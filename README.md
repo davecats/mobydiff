@@ -19,3 +19,9 @@ Compile both CPU/GPU paths via
 ```
 ./compile.sh all
 ```
+
+## Usage
+
+```
+./main ./path_to_inputfile/input.ini
+```
