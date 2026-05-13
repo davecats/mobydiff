@@ -5,13 +5,17 @@ project(3D_NSE_SOLVER LANGUAGES Fortran)
 # =========================
 # Options
 # =========================
-option(USE_IBM "Enable immersed boundary method (IBM)" OFF)
 option(USE_OPENMP_OFFLOAD "Enable OpenMP target offload for accelerator execution" OFF)
-option(USE_CUFFT "Use cuFFT instead of FFTW for the Poisson FFT backend" ${USE_OPENMP_OFFLOAD})
+option(USE_CUFFT "Use cuFFT instead of FFTW for the pressure FFT backend" ${USE_OPENMP_OFFLOAD})
+option(USE_REDBLACK "Use the red-black SOR pressure solver backend" OFF)
 set(OPENMP_OFFLOAD_FLAGS "" CACHE STRING "Additional Fortran compiler/linker flags for OpenMP target offload")
 
-if(USE_OPENMP_OFFLOAD AND NOT USE_CUFFT)
-    message(FATAL_ERROR "USE_OPENMP_OFFLOAD requires USE_CUFFT=ON for the GPU Poisson FFT backend.")
+if(USE_REDBLACK)
+    set(USE_CUFFT OFF CACHE BOOL "Use cuFFT instead of FFTW for the pressure FFT backend" FORCE)
+endif()
+
+if(USE_OPENMP_OFFLOAD AND NOT USE_REDBLACK AND NOT USE_CUFFT)
+    message(FATAL_ERROR "USE_OPENMP_OFFLOAD requires USE_CUFFT=ON for the GPU pressure FFT backend.")
 endif()
 
 if(USE_CUFFT AND NOT USE_OPENMP_OFFLOAD)
@@ -21,34 +25,37 @@ endif()
 # =========================
 # Sources
 # =========================
+set(SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
+set(MODULE_DIR ${SRC_DIR}/modules)
+set(PRESSURE_DIR ${MODULE_DIR}/pressure)
+
 set(SOURCES
-    main.f90
-    init.f90
-    config.f90
-    gpu_runtime.f90
-    boundary.f90
-    io.f90
-    step.f90
-    poisson_workspace.f90
-    poisson_common.f90
-    poisson_solver.f90
+    ${SRC_DIR}/main.f90
+    ${MODULE_DIR}/init.f90
+    ${MODULE_DIR}/config.f90
+    ${MODULE_DIR}/gpu_runtime.f90
+    ${MODULE_DIR}/boundary.f90
+    ${MODULE_DIR}/ibm.f90
+    ${MODULE_DIR}/io.f90
+    ${MODULE_DIR}/step.f90
+    ${MODULE_DIR}/pressure_workspace.f90
+    ${MODULE_DIR}/pressure_solver.f90
 )
 
-if(USE_CUFFT)
+if(USE_REDBLACK)
     list(APPEND SOURCES
-        cufft_bindings.f90
-        poisson_cufft.f90
+        ${PRESSURE_DIR}/pressure_redblack.f90
+    )
+elseif(USE_CUFFT)
+    list(APPEND SOURCES
+        ${PRESSURE_DIR}/cufft_bindings.f90
+        ${PRESSURE_DIR}/pressure_fft.f90
+        ${PRESSURE_DIR}/pressure_backend_cufft.f90
     )
 else()
     list(APPEND SOURCES
-        poisson_fftw.f90
-    )
-endif()
-
-# Add IBM sources only if enabled
-if(USE_IBM)
-    list(APPEND SOURCES
-        ibm.f90
+        ${PRESSURE_DIR}/pressure_fft.f90
+        ${PRESSURE_DIR}/pressure_backend_fftw.f90
     )
 endif()
 
@@ -78,10 +85,6 @@ endif()
 # =========================
 # Define macros
 # =========================
-if(USE_IBM)
-    target_compile_definitions(main PRIVATE USE_IBM)
-endif()
-
 if(USE_OPENMP_OFFLOAD)
     target_compile_definitions(main PRIVATE USE_OPENMP_OFFLOAD)
 
@@ -105,12 +108,22 @@ if(USE_OPENMP_OFFLOAD)
     endif()
 endif()
 
+if(USE_REDBLACK)
+    target_compile_definitions(main PRIVATE USE_REDBLACK)
+endif()
+
 
 # =========================
 # FFT backend
 # =========================
 
-if(USE_CUFFT)
+if(USE_REDBLACK)
+    if(USE_OPENMP_OFFLOAD)
+        message(STATUS "Pressure backend: red-black SOR OpenMP offload")
+    else()
+        message(STATUS "Pressure backend: red-black SOR CPU")
+    endif()
+elseif(USE_CUFFT)
     target_compile_definitions(main PRIVATE USE_CUFFT)
 
     find_package(CUDAToolkit REQUIRED)

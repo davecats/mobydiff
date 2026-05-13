@@ -1,3 +1,8 @@
+! TODO:
+!       - second-order IBM in space, then in time
+!       - IBM in Poisson equation for redblack
+!       - multiGPU parallelisation
+
 program main
     use, intrinsic :: iso_fortran_env, only: int64
     use :: init
@@ -5,11 +10,9 @@ program main
     use :: boundary
     use :: io
     use :: step
-    use :: poisson_solver
+    use :: pressure_solver
     use :: gpu_runtime
-#ifdef USE_IBM
     use :: ibmm
-#endif
     implicit none
 
     integer :: i, arg_status, rkStage
@@ -21,11 +24,9 @@ program main
     character(len=256) :: input_file, output_prefix
     type(grid_type) :: g
     type(field_type) :: f
-    type(poisson_fft_workspace) :: ws
+    type(pressure_solver_type) :: ps
     type(output_workspace_type) :: out
-#ifdef USE_IBM
     type(ibm_type) :: ibm
-#endif
 
     ! The first command-line argument can override the default input file.
     call get_command_argument(1, input_file, status=arg_status)
@@ -34,7 +35,7 @@ program main
     ! Grid/configuration setup also prepares optional OpenMP offload.
     print *, "initialising grid..."
     call init_grid(g)
-    call read_runtime_config(g, output_interval, output_prefix, input_file)
+    call read_runtime_config(g, ps, output_interval, output_prefix, input_file)
     call init_openmp_offload()
 
     ! Field and solver work arrays are kept resident on the device when offload is enabled.
@@ -43,17 +44,15 @@ program main
     call enter_field_data(f, g)
     call init_output_workspace(out, g, output_interval)
 
-    print *, "initialising poisson solver..."
-    call init_poisson_fft_workspace(ws, g)
+    print *, "initialising pressure solver..."
+    call init_pressure_solver(ps, g)
 
-#ifdef USE_IBM
     print *, "initialising IBM..."
     call init_ibm(ibm, g)
     call set_ibm_coeff(g, ibm, ibm%coef_u, 1, 0, 0)
     call set_ibm_coeff(g, ibm, ibm%coef_v, 0, 1, 0)
     call set_ibm_coeff(g, ibm, ibm%coef_w, 0, 0, 1)
     call enter_ibm_data(ibm, g)
-#endif
 
     print *, "main loop starting..."
     call system_clock(count_rate=clock_rate)
@@ -67,27 +66,19 @@ program main
             dt_gamma = g%dt*rk_gamma(rkStage)
 
             ! Predictor: advance tentative staggered velocities, then enforce solid/body constraints.
-            call momentum(f, g, dt_alpha, dt_beta, dt_gamma)
-#ifdef USE_IBM
-            call apply_ibm(f%us, ibm%coef_u, g)
-            call apply_ibm(f%vs, ibm%coef_v, g)
-            call apply_ibm(f%ws, ibm%coef_w, g)
-#endif
-            call apply_bc(f, g)
+            call momentum(f, g, dt_alpha, dt_beta, dt_gamma, ibm)
 
-            ! Projection: build the Poisson right-hand side and solve for pressure correction.
-            call divU(f, g, ws, dt_gamma)
-            call poisson(g, f, ws)
+#ifndef USE_REDBLACK
             call apply_bc(f, g)
-
-            ! Corrector: project tentative velocities onto the divergence-free field.
-            call corrector(f, g, dt_gamma)
-#ifdef USE_IBM
-            call apply_ibm(f%un, ibm%coef_u, g)
-            call apply_ibm(f%vn, ibm%coef_v, g)
-            call apply_ibm(f%wn, ibm%coef_w, g)
 #endif
+
+            ! Projection: solve for pressure correction and project tentative velocities.
+            call pressure_projection(ps, f, g, dt_gamma, ibm)
+#ifdef USE_REDBLACK
+            call apply_bc_redblack(f, g)
+#else
             call apply_bc(f, g)
+#endif
 
         end do
 
@@ -113,10 +104,8 @@ program main
         "timing: nsteps", g%nsteps, "loop_seconds", loop_seconds, "seconds_per_step", seconds_per_step
 
     ! Release device-side data before the host allocatables go out of scope.
-    call destroy_poisson_fft_workspace(ws)
-#ifdef USE_IBM
+    call destroy_pressure_solver(ps)
     call exit_ibm_data(ibm, g)
-#endif
     call destroy_output_workspace(out, g)
     call exit_field_data(f, g)
 end program main

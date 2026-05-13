@@ -18,6 +18,8 @@ module ibmm
     implicit none
 
     real(C_DOUBLE), parameter :: SOLID = 1.0d30
+    real(C_DOUBLE), parameter :: DEFAULT_TOL = 1.0d-10
+    integer(C_INT), parameter :: MAX_ITER = 200
 
     !========================
     ! IBM TYPE
@@ -33,27 +35,24 @@ module ibmm
 
 contains
 
-
 !========================
 ! INITIALIZE IBM
 !========================
-subroutine init_ibm(ibm, g)
-    type(ibm_type), intent(inout) :: ibm
-    type(grid_type), intent(in)   :: g
+    subroutine init_ibm(ibm, g)
+        type(ibm_type), intent(inout) :: ibm
+        type(grid_type), intent(in)   :: g
 
-    ibm%n_wave_x = 1
-    ibm%n_wave_z = 1
-    ibm%amp_x = 5*g%dy
-    ibm%amp_z = 5*g%dy
-    ibm%phase_x = 0.0d0
-    ibm%phase_z = 0.0d0
+        ibm%n_wave_x = 1
+        ibm%n_wave_z = 1
+        ibm%amp_x = 5*g%dy
+        ibm%amp_z = 5*g%dy
+        ibm%phase_x = 0.0d0
+        ibm%phase_z = 0.0d0
 
-    allocate(ibm%coef_u(0:g%nx+1,0:g%ny+1,0:g%nz+1))
-    allocate(ibm%coef_v(0:g%nx+1,1:g%ny+1,0:g%nz+1))
-    allocate(ibm%coef_w(0:g%nx+1,0:g%ny+1,0:g%nz+1))
-
-
-end subroutine init_ibm
+        allocate(ibm%coef_u(0:g%nx+1,0:g%ny+1,0:g%nz+1))
+        allocate(ibm%coef_v(0:g%nx+1,1:g%ny+1,0:g%nz+1))
+        allocate(ibm%coef_w(0:g%nx+1,0:g%ny+1,0:g%nz+1))
+    end subroutine init_ibm
 
     subroutine enter_ibm_data(ibm, g)
         type(ibm_type), intent(inout) :: ibm
@@ -101,6 +100,41 @@ end subroutine init_ibm
 
     end function isInBody
 
+    real(C_DOUBLE) function bisection(x0,dir,ibm,g) result(d)
+        real(C_DOUBLE), intent(in) :: x0(1:3)
+        integer(C_INT), intent(in) :: dir
+        type(ibm_type), intent(in) :: ibm
+        type(grid_type), intent(in) :: g
+        real(C_DOUBLE) :: xa(1:3),xb(1:3),xm(1:3),DD(1:3)
+        logical :: la, lb, lm
+
+        ! Assumed : isInBody(x0)=false, isInBody(x0+DD)=true
+
+        integer(C_INT) :: it
+        DD(1)=g%dx; DD(2)=g%dy; DD(3)=g%dz
+        xb = x0; xb(dir) = xb(dir) + 0.5*DD(dir)
+        xa = x0; 
+
+        DO it=1,MAX_ITER
+            xm = 0.5*(xa+xb)
+
+            if ((xb(dir) - xa(dir)) < DEFAULT_TOL) then
+                exit
+            end if
+
+            la = isInBody(xa(1),xa(2),xa(3),ibm,g)
+            lb = isInBody(xb(1),xb(2),xb(3),ibm,g)
+            lm = isInBody(xm(1),xm(2),xm(3),ibm,g)
+            IF (lm .eqv. la) THEN
+                xa = xm
+            ELSE
+                xb = xm
+            END IF
+        END DO
+        d = xm(dir)-x0(dir)
+    end function  bisection
+
+    
 
     subroutine set_ibm_coeff(g, ibm, coeff, dix, diy, diz)
         implicit none
@@ -134,33 +168,4 @@ end subroutine init_ibm
 
     end subroutine set_ibm_coeff
     
-    subroutine apply_ibm(field, coeff, g)
-        implicit none
-
-        real(C_DOUBLE), intent(inout) :: field(:,:,:)
-        real(C_DOUBLE), intent(in)    :: coeff(:,:,:)
-        type(grid_type), intent(in) :: g
-
-        integer :: ix, iy, iz
-        real(C_DOUBLE) :: dt
-
-        dt = g%dt
-
-        !$omp target teams distribute parallel do collapse(3) &
-        !$omp& map(to: coeff(1:size(coeff,1),1:size(coeff,2),1:size(coeff,3))) &
-        !$omp& map(tofrom: field(1:size(field,1),1:size(field,2),1:size(field,3))) &
-        !$omp& private(ix,iy,iz)
-        do iz = 1, size(field,3)
-       	   do iy = 1, size(field,2)
-	      do ix = 1, size(field,1)
-
-	        field(ix,iy,iz) = field(ix,iy,iz) / &
-	                          (1.0d0 + dt*coeff(ix,iy,iz))
-
-	      end do
-	   end do
-        end do
-        !$omp end target teams distribute parallel do
-
-end subroutine apply_ibm
 end module ibmm

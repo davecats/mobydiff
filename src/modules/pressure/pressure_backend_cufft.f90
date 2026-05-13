@@ -1,35 +1,33 @@
-module poisson_cufft_backend
+module pressure_backend_cufft
     use, intrinsic :: iso_c_binding
-    use :: init, only: grid_type, field_type
-    use :: poisson_workspace, only: poisson_fft_workspace
-    use :: poisson_common, only: allocate_common_workspace, solve_tridiagonal_y
+    use :: init, only: grid_type
+    use :: pressure_workspace, only: pressure_solver_type
+    use :: pressure_fft, only: allocate_common_workspace, solve_tridiagonal_y
     use :: cufft_bindings
     implicit none
 
 contains
 
 subroutine allocate_cufft_workspace(ws, g)
-    type(poisson_fft_workspace), intent(inout) :: ws
+    type(pressure_solver_type), intent(inout) :: ws
     type(grid_type), intent(in) :: g
     integer :: nxh
 
     nxh = g%nx/2 + 1
 
-    call allocate_common_workspace(ws, nxh, g%ny, g%nz)
-    allocate(ws%plane(g%nx, g%nz, g%ny))
-    allocate(ws%plane_hat(nxh, g%nz, g%ny))
+    call allocate_common_workspace(ws, g%nx, nxh, g%ny, g%nz)
 
     !$omp target enter data map(to: ws)
     !$omp target enter data map(alloc: &
     !$omp& ws%cp_hat(1:nxh,1:g%ny,1:g%nz), &
     !$omp& ws%dp_hat(1:nxh,1:g%ny,1:g%nz), &
     !$omp& ws%den_inv_hat(1:nxh,1:g%ny,1:g%nz), &
-    !$omp& ws%plane(1:g%nx,1:g%nz,1:g%ny), &
+    !$omp& ws%rhs(1:g%nx,1:g%nz,1:g%ny), &
     !$omp& ws%plane_hat(1:nxh,1:g%nz,1:g%ny))
 end subroutine allocate_cufft_workspace
 
 subroutine create_cufft_plans(ws, g)
-    type(poisson_fft_workspace), intent(inout) :: ws
+    type(pressure_solver_type), intent(inout) :: ws
     type(grid_type), intent(in) :: g
 
     integer(C_INT), target :: fft_dims(2), inembed(2), onembed(2)
@@ -57,10 +55,9 @@ subroutine create_cufft_plans(ws, g)
         istride, idist, CUFFT_Z2D, batch), "cufftPlanMany Z2D")
 end subroutine create_cufft_plans
 
-subroutine poisson_cufft(g, f, ws)
+subroutine solve_pressure_cufft(g, ws)
     type(grid_type), intent(in) :: g
-    type(field_type), intent(inout) :: f
-    type(poisson_fft_workspace), intent(inout) :: ws
+    type(pressure_solver_type), intent(inout) :: ws
 
     integer :: nx, ny, nz, nxh
     real(C_DOUBLE) :: dyi2, scale
@@ -75,59 +72,57 @@ subroutine poisson_cufft(g, f, ws)
     call execute_cufft_forward(ws)
     call solve_tridiagonal_y(ws, nxh, ny, nz, dyi2)
     call execute_cufft_backward(ws)
-    call unpack_pressure_from_cufft(f, ws, nx, ny, nz, scale)
-end subroutine poisson_cufft
+    call scale_pressure_correction_cufft(ws, nx, ny, nz, scale)
+end subroutine solve_pressure_cufft
 
 subroutine execute_cufft_forward(ws)
-    type(poisson_fft_workspace), intent(inout) :: ws
+    type(pressure_solver_type), intent(inout) :: ws
     integer(C_INT) :: ierr
-    type(C_PTR) :: plane_ptr, plane_hat_ptr
+    type(C_PTR) :: rhs_ptr, plane_hat_ptr
 
-    !$omp target data use_device_addr(ws%plane, ws%plane_hat)
-    plane_ptr = c_loc(ws%plane(1,1,1))
+    !$omp target data use_device_addr(ws%rhs, ws%plane_hat)
+    rhs_ptr = c_loc(ws%rhs(1,1,1))
     plane_hat_ptr = c_loc(ws%plane_hat(1,1,1))
-    ierr = cufftExecD2Z(ws%plan_fwd, plane_ptr, plane_hat_ptr)
+    ierr = cufftExecD2Z(ws%plan_fwd, rhs_ptr, plane_hat_ptr)
     !$omp end target data
     call check_cufft(ierr, "batched cufftExecD2Z")
     call check_cuda(cudaStreamSynchronize(C_NULL_PTR), "cudaStreamSynchronize after batched cufftExecD2Z")
 end subroutine execute_cufft_forward
 
 subroutine execute_cufft_backward(ws)
-    type(poisson_fft_workspace), intent(inout) :: ws
+    type(pressure_solver_type), intent(inout) :: ws
     integer(C_INT) :: ierr
-    type(C_PTR) :: plane_ptr, plane_hat_ptr
+    type(C_PTR) :: rhs_ptr, plane_hat_ptr
 
-    !$omp target data use_device_addr(ws%plane_hat, ws%plane)
+    !$omp target data use_device_addr(ws%plane_hat, ws%rhs)
     plane_hat_ptr = c_loc(ws%plane_hat(1,1,1))
-    plane_ptr = c_loc(ws%plane(1,1,1))
-    ierr = cufftExecZ2D(ws%plan_bwd, plane_hat_ptr, plane_ptr)
+    rhs_ptr = c_loc(ws%rhs(1,1,1))
+    ierr = cufftExecZ2D(ws%plan_bwd, plane_hat_ptr, rhs_ptr)
     !$omp end target data
     call check_cufft(ierr, "batched cufftExecZ2D")
     call check_cuda(cudaStreamSynchronize(C_NULL_PTR), "cudaStreamSynchronize after batched cufftExecZ2D")
 end subroutine execute_cufft_backward
 
-subroutine unpack_pressure_from_cufft(f, ws, nx, ny, nz, scale)
-    type(field_type), intent(inout) :: f
-    type(poisson_fft_workspace), intent(inout) :: ws
+subroutine scale_pressure_correction_cufft(ws, nx, ny, nz, scale)
+    type(pressure_solver_type), intent(inout) :: ws
     integer, intent(in) :: nx, ny, nz
     real(C_DOUBLE), intent(in) :: scale
     integer :: i, j, ikz
 
     !$omp target teams distribute parallel do collapse(3) &
-    !$omp& map(to: ws%plane(1:nx,1:nz,1:ny)) &
-    !$omp& map(tofrom: f%pc(0:nx+1,1:ny,0:nz+1)) private(i,j,ikz)
+    !$omp& map(tofrom: ws%rhs(1:nx,1:nz,1:ny)) private(i,j,ikz)
     do j = 1, ny
         do ikz = 1, nz
             do i = 1, nx
-                f%pc(i,j,ikz) = ws%plane(i,ikz,j) * scale
+                ws%rhs(i,ikz,j) = ws%rhs(i,ikz,j) * scale
             end do
         end do
     end do
     !$omp end target teams distribute parallel do
-end subroutine unpack_pressure_from_cufft
+end subroutine scale_pressure_correction_cufft
 
 subroutine destroy_cufft_workspace(ws)
-    type(poisson_fft_workspace), intent(inout) :: ws
+    type(pressure_solver_type), intent(inout) :: ws
 
     if (ws%plan_fwd /= 0) call check_cufft(cufftDestroy(ws%plan_fwd), "cufftDestroy forward")
     if (ws%plan_bwd /= 0) call check_cufft(cufftDestroy(ws%plan_bwd), "cufftDestroy backward")
@@ -135,7 +130,7 @@ subroutine destroy_cufft_workspace(ws)
     if (allocated(ws%cp_hat)) then
         !$omp target exit data map(delete: &
         !$omp& ws%cp_hat, ws%dp_hat, ws%den_inv_hat, &
-        !$omp& ws%plane, ws%plane_hat)
+        !$omp& ws%rhs, ws%plane_hat)
     end if
     !$omp target exit data map(delete: ws)
 
@@ -143,4 +138,4 @@ subroutine destroy_cufft_workspace(ws)
     ws%plan_bwd = 0
 end subroutine destroy_cufft_workspace
 
-end module poisson_cufft_backend
+end module pressure_backend_cufft

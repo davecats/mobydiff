@@ -1,12 +1,14 @@
 module config
     use, intrinsic :: iso_c_binding
     use :: init, only: grid_type, finalize_grid
+    use :: pressure_workspace, only: pressure_solver_type
     implicit none
 
 contains
 
-subroutine read_runtime_config(g, output_interval, output_prefix, input_file)
+subroutine read_runtime_config(g, ps, output_interval, output_prefix, input_file)
     type(grid_type), intent(inout) :: g
+    type(pressure_solver_type), intent(inout) :: ps
     integer, intent(out) :: output_interval
     character(len=*), intent(out) :: output_prefix
     character(len=*), intent(in) :: input_file
@@ -53,7 +55,7 @@ subroutine read_runtime_config(g, output_interval, output_prefix, input_file)
 
         call split_key_value(line, key, value)
         if (len_trim(key) == 0) cycle
-        call apply_config_value(section, key, value, g, output_interval, output_prefix, &
+        call apply_config_value(section, key, value, g, ps, output_interval, output_prefix, &
             nsteps_seen, t_final_seen, line_no)
     end do
 
@@ -65,16 +67,20 @@ subroutine read_runtime_config(g, output_interval, output_prefix, input_file)
     call finalize_grid(g)
 end subroutine read_runtime_config
 
-subroutine apply_config_value(section, key, value, g, output_interval, output_prefix, &
+subroutine apply_config_value(section, key, value, g, ps, output_interval, output_prefix, &
         nsteps_seen, t_final_seen, line_no)
     character(len=*), intent(in) :: section, key, value
     type(grid_type), intent(inout) :: g
+    type(pressure_solver_type), intent(inout) :: ps
     integer, intent(inout) :: output_interval
     character(len=*), intent(inout) :: output_prefix
     logical, intent(inout) :: nsteps_seen, t_final_seen
     integer, intent(in) :: line_no
 
     character(len=:), allocatable :: section_l, key_l
+#ifdef USE_REDBLACK
+    integer :: niter_value
+#endif
 
     section_l = lower(trim(section))
     key_l = lower(trim(key))
@@ -119,6 +125,21 @@ subroutine apply_config_value(section, key, value, g, output_interval, output_pr
         case ("prefix")
             output_prefix = clean_string(value)
         end select
+    case ("pressure")
+#ifdef USE_REDBLACK
+        select case (key_l)
+        case ("niter", "n_iter", "iterations")
+            niter_value = int(ps%nIter)
+            call read_integer(value, niter_value, line_no)
+            if (niter_value > 0) then
+                ps%nIter = int(niter_value, C_INT)
+            else
+                print *, "warning: pressure nIter must be positive on input line", line_no
+            end if
+        case ("sor", "omega")
+            call read_real(value, ps%sor, line_no)
+        end select
+#endif
     end select
 end subroutine apply_config_value
 
