@@ -50,7 +50,7 @@ contains
         ibm%phase_z = 0.0d0
 
         allocate(ibm%coef_u(0:g%nx+1,0:g%ny+1,0:g%nz+1))
-        allocate(ibm%coef_v(0:g%nx+1,1:g%ny+1,0:g%nz+1))
+        allocate(ibm%coef_v(0:g%nx+1,0:g%ny+1,0:g%nz+1))
         allocate(ibm%coef_w(0:g%nx+1,0:g%ny+1,0:g%nz+1))
     end subroutine init_ibm
 
@@ -62,7 +62,7 @@ contains
         !$omp target enter data map(to: ibm)
         !$omp target enter data map(to: &
         !$omp& ibm%coef_u(0:g%nx+1,0:g%ny+1,0:g%nz+1), &
-        !$omp& ibm%coef_v(0:g%nx+1,1:g%ny+1,0:g%nz+1), &
+        !$omp& ibm%coef_v(0:g%nx+1,0:g%ny+1,0:g%nz+1), &
         !$omp& ibm%coef_w(0:g%nx+1,0:g%ny+1,0:g%nz+1))
 #endif
     end subroutine enter_ibm_data
@@ -74,17 +74,17 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target exit data map(delete: &
         !$omp& ibm%coef_u(0:g%nx+1,0:g%ny+1,0:g%nz+1), &
-        !$omp& ibm%coef_v(0:g%nx+1,1:g%ny+1,0:g%nz+1), &
+        !$omp& ibm%coef_v(0:g%nx+1,0:g%ny+1,0:g%nz+1), &
         !$omp& ibm%coef_w(0:g%nx+1,0:g%ny+1,0:g%nz+1))
         !$omp target exit data map(delete: ibm)
 #endif
     end subroutine exit_ibm_data
 
 
-    logical function isInBody(x, y, z, ibm, g)
+    logical function isInBody(xIN, ibm, g)
         implicit none
 
-        real(C_DOUBLE), intent(in) :: x, y, z
+        real(C_DOUBLE), intent(in) :: xIN(1:3)
         type(ibm_type), intent(in) :: ibm
         type(grid_type), intent(in) :: g
 
@@ -92,49 +92,43 @@ contains
         real(C_DOUBLE) :: y_body
 
         y_body = ibm%amp_x * 0.5d0 * &
-                 (1.0d0 + sin(2.0d0*pi*real(ibm%n_wave_x,C_DOUBLE)*x/g%lx + ibm%phase_x)) + 2*g%dy !* &
-!                 ibm%amp_z * 0.5d0 * &
-                !(1.0d0 + sin(2.0d0*pi*real(ibm%n_wave_z,C_DOUBLE)*z/g%lz + ibm%phase_z))
+                 (1.0d0 + sin(2.0d0*pi*real(ibm%n_wave_x,C_DOUBLE)*xIN(1)/g%lx + ibm%phase_x)) + 2*g%dy 
 
-        isInBody = (y < y_body)
+        isInBody = (xIN(2) < y_body)
 
     end function isInBody
 
-    real(C_DOUBLE) function bisection(x0,dir,ibm,g) result(d)
-        real(C_DOUBLE), intent(in) :: x0(1:3)
-        integer(C_INT), intent(in) :: dir
+    subroutine bisection(xAin,xB,ibm,g) 
+        real(C_DOUBLE), intent(in) :: xAin(1:3)
+        real(C_DOUBLE), intent(inout):: xB(1:3)
         type(ibm_type), intent(in) :: ibm
         type(grid_type), intent(in) :: g
-        real(C_DOUBLE) :: xa(1:3),xb(1:3),xm(1:3),DD(1:3)
+        real(C_DOUBLE) :: xA(1:3),xM(1:3)
         logical :: la, lb, lm
 
-        ! Assumed : isInBody(x0)=false, isInBody(x0+DD)=true
-
         integer(C_INT) :: it
-        DD(1)=g%dx; DD(2)=g%dy; DD(3)=g%dz
-        xb = x0; xb(dir) = xb(dir) + 0.5*DD(dir)
-        xa = x0; 
+
+        xA = xAin
 
         DO it=1,MAX_ITER
+
             xm = 0.5*(xa+xb)
 
-            if ((xb(dir) - xa(dir)) < DEFAULT_TOL) then
+            if (NORM2(xb-xa) < DEFAULT_TOL) then
                 exit
             end if
 
-            la = isInBody(xa(1),xa(2),xa(3),ibm,g)
-            lb = isInBody(xb(1),xb(2),xb(3),ibm,g)
-            lm = isInBody(xm(1),xm(2),xm(3),ibm,g)
+            la = isInBody(xa,ibm,g)
+            lm = isInBody(xm,ibm,g)
             IF (lm .eqv. la) THEN
                 xa = xm
             ELSE
                 xb = xm
             END IF
         END DO
-        d = xm(dir)-x0(dir)
-    end function  bisection
+        xb = xm
+    end subroutine  bisection
 
-    
 
     subroutine set_ibm_coeff(g, ibm, coeff, dix, diy, diz)
         implicit none
@@ -146,26 +140,50 @@ contains
 
         integer, intent(in) :: dix, diy, diz
         integer :: ix, iy, iz
-        real(C_DOUBLE) :: x, y, z
+        real(C_DOUBLE) :: xA(1:3)
+#ifdef USE_IBM_SECONDORDER
+        integer(C_INT) :: neighbours(1:3,1:6), iN
+        real(C_DOUBLE) :: xB(1:3), d0, d
+
+        neighbours(1:3,1) = (/-1, 0, 0 /)
+        neighbours(1:3,2) = (/ 1, 0, 0 /)
+        neighbours(1:3,3) = (/ 0,-1, 0 /)
+        neighbours(1:3,4) = (/ 0, 1, 0 /)
+        neighbours(1:3,5) = (/ 0, 0,-1 /)
+        neighbours(1:3,6) = (/ 0, 0, 1 /)
+#endif
 
         coeff = 0.0d0
 
         do iz = 1, size(coeff,3)
             do iy = 1, size(coeff,2)
                 do ix = 1, size(coeff,1)
-
-                    x = (real(ix,C_DOUBLE) - real(dix,C_DOUBLE)*0.5d0        )*g%dx
-                    y = (real(iy,C_DOUBLE) - real(diy,C_DOUBLE)*0.5d0 + 0.5d0)*g%dy
-                    z = (real(iz,C_DOUBLE) - real(diz,C_DOUBLE)*0.5d0        )*g%dz
-
-                    if (isInBody(x, y, z, ibm, g)) then
+                    xA(1) = (real(ix,C_DOUBLE) - real(dix,C_DOUBLE)*0.5d0 - 1.5d0)*g%dx
+                    xA(2) = (real(iy,C_DOUBLE) - real(diy,C_DOUBLE)*0.5d0 - 1.5d0)*g%dy
+                    xA(3) = (real(iz,C_DOUBLE) - real(diz,C_DOUBLE)*0.5d0 - 1.5d0)*g%dz
+                    if (isInBody(xA, ibm, g)) then
                         coeff(ix,iy,iz) = SOLID
+#ifdef USE_IBM_SECONDORDER
+                    else
+                        do iN = 1,6
+                            xB(1) = (real(ix+neighbours(1,iN),C_DOUBLE) - real(dix,C_DOUBLE)*0.5d0 - 1.5d0)*g%dx
+                            xB(2) = (real(iy+neighbours(2,iN),C_DOUBLE) - real(diy,C_DOUBLE)*0.5d0 - 1.5d0)*g%dy
+                            xB(3) = (real(iz+neighbours(3,iN),C_DOUBLE) - real(diz,C_DOUBLE)*0.5d0 - 1.5d0)*g%dz
+                            !coordMod will be put here
+                            d0 = norm2(xB-xA)
+                            if (isInBody(xB, ibm, g)) then
+                                call bisection(xA,xB,ibm,g)
+                                d = norm2(xB-xA)
+                                coeff(ix,iy,iz) =  coeff(ix,iy,iz) + ((d0-d)/d)/d0**2  ! adjust for noneq. grid
+                            end if
+                        end do
+#endif
                     end if
 
                 end do
             end do
         end do
-
+        coeff = coeff/g%re
     end subroutine set_ibm_coeff
     
 end module ibmm

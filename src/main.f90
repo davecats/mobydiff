@@ -1,7 +1,11 @@
 ! TODO:
-!       - second-order IBM in space, then in time
-!       - IBM in Poisson equation for redblack
-!       - multiGPU parallelisation
+!
+!      (*) second-order IBM in space, then in time: implement bisection with direction
+!       -  IBM in Poisson equation for redblack
+!       -  multiGPU parallelisation
+!       -  various optimisation
+
+
 
 program main
     use, intrinsic :: iso_fortran_env, only: int64
@@ -16,14 +20,15 @@ program main
     implicit none
 
     integer :: i, arg_status, rkStage
-    integer :: output_interval
+    integer :: output_interval, field_interval
     logical :: need_cfl
     real(C_DOUBLE) :: dt_alpha, dt_beta, dt_gamma
     real(C_DOUBLE) :: loop_seconds, seconds_per_step
     integer(int64) :: loop_clock_start, loop_clock_end, clock_rate
-    character(len=256) :: input_file, output_prefix
+    character(len=256) :: input_file, output_prefix, field_prefix
     type(grid_type) :: g
     type(field_type) :: f
+    type(boundary_type) :: bc
     type(pressure_solver_type) :: ps
     type(output_workspace_type) :: out
     type(ibm_type) :: ibm
@@ -32,13 +37,14 @@ program main
     call get_command_argument(1, input_file, status=arg_status)
     if (arg_status /= 0 .or. len_trim(input_file) == 0) input_file = "input.ini"
 
-    ! Grid/configuration setup also prepares optional OpenMP offload.
     print *, "initialising grid..."
     call init_grid(g)
-    call read_runtime_config(g, ps, output_interval, output_prefix, input_file)
+
+    print *, "initialising BCs..."
+    call init_bc(bc)
+    call read_runtime_config(g, ps, bc, output_interval, output_prefix, field_interval, field_prefix, input_file)
     call init_openmp_offload()
 
-    ! Field and solver work arrays are kept resident on the device when offload is enabled.
     print *, "initialising fields..."
     call init_field(f, g)
     call enter_field_data(f, g)
@@ -66,16 +72,16 @@ program main
             dt_gamma = g%dt*rk_gamma(rkStage)
 
             ! Predictor: advance tentative staggered velocities, then enforce solid/body constraints.
-            call momentum(f, g, dt_alpha, dt_beta, dt_gamma, ibm)
+            call momentum(f, g, dt_alpha, dt_beta, dt_gamma, ibm, bc)
 
 #ifndef USE_REDBLACK
             call apply_bc(f, g)
 #endif
 
             ! Projection: solve for pressure correction and project tentative velocities.
-            call pressure_projection(ps, f, g, dt_gamma, ibm)
+            call pressure_projection(ps, f, g, dt_gamma, ibm, bc)
 #ifdef USE_REDBLACK
-            call apply_bc_redblack(f, g)
+            call apply_bc_redblack(f, g, bc)
 #else
             call apply_bc(f, g)
 #endif
@@ -92,6 +98,9 @@ program main
 
         if (output_interval > 0) then
             call maybe_write_vtk(out, f, g, i, output_interval, output_prefix)
+        end if
+        if (field_interval > 0) then
+            call maybe_write_field(f, g, i, field_interval, field_prefix)
         end if
 
     end do

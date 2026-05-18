@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(3D_NSE_SOLVER LANGUAGES Fortran)
+project(3D_NSE_SOLVER LANGUAGES Fortran C)
 
 # =========================
 # Options
@@ -8,6 +8,7 @@ project(3D_NSE_SOLVER LANGUAGES Fortran)
 option(USE_OPENMP_OFFLOAD "Enable OpenMP target offload for accelerator execution" OFF)
 option(USE_CUFFT "Use cuFFT instead of FFTW for the pressure FFT backend" ${USE_OPENMP_OFFLOAD})
 option(USE_REDBLACK "Use the red-black SOR pressure solver backend" OFF)
+option(USE_IBM_SECONDORDER "Use second-order IBM interpolation/correction" ON)
 set(OPENMP_OFFLOAD_FLAGS "" CACHE STRING "Additional Fortran compiler/linker flags for OpenMP target offload")
 
 if(USE_REDBLACK)
@@ -36,6 +37,7 @@ set(SOURCES
     ${MODULE_DIR}/gpu_runtime.f90
     ${MODULE_DIR}/boundary.f90
     ${MODULE_DIR}/ibm.f90
+    ${MODULE_DIR}/field_hdf5.c
     ${MODULE_DIR}/io.f90
     ${MODULE_DIR}/step.f90
     ${MODULE_DIR}/pressure_workspace.f90
@@ -71,15 +73,56 @@ set_target_properties(main PROPERTIES
 # =========================
 # Compiler flags
 # =========================
-target_compile_options(main PRIVATE -O2)
+target_compile_options(main PRIVATE
+    $<$<COMPILE_LANGUAGE:Fortran>:-O2>
+    $<$<COMPILE_LANGUAGE:C>:-O2>
+)
+
+# =========================
+# HDF5 field output
+# =========================
+set(HDF5_ROOT "" CACHE PATH "Root directory of HDF5 installation")
+
+find_path(HDF5_C_INCLUDE_DIR
+    NAMES hdf5.h
+    HINTS
+        ${HDF5_ROOT}/include
+        ${HDF5_ROOT}
+        /usr/include/hdf5/serial
+    PATH_SUFFIXES include
+)
+
+find_library(HDF5_C_LIB
+    NAMES hdf5
+    HINTS
+        ${HDF5_ROOT}/lib
+        ${HDF5_ROOT}/lib64
+        ${HDF5_ROOT}
+        /usr/lib/x86_64-linux-gnu/hdf5/serial
+    PATH_SUFFIXES lib lib64
+)
+
+if(NOT HDF5_C_INCLUDE_DIR)
+    message(FATAL_ERROR "Could not find hdf5.h. Set -DHDF5_ROOT=/path/to/hdf5 or -DHDF5_C_INCLUDE_DIR=/path/to/include")
+endif()
+
+if(NOT HDF5_C_LIB)
+    message(FATAL_ERROR "Could not find HDF5 C library. Set -DHDF5_ROOT=/path/to/hdf5 or -DHDF5_C_LIB=/path/to/libhdf5.so")
+endif()
+
+message(STATUS "HDF5 include dir: ${HDF5_C_INCLUDE_DIR}")
+message(STATUS "HDF5 C library: ${HDF5_C_LIB}")
+
+target_include_directories(main PRIVATE ${HDF5_C_INCLUDE_DIR})
+target_link_libraries(main PRIVATE ${HDF5_C_LIB})
 
 # Enable preprocessing depending on compiler
 if (CMAKE_Fortran_COMPILER_ID STREQUAL "GNU")
-    target_compile_options(main PRIVATE -cpp)
+    target_compile_options(main PRIVATE $<$<COMPILE_LANGUAGE:Fortran>:-cpp>)
 elseif (CMAKE_Fortran_COMPILER_ID MATCHES "Intel")
-    target_compile_options(main PRIVATE -fpp)
+    target_compile_options(main PRIVATE $<$<COMPILE_LANGUAGE:Fortran>:-fpp>)
 elseif (CMAKE_Fortran_COMPILER_ID STREQUAL "NVHPC")
-    target_compile_options(main PRIVATE -Mpreprocess)
+    target_compile_options(main PRIVATE $<$<COMPILE_LANGUAGE:Fortran>:-Mpreprocess>)
 endif()
 
 # =========================
@@ -103,13 +146,19 @@ if(USE_OPENMP_OFFLOAD)
 
     if(OPENMP_OFFLOAD_FLAGS)
         separate_arguments(OPENMP_OFFLOAD_FLAGS_LIST NATIVE_COMMAND "${OPENMP_OFFLOAD_FLAGS}")
-        target_compile_options(main PRIVATE ${OPENMP_OFFLOAD_FLAGS_LIST})
+        foreach(flag IN LISTS OPENMP_OFFLOAD_FLAGS_LIST)
+            target_compile_options(main PRIVATE $<$<COMPILE_LANGUAGE:Fortran>:${flag}>)
+        endforeach()
         target_link_options(main PRIVATE ${OPENMP_OFFLOAD_FLAGS_LIST})
     endif()
 endif()
 
 if(USE_REDBLACK)
     target_compile_definitions(main PRIVATE USE_REDBLACK)
+endif()
+
+if(USE_IBM_SECONDORDER)
+    target_compile_definitions(main PRIVATE USE_IBM_SECONDORDER)
 endif()
 
 

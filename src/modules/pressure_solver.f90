@@ -3,6 +3,7 @@ module pressure_solver
     use :: init, only: grid_type, field_type
     use :: pressure_workspace, only: pressure_solver_type
     use :: ibmm, only: ibm_type
+    use :: boundary, only: boundary_type
 #ifdef USE_REDBLACK
     use :: pressure_redblack, only: &
         init_redblack_solver, &
@@ -44,15 +45,16 @@ subroutine init_pressure_solver(ps, g)
 #endif
 end subroutine init_pressure_solver
 
-subroutine pressure_projection(ps, f, g, dt_gamma, ibm)
+subroutine pressure_projection(ps, f, g, dt_gamma, ibm, bc)
     type(pressure_solver_type), intent(inout) :: ps
     type(field_type), intent(inout) :: f
     type(grid_type), intent(in) :: g
     real(C_DOUBLE), intent(in) :: dt_gamma
     type(ibm_type), intent(in) :: ibm
+    type(boundary_type), intent(in) :: bc
 
 #ifdef USE_REDBLACK
-    call pressure_projection_redblack(ps, f, g, dt_gamma, ibm)
+    call pressure_projection_redblack(ps, f, g, dt_gamma, ibm, bc)
 #else
     call build_fft_rhs(ps, f, g, dt_gamma)
     call solve_pressure_fft_backend(g, ps)
@@ -92,7 +94,7 @@ subroutine build_fft_rhs(ps, f, g, dt_gamma)
 #ifdef USE_OPENMP_OFFLOAD
     !$omp target teams distribute parallel do collapse(3) &
     !$omp& map(to: dt_gamma, f%us(0:nx+1,0:ny+1,0:nz+1), &
-    !$omp& f%vs(0:nx+1,1:ny+1,0:nz+1), &
+    !$omp& f%vs(0:nx+1,0:ny+1,0:nz+1), &
     !$omp& f%ws(0:nx+1,0:ny+1,0:nz+1)) &
     !$omp& map(tofrom: ps%rhs(1:nx,1:nz,1:ny)) &
     !$omp& private(i,j,k)
@@ -134,15 +136,15 @@ subroutine apply_fft_pressure_correction(ps, f, g, dt_gamma, ibm)
     !$omp target teams distribute parallel do collapse(3) &
     !$omp& map(to: dt_gamma, ps%rhs(1:nx,1:nz,1:ny), &
     !$omp& f%us(0:nx+1,0:ny+1,0:nz+1), &
-    !$omp& f%vs(0:nx+1,1:ny+1,0:nz+1), &
+    !$omp& f%vs(0:nx+1,0:ny+1,0:nz+1), &
     !$omp& f%ws(0:nx+1,0:ny+1,0:nz+1), &
     !$omp& ibm%coef_u(0:nx+1,0:ny+1,0:nz+1), &
-    !$omp& ibm%coef_v(0:nx+1,1:ny+1,0:nz+1), &
+    !$omp& ibm%coef_v(0:nx+1,0:ny+1,0:nz+1), &
     !$omp& ibm%coef_w(0:nx+1,0:ny+1,0:nz+1)) &
     !$omp& map(tofrom: f%un(0:nx+1,0:ny+1,0:nz+1), &
-    !$omp& f%vn(0:nx+1,1:ny+1,0:nz+1), &
+    !$omp& f%vn(0:nx+1,0:ny+1,0:nz+1), &
     !$omp& f%wn(0:nx+1,0:ny+1,0:nz+1), &
-    !$omp& f%pn(0:nx+1,1:ny,0:nz+1)) &
+    !$omp& f%pn(0:nx+1,0:ny+1,0:nz+1)) &
     !$omp& private(i,j,k,im,km)
 #endif
     do i = 1, nx

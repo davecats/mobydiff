@@ -8,6 +8,7 @@ module init
         real(C_DOUBLE) :: lx, ly, lz
         real(C_DOUBLE) :: dx, dy, dz
         real(C_DOUBLE) :: re, dt, t_final, t_current, cfl, cflmax, dtmax
+        real(C_DOUBLE) :: forcing_x, forcing_y, forcing_z
     end type grid_type
 
     type :: field_type
@@ -31,6 +32,9 @@ subroutine init_grid(g)
     g%ly = 1.0d0
     g%lz = 1.0d0
     g%re = 100.0d0
+    g%forcing_x = 1.0d0
+    g%forcing_y = 0.0d0
+    g%forcing_z = 0.0d0
 
     g%dt = 1.0d-4
     g%cflmax = 0.0d0
@@ -55,10 +59,10 @@ subroutine init_field(f, g)
     type(grid_type), intent(in)     :: g
 
     allocate(f%un(0:g%nx+1,0:g%ny+1,0:g%nz+1), f%us(0:g%nx+1,0:g%ny+1,0:g%nz+1), f%oldrhsu(1:g%nx,1:g%ny,1:g%nz))
-    allocate(f%vn(0:g%nx+1,1:g%ny+1,0:g%nz+1), f%vs(0:g%nx+1,1:g%ny+1,0:g%nz+1), f%oldrhsv(1:g%nx,2:g%ny,1:g%nz))
+    allocate(f%vn(0:g%nx+1,0:g%ny+1,0:g%nz+1), f%vs(0:g%nx+1,0:g%ny+1,0:g%nz+1), f%oldrhsv(1:g%nx,1:g%ny,1:g%nz))
     allocate(f%wn(0:g%nx+1,0:g%ny+1,0:g%nz+1), f%ws(0:g%nx+1,0:g%ny+1,0:g%nz+1), f%oldrhsw(1:g%nx,1:g%ny,1:g%nz))
 
-    allocate(f%pn(0:g%nx+1,1:g%ny,0:g%nz+1))
+    allocate(f%pn(0:g%nx+1,0:g%ny+1,0:g%nz+1))
 
     f%un = 0.0d0; f%us = 0.0d0; f%oldrhsu = 0.0d0
     f%vn = 0.0d0; f%vs = 0.0d0; f%oldrhsv = 0.0d0

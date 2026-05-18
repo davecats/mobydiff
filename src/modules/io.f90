@@ -3,6 +3,27 @@ module io
     use :: init, only: grid_type, field_type
     implicit none
 
+    interface
+        function fdm_h5_write_field(file_name, nx, ny, nz, lx, ly, lz, dx, dy, dz, re, dt, t_current, &
+                un, vn, wn, pn) bind(C, name="fdm_h5_write_field") result(ierr)
+            import :: C_CHAR, C_INT, C_DOUBLE
+            character(kind=C_CHAR), intent(in) :: file_name(*)
+            integer(C_INT), value :: nx, ny, nz
+            real(C_DOUBLE), value :: lx, ly, lz, dx, dy, dz, re, dt, t_current
+            real(C_DOUBLE), intent(in) :: un(*), vn(*), wn(*), pn(*)
+            integer(C_INT) :: ierr
+        end function fdm_h5_write_field
+
+        function fdm_h5_read_field(file_name, nx, ny, nz, un, vn, wn, pn) &
+                bind(C, name="fdm_h5_read_field") result(ierr)
+            import :: C_CHAR, C_INT, C_DOUBLE
+            character(kind=C_CHAR), intent(in) :: file_name(*)
+            integer(C_INT), value :: nx, ny, nz
+            real(C_DOUBLE), intent(out) :: un(*), vn(*), wn(*), pn(*)
+            integer(C_INT) :: ierr
+        end function fdm_h5_read_field
+    end interface
+
     type :: output_workspace_type
         real(C_DOUBLE), allocatable :: uc(:,:,:), vc(:,:,:), wc(:,:,:)
     end type output_workspace_type
@@ -71,6 +92,79 @@ subroutine maybe_write_vtk(out, f, g, step, output_interval, output_prefix)
     call write_vtk(out, f, g, step, output_prefix)
 end subroutine maybe_write_vtk
 
+subroutine maybe_write_field(f, g, step, field_interval, field_prefix)
+    type(field_type), intent(inout) :: f
+    type(grid_type), intent(in) :: g
+    integer, intent(in) :: step, field_interval
+    character(len=*), intent(in) :: field_prefix
+
+    if (.not. output_is_due(step, field_interval)) return
+    call write_field(f, g, step, field_prefix)
+end subroutine maybe_write_field
+
+subroutine write_field(f, g, step, field_prefix)
+    type(field_type), intent(inout) :: f
+    type(grid_type), intent(in) :: g
+    integer, intent(in) :: step
+    character(len=*), intent(in) :: field_prefix
+
+    character(len=256) :: file_name
+    character(kind=C_CHAR,len=:), allocatable :: c_file_name
+    integer(C_INT) :: ierr
+    integer :: nx, ny, nz
+
+    nx = g%nx
+    ny = g%ny
+    nz = g%nz
+
+    write(file_name,'(A,"_",I0,".h5")') trim(field_prefix), step
+    print *, "current time step: ", step, "   field filename: ", trim(file_name)
+
+#ifdef USE_OPENMP_OFFLOAD
+    !$omp target update from(f%un(0:nx+1,0:ny+1,0:nz+1), &
+    !$omp& f%vn(0:nx+1,0:ny+1,0:nz+1), &
+    !$omp& f%wn(0:nx+1,0:ny+1,0:nz+1), &
+    !$omp& f%pn(0:nx+1,0:ny+1,0:nz+1))
+#endif
+
+    c_file_name = to_c_string(file_name)
+    ierr = fdm_h5_write_field(c_file_name, int(nx, C_INT), int(ny, C_INT), int(nz, C_INT), &
+        g%lx, g%ly, g%lz, g%dx, g%dy, g%dz, g%re, g%dt, g%t_current, f%un, f%vn, f%wn, f%pn)
+    if (ierr /= 0_C_INT) then
+        print *, "error: could not write HDF5 field file: ", trim(file_name)
+        error stop
+    end if
+end subroutine write_field
+
+subroutine read_field(f, g, file_name)
+    type(field_type), intent(inout) :: f
+    type(grid_type), intent(in) :: g
+    character(len=*), intent(in) :: file_name
+
+    character(kind=C_CHAR,len=:), allocatable :: c_file_name
+    integer(C_INT) :: ierr
+    integer :: nx, ny, nz
+
+    nx = g%nx
+    ny = g%ny
+    nz = g%nz
+
+    c_file_name = to_c_string(file_name)
+    ierr = fdm_h5_read_field(c_file_name, int(nx, C_INT), int(ny, C_INT), int(nz, C_INT), &
+        f%un, f%vn, f%wn, f%pn)
+    if (ierr /= 0_C_INT) then
+        print *, "error: could not read HDF5 field file: ", trim(file_name)
+        error stop
+    end if
+
+#ifdef USE_OPENMP_OFFLOAD
+    !$omp target update to(f%un(0:nx+1,0:ny+1,0:nz+1), &
+    !$omp& f%vn(0:nx+1,0:ny+1,0:nz+1), &
+    !$omp& f%wn(0:nx+1,0:ny+1,0:nz+1), &
+    !$omp& f%pn(0:nx+1,0:ny+1,0:nz+1))
+#endif
+end subroutine read_field
+
 subroutine write_vtk(out, f, g, step, output_prefix)
     type(output_workspace_type), intent(inout) :: out
     type(field_type), intent(inout) :: f
@@ -101,7 +195,7 @@ subroutine center_vel(out, f, g)
 
     !$omp target teams distribute parallel do collapse(3) &
     !$omp& map(to: f%un(0:nx+1,0:ny+1,0:nz+1), &
-    !$omp& f%vn(0:nx+1,1:ny+1,0:nz+1), &
+    !$omp& f%vn(0:nx+1,0:ny+1,0:nz+1), &
     !$omp& f%wn(0:nx+1,0:ny+1,0:nz+1)) &
     !$omp& map(tofrom: out%uc(1:nx,1:ny,1:nz), &
     !$omp& out%vc(1:nx,1:ny,1:nz), out%wc(1:nx,1:ny,1:nz)) &
@@ -163,5 +257,18 @@ subroutine data_output(out, g, file_name)
 
     close(io)
 end subroutine data_output
+
+function to_c_string(text) result(c_text)
+    character(len=*), intent(in) :: text
+    character(kind=C_CHAR,len=:), allocatable :: c_text
+    integer :: i, n
+
+    n = len_trim(text)
+    allocate(character(kind=C_CHAR,len=n+1) :: c_text)
+    do i = 1, n
+        c_text(i:i) = text(i:i)
+    end do
+    c_text(n+1:n+1) = C_NULL_CHAR
+end function to_c_string
 
 end module io
