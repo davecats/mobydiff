@@ -193,9 +193,9 @@ contains
                         dpz = (f%q(i,j,k,VAR_P)-f%q(i,j,km,VAR_P))*g%d1z(k,VAR_W)
 
                         rhsw = ( &
-                            -0.25d0*((wu_p-wu_m)*g%d1x(i,VAR_W) &
-                                     (wv_p-wv_m)*g%d1y(j,VAR_W) &
-                                     (ww_p-ww_m)*g%d1z(k,VAR_W)) &
+                            -0.25d0*( (wu_p-wu_m)*g%d1x(i,VAR_W) &
+                                     +(wv_p-wv_m)*g%d1y(j,VAR_W) &
+                                     +(ww_p-ww_m)*g%d1z(k,VAR_W)) &
                             + forcing(VAR_W) &
                             + ire*(diff_wx + diff_wy + diff_wz) )
 
