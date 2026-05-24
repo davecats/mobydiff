@@ -1,32 +1,77 @@
 module io
     use, intrinsic :: iso_c_binding
-    use :: init, only: grid_type, field_type
+    use :: init, only: dns_type, grid_type, field_type, VAR_U, VAR_V, VAR_W, VAR_P
+    use :: boundary, only: boundary_type, NFACES
+    use :: comm, only: comm_type
     implicit none
 
     interface
-        function fdm_h5_write_field(file_name, nx, ny, nz, lx, ly, lz, dx, dy, dz, re, dt, t_current, &
-                un, vn, wn, pn) bind(C, name="fdm_h5_write_field") result(ierr)
+        function fdm_h5_write_field(file_name, nx, ny, nz, rank, nranks, &
+                global_nx, global_ny, global_nz, &
+                local_i_first, local_i_last, local_j_first, local_j_last, &
+                local_k_first, local_k_last, step, nsteps, lx, ly, lz, dx, dy, dz, &
+                re, dt, t_final, t_current, cfl, cflmax, dtmax, &
+                forcing, pressure_niter, pressure_sor, &
+                ibm_enabled, bc_count, periodic, bc_type, bc_value, grid_distribution, grid_stretch, &
+                x_node, y_node, z_node, un, vn, wn, pn) &
+                bind(C, name="fdm_h5_write_field") result(ierr)
             import :: C_CHAR, C_INT, C_DOUBLE
             character(kind=C_CHAR), intent(in) :: file_name(*)
-            integer(C_INT), value :: nx, ny, nz
-            real(C_DOUBLE), value :: lx, ly, lz, dx, dy, dz, re, dt, t_current
+            integer(C_INT), value :: nx, ny, nz, rank, nranks
+            integer(C_INT), value :: global_nx, global_ny, global_nz
+            integer(C_INT), value :: local_i_first, local_i_last
+            integer(C_INT), value :: local_j_first, local_j_last
+            integer(C_INT), value :: local_k_first, local_k_last
+            integer(C_INT), value :: step, nsteps
+            real(C_DOUBLE), value :: lx, ly, lz, dx, dy, dz, re, dt, t_final, t_current
+            real(C_DOUBLE), value :: cfl, cflmax, dtmax
+            real(C_DOUBLE), intent(in) :: forcing(*)
+            integer(C_INT), value :: pressure_niter
+            real(C_DOUBLE), value :: pressure_sor
+            integer(C_INT), value :: ibm_enabled
+            integer(C_INT), value :: bc_count
+            integer(C_INT), intent(in) :: periodic(*), bc_type(*), grid_distribution(*)
+            real(C_DOUBLE), intent(in) :: bc_value(*), grid_stretch(*), x_node(*), y_node(*), z_node(*)
             real(C_DOUBLE), intent(in) :: un(*), vn(*), wn(*), pn(*)
             integer(C_INT) :: ierr
         end function fdm_h5_write_field
 
-        function fdm_h5_read_field(file_name, nx, ny, nz, un, vn, wn, pn) &
+        function fdm_h5_read_metadata(file_name, global_nx, global_ny, global_nz, &
+                step, nsteps, lx, ly, lz, re, dt, t_final, t_current, cfl, &
+                cflmax, dtmax, forcing, &
+                pressure_niter, pressure_sor, ibm_enabled, bc_count, periodic, bc_type, bc_value, &
+                grid_distribution, grid_stretch) &
+                bind(C, name="fdm_h5_read_metadata") result(ierr)
+            import :: C_CHAR, C_INT, C_DOUBLE
+            character(kind=C_CHAR), intent(in) :: file_name(*)
+            integer(C_INT), intent(inout) :: global_nx, global_ny, global_nz
+            integer(C_INT), intent(inout) :: step, nsteps
+            real(C_DOUBLE), intent(inout) :: lx, ly, lz, re, dt, t_final, t_current, cfl
+            real(C_DOUBLE), intent(inout) :: cflmax, dtmax
+            real(C_DOUBLE), intent(inout) :: forcing(*)
+            integer(C_INT), intent(inout) :: pressure_niter
+            real(C_DOUBLE), intent(inout) :: pressure_sor
+            integer(C_INT), intent(inout) :: ibm_enabled
+            integer(C_INT), value :: bc_count
+            integer(C_INT), intent(inout) :: periodic(*), bc_type(*), grid_distribution(*)
+            real(C_DOUBLE), intent(inout) :: bc_value(*), grid_stretch(*)
+            integer(C_INT) :: ierr
+        end function fdm_h5_read_metadata
+
+        function fdm_h5_read_field(file_name, nx, ny, nz, &
+                global_nx, global_ny, global_nz, &
+                local_i_first, local_j_first, local_k_first, &
+                un, vn, wn, pn) &
                 bind(C, name="fdm_h5_read_field") result(ierr)
             import :: C_CHAR, C_INT, C_DOUBLE
             character(kind=C_CHAR), intent(in) :: file_name(*)
             integer(C_INT), value :: nx, ny, nz
+            integer(C_INT), value :: global_nx, global_ny, global_nz
+            integer(C_INT), value :: local_i_first, local_j_first, local_k_first
             real(C_DOUBLE), intent(out) :: un(*), vn(*), wn(*), pn(*)
             integer(C_INT) :: ierr
         end function fdm_h5_read_field
     end interface
-
-    type :: output_workspace_type
-        real(C_DOUBLE), allocatable :: uc(:,:,:), vc(:,:,:), wc(:,:,:)
-    end type output_workspace_type
 
 contains
 
@@ -40,223 +85,226 @@ logical function output_is_due(step, output_interval)
     end if
 end function output_is_due
 
-subroutine init_output_workspace(out, g, output_interval)
-    type(output_workspace_type), intent(inout) :: out
-    type(grid_type), intent(in) :: g
-    integer, intent(in) :: output_interval
-
-    if (output_interval <= 0) return
-
-    allocate(out%uc(1:g%nx,1:g%ny,1:g%nz))
-    allocate(out%vc(1:g%nx,1:g%ny,1:g%nz))
-    allocate(out%wc(1:g%nx,1:g%ny,1:g%nz))
-
-    out%uc = 0.0d0
-    out%vc = 0.0d0
-    out%wc = 0.0d0
-
-#ifdef USE_OPENMP_OFFLOAD
-    !$omp target enter data map(to: out)
-    !$omp target enter data map(alloc: &
-    !$omp& out%uc(1:g%nx,1:g%ny,1:g%nz), &
-    !$omp& out%vc(1:g%nx,1:g%ny,1:g%nz), &
-    !$omp& out%wc(1:g%nx,1:g%ny,1:g%nz))
-#endif
-end subroutine init_output_workspace
-
-subroutine destroy_output_workspace(out, g)
-    type(output_workspace_type), intent(inout) :: out
-    type(grid_type), intent(in) :: g
-
-    if (.not. allocated(out%uc)) return
-
-#ifdef USE_OPENMP_OFFLOAD
-    !$omp target exit data map(delete: &
-    !$omp& out%uc(1:g%nx,1:g%ny,1:g%nz), &
-    !$omp& out%vc(1:g%nx,1:g%ny,1:g%nz), &
-    !$omp& out%wc(1:g%nx,1:g%ny,1:g%nz))
-    !$omp target exit data map(delete: out)
-#endif
-
-    deallocate(out%uc, out%vc, out%wc)
-end subroutine destroy_output_workspace
-
-subroutine maybe_write_vtk(out, f, g, step, output_interval, output_prefix)
-    type(output_workspace_type), intent(inout) :: out
+subroutine maybe_write_field(f, dns, g, step, c, bc, pressure_niter, pressure_sor)
     type(field_type), intent(inout) :: f
-    type(grid_type), intent(in) :: g
-    integer, intent(in) :: step, output_interval
-    character(len=*), intent(in) :: output_prefix
-
-    if (.not. output_is_due(step, output_interval)) return
-    call write_vtk(out, f, g, step, output_prefix)
-end subroutine maybe_write_vtk
-
-subroutine maybe_write_field(f, g, step, field_interval, field_prefix)
-    type(field_type), intent(inout) :: f
-    type(grid_type), intent(in) :: g
-    integer, intent(in) :: step, field_interval
-    character(len=*), intent(in) :: field_prefix
-
-    if (.not. output_is_due(step, field_interval)) return
-    call write_field(f, g, step, field_prefix)
-end subroutine maybe_write_field
-
-subroutine write_field(f, g, step, field_prefix)
-    type(field_type), intent(inout) :: f
+    type(dns_type), intent(in) :: dns
     type(grid_type), intent(in) :: g
     integer, intent(in) :: step
-    character(len=*), intent(in) :: field_prefix
+    type(comm_type), intent(in) :: c
+    type(boundary_type), intent(in) :: bc
+    integer(C_INT), intent(in) :: pressure_niter
+    real(C_DOUBLE), intent(in) :: pressure_sor
 
-    character(len=256) :: file_name
+    if (.not. output_is_due(step, dns%field_interval)) return
+    call write_field(f, dns, g, step, c, bc, pressure_niter, pressure_sor)
+end subroutine maybe_write_field
+
+subroutine write_field(f, dns, g, step, c, bc, pressure_niter, pressure_sor)
+    ! Parallel HDF5 call: all MPI ranks must enter this routine together.
+    type(field_type), intent(inout) :: f
+    type(dns_type), intent(in) :: dns
+    type(grid_type), intent(in) :: g
+    integer, intent(in) :: step
+    type(comm_type), intent(in) :: c
+    type(boundary_type), intent(in) :: bc
+    integer(C_INT), intent(in) :: pressure_niter
+    real(C_DOUBLE), intent(in) :: pressure_sor
+
+    character(len=256) :: h5_file_name, xdmf_file_name
     character(kind=C_CHAR,len=:), allocatable :: c_file_name
     integer(C_INT) :: ierr
     integer :: nx, ny, nz
+    integer(C_INT) :: periodic(1:3)
+    integer(C_INT) :: ibm_enabled
 
-    nx = g%nx
-    ny = g%ny
-    nz = g%nz
+    nx = int(dns%localSize(1,2))
+    ny = int(dns%localSize(2,2))
+    nz = int(dns%localSize(3,2))
+    periodic = merge(1_C_INT, 0_C_INT, bc%isPeriodic)
+    ibm_enabled = merge(1_C_INT, 0_C_INT, dns%ibm_enabled)
 
-    write(file_name,'(A,"_",I0,".h5")') trim(field_prefix), step
-    print *, "current time step: ", step, "   field filename: ", trim(file_name)
+    call make_output_filename(trim(dns%field_prefix), step, ".h5", h5_file_name)
+    call make_output_filename(trim(dns%field_prefix), step, ".xdmf", xdmf_file_name)
+    if (c%has_terminal) then
+        print *, "current time step: ", step, "   field filename: ", trim(h5_file_name)
+    end if
 
 #ifdef USE_OPENMP_OFFLOAD
-    !$omp target update from(f%un(0:nx+1,0:ny+1,0:nz+1), &
-    !$omp& f%vn(0:nx+1,0:ny+1,0:nz+1), &
-    !$omp& f%wn(0:nx+1,0:ny+1,0:nz+1), &
-    !$omp& f%pn(0:nx+1,0:ny+1,0:nz+1))
+    !$omp target update from(f%q)
 #endif
 
-    c_file_name = to_c_string(file_name)
+    c_file_name = to_c_string(h5_file_name)
     ierr = fdm_h5_write_field(c_file_name, int(nx, C_INT), int(ny, C_INT), int(nz, C_INT), &
-        g%lx, g%ly, g%lz, g%dx, g%dy, g%dz, g%re, g%dt, g%t_current, f%un, f%vn, f%wn, f%pn)
+        int(c%world_rank, C_INT), int(c%world_size, C_INT), &
+        dns%globalSize(1), dns%globalSize(2), dns%globalSize(3), &
+        dns%localSize(1,0), dns%localSize(1,1), dns%localSize(2,0), dns%localSize(2,1), &
+        dns%localSize(3,0), dns%localSize(3,1), &
+        dns%step_current, dns%nsteps, &
+        dns%leng(1), dns%leng(2), dns%leng(3), g%havg(1), g%havg(2), g%havg(3), &
+        dns%re, dns%dt, dns%t_final, dns%t_current, &
+        dns%cfl, dns%cflmax, dns%dtmax, &
+        dns%forcing, &
+        pressure_niter, pressure_sor, ibm_enabled, int(size(bc%faceBcType), C_INT), periodic, &
+        bc%faceBcType(VAR_U:VAR_P,1:NFACES), bc%faceBcValue(VAR_U:VAR_P,1:NFACES), &
+        dns%gridDistribution(1:3), dns%gridStretch(1:3), &
+        g%xNode(0:dns%globalSize(1)), g%yNode(0:dns%globalSize(2)), g%zNode(0:dns%globalSize(3)), &
+        f%q(0:nx+1,0:ny+1,0:nz+1,VAR_U), &
+        f%q(0:nx+1,0:ny+1,0:nz+1,VAR_V), &
+        f%q(0:nx+1,0:ny+1,0:nz+1,VAR_W), &
+        f%q(0:nx+1,0:ny+1,0:nz+1,VAR_P))
     if (ierr /= 0_C_INT) then
-        print *, "error: could not write HDF5 field file: ", trim(file_name)
+        if (c%has_terminal) print *, "error: could not write HDF5 field file: ", trim(h5_file_name)
         error stop
     end if
+
+    if (c%has_terminal) call write_xdmf(xdmf_file_name, h5_file_name, dns, g)
 end subroutine write_field
 
-subroutine read_field(f, g, file_name)
-    type(field_type), intent(inout) :: f
-    type(grid_type), intent(in) :: g
+subroutine read_restart_metadata(dns, bc, pressure_niter, pressure_sor, file_name, c)
+    type(dns_type), intent(inout) :: dns
+    type(boundary_type), intent(inout) :: bc
+    integer(C_INT), intent(inout) :: pressure_niter
+    real(C_DOUBLE), intent(inout) :: pressure_sor
     character(len=*), intent(in) :: file_name
+    type(comm_type), intent(in) :: c
+
+    character(kind=C_CHAR,len=:), allocatable :: c_file_name
+    integer(C_INT) :: ierr
+    integer(C_INT) :: file_nsteps
+    integer(C_INT) :: periodic(1:3)
+    integer(C_INT) :: ibm_enabled
+    integer :: dir
+
+    file_nsteps = dns%nsteps
+    periodic = merge(1_C_INT, 0_C_INT, bc%isPeriodic)
+    ibm_enabled = merge(1_C_INT, 0_C_INT, dns%ibm_enabled)
+    c_file_name = to_c_string(file_name)
+    ierr = fdm_h5_read_metadata(c_file_name, dns%globalSize(1), dns%globalSize(2), dns%globalSize(3), &
+        dns%step_current, file_nsteps, &
+        dns%leng(1), dns%leng(2), dns%leng(3), dns%re, dns%dt, dns%t_final, dns%t_current, dns%cfl, &
+        dns%cflmax, dns%dtmax, dns%forcing, &
+        pressure_niter, pressure_sor, ibm_enabled, int(size(bc%faceBcType), C_INT), periodic, &
+        bc%faceBcType(VAR_U:VAR_P,1:NFACES), bc%faceBcValue(VAR_U:VAR_P,1:NFACES), &
+        dns%gridDistribution(1:3), dns%gridStretch(1:3))
+    if (ierr /= 0_C_INT) then
+        if (c%has_terminal) print *, "error: could not read restart metadata: ", trim(file_name)
+        error stop
+    end if
+
+    if (dns%nsteps <= 0_C_INT) dns%nsteps = file_nsteps
+    do dir = 1, 3
+        bc%isPeriodic(dir) = periodic(dir) /= 0_C_INT
+    end do
+    dns%ibm_enabled = ibm_enabled /= 0_C_INT
+end subroutine read_restart_metadata
+
+subroutine read_field(f, dns, file_name, c)
+    ! Parallel HDF5 call: all MPI ranks must enter this routine together.
+    type(field_type), intent(inout) :: f
+    type(dns_type), intent(in) :: dns
+    character(len=*), intent(in) :: file_name
+    type(comm_type), intent(in) :: c
 
     character(kind=C_CHAR,len=:), allocatable :: c_file_name
     integer(C_INT) :: ierr
     integer :: nx, ny, nz
 
-    nx = g%nx
-    ny = g%ny
-    nz = g%nz
+    nx = int(dns%localSize(1,2))
+    ny = int(dns%localSize(2,2))
+    nz = int(dns%localSize(3,2))
 
     c_file_name = to_c_string(file_name)
     ierr = fdm_h5_read_field(c_file_name, int(nx, C_INT), int(ny, C_INT), int(nz, C_INT), &
-        f%un, f%vn, f%wn, f%pn)
+        dns%globalSize(1), dns%globalSize(2), dns%globalSize(3), &
+        dns%localSize(1,0), dns%localSize(2,0), dns%localSize(3,0), &
+        f%q(0:nx+1,0:ny+1,0:nz+1,VAR_U), &
+        f%q(0:nx+1,0:ny+1,0:nz+1,VAR_V), &
+        f%q(0:nx+1,0:ny+1,0:nz+1,VAR_W), &
+        f%q(0:nx+1,0:ny+1,0:nz+1,VAR_P))
     if (ierr /= 0_C_INT) then
-        print *, "error: could not read HDF5 field file: ", trim(file_name)
+        if (c%has_terminal) print *, "error: could not read HDF5 field file: ", trim(file_name)
         error stop
     end if
 
 #ifdef USE_OPENMP_OFFLOAD
-    !$omp target update to(f%un(0:nx+1,0:ny+1,0:nz+1), &
-    !$omp& f%vn(0:nx+1,0:ny+1,0:nz+1), &
-    !$omp& f%wn(0:nx+1,0:ny+1,0:nz+1), &
-    !$omp& f%pn(0:nx+1,0:ny+1,0:nz+1))
+    !$omp target update to(f%q)
 #endif
 end subroutine read_field
 
-subroutine write_vtk(out, f, g, step, output_prefix)
-    type(output_workspace_type), intent(inout) :: out
-    type(field_type), intent(inout) :: f
-    type(grid_type), intent(in) :: g
-    integer, intent(in) :: step
-    character(len=*), intent(in) :: output_prefix
-
-    character(len=256) :: file_name
-
-    write(file_name,'(A,"_",I0,".vtk")') trim(output_prefix), step
-    print *, "current time step: ", step, "   filename: ", trim(file_name), "   cfl:", g%cfl*g%dt
-
-    call center_vel(out, f, g)
-    call data_output(out, g, file_name)
-end subroutine write_vtk
-
-subroutine center_vel(out, f, g)
-    type(output_workspace_type), intent(inout) :: out
-    type(field_type), intent(inout) :: f
+subroutine write_xdmf(xdmf_file_name, h5_file_name, dns, g)
+    character(len=*), intent(in) :: xdmf_file_name, h5_file_name
+    type(dns_type), intent(in) :: dns
     type(grid_type), intent(in) :: g
 
-    integer :: i, j, k, ip, jp, kp
-    integer :: nx, ny, nz
+    character(len=256) :: h5_ref
+    integer :: io, slash
+    integer(C_INT) :: nx, ny, nz
 
-    nx = g%nx
-    ny = g%ny
-    nz = g%nz
+    nx = dns%globalSize(1)
+    ny = dns%globalSize(2)
+    nz = dns%globalSize(3)
 
-    !$omp target teams distribute parallel do collapse(3) &
-    !$omp& map(to: f%un(0:nx+1,0:ny+1,0:nz+1), &
-    !$omp& f%vn(0:nx+1,0:ny+1,0:nz+1), &
-    !$omp& f%wn(0:nx+1,0:ny+1,0:nz+1)) &
-    !$omp& map(tofrom: out%uc(1:nx,1:ny,1:nz), &
-    !$omp& out%vc(1:nx,1:ny,1:nz), out%wc(1:nx,1:ny,1:nz)) &
-    !$omp& private(i,j,k,ip,jp,kp)
-    do i = 1, nx
-        do j = 1, ny
-            do k = 1, nz
-                ip = i + 1
-                jp = j + 1
-                kp = k + 1
+    h5_ref = trim(h5_file_name)
+    slash = scan(trim(h5_ref), "/", back=.true.)
+    if (slash > 0) h5_ref = h5_ref(slash+1:)
+    h5_ref = "./"//trim(h5_ref)
 
-                out%uc(i,j,k) = 0.5d0 * (f%un(i,j,k) + f%un(ip,j,k))
-                out%vc(i,j,k) = 0.5d0 * (f%vn(i,j,k) + f%vn(i,jp,k))
-                out%wc(i,j,k) = 0.5d0 * (f%wn(i,j,k) + f%wn(i,j,kp))
-            end do
-        end do
-    end do
-    !$omp end target teams distribute parallel do
-
-#ifdef USE_OPENMP_OFFLOAD
-    !$omp target update from(out%uc(1:nx,1:ny,1:nz), &
-    !$omp& out%vc(1:nx,1:ny,1:nz), out%wc(1:nx,1:ny,1:nz))
-#endif
-end subroutine center_vel
-
-subroutine data_output(out, g, file_name)
-    type(output_workspace_type), intent(in) :: out
-    type(grid_type), intent(in) :: g
-    character(len=*), intent(in) :: file_name
-
-    integer :: io, npts, i, j, k
-
-    npts = g%nx*g%ny*g%nz
-
-    open(newunit=io, file=trim(file_name), status="replace", action="write")
-    write(io,'(A)') "# vtk DataFile Version 3.0"
-    write(io,'(A)') "3D velocity field"
-    write(io,'(A)') "ASCII"
-    write(io,'(A)') "DATASET STRUCTURED_POINTS"
-
-    write(io,'(A,1X,I0,1X,I0,1X,I0)') "DIMENSIONS", g%nx+1, g%ny+1, g%nz+1
-    write(io,'(A,1X,3ES20.12)') "ORIGIN", 0.0d0, 0.0d0, 0.0d0
-    write(io,'(A,1X,3ES20.12)') "SPACING", g%dx, g%dy, g%dz
-
-    write(io,'(A)') "FIELD FieldData 1"
-    write(io,'(A)') "TIME 1 1 double"
-    write(io,'(ES20.12)') g%t_current
-
-    write(io,'(A,1X,I0)') "CELL_DATA", npts
-    write(io,'(A)') "VECTORS U double"
-
-    do k = 1, g%nz
-        do j = 1, g%ny
-            do i = 1, g%nx
-                write(io,'(3ES20.12)') out%uc(i,j,k), out%vc(i,j,k), out%wc(i,j,k)
-            end do
-        end do
-    end do
-
+    open(newunit=io, file=trim(xdmf_file_name), status="replace", action="write")
+    write(io,'(A)') '<?xml version="1.0" ?>'
+    write(io,'(A)') '<!DOCTYPE Xdmf SYSTEM "Xdmf.dtd" []>'
+    write(io,'(A)') '<Xdmf Version="2.0">'
+    write(io,'(A)') '  <Domain>'
+    write(io,'(A)') '    <Grid Name="mobyDiff" GridType="Uniform">'
+    write(io,'(A,ES20.12,A)') '      <Time Value="', dns%t_current, '"/>'
+    write(io,'(A,I0,1X,I0,1X,I0,A)') &
+        '      <Topology TopologyType="3DRectMesh" Dimensions="', nz+1_C_INT, ny+1_C_INT, nx+1_C_INT, '"/>'
+    write(io,'(A)') '      <Geometry GeometryType="VXVYVZ">'
+    call write_xdmf_coord(io, h5_ref, "/x", nx+1_C_INT)
+    call write_xdmf_coord(io, h5_ref, "/y", ny+1_C_INT)
+    call write_xdmf_coord(io, h5_ref, "/z", nz+1_C_INT)
+    write(io,'(A)') '      </Geometry>'
+    call write_xdmf_scalar(io, "un", h5_ref, "/un", nx, ny, nz)
+    call write_xdmf_scalar(io, "vn", h5_ref, "/vn", nx, ny, nz)
+    call write_xdmf_scalar(io, "wn", h5_ref, "/wn", nx, ny, nz)
+    call write_xdmf_scalar(io, "pn", h5_ref, "/pn", nx, ny, nz)
+    write(io,'(A)') '    </Grid>'
+    write(io,'(A)') '  </Domain>'
+    write(io,'(A)') '</Xdmf>'
     close(io)
-end subroutine data_output
+end subroutine write_xdmf
+
+subroutine write_xdmf_coord(io, h5_ref, dataset, n)
+    integer, intent(in) :: io
+    character(len=*), intent(in) :: h5_ref, dataset
+    integer(C_INT), intent(in) :: n
+
+    write(io,'(A,I0,A,A,A,A,A)') &
+        '        <DataItem Dimensions="', n, &
+        '" NumberType="Float" Precision="8" Format="HDF">', &
+        trim(h5_ref), ':', trim(dataset), '</DataItem>'
+end subroutine write_xdmf_coord
+
+subroutine write_xdmf_scalar(io, name, h5_ref, dataset, nx, ny, nz)
+    integer, intent(in) :: io
+    character(len=*), intent(in) :: name, h5_ref, dataset
+    integer(C_INT), intent(in) :: nx, ny, nz
+
+    write(io,'(A,A,A)') '      <Attribute Name="', trim(name), '" AttributeType="Scalar" Center="Cell">'
+    write(io,'(A,I0,1X,I0,1X,I0,A,A,A,A,A)') &
+        '        <DataItem Dimensions="', nz, ny, nx, &
+        '" NumberType="Float" Precision="8" Format="HDF">', &
+        trim(h5_ref), ':', trim(dataset), '</DataItem>'
+    write(io,'(A)') '      </Attribute>'
+end subroutine write_xdmf_scalar
+
+
+subroutine make_output_filename(prefix, step, extension, file_name)
+    character(len=*), intent(in) :: prefix, extension
+    integer, intent(in) :: step
+    character(len=*), intent(out) :: file_name
+
+    write(file_name,'(A,"_",I0,A)') trim(prefix), step, trim(extension)
+end subroutine make_output_filename
 
 function to_c_string(text) result(c_text)
     character(len=*), intent(in) :: text

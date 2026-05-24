@@ -1,47 +1,63 @@
 module config
     use, intrinsic :: iso_c_binding
-    use :: init, only: grid_type, finalize_grid
-    use :: pressure_workspace, only: pressure_solver_type
-    use :: boundary, only: boundary_type
+    use :: init, only: dns_type, VAR_U, VAR_V, VAR_W, VAR_P, GRID_UNIFORM, GRID_COSINE, GRID_TANH
+    use :: pressure_solver, only: pressure_solver_type
+    use :: boundary, only: boundary_type, boundary_face_id
     implicit none
+
+    type :: config_seen_type
+        logical :: size(1:3) = .false.
+        logical :: length(1:3) = .false.
+        logical :: forcing(1:3) = .false.
+        logical :: re = .false.
+        logical :: dt = .false.
+        logical :: nsteps = .false.
+        logical :: t_final = .false.
+        logical :: cflmax = .false.
+        logical :: dtmax = .false.
+    end type config_seen_type
+
+    logical, save :: terminal_output = .true.
 
 contains
 
-subroutine read_runtime_config(g, ps, bc, output_interval, output_prefix, field_interval, field_prefix, input_file)
-    type(grid_type), intent(inout) :: g
+subroutine read_runtime_config(dns, ps, bc, input_file, has_terminal)
+    type(dns_type), intent(inout) :: dns
     type(pressure_solver_type), intent(inout) :: ps
     type(boundary_type), intent(inout) :: bc
-    integer, intent(out) :: output_interval
-    integer, intent(out) :: field_interval
-    character(len=*), intent(out) :: output_prefix
-    character(len=*), intent(out) :: field_prefix
     character(len=*), intent(in) :: input_file
+    logical, intent(in), optional :: has_terminal
 
     integer :: unit, stat, line_no
     character(len=512) :: line, key, value
     character(len=64) :: section
-    logical :: exists, nsteps_seen, t_final_seen
+    logical :: exists
+    type(config_seen_type) :: seen
 
-    output_interval = 1
-    output_prefix = "data"
-    field_interval = 0
-    field_prefix = "field"
+    if (present(has_terminal)) terminal_output = has_terminal
+
+    dns%field_interval = 0
+    dns%field_prefix = "field"
+    dns%restart_file = ""
+    dns%mpiDims = 0_C_INT
+    dns%gridDistribution = GRID_UNIFORM
+    dns%gridStretch = 0.0d0
+    dns%ibm_enabled = .true.
+    dns%step_current = 0_C_INT
+    dns%t_current = 0.0d0
+    dns%cfl = 0.0d0
     section = ""
-    nsteps_seen = .false.
-    t_final_seen = .false.
 
     inquire(file=trim(input_file), exist=exists)
     if (.not. exists) then
-        print *, "input file not found; using defaults: ", trim(input_file)
-        call finalize_grid(g)
-        return
+        if (terminal_output) print *, "error: input file not found: ", trim(input_file)
+        error stop "missing input file"
     end if
 
     open(newunit=unit, file=trim(input_file), status="old", action="read", iostat=stat)
     if (stat /= 0) then
-        print *, "could not open input file; using defaults: ", trim(input_file)
-        call finalize_grid(g)
-        return
+        if (terminal_output) print *, "error: could not open input file: ", trim(input_file)
+        error stop "could not open input file"
     end if
 
     line_no = 0
@@ -61,37 +77,32 @@ subroutine read_runtime_config(g, ps, bc, output_interval, output_prefix, field_
 
         call split_key_value(line, key, value)
         if (len_trim(key) == 0) cycle
-        call apply_config_value(section, key, value, g, ps, bc, output_interval, output_prefix, &
-            field_interval, field_prefix, &
-            nsteps_seen, t_final_seen, line_no)
+        call apply_config_value(section, key, value, dns, ps, bc, seen, line_no)
     end do
 
     close(unit)
 
-    if (t_final_seen .and. .not. nsteps_seen) then
-        g%nsteps = max(1, ceiling(g%t_final/g%dt))
+    if (has_restart_file(dns)) then
+        if (dns%field_interval < 0) error stop "field interval must be non-negative"
+    else
+        call require_config_value(seen%dt, "time.dt")
+        if (seen%t_final .and. .not. seen%nsteps) then
+            dns%nsteps = max(1_C_INT, int(ceiling(dns%t_final/dns%dt), C_INT))
+        end if
+        call validate_runtime_config(dns, seen)
     end if
-    call finalize_grid(g)
 end subroutine read_runtime_config
 
-subroutine apply_config_value(section, key, value, g, ps, bc, output_interval, output_prefix, &
-        field_interval, field_prefix, &
-        nsteps_seen, t_final_seen, line_no)
+subroutine apply_config_value(section, key, value, dns, ps, bc, seen, line_no)
     character(len=*), intent(in) :: section, key, value
-    type(grid_type), intent(inout) :: g
+    type(dns_type), intent(inout) :: dns
     type(pressure_solver_type), intent(inout) :: ps
     type(boundary_type), intent(inout) :: bc
-    integer, intent(inout) :: output_interval
-    integer, intent(inout) :: field_interval
-    character(len=*), intent(inout) :: output_prefix
-    character(len=*), intent(inout) :: field_prefix
-    logical, intent(inout) :: nsteps_seen, t_final_seen
+    type(config_seen_type), intent(inout) :: seen
     integer, intent(in) :: line_no
 
     character(len=:), allocatable :: section_l, key_l
-#ifdef USE_REDBLACK
     integer :: niter_value
-#endif
 
     section_l = lower(trim(section))
     key_l = lower(trim(key))
@@ -100,104 +111,227 @@ subroutine apply_config_value(section, key, value, g, ps, bc, output_interval, o
     case ("grid")
         select case (key_l)
         case ("nx")
-            call read_integer(value, g%nx, line_no)
+            call read_c_int(value, dns%globalSize(1), line_no)
+            seen%size(1) = .true.
         case ("ny")
-            call read_integer(value, g%ny, line_no)
+            call read_c_int(value, dns%globalSize(2), line_no)
+            seen%size(2) = .true.
         case ("nz")
-            call read_integer(value, g%nz, line_no)
+            call read_c_int(value, dns%globalSize(3), line_no)
+            seen%size(3) = .true.
         case ("lx")
-            call read_real(value, g%lx, line_no)
+            call read_real(value, dns%leng(1), line_no)
+            seen%length(1) = .true.
         case ("ly")
-            call read_real(value, g%ly, line_no)
+            call read_real(value, dns%leng(2), line_no)
+            seen%length(2) = .true.
         case ("lz")
-            call read_real(value, g%lz, line_no)
+            call read_real(value, dns%leng(3), line_no)
+            seen%length(3) = .true.
         end select
+    case ("grid.x", "grid.y", "grid.z")
+        call apply_grid_axis_value(section_l, key_l, value, dns, seen, line_no)
     case ("flow")
         select case (key_l)
         case ("re")
-            call read_real(value, g%re, line_no)
-        case ("forcing_x", "force_x", "body_force_x", "meanpx")
-            call read_real(value, g%forcing_x, line_no)
-        case ("forcing_y", "force_y", "body_force_y", "meanpy")
-            call read_real(value, g%forcing_y, line_no)
-        case ("forcing_z", "force_z", "body_force_z", "meanpz")
-            call read_real(value, g%forcing_z, line_no)
+            call read_real(value, dns%re, line_no)
+            seen%re = .true.
+        case ("forcing_x")
+            call read_real(value, dns%forcing(1), line_no)
+            seen%forcing(1) = .true.
+        case ("forcing_y")
+            call read_real(value, dns%forcing(2), line_no)
+            seen%forcing(2) = .true.
+        case ("forcing_z")
+            call read_real(value, dns%forcing(3), line_no)
+            seen%forcing(3) = .true.
         end select
     case ("time")
         select case (key_l)
         case ("dt")
-            call read_real(value, g%dt, line_no)
-        case ("nsteps", "steps")
-            call read_integer(value, g%nsteps, line_no)
-            nsteps_seen = .true.
+            call read_real(value, dns%dt, line_no)
+            seen%dt = .true.
+        case ("nsteps")
+            call read_c_int(value, dns%nsteps, line_no)
+            seen%nsteps = .true.
         case ("t_final")
-            call read_real(value, g%t_final, line_no)
-            t_final_seen = .true.
+            call read_real(value, dns%t_final, line_no)
+            seen%t_final = .true.
         case ("cflmax")
-            call read_real(value, g%cflmax, line_no)
+            call read_real(value, dns%cflmax, line_no)
+            seen%cflmax = .true.
         case ("dtmax")
-            call read_real(value, g%dtmax, line_no)
+            call read_real(value, dns%dtmax, line_no)
+            seen%dtmax = .true.
         end select
     case ("output")
         select case (key_l)
-        case ("interval", "output_interval")
-            call read_integer(value, output_interval, line_no)
-        case ("prefix")
-            output_prefix = clean_string(value)
-        case ("field_interval", "hdf5_interval", "h5_interval")
-            call read_integer(value, field_interval, line_no)
-        case ("field_prefix", "hdf5_prefix", "h5_prefix")
-            field_prefix = clean_string(value)
+        case ("field_interval")
+            call read_integer(value, dns%field_interval, line_no)
+        case ("field_prefix")
+            dns%field_prefix = clean_string(value)
+        end select
+    case ("restart")
+        select case (key_l)
+        case ("file")
+            dns%restart_file = clean_string(value)
         end select
     case ("pressure")
-#ifdef USE_REDBLACK
         select case (key_l)
-        case ("niter", "n_iter", "iterations")
+        case ("niter")
             niter_value = int(ps%nIter)
             call read_integer(value, niter_value, line_no)
             if (niter_value > 0) then
                 ps%nIter = int(niter_value, C_INT)
             else
-                print *, "warning: pressure nIter must be positive on input line", line_no
+                if (terminal_output) print *, "warning: pressure nIter must be positive on input line", line_no
             end if
-        case ("sor", "omega")
+        case ("sor")
             call read_real(value, ps%sor, line_no)
         end select
-#endif
+    case ("ibm")
+        select case (key_l)
+        case ("enabled")
+            call read_bool(value, dns%ibm_enabled, line_no)
+        end select
+    case ("mpi")
+        call apply_mpi_value(key_l, value, dns, line_no)
     case ("boundary")
         call apply_boundary_value(key_l, value, bc, line_no)
     end select
 end subroutine apply_config_value
+
+subroutine validate_runtime_config(dns, seen)
+    type(dns_type), intent(in) :: dns
+    type(config_seen_type), intent(in) :: seen
+
+    call require_config_value(all(seen%size), "grid.nx/grid.ny/grid.nz")
+    call require_config_value(all(seen%length), "grid.lx/grid.ly/grid.lz")
+    call require_config_value(seen%re, "flow.re")
+    call require_config_value(all(seen%forcing), "flow.forcing_x/flow.forcing_y/flow.forcing_z")
+    call require_config_value(seen%dt, "time.dt")
+    call require_config_value(seen%nsteps .or. seen%t_final, "time.nsteps or time.t_final")
+    call require_config_value(seen%cflmax, "time.cflmax")
+    call require_config_value(seen%dtmax, "time.dtmax")
+
+    call validate_dns_values(dns)
+end subroutine validate_runtime_config
+
+logical function has_restart_file(dns)
+    type(dns_type), intent(in) :: dns
+
+    has_restart_file = len_trim(dns%restart_file) > 0
+end function has_restart_file
+
+subroutine validate_dns_values(dns)
+    type(dns_type), intent(in) :: dns
+
+    if (any(dns%globalSize <= 0_C_INT)) error stop "grid sizes must be positive"
+    if (any(dns%leng <= 0.0d0)) error stop "domain lengths must be positive"
+    if (dns%re <= 0.0d0) error stop "Reynolds number must be positive"
+    if (dns%dt <= 0.0d0) error stop "time step must be positive"
+    if (dns%nsteps <= 0_C_INT) error stop "number of time steps must be positive"
+    if (dns%cflmax < 0.0d0) error stop "cflmax must be non-negative"
+    if (dns%dtmax <= 0.0d0) error stop "dtmax must be positive"
+    if (dns%field_interval < 0) error stop "field interval must be non-negative"
+    if (any(dns%gridDistribution < GRID_UNIFORM) .or. any(dns%gridDistribution > GRID_TANH)) then
+        error stop "invalid grid distribution"
+    end if
+    if (any(dns%gridStretch < 0.0d0)) error stop "grid stretch values must be non-negative"
+    if (any(dns%mpiDims < 0_C_INT)) error stop "MPI dimensions must be non-negative"
+end subroutine validate_dns_values
+
+subroutine apply_mpi_value(key, value, dns, line_no)
+    character(len=*), intent(in) :: key, value
+    type(dns_type), intent(inout) :: dns
+    integer, intent(in) :: line_no
+
+    select case (trim(key))
+    case ("dims")
+        call read_c_int3(value, dns%mpiDims, line_no)
+    end select
+end subroutine apply_mpi_value
+
+subroutine apply_grid_axis_value(section, key, value, dns, seen, line_no)
+    character(len=*), intent(in) :: section, key, value
+    type(dns_type), intent(inout) :: dns
+    type(config_seen_type), intent(inout) :: seen
+    integer, intent(in) :: line_no
+
+    integer :: dir
+
+    dir = grid_axis_index(section)
+    if (dir < 1) return
+
+    select case (trim(key))
+    case ("distribution")
+        call read_grid_distribution(value, dns%gridDistribution(dir), line_no)
+    case ("stretch")
+        call read_real(value, dns%gridStretch(dir), line_no)
+    case ("n")
+        call read_c_int(value, dns%globalSize(dir), line_no)
+        seen%size(dir) = .true.
+    case ("length")
+        call read_real(value, dns%leng(dir), line_no)
+        seen%length(dir) = .true.
+    end select
+end subroutine apply_grid_axis_value
+
+integer function grid_axis_index(section) result(dir)
+    character(len=*), intent(in) :: section
+
+    select case (trim(section))
+    case ("grid.x")
+        dir = 1
+    case ("grid.y")
+        dir = 2
+    case ("grid.z")
+        dir = 3
+    case default
+        dir = 0
+    end select
+end function grid_axis_index
+
+subroutine require_config_value(seen, name)
+    logical, intent(in) :: seen
+    character(len=*), intent(in) :: name
+
+    if (.not. seen) then
+        if (terminal_output) print *, "error: missing required input value: ", trim(name)
+        error stop "invalid input file"
+    end if
+end subroutine require_config_value
 
 subroutine apply_boundary_value(key, value, bc, line_no)
     character(len=*), intent(in) :: key, value
     type(boundary_type), intent(inout) :: bc
     integer, intent(in) :: line_no
 
-    integer :: dir, side, var
+    integer :: dir, side, var, face_id
     character(len=16) :: field
 
     select case (trim(key))
-    case ("periodic_x", "x_periodic", "isperiodic_x", "x_is_periodic")
+    case ("periodic_x")
         call read_bool(value, bc%isPeriodic(1), line_no)
-    case ("periodic_y", "y_periodic", "isperiodic_y", "y_is_periodic")
+    case ("periodic_y")
         call read_bool(value, bc%isPeriodic(2), line_no)
-    case ("periodic_z", "z_periodic", "isperiodic_z", "z_is_periodic")
+    case ("periodic_z")
         call read_bool(value, bc%isPeriodic(3), line_no)
     case default
         call parse_boundary_key(key, dir, side, var, field)
         if (dir == 0 .or. side < 0 .or. var < 0) then
-            print *, "warning: unknown boundary key on input line", line_no, ": ", trim(key)
+            if (terminal_output) print *, "warning: unknown boundary key on input line", line_no, ": ", trim(key)
             return
         end if
+        face_id = boundary_face_id(dir, side)
 
         select case (trim(field))
         case ("type")
-            call read_bc_type(value, bc%bcType(dir,side,var), line_no)
+            call read_bc_type(value, bc%faceBcType(var,face_id), line_no)
         case ("value")
-            call read_real(value, bc%bcValue(dir,side,var), line_no)
+            call read_real(value, bc%faceBcValue(var,face_id), line_no)
         case default
-            print *, "warning: boundary key must end in _type or _value on input line", line_no
+            if (terminal_output) print *, "warning: boundary key must end in _type or _value on input line", line_no
         end select
     end select
 end subroutine apply_boundary_value
@@ -235,11 +369,11 @@ integer function boundary_direction_index(token) result(idx)
     character(len=*), intent(in) :: token
 
     select case (trim(token))
-    case ("x", "i", "streamwise")
+    case ("x")
         idx = 1
-    case ("y", "j", "wallnormal", "wall_normal")
+    case ("y")
         idx = 2
-    case ("z", "k", "spanwise")
+    case ("z")
         idx = 3
     case default
         idx = 0
@@ -250,9 +384,9 @@ integer function boundary_side_index(token) result(idx)
     character(len=*), intent(in) :: token
 
     select case (trim(token))
-    case ("min", "lo", "low", "lower", "left", "bottom", "front")
+    case ("min")
         idx = 0
-    case ("max", "hi", "high", "upper", "right", "top", "back")
+    case ("max")
         idx = 1
     case default
         idx = -1
@@ -263,14 +397,14 @@ integer function boundary_variable_index(token) result(idx)
     character(len=*), intent(in) :: token
 
     select case (trim(token))
-    case ("p", "pressure")
-        idx = 0
-    case ("u", "un")
-        idx = 1
-    case ("v", "vn")
-        idx = 2
-    case ("w", "wn")
-        idx = 3
+    case ("u")
+        idx = int(VAR_U)
+    case ("v")
+        idx = int(VAR_V)
+    case ("w")
+        idx = int(VAR_W)
+    case ("p")
+        idx = int(VAR_P)
     case default
         idx = -1
     end select
@@ -285,12 +419,12 @@ subroutine read_bool(value, target, line_no)
 
     value_l = lower(clean_string(value))
     select case (trim(value_l))
-    case ("true", "t", ".true.", "yes", "y", "1", "periodic")
+    case ("true", ".true.", "1", "yes")
         target = .true.
-    case ("false", "f", ".false.", "no", "n", "0", "nonperiodic", "non-periodic")
+    case ("false", ".false.", "0", "no")
         target = .false.
     case default
-        print *, "warning: could not parse logical value on input line", line_no
+        if (terminal_output) print *, "warning: could not parse logical value on input line", line_no
     end select
 end subroutine read_bool
 
@@ -304,19 +438,41 @@ subroutine read_bc_type(value, target, line_no)
 
     value_l = lower(clean_string(value))
     select case (trim(value_l))
-    case ("dirichlet", "d", "fixed", "value", "0")
+    case ("dirichlet", "0")
         target = 0_C_INT
-    case ("neumann", "n", "gradient", "normal_gradient", "1")
+    case ("neumann", "1")
         target = 1_C_INT
     case default
         read(value_l, *, iostat=stat) parsed
         if (stat == 0 .and. (parsed == 0 .or. parsed == 1)) then
             target = int(parsed, C_INT)
         else
-            print *, "warning: boundary type must be dirichlet/0 or neumann/1 on input line", line_no
+            if (terminal_output) then
+                print *, "warning: boundary type must be dirichlet/0 or neumann/1 on input line", line_no
+            end if
         end if
     end select
 end subroutine read_bc_type
+
+subroutine read_grid_distribution(value, target, line_no)
+    character(len=*), intent(in) :: value
+    integer(C_INT), intent(inout) :: target
+    integer, intent(in) :: line_no
+
+    character(len=:), allocatable :: value_l
+
+    value_l = lower(clean_string(value))
+    select case (trim(value_l))
+    case ("uniform")
+        target = GRID_UNIFORM
+    case ("cosine")
+        target = GRID_COSINE
+    case ("tanh")
+        target = GRID_TANH
+    case default
+        if (terminal_output) print *, "warning: unknown grid distribution on input line", line_no, ": ", trim(value_l)
+    end select
+end subroutine read_grid_distribution
 
 subroutine parse_section(line, section)
     character(len=*), intent(in) :: line
@@ -378,9 +534,37 @@ subroutine read_integer(value, target, line_no)
     if (stat == 0) then
         target = parsed
     else
-        print *, "warning: could not parse integer on input line", line_no
+        if (terminal_output) print *, "warning: could not parse integer on input line", line_no
     end if
 end subroutine read_integer
+
+subroutine read_c_int(value, target, line_no)
+    character(len=*), intent(in) :: value
+    integer(C_INT), intent(inout) :: target
+    integer, intent(in) :: line_no
+    integer :: stat, parsed
+
+    read(value, *, iostat=stat) parsed
+    if (stat == 0) then
+        target = int(parsed, C_INT)
+    else
+        if (terminal_output) print *, "warning: could not parse integer on input line", line_no
+    end if
+end subroutine read_c_int
+
+subroutine read_c_int3(value, target, line_no)
+    character(len=*), intent(in) :: value
+    integer(C_INT), intent(inout) :: target(1:3)
+    integer, intent(in) :: line_no
+    integer :: stat, parsed(3)
+
+    read(value, *, iostat=stat) parsed
+    if (stat == 0) then
+        target = int(parsed, C_INT)
+    else
+        if (terminal_output) print *, "warning: could not parse three integer values on input line", line_no
+    end if
+end subroutine read_c_int3
 
 subroutine read_real(value, target, line_no)
     character(len=*), intent(in) :: value
@@ -393,7 +577,7 @@ subroutine read_real(value, target, line_no)
     if (stat == 0) then
         target = parsed
     else
-        print *, "warning: could not parse real value on input line", line_no
+        if (terminal_output) print *, "warning: could not parse real value on input line", line_no
     end if
 end subroutine read_real
 

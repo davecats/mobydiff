@@ -1,176 +1,178 @@
 module pressure_solver
     use, intrinsic :: iso_c_binding
-    use :: init, only: grid_type, field_type
-    use :: pressure_workspace, only: pressure_solver_type
+    use :: init, only: dns_type, grid_type, field_type, VAR_U, VAR_V, VAR_W, VAR_P
     use :: ibmm, only: ibm_type
-    use :: boundary, only: boundary_type
-#ifdef USE_REDBLACK
-    use :: pressure_redblack, only: &
-        init_redblack_solver, &
-        pressure_projection_redblack, &
-        destroy_redblack_solver
-#else
-    use :: pressure_fft, only: init_tridiag_coefficients, deallocate_workspace_arrays
-#ifdef USE_CUFFT
-    use :: pressure_backend_cufft, only: &
-        allocate_backend_workspace => allocate_cufft_workspace, &
-        create_backend_plans => create_cufft_plans, &
-        solve_pressure_fft_backend => solve_pressure_cufft, &
-        destroy_backend_workspace => destroy_cufft_workspace
-#else
-    use :: pressure_backend_fftw, only: &
-        allocate_backend_workspace => allocate_fftw_workspace, &
-        create_backend_plans => create_fftw_plans, &
-        solve_pressure_fft_backend => solve_pressure_fftw, &
-        destroy_backend_workspace => destroy_fftw_workspace
-#endif
-#endif
+    use :: boundary, only: boundary_type, apply_bc
+    use :: comm, only: comm_type, exchange_halos
+
     implicit none
 
     private
-    public :: pressure_solver_type, init_pressure_solver, pressure_projection, destroy_pressure_solver
+    public :: pressure_solver_type, init_pressure_solver, pressure_projection
+
+    type :: pressure_solver_type
+        integer(C_INT) :: nIter=3
+        real(C_DOUBLE) :: sor=1.5d0
+        integer(C_INT) :: sweepLo(1:3) = 1_C_INT
+        logical(C_BOOL) :: pressureNeumannLow(1:3) = .false.
+        logical(C_BOOL) :: pressureNeumannHigh(1:3) = .false.
+    end type pressure_solver_type
 
 contains
 
-subroutine init_pressure_solver(ps, g)
-    type(pressure_solver_type), intent(inout) :: ps
-    type(grid_type), intent(in) :: g
+    subroutine init_pressure_solver(ps, dns, bc, has_terminal)
+        type(pressure_solver_type), intent(inout) :: ps
+        type(dns_type), intent(in) :: dns
+        type(boundary_type), intent(in) :: bc
+        logical, intent(in), optional :: has_terminal
+        integer :: dir
+        logical :: terminal
 
-#ifdef USE_REDBLACK
-    call init_redblack_solver(ps, g)
-#else
-    call allocate_backend_workspace(ps, g)
-    call create_backend_plans(ps, g)
-    call init_tridiag_coefficients(ps, g)
-#endif
-end subroutine init_pressure_solver
+        terminal = .true.
+        if (present(has_terminal)) terminal = has_terminal
 
-subroutine pressure_projection(ps, f, g, dt_gamma, ibm, bc)
-    type(pressure_solver_type), intent(inout) :: ps
-    type(field_type), intent(inout) :: f
-    type(grid_type), intent(in) :: g
-    real(C_DOUBLE), intent(in) :: dt_gamma
-    type(ibm_type), intent(in) :: ibm
-    type(boundary_type), intent(in) :: bc
 
-#ifdef USE_REDBLACK
-    call pressure_projection_redblack(ps, f, g, dt_gamma, ibm, bc)
-#else
-    call build_fft_rhs(ps, f, g, dt_gamma)
-    call solve_pressure_fft_backend(g, ps)
-    call apply_fft_pressure_correction(ps, f, g, dt_gamma, ibm)
-#endif
-end subroutine pressure_projection
-
-subroutine destroy_pressure_solver(ps)
-    type(pressure_solver_type), intent(inout) :: ps
-
-#ifdef USE_REDBLACK
-    call destroy_redblack_solver(ps)
-#else
-    call destroy_backend_workspace(ps)
-    call deallocate_workspace_arrays(ps)
-#endif
-end subroutine destroy_pressure_solver
-
-#ifndef USE_REDBLACK
-subroutine build_fft_rhs(ps, f, g, dt_gamma)
-    type(pressure_solver_type), intent(inout) :: ps
-    type(field_type), intent(inout) :: f
-    type(grid_type), intent(in) :: g
-    real(C_DOUBLE), intent(in) :: dt_gamma
-
-    integer :: i,j,k
-    integer :: nx, ny, nz
-    real(C_DOUBLE) :: dx, dy, dz
-
-    nx = g%nx
-    ny = g%ny
-    nz = g%nz
-    dx = g%dx
-    dy = g%dy
-    dz = g%dz
-
-#ifdef USE_OPENMP_OFFLOAD
-    !$omp target teams distribute parallel do collapse(3) &
-    !$omp& map(to: dt_gamma, f%us(0:nx+1,0:ny+1,0:nz+1), &
-    !$omp& f%vs(0:nx+1,0:ny+1,0:nz+1), &
-    !$omp& f%ws(0:nx+1,0:ny+1,0:nz+1)) &
-    !$omp& map(tofrom: ps%rhs(1:nx,1:nz,1:ny)) &
-    !$omp& private(i,j,k)
-#endif
-    do i = 1, nx
-        do j = 1, ny
-            do k = 1, nz
-                ps%rhs(i,k,j) = ( &
-                    (f%us(i+1,j,k)-f%us(i,j,k))/dx &
-                  + (f%vs(i,j+1,k)-f%vs(i,j,k))/dy &
-                  + (f%ws(i,j,k+1)-f%ws(i,j,k))/dz ) / dt_gamma
-            end do
+        do dir = 1, 3
+            if (bc%isPeriodic(dir) .and. mod(dns%globalSize(dir), 2_C_INT) /= 0) then
+                if (terminal) then
+                    print *, "invalid red-black grid: periodic direction", dir, &
+                             "has odd global size", dns%globalSize(dir)
+                end if
+                error stop "red-black pressure solver requires even global sizes in periodic directions"
+            end if
         end do
-    end do
-#ifdef USE_OPENMP_OFFLOAD
-    !$omp end target teams distribute parallel do
-#endif
-end subroutine build_fft_rhs
 
-subroutine apply_fft_pressure_correction(ps, f, g, dt_gamma, ibm)
-    type(pressure_solver_type), intent(inout) :: ps
-    type(field_type), intent(inout) :: f
-    type(grid_type), intent(in) :: g
-    real(C_DOUBLE), intent(in) :: dt_gamma
-    type(ibm_type), intent(in) :: ibm
+        ps%sweepLo = 1_C_INT
+        ps%pressureNeumannLow = .false.
+        ps%pressureNeumannHigh = .false.
 
-    integer :: i,j,k,im,km
-    integer :: nx, ny, nz
-    real(C_DOUBLE) :: dx, dy, dz
+        do dir = 1, 3
+            if (bc%isPeriodic(dir) .or. dns%localSize(dir,0) > 1_C_INT) then
+                ps%sweepLo(dir) = 0_C_INT
+            end if
+            ps%pressureNeumannLow(dir) = (.not. bc%isPeriodic(dir)) .and. dns%localSize(dir,0) == 1_C_INT
+            ps%pressureNeumannHigh(dir) = (.not. bc%isPeriodic(dir)) .and. dns%localSize(dir,1) == dns%globalSize(dir)
+        end do
 
-    nx = g%nx
-    ny = g%ny
-    nz = g%nz
-    dx = g%dx
-    dy = g%dy
-    dz = g%dz
+    end subroutine init_pressure_solver
 
-#ifdef USE_OPENMP_OFFLOAD
-    !$omp target teams distribute parallel do collapse(3) &
-    !$omp& map(to: dt_gamma, ps%rhs(1:nx,1:nz,1:ny), &
-    !$omp& f%us(0:nx+1,0:ny+1,0:nz+1), &
-    !$omp& f%vs(0:nx+1,0:ny+1,0:nz+1), &
-    !$omp& f%ws(0:nx+1,0:ny+1,0:nz+1), &
-    !$omp& ibm%coef_u(0:nx+1,0:ny+1,0:nz+1), &
-    !$omp& ibm%coef_v(0:nx+1,0:ny+1,0:nz+1), &
-    !$omp& ibm%coef_w(0:nx+1,0:ny+1,0:nz+1)) &
-    !$omp& map(tofrom: f%un(0:nx+1,0:ny+1,0:nz+1), &
-    !$omp& f%vn(0:nx+1,0:ny+1,0:nz+1), &
-    !$omp& f%wn(0:nx+1,0:ny+1,0:nz+1), &
-    !$omp& f%pn(0:nx+1,0:ny+1,0:nz+1)) &
-    !$omp& private(i,j,k,im,km)
-#endif
-    do i = 1, nx
-        do j = 1, ny
-            do k = 1, nz
-                im = i - 1
-                km = k - 1
-                if (im < 1) im = nx
-                if (km < 1) km = nz
+    subroutine pressure_projection(ps, f, dns, g, dt_gamma, ibm, bc, c)
+        type(pressure_solver_type), intent(in) :: ps
+        type(field_type), intent(inout) :: f
+        type(dns_type), intent(in) :: dns
+        type(grid_type), intent(in) :: g
+        real(C_DOUBLE), intent(in) :: dt_gamma
+        type(ibm_type), intent(in) :: ibm
+        type(boundary_type), intent(in) :: bc
+        type(comm_type), intent(inout) :: c
 
-                f%un(i,j,k) = (f%us(i,j,k) - dt_gamma*(ps%rhs(i,k,j)-ps%rhs(im,k,j))/dx) &
-                    / (1.0d0 + dt_gamma*ibm%coef_u(i,j,k))
-                f%wn(i,j,k) = (f%ws(i,j,k) - dt_gamma*(ps%rhs(i,k,j)-ps%rhs(i,km,j))/dz) &
-                    / (1.0d0 + dt_gamma*ibm%coef_w(i,j,k))
-                f%pn(i,j,k) = f%pn(i,j,k) + ps%rhs(i,k,j)
-                if (j >= 2) then
-                    f%vn(i,j,k) = (f%vs(i,j,k) - dt_gamma*(ps%rhs(i,k,j)-ps%rhs(i,k,j-1))/dy) &
-                        / (1.0d0 + dt_gamma*ibm%coef_v(i,j,k))
+        integer(C_INT) :: iIter, color
+        integer(C_INT) :: local_n(1:3), colorOffset
+
+        local_n = dns%localSize(1:3,2)
+        colorOffset = modulo(sum(dns%localSize(1:3,0) - 1_C_INT), 2_C_INT)
+
+        do iIter = 1_C_INT, ps%nIter
+            do color = 1_C_INT, 0_C_INT, -1_C_INT
+                call redblack_sweep(ps, f, g, dt_gamma, ibm, local_n, color, colorOffset)
+                call apply_bc(f, dns, g, bc)
+                if (iIter == ps%nIter .and. color == 0_C_INT) then
+                    call exchange_halos(c, f, [VAR_U, VAR_V, VAR_W, VAR_P])
+                else
+                    call exchange_halos(c, f, [VAR_U, VAR_V, VAR_W])
                 end if
             end do
         end do
-    end do
+
+    end subroutine pressure_projection
+
+    subroutine redblack_sweep(ps, f, g, dt_gamma, ibm, local_n, color, colorOffset)
+        type(pressure_solver_type), intent(in) :: ps
+        type(field_type), intent(inout) :: f
+        type(grid_type), intent(in) :: g
+        real(C_DOUBLE), intent(in) :: dt_gamma
+        type(ibm_type), intent(in) :: ibm
+        integer(C_INT), intent(in) :: local_n(1:3), color, colorOffset
+
+        real(C_DOUBLE) :: phi,denom,idt,sor
+        real(C_DOUBLE) :: div
+        real(C_DOUBLE) :: mu_u_i,mu_u_ip,mu_v_j,mu_v_jp,mu_w_k,mu_w_kp
+        integer(C_INT) :: i,ip,j,jp,k,kp,nLowerHaloDirections
+        integer(C_INT) :: lo(1:3), hi(1:3)
+        logical(C_BOOL) :: pressureNeumannLow(1:3), pressureNeumannHigh(1:3)
+
+        lo = ps%sweepLo
+        hi = local_n
+        pressureNeumannLow = ps%pressureNeumannLow
+        pressureNeumannHigh = ps%pressureNeumannHigh
+        sor = ps%sor
+
+        idt = 1.0_C_DOUBLE/dt_gamma
+
 #ifdef USE_OPENMP_OFFLOAD
-    !$omp end target teams distribute parallel do
+        !$omp target teams distribute parallel do collapse(3) &
+        !$omp& map(to: color, colorOffset, sor, idt, dt_gamma, &
+        !$omp& lo(1:3), hi(1:3), pressureNeumannLow(1:3), pressureNeumannHigh(1:3), &
+        !$omp& g%d1x, g%d1y, g%d1z, ibm%coef) &
+        !$omp& map(tofrom: f%q) &
+        !$omp& private(i,ip,j,jp,k,kp,phi,denom,div,nLowerHaloDirections, &
+        !$omp& mu_u_i,mu_u_ip,mu_v_j,mu_v_jp,mu_w_k,mu_w_kp)
 #endif
-end subroutine apply_fft_pressure_correction
+        DO k=lo(3),hi(3)
+            DO j=lo(2),hi(2)
+                DO i=lo(1),hi(1)
+                    nLowerHaloDirections = 0_C_INT
+                    if (i == 0_C_INT) nLowerHaloDirections = nLowerHaloDirections + 1_C_INT
+                    if (j == 0_C_INT) nLowerHaloDirections = nLowerHaloDirections + 1_C_INT
+                    if (k == 0_C_INT) nLowerHaloDirections = nLowerHaloDirections + 1_C_INT
+                    if (nLowerHaloDirections > 1_C_INT) cycle
+                    if (modulo(i+j+k+colorOffset, 2_C_INT) /= color) cycle
+
+                    jp = j + 1
+                    kp = k + 1
+                    ip = i + 1
+
+                    mu_u_i  = 1.0d0/(1.0d0+dt_gamma*ibm%coef(i,j,k,VAR_U))
+                    mu_u_ip = 1.0d0/(1.0d0+dt_gamma*ibm%coef(ip,j,k,VAR_U))
+                    mu_v_j  = 1.0d0/(1.0d0+dt_gamma*ibm%coef(i,j,k,VAR_V))
+                    mu_v_jp = 1.0d0/(1.0d0+dt_gamma*ibm%coef(i,jp,k,VAR_V))
+                    mu_w_k  = 1.0d0/(1.0d0+dt_gamma*ibm%coef(i,j,k,VAR_W))
+                    mu_w_kp = 1.0d0/(1.0d0+dt_gamma*ibm%coef(i,j,kp,VAR_W))
+
+                    denom = (merge(0.0d0, mu_u_i*g%d1x(i,VAR_U), &
+                                      pressureNeumannLow(1) .and. i == 1_C_INT) &
+                           + merge(0.0d0, mu_u_ip*g%d1x(ip,VAR_U), &
+                                      pressureNeumannHigh(1) .and. i == hi(1)))*g%d1x(i,VAR_P) &
+                          + (merge(0.0d0, mu_v_j*g%d1y(j,VAR_V), &
+                                      pressureNeumannLow(2) .and. j == 1_C_INT) &
+                           + merge(0.0d0, mu_v_jp*g%d1y(jp,VAR_V), &
+                                      pressureNeumannHigh(2) .and. j == hi(2)))*g%d1y(j,VAR_P) &
+                          + (merge(0.0d0, mu_w_k*g%d1z(k,VAR_W), &
+                                      pressureNeumannLow(3) .and. k == 1_C_INT) &
+                           + merge(0.0d0, mu_w_kp*g%d1z(kp,VAR_W), &
+                                      pressureNeumannHigh(3) .and. k == hi(3)))*g%d1z(k,VAR_P)
+
+                    div = (f%q(ip,j,k,VAR_U)-f%q(i,j,k,VAR_U))*g%d1x(i,VAR_P) &
+                        + (f%q(i,jp,k,VAR_V)-f%q(i,j,k,VAR_V))*g%d1y(j,VAR_P) &
+                        + (f%q(i,j,kp,VAR_W)-f%q(i,j,k,VAR_W))*g%d1z(k,VAR_P)
+
+                    phi = -sor*div/denom
+
+                    f%q(i,j,k,VAR_P) = f%q(i,j,k,VAR_P) + phi*idt
+
+                    f%q(i,j,k,VAR_U) = f%q(i,j,k,VAR_U) - phi*g%d1x(i,VAR_U)*mu_u_i
+                    f%q(ip,j,k,VAR_U) = f%q(ip,j,k,VAR_U) + phi*g%d1x(ip,VAR_U)*mu_u_ip
+                    f%q(i,j,k,VAR_V) = f%q(i,j,k,VAR_V) - phi*g%d1y(j,VAR_V)*mu_v_j
+                    f%q(i,jp,k,VAR_V) = f%q(i,jp,k,VAR_V) + phi*g%d1y(jp,VAR_V)*mu_v_jp
+                    f%q(i,j,k,VAR_W) = f%q(i,j,k,VAR_W) - phi*g%d1z(k,VAR_W)*mu_w_k
+                    f%q(i,j,kp,VAR_W) = f%q(i,j,kp,VAR_W) + phi*g%d1z(kp,VAR_W)*mu_w_kp
+                END DO
+            END DO
+        END DO
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp end target teams distribute parallel do
 #endif
+
+    end subroutine redblack_sweep
 
 end module pressure_solver
