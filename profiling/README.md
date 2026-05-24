@@ -22,6 +22,8 @@ module load lib/hdf5/1.14
 
 If the site module exposes HDF5 under a different variable, set `HDF5_ROOT` before calling `./compile.sh gpu`.
 
+The profiling module helper also sets `FDM_FAST_MPI=1`. This makes `compile.sh` skip CMake's `FindMPI` probes and instead use `mpifort --showme:compile` / `mpifort --showme:link` directly. On some clusters this avoids long configure delays right after the `MPI support: required` message.
+
 ## Quick Start
 
 From the repository root on the HPC system:

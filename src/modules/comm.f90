@@ -122,7 +122,6 @@ contains
         if (any(local_n <= 0)) error stop "MPI decomposition produced an empty local block"
 
         call build_neighbors(c, local_n)
-        call ensure_buffer_capacity(c, max(1, max_neighbor_points(c)))
 
         call MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL, local_comm, ierr)
         call MPI_Comm_rank(local_comm, c%local_rank, ierr)
@@ -134,6 +133,8 @@ contains
         end if
 #endif
 
+        call ensure_buffer_capacity(c, max(1, max_neighbor_points(c)))
+
         c%initialized = .true.
     end subroutine comm_init
 
@@ -144,8 +145,13 @@ contains
 
         if (c%exchangeActive) error stop "cannot finalize MPI while a halo exchange is active"
 
-        if (allocated(c%sendbuf)) deallocate(c%sendbuf)
-        if (allocated(c%recvbuf)) deallocate(c%recvbuf)
+        if (allocated(c%sendbuf)) then
+#ifdef USE_OPENMP_OFFLOAD
+            !$omp target exit data map(delete: c%sendbuf, c%recvbuf)
+#endif
+            deallocate(c%sendbuf)
+            deallocate(c%recvbuf)
+        end if
 
         if (c%cart_comm /= MPI_COMM_NULL) then
             call MPI_Comm_free(c%cart_comm, ierr)
@@ -181,25 +187,30 @@ contains
         count = max_neighbor_points(c) * c%nActiveVars
         call ensure_buffer_capacity(c, count)
 
-#ifdef USE_OPENMP_OFFLOAD
-        call update_send_boxes_from_device(c, f)
-#endif
-
         c%request = MPI_REQUEST_NULL
         do n = 1, c%nNeighbors
             c%activeCount(n) = c%nPoints(n) * c%nActiveVars
+        end do
+
+        call pack_q_boxes(c, f)
+
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target data use_device_addr(c%sendbuf, c%recvbuf)
+#endif
+        do n = 1, c%nNeighbors
             recvOffset = -c%offset(:,n)
             call MPI_Irecv(c%recvbuf(1,n), c%activeCount(n), MPI_DOUBLE_PRECISION, &
                 c%neighborRank(n), halo_tag(recvOffset), c%cart_comm, c%request(n), ierr)
         end do
 
         do n = 1, c%nNeighbors
-            call pack_q_box(f, c%sendLo(:,n), c%sendHi(:,n), &
-                            c%activeVars(1:c%nActiveVars), c%sendbuf(:,n))
             call MPI_Isend(c%sendbuf(1,n), c%activeCount(n), MPI_DOUBLE_PRECISION, &
                 c%neighborRank(n), halo_tag(c%offset(:,n)), c%cart_comm, &
                 c%request(c%nNeighbors+n), ierr)
         end do
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp end target data
+#endif
 
         c%exchangeActive = .true.
     end subroutine start_halo_exchange
@@ -215,14 +226,7 @@ contains
         nRequest = 2*c%nNeighbors
         call MPI_Waitall(nRequest, c%request(1:nRequest), MPI_STATUSES_IGNORE, ierr)
 
-        do n = 1, c%nNeighbors
-            call unpack_q_box(f, c%recvLo(:,n), c%recvHi(:,n), &
-                              c%activeVars(1:c%nActiveVars), c%recvbuf(:,n))
-        end do
-
-#ifdef USE_OPENMP_OFFLOAD
-        call update_recv_boxes_to_device(c, f)
-#endif
+        call unpack_q_boxes(c, f)
 
         c%request = MPI_REQUEST_NULL
         c%activeCount = 0
@@ -363,93 +367,89 @@ contains
         end do
     end subroutine set_active_vars
 
-    subroutine pack_q_box(f, lo, hi, vars, buf)
+    subroutine pack_q_boxes(c, f)
+        type(comm_type), intent(inout) :: c
         type(field_type), intent(in) :: f
-        integer, intent(in) :: lo(3), hi(3)
-        integer(C_INT), intent(in) :: vars(:)
-        real(C_DOUBLE), intent(out) :: buf(:)
 
-        integer :: i, j, k, n, nv, var
+        integer :: n
 
-        n = 0
-        do nv = 1, size(vars)
-            var = int(vars(nv))
-            do k = lo(3), hi(3)
-                do j = lo(2), hi(2)
-                    do i = lo(1), hi(1)
-                        n = n + 1
-                        buf(n) = f%q(i,j,k,var)
-                    end do
-                end do
-            end do
+        do n = 1, c%nNeighbors
+            call pack_q_box(c, f, n)
         end do
-    end subroutine pack_q_box
+    end subroutine pack_q_boxes
 
-    subroutine unpack_q_box(f, lo, hi, vars, buf)
-        type(field_type), intent(inout) :: f
-        integer, intent(in) :: lo(3), hi(3)
-        integer(C_INT), intent(in) :: vars(:)
-        real(C_DOUBLE), intent(in) :: buf(:)
+    subroutine pack_q_box(c, f, n)
+        type(comm_type), intent(inout) :: c
+        type(field_type), intent(in) :: f
+        integer, intent(in) :: n
 
-        integer :: i, j, k, n, nv, var
-
-        n = 0
-        do nv = 1, size(vars)
-            var = int(vars(nv))
-            do k = lo(3), hi(3)
-                do j = lo(2), hi(2)
-                    do i = lo(1), hi(1)
-                        n = n + 1
-                        f%q(i,j,k,var) = buf(n)
-                    end do
-                end do
-            end do
-        end do
-    end subroutine unpack_q_box
+        integer :: p, q, nv, var
+        integer :: i, j, k, ni, nj, nk
 
 #ifdef USE_OPENMP_OFFLOAD
-    subroutine update_send_boxes_from_device(c, f)
-        type(comm_type), intent(in) :: c
-        type(field_type), intent(inout) :: f
-
-        integer :: n, nv
-
-        do n = 1, c%nNeighbors
-            do nv = 1, c%nActiveVars
-                call update_q_box_from_device(f, c%sendLo(:,n), c%sendHi(:,n), c%activeVars(nv))
-            end do
-        end do
-    end subroutine update_send_boxes_from_device
-
-    subroutine update_recv_boxes_to_device(c, f)
-        type(comm_type), intent(in) :: c
-        type(field_type), intent(inout) :: f
-
-        integer :: n, nv
-
-        do n = 1, c%nNeighbors
-            do nv = 1, c%nActiveVars
-                call update_q_box_to_device(f, c%recvLo(:,n), c%recvHi(:,n), c%activeVars(nv))
-            end do
-        end do
-    end subroutine update_recv_boxes_to_device
-
-    subroutine update_q_box_from_device(f, lo, hi, var)
-        type(field_type), intent(inout) :: f
-        integer, intent(in) :: lo(3), hi(3)
-        integer(C_INT), intent(in) :: var
-
-        !$omp target update from(f%q(lo(1):hi(1),lo(2):hi(2),lo(3):hi(3),var))
-    end subroutine update_q_box_from_device
-
-    subroutine update_q_box_to_device(f, lo, hi, var)
-        type(field_type), intent(inout) :: f
-        integer, intent(in) :: lo(3), hi(3)
-        integer(C_INT), intent(in) :: var
-
-        !$omp target update to(f%q(lo(1):hi(1),lo(2):hi(2),lo(3):hi(3),var))
-    end subroutine update_q_box_to_device
+        !$omp target teams distribute parallel do &
+        !$omp& map(to: n, c%nPoints, c%activeCount, c%sendLo, c%sendHi, c%activeVars, f%q) &
+        !$omp& map(tofrom: c%sendbuf) &
+        !$omp& private(p,q,nv,var,i,j,k,ni,nj,nk)
 #endif
+        do p = 1, c%activeCount(n)
+            ni = c%sendHi(1,n) - c%sendLo(1,n) + 1
+            nj = c%sendHi(2,n) - c%sendLo(2,n) + 1
+            nk = c%sendHi(3,n) - c%sendLo(3,n) + 1
+            nv = (p - 1) / c%nPoints(n) + 1
+            q = modulo(p - 1, c%nPoints(n))
+            i = c%sendLo(1,n) + modulo(q, ni)
+            j = c%sendLo(2,n) + modulo(q / ni, nj)
+            k = c%sendLo(3,n) + q / (ni*nj)
+            var = int(c%activeVars(nv))
+            c%sendbuf(p,n) = f%q(i,j,k,var)
+        end do
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp end target teams distribute parallel do
+#endif
+    end subroutine pack_q_box
+
+    subroutine unpack_q_boxes(c, f)
+        type(comm_type), intent(in) :: c
+        type(field_type), intent(inout) :: f
+
+        integer :: n
+
+        do n = 1, c%nNeighbors
+            call unpack_q_box(c, f, n)
+        end do
+    end subroutine unpack_q_boxes
+
+    subroutine unpack_q_box(c, f, n)
+        type(comm_type), intent(in) :: c
+        type(field_type), intent(inout) :: f
+        integer, intent(in) :: n
+
+        integer :: p, q, nv, var
+        integer :: i, j, k, ni, nj, nk
+
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target teams distribute parallel do &
+        !$omp& map(to: n, c%nPoints, c%activeCount, c%recvLo, c%recvHi, c%activeVars, c%recvbuf) &
+        !$omp& map(tofrom: f%q) &
+        !$omp& private(p,q,nv,var,i,j,k,ni,nj,nk)
+#endif
+        do p = 1, c%activeCount(n)
+            ni = c%recvHi(1,n) - c%recvLo(1,n) + 1
+            nj = c%recvHi(2,n) - c%recvLo(2,n) + 1
+            nk = c%recvHi(3,n) - c%recvLo(3,n) + 1
+            nv = (p - 1) / c%nPoints(n) + 1
+            q = modulo(p - 1, c%nPoints(n))
+            i = c%recvLo(1,n) + modulo(q, ni)
+            j = c%recvLo(2,n) + modulo(q / ni, nj)
+            k = c%recvLo(3,n) + q / (ni*nj)
+            var = int(c%activeVars(nv))
+            f%q(i,j,k,var) = c%recvbuf(p,n)
+        end do
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp end target teams distribute parallel do
+#endif
+    end subroutine unpack_q_box
 
     subroutine local_range(n_global, nproc_dir, coord, first, last)
         integer, intent(in) :: n_global, nproc_dir, coord
@@ -468,12 +468,20 @@ contains
         capacity = max(1, count)
         if (allocated(c%sendbuf) .and. capacity <= c%maxBufferCount) return
 
-        if (allocated(c%sendbuf)) deallocate(c%sendbuf)
-        if (allocated(c%recvbuf)) deallocate(c%recvbuf)
+        if (allocated(c%sendbuf)) then
+#ifdef USE_OPENMP_OFFLOAD
+            !$omp target exit data map(delete: c%sendbuf, c%recvbuf)
+#endif
+            deallocate(c%sendbuf)
+            deallocate(c%recvbuf)
+        end if
 
         c%maxBufferCount = capacity
         allocate(c%sendbuf(c%maxBufferCount, MAX_NEIGHBORS))
         allocate(c%recvbuf(c%maxBufferCount, MAX_NEIGHBORS))
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target enter data map(alloc: c%sendbuf, c%recvbuf)
+#endif
     end subroutine ensure_buffer_capacity
 
     subroutine require_ready(c)

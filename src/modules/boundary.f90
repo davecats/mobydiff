@@ -81,6 +81,34 @@ contains
              (side == SIDE_MAX .and. dns%localSize(dir,1) == dns%globalSize(dir)))
     end function is_physical_boundary
 
+    subroutine enter_boundary_data(bc)
+        type(boundary_type), intent(inout) :: bc
+        integer :: npts
+
+#ifdef USE_OPENMP_OFFLOAD
+        npts = int(bc%nTotal)
+        !$omp target enter data map(to: bc)
+        !$omp target enter data map(to: bc%faceBcType, bc%faceBcValue)
+        if (npts > 0) then
+            !$omp target enter data map(to: bc%pointFace(1:npts), bc%i(1:npts), bc%j(1:npts), bc%k(1:npts))
+        end if
+#endif
+    end subroutine enter_boundary_data
+
+    subroutine exit_boundary_data(bc)
+        type(boundary_type), intent(inout) :: bc
+        integer :: npts
+
+#ifdef USE_OPENMP_OFFLOAD
+        npts = int(bc%nTotal)
+        if (npts > 0) then
+            !$omp target exit data map(delete: bc%pointFace(1:npts), bc%i(1:npts), bc%j(1:npts), bc%k(1:npts))
+        end if
+        !$omp target exit data map(delete: bc%faceBcType, bc%faceBcValue)
+        !$omp target exit data map(delete: bc)
+#endif
+    end subroutine exit_boundary_data
+
     subroutine destroy_boundary_faces(bc)
         type(boundary_type), intent(inout) :: bc
 

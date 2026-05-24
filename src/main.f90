@@ -54,6 +54,7 @@ program main
     call init_boundary_faces(bc, dns)
     call init_openmp_offload(c%has_terminal)
     call enter_grid_data(g, dns)
+    call enter_boundary_data(bc)
 
     if (c%has_terminal) print *, "initialising fields..."
     call init_field(f, dns)
@@ -129,6 +130,7 @@ program main
     ! Release device-side data before the host allocatables go out of scope.
     call exit_ibm_data(ibm, dns)
     call exit_field_data(f, dns)
+    call exit_boundary_data(bc)
     call exit_grid_data(g, dns)
     call destroy_grid(g)
     call destroy_boundary_faces(bc)

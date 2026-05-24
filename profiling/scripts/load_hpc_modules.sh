@@ -10,6 +10,8 @@ module load lib/hdf5/1.14
 
 export FC="${FC:-nvfortran}"
 export CC="${CC:-nvc}"
+export MPI_FC_WRAPPER="${MPI_FC_WRAPPER:-mpifort}"
+export FDM_FAST_MPI="${FDM_FAST_MPI:-1}"
 
 # Different sites expose HDF5 module prefixes under different variable names.
 if [ -z "${HDF5_ROOT:-}" ]; then

@@ -7,7 +7,10 @@ project(3D_NSE_SOLVER LANGUAGES Fortran C)
 # =========================
 option(USE_OPENMP_OFFLOAD "Enable OpenMP target offload for accelerator execution" OFF)
 option(USE_IBM_SECONDORDER "Use second-order IBM interpolation/correction" ON)
+option(USE_CMAKE_FIND_MPI "Use CMake FindMPI instead of externally supplied MPI wrapper flags" ON)
 set(OPENMP_OFFLOAD_FLAGS "" CACHE STRING "Additional Fortran compiler/linker flags for OpenMP target offload")
+set(MPI_WRAPPER_COMPILE_FLAGS "" CACHE STRING "MPI wrapper compile flags used when USE_CMAKE_FIND_MPI=OFF")
+set(MPI_WRAPPER_LINK_FLAGS "" CACHE STRING "MPI wrapper link flags used when USE_CMAKE_FIND_MPI=OFF")
 
 # =========================
 # Sources
@@ -89,12 +92,33 @@ message(STATUS "HDF5 include dir: ${HDF5_C_INCLUDE_DIR}")
 message(STATUS "HDF5 C library: ${HDF5_C_LIB}")
 message(STATUS "Pressure solver: red-black SOR")
 message(STATUS "MPI support: required")
+message(STATUS "MPI discovery: ${USE_CMAKE_FIND_MPI}")
 
 target_include_directories(main PRIVATE ${HDF5_C_INCLUDE_DIR})
 target_link_libraries(main PRIVATE ${HDF5_C_LIB})
 
-find_package(MPI REQUIRED COMPONENTS Fortran C)
-target_link_libraries(main PRIVATE MPI::MPI_Fortran MPI::MPI_C)
+if(USE_CMAKE_FIND_MPI)
+    find_package(MPI REQUIRED COMPONENTS Fortran C)
+    target_link_libraries(main PRIVATE MPI::MPI_Fortran MPI::MPI_C)
+else()
+    if(NOT MPI_WRAPPER_LINK_FLAGS)
+        message(FATAL_ERROR "MPI_WRAPPER_LINK_FLAGS is required when USE_CMAKE_FIND_MPI=OFF")
+    endif()
+
+    message(STATUS "MPI wrapper compile flags: ${MPI_WRAPPER_COMPILE_FLAGS}")
+    message(STATUS "MPI wrapper link flags: ${MPI_WRAPPER_LINK_FLAGS}")
+
+    separate_arguments(MPI_WRAPPER_COMPILE_FLAGS_LIST NATIVE_COMMAND "${MPI_WRAPPER_COMPILE_FLAGS}")
+    separate_arguments(MPI_WRAPPER_LINK_FLAGS_LIST NATIVE_COMMAND "${MPI_WRAPPER_LINK_FLAGS}")
+
+    foreach(flag IN LISTS MPI_WRAPPER_COMPILE_FLAGS_LIST)
+        target_compile_options(main PRIVATE
+            $<$<COMPILE_LANGUAGE:Fortran>:${flag}>
+            $<$<COMPILE_LANGUAGE:C>:${flag}>
+        )
+    endforeach()
+    target_link_libraries(main PRIVATE ${MPI_WRAPPER_LINK_FLAGS_LIST})
+endif()
 
 # =========================
 # Optional features
