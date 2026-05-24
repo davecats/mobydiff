@@ -68,10 +68,10 @@ program main
 
     if (c%has_terminal) print *, "initialising IBM..."
     call init_ibm(ibm, dns, g)
+    call enter_ibm_data(ibm, dns)
     call set_ibm_coeff(dns, g, ibm, VAR_U)
     call set_ibm_coeff(dns, g, ibm, VAR_V)
     call set_ibm_coeff(dns, g, ibm, VAR_W)
-    call enter_ibm_data(ibm, dns)
 
     call apply_bc(f, dns, g, bc)
     call exchange_halos(c, f, [VAR_U, VAR_V, VAR_W, VAR_P])

@@ -33,6 +33,8 @@ module ibmm
 
     end type ibm_type
 
+!$omp declare target(isInBody, distance3, bisection, add_neighbor_coeff)
+
 contains
 
 !========================
@@ -92,11 +94,16 @@ contains
         real(C_DOUBLE) :: y_body
 
         y_body = ibm%amp_x * 0.5d0 * &
-                 (1.0d0 + sin(2.0d0*pi*real(ibm%n_wave_x,C_DOUBLE)*xIN(1)/dns%leng(1) + ibm%phase_x)) + 2*g%havg(2)
-
+                 (1.0d0 + sin(2.0d0*pi*real(ibm%n_wave_x,C_DOUBLE)*xIN(1)/dns%leng(1) + ibm%phase_x)) + &
+                 2.0d0*g%havg(2)
         isInBody = (xIN(2) < y_body)
-
     end function isInBody
+
+    real(C_DOUBLE) function distance3(xA, xB) result(d)
+        real(C_DOUBLE), intent(in) :: xA(1:3), xB(1:3)
+
+        d = sqrt((xB(1)-xA(1))**2 + (xB(2)-xA(2))**2 + (xB(3)-xA(3))**2)
+    end function distance3
 
     subroutine bisection(xAin,xB,ibm,dns,g)
         real(C_DOUBLE), intent(in) :: xAin(1:3)
@@ -104,32 +111,46 @@ contains
         type(ibm_type), intent(in) :: ibm
         type(dns_type), intent(in) :: dns
         type(grid_type), intent(in) :: g
-        real(C_DOUBLE) :: xA(1:3),xM(1:3)
-        logical :: la, lb, lm
 
+        real(C_DOUBLE) :: xA(1:3), xM(1:3)
+        logical :: la, lm
         integer(C_INT) :: it
 
         xA = xAin
+        xM = xA
+        la = isInBody(xA, ibm, dns, g)
 
-        DO it=1,MAX_ITER
+        do it = 1, MAX_ITER
+            xM = 0.5d0*(xA + xB)
+            if (distance3(xA, xB) < DEFAULT_TOL) exit
 
-            xm = 0.5*(xa+xb)
-
-            if (NORM2(xb-xa) < DEFAULT_TOL) then
-                exit
+            lm = isInBody(xM, ibm, dns, g)
+            if (lm .eqv. la) then
+                xA = xM
+            else
+                xB = xM
             end if
+        end do
+        xB = xM
+    end subroutine bisection
 
-            la = isInBody(xa,ibm,dns,g)
-            lm = isInBody(xm,ibm,dns,g)
-            IF (lm .eqv. la) THEN
-                xa = xm
-            ELSE
-                xb = xm
-            END IF
-        END DO
-        xb = xm
-    end subroutine  bisection
+    subroutine add_neighbor_coeff(coeff, xA, xB, ibm, dns, g)
+        real(C_DOUBLE), intent(inout) :: coeff
+        real(C_DOUBLE), intent(in) :: xA(1:3)
+        real(C_DOUBLE), intent(inout) :: xB(1:3)
+        type(ibm_type), intent(in) :: ibm
+        type(dns_type), intent(in) :: dns
+        type(grid_type), intent(in) :: g
 
+        real(C_DOUBLE) :: d0, d
+
+        if (isInBody(xB, ibm, dns, g)) then
+            d0 = distance3(xA, xB)
+            call bisection(xA, xB, ibm, dns, g)
+            d = distance3(xA, xB)
+            coeff = coeff + ((d0-d)/d)/d0**2
+        end if
+    end subroutine add_neighbor_coeff
 
     subroutine set_ibm_coeff(dns, g, ibm, var)
         type(dns_type), intent(in) :: dns
@@ -138,51 +159,67 @@ contains
         integer(C_INT), intent(in) :: var
 
         integer :: ix, iy, iz
-        real(C_DOUBLE) :: xA(1:3)
-#ifdef USE_IBM_SECONDORDER
-        integer(C_INT) :: neighbours(1:3,1:6), iN
-        real(C_DOUBLE) :: xB(1:3), d0, d
-
-        neighbours(1:3,1) = (/-1, 0, 0 /)
-        neighbours(1:3,2) = (/ 1, 0, 0 /)
-        neighbours(1:3,3) = (/ 0,-1, 0 /)
-        neighbours(1:3,4) = (/ 0, 1, 0 /)
-        neighbours(1:3,5) = (/ 0, 0,-1 /)
-        neighbours(1:3,6) = (/ 0, 0, 1 /)
-#endif
+        integer :: ilo, ihi, jlo, jhi, klo, khi
+        real(C_DOUBLE) :: xA(1:3), xB(1:3), coeff
+        real(C_DOUBLE) :: re_inv, solid_coef
+        logical(C_BOOL) :: enabled
 
         if (var < VAR_U .or. var > VAR_W) error stop "invalid IBM coefficient variable"
 
-        ibm%coef(:,:,:,var) = 0.0d0
-        if (.not. dns%ibm_enabled) return
+        ilo = lbound(ibm%coef,1)
+        ihi = ubound(ibm%coef,1)
+        jlo = lbound(ibm%coef,2)
+        jhi = ubound(ibm%coef,2)
+        klo = lbound(ibm%coef,3)
+        khi = ubound(ibm%coef,3)
 
-        do iz = lbound(ibm%coef,3), ubound(ibm%coef,3)
-            do iy = lbound(ibm%coef,2), ubound(ibm%coef,2)
-                do ix = lbound(ibm%coef,1), ubound(ibm%coef,1)
+        enabled = dns%ibm_enabled
+        re_inv = 1.0d0/dns%re
+        solid_coef = SOLID*re_inv
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target teams distribute parallel do collapse(3) &
+        !$omp& map(to: var, enabled, re_inv, solid_coef, ilo, ihi, jlo, jhi, klo, khi, dns, ibm, g, &
+        !$omp& g%x, g%y, g%z) &
+        !$omp& map(tofrom: ibm%coef) &
+        !$omp& private(ix,iy,iz,xA,xB,coeff)
+#endif
+        do iz = klo, khi
+            do iy = jlo, jhi
+                do ix = ilo, ihi
+                    ibm%coef(ix,iy,iz,var) = 0.0d0
+                    if (.not. enabled) cycle
+
                     xA(1) = g%x(ix,var)
                     xA(2) = g%y(iy,var)
                     xA(3) = g%z(iz,var)
                     if (isInBody(xA, ibm, dns, g)) then
-                        ibm%coef(ix,iy,iz,var) = SOLID
+                        ibm%coef(ix,iy,iz,var) = solid_coef
 #ifdef USE_IBM_SECONDORDER
                     else
-                        do iN = 1,6
-                            xB(1) = g%x(ix+neighbours(1,iN),var)
-                            xB(2) = g%y(iy+neighbours(2,iN),var)
-                            xB(3) = g%z(iz+neighbours(3,iN),var)
-                            d0 = norm2(xB-xA)
-                            if (isInBody(xB, ibm, dns, g)) then
-                                call bisection(xA,xB,ibm,dns,g)
-                                d = norm2(xB-xA)
-                                ibm%coef(ix,iy,iz,var) = ibm%coef(ix,iy,iz,var) + ((d0-d)/d)/d0**2
-                            end if
-                        end do
+                        coeff = 0.0d0
+
+                        xB(1) = g%x(ix-1,var); xB(2) = xA(2);          xB(3) = xA(3)
+                        call add_neighbor_coeff(coeff, xA, xB, ibm, dns, g)
+                        xB(1) = g%x(ix+1,var); xB(2) = xA(2);          xB(3) = xA(3)
+                        call add_neighbor_coeff(coeff, xA, xB, ibm, dns, g)
+                        xB(1) = xA(1);          xB(2) = g%y(iy-1,var); xB(3) = xA(3)
+                        call add_neighbor_coeff(coeff, xA, xB, ibm, dns, g)
+                        xB(1) = xA(1);          xB(2) = g%y(iy+1,var); xB(3) = xA(3)
+                        call add_neighbor_coeff(coeff, xA, xB, ibm, dns, g)
+                        xB(1) = xA(1);          xB(2) = xA(2);          xB(3) = g%z(iz-1,var)
+                        call add_neighbor_coeff(coeff, xA, xB, ibm, dns, g)
+                        xB(1) = xA(1);          xB(2) = xA(2);          xB(3) = g%z(iz+1,var)
+                        call add_neighbor_coeff(coeff, xA, xB, ibm, dns, g)
+
+                        ibm%coef(ix,iy,iz,var) = coeff*re_inv
 #endif
                     end if
                 end do
             end do
         end do
-        ibm%coef(:,:,:,var) = ibm%coef(:,:,:,var)/dns%re
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp end target teams distribute parallel do
+#endif
     end subroutine set_ibm_coeff
     
 end module ibmm
