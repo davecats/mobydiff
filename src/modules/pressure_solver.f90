@@ -97,7 +97,7 @@ contains
         real(C_DOUBLE) :: phi,denom,idt,sor
         real(C_DOUBLE) :: div
         real(C_DOUBLE) :: mu_u_i,mu_u_ip,mu_v_j,mu_v_jp,mu_w_k,mu_w_kp
-        integer(C_INT) :: i,ip,j,jp,k,kp,nLowerHaloDirections
+        integer(C_INT) :: i,ip,j,jp,k,kp,nLowerHaloDirections,iColor,nColorX
         integer(C_INT) :: lo(1:3), hi(1:3)
         logical(C_BOOL) :: pressureNeumannLow(1:3), pressureNeumannHigh(1:3)
 
@@ -106,27 +106,31 @@ contains
         pressureNeumannLow = ps%pressureNeumannLow
         pressureNeumannHigh = ps%pressureNeumannHigh
         sor = ps%sor
+        nColorX = (hi(1) - lo(1) + 2_C_INT)/2_C_INT
 
         idt = 1.0_C_DOUBLE/dt_gamma
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do collapse(3) &
-        !$omp& map(to: color, colorOffset, sor, idt, dt_gamma, &
+        !$omp& map(to: color, colorOffset, nColorX, sor, idt, dt_gamma, &
         !$omp& lo(1:3), hi(1:3), pressureNeumannLow(1:3), pressureNeumannHigh(1:3), &
         !$omp& g%d1x, g%d1y, g%d1z, ibm%coef) &
         !$omp& map(tofrom: f%q) &
-        !$omp& private(i,ip,j,jp,k,kp,phi,denom,div,nLowerHaloDirections, &
+        !$omp& private(i,ip,j,jp,k,kp,iColor,phi,denom,div,nLowerHaloDirections, &
         !$omp& mu_u_i,mu_u_ip,mu_v_j,mu_v_jp,mu_w_k,mu_w_kp)
 #endif
         DO k=lo(3),hi(3)
             DO j=lo(2),hi(2)
-                DO i=lo(1),hi(1)
+                DO iColor=0_C_INT,nColorX-1_C_INT
+                    i = lo(1) + modulo(color - modulo(lo(1)+j+k+colorOffset, 2_C_INT), 2_C_INT) &
+                        + 2_C_INT*iColor
+                    if (i > hi(1)) cycle
+
                     nLowerHaloDirections = 0_C_INT
                     if (i == 0_C_INT) nLowerHaloDirections = nLowerHaloDirections + 1_C_INT
                     if (j == 0_C_INT) nLowerHaloDirections = nLowerHaloDirections + 1_C_INT
                     if (k == 0_C_INT) nLowerHaloDirections = nLowerHaloDirections + 1_C_INT
                     if (nLowerHaloDirections > 1_C_INT) cycle
-                    if (modulo(i+j+k+colorOffset, 2_C_INT) /= color) cycle
 
                     jp = j + 1
                     kp = k + 1

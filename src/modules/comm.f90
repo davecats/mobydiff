@@ -30,6 +30,7 @@ module comm
         logical :: periodic(3) = [.false., .false., .false.]
         logical :: physicalLow(3) = [.false., .false., .false.]
         logical :: physicalHigh(3) = [.false., .false., .false.]
+        logical :: communicatedDir(3) = [.false., .false., .false.]
 
         integer :: nNeighbors = 0
         integer :: neighborRank(MAX_NEIGHBORS) = MPI_PROC_NULL
@@ -41,6 +42,8 @@ module comm
         integer :: nPoints(MAX_NEIGHBORS) = 0
 
         integer :: maxBufferCount = 0
+        integer :: totalActiveCount = 0
+        integer :: bufferOffset(MAX_NEIGHBORS) = 0
         real(C_DOUBLE), allocatable :: sendbuf(:,:)
         real(C_DOUBLE), allocatable :: recvbuf(:,:)
 
@@ -111,6 +114,7 @@ contains
         end if
         c%physicalLow = (.not. c%periodic) .and. (c%coords == 0)
         c%physicalHigh = (.not. c%periodic) .and. (c%coords == c%dims - 1)
+        c%communicatedDir = c%periodic .or. (c%dims > 1)
 
         do dir = 1, 3
             call local_range(int(dns%globalSize(dir)), c%dims(dir), c%coords(dir), &
@@ -188,8 +192,12 @@ contains
         call ensure_buffer_capacity(c, count)
 
         c%request = MPI_REQUEST_NULL
+        c%bufferOffset = 0
+        c%totalActiveCount = 0
         do n = 1, c%nNeighbors
             c%activeCount(n) = c%nPoints(n) * c%nActiveVars
+            c%bufferOffset(n) = c%totalActiveCount
+            c%totalActiveCount = c%totalActiveCount + c%activeCount(n)
         end do
 
         call pack_q_boxes(c, f)
@@ -230,6 +238,8 @@ contains
 
         c%request = MPI_REQUEST_NULL
         c%activeCount = 0
+        c%bufferOffset = 0
+        c%totalActiveCount = 0
         c%activeVars = 0_C_INT
         c%nActiveVars = 0
         c%exchangeActive = .false.
@@ -268,7 +278,7 @@ contains
                     c%offset(:,n) = off
                     call MPI_Cart_rank(c%cart_comm, neighborCoords, c%neighborRank(n), ierr)
                     call set_neighbor_boxes(local_n, off, c%physicalLow, c%physicalHigh, &
-                                            c%sendLo(:,n), c%sendHi(:,n), &
+                                            c%communicatedDir, c%sendLo(:,n), c%sendHi(:,n), &
                                             c%recvLo(:,n), c%recvHi(:,n))
                     c%nPoints(n) = box_point_count(c%sendLo(:,n), c%sendHi(:,n))
                     c%nNeighbors = n
@@ -299,9 +309,10 @@ contains
         end do
     end subroutine get_neighbor_coords
 
-    subroutine set_neighbor_boxes(local_n, off, physicalLow, physicalHigh, sendLo, sendHi, recvLo, recvHi)
+    subroutine set_neighbor_boxes(local_n, off, physicalLow, physicalHigh, communicatedDir, &
+                                   sendLo, sendHi, recvLo, recvHi)
         integer, intent(in) :: local_n(3), off(3)
-        logical, intent(in) :: physicalLow(3), physicalHigh(3)
+        logical, intent(in) :: physicalLow(3), physicalHigh(3), communicatedDir(3)
         integer, intent(out) :: sendLo(3), sendHi(3), recvLo(3), recvHi(3)
 
         integer :: dir
@@ -314,8 +325,13 @@ contains
                 recvLo(dir) = 0
                 recvHi(dir) = 0
             case (0)
-                sendLo(dir) = merge(0, 1, physicalLow(dir))
-                sendHi(dir) = merge(local_n(dir)+1, local_n(dir), physicalHigh(dir))
+                if (communicatedDir(dir)) then
+                    sendLo(dir) = 1
+                    sendHi(dir) = local_n(dir)
+                else
+                    sendLo(dir) = merge(0, 1, physicalLow(dir))
+                    sendHi(dir) = merge(local_n(dir)+1, local_n(dir), physicalHigh(dir))
+                end if
                 recvLo(dir) = sendLo(dir)
                 recvHi(dir) = sendHi(dir)
             case (1)
@@ -371,31 +387,25 @@ contains
         type(comm_type), intent(inout) :: c
         type(field_type), intent(in) :: f
 
-        integer :: n
-
-        do n = 1, c%nNeighbors
-            call pack_q_box(c, f, n)
-        end do
-    end subroutine pack_q_boxes
-
-    subroutine pack_q_box(c, f, n)
-        type(comm_type), intent(inout) :: c
-        type(field_type), intent(in) :: f
-        integer, intent(in) :: n
-
-        integer :: p, q, nv, var
-        integer :: i, j, k, ni, nj, nk
+        integer :: pAll, p, q, n, nv, var
+        integer :: i, j, k, ni, nj
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
-        !$omp& map(to: n, c%nPoints, c%activeCount, c%sendLo, c%sendHi, c%activeVars, f%q) &
+        !$omp& map(to: c%nNeighbors, c%totalActiveCount, c%bufferOffset, c%nPoints, &
+        !$omp& c%activeCount, c%sendLo, c%sendHi, c%activeVars, f%q) &
         !$omp& map(tofrom: c%sendbuf) &
-        !$omp& private(p,q,nv,var,i,j,k,ni,nj,nk)
+        !$omp& private(pAll,p,q,n,nv,var,i,j,k,ni,nj)
 #endif
-        do p = 1, c%activeCount(n)
+        do pAll = 1, c%totalActiveCount
+            n = 1
+            do while (n < c%nNeighbors .and. pAll > c%bufferOffset(n) + c%activeCount(n))
+                n = n + 1
+            end do
+
+            p = pAll - c%bufferOffset(n)
             ni = c%sendHi(1,n) - c%sendLo(1,n) + 1
             nj = c%sendHi(2,n) - c%sendLo(2,n) + 1
-            nk = c%sendHi(3,n) - c%sendLo(3,n) + 1
             nv = (p - 1) / c%nPoints(n) + 1
             q = modulo(p - 1, c%nPoints(n))
             i = c%sendLo(1,n) + modulo(q, ni)
@@ -407,37 +417,31 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
 #endif
-    end subroutine pack_q_box
+    end subroutine pack_q_boxes
 
     subroutine unpack_q_boxes(c, f)
         type(comm_type), intent(in) :: c
         type(field_type), intent(inout) :: f
 
-        integer :: n
-
-        do n = 1, c%nNeighbors
-            call unpack_q_box(c, f, n)
-        end do
-    end subroutine unpack_q_boxes
-
-    subroutine unpack_q_box(c, f, n)
-        type(comm_type), intent(in) :: c
-        type(field_type), intent(inout) :: f
-        integer, intent(in) :: n
-
-        integer :: p, q, nv, var
-        integer :: i, j, k, ni, nj, nk
+        integer :: pAll, p, q, n, nv, var
+        integer :: i, j, k, ni, nj
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
-        !$omp& map(to: n, c%nPoints, c%activeCount, c%recvLo, c%recvHi, c%activeVars, c%recvbuf) &
+        !$omp& map(to: c%nNeighbors, c%totalActiveCount, c%bufferOffset, c%nPoints, &
+        !$omp& c%activeCount, c%recvLo, c%recvHi, c%activeVars, c%recvbuf) &
         !$omp& map(tofrom: f%q) &
-        !$omp& private(p,q,nv,var,i,j,k,ni,nj,nk)
+        !$omp& private(pAll,p,q,n,nv,var,i,j,k,ni,nj)
 #endif
-        do p = 1, c%activeCount(n)
+        do pAll = 1, c%totalActiveCount
+            n = 1
+            do while (n < c%nNeighbors .and. pAll > c%bufferOffset(n) + c%activeCount(n))
+                n = n + 1
+            end do
+
+            p = pAll - c%bufferOffset(n)
             ni = c%recvHi(1,n) - c%recvLo(1,n) + 1
             nj = c%recvHi(2,n) - c%recvLo(2,n) + 1
-            nk = c%recvHi(3,n) - c%recvLo(3,n) + 1
             nv = (p - 1) / c%nPoints(n) + 1
             q = modulo(p - 1, c%nPoints(n))
             i = c%recvLo(1,n) + modulo(q, ni)
@@ -449,7 +453,7 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
 #endif
-    end subroutine unpack_q_box
+    end subroutine unpack_q_boxes
 
     subroutine local_range(n_global, nproc_dir, coord, first, last)
         integer, intent(in) :: n_global, nproc_dir, coord
