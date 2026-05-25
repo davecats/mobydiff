@@ -16,7 +16,7 @@ CPUS_PER_TASK="${CPUS_PER_TASK:-8}"
 TASKS_PER_NODE="${TASKS_PER_NODE:-$(( (RANKS + NODES - 1) / NODES ))}"
 EXE="${EXE:-$ROOT/build_gpu/main}"
 INPUT="${INPUT:-$CASE_DIR/input.ini}"
-LAUNCHER="${LAUNCHER:-auto}"
+LAUNCHER="${LAUNCHER:-mpirun}"
 NX="${NX:-200}"
 NY="${NY:-$NX}"
 NZ="${NZ:-$NX}"
@@ -47,11 +47,8 @@ fi
     echo "OMP_NUM_THREADS: $OMP_NUM_THREADS"
     echo "OMP_TARGET_OFFLOAD: $OMP_TARGET_OFFLOAD"
     echo "NVCOMPILER_ACC_NOTIFY: $NVCOMPILER_ACC_NOTIFY"
-    echo "OMPI_MCA_pml: ${OMPI_MCA_pml:-}"
-    echo "OMPI_MCA_coll_hcoll_enable: ${OMPI_MCA_coll_hcoll_enable:-}"
-    echo "UCX_TLS: ${UCX_TLS:-}"
-    echo "UCX_MEMTYPE_CACHE: ${UCX_MEMTYPE_CACHE:-}"
-    echo "UCX_RNDV_THRESH: ${UCX_RNDV_THRESH:-}"
+    echo "launcher: $LAUNCHER"
+    echo "MPI_EXTRA_ARGS: ${MPI_EXTRA_ARGS:-}"
     if type module >/dev/null 2>&1; then module list 2>&1; fi
 } > "$CASE_DIR/env.txt"
 
@@ -64,12 +61,14 @@ if [ ! -x "$EXE" ]; then
     exit 1
 fi
 
-if [ "$LAUNCHER" = "srun" ] || { [ "$LAUNCHER" = "auto" ] && [ -n "${SLURM_JOB_ID:-}" ]; }; then
+if [ "$LAUNCHER" = "srun" ]; then
     cmd=(srun --nodes "$NODES" --ntasks "$RANKS" --ntasks-per-node "$TASKS_PER_NODE" \
          --cpus-per-task "$CPUS_PER_TASK" --gpus-per-task "$GPUS_PER_TASK" \
          --gpu-bind="${GPU_BIND:-single:1}" "$EXE" "$INPUT")
 else
-    cmd=(mpirun -np "$RANKS" "$EXE" "$INPUT")
+    read -r -a mpi_extra_args <<< "${MPI_EXTRA_ARGS:-}"
+    cmd=(mpirun -np "$RANKS" --map-by "ppr:${TASKS_PER_NODE}:node" --bind-to none \
+         "${mpi_extra_args[@]}" "$EXE" "$INPUT")
 fi
 
 printf '%q ' "${cmd[@]}" > "$CASE_DIR/command.txt"

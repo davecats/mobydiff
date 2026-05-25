@@ -18,14 +18,12 @@ The helper script used by the SLURM jobs does the same:
 source profiling/scripts/load_hpc_modules.sh
 ```
 
-It also exports the OpenMPI/UCX settings used for direct device-buffer MPI:
+The profiling scripts use `mpirun` by default. On this cluster, direct `srun` launch of the HPC SDK OpenMPI stack failed during `MPI_Init`, while `mpirun` correctly starts the GPU-aware runtime.
+
+If an MPI stack needs extra MCA/UCX flags, pass them with `MPI_EXTRA_ARGS`, for example:
 
 ```bash
-OMPI_MCA_pml=ucx
-OMPI_MCA_coll_hcoll_enable=0
-UCX_TLS=rc,sm,self,cuda_copy,cuda_ipc
-UCX_MEMTYPE_CACHE=y
-UCX_RNDV_THRESH=0
+MPI_EXTRA_ARGS="--mca pml ucx --mca coll_hcoll_enable 0" profiling/scripts/run_case.sh
 ```
 
 ## Build
@@ -117,6 +115,8 @@ After an interactive allocation:
 source profiling/scripts/load_hpc_modules.sh
 ./compile.sh gpu
 ```
+
+The manual examples below use `mpirun` internally and map ranks as `ppr:TASKS_PER_NODE:node`.
 
 One GPU, 700^3:
 

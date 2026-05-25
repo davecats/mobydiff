@@ -24,7 +24,7 @@ if [ "${DO_BUILD:-1}" = "1" ]; then
     ./compile.sh gpu
 fi
 
-SIZE="${SIZE:-512}"
+SIZE="${SIZE:-700}"
 RANKS="${RANKS:-4}"
 NSTEPS="${NSTEPS:-5}"
 NITER="${NITER:-3}"
@@ -44,10 +44,11 @@ if ! command -v nsys >/dev/null 2>&1; then
     exit 1
 fi
 
-srun --nodes "$NODES" --ntasks "$RANKS" --ntasks-per-node "$TASKS_PER_NODE" \
-     --cpus-per-task "${CPUS_PER_TASK:-8}" --gpus-per-task=1 --gpu-bind="${GPU_BIND:-single:1}" \
+read -r -a mpi_extra_args <<< "${MPI_EXTRA_ARGS:-}"
+mpirun -np "$RANKS" --map-by "ppr:${TASKS_PER_NODE}:node" --bind-to none \
+     "${mpi_extra_args[@]}" \
      nsys profile --force-overwrite=true --sample=none --trace=cuda,nvtx,mpi,osrt \
-     --output="$CASE_DIR/nsys_rank_%q{SLURM_PROCID}" \
+     --output="$CASE_DIR/nsys_rank_%q{OMPI_COMM_WORLD_RANK}" \
      "$ROOT/build_gpu/main" "$CASE_DIR/input.ini" \
      > "$CASE_DIR/stdout.txt" 2> "$CASE_DIR/stderr.txt"
 

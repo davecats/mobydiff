@@ -31,6 +31,7 @@ RANKS_LIST="${RANKS_LIST:-1 2 4 8 16}"
 GPUS_PER_NODE="${GPUS_PER_NODE:-4}"
 RESULTS_ROOT="${RESULTS_ROOT:-$ROOT/profiling/results/${SLURM_JOB_NAME:-strong}-${SLURM_JOB_ID:-manual}}"
 mkdir -p "$RESULTS_ROOT"
+failed=0
 
 for ranks in $RANKS_LIST; do
     nodes=$(( (ranks + GPUS_PER_NODE - 1) / GPUS_PER_NODE ))
@@ -38,14 +39,20 @@ for ranks in $RANKS_LIST; do
         echo "Skipping $ranks ranks: needs $nodes nodes, allocation has $SLURM_JOB_NUM_NODES"
         continue
     fi
+
     tasks_per_node=$(( (ranks + nodes - 1) / nodes ))
     dims="$(python3 profiling/scripts/choose_mpi_dims.py "$SIZE" "$SIZE" "$SIZE" "$ranks")"
     echo "Running strong scaling: size=${SIZE}^3 ranks=$ranks nodes=$nodes dims=$dims"
-    NX="$SIZE" NY="$SIZE" NZ="$SIZE" DIMS="$dims" NSTEPS="$NSTEPS" NITER="$NITER" \
-    RANKS="$ranks" NODES="$nodes" TASKS_PER_NODE="$tasks_per_node" \
-    CASE_NAME="strong_${SIZE}_${ranks}r" RESULTS_ROOT="$RESULTS_ROOT" \
-    profiling/scripts/run_case.sh
+
+    if ! NX="$SIZE" NY="$SIZE" NZ="$SIZE" DIMS="$dims" NSTEPS="$NSTEPS" NITER="$NITER" \
+        RANKS="$ranks" NODES="$nodes" TASKS_PER_NODE="$tasks_per_node" \
+        CASE_NAME="strong_${SIZE}_${ranks}r" RESULTS_ROOT="$RESULTS_ROOT" \
+        profiling/scripts/run_case.sh; then
+        echo "Case strong_${SIZE}_${ranks}r failed; continuing with remaining cases" >&2
+        failed=1
+    fi
 done
 
 python3 profiling/scripts/collect_timings.py "$RESULTS_ROOT" > "$RESULTS_ROOT/timings.csv"
 cat "$RESULTS_ROOT/timings.csv"
+exit "$failed"
