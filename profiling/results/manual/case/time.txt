@@ -1,0 +1,3 @@
+Command exited with non-zero status 1
+elapsed_seconds 2.16
+maxrss_kb 15188

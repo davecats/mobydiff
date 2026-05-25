@@ -48,7 +48,7 @@ srun --nodes "$NODES" --ntasks "$RANKS" --ntasks-per-node "$TASKS_PER_NODE" \
      --cpus-per-task "${CPUS_PER_TASK:-8}" --gpus-per-task=1 --gpu-bind="${GPU_BIND:-single:1}" \
      nsys profile --force-overwrite=true --sample=none --trace=cuda,nvtx,mpi,osrt \
      --output="$CASE_DIR/nsys_rank_%q{SLURM_PROCID}" \
-     "$ROOT/build_gpu_mpi/main" "$CASE_DIR/input.ini" \
+     "$ROOT/build_gpu/main" "$CASE_DIR/input.ini" \
      > "$CASE_DIR/stdout.txt" 2> "$CASE_DIR/stderr.txt"
 
 for rep in "$CASE_DIR"/*.nsys-rep; do

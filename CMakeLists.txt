@@ -7,10 +7,9 @@ project(3D_NSE_SOLVER LANGUAGES Fortran C)
 # =========================
 option(USE_OPENMP_OFFLOAD "Enable OpenMP target offload for accelerator execution" OFF)
 option(USE_IBM_SECONDORDER "Use second-order IBM interpolation/correction" ON)
-option(USE_CMAKE_FIND_MPI "Use CMake FindMPI instead of externally supplied MPI wrapper flags" ON)
 set(OPENMP_OFFLOAD_FLAGS "" CACHE STRING "Additional Fortran compiler/linker flags for OpenMP target offload")
-set(MPI_WRAPPER_COMPILE_FLAGS "" CACHE STRING "MPI wrapper compile flags used when USE_CMAKE_FIND_MPI=OFF")
-set(MPI_WRAPPER_LINK_FLAGS "" CACHE STRING "MPI wrapper link flags used when USE_CMAKE_FIND_MPI=OFF")
+set(MPI_WRAPPER_COMPILE_FLAGS "" CACHE STRING "MPI wrapper compile flags")
+set(MPI_WRAPPER_LINK_FLAGS "" CACHE STRING "MPI wrapper link flags")
 set(MPI_FORTRAN_MODULE_DIR "" CACHE PATH "Directory containing mpi_f08.mod")
 
 # =========================
@@ -93,42 +92,34 @@ message(STATUS "HDF5 include dir: ${HDF5_C_INCLUDE_DIR}")
 message(STATUS "HDF5 C library: ${HDF5_C_LIB}")
 message(STATUS "Pressure solver: red-black SOR")
 message(STATUS "MPI support: required")
-message(STATUS "MPI discovery: ${USE_CMAKE_FIND_MPI}")
+message(STATUS "MPI wrapper compile flags: ${MPI_WRAPPER_COMPILE_FLAGS}")
+message(STATUS "MPI wrapper link flags: ${MPI_WRAPPER_LINK_FLAGS}")
+if(MPI_FORTRAN_MODULE_DIR)
+    message(STATUS "MPI Fortran module dir: ${MPI_FORTRAN_MODULE_DIR}")
+endif()
+
+if(NOT MPI_WRAPPER_LINK_FLAGS)
+    message(FATAL_ERROR "MPI_WRAPPER_LINK_FLAGS is required")
+endif()
 
 target_include_directories(main PRIVATE ${HDF5_C_INCLUDE_DIR})
 target_link_libraries(main PRIVATE ${HDF5_C_LIB})
 
-if(USE_CMAKE_FIND_MPI)
-    find_package(MPI REQUIRED COMPONENTS Fortran C)
-    target_link_libraries(main PRIVATE MPI::MPI_Fortran MPI::MPI_C)
-    target_include_directories(main PRIVATE ${MPI_Fortran_INCLUDE_DIRS} ${MPI_C_INCLUDE_DIRS})
-    if(MPI_FORTRAN_MODULE_DIR)
-        message(STATUS "MPI Fortran module dir: ${MPI_FORTRAN_MODULE_DIR}")
-        target_include_directories(main PRIVATE ${MPI_FORTRAN_MODULE_DIR})
-    endif()
-else()
-    if(NOT MPI_WRAPPER_LINK_FLAGS)
-        message(FATAL_ERROR "MPI_WRAPPER_LINK_FLAGS is required when USE_CMAKE_FIND_MPI=OFF")
-    endif()
-
-    message(STATUS "MPI wrapper compile flags: ${MPI_WRAPPER_COMPILE_FLAGS}")
-    message(STATUS "MPI wrapper link flags: ${MPI_WRAPPER_LINK_FLAGS}")
-    if(MPI_FORTRAN_MODULE_DIR)
-        message(STATUS "MPI Fortran module dir: ${MPI_FORTRAN_MODULE_DIR}")
-        target_include_directories(main PRIVATE ${MPI_FORTRAN_MODULE_DIR})
-    endif()
-
-    separate_arguments(MPI_WRAPPER_COMPILE_FLAGS_LIST NATIVE_COMMAND "${MPI_WRAPPER_COMPILE_FLAGS}")
-    separate_arguments(MPI_WRAPPER_LINK_FLAGS_LIST NATIVE_COMMAND "${MPI_WRAPPER_LINK_FLAGS}")
-
-    foreach(flag IN LISTS MPI_WRAPPER_COMPILE_FLAGS_LIST)
-        target_compile_options(main PRIVATE
-            $<$<COMPILE_LANGUAGE:Fortran>:${flag}>
-            $<$<COMPILE_LANGUAGE:C>:${flag}>
-        )
-    endforeach()
-    target_link_libraries(main PRIVATE ${MPI_WRAPPER_LINK_FLAGS_LIST})
+if(MPI_FORTRAN_MODULE_DIR)
+    target_include_directories(main PRIVATE ${MPI_FORTRAN_MODULE_DIR})
 endif()
+
+separate_arguments(MPI_WRAPPER_COMPILE_FLAGS_LIST NATIVE_COMMAND "${MPI_WRAPPER_COMPILE_FLAGS}")
+separate_arguments(MPI_WRAPPER_LINK_FLAGS_LIST NATIVE_COMMAND "${MPI_WRAPPER_LINK_FLAGS}")
+
+foreach(flag IN LISTS MPI_WRAPPER_COMPILE_FLAGS_LIST)
+    target_compile_options(main PRIVATE
+        $<$<COMPILE_LANGUAGE:Fortran>:${flag}>
+        $<$<COMPILE_LANGUAGE:C>:${flag}>
+    )
+endforeach()
+
+target_link_libraries(main PRIVATE ${MPI_WRAPPER_LINK_FLAGS_LIST})
 
 # =========================
 # Optional features

@@ -1,25 +1,22 @@
 #!/usr/bin/env bash
-# Source this file from SLURM scripts before building or running on the HPC system.
+# Source this file before building or running on the cluster.
 
 set -euo pipefail
 
 module purge
-module load toolkit/nvidia-hpc-sdk/25.3-nompi
-module load mpi/openmpi/5.0
-module load lib/hdf5/1.14
+module load toolkit/nvidia-hpc-sdk/25.3
 
-export FC="${FC:-nvfortran}"
-export CC="${CC:-nvc}"
+export HDF5_ROOT="${HDF5_ROOT:-/hkfs/work/workspace/scratch/xt8786-mobydiff/mobydiff/lib}"
+export FC="${FC:-mpifort}"
+export CC="${CC:-mpicc}"
 export MPI_FC_WRAPPER="${MPI_FC_WRAPPER:-mpifort}"
-export FDM_FAST_MPI="${FDM_FAST_MPI:-1}"
+export MPI_C_WRAPPER="${MPI_C_WRAPPER:-mpicc}"
+export OMP_TARGET_OFFLOAD="${OMP_TARGET_OFFLOAD:-MANDATORY}"
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
 
-# Different sites expose HDF5 module prefixes under different variable names.
-if [ -z "${HDF5_ROOT:-}" ]; then
-    if [ -n "${HDF5_HOME:-}" ]; then
-        export HDF5_ROOT="$HDF5_HOME"
-    elif [ -n "${EBROOTHDF5:-}" ]; then
-        export HDF5_ROOT="$EBROOTHDF5"
-    elif [ -n "${HDF5_DIR:-}" ]; then
-        export HDF5_ROOT="$HDF5_DIR"
-    fi
-fi
+# The GPU path passes OpenMP device buffers directly to MPI.
+export OMPI_MCA_pml="${OMPI_MCA_pml:-ucx}"
+export OMPI_MCA_coll_hcoll_enable="${OMPI_MCA_coll_hcoll_enable:-0}"
+export UCX_TLS="${UCX_TLS:-rc,sm,self,cuda_copy,cuda_ipc}"
+export UCX_MEMTYPE_CACHE="${UCX_MEMTYPE_CACHE:-y}"
+export UCX_RNDV_THRESH="${UCX_RNDV_THRESH:-0}"
