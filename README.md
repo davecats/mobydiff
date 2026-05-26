@@ -6,9 +6,7 @@ A WIP simple and (reasonably) efficient solver of the incompressible Navier-Stok
 
 *  _cmake > 3.22_
 *  _gcc >= 13_
-
-For CPU support
-* _fftw >= 3.1_
+*  _libhdf5 >= 1.14_ with parallel support
 
 For GPU support
 * NVIDIA: NVHPC + CUDA _12+_
