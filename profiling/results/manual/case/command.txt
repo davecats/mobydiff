@@ -1,1 +1,0 @@
-mpirun -np 1 /home/davide/Codes/FDM/build_gpu_mpi/main /home/davide/Codes/FDM/profiling/results/manual/case/input.ini 

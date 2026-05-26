@@ -2,7 +2,6 @@
 set -euo pipefail
 
 mode="${1:-gpu}"
-DEFAULT_HDF5_ROOT="/hkfs/work/workspace/scratch/xt8786-mobydiff/mobydiff/lib"
 
 cache_value() {
     local build_dir="$1"
@@ -144,6 +143,7 @@ configure_and_build() {
     local mpi_compile_flags
     local mpi_link_flags
     local hdf5_root
+    local -a cmake_args
 
     if [ -z "$mpi_fortran_module_dir" ]; then
         mpi_fortran_module_dir="$(find_mpi_fortran_module_dir "$mpi_fc_wrapper" || true)"
@@ -165,15 +165,24 @@ configure_and_build() {
         exit 1
     fi
 
-    hdf5_root="${HDF5_ROOT:-$DEFAULT_HDF5_ROOT}"
+    hdf5_root="${HDF5_ROOT:-}"
+    if [ -n "$hdf5_root" ]; then
+        echo "HDF5_ROOT: $hdf5_root"
+    else
+        echo "HDF5_ROOT: not set; using CMake/system search paths"
+    fi
 
-    cmake -S . -B "$build_dir" \
-        -UHDF5_C_INCLUDE_DIR -UHDF5_C_LIB \
-        -DHDF5_ROOT="$hdf5_root" \
-        -DMPI_WRAPPER_COMPILE_FLAGS="$mpi_compile_flags" \
-        -DMPI_WRAPPER_LINK_FLAGS="$mpi_link_flags" \
-        -DMPI_FORTRAN_MODULE_DIR="$mpi_fortran_module_dir" \
+    cmake_args=(
+        -S . -B "$build_dir"
+        -UHDF5_C_INCLUDE_DIR -UHDF5_C_LIB
+        -DHDF5_ROOT="$hdf5_root"
+        -DMPI_WRAPPER_COMPILE_FLAGS="$mpi_compile_flags"
+        -DMPI_WRAPPER_LINK_FLAGS="$mpi_link_flags"
+        -DMPI_FORTRAN_MODULE_DIR="$mpi_fortran_module_dir"
         -DUSE_OPENMP_OFFLOAD="$offload"
+    )
+
+    cmake "${cmake_args[@]}"
 
     cmake --build "$build_dir" -j
     print_build_summary "$name" "$build_dir"
@@ -189,7 +198,7 @@ case "$mode" in
     *)
         echo "Usage: $0 [cpu|gpu]" >&2
         echo "MPI is always enabled. GPU builds require a GPU-aware MPI stack." >&2
-        echo "Default HDF5_ROOT: $DEFAULT_HDF5_ROOT" >&2
+        echo "Set HDF5_ROOT=/path/to/parallel-hdf5 if CMake cannot find HDF5." >&2
         exit 1
         ;;
 esac
