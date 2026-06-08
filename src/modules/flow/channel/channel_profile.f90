@@ -7,6 +7,7 @@ module channel_profile
     private
 
     real(C_DOUBLE), parameter :: PI = 3.1415926535897932384626433832795d0
+    integer, parameter :: LARGE_DISTURBANCE_NMODES = 5
 
     public :: initialise_channel_fields
 
@@ -83,9 +84,23 @@ contains
         real(C_DOUBLE), intent(in) :: amplitude, envelope, stream_x, span_x
         real(C_DOUBLE), intent(in) :: stream_length, span_length
 
-        value = amplitude*envelope * &
-            sin(2.0d0*PI*stream_x/max(stream_length, 1.0d-12)) * &
-            cos(2.0d0*PI*span_x/max(span_length, 1.0d-12))
+        integer :: mode
+        real(C_DOUBLE) :: stream_phase, span_phase, weight, norm
+
+        stream_phase = 2.0d0*PI*stream_x/max(stream_length, 1.0d-12)
+        span_phase = 2.0d0*PI*span_x/max(span_length, 1.0d-12)
+
+        value = 0.0d0
+        norm = 0.0d0
+        do mode = 1, LARGE_DISTURBANCE_NMODES
+            weight = 1.0d0/real(mode, C_DOUBLE)
+            value = value + weight * &
+                sin(real(mode, C_DOUBLE)*stream_phase) * &
+                cos(real(mode, C_DOUBLE)*span_phase)
+            norm = norm + weight
+        end do
+
+        if (norm > 0.0d0) value = amplitude*envelope*value/norm
     end function large_disturbance
 
     real(C_DOUBLE) function disturbance_component(var, large) result(value)
