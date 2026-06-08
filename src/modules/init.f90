@@ -31,6 +31,7 @@ module init
         real(C_DOUBLE) :: cfl(1:NCFL) = 0.0d0
         real(C_DOUBLE) :: cflmax = 0.0d0
         real(C_DOUBLE) :: pecletmax = 0.0d0
+        real(C_DOUBLE) :: peclet_rate = 0.0d0
         real(C_DOUBLE) :: dtmax = 0.0d0
         real(C_DOUBLE) :: forcing(1:3) = 0.0d0
         logical(C_BOOL) :: ibm_enabled = .true.

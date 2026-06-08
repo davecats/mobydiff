@@ -254,9 +254,39 @@ contains
         type(field_type), intent(inout) :: f
         integer(C_INT), intent(in) :: vars(:)
 
+        call require_ready(c)
+        if (c%exchangeActive) error stop "halo exchange already active"
+
+        call set_active_vars(c, vars)
+        if (c%nNeighbors == 0 .or. c%nActiveVars == 0) return
+
         call start_halo_exchange(c, f, vars)
         call finish_halo_exchange(c, f)
     end subroutine exchange_halos
+
+    subroutine prepare_active_counts(c)
+        type(comm_type), intent(inout) :: c
+
+        integer :: n
+
+        c%bufferOffset = 0
+        c%totalActiveCount = 0
+        do n = 1, c%nNeighbors
+            c%activeCount(n) = c%nPoints(n) * c%nActiveVars
+            c%bufferOffset(n) = c%totalActiveCount
+            c%totalActiveCount = c%totalActiveCount + c%activeCount(n)
+        end do
+    end subroutine prepare_active_counts
+
+    subroutine clear_active_counts(c)
+        type(comm_type), intent(inout) :: c
+
+        c%activeCount = 0
+        c%bufferOffset = 0
+        c%totalActiveCount = 0
+        c%activeVars = 0_C_INT
+        c%nActiveVars = 0
+    end subroutine clear_active_counts
 
     subroutine build_neighbors(c, local_n)
         type(comm_type), intent(inout) :: c

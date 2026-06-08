@@ -30,6 +30,7 @@ module ibmm
         real(C_DOUBLE) :: amp_z, phase_z
 
         real(C_DOUBLE), allocatable :: coef(:,:,:,:)
+        real(C_DOUBLE), allocatable :: mu(:,:,:,:)
 
     end type ibm_type
 
@@ -57,7 +58,9 @@ contains
         ibm%phase_z = 0.0d0
 
         allocate(ibm%coef(0:nx+1,0:ny+1,0:nz+1,VAR_U:VAR_W))
+        allocate(ibm%mu(0:nx+1,0:ny+1,0:nz+1,VAR_U:VAR_W))
         ibm%coef = 0.0d0
+        ibm%mu = 1.0d0
     end subroutine init_ibm
 
     subroutine enter_ibm_data(ibm, dns)
@@ -66,7 +69,7 @@ contains
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target enter data map(to: ibm)
-        !$omp target enter data map(to: ibm%coef)
+        !$omp target enter data map(to: ibm%coef, ibm%mu)
 #endif
     end subroutine enter_ibm_data
 
@@ -75,7 +78,7 @@ contains
         type(dns_type), intent(in)    :: dns
 
 #ifdef USE_OPENMP_OFFLOAD
-        !$omp target exit data map(delete: ibm%coef)
+        !$omp target exit data map(delete: ibm%coef, ibm%mu)
         !$omp target exit data map(delete: ibm)
 #endif
     end subroutine exit_ibm_data
@@ -218,5 +221,39 @@ contains
         !$omp end target teams distribute parallel do
 #endif
     end subroutine set_ibm_coeff
-    
+
+    subroutine update_ibm_mu(ibm, dt_gamma)
+        type(ibm_type), intent(inout) :: ibm
+        real(C_DOUBLE), intent(in) :: dt_gamma
+
+        integer :: ix, iy, iz, var
+        integer :: ilo, ihi, jlo, jhi, klo, khi
+
+        ilo = lbound(ibm%coef,1)
+        ihi = ubound(ibm%coef,1)
+        jlo = lbound(ibm%coef,2)
+        jhi = ubound(ibm%coef,2)
+        klo = lbound(ibm%coef,3)
+        khi = ubound(ibm%coef,3)
+
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target teams distribute parallel do collapse(4) &
+        !$omp& map(to: dt_gamma, ilo, ihi, jlo, jhi, klo, khi, ibm%coef) &
+        !$omp& map(tofrom: ibm%mu) &
+        !$omp& private(ix,iy,iz,var)
+#endif
+        do var = VAR_U, VAR_W
+            do iz = klo, khi
+                do iy = jlo, jhi
+                    do ix = ilo, ihi
+                        ibm%mu(ix,iy,iz,var) = 1.0d0/(1.0d0 + dt_gamma*ibm%coef(ix,iy,iz,var))
+                    end do
+                end do
+            end do
+        end do
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp end target teams distribute parallel do
+#endif
+    end subroutine update_ibm_mu
+
 end module ibmm

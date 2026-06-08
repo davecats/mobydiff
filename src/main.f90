@@ -51,6 +51,7 @@ program main
     if (c%has_terminal) print *, "initialising grid..."
     call init_grid(g, dns, bc%isPeriodic)
     call validate_dns_values(dns, g)
+    call precompute_peclet_rate(dns, g, c)
     call init_boundary_faces(bc, dns, g)
     call init_openmp_offload(c%has_terminal)
     call enter_grid_data(g, dns)
@@ -99,6 +100,7 @@ program main
             dt_gamma = dns%dt*rk_gamma(rkStage)
 
             ! Predictor: advance tentative staggered velocities, then enforce solid/body constraints.
+            call update_ibm_mu(ibm, dt_gamma)
             call momentum(f, dns, g, dt_alpha, dt_beta, dt_gamma, ibm, bc)
             call apply_bc(f, dns, g, bc)
             call exchange_halos(c, f, [VAR_U, VAR_V, VAR_W])

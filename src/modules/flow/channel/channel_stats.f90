@@ -27,10 +27,8 @@ module channel_stats
     type, public :: channel_stats_type
         integer :: sample_interval = -1
         integer :: write_interval = -1
-        integer :: runtime_interval = -1
         character(len=256) :: file = "channel_stats.h5"
         character(len=256) :: runtime_file = "runtimedata.txt"
-        logical :: on_device = .false.
         logical :: runtime_header_written = .false.
         integer(int64) :: clock_start = 0_int64
         integer(int64) :: clock_rate = 0_int64
@@ -42,8 +40,7 @@ module channel_stats
         real(C_DOUBLE), allocatable :: coord(:)
     contains
         procedure :: setup => channel_stats_setup
-        procedure :: accumulate => channel_stats_accumulate
-        procedure :: write => channel_stats_write
+        procedure :: after_step => channel_stats_after_step
         procedure :: write_hdf5 => channel_stats_write_hdf5
         procedure :: finalize => channel_stats_finalize
     end type channel_stats_type
@@ -82,8 +79,7 @@ contains
 
         integer :: nwall, n
 
-        if (this%sample_interval <= 0 .and. this%write_interval <= 0 .and. &
-                this%runtime_interval <= 0) return
+        if (this%sample_interval <= 0 .and. this%write_interval <= 0) return
 
         call system_clock(count=this%clock_start, count_rate=this%clock_rate)
         this%clock_step_start = dns%step_current
@@ -108,30 +104,61 @@ contains
             call read_channel_stats_restart(this, dns, c)
         end if
 
-#ifdef USE_OPENMP_OFFLOAD
-        !$omp target enter data map(to: this%sum, this%count)
-        this%on_device = .true.
-#endif
     end subroutine channel_stats_setup
 
-    subroutine channel_stats_accumulate(this, f, dns, g)
+    subroutine channel_stats_after_step(this, f, dns, g, c)
         class(channel_stats_type), intent(inout) :: this
         type(field_type), intent(inout) :: f
         type(dns_type), intent(in) :: dns
         type(grid_type), intent(in) :: g
+        type(comm_type), intent(in) :: c
+
+        logical :: sample_stats, write_stats
+        real(C_DOUBLE), allocatable :: sample_sum(:), sample_count(:)
+
+        if (.not. allocated(this%sum)) return
+
+        sample_stats = interval_is_due(dns%step_current, this%sample_interval)
+        write_stats = interval_is_due(dns%step_current, this%write_interval)
+
+        if (sample_stats) then
+            allocate(sample_sum(size(this%sum)))
+            allocate(sample_count(size(this%count)))
+            call collect_channel_sample(f, dns, g, sample_sum, sample_count)
+            call add_channel_sample(this, sample_sum, sample_count)
+            call write_runtime_sample(this, dns, c, sample_sum, sample_count)
+        end if
+
+        if (write_stats) call this%write_hdf5(dns, c)
+    end subroutine channel_stats_after_step
+
+    logical function interval_is_due(step, interval) result(is_due)
+        integer(C_INT), intent(in) :: step
+        integer, intent(in) :: interval
+
+        is_due = .false.
+        if (interval <= 0) return
+        is_due = modulo(int(step), interval) == 0
+    end function interval_is_due
+
+    subroutine collect_channel_sample(f, dns, g, sample_sum, sample_count)
+        type(field_type), intent(inout) :: f
+        type(dns_type), intent(in) :: dns
+        type(grid_type), intent(in) :: g
+        real(C_DOUBLE), intent(inout) :: sample_sum(:), sample_count(:)
 
         integer :: i, j, k, s, nx, ny, nz, global_wall_idx, base
         real(C_DOUBLE) :: p, kin, eps, velocity(3), sample(CHANNEL_NSTAT)
 
-        if (.not. allocated(this%sum)) return
-
         nx = int(dns%localSize(1,2))
         ny = int(dns%localSize(2,2))
         nz = int(dns%localSize(3,2))
+        sample_sum = 0.0d0
+        sample_count = 0.0d0
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do collapse(3) &
-        !$omp& map(to: this, dns, g, f%q) map(tofrom: this%sum, this%count) &
+        !$omp& map(to: dns, g, f%q) map(tofrom: sample_sum, sample_count) &
         !$omp& private(i,j,k,s,global_wall_idx,base,p,kin,eps,velocity,sample)
 #endif
         do k = 1, nz
@@ -147,10 +174,10 @@ contains
                     sample = channel_sample(velocity, p, kin, eps)
 
                     !$omp atomic update
-                    this%count(global_wall_idx) = this%count(global_wall_idx) + 1.0d0
+                    sample_count(global_wall_idx) = sample_count(global_wall_idx) + 1.0d0
                     do s = 1, CHANNEL_NSTAT
                         !$omp atomic update
-                        this%sum(base + s) = this%sum(base + s) + sample(s)
+                        sample_sum(base + s) = sample_sum(base + s) + sample(s)
                     end do
                 end do
             end do
@@ -158,32 +185,39 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
 #endif
-    end subroutine channel_stats_accumulate
+    end subroutine collect_channel_sample
 
-    subroutine channel_stats_write(this, f, dns, g, c, write_hdf5, write_runtime)
+    subroutine add_channel_sample(this, sample_sum, sample_count)
         class(channel_stats_type), intent(inout) :: this
-        type(field_type), intent(inout) :: f
-        type(dns_type), intent(in) :: dns
-        type(grid_type), intent(in) :: g
-        type(comm_type), intent(in) :: c
-        logical, intent(in) :: write_hdf5, write_runtime
+        real(C_DOUBLE), intent(in) :: sample_sum(:), sample_count(:)
 
+        this%sum = this%sum + sample_sum
+        this%count = this%count + sample_count
+    end subroutine add_channel_sample
+
+    subroutine write_runtime_sample(this, dns, c, sample_sum, sample_count)
+        class(channel_stats_type), intent(inout) :: this
+        type(dns_type), intent(in) :: dns
+        type(comm_type), intent(in) :: c
+        real(C_DOUBLE), intent(in) :: sample_sum(:), sample_count(:)
+
+        real(C_DOUBLE), allocatable :: reduced_sum(:), reduced_count(:)
         real(C_DOUBLE) :: flow_values(2), volume_values(2)
         real(C_DOUBLE) :: wall_seconds_per_step
 
-        if (.not. (write_hdf5 .or. write_runtime)) return
-        if (.not. allocated(this%sum)) return
+        allocate(reduced_sum(size(sample_sum)))
+        allocate(reduced_count(size(sample_count)))
+        reduced_sum = sample_sum
+        reduced_count = sample_count
+        call comm_allreduce_sum(c, reduced_sum)
+        call comm_allreduce_sum(c, reduced_count)
 
-        if (write_runtime) then
-            call channel_runtime_diagnostics(this, f, dns, g, c, flow_values, volume_values)
-            wall_seconds_per_step = channel_wall_seconds_per_step(this, dns)
-            if (c%has_terminal) then
-                call write_runtime_output(this, dns, flow_values, volume_values, wall_seconds_per_step)
-            end if
+        call channel_runtime_values(this, dns, reduced_sum, reduced_count, flow_values, volume_values)
+        wall_seconds_per_step = channel_wall_seconds_per_step(this, dns)
+        if (c%has_terminal) then
+            call write_runtime_output(this, dns, flow_values, volume_values, wall_seconds_per_step)
         end if
-
-        if (write_hdf5) call this%write_hdf5(dns, c)
-    end subroutine channel_stats_write
+    end subroutine write_runtime_sample
 
     subroutine channel_stats_write_hdf5(this, dns, c)
         class(channel_stats_type), intent(inout) :: this
@@ -197,12 +231,6 @@ contains
 
         if (.not. allocated(this%sum)) return
         if (this%last_write_step == dns%step_current) return
-
-#ifdef USE_OPENMP_OFFLOAD
-        if (this%on_device) then
-            !$omp target update from(this%sum, this%count)
-        end if
-#endif
 
         nwall = size(this%count)
         allocate(raw_sum(size(this%sum)))
@@ -235,13 +263,6 @@ contains
         type(comm_type), intent(in) :: c
 
         call this%write_hdf5(dns, c)
-
-#ifdef USE_OPENMP_OFFLOAD
-        if (this%on_device) then
-            !$omp target exit data map(delete: this%sum, this%count)
-        end if
-#endif
-        this%on_device = .false.
     end subroutine channel_stats_finalize
 
     subroutine centered_velocity(f, i, j, k, velocity)
@@ -415,98 +436,53 @@ contains
         end if
     end subroutine write_runtime_output
 
-    subroutine channel_runtime_diagnostics(this, f, dns, g, c, flow_values, volume_values)
+    subroutine channel_runtime_values(this, dns, sample_sum, sample_count, flow_values, volume_values)
         class(channel_stats_type), intent(in) :: this
-        type(field_type), intent(inout) :: f
         type(dns_type), intent(in) :: dns
-        type(grid_type), intent(in) :: g
-        type(comm_type), intent(in) :: c
+        real(C_DOUBLE), intent(in) :: sample_sum(:), sample_count(:)
         real(C_DOUBLE), intent(out) :: flow_values(2)
         real(C_DOUBLE), intent(out) :: volume_values(2)
 
-        integer :: i, j, k, nx, ny, nz, nwall, global_wall_idx, base, mean_base, n
-        real(C_DOUBLE) :: velocity(3), kin, eps, total_count, mean_eps
-        real(C_DOUBLE), allocatable :: plane_sum(:), plane_count(:), mean_velocity(:)
+        integer :: nwall, base, mean_base, n
+        real(C_DOUBLE) :: total_count, mean_eps
+        real(C_DOUBLE), allocatable :: mean_velocity(:)
 
-        nx = int(dns%localSize(1,2))
-        ny = int(dns%localSize(2,2))
-        nz = int(dns%localSize(3,2))
-        nwall = int(dns%globalSize(2))
-        allocate(plane_sum(5*nwall))
-        allocate(plane_count(nwall))
+        nwall = size(sample_count)
         allocate(mean_velocity(3*nwall))
-        plane_sum = 0.0d0
-        plane_count = 0.0d0
         mean_velocity = 0.0d0
 
-#ifdef USE_OPENMP_OFFLOAD
-        !$omp target teams distribute parallel do collapse(3) &
-        !$omp& map(to: dns, g, f%q) map(tofrom: plane_sum(1:5*nwall), plane_count(1:nwall)) &
-        !$omp& private(i,j,k,global_wall_idx,base,velocity,kin,eps)
-#endif
-        do k = 1, nz
-            do j = 1, ny
-                do i = 1, nx
-                    global_wall_idx = int(dns%localSize(2,0)) + j - 1
-                    base = 5*(global_wall_idx - 1)
-
-                    call centered_velocity(f, i, j, k, velocity)
-                    kin = 0.5d0*sum(velocity*velocity)
-                    eps = channel_dissipation(f, dns, g, i, j, k)
-
-                    !$omp atomic update
-                    plane_count(global_wall_idx) = plane_count(global_wall_idx) + 1.0d0
-                    !$omp atomic update
-                    plane_sum(base+1) = plane_sum(base+1) + velocity(1)
-                    !$omp atomic update
-                    plane_sum(base+2) = plane_sum(base+2) + velocity(2)
-                    !$omp atomic update
-                    plane_sum(base+3) = plane_sum(base+3) + velocity(3)
-                    !$omp atomic update
-                    plane_sum(base+4) = plane_sum(base+4) + kin
-                    !$omp atomic update
-                    plane_sum(base+5) = plane_sum(base+5) + eps
-                end do
-            end do
-        end do
-#ifdef USE_OPENMP_OFFLOAD
-        !$omp end target teams distribute parallel do
-#endif
-
-        call comm_allreduce_sum(c, plane_sum)
-        call comm_allreduce_sum(c, plane_count)
         flow_values = 0.0d0
         volume_values = 0.0d0
-        total_count = sum(plane_count)
+        total_count = sum(sample_count)
 
         do n = 1, nwall
-            if (plane_count(n) <= 0.0d0) cycle
-            base = 5*(n - 1)
+            if (sample_count(n) <= 0.0d0) cycle
+            base = CHANNEL_NSTAT*(n - 1)
             mean_base = 3*(n - 1)
-            mean_velocity(mean_base+1) = plane_sum(base+1)/plane_count(n)
-            mean_velocity(mean_base+2) = plane_sum(base+2)/plane_count(n)
-            mean_velocity(mean_base+3) = plane_sum(base+3)/plane_count(n)
+            mean_velocity(mean_base+1) = sample_sum(base+STAT_U)/sample_count(n)
+            mean_velocity(mean_base+2) = sample_sum(base+STAT_V)/sample_count(n)
+            mean_velocity(mean_base+3) = sample_sum(base+STAT_W)/sample_count(n)
         end do
 
         do n = 1, nwall
-            if (plane_count(n) <= 0.0d0) cycle
-            base = 5*(n - 1)
+            if (sample_count(n) <= 0.0d0) cycle
+            base = CHANNEL_NSTAT*(n - 1)
             mean_base = 3*(n - 1)
-            flow_values(1) = flow_values(1) + plane_sum(base+1)
-            flow_values(2) = flow_values(2) + plane_sum(base+3)
-            volume_values(1) = volume_values(1) + plane_count(n)*max(0.0d0, &
-                plane_sum(base+4)/plane_count(n) - 0.5d0*(mean_velocity(mean_base+1)**2 + &
+            flow_values(1) = flow_values(1) + sample_sum(base+STAT_U)
+            flow_values(2) = flow_values(2) + sample_sum(base+STAT_W)
+            volume_values(1) = volume_values(1) + sample_count(n)*max(0.0d0, &
+                sample_sum(base+STAT_K)/sample_count(n) - 0.5d0*(mean_velocity(mean_base+1)**2 + &
                 mean_velocity(mean_base+2)**2 + mean_velocity(mean_base+3)**2))
-            mean_eps = mean_profile_dissipation_at(mean_velocity, this%coord, plane_count, n, dns%re)
-            volume_values(2) = volume_values(2) + plane_count(n)*max(0.0d0, &
-                plane_sum(base+5)/plane_count(n) - mean_eps)
+            mean_eps = mean_profile_dissipation_at(mean_velocity, this%coord, sample_count, n, dns%re)
+            volume_values(2) = volume_values(2) + sample_count(n)*max(0.0d0, &
+                sample_sum(base+STAT_EPSILON)/sample_count(n) - mean_eps)
         end do
 
         if (total_count > 0.0d0) then
             flow_values = flow_values/total_count
             volume_values = volume_values/total_count
         end if
-    end subroutine channel_runtime_diagnostics
+    end subroutine channel_runtime_values
 
     real(C_DOUBLE) function mean_profile_dissipation_at(mean_velocity, coord, count, n, re) result(mean_eps)
         real(C_DOUBLE), intent(in) :: mean_velocity(:), coord(:), count(:)

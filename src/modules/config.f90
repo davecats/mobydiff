@@ -177,10 +177,10 @@ subroutine apply_config_value(section, key, value, dns, g, ps, bc, c, seen, line
         case ("niter")
             niter_value = int(ps%nIter)
             call read_integer(value, niter_value, line_no)
-            if (niter_value > 0) then
+            if (niter_value >= 0) then
                 ps%nIter = int(niter_value, C_INT)
             else
-                if (terminal_output) print *, "warning: pressure nIter must be positive on input line", line_no
+                if (terminal_output) print *, "warning: pressure nIter must be non-negative on input line", line_no
             end if
         case ("sor")
             call read_real(value, ps%sor, line_no)

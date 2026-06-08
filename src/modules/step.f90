@@ -26,6 +26,34 @@ module step
 
 contains
 
+    subroutine precompute_peclet_rate(dns, g, c)
+        type(dns_type), intent(inout) :: dns
+        type(grid_type), intent(in) :: g
+        type(comm_type), intent(in) :: c
+
+        integer :: i, nx, ny, nz
+        real(C_DOUBLE) :: ire, local_rate(1)
+
+        nx = int(dns%localSize(1,2))
+        ny = int(dns%localSize(2,2))
+        nz = int(dns%localSize(3,2))
+        ire = 1.0d0/dns%re
+
+        local_rate = 0.0d0
+        do i = 0, nx+1
+            local_rate(1) = max(local_rate(1), ire*g%d1x(i,VAR_P)**2)
+        end do
+        do i = 0, ny+1
+            local_rate(1) = max(local_rate(1), ire*g%d1y(i,VAR_P)**2)
+        end do
+        do i = 0, nz+1
+            local_rate(1) = max(local_rate(1), ire*g%d1z(i,VAR_P)**2)
+        end do
+
+        call comm_allreduce_max(c, local_rate)
+        dns%peclet_rate = local_rate(1)
+    end subroutine precompute_peclet_rate
+
     subroutine momentum(f, dns, g, dt_alpha, dt_beta, dt_gamma, ibm, bc)
         type(field_type), intent(inout) :: f
         type(dns_type),   intent(in)    :: dns
@@ -68,7 +96,7 @@ contains
         !$omp& ire, forcing(1:3), &
         !$omp& g%d1x, g%d1y, g%d1z, &
         !$omp& g%lapXm, g%lapX0, g%lapXp, g%lapYm, g%lapY0, g%lapYp, &
-        !$omp& g%lapZm, g%lapZ0, g%lapZp, f%q, ibm%coef) &
+        !$omp& g%lapZm, g%lapZ0, g%lapZp, f%q, ibm%mu) &
         !$omp& map(tofrom: f%qs, f%oldrhs) &
         !$omp& private(i,j,k,ip,im,jp,jm,kp,km,uu_p,uu_m,uv_p,uv_m,uw_p,uw_m, &
         !$omp& vu_p,vu_m,vv_p,vv_m,vw_p,vw_m,wu_p,wu_m,ww_p,ww_m,wv_p,wv_m, &
@@ -120,7 +148,7 @@ contains
                         f%qs(i,j,k,VAR_U) = f%q(i,j,k,VAR_U) + dt_alpha*rhsu &
                             + dt_beta*f%oldrhs(i,j,k,VAR_U) - dt_gamma*dpx
 
-                        mu_u = 1.0d0/(1.0d0 + dt_gamma*ibm%coef(i,j,k,VAR_U))
+                        mu_u = ibm%mu(i,j,k,VAR_U)
                         f%qs(i,j,k,VAR_U) = f%qs(i,j,k,VAR_U)*mu_u
 
                         f%oldrhs(i,j,k,VAR_U) = rhsu
@@ -162,7 +190,7 @@ contains
                         f%qs(i,j,k,VAR_V) = f%q(i,j,k,VAR_V) + dt_alpha*rhsv &
                             + dt_beta*f%oldrhs(i,j,k,VAR_V) - dt_gamma*dpy
 
-                        mu_v = 1.0d0/(1.0d0 + dt_gamma*ibm%coef(i,j,k,VAR_V))
+                        mu_v = ibm%mu(i,j,k,VAR_V)
                         f%qs(i,j,k,VAR_V) = f%qs(i,j,k,VAR_V)*mu_v
 
                         f%oldrhs(i,j,k,VAR_V) = rhsv
@@ -204,12 +232,11 @@ contains
                         f%qs(i,j,k,VAR_W) = f%q(i,j,k,VAR_W) + dt_alpha*rhsw &
                             + dt_beta*f%oldrhs(i,j,k,VAR_W) - dt_gamma*dpz
 
-                        mu_w = 1.0d0/(1.0d0 + dt_gamma*ibm%coef(i,j,k,VAR_W))
+                        mu_w = ibm%mu(i,j,k,VAR_W)
                         f%qs(i,j,k,VAR_W) = f%qs(i,j,k,VAR_W)*mu_w
 
                         f%oldrhs(i,j,k,VAR_W) = rhsw
                     end if
-
                 end do
             end do
         end do
@@ -241,34 +268,29 @@ contains
 
         integer :: i,j,k
         integer :: nx, ny, nz
-        real(C_DOUBLE) :: cfl_rate, peclet_rate, ire
+        real(C_DOUBLE) :: cfl_rate
 
         nx = int(dns%localSize(1,2))
         ny = int(dns%localSize(2,2))
         nz = int(dns%localSize(3,2))
         cfl_rate = 0.0d0
-        peclet_rate = 0.0d0
-        ire = 1.0d0/dns%re
 
-        !$omp target teams distribute parallel do collapse(3) reduction(max:cfl_rate,peclet_rate) &
-        !$omp& map(to: g%d1x, g%d1y, g%d1z, f%q, ire) &
+        !$omp target teams distribute parallel do collapse(3) reduction(max:cfl_rate) &
+        !$omp& map(to: g%d1x, g%d1y, g%d1z, f%q) &
         !$omp& private(i,j,k)
-        do i = 0, nx+1
+        do k = 0, nz+1
             do j = 0, ny+1
-                do k = 0, nz+1
+                do i = 0, nx+1
                     cfl_rate = max(cfl_rate, abs(f%q(i,j,k,VAR_U)*g%d1x(i,VAR_U)))
                     cfl_rate = max(cfl_rate, abs(f%q(i,j,k,VAR_V)*g%d1y(j,VAR_V)))
                     cfl_rate = max(cfl_rate, abs(f%q(i,j,k,VAR_W)*g%d1z(k,VAR_W)))
-                    peclet_rate = max(peclet_rate, ire*g%d1x(i,VAR_P)**2)
-                    peclet_rate = max(peclet_rate, ire*g%d1y(j,VAR_P)**2)
-                    peclet_rate = max(peclet_rate, ire*g%d1z(k,VAR_P)**2)
                 end do
             end do
         end do
         !$omp end target teams distribute parallel do
 
         rates(CFL_COURANT) = cfl_rate
-        rates(CFL_PECLET) = peclet_rate
+        rates(CFL_PECLET) = dns%peclet_rate
     end subroutine get_timestep_rates
 
     logical function run_should_continue(dns, loop_steps)

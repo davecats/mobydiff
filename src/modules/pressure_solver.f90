@@ -114,7 +114,7 @@ contains
         !$omp target teams distribute parallel do collapse(3) &
         !$omp& map(to: color, colorOffset, nColorX, sor, idt, dt_gamma, &
         !$omp& lo(1:3), hi(1:3), pressureNeumannLow(1:3), pressureNeumannHigh(1:3), &
-        !$omp& g%d1x, g%d1y, g%d1z, ibm%coef) &
+        !$omp& g%d1x, g%d1y, g%d1z, ibm%mu) &
         !$omp& map(tofrom: f%q) &
         !$omp& private(i,ip,j,jp,k,kp,iColor,phi,denom,div,nLowerHaloDirections, &
         !$omp& mu_u_i,mu_u_ip,mu_v_j,mu_v_jp,mu_w_k,mu_w_kp)
@@ -136,12 +136,12 @@ contains
                     kp = k + 1
                     ip = i + 1
 
-                    mu_u_i  = 1.0d0/(1.0d0+dt_gamma*ibm%coef(i,j,k,VAR_U))
-                    mu_u_ip = 1.0d0/(1.0d0+dt_gamma*ibm%coef(ip,j,k,VAR_U))
-                    mu_v_j  = 1.0d0/(1.0d0+dt_gamma*ibm%coef(i,j,k,VAR_V))
-                    mu_v_jp = 1.0d0/(1.0d0+dt_gamma*ibm%coef(i,jp,k,VAR_V))
-                    mu_w_k  = 1.0d0/(1.0d0+dt_gamma*ibm%coef(i,j,k,VAR_W))
-                    mu_w_kp = 1.0d0/(1.0d0+dt_gamma*ibm%coef(i,j,kp,VAR_W))
+                    mu_u_i  = ibm%mu(i,j,k,VAR_U)
+                    mu_u_ip = ibm%mu(ip,j,k,VAR_U)
+                    mu_v_j  = ibm%mu(i,j,k,VAR_V)
+                    mu_v_jp = ibm%mu(i,jp,k,VAR_V)
+                    mu_w_k  = ibm%mu(i,j,k,VAR_W)
+                    mu_w_kp = ibm%mu(i,j,kp,VAR_W)
 
                     denom = (merge(0.0d0, mu_u_i*g%d1x(i,VAR_U), &
                                       pressureNeumannLow(1) .and. i == 1_C_INT) &

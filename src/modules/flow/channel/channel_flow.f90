@@ -97,23 +97,7 @@ contains
         type(grid_type), intent(in) :: g
         type(comm_type), intent(in) :: c
 
-        integer :: runtime_interval, sample_interval, write_interval
-        logical :: sample_stats, write_hdf5, write_runtime
-
-        runtime_interval = this%stats%runtime_interval
-        sample_interval = this%stats%sample_interval
-        write_interval = this%stats%write_interval
-
-        sample_stats = sample_interval > 0 .and. modulo(int(dns%step_current), sample_interval) == 0
-        write_hdf5 = write_interval > 0 .and. modulo(int(dns%step_current), write_interval) == 0
-        write_runtime = runtime_interval > 0 .and. modulo(int(dns%step_current), runtime_interval) == 0
-
-        if (.not. (sample_stats .or. write_hdf5 .or. write_runtime)) return
-
-        if (sample_stats) call this%stats%accumulate(f, dns, g)
-        if (write_hdf5 .or. write_runtime) then
-            call this%stats%write(f, dns, g, c, write_hdf5, write_runtime)
-        end if
+        call this%stats%after_step(f, dns, g, c)
     end subroutine channel_after_step
 
     subroutine channel_finalize(this, dns, g, c)
@@ -210,9 +194,6 @@ contains
             if (stat == 0) this%stats%write_interval = int_value
         case ("stats_file")
             this%stats%file = clean_config_string(value)
-        case ("runtime_interval")
-            read(value, *, iostat=stat) int_value
-            if (stat == 0) this%stats%runtime_interval = int_value
         case ("runtime_file")
             this%stats%runtime_file = clean_config_string(value)
         case ("natural_blend_index", "jb")
