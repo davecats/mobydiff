@@ -1,5 +1,6 @@
 module channel_stats
     use, intrinsic :: iso_c_binding
+    use, intrinsic :: iso_fortran_env, only: int64
     use :: init, only: dns_type, grid_type, field_type, VAR_U, VAR_V, VAR_W, VAR_P, &
         CFL_COURANT, CFL_PECLET
     use :: comm, only: comm_type, comm_allreduce_sum
@@ -27,8 +28,14 @@ module channel_stats
 
     type, public :: channel_stats_type
         integer :: interval = 100
+        integer :: runtime_interval = -1
         character(len=256) :: file = "channel_stats.h5"
+        character(len=256) :: runtime_file = "runtimedata.txt"
         logical :: on_device = .false.
+        logical :: runtime_header_written = .false.
+        integer(int64) :: clock_start = 0_int64
+        integer(int64) :: clock_rate = 0_int64
+        integer(C_INT) :: clock_step_start = 0_C_INT
         real(C_DOUBLE), allocatable :: sum(:)
         real(C_DOUBLE), allocatable :: count(:)
         real(C_DOUBLE), allocatable :: profile(:)
@@ -75,7 +82,11 @@ contains
 
         integer :: nwall, n
 
-        if (this%interval <= 0) return
+        if (this%interval <= 0 .and. effective_runtime_interval(this) <= 0) return
+
+        call system_clock(count=this%clock_start, count_rate=this%clock_rate)
+        this%clock_step_start = dns%step_current
+        this%runtime_header_written = .false.
 
         nwall = int(dns%globalSize(wall_dir))
         allocate(this%sum(CHANNEL_NSTAT*nwall))
@@ -91,7 +102,7 @@ contains
             this%coord(n) = channel_plane_coord(g, wall_dir, n)
         end do
 
-        call read_channel_stats_restart(this, dns, c)
+        if (this%interval > 0) call read_channel_stats_restart(this, dns, c)
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target enter data map(to: this%sum, this%count)
@@ -109,7 +120,7 @@ contains
         integer :: i, j, k, s, nx, ny, nz, wall_idx, global_wall_idx, base
         real(C_DOUBLE) :: p, kin, eps, velocity(3), sample(CHANNEL_NSTAT)
 
-        if (this%interval <= 0 .or. .not. allocated(this%sum)) return
+        if (.not. allocated(this%sum)) return
 
         nx = int(dns%localSize(1,2))
         ny = int(dns%localSize(2,2))
@@ -154,21 +165,24 @@ contains
 #endif
     end subroutine channel_stats_accumulate
 
-    subroutine channel_stats_write(this, f, dns, g, c, stream_dir, wall_dir, span_dir)
+    subroutine channel_stats_write(this, f, dns, g, c, wall_dir, write_hdf5, write_runtime)
         class(channel_stats_type), intent(inout) :: this
         type(field_type), intent(inout) :: f
         type(dns_type), intent(in) :: dns
         type(grid_type), intent(in) :: g
         type(comm_type), intent(in) :: c
-        integer(C_INT), intent(in) :: stream_dir, wall_dir, span_dir
+        integer(C_INT), intent(in) :: wall_dir
+        logical, intent(in) :: write_hdf5, write_runtime
 
         character(kind=C_CHAR,len=:), allocatable :: c_file_name
         integer(C_INT) :: ierr
         integer :: nwall
         real(C_DOUBLE), allocatable :: raw_sum(:), reduced_count(:)
         real(C_DOUBLE) :: flow_values(2), volume_values(2)
+        real(C_DOUBLE) :: wall_seconds_per_step
 
-        if (this%interval <= 0 .or. .not. allocated(this%sum)) return
+        if (.not. (write_hdf5 .or. write_runtime)) return
+        if (.not. allocated(this%sum)) return
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target update from(this%sum, this%count)
@@ -183,17 +197,17 @@ contains
         call comm_allreduce_sum(c, reduced_count)
 
         call build_channel_profile(this, raw_sum, reduced_count)
-        call channel_current_diagnostics(f, dns, g, c, stream_dir, span_dir, flow_values)
-        call channel_volume_averages(this, reduced_count, volume_values)
 
-        if (c%has_terminal) then
-            write(*,'(A,1X,I0,8(1X,A,1X,ES16.8))') &
-                "channel:", int(dns%step_current), &
-                "grad_stream", dns%forcing(stream_dir), "grad_span", dns%forcing(span_dir), &
-                "flow_stream", flow_values(1), "flow_span", flow_values(2), &
-                "cfl", dns%cfl(CFL_COURANT), "peclet", dns%cfl(CFL_PECLET), &
-                "volume_k", volume_values(1), "volume_epsilon", volume_values(2)
+        if (write_runtime) then
+            call channel_current_diagnostics(f, dns, g, c, flow_values)
+            call channel_volume_averages(this, reduced_count, volume_values)
+            wall_seconds_per_step = channel_wall_seconds_per_step(this, dns)
+            if (c%has_terminal) then
+                call write_runtime_output(this, dns, flow_values, volume_values, wall_seconds_per_step)
+            end if
+        end if
 
+        if (write_hdf5 .and. c%has_terminal) then
             c_file_name = to_c_string(this%file)
             ierr = fdm_h5_write_channel_stats(c_file_name, int(nwall, C_INT), int(CHANNEL_NSTAT, C_INT), &
                 dns%step_current, dns%t_current, wall_dir, dns%re, dns%forcing, &
@@ -321,12 +335,71 @@ contains
         if (count_sum > 0.0d0) volume_values = volume_values/count_sum
     end subroutine channel_volume_averages
 
-    subroutine channel_current_diagnostics(f, dns, g, c, stream_dir, span_dir, flow_values)
+    integer function effective_runtime_interval(this) result(interval)
+        class(channel_stats_type), intent(in) :: this
+
+        interval = this%runtime_interval
+        if (interval < 0) interval = this%interval
+    end function effective_runtime_interval
+
+    real(C_DOUBLE) function channel_wall_seconds_per_step(this, dns) result(seconds_per_step)
+        class(channel_stats_type), intent(in) :: this
+        type(dns_type), intent(in) :: dns
+
+        integer(int64) :: clock_now
+        integer(C_INT) :: nsteps
+
+        seconds_per_step = 0.0d0
+        if (this%clock_rate <= 0_int64) return
+
+        nsteps = max(1_C_INT, dns%step_current - this%clock_step_start)
+        call system_clock(count=clock_now)
+        seconds_per_step = real(clock_now - this%clock_start, C_DOUBLE) / &
+            (real(this%clock_rate, C_DOUBLE)*real(nsteps, C_DOUBLE))
+    end function channel_wall_seconds_per_step
+
+    subroutine write_runtime_output(this, dns, flow_values, volume_values, wall_seconds_per_step)
+        class(channel_stats_type), intent(inout) :: this
+        type(dns_type), intent(in) :: dns
+        real(C_DOUBLE), intent(in) :: flow_values(2), volume_values(2), wall_seconds_per_step
+
+        integer :: unit, stat
+        character(len=*), parameter :: header = &
+            "iteration time meanpx meanpz flowratex flowratez volume_k volume_epsilon wall_seconds_per_step"
+
+        if (.not. this%runtime_header_written) then
+            write(*,'(A)') header
+            open(newunit=unit, file=trim(this%runtime_file), status="replace", action="write", iostat=stat)
+            if (stat == 0) then
+                write(unit,'(A)') header
+                close(unit)
+            else
+                print *, "warning: could not open runtime data file: ", trim(this%runtime_file)
+            end if
+            this%runtime_header_written = .true.
+        end if
+
+        write(*,'(I10,8(1X,ES16.8))') int(dns%step_current), dns%t_current, &
+            dns%forcing(1), dns%forcing(3), flow_values(1), flow_values(2), &
+            volume_values(1), volume_values(2), wall_seconds_per_step
+
+        open(newunit=unit, file=trim(this%runtime_file), status="old", position="append", action="write", &
+            iostat=stat)
+        if (stat == 0) then
+            write(unit,'(I10,8(1X,ES16.8))') int(dns%step_current), dns%t_current, &
+                dns%forcing(1), dns%forcing(3), flow_values(1), flow_values(2), &
+                volume_values(1), volume_values(2), wall_seconds_per_step
+            close(unit)
+        else
+            print *, "warning: could not append runtime data file: ", trim(this%runtime_file)
+        end if
+    end subroutine write_runtime_output
+
+    subroutine channel_current_diagnostics(f, dns, g, c, flow_values)
         type(field_type), intent(inout) :: f
         type(dns_type), intent(in) :: dns
         type(grid_type), intent(in) :: g
         type(comm_type), intent(in) :: c
-        integer(C_INT), intent(in) :: stream_dir, span_dir
         real(C_DOUBLE), intent(out) :: flow_values(2)
 
         integer :: i, j, k, nx, ny, nz
@@ -345,8 +418,8 @@ contains
             do j = 1, ny
                 do i = 1, nx
                     call centered_velocity(f, i, j, k, velocity)
-                    diagnostics(1) = diagnostics(1) + velocity(stream_dir)
-                    diagnostics(2) = diagnostics(2) + velocity(span_dir)
+                    diagnostics(1) = diagnostics(1) + velocity(1)
+                    diagnostics(2) = diagnostics(2) + velocity(3)
                     diagnostics(3) = diagnostics(3) + 1.0d0
                 end do
             end do

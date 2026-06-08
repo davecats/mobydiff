@@ -99,11 +99,19 @@ contains
         type(grid_type), intent(in) :: g
         type(comm_type), intent(in) :: c
 
-        if (this%stats%interval <= 0) return
+        integer :: runtime_interval
+        logical :: write_hdf5, write_runtime
+
+        runtime_interval = this%stats%runtime_interval
+        if (runtime_interval < 0) runtime_interval = this%stats%interval
+
+        if (this%stats%interval <= 0 .and. runtime_interval <= 0) return
 
         call this%stats%accumulate(f, dns, g, this%wall_dir)
-        if (modulo(int(dns%step_current), this%stats%interval) == 0) then
-            call this%stats%write(f, dns, g, c, this%stream_dir, this%wall_dir, this%span_dir)
+        write_hdf5 = this%stats%interval > 0 .and. modulo(int(dns%step_current), this%stats%interval) == 0
+        write_runtime = runtime_interval > 0 .and. modulo(int(dns%step_current), runtime_interval) == 0
+        if (write_hdf5 .or. write_runtime) then
+            call this%stats%write(f, dns, g, c, this%wall_dir, write_hdf5, write_runtime)
         end if
     end subroutine channel_after_step
 
@@ -217,6 +225,11 @@ contains
             if (stat == 0) this%stats%interval = int_value
         case ("stats_file")
             this%stats%file = clean_config_string(value)
+        case ("runtime_interval")
+            read(value, *, iostat=stat) int_value
+            if (stat == 0) this%stats%runtime_interval = int_value
+        case ("runtime_file")
+            this%stats%runtime_file = clean_config_string(value)
         case ("natural_blend_index", "jb")
             read(value, *, iostat=stat) real_value
             if (stat == 0) this%natural_blend_index = real_value
