@@ -500,9 +500,8 @@ int fdm_h5_write_field(const char *filename, int nx, int ny, int nz,
                        int local_k_first, int local_k_last,
                        int step, int nsteps,
                        double lx, double ly, double lz,
-                       double dx, double dy, double dz,
                        double re, double dt, double t_final, double t_current,
-                       double cfl, double cflmax, double dtmax,
+                       const double *cfl, double cflmax, double pecletmax, double dtmax,
                        const double *forcing,
                        int pressure_niter, double pressure_sor, int ibm_enabled, int bc_count,
                        const int *periodic, const int *bc_type, const double *bc_value,
@@ -529,15 +528,13 @@ int fdm_h5_write_field(const char *filename, int nx, int ny, int nz,
     ierr |= write_attr_double(file, "lx", lx);
     ierr |= write_attr_double(file, "ly", ly);
     ierr |= write_attr_double(file, "lz", lz);
-    ierr |= write_attr_double(file, "dx", dx);
-    ierr |= write_attr_double(file, "dy", dy);
-    ierr |= write_attr_double(file, "dz", dz);
     ierr |= write_attr_double(file, "re", re);
     ierr |= write_attr_double(file, "dt", dt);
     ierr |= write_attr_double(file, "t_final", t_final);
     ierr |= write_attr_double(file, "t_current", t_current);
-    ierr |= write_attr_double(file, "cfl", cfl);
+    ierr |= write_attr_double_array(file, "cfl", cfl, 2);
     ierr |= write_attr_double(file, "cflmax", cflmax);
+    ierr |= write_attr_double(file, "pecletmax", pecletmax);
     ierr |= write_attr_double(file, "dtmax", dtmax);
     ierr |= write_attr_double(file, "forcing_x", forcing[0]);
     ierr |= write_attr_double(file, "forcing_y", forcing[1]);
@@ -581,7 +578,7 @@ int fdm_h5_read_metadata(const char *filename,
                          int *step, int *nsteps,
                          double *lx, double *ly, double *lz,
                          double *re, double *dt, double *t_final, double *t_current,
-                         double *cfl, double *cflmax, double *dtmax,
+                         double *cfl, double *cflmax, double *pecletmax, double *dtmax,
                          double *forcing,
                          int *pressure_niter, double *pressure_sor, int *ibm_enabled, int bc_count,
                          int *periodic, int *bc_type, double *bc_value,
@@ -606,8 +603,9 @@ int fdm_h5_read_metadata(const char *filename,
     ierr |= read_attr_double(file, "dt", dt, 1);
     ierr |= read_attr_double(file, "t_final", t_final, 0);
     ierr |= read_attr_double(file, "t_current", t_current, 1);
-    ierr |= read_attr_double(file, "cfl", cfl, 0);
+    ierr |= read_attr_double_array(file, "cfl", cfl, 2, 0);
     ierr |= read_attr_double(file, "cflmax", cflmax, 0);
+    ierr |= read_attr_double(file, "pecletmax", pecletmax, 0);
     ierr |= read_attr_double(file, "dtmax", dtmax, 0);
     ierr |= read_attr_double(file, "forcing_x", &forcing[0], 0);
     ierr |= read_attr_double(file, "forcing_y", &forcing[1], 0);
@@ -650,6 +648,212 @@ int fdm_h5_read_field(const char *filename, int nx, int ny, int nz,
     ierr |= read_global_dataset3(file, "pn", nx, ny, nz,
                                  global_nx, global_ny, global_nz,
                                  local_i_first, local_j_first, local_k_first, pn);
+
+    ierr |= H5Fclose(file) < 0;
+    return ierr != 0;
+}
+
+static int write_dataset1(hid_t file, const char *name, hsize_t n, const double *values)
+{
+    hid_t space = -1;
+    hid_t dset = -1;
+    herr_t status;
+
+    space = H5Screate_simple(1, &n, NULL);
+    if (space < 0) return 1;
+
+    dset = H5Dcreate2(file, name, H5T_NATIVE_DOUBLE, space,
+                      H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+    if (dset < 0) {
+        H5Sclose(space);
+        return 1;
+    }
+
+    status = H5Dwrite(dset, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, values);
+    H5Dclose(dset);
+    H5Sclose(space);
+    return status < 0;
+}
+
+static int write_dataset2_fortran(hid_t file, const char *name,
+                                  int nwall, int nstat, const double *values)
+{
+    hsize_t dims[2] = {(hsize_t)nwall, (hsize_t)nstat};
+    size_t n = (size_t)nwall*(size_t)nstat;
+    hid_t space = -1;
+    hid_t dset = -1;
+    double *buffer = NULL;
+    herr_t status;
+
+    buffer = (double *)malloc(n*sizeof(double));
+    if (buffer == NULL) return 1;
+
+    for (int i = 0; i < nwall; ++i) {
+        for (int s = 0; s < nstat; ++s) {
+            buffer[(size_t)i*(size_t)nstat + (size_t)s] =
+                values[(size_t)s + (size_t)nstat*(size_t)i];
+        }
+    }
+
+    space = H5Screate_simple(2, dims, NULL);
+    if (space < 0) {
+        free(buffer);
+        return 1;
+    }
+
+    dset = H5Dcreate2(file, name, H5T_NATIVE_DOUBLE, space,
+                      H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+    if (dset < 0) {
+        H5Sclose(space);
+        free(buffer);
+        return 1;
+    }
+
+    status = H5Dwrite(dset, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, buffer);
+
+    H5Dclose(dset);
+    H5Sclose(space);
+    free(buffer);
+    return status < 0;
+}
+
+static int read_dataset1(hid_t file, const char *name, hsize_t n, double *values)
+{
+    hsize_t dims[1] = {0};
+    hid_t dset = -1;
+    hid_t space = -1;
+    herr_t status;
+
+    dset = H5Dopen2(file, name, H5P_DEFAULT);
+    if (dset < 0) return 1;
+
+    space = H5Dget_space(dset);
+    if (space < 0 || H5Sget_simple_extent_ndims(space) != 1) {
+        if (space >= 0) H5Sclose(space);
+        H5Dclose(dset);
+        return 1;
+    }
+
+    H5Sget_simple_extent_dims(space, dims, NULL);
+    if (dims[0] != n) {
+        H5Sclose(space);
+        H5Dclose(dset);
+        return 1;
+    }
+
+    status = H5Dread(dset, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, values);
+    H5Sclose(space);
+    H5Dclose(dset);
+    return status < 0;
+}
+
+static int read_dataset2_fortran(hid_t file, const char *name,
+                                 int nwall, int nstat, double *values)
+{
+    hsize_t expected[2] = {(hsize_t)nwall, (hsize_t)nstat};
+    hsize_t dims[2] = {0, 0};
+    size_t n = (size_t)nwall*(size_t)nstat;
+    hid_t dset = -1;
+    hid_t space = -1;
+    double *buffer = NULL;
+    herr_t status;
+
+    dset = H5Dopen2(file, name, H5P_DEFAULT);
+    if (dset < 0) return 1;
+
+    space = H5Dget_space(dset);
+    if (space < 0 || H5Sget_simple_extent_ndims(space) != 2) {
+        if (space >= 0) H5Sclose(space);
+        H5Dclose(dset);
+        return 1;
+    }
+
+    H5Sget_simple_extent_dims(space, dims, NULL);
+    if (dims[0] != expected[0] || dims[1] != expected[1]) {
+        H5Sclose(space);
+        H5Dclose(dset);
+        return 1;
+    }
+
+    buffer = (double *)malloc(n*sizeof(double));
+    if (buffer == NULL) {
+        H5Sclose(space);
+        H5Dclose(dset);
+        return 1;
+    }
+
+    status = H5Dread(dset, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, buffer);
+    if (status >= 0) {
+        for (int i = 0; i < nwall; ++i) {
+            for (int s = 0; s < nstat; ++s) {
+                values[(size_t)s + (size_t)nstat*(size_t)i] =
+                    buffer[(size_t)i*(size_t)nstat + (size_t)s];
+            }
+        }
+    }
+
+    free(buffer);
+    H5Sclose(space);
+    H5Dclose(dset);
+    return status < 0;
+}
+
+int fdm_h5_write_channel_stats(const char *filename, int nwall, int nstat,
+                               int step, double t_current, int wall_dir, double re,
+                               const double *forcing, const double *coord,
+                               const double *profile, const double *raw_sum,
+                               const double *count)
+{
+    hid_t file;
+    int ierr = 0;
+
+    if (nwall < 1 || nstat < 1) return 1;
+
+    file = H5Fcreate(filename, H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
+    if (file < 0) return 1;
+
+    ierr |= write_attr_int(file, "nwall", nwall);
+    ierr |= write_attr_int(file, "nstat", nstat);
+    ierr |= write_attr_int(file, "step", step);
+    ierr |= write_attr_int(file, "wall_dir", wall_dir);
+    ierr |= write_attr_double(file, "t_current", t_current);
+    ierr |= write_attr_double(file, "re", re);
+    ierr |= write_attr_double(file, "forcing_x", forcing[0]);
+    ierr |= write_attr_double(file, "forcing_y", forcing[1]);
+    ierr |= write_attr_double(file, "forcing_z", forcing[2]);
+    ierr |= write_dataset1(file, "coord", (hsize_t)nwall, coord);
+    ierr |= write_dataset1(file, "count", (hsize_t)nwall, count);
+    ierr |= write_dataset2_fortran(file, "profile", nwall, nstat, profile);
+    ierr |= write_dataset2_fortran(file, "raw_sum", nwall, nstat, raw_sum);
+
+    ierr |= H5Fclose(file) < 0;
+    return ierr != 0;
+}
+
+int fdm_h5_read_channel_stats(const char *filename, int nwall, int nstat,
+                              int *step, double *t_current,
+                              double *raw_sum, double *count)
+{
+    hid_t file;
+    int file_nwall = nwall;
+    int file_nstat = nstat;
+    int ierr = 0;
+
+    file = H5Fopen(filename, H5F_ACC_RDONLY, H5P_DEFAULT);
+    if (file < 0) return 1;
+
+    ierr |= read_attr_int(file, "nwall", &file_nwall, 1);
+    ierr |= read_attr_int(file, "nstat", &file_nstat, 1);
+    ierr |= read_attr_int(file, "step", step, 0);
+    ierr |= read_attr_double(file, "t_current", t_current, 0);
+
+    if (file_nwall != nwall || file_nstat != nstat) {
+        H5Fclose(file);
+        return 1;
+    }
+
+    ierr |= read_dataset1(file, "count", (hsize_t)nwall, count);
+    ierr |= read_dataset2_fortran(file, "raw_sum", nwall, nstat, raw_sum);
 
     ierr |= H5Fclose(file) < 0;
     return ierr != 0;

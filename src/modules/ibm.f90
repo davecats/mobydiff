@@ -40,10 +40,9 @@ contains
 !========================
 ! INITIALIZE IBM
 !========================
-    subroutine init_ibm(ibm, dns, g)
+    subroutine init_ibm(ibm, dns)
         type(ibm_type), intent(inout) :: ibm
         type(dns_type), intent(in)    :: dns
-        type(grid_type), intent(in)   :: g
         integer :: nx, ny, nz
 
         nx = int(dns%localSize(1,2))
@@ -52,8 +51,8 @@ contains
 
         ibm%n_wave_x = 1
         ibm%n_wave_z = 1
-        ibm%amp_x = 5*g%havg(2)
-        ibm%amp_z = 5*g%havg(2)
+        ibm%amp_x = 2.5d-2
+        ibm%amp_z = 2.5d-2
         ibm%phase_x = 0.0d0
         ibm%phase_z = 0.0d0
 
@@ -82,20 +81,20 @@ contains
     end subroutine exit_ibm_data
 
 
-    logical function isInBody(xIN, ibm, dns, g)
+    logical function isInBody(xIN, ibm, dns)
         implicit none
 
         real(C_DOUBLE), intent(in) :: xIN(1:3)
         type(ibm_type), intent(in) :: ibm
         type(dns_type), intent(in) :: dns
-        type(grid_type), intent(in) :: g
 
         real(C_DOUBLE), parameter :: pi = 3.141592653589793d0
+        real(C_DOUBLE), parameter :: y_offset = 1.0d-2
         real(C_DOUBLE) :: y_body
 
         y_body = ibm%amp_x * 0.5d0 * &
                  (1.0d0 + sin(2.0d0*pi*real(ibm%n_wave_x,C_DOUBLE)*xIN(1)/dns%leng(1) + ibm%phase_x)) + &
-                 2.0d0*g%havg(2)
+                 y_offset
         isInBody = (xIN(2) < y_body)
     end function isInBody
 
@@ -105,12 +104,11 @@ contains
         d = sqrt((xB(1)-xA(1))**2 + (xB(2)-xA(2))**2 + (xB(3)-xA(3))**2)
     end function distance3
 
-    subroutine bisection(xAin,xB,ibm,dns,g)
+    subroutine bisection(xAin,xB,ibm,dns)
         real(C_DOUBLE), intent(in) :: xAin(1:3)
         real(C_DOUBLE), intent(inout):: xB(1:3)
         type(ibm_type), intent(in) :: ibm
         type(dns_type), intent(in) :: dns
-        type(grid_type), intent(in) :: g
 
         real(C_DOUBLE) :: xA(1:3), xM(1:3)
         logical :: la, lm
@@ -118,13 +116,13 @@ contains
 
         xA = xAin
         xM = xA
-        la = isInBody(xA, ibm, dns, g)
+        la = isInBody(xA, ibm, dns)
 
         do it = 1, MAX_ITER
             xM = 0.5d0*(xA + xB)
             if (distance3(xA, xB) < DEFAULT_TOL) exit
 
-            lm = isInBody(xM, ibm, dns, g)
+            lm = isInBody(xM, ibm, dns)
             if (lm .eqv. la) then
                 xA = xM
             else
@@ -134,19 +132,18 @@ contains
         xB = xM
     end subroutine bisection
 
-    subroutine add_neighbor_coeff(coeff, xA, xB, ibm, dns, g)
+    subroutine add_neighbor_coeff(coeff, xA, xB, ibm, dns)
         real(C_DOUBLE), intent(inout) :: coeff
         real(C_DOUBLE), intent(in) :: xA(1:3)
         real(C_DOUBLE), intent(inout) :: xB(1:3)
         type(ibm_type), intent(in) :: ibm
         type(dns_type), intent(in) :: dns
-        type(grid_type), intent(in) :: g
 
         real(C_DOUBLE) :: d0, d
 
-        if (isInBody(xB, ibm, dns, g)) then
+        if (isInBody(xB, ibm, dns)) then
             d0 = distance3(xA, xB)
-            call bisection(xA, xB, ibm, dns, g)
+            call bisection(xA, xB, ibm, dns)
             d = distance3(xA, xB)
             coeff = coeff + ((d0-d)/d)/d0**2
         end if
@@ -192,24 +189,24 @@ contains
                     xA(1) = g%x(ix,var)
                     xA(2) = g%y(iy,var)
                     xA(3) = g%z(iz,var)
-                    if (isInBody(xA, ibm, dns, g)) then
+                    if (isInBody(xA, ibm, dns)) then
                         ibm%coef(ix,iy,iz,var) = solid_coef
 #ifdef USE_IBM_SECONDORDER
                     else
                         coeff = 0.0d0
 
                         xB(1) = g%x(ix-1,var); xB(2) = xA(2);          xB(3) = xA(3)
-                        call add_neighbor_coeff(coeff, xA, xB, ibm, dns, g)
+                        call add_neighbor_coeff(coeff, xA, xB, ibm, dns)
                         xB(1) = g%x(ix+1,var); xB(2) = xA(2);          xB(3) = xA(3)
-                        call add_neighbor_coeff(coeff, xA, xB, ibm, dns, g)
+                        call add_neighbor_coeff(coeff, xA, xB, ibm, dns)
                         xB(1) = xA(1);          xB(2) = g%y(iy-1,var); xB(3) = xA(3)
-                        call add_neighbor_coeff(coeff, xA, xB, ibm, dns, g)
+                        call add_neighbor_coeff(coeff, xA, xB, ibm, dns)
                         xB(1) = xA(1);          xB(2) = g%y(iy+1,var); xB(3) = xA(3)
-                        call add_neighbor_coeff(coeff, xA, xB, ibm, dns, g)
+                        call add_neighbor_coeff(coeff, xA, xB, ibm, dns)
                         xB(1) = xA(1);          xB(2) = xA(2);          xB(3) = g%z(iz-1,var)
-                        call add_neighbor_coeff(coeff, xA, xB, ibm, dns, g)
+                        call add_neighbor_coeff(coeff, xA, xB, ibm, dns)
                         xB(1) = xA(1);          xB(2) = xA(2);          xB(3) = g%z(iz+1,var)
-                        call add_neighbor_coeff(coeff, xA, xB, ibm, dns, g)
+                        call add_neighbor_coeff(coeff, xA, xB, ibm, dns)
 
                         ibm%coef(ix,iy,iz,var) = coeff*re_inv
 #endif

@@ -1,8 +1,10 @@
 module config
     use, intrinsic :: iso_c_binding
-    use :: init, only: dns_type, VAR_U, VAR_V, VAR_W, VAR_P, GRID_UNIFORM, GRID_COSINE, GRID_TANH
+    use :: init, only: dns_type, grid_type, VAR_U, VAR_V, VAR_W, VAR_P, &
+        GRID_UNIFORM, GRID_COSINE, GRID_TANH, GRID_NATURAL
     use :: pressure_solver, only: pressure_solver_type
     use :: boundary, only: boundary_type, boundary_face_id
+    use :: comm, only: comm_type
     implicit none
 
     type :: config_seen_type
@@ -14,6 +16,7 @@ module config
         logical :: nsteps = .false.
         logical :: t_final = .false.
         logical :: cflmax = .false.
+        logical :: pecletmax = .false.
         logical :: dtmax = .false.
     end type config_seen_type
 
@@ -21,10 +24,12 @@ module config
 
 contains
 
-subroutine read_runtime_config(dns, ps, bc, input_file, has_terminal)
+subroutine read_runtime_config(dns, g, ps, bc, c, input_file, has_terminal)
     type(dns_type), intent(inout) :: dns
+    type(grid_type), intent(inout) :: g
     type(pressure_solver_type), intent(inout) :: ps
     type(boundary_type), intent(inout) :: bc
+    type(comm_type), intent(inout) :: c
     character(len=*), intent(in) :: input_file
     logical, intent(in), optional :: has_terminal
 
@@ -36,16 +41,6 @@ subroutine read_runtime_config(dns, ps, bc, input_file, has_terminal)
 
     if (present(has_terminal)) terminal_output = has_terminal
 
-    dns%field_interval = 0
-    dns%field_prefix = "field"
-    dns%restart_file = ""
-    dns%mpiDims = 0_C_INT
-    dns%gridDistribution = GRID_UNIFORM
-    dns%gridStretch = 0.0d0
-    dns%ibm_enabled = .true.
-    dns%step_current = 0_C_INT
-    dns%t_current = 0.0d0
-    dns%cfl = 0.0d0
     section = ""
 
     inquire(file=trim(input_file), exist=exists)
@@ -77,7 +72,7 @@ subroutine read_runtime_config(dns, ps, bc, input_file, has_terminal)
 
         call split_key_value(line, key, value)
         if (len_trim(key) == 0) cycle
-        call apply_config_value(section, key, value, dns, ps, bc, seen, line_no)
+        call apply_config_value(section, key, value, dns, g, ps, bc, c, seen, line_no)
     end do
 
     close(unit)
@@ -85,19 +80,17 @@ subroutine read_runtime_config(dns, ps, bc, input_file, has_terminal)
     if (has_restart_file(dns)) then
         if (dns%field_interval < 0) error stop "field interval must be non-negative"
     else
-        call require_config_value(seen%dt, "time.dt")
-        if (seen%t_final .and. .not. seen%nsteps) then
-            dns%nsteps = max(1_C_INT, int(ceiling(dns%t_final/dns%dt), C_INT))
-        end if
-        call validate_runtime_config(dns, seen)
+        call validate_runtime_config(dns, g, c, seen)
     end if
 end subroutine read_runtime_config
 
-subroutine apply_config_value(section, key, value, dns, ps, bc, seen, line_no)
+subroutine apply_config_value(section, key, value, dns, g, ps, bc, c, seen, line_no)
     character(len=*), intent(in) :: section, key, value
     type(dns_type), intent(inout) :: dns
+    type(grid_type), intent(inout) :: g
     type(pressure_solver_type), intent(inout) :: ps
     type(boundary_type), intent(inout) :: bc
+    type(comm_type), intent(inout) :: c
     type(config_seen_type), intent(inout) :: seen
     integer, intent(in) :: line_no
 
@@ -130,7 +123,7 @@ subroutine apply_config_value(section, key, value, dns, ps, bc, seen, line_no)
             seen%length(3) = .true.
         end select
     case ("grid.x", "grid.y", "grid.z")
-        call apply_grid_axis_value(section_l, key_l, value, dns, seen, line_no)
+        call apply_grid_axis_value(section_l, key_l, value, dns, g, seen, line_no)
     case ("flow")
         select case (key_l)
         case ("re")
@@ -160,6 +153,9 @@ subroutine apply_config_value(section, key, value, dns, ps, bc, seen, line_no)
         case ("cflmax")
             call read_real(value, dns%cflmax, line_no)
             seen%cflmax = .true.
+        case ("pecletmax")
+            call read_real(value, dns%pecletmax, line_no)
+            seen%pecletmax = .true.
         case ("dtmax")
             call read_real(value, dns%dtmax, line_no)
             seen%dtmax = .true.
@@ -195,26 +191,20 @@ subroutine apply_config_value(section, key, value, dns, ps, bc, seen, line_no)
             call read_bool(value, dns%ibm_enabled, line_no)
         end select
     case ("mpi")
-        call apply_mpi_value(key_l, value, dns, line_no)
+        call apply_mpi_value(key_l, value, c, line_no)
     case ("boundary")
         call apply_boundary_value(key_l, value, bc, line_no)
     end select
 end subroutine apply_config_value
 
-subroutine validate_runtime_config(dns, seen)
+subroutine validate_runtime_config(dns, g, c, seen)
     type(dns_type), intent(in) :: dns
+    type(grid_type), intent(in) :: g
+    type(comm_type), intent(in) :: c
     type(config_seen_type), intent(in) :: seen
 
-    call require_config_value(all(seen%size), "grid.nx/grid.ny/grid.nz")
-    call require_config_value(all(seen%length), "grid.lx/grid.ly/grid.lz")
-    call require_config_value(seen%re, "flow.re")
-    call require_config_value(all(seen%forcing), "flow.forcing_x/flow.forcing_y/flow.forcing_z")
-    call require_config_value(seen%dt, "time.dt")
-    call require_config_value(seen%nsteps .or. seen%t_final, "time.nsteps or time.t_final")
-    call require_config_value(seen%cflmax, "time.cflmax")
-    call require_config_value(seen%dtmax, "time.dtmax")
-
-    call validate_dns_values(dns)
+    call validate_dns_values(dns, g)
+    if (any(c%dims < 0)) error stop "MPI dimensions must be non-negative"
 end subroutine validate_runtime_config
 
 logical function has_restart_file(dns)
@@ -223,38 +213,44 @@ logical function has_restart_file(dns)
     has_restart_file = len_trim(dns%restart_file) > 0
 end function has_restart_file
 
-subroutine validate_dns_values(dns)
+subroutine validate_dns_values(dns, g)
     type(dns_type), intent(in) :: dns
+    type(grid_type), intent(in) :: g
 
     if (any(dns%globalSize <= 0_C_INT)) error stop "grid sizes must be positive"
     if (any(dns%leng <= 0.0d0)) error stop "domain lengths must be positive"
     if (dns%re <= 0.0d0) error stop "Reynolds number must be positive"
     if (dns%dt <= 0.0d0) error stop "time step must be positive"
-    if (dns%nsteps <= 0_C_INT) error stop "number of time steps must be positive"
+    if (dns%nsteps < 0_C_INT) error stop "number of time steps must be non-negative"
+    if (dns%t_final < 0.0d0) error stop "final time must be non-negative"
+    if (dns%nsteps <= 0_C_INT .and. dns%t_final <= 0.0d0) then
+        error stop "either nsteps or t_final must be positive"
+    end if
     if (dns%cflmax < 0.0d0) error stop "cflmax must be non-negative"
+    if (dns%pecletmax < 0.0d0) error stop "pecletmax must be non-negative"
     if (dns%dtmax <= 0.0d0) error stop "dtmax must be positive"
     if (dns%field_interval < 0) error stop "field interval must be non-negative"
-    if (any(dns%gridDistribution < GRID_UNIFORM) .or. any(dns%gridDistribution > GRID_TANH)) then
+    if (any(g%distribution < GRID_UNIFORM) .or. any(g%distribution > GRID_NATURAL)) then
         error stop "invalid grid distribution"
     end if
-    if (any(dns%gridStretch < 0.0d0)) error stop "grid stretch values must be non-negative"
-    if (any(dns%mpiDims < 0_C_INT)) error stop "MPI dimensions must be non-negative"
+    if (any(g%stretch < 0.0d0)) error stop "grid stretch values must be non-negative"
 end subroutine validate_dns_values
 
-subroutine apply_mpi_value(key, value, dns, line_no)
+subroutine apply_mpi_value(key, value, c, line_no)
     character(len=*), intent(in) :: key, value
-    type(dns_type), intent(inout) :: dns
+    type(comm_type), intent(inout) :: c
     integer, intent(in) :: line_no
 
     select case (trim(key))
     case ("dims")
-        call read_c_int3(value, dns%mpiDims, line_no)
+        call read_integer3(value, c%dims, line_no)
     end select
 end subroutine apply_mpi_value
 
-subroutine apply_grid_axis_value(section, key, value, dns, seen, line_no)
+subroutine apply_grid_axis_value(section, key, value, dns, g, seen, line_no)
     character(len=*), intent(in) :: section, key, value
     type(dns_type), intent(inout) :: dns
+    type(grid_type), intent(inout) :: g
     type(config_seen_type), intent(inout) :: seen
     integer, intent(in) :: line_no
 
@@ -265,9 +261,9 @@ subroutine apply_grid_axis_value(section, key, value, dns, seen, line_no)
 
     select case (trim(key))
     case ("distribution")
-        call read_grid_distribution(value, dns%gridDistribution(dir), line_no)
+        call read_grid_distribution(value, g%distribution(dir), line_no)
     case ("stretch")
-        call read_real(value, dns%gridStretch(dir), line_no)
+        call read_real(value, g%stretch(dir), line_no)
     case ("n")
         call read_c_int(value, dns%globalSize(dir), line_no)
         seen%size(dir) = .true.
@@ -329,7 +325,7 @@ subroutine apply_boundary_value(key, value, bc, line_no)
         case ("type")
             call read_bc_type(value, bc%faceBcType(var,face_id), line_no)
         case ("value")
-            call read_real(value, bc%faceBcValue(var,face_id), line_no)
+            call read_real(value, bc%faceBcDefaultValue(var,face_id), line_no)
         case default
             if (terminal_output) print *, "warning: boundary key must end in _type or _value on input line", line_no
         end select
@@ -469,6 +465,8 @@ subroutine read_grid_distribution(value, target, line_no)
         target = GRID_COSINE
     case ("tanh")
         target = GRID_TANH
+    case ("natural", "pirozzoli_orlandi", "pirozzoli-orlandi", "po")
+        target = GRID_NATURAL
     case default
         if (terminal_output) print *, "warning: unknown grid distribution on input line", line_no, ": ", trim(value_l)
     end select
@@ -537,6 +535,20 @@ subroutine read_integer(value, target, line_no)
         if (terminal_output) print *, "warning: could not parse integer on input line", line_no
     end if
 end subroutine read_integer
+
+subroutine read_integer3(value, target, line_no)
+    character(len=*), intent(in) :: value
+    integer, intent(inout) :: target(1:3)
+    integer, intent(in) :: line_no
+    integer :: stat, parsed(3)
+
+    read(value, *, iostat=stat) parsed
+    if (stat == 0) then
+        target = parsed
+    else
+        if (terminal_output) print *, "warning: could not parse three integer values on input line", line_no
+    end if
+end subroutine read_integer3
 
 subroutine read_c_int(value, target, line_no)
     character(len=*), intent(in) :: value

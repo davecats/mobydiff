@@ -25,7 +25,7 @@ module comm
         integer :: local_rank = 0
         logical :: has_terminal = .true.
 
-        integer :: dims(3) = [1, 1, 1]
+        integer :: dims(3) = [0, 0, 0]
         integer :: coords(3) = [0, 0, 0]
         logical :: periodic(3) = [.false., .false., .false.]
         logical :: physicalLow(3) = [.false., .false., .false.]
@@ -54,7 +54,7 @@ module comm
     end type comm_type
 
     public :: comm_init_world, comm_init, comm_finalize
-    public :: comm_allreduce_max
+    public :: comm_allreduce_max, comm_allreduce_sum
     public :: start_halo_exchange, finish_halo_exchange, exchange_halos
 
 contains
@@ -75,11 +75,10 @@ contains
         c%has_terminal = (c%world_rank == 0)
     end subroutine comm_init_world
 
-    subroutine comm_init(c, dns, bc, dims_in)
+    subroutine comm_init(c, dns, bc)
         type(comm_type), intent(inout) :: c
         type(dns_type), intent(inout) :: dns
         type(boundary_type), intent(in) :: bc
-        integer, intent(in), optional :: dims_in(3)
 
         type(MPI_Comm) :: local_comm
         integer :: ierr, dir
@@ -88,10 +87,6 @@ contains
         call comm_init_world(c)
 
         c%periodic = bc%isPeriodic
-        c%dims = [0, 0, 0]
-        if (present(dims_in)) then
-            c%dims = dims_in
-        end if
 
         if (any(c%dims < 0)) then
             error stop "MPI Cartesian dimensions must be non-negative"
@@ -174,6 +169,15 @@ contains
 
         call MPI_Allreduce(MPI_IN_PLACE, values, size(values), MPI_DOUBLE_PRECISION, MPI_MAX, c%cart_comm, ierr)
     end subroutine comm_allreduce_max
+
+    subroutine comm_allreduce_sum(c, values)
+        type(comm_type), intent(in) :: c
+        real(C_DOUBLE), intent(inout) :: values(:)
+
+        integer :: ierr
+
+        call MPI_Allreduce(MPI_IN_PLACE, values, size(values), MPI_DOUBLE_PRECISION, MPI_SUM, c%cart_comm, ierr)
+    end subroutine comm_allreduce_sum
 
     subroutine start_halo_exchange(c, f, vars)
         type(comm_type), intent(inout) :: c

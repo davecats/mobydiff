@@ -13,9 +13,11 @@
 
 module step
     use, intrinsic :: iso_c_binding
-    use :: init, only: dns_type, grid_type, field_type, VAR_U, VAR_V, VAR_W, VAR_P
+    use :: init, only: dns_type, grid_type, field_type, VAR_U, VAR_V, VAR_W, VAR_P, &
+        CFL_COURANT, CFL_PECLET, NCFL
     use :: ibmm, only: ibm_type
     use :: boundary, only: boundary_type
+    use :: comm, only: comm_type, comm_allreduce_max
     implicit none
 
     real(C_DOUBLE), parameter :: rk_alpha(3) = [64.0d0/120.0d0,  50.0d0/120.0d0,  90.0d0/120.0d0]
@@ -231,32 +233,99 @@ contains
     end subroutine momentum
 
 
-    real(C_DOUBLE) function get_cfl(f, dns, g)
+    subroutine get_timestep_rates(f, dns, g, rates)
         type(field_type), intent(inout) :: f
         type(dns_type),   intent(in)    :: dns
         type(grid_type),  intent(in)    :: g
+        real(C_DOUBLE), intent(out) :: rates(1:NCFL)
 
         integer :: i,j,k
         integer :: nx, ny, nz
+        real(C_DOUBLE) :: cfl_rate, peclet_rate, ire
 
         nx = int(dns%localSize(1,2))
         ny = int(dns%localSize(2,2))
         nz = int(dns%localSize(3,2))
-        get_cfl = 0.0d0
+        cfl_rate = 0.0d0
+        peclet_rate = 0.0d0
+        ire = 1.0d0/dns%re
 
-        !$omp target teams distribute parallel do collapse(3) reduction(max:get_cfl) &
-        !$omp& map(to: g%d1x, g%d1y, g%d1z, f%q) &
+        !$omp target teams distribute parallel do collapse(3) reduction(max:cfl_rate,peclet_rate) &
+        !$omp& map(to: g%d1x, g%d1y, g%d1z, f%q, ire) &
         !$omp& private(i,j,k)
         do i = 0, nx+1
             do j = 0, ny+1
                 do k = 0, nz+1
-                    get_cfl = max(get_cfl, abs(f%q(i,j,k,VAR_U)*g%d1x(i,VAR_U)))
-                    get_cfl = max(get_cfl, abs(f%q(i,j,k,VAR_V)*g%d1y(j,VAR_V)))
-                    get_cfl = max(get_cfl, abs(f%q(i,j,k,VAR_W)*g%d1z(k,VAR_W)))
+                    cfl_rate = max(cfl_rate, abs(f%q(i,j,k,VAR_U)*g%d1x(i,VAR_U)))
+                    cfl_rate = max(cfl_rate, abs(f%q(i,j,k,VAR_V)*g%d1y(j,VAR_V)))
+                    cfl_rate = max(cfl_rate, abs(f%q(i,j,k,VAR_W)*g%d1z(k,VAR_W)))
+                    peclet_rate = max(peclet_rate, ire*g%d1x(i,VAR_P)**2)
+                    peclet_rate = max(peclet_rate, ire*g%d1y(j,VAR_P)**2)
+                    peclet_rate = max(peclet_rate, ire*g%d1z(k,VAR_P)**2)
                 end do
             end do
         end do
         !$omp end target teams distribute parallel do
-    end function get_cfl
+
+        rates(CFL_COURANT) = cfl_rate
+        rates(CFL_PECLET) = peclet_rate
+    end subroutine get_timestep_rates
+
+    logical function run_should_continue(dns, loop_steps)
+        type(dns_type), intent(in) :: dns
+        integer(C_INT), intent(in) :: loop_steps
+
+        real(C_DOUBLE) :: time_tol
+
+        run_should_continue = .true.
+        if (dns%nsteps > 0_C_INT .and. loop_steps >= dns%nsteps) run_should_continue = .false.
+        if (dns%t_final > 0.0d0) then
+            time_tol = max(1.0d-12, 100.0d0*epsilon(1.0d0)*max(1.0d0, abs(dns%t_final)))
+            if (dns%t_current >= dns%t_final - time_tol) run_should_continue = .false.
+        end if
+    end function run_should_continue
+
+    subroutine trim_dt_for_final_time(dns)
+        type(dns_type), intent(inout) :: dns
+
+        real(C_DOUBLE) :: remaining
+
+        if (dns%t_final <= 0.0d0) return
+
+        remaining = dns%t_final - dns%t_current
+        dns%dt = min(dns%dt, max(0.0d0, remaining))
+    end subroutine trim_dt_for_final_time
+
+    subroutine update_timestep_limits(f, dns, g, c)
+        type(field_type), intent(inout) :: f
+        type(dns_type), intent(inout) :: dns
+        type(grid_type), intent(in) :: g
+        type(comm_type), intent(in) :: c
+
+        real(C_DOUBLE) :: rates(1:NCFL), next_dt
+        logical :: have_limit
+
+        if (dns%cflmax <= 0.0d0 .and. dns%pecletmax <= 0.0d0) return
+
+        call get_timestep_rates(f, dns, g, rates)
+        call comm_allreduce_max(c, rates)
+
+        next_dt = dns%dt
+        have_limit = .false.
+        if (dns%cflmax > 0.0d0 .and. rates(CFL_COURANT) > 0.0d0) then
+            if (.not. have_limit) next_dt = dns%dtmax
+            next_dt = min(next_dt, dns%cflmax/rates(CFL_COURANT))
+            have_limit = .true.
+        end if
+        if (dns%pecletmax > 0.0d0 .and. rates(CFL_PECLET) > 0.0d0) then
+            if (.not. have_limit) next_dt = dns%dtmax
+            next_dt = min(next_dt, dns%pecletmax/rates(CFL_PECLET))
+            have_limit = .true.
+        end if
+
+        if (have_limit) dns%dt = next_dt
+        dns%cfl(CFL_COURANT) = dns%dt*rates(CFL_COURANT)
+        dns%cfl(CFL_PECLET) = dns%dt*rates(CFL_PECLET)
+    end subroutine update_timestep_limits
 
 end module step

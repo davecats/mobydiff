@@ -9,8 +9,8 @@ module io
         function fdm_h5_write_field(file_name, nx, ny, nz, rank, nranks, &
                 global_nx, global_ny, global_nz, &
                 local_i_first, local_i_last, local_j_first, local_j_last, &
-                local_k_first, local_k_last, step, nsteps, lx, ly, lz, dx, dy, dz, &
-                re, dt, t_final, t_current, cfl, cflmax, dtmax, &
+                local_k_first, local_k_last, step, nsteps, lx, ly, lz, &
+                re, dt, t_final, t_current, cfl, cflmax, pecletmax, dtmax, &
                 forcing, pressure_niter, pressure_sor, &
                 ibm_enabled, bc_count, periodic, bc_type, bc_value, grid_distribution, grid_stretch, &
                 x_node, y_node, z_node, un, vn, wn, pn) &
@@ -23,8 +23,9 @@ module io
             integer(C_INT), value :: local_j_first, local_j_last
             integer(C_INT), value :: local_k_first, local_k_last
             integer(C_INT), value :: step, nsteps
-            real(C_DOUBLE), value :: lx, ly, lz, dx, dy, dz, re, dt, t_final, t_current
-            real(C_DOUBLE), value :: cfl, cflmax, dtmax
+            real(C_DOUBLE), value :: lx, ly, lz, re, dt, t_final, t_current
+            real(C_DOUBLE), value :: cflmax, pecletmax, dtmax
+            real(C_DOUBLE), intent(in) :: cfl(*)
             real(C_DOUBLE), intent(in) :: forcing(*)
             integer(C_INT), value :: pressure_niter
             real(C_DOUBLE), value :: pressure_sor
@@ -38,7 +39,7 @@ module io
 
         function fdm_h5_read_metadata(file_name, global_nx, global_ny, global_nz, &
                 step, nsteps, lx, ly, lz, re, dt, t_final, t_current, cfl, &
-                cflmax, dtmax, forcing, &
+                cflmax, pecletmax, dtmax, forcing, &
                 pressure_niter, pressure_sor, ibm_enabled, bc_count, periodic, bc_type, bc_value, &
                 grid_distribution, grid_stretch) &
                 bind(C, name="fdm_h5_read_metadata") result(ierr)
@@ -46,8 +47,9 @@ module io
             character(kind=C_CHAR), intent(in) :: file_name(*)
             integer(C_INT), intent(inout) :: global_nx, global_ny, global_nz
             integer(C_INT), intent(inout) :: step, nsteps
-            real(C_DOUBLE), intent(inout) :: lx, ly, lz, re, dt, t_final, t_current, cfl
-            real(C_DOUBLE), intent(inout) :: cflmax, dtmax
+            real(C_DOUBLE), intent(inout) :: lx, ly, lz, re, dt, t_final, t_current
+            real(C_DOUBLE), intent(inout) :: cfl(*)
+            real(C_DOUBLE), intent(inout) :: cflmax, pecletmax, dtmax
             real(C_DOUBLE), intent(inout) :: forcing(*)
             integer(C_INT), intent(inout) :: pressure_niter
             real(C_DOUBLE), intent(inout) :: pressure_sor
@@ -140,13 +142,13 @@ subroutine write_field(f, dns, g, step, c, bc, pressure_niter, pressure_sor)
         dns%localSize(1,0), dns%localSize(1,1), dns%localSize(2,0), dns%localSize(2,1), &
         dns%localSize(3,0), dns%localSize(3,1), &
         dns%step_current, dns%nsteps, &
-        dns%leng(1), dns%leng(2), dns%leng(3), g%havg(1), g%havg(2), g%havg(3), &
+        dns%leng(1), dns%leng(2), dns%leng(3), &
         dns%re, dns%dt, dns%t_final, dns%t_current, &
-        dns%cfl, dns%cflmax, dns%dtmax, &
+        dns%cfl, dns%cflmax, dns%pecletmax, dns%dtmax, &
         dns%forcing, &
         pressure_niter, pressure_sor, ibm_enabled, int(size(bc%faceBcType), C_INT), periodic, &
-        bc%faceBcType(VAR_U:VAR_P,1:NFACES), bc%faceBcValue(VAR_U:VAR_P,1:NFACES), &
-        dns%gridDistribution(1:3), dns%gridStretch(1:3), &
+        bc%faceBcType(VAR_U:VAR_P,1:NFACES), bc%faceBcDefaultValue(VAR_U:VAR_P,1:NFACES), &
+        g%distribution(1:3), g%stretch(1:3), &
         g%xNode(0:dns%globalSize(1)), g%yNode(0:dns%globalSize(2)), g%zNode(0:dns%globalSize(3)), &
         f%q(0:nx+1,0:ny+1,0:nz+1,VAR_U), &
         f%q(0:nx+1,0:ny+1,0:nz+1,VAR_V), &
@@ -160,8 +162,9 @@ subroutine write_field(f, dns, g, step, c, bc, pressure_niter, pressure_sor)
     if (c%has_terminal) call write_xdmf(xdmf_file_name, h5_file_name, dns, g)
 end subroutine write_field
 
-subroutine read_restart_metadata(dns, bc, pressure_niter, pressure_sor, file_name, c)
+subroutine read_restart_metadata(dns, g, bc, pressure_niter, pressure_sor, file_name, c)
     type(dns_type), intent(inout) :: dns
+    type(grid_type), intent(inout) :: g
     type(boundary_type), intent(inout) :: bc
     integer(C_INT), intent(inout) :: pressure_niter
     real(C_DOUBLE), intent(inout) :: pressure_sor
@@ -182,10 +185,10 @@ subroutine read_restart_metadata(dns, bc, pressure_niter, pressure_sor, file_nam
     ierr = fdm_h5_read_metadata(c_file_name, dns%globalSize(1), dns%globalSize(2), dns%globalSize(3), &
         dns%step_current, file_nsteps, &
         dns%leng(1), dns%leng(2), dns%leng(3), dns%re, dns%dt, dns%t_final, dns%t_current, dns%cfl, &
-        dns%cflmax, dns%dtmax, dns%forcing, &
+        dns%cflmax, dns%pecletmax, dns%dtmax, dns%forcing, &
         pressure_niter, pressure_sor, ibm_enabled, int(size(bc%faceBcType), C_INT), periodic, &
-        bc%faceBcType(VAR_U:VAR_P,1:NFACES), bc%faceBcValue(VAR_U:VAR_P,1:NFACES), &
-        dns%gridDistribution(1:3), dns%gridStretch(1:3))
+        bc%faceBcType(VAR_U:VAR_P,1:NFACES), bc%faceBcDefaultValue(VAR_U:VAR_P,1:NFACES), &
+        g%distribution(1:3), g%stretch(1:3))
     if (ierr /= 0_C_INT) then
         if (c%has_terminal) print *, "error: could not read restart metadata: ", trim(file_name)
         error stop

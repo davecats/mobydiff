@@ -17,9 +17,10 @@ module boundary
         ! Active physical boundary points. Periodic/MPI halos are handled by comm.f90.
         integer(C_INT), allocatable :: pointFace(:), i(:), j(:), k(:)
 
-        ! Boundary data use the same variable order as field_type: u, v, w, p.
+        ! Face defaults seed pointwise values; apply_bc uses pointBcValue only.
         integer(C_INT) :: faceBcType(VAR_U:VAR_P,1:NFACES) = 0_C_INT
-        real(C_DOUBLE) :: faceBcValue(VAR_U:VAR_P,1:NFACES) = 0.0d0
+        real(C_DOUBLE) :: faceBcDefaultValue(VAR_U:VAR_P,1:NFACES) = 0.0d0
+        real(C_DOUBLE), allocatable :: pointBcValue(:,:)
     end type boundary_type
 
 contains
@@ -30,13 +31,14 @@ contains
         call destroy_boundary_faces(bc)
         bc%isPeriodic(1:3) = .true.
         bc%faceBcType = 0_C_INT
-        bc%faceBcValue = 0.0d0
+        bc%faceBcDefaultValue = 0.0d0
         bc%faceBcType(VAR_P,:) = 1_C_INT
     end subroutine init_bc
 
-    subroutine init_boundary_faces(bc, dns)
+    subroutine init_boundary_faces(bc, dns, g)
         type(boundary_type), intent(inout) :: bc
         type(dns_type), intent(in) :: dns
+        type(grid_type), intent(in) :: g
         integer :: nx, ny, nz
         integer :: dir, side, face_id, pos, total
 
@@ -59,6 +61,7 @@ contains
         if (total <= 0) return
 
         allocate(bc%pointFace(total), bc%i(total), bc%j(total), bc%k(total))
+        allocate(bc%pointBcValue(VAR_U:VAR_P,total))
 
         pos = 0
         do dir = 1, 3
@@ -69,6 +72,8 @@ contains
                 call append_boundary_face_points(bc, face_id, pos, nx, ny, nz)
             end do
         end do
+
+        call update_boundary_values(bc, dns, g)
     end subroutine init_boundary_faces
 
     logical function is_physical_boundary(bc, dns, dir, side)
@@ -88,9 +93,10 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
         npts = int(bc%nTotal)
         !$omp target enter data map(to: bc)
-        !$omp target enter data map(to: bc%faceBcType, bc%faceBcValue)
+        !$omp target enter data map(to: bc%faceBcType)
         if (npts > 0) then
             !$omp target enter data map(to: bc%pointFace(1:npts), bc%i(1:npts), bc%j(1:npts), bc%k(1:npts))
+            !$omp target enter data map(to: bc%pointBcValue(VAR_U:VAR_P,1:npts))
         end if
 #endif
     end subroutine enter_boundary_data
@@ -102,9 +108,10 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
         npts = int(bc%nTotal)
         if (npts > 0) then
+            !$omp target exit data map(delete: bc%pointBcValue(VAR_U:VAR_P,1:npts))
             !$omp target exit data map(delete: bc%pointFace(1:npts), bc%i(1:npts), bc%j(1:npts), bc%k(1:npts))
         end if
-        !$omp target exit data map(delete: bc%faceBcType, bc%faceBcValue)
+        !$omp target exit data map(delete: bc%faceBcType)
         !$omp target exit data map(delete: bc)
 #endif
     end subroutine exit_boundary_data
@@ -116,8 +123,26 @@ contains
         if (allocated(bc%i)) deallocate(bc%i)
         if (allocated(bc%j)) deallocate(bc%j)
         if (allocated(bc%k)) deallocate(bc%k)
+        if (allocated(bc%pointBcValue)) deallocate(bc%pointBcValue)
         bc%nTotal = 0_C_INT
     end subroutine destroy_boundary_faces
+
+    subroutine update_boundary_values(bc, dns, g)
+        type(boundary_type), intent(inout) :: bc
+        type(dns_type), intent(in) :: dns
+        type(grid_type), intent(in) :: g
+        integer :: n, var, face_id, npts
+
+        npts = int(bc%nTotal)
+        if (npts <= 0) return
+
+        do n = 1, npts
+            face_id = int(bc%pointFace(n))
+            do var = VAR_U, VAR_P
+                bc%pointBcValue(var,n) = bc%faceBcDefaultValue(var,face_id)
+            end do
+        end do
+    end subroutine update_boundary_values
 
     subroutine append_boundary_face_points(bc, face_id, pos, nx, ny, nz)
         type(boundary_type), intent(inout) :: bc
@@ -210,7 +235,7 @@ contains
         integer :: n_dir, ghost_idx, interior_idx_dir, face_idx_dir, neighbor_idx
         integer(C_INT) :: local_n(1:3)
         integer :: idx(3), interior_idx(3), face_idx(3)
-        real(C_DOUBLE) :: dn
+        real(C_DOUBLE) :: dn, bc_value
 
         npts = int(bc%nTotal)
         if (npts <= 0) return
@@ -220,12 +245,13 @@ contains
         !$omp target teams distribute parallel do &
         !$omp& map(to: npts, local_n(1:3), g%x, g%y, g%z, &
         !$omp& bc%pointFace(1:npts), bc%i(1:npts), bc%j(1:npts), bc%k(1:npts), &
-        !$omp& bc%faceBcType(VAR_U:VAR_P,1:NFACES), bc%faceBcValue(VAR_U:VAR_P,1:NFACES)) &
+        !$omp& bc%faceBcType(VAR_U:VAR_P,1:NFACES), bc%pointBcValue(VAR_U:VAR_P,1:npts)) &
         !$omp& map(tofrom: f%q) &
         !$omp& private(n,i,j,k,face_id,var,dir,side,n_dir, &
         !$omp& ghost_idx,interior_idx_dir,face_idx_dir,neighbor_idx, &
-        !$omp& idx,interior_idx,face_idx,dn)
+        !$omp& idx,interior_idx,face_idx,dn,bc_value)
         do n = 1, npts
+            ! Each entry is one active physical boundary point on this MPI rank.
             face_id = int(bc%pointFace(n))
             dir = (face_id + 1)/2
             side = modulo(face_id - 1, 2)
@@ -238,6 +264,7 @@ contains
             face_idx = idx
 
             n_dir = int(local_n(dir))
+            ! Pick the boundary/ghost/interior indices along the wall-normal direction.
             if (side == SIDE_MIN) then
                 ghost_idx = 0
                 interior_idx_dir = 1
@@ -251,7 +278,9 @@ contains
             end if
 
             do var = VAR_U, VAR_P
+                bc_value = bc%pointBcValue(var,n)
                 if (var == dir) then
+                    ! Normal velocity lives on the boundary face itself in the staggered layout.
                     face_idx(dir) = face_idx_dir
                     interior_idx(dir) = neighbor_idx
                     select case (dir)
@@ -263,13 +292,15 @@ contains
                         dn = g%z(face_idx(3),var) - g%z(interior_idx(3),var)
                     end select
                     if (bc%faceBcType(var,face_id) == 0_C_INT) then
-                        f%q(face_idx(1),face_idx(2),face_idx(3),var) = bc%faceBcValue(var,face_id)
+                        f%q(face_idx(1),face_idx(2),face_idx(3),var) = bc_value
                     else
+                        ! Neumann data are stored as the normal derivative.
                         f%q(face_idx(1),face_idx(2),face_idx(3),var) = &
                             f%q(interior_idx(1),interior_idx(2),interior_idx(3),var) &
-                          + dn*bc%faceBcValue(var,face_id)
+                          + dn*bc_value
                     end if
                 else
+                    ! Tangential velocities and pressure use the ghost layer next to the boundary.
                     face_idx(dir) = ghost_idx
                     interior_idx(dir) = interior_idx_dir
                     select case (dir)
@@ -281,13 +312,14 @@ contains
                         dn = g%z(face_idx(3),var) - g%z(interior_idx(3),var)
                     end select
                     if (bc%faceBcType(var,face_id) == 0_C_INT) then
+                        ! Dirichlet ghost value chosen so the boundary midpoint has bc_value.
                         f%q(face_idx(1),face_idx(2),face_idx(3),var) = &
-                            2.0d0*bc%faceBcValue(var,face_id) &
+                            2.0d0*bc_value &
                           - f%q(interior_idx(1),interior_idx(2),interior_idx(3),var)
                     else
                         f%q(face_idx(1),face_idx(2),face_idx(3),var) = &
                             f%q(interior_idx(1),interior_idx(2),interior_idx(3),var) &
-                          + dn*bc%faceBcValue(var,face_id)
+                          + dn*bc_value
                     end if
                 end if
             end do

@@ -21,6 +21,7 @@ set(MODULE_DIR ${SRC_DIR}/modules)
 set(SOURCES
     ${SRC_DIR}/main.f90
     ${MODULE_DIR}/init.f90
+    ${MODULE_DIR}/chron.f90
     ${MODULE_DIR}/config.f90
     ${MODULE_DIR}/gpu_runtime.f90
     ${MODULE_DIR}/boundary.f90
@@ -30,6 +31,13 @@ set(SOURCES
     ${MODULE_DIR}/comm.f90
     ${MODULE_DIR}/step.f90
     ${MODULE_DIR}/pressure_solver.f90
+    ${MODULE_DIR}/flow_case_base.f90
+    ${MODULE_DIR}/flow/case_config_helpers.f90
+    ${MODULE_DIR}/flow/generic_flow.f90
+    ${MODULE_DIR}/flow/channel/channel_profile.f90
+    ${MODULE_DIR}/flow/channel/channel_stats.f90
+    ${MODULE_DIR}/flow/channel/channel_flow.f90
+    ${MODULE_DIR}/flow_case.f90
 )
 
 add_executable(main ${SOURCES})

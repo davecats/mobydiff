@@ -1,0 +1,103 @@
+TODO from 2026-05-25
+====================
+
+1. Build parallel HDF5 for the GPU-aware NVIDIA HPC SDK module stack.
+   - Use the module set based on toolkit/nvidia-hpc-sdk/25.3, not the -nompi SDK plus separate non-GPU-aware MPI.
+   - Configure mobyDiff with HDF5_ROOT pointing to the new parallel HDF5 installation.
+   - Rebuild from a clean build directory and confirm the build summary shows the intended MPI/HDF5 paths.
+
+2. Preserve the GPU-aware MPI runtime setup.
+   - Document the working module list and mpirun/srun environment.
+   - Keep UCX CUDA support enabled for multi-GPU runs.
+   - Avoid host-staged MPI buffers; performance depends on direct device-buffer MPI.
+
+3. Validate full production I/O with the new HDF5 build.
+   - Test one rank, four ranks on one node, and then multi-node if available.
+   - Check that field output and restart files are written/read correctly with parallel HDF5.
+   - Open the XDMF/HDF5 output in ParaView and verify coordinates/components.
+
+4. Re-check pressure consistency.
+   - CPU/GPU velocity fields agreed to roundoff, but pressure output previously showed a sizeable difference.
+   - Determine whether this is only a diagnostic/pressure-gauge issue or a real pressure-state inconsistency.
+   - Compare pressure after removing constant offsets and inspect halos/interior separately.
+   - Verify restart from pressure-containing files if pressure is meant to be restart state.
+
+5. Cluster scaling and profiling.
+   - Repeat the 700^3 case for 1, 2, 4 GPUs with the final HDF5/MPI stack.
+   - Run a 1024^3 case if memory permits.
+   - Profile the final code path with Nsight Systems after HDF5 is working.
+   - Check whether remaining time is dominated by red-black sweeps, halo exchange, boundary application, or IBM coefficient setup.
+
+6. Keep an eye on portability.
+   - The code assumes GPU-aware MPI for GPU builds.
+   - If a system lacks CUDA-aware MPI, fail clearly or document the required module/runtime configuration.
+
+Performance comparison and optimisation notes from 2026-05-26
+============================================================
+
+1024^3 strong-scaling comparison, seconds per timestep:
+
+GPUs | MPI dims | mobyDiff | AMPHIBIOUS | AMPHIBIOUS/mobyDiff
+-----|----------|----------|------------|--------------------
+4    | 1 2 2    | 0.714    | 0.617      | 0.86
+8    | 2 2 2    | 0.386    | 0.406      | 1.05
+16   | 2 2 4    | 0.255    | 0.258      | 1.01
+32   | 2 4 4    | 0.139    | 0.184      | 1.32
+64   | 4 4 4    | 0.137    | 0.150      | 1.09
+
+Notes:
+- mobyDiff is slightly slower on 4 GPUs, but matches or outperforms AMPHIBIOUS from 8 GPUs upward.
+- Both codes show a plateau from 32 to 64 GPUs, suggesting a hardware/runtime communication limit may be important for this case size.
+- Nsight Systems showed healthy scaling of the main GPU kernels. The dominant kernels are the red-black pressure sweep and momentum predictor.
+- Remaining optimisation candidates, when needed:
+  * reduce OpenMP target-region synchronisation in the pressure loop;
+  * consider merging or restructuring small kernels such as apply_bc around the red-black sweep;
+  * add explicit internal timers for halo exchange/MPI wait time, since Nsight did not collect MPI events;
+  * consider interior/boundary box splitting and communication/computation overlap only if MPI wait is confirmed significant;
+  * clean up initialization-time host-to-device transfers with map(alloc:) where arrays are initialized directly on the GPU.
+- For now, performance is good enough to move focus to validation cases and utilities for setting up/initialising flow cases.
+
+Autotuning notes from 2026-05-31
+================================
+
+Autotuning could be useful for production runs, especially multi-node cases, but it should remain outside the solver core. The solver should continue to read a simple explicit decomposition from input.ini:
+
+[mpi]
+dims = nxr nyr nzr
+
+The autotuning utility can generate and test those values.
+
+Candidate tuning targets:
+- MPI Cartesian decomposition for a fixed global grid and rank count.
+  * Try all reasonable factorizations of the rank count, e.g. for 32 ranks: 1 4 8, 2 4 4, 4 4 2, etc.
+  * Use a simple surface-area communication model to order/prune candidates, but rely on measurements for the final choice.
+  * The best decomposition may depend on physical boundary conditions, local block shape, red-black halo frequency, GPU-aware MPI behaviour, and network topology.
+- MPI launch/runtime settings.
+  * Compare a small set of robust launcher options, e.g. --bind-to none, --bind-to core, ppr:4:node, and PE=1/2 variants.
+  * Compare a few MPI presets through MPI_EXTRA_ARGS, e.g. default, --mca pml ucx, and --mca pml ucx --mca coll_hcoll_enable 0.
+  * Avoid aggressive UCX_TLS or low-level transport settings unless recommended by the cluster documentation, because they can silently disable good transports.
+
+Suggested utility layout:
+
+profiling/autotune/
+  generate_decompositions.py
+  run_autotune.slurm
+  collect_autotune.py
+
+Suggested workflow:
+1. Generate candidate decompositions for nx, ny, nz, and ranks.
+2. Generate temporary input.ini files with output disabled.
+3. Run each candidate for a short fixed number of timesteps, e.g. 10-20.
+4. Repeat candidates 2-3 times to reduce noise.
+5. Store seconds_per_step, rank count, nodes, dims, MPI preset, launch flags, environment, and exit code.
+6. Produce a sorted CSV/table with the best-performing candidates.
+
+Example output table:
+
+ranks | dims  | MPI preset | seconds_per_step | relative
+------|-------|------------|------------------|---------
+32    | 2 4 4 | default    | 0.139            | 1.00
+32    | 4 4 2 | default    | 0.146            | 1.05
+32    | 2 4 4 | hcoll_off  | 0.136            | 0.98
+
+Guiding principle: autotune the scripts and input files, not the solver logic. Keep mobyDiff clean and explicit, while allowing hardware-specific optimisation through the profiling harness.
