@@ -123,6 +123,8 @@ program main
         call write_chron(loop_timer)
     end if
 
+    call write_field(f, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%sor)
+
     ! Release device-side data before the host allocatables go out of scope.
     call flow%finalize(dns, g, c)
     call exit_ibm_data(ibm, dns)
