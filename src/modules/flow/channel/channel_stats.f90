@@ -123,7 +123,14 @@ contains
         do k = 1, nz
             do j = 1, ny
                 do i = 1, nx
-                    wall_idx = local_wall_index(wall_dir, i, j, k)
+                    select case (wall_dir)
+                    case (1)
+                        wall_idx = i
+                    case (2)
+                        wall_idx = j
+                    case default
+                        wall_idx = k
+                    end select
                     global_wall_idx = int(dns%localSize(wall_dir,0)) + wall_idx - 1
                     base = CHANNEL_NSTAT*(global_wall_idx - 1)
 
@@ -208,20 +215,6 @@ contains
 #endif
         this%on_device = .false.
     end subroutine channel_stats_finalize
-
-    integer function local_wall_index(wall_dir, i, j, k) result(wall_idx)
-        integer(C_INT), intent(in) :: wall_dir
-        integer, intent(in) :: i, j, k
-
-        select case (wall_dir)
-        case (1)
-            wall_idx = i
-        case (2)
-            wall_idx = j
-        case default
-            wall_idx = k
-        end select
-    end function local_wall_index
 
     subroutine centered_velocity(f, i, j, k, velocity)
         type(field_type), intent(in) :: f
