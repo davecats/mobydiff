@@ -8,18 +8,17 @@ module channel_flow
     use :: comm, only: comm_type
     use :: case_config_helpers, only: strip_config_comment, parse_config_section, &
         split_config_key_value, to_lower, clean_config_string
-    use :: channel_profile, only: initialise_channel_fields, channel_span_dir
+    use :: channel_profile, only: initialise_channel_fields
     use :: channel_stats, only: channel_stats_type
     implicit none
 
     private
 
     character(len=*), parameter :: CHANNEL_CASE_NAME = "channel"
+    integer(C_INT), parameter :: CHANNEL_STREAM_DIR = 1_C_INT
+    integer(C_INT), parameter :: CHANNEL_WALL_DIR = 2_C_INT
 
     type, extends(case_type), public :: channel_case_type
-        integer(C_INT) :: stream_dir = 1_C_INT
-        integer(C_INT) :: wall_dir = 0_C_INT
-        integer(C_INT) :: span_dir = 3_C_INT
         integer :: n_walls = 2
         real(C_DOUBLE) :: natural_blend_index = 40.0d0
         real(C_DOUBLE) :: large_disturbance_amplitude = 1.0d-2
@@ -53,18 +52,17 @@ contains
         type(comm_type), intent(inout) :: c
         type(pressure_solver_type), intent(inout) :: ps
 
-        call resolve_channel_directions(this)
         call set_generic_defaults(dns, g, bc, c, ps)
         this%name = CHANNEL_CASE_NAME
 
-        dns%leng(this%wall_dir) = merge(2.0d0, 1.0d0, this%n_walls == 2)
+        dns%leng(CHANNEL_WALL_DIR) = merge(2.0d0, 1.0d0, this%n_walls == 2)
         dns%forcing = 0.0d0
-        dns%forcing(this%stream_dir) = 1.0d0
+        dns%forcing(CHANNEL_STREAM_DIR) = 1.0d0
         dns%ibm_enabled = .false.
 
-        bc%isPeriodic(this%wall_dir) = .false.
-        g%distribution(this%wall_dir) = GRID_NATURAL
-        g%stretch(this%wall_dir) = this%natural_blend_index
+        bc%isPeriodic(CHANNEL_WALL_DIR) = .false.
+        g%distribution(CHANNEL_WALL_DIR) = GRID_NATURAL
+        g%stretch(CHANNEL_WALL_DIR) = this%natural_blend_index
 
         call set_channel_wall_bcs(this, bc)
     end subroutine channel_apply_defaults
@@ -77,7 +75,7 @@ contains
         type(boundary_type), intent(in) :: bc
         type(comm_type), intent(in) :: c
 
-        call this%stats%setup(dns, g, this%wall_dir, c)
+        call this%stats%setup(dns, g, c)
     end subroutine channel_setup_after_grid
 
     subroutine channel_initialise_fields(this, f, dns, g, bc, c)
@@ -88,7 +86,7 @@ contains
         type(boundary_type), intent(in) :: bc
         type(comm_type), intent(in) :: c
 
-        call initialise_channel_fields(f, dns, g, this%stream_dir, this%wall_dir, this%n_walls, &
+        call initialise_channel_fields(f, dns, g, this%n_walls, &
             this%large_disturbance_amplitude, this%small_noise_amplitude)
     end subroutine channel_initialise_fields
 
@@ -107,11 +105,11 @@ contains
 
         if (this%stats%interval <= 0 .and. runtime_interval <= 0) return
 
-        call this%stats%accumulate(f, dns, g, this%wall_dir)
+        call this%stats%accumulate(f, dns, g)
         write_hdf5 = this%stats%interval > 0 .and. modulo(int(dns%step_current), this%stats%interval) == 0
         write_runtime = runtime_interval > 0 .and. modulo(int(dns%step_current), runtime_interval) == 0
         if (write_hdf5 .or. write_runtime) then
-            call this%stats%write(f, dns, g, c, this%wall_dir, write_hdf5, write_runtime)
+            call this%stats%write(f, dns, g, c, write_hdf5, write_runtime)
         end if
     end subroutine channel_after_step
 
@@ -130,8 +128,8 @@ contains
 
         integer :: min_face, max_face
 
-        min_face = boundary_face_id(int(this%wall_dir), 0)
-        max_face = boundary_face_id(int(this%wall_dir), 1)
+        min_face = boundary_face_id(int(CHANNEL_WALL_DIR), 0)
+        max_face = boundary_face_id(int(CHANNEL_WALL_DIR), 1)
 
         bc%faceBcType(VAR_U:VAR_W,min_face) = 0_C_INT
         bc%faceBcDefaultValue(VAR_U:VAR_W,min_face) = 0.0d0
@@ -141,23 +139,11 @@ contains
             bc%faceBcType(VAR_U:VAR_W,max_face) = 0_C_INT
         else
             bc%faceBcType(VAR_U:VAR_W,max_face) = 1_C_INT
-            bc%faceBcType(this%wall_dir,max_face) = 0_C_INT
+            bc%faceBcType(VAR_V,max_face) = 0_C_INT
         end if
         bc%faceBcDefaultValue(VAR_U:VAR_W,max_face) = 0.0d0
         bc%faceBcType(VAR_P,max_face) = 1_C_INT
     end subroutine set_channel_wall_bcs
-
-    subroutine resolve_channel_directions(this)
-        class(channel_case_type), intent(inout) :: this
-
-        if (this%wall_dir == 0_C_INT) then
-            this%wall_dir = merge(2_C_INT, 1_C_INT, this%n_walls == 2)
-        end if
-        if (this%stream_dir == this%wall_dir) then
-            this%stream_dir = merge(1_C_INT, 2_C_INT, this%wall_dir /= 1_C_INT)
-        end if
-        this%span_dir = channel_span_dir(this%stream_dir, this%wall_dir)
-    end subroutine resolve_channel_directions
 
     subroutine channel_read_config(this, input_file, has_terminal)
         class(channel_case_type), intent(inout) :: this
@@ -194,7 +180,6 @@ contains
         end do
 
         close(unit)
-        call resolve_channel_directions(this)
     end subroutine channel_read_config
 
     subroutine apply_channel_case_value(this, key, value, line_no, has_terminal)
@@ -214,12 +199,6 @@ contains
         case ("n_walls")
             read(value, *, iostat=stat) int_value
             if (stat == 0 .and. (int_value == 1 .or. int_value == 2)) this%n_walls = int_value
-        case ("stream_dir", "stream_direction")
-            read(value, *, iostat=stat) int_value
-            if (stat == 0 .and. int_value >= 1 .and. int_value <= 3) this%stream_dir = int(int_value, C_INT)
-        case ("wall_dir", "wall_direction")
-            read(value, *, iostat=stat) int_value
-            if (stat == 0 .and. int_value >= 1 .and. int_value <= 3) this%wall_dir = int(int_value, C_INT)
         case ("stats_interval")
             read(value, *, iostat=stat) int_value
             if (stat == 0) this%stats%interval = int_value

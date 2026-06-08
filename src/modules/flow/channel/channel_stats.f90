@@ -1,11 +1,9 @@
 module channel_stats
     use, intrinsic :: iso_c_binding
     use, intrinsic :: iso_fortran_env, only: int64
-    use :: init, only: dns_type, grid_type, field_type, VAR_U, VAR_V, VAR_W, VAR_P, &
-        CFL_COURANT, CFL_PECLET
+    use :: init, only: dns_type, grid_type, field_type, VAR_U, VAR_V, VAR_W, VAR_P
     use :: comm, only: comm_type, comm_allreduce_sum
     use :: io, only: to_c_string
-    use :: channel_profile, only: channel_plane_coord
     implicit none
 
     private
@@ -73,11 +71,10 @@ module channel_stats
 
 contains
 
-    subroutine channel_stats_setup(this, dns, g, wall_dir, c)
+    subroutine channel_stats_setup(this, dns, g, c)
         class(channel_stats_type), intent(inout) :: this
         type(dns_type), intent(in) :: dns
         type(grid_type), intent(in) :: g
-        integer(C_INT), intent(in) :: wall_dir
         type(comm_type), intent(in) :: c
 
         integer :: nwall, n
@@ -88,7 +85,7 @@ contains
         this%clock_step_start = dns%step_current
         this%runtime_header_written = .false.
 
-        nwall = int(dns%globalSize(wall_dir))
+        nwall = int(dns%globalSize(2))
         allocate(this%sum(CHANNEL_NSTAT*nwall))
         allocate(this%count(nwall))
         allocate(this%profile(CHANNEL_NSTAT*nwall))
@@ -99,7 +96,7 @@ contains
         this%profile = 0.0d0
 
         do n = 1, nwall
-            this%coord(n) = channel_plane_coord(g, wall_dir, n)
+            this%coord(n) = 0.5d0*(g%yNode(n-1) + g%yNode(n))
         end do
 
         if (this%interval > 0) call read_channel_stats_restart(this, dns, c)
@@ -110,14 +107,13 @@ contains
 #endif
     end subroutine channel_stats_setup
 
-    subroutine channel_stats_accumulate(this, f, dns, g, wall_dir)
+    subroutine channel_stats_accumulate(this, f, dns, g)
         class(channel_stats_type), intent(inout) :: this
         type(field_type), intent(inout) :: f
         type(dns_type), intent(in) :: dns
         type(grid_type), intent(in) :: g
-        integer(C_INT), intent(in) :: wall_dir
 
-        integer :: i, j, k, s, nx, ny, nz, wall_idx, global_wall_idx, base
+        integer :: i, j, k, s, nx, ny, nz, global_wall_idx, base
         real(C_DOUBLE) :: p, kin, eps, velocity(3), sample(CHANNEL_NSTAT)
 
         if (.not. allocated(this%sum)) return
@@ -129,20 +125,12 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do collapse(3) &
         !$omp& map(to: this, dns, g, f%q) map(tofrom: this%sum, this%count) &
-        !$omp& private(i,j,k,s,wall_idx,global_wall_idx,base,p,kin,eps,velocity,sample)
+        !$omp& private(i,j,k,s,global_wall_idx,base,p,kin,eps,velocity,sample)
 #endif
         do k = 1, nz
             do j = 1, ny
                 do i = 1, nx
-                    select case (wall_dir)
-                    case (1)
-                        wall_idx = i
-                    case (2)
-                        wall_idx = j
-                    case default
-                        wall_idx = k
-                    end select
-                    global_wall_idx = int(dns%localSize(wall_dir,0)) + wall_idx - 1
+                    global_wall_idx = int(dns%localSize(2,0)) + j - 1
                     base = CHANNEL_NSTAT*(global_wall_idx - 1)
 
                     call centered_velocity(f, i, j, k, velocity)
@@ -165,13 +153,12 @@ contains
 #endif
     end subroutine channel_stats_accumulate
 
-    subroutine channel_stats_write(this, f, dns, g, c, wall_dir, write_hdf5, write_runtime)
+    subroutine channel_stats_write(this, f, dns, g, c, write_hdf5, write_runtime)
         class(channel_stats_type), intent(inout) :: this
         type(field_type), intent(inout) :: f
         type(dns_type), intent(in) :: dns
         type(grid_type), intent(in) :: g
         type(comm_type), intent(in) :: c
-        integer(C_INT), intent(in) :: wall_dir
         logical, intent(in) :: write_hdf5, write_runtime
 
         character(kind=C_CHAR,len=:), allocatable :: c_file_name
@@ -185,7 +172,7 @@ contains
         if (.not. allocated(this%sum)) return
 
         if (write_runtime) then
-            call channel_runtime_diagnostics(this, f, dns, g, c, wall_dir, flow_values, volume_values)
+            call channel_runtime_diagnostics(this, f, dns, g, c, flow_values, volume_values)
             wall_seconds_per_step = channel_wall_seconds_per_step(this, dns)
             if (c%has_terminal) then
                 call write_runtime_output(this, dns, flow_values, volume_values, wall_seconds_per_step)
@@ -206,12 +193,12 @@ contains
         call comm_allreduce_sum(c, raw_sum)
         call comm_allreduce_sum(c, reduced_count)
 
-        call build_channel_profile(this, raw_sum, reduced_count, dns, wall_dir)
+        call build_channel_profile(this, raw_sum, reduced_count, dns)
 
         if (c%has_terminal) then
             c_file_name = to_c_string(this%file)
             ierr = fdm_h5_write_channel_stats(c_file_name, int(nwall, C_INT), int(CHANNEL_NSTAT, C_INT), &
-                dns%step_current, dns%t_current, wall_dir, dns%re, dns%forcing, &
+                dns%step_current, dns%t_current, int(2, C_INT), dns%re, dns%forcing, &
                 this%coord, this%profile, raw_sum, reduced_count)
             if (ierr /= 0_C_INT) then
                 print *, "error: could not write channel statistics file: ", trim(this%file)
@@ -297,11 +284,10 @@ contains
             2.0d0*(s12*s12 + s13*s13 + s23*s23))
     end function channel_dissipation
 
-    subroutine build_channel_profile(this, raw_sum, reduced_count, dns, wall_dir)
+    subroutine build_channel_profile(this, raw_sum, reduced_count, dns)
         class(channel_stats_type), intent(inout) :: this
         real(C_DOUBLE), intent(in) :: raw_sum(:), reduced_count(:)
         type(dns_type), intent(in) :: dns
-        integer(C_INT), intent(in) :: wall_dir
 
         integer :: n, s, base
 
@@ -317,13 +303,12 @@ contains
                 this%profile(base+STAT_U)**2 - this%profile(base+STAT_V)**2 - &
                 this%profile(base+STAT_W)**2)
         end do
-        call subtract_mean_profile_dissipation(this, dns, wall_dir, reduced_count)
+        call subtract_mean_profile_dissipation(this, dns, reduced_count)
     end subroutine build_channel_profile
 
-    subroutine subtract_mean_profile_dissipation(this, dns, wall_dir, reduced_count)
+    subroutine subtract_mean_profile_dissipation(this, dns, reduced_count)
         class(channel_stats_type), intent(inout) :: this
         type(dns_type), intent(in) :: dns
-        integer(C_INT), intent(in) :: wall_dir
         real(C_DOUBLE), intent(in) :: reduced_count(:)
 
         integer :: n, nwall, base, mean_base
@@ -346,29 +331,10 @@ contains
         do n = 1, nwall
             if (reduced_count(n) <= 0.0d0) cycle
             base = CHANNEL_NSTAT*(n - 1)
-            mean_eps = mean_profile_dissipation_at(mean_velocity, this%coord, reduced_count, n, wall_dir, dns%re)
+            mean_eps = mean_profile_dissipation_at(mean_velocity, this%coord, reduced_count, n, dns%re)
             this%profile(base+STAT_EPSILON) = max(0.0d0, this%profile(base+STAT_EPSILON) - mean_eps)
         end do
     end subroutine subtract_mean_profile_dissipation
-
-    subroutine channel_volume_averages(this, reduced_count, volume_values)
-        class(channel_stats_type), intent(in) :: this
-        real(C_DOUBLE), intent(in) :: reduced_count(:)
-        real(C_DOUBLE), intent(out) :: volume_values(2)
-
-        integer :: n, base
-        real(C_DOUBLE) :: count_sum
-
-        volume_values = 0.0d0
-        count_sum = 0.0d0
-        do n = 1, size(reduced_count)
-            base = CHANNEL_NSTAT*(n - 1)
-            volume_values(1) = volume_values(1) + this%profile(base+STAT_K)*reduced_count(n)
-            volume_values(2) = volume_values(2) + this%profile(base+STAT_EPSILON)*reduced_count(n)
-            count_sum = count_sum + reduced_count(n)
-        end do
-        if (count_sum > 0.0d0) volume_values = volume_values/count_sum
-    end subroutine channel_volume_averages
 
     integer function effective_runtime_interval(this) result(interval)
         class(channel_stats_type), intent(in) :: this
@@ -430,24 +396,23 @@ contains
         end if
     end subroutine write_runtime_output
 
-    subroutine channel_runtime_diagnostics(this, f, dns, g, c, wall_dir, flow_values, volume_values)
+    subroutine channel_runtime_diagnostics(this, f, dns, g, c, flow_values, volume_values)
         class(channel_stats_type), intent(in) :: this
         type(field_type), intent(inout) :: f
         type(dns_type), intent(in) :: dns
         type(grid_type), intent(in) :: g
         type(comm_type), intent(in) :: c
-        integer(C_INT), intent(in) :: wall_dir
         real(C_DOUBLE), intent(out) :: flow_values(2)
         real(C_DOUBLE), intent(out) :: volume_values(2)
 
-        integer :: i, j, k, nx, ny, nz, nwall, wall_idx, global_wall_idx, base, mean_base, n
+        integer :: i, j, k, nx, ny, nz, nwall, global_wall_idx, base, mean_base, n
         real(C_DOUBLE) :: velocity(3), kin, eps, total_count, mean_eps
         real(C_DOUBLE), allocatable :: plane_sum(:), plane_count(:), mean_velocity(:)
 
         nx = int(dns%localSize(1,2))
         ny = int(dns%localSize(2,2))
         nz = int(dns%localSize(3,2))
-        nwall = int(dns%globalSize(wall_dir))
+        nwall = int(dns%globalSize(2))
         allocate(plane_sum(5*nwall))
         allocate(plane_count(nwall))
         allocate(mean_velocity(3*nwall))
@@ -458,20 +423,12 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do collapse(3) &
         !$omp& map(to: dns, g, f%q) map(tofrom: plane_sum(1:5*nwall), plane_count(1:nwall)) &
-        !$omp& private(i,j,k,wall_idx,global_wall_idx,base,velocity,kin,eps)
+        !$omp& private(i,j,k,global_wall_idx,base,velocity,kin,eps)
 #endif
         do k = 1, nz
             do j = 1, ny
                 do i = 1, nx
-                    select case (wall_dir)
-                    case (1)
-                        wall_idx = i
-                    case (2)
-                        wall_idx = j
-                    case default
-                        wall_idx = k
-                    end select
-                    global_wall_idx = int(dns%localSize(wall_dir,0)) + wall_idx - 1
+                    global_wall_idx = int(dns%localSize(2,0)) + j - 1
                     base = 5*(global_wall_idx - 1)
 
                     call centered_velocity(f, i, j, k, velocity)
@@ -521,7 +478,7 @@ contains
             volume_values(1) = volume_values(1) + plane_count(n)*max(0.0d0, &
                 plane_sum(base+4)/plane_count(n) - 0.5d0*(mean_velocity(mean_base+1)**2 + &
                 mean_velocity(mean_base+2)**2 + mean_velocity(mean_base+3)**2))
-            mean_eps = mean_profile_dissipation_at(mean_velocity, this%coord, plane_count, n, wall_dir, dns%re)
+            mean_eps = mean_profile_dissipation_at(mean_velocity, this%coord, plane_count, n, dns%re)
             volume_values(2) = volume_values(2) + plane_count(n)*max(0.0d0, &
                 plane_sum(base+5)/plane_count(n) - mean_eps)
         end do
@@ -532,10 +489,9 @@ contains
         end if
     end subroutine channel_runtime_diagnostics
 
-    real(C_DOUBLE) function mean_profile_dissipation_at(mean_velocity, coord, count, n, wall_dir, re) result(mean_eps)
+    real(C_DOUBLE) function mean_profile_dissipation_at(mean_velocity, coord, count, n, re) result(mean_eps)
         real(C_DOUBLE), intent(in) :: mean_velocity(:), coord(:), count(:)
         integer, intent(in) :: n
-        integer(C_INT), intent(in) :: wall_dir
         real(C_DOUBLE), intent(in) :: re
 
         integer :: nwall, n0, n1, dir, base0, base1
@@ -566,10 +522,7 @@ contains
             grad(dir) = (mean_velocity(base1+dir) - mean_velocity(base0+dir))/dy
         end do
 
-        mean_eps = 2.0d0/re*grad(int(wall_dir))**2
-        do dir = 1, 3
-            if (dir /= int(wall_dir)) mean_eps = mean_eps + grad(dir)**2/re
-        end do
+        mean_eps = (grad(1)**2 + grad(3)**2)/re + 2.0d0*grad(2)**2/re
     end function mean_profile_dissipation_at
 
     subroutine read_channel_stats_restart(this, dns, c)
