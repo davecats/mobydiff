@@ -21,6 +21,7 @@ module channel_flow
     type, extends(case_type), public :: channel_case_type
         integer :: n_walls = 2
         real(C_DOUBLE) :: natural_blend_index = 40.0d0
+        real(C_DOUBLE) :: mean_profile_sine_amplitude = 0.0d0
         real(C_DOUBLE) :: large_disturbance_amplitude = 1.0d-2
         real(C_DOUBLE) :: small_noise_amplitude = 1.0d-3
         type(channel_stats_type) :: stats
@@ -86,7 +87,7 @@ contains
         type(boundary_type), intent(in) :: bc
         type(comm_type), intent(in) :: c
 
-        call initialise_channel_fields(f, dns, g, this%n_walls, &
+        call initialise_channel_fields(f, dns, g, this%n_walls, this%mean_profile_sine_amplitude, &
             this%large_disturbance_amplitude, this%small_noise_amplitude)
     end subroutine channel_initialise_fields
 
@@ -199,6 +200,9 @@ contains
         case ("natural_blend_index", "jb")
             read(value, *, iostat=stat) real_value
             if (stat == 0) this%natural_blend_index = real_value
+        case ("mean_profile_sine_amplitude", "mean_sine_amplitude")
+            read(value, *, iostat=stat) real_value
+            if (stat == 0) this%mean_profile_sine_amplitude = real_value
         case ("large_disturbance_amplitude")
             read(value, *, iostat=stat) real_value
             if (stat == 0) this%large_disturbance_amplitude = real_value

@@ -13,15 +13,15 @@ module channel_profile
 
 contains
 
-    subroutine initialise_channel_fields(f, dns, g, n_walls, large_amp, noise_amp)
+    subroutine initialise_channel_fields(f, dns, g, n_walls, mean_sine_amp, large_amp, noise_amp)
         type(field_type), intent(inout) :: f
         type(dns_type), intent(in) :: dns
         type(grid_type), intent(in) :: g
         integer, intent(in) :: n_walls
-        real(C_DOUBLE), intent(in) :: large_amp, noise_amp
+        real(C_DOUBLE), intent(in) :: mean_sine_amp, large_amp, noise_amp
 
         integer :: i, j, k, var, nx, ny, nz
-        real(C_DOUBLE) :: stream_x, span_x, wall_y, envelope, laminar_u
+        real(C_DOUBLE) :: stream_x, span_x, wall_y, envelope, mean_u
         real(C_DOUBLE) :: large, noise
 
         nx = int(dns%localSize(1,2))
@@ -40,7 +40,7 @@ contains
                         span_x = g%z(k,var)
                         wall_y = max(0.0d0, min(g%y(j,var), dns%leng(2)))
 
-                        call laminar_profile(dns, n_walls, wall_y, laminar_u, envelope)
+                        call mean_profile(dns, n_walls, wall_y, mean_sine_amp, mean_u, envelope)
 
                         large = large_disturbance(large_amp, envelope, stream_x, span_x, &
                             dns%leng(1), dns%leng(3))
@@ -49,7 +49,7 @@ contains
                                                 j + int(dns%localSize(2,0)) - 1, &
                                                 k + int(dns%localSize(3,0)) - 1, var)
 
-                        f%q(i,j,k,var) = stream_profile(var, laminar_u) + &
+                        f%q(i,j,k,var) = stream_profile(var, mean_u) + &
                             disturbance_component(var, large) + noise
                     end do
                 end do
@@ -57,20 +57,25 @@ contains
         end do
     end subroutine initialise_channel_fields
 
-    subroutine laminar_profile(dns, n_walls, wall_y, laminar_u, envelope)
+    subroutine mean_profile(dns, n_walls, wall_y, mean_sine_amp, mean_u, envelope)
         type(dns_type), intent(in) :: dns
         integer, intent(in) :: n_walls
-        real(C_DOUBLE), intent(in) :: wall_y
-        real(C_DOUBLE), intent(out) :: laminar_u, envelope
+        real(C_DOUBLE), intent(in) :: wall_y, mean_sine_amp
+        real(C_DOUBLE), intent(out) :: mean_u, envelope
 
+        real(C_DOUBLE) :: wall_length
+
+        wall_length = max(dns%leng(2), 1.0d-12)
         if (n_walls == 2) then
-            laminar_u = 0.5d0*dns%re*dns%forcing(VAR_U)*wall_y*(dns%leng(2) - wall_y)
-            envelope = sin(PI*wall_y/dns%leng(2))
+            mean_u = 0.5d0*dns%re*dns%forcing(VAR_U)*wall_y*(dns%leng(2) - wall_y)
+            envelope = sin(PI*wall_y/wall_length)
         else
-            laminar_u = dns%re*dns%forcing(VAR_U)*(dns%leng(2)*wall_y - 0.5d0*wall_y*wall_y)
-            envelope = sin(0.5d0*PI*wall_y/dns%leng(2))
+            mean_u = dns%re*dns%forcing(VAR_U)*(dns%leng(2)*wall_y - 0.5d0*wall_y*wall_y)
+            envelope = sin(0.5d0*PI*wall_y/wall_length)
         end if
-    end subroutine laminar_profile
+
+        mean_u = mean_u + mean_sine_amp*sin(2.0d0*PI*wall_y/wall_length)
+    end subroutine mean_profile
 
     real(C_DOUBLE) function stream_profile(var, laminar_u) result(value)
         integer, intent(in) :: var
