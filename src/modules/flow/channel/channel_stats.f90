@@ -25,7 +25,8 @@ module channel_stats
     integer, parameter :: CHANNEL_NSTAT = 14
 
     type, public :: channel_stats_type
-        integer :: interval = 100
+        integer :: sample_interval = -1
+        integer :: write_interval = -1
         integer :: runtime_interval = -1
         character(len=256) :: file = "channel_stats.h5"
         character(len=256) :: runtime_file = "runtimedata.txt"
@@ -34,6 +35,7 @@ module channel_stats
         integer(int64) :: clock_start = 0_int64
         integer(int64) :: clock_rate = 0_int64
         integer(C_INT) :: clock_step_start = 0_C_INT
+        integer(C_INT) :: last_write_step = -1_C_INT
         real(C_DOUBLE), allocatable :: sum(:)
         real(C_DOUBLE), allocatable :: count(:)
         real(C_DOUBLE), allocatable :: profile(:)
@@ -42,6 +44,7 @@ module channel_stats
         procedure :: setup => channel_stats_setup
         procedure :: accumulate => channel_stats_accumulate
         procedure :: write => channel_stats_write
+        procedure :: write_hdf5 => channel_stats_write_hdf5
         procedure :: finalize => channel_stats_finalize
     end type channel_stats_type
 
@@ -79,11 +82,13 @@ contains
 
         integer :: nwall, n
 
-        if (this%interval <= 0 .and. effective_runtime_interval(this) <= 0) return
+        if (this%sample_interval <= 0 .and. this%write_interval <= 0 .and. &
+                this%runtime_interval <= 0) return
 
         call system_clock(count=this%clock_start, count_rate=this%clock_rate)
         this%clock_step_start = dns%step_current
         this%runtime_header_written = .false.
+        this%last_write_step = -1_C_INT
 
         nwall = int(dns%globalSize(2))
         allocate(this%sum(CHANNEL_NSTAT*nwall))
@@ -99,7 +104,9 @@ contains
             this%coord(n) = 0.5d0*(g%yNode(n-1) + g%yNode(n))
         end do
 
-        if (this%interval > 0) call read_channel_stats_restart(this, dns, c)
+        if (this%sample_interval > 0 .or. this%write_interval > 0) then
+            call read_channel_stats_restart(this, dns, c)
+        end if
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target enter data map(to: this%sum, this%count)
@@ -161,10 +168,6 @@ contains
         type(comm_type), intent(in) :: c
         logical, intent(in) :: write_hdf5, write_runtime
 
-        character(kind=C_CHAR,len=:), allocatable :: c_file_name
-        integer(C_INT) :: ierr
-        integer :: nwall
-        real(C_DOUBLE), allocatable :: raw_sum(:), reduced_count(:)
         real(C_DOUBLE) :: flow_values(2), volume_values(2)
         real(C_DOUBLE) :: wall_seconds_per_step
 
@@ -179,10 +182,26 @@ contains
             end if
         end if
 
-        if (.not. write_hdf5) return
+        if (write_hdf5) call this%write_hdf5(dns, c)
+    end subroutine channel_stats_write
+
+    subroutine channel_stats_write_hdf5(this, dns, c)
+        class(channel_stats_type), intent(inout) :: this
+        type(dns_type), intent(in) :: dns
+        type(comm_type), intent(in) :: c
+
+        character(kind=C_CHAR,len=:), allocatable :: c_file_name
+        integer(C_INT) :: ierr
+        integer :: nwall
+        real(C_DOUBLE), allocatable :: raw_sum(:), reduced_count(:)
+
+        if (.not. allocated(this%sum)) return
+        if (this%last_write_step == dns%step_current) return
 
 #ifdef USE_OPENMP_OFFLOAD
-        !$omp target update from(this%sum, this%count)
+        if (this%on_device) then
+            !$omp target update from(this%sum, this%count)
+        end if
 #endif
 
         nwall = size(this%count)
@@ -192,6 +211,7 @@ contains
         reduced_count = this%count
         call comm_allreduce_sum(c, raw_sum)
         call comm_allreduce_sum(c, reduced_count)
+        if (sum(reduced_count) <= 0.0d0) return
 
         call build_channel_profile(this, raw_sum, reduced_count, dns)
 
@@ -205,10 +225,16 @@ contains
                 error stop
             end if
         end if
-    end subroutine channel_stats_write
 
-    subroutine channel_stats_finalize(this)
+        this%last_write_step = dns%step_current
+    end subroutine channel_stats_write_hdf5
+
+    subroutine channel_stats_finalize(this, dns, c)
         class(channel_stats_type), intent(inout) :: this
+        type(dns_type), intent(in) :: dns
+        type(comm_type), intent(in) :: c
+
+        call this%write_hdf5(dns, c)
 
 #ifdef USE_OPENMP_OFFLOAD
         if (this%on_device) then
@@ -335,13 +361,6 @@ contains
             this%profile(base+STAT_EPSILON) = max(0.0d0, this%profile(base+STAT_EPSILON) - mean_eps)
         end do
     end subroutine subtract_mean_profile_dissipation
-
-    integer function effective_runtime_interval(this) result(interval)
-        class(channel_stats_type), intent(in) :: this
-
-        interval = this%runtime_interval
-        if (interval < 0) interval = this%interval
-    end function effective_runtime_interval
 
     real(C_DOUBLE) function channel_wall_seconds_per_step(this, dns) result(seconds_per_step)
         class(channel_stats_type), intent(in) :: this

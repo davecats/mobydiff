@@ -97,17 +97,20 @@ contains
         type(grid_type), intent(in) :: g
         type(comm_type), intent(in) :: c
 
-        integer :: runtime_interval
-        logical :: write_hdf5, write_runtime
+        integer :: runtime_interval, sample_interval, write_interval
+        logical :: sample_stats, write_hdf5, write_runtime
 
         runtime_interval = this%stats%runtime_interval
-        if (runtime_interval < 0) runtime_interval = this%stats%interval
+        sample_interval = this%stats%sample_interval
+        write_interval = this%stats%write_interval
 
-        if (this%stats%interval <= 0 .and. runtime_interval <= 0) return
-
-        call this%stats%accumulate(f, dns, g)
-        write_hdf5 = this%stats%interval > 0 .and. modulo(int(dns%step_current), this%stats%interval) == 0
+        sample_stats = sample_interval > 0 .and. modulo(int(dns%step_current), sample_interval) == 0
+        write_hdf5 = write_interval > 0 .and. modulo(int(dns%step_current), write_interval) == 0
         write_runtime = runtime_interval > 0 .and. modulo(int(dns%step_current), runtime_interval) == 0
+
+        if (.not. (sample_stats .or. write_hdf5 .or. write_runtime)) return
+
+        if (sample_stats) call this%stats%accumulate(f, dns, g)
         if (write_hdf5 .or. write_runtime) then
             call this%stats%write(f, dns, g, c, write_hdf5, write_runtime)
         end if
@@ -119,7 +122,7 @@ contains
         type(grid_type), intent(in) :: g
         type(comm_type), intent(in) :: c
 
-        call this%stats%finalize()
+        call this%stats%finalize(dns, c)
     end subroutine channel_finalize
 
     subroutine set_channel_wall_bcs(this, bc)
@@ -199,9 +202,12 @@ contains
         case ("n_walls")
             read(value, *, iostat=stat) int_value
             if (stat == 0 .and. (int_value == 1 .or. int_value == 2)) this%n_walls = int_value
-        case ("stats_interval")
+        case ("stats_sample_interval")
             read(value, *, iostat=stat) int_value
-            if (stat == 0) this%stats%interval = int_value
+            if (stat == 0) this%stats%sample_interval = int_value
+        case ("stats_write_interval")
+            read(value, *, iostat=stat) int_value
+            if (stat == 0) this%stats%write_interval = int_value
         case ("stats_file")
             this%stats%file = clean_config_string(value)
         case ("runtime_interval")
