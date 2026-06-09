@@ -1,0 +1,27 @@
+<?xml version="1.0" ?>
+<!DOCTYPE Xdmf SYSTEM "Xdmf.dtd" []>
+<Xdmf Version="2.0">
+  <Domain>
+    <Grid Name="mobyDiff" GridType="Uniform">
+      <Time Value="  1.000000000000E-04"/>
+      <Topology TopologyType="3DRectMesh" Dimensions="9 9 9"/>
+      <Geometry GeometryType="VXVYVZ">
+        <DataItem Dimensions="9" NumberType="Float" Precision="8" Format="HDF">./tiny_field_1.h5:/x</DataItem>
+        <DataItem Dimensions="9" NumberType="Float" Precision="8" Format="HDF">./tiny_field_1.h5:/y</DataItem>
+        <DataItem Dimensions="9" NumberType="Float" Precision="8" Format="HDF">./tiny_field_1.h5:/z</DataItem>
+      </Geometry>
+      <Attribute Name="un" AttributeType="Scalar" Center="Cell">
+        <DataItem Dimensions="8 8 8" NumberType="Float" Precision="8" Format="HDF">./tiny_field_1.h5:/un</DataItem>
+      </Attribute>
+      <Attribute Name="vn" AttributeType="Scalar" Center="Cell">
+        <DataItem Dimensions="8 8 8" NumberType="Float" Precision="8" Format="HDF">./tiny_field_1.h5:/vn</DataItem>
+      </Attribute>
+      <Attribute Name="wn" AttributeType="Scalar" Center="Cell">
+        <DataItem Dimensions="8 8 8" NumberType="Float" Precision="8" Format="HDF">./tiny_field_1.h5:/wn</DataItem>
+      </Attribute>
+      <Attribute Name="pn" AttributeType="Scalar" Center="Cell">
+        <DataItem Dimensions="8 8 8" NumberType="Float" Precision="8" Format="HDF">./tiny_field_1.h5:/pn</DataItem>
+      </Attribute>
+    </Grid>
+  </Domain>
+</Xdmf>

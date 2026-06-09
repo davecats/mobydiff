@@ -18,8 +18,7 @@ set(MPI_FORTRAN_MODULE_DIR "" CACHE PATH "Directory containing mpi_f08.mod")
 set(SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
 set(MODULE_DIR ${SRC_DIR}/modules)
 
-set(SOURCES
-    ${SRC_DIR}/main.f90
+set(MODULE_SOURCES
     ${MODULE_DIR}/init.f90
     ${MODULE_DIR}/chron.f90
     ${MODULE_DIR}/config.f90
@@ -40,30 +39,43 @@ set(SOURCES
     ${MODULE_DIR}/flow_case.f90
 )
 
-add_executable(main ${SOURCES})
+set(SOLVER_TARGETS main mobygrid)
+
+add_executable(main ${SRC_DIR}/main.f90 ${MODULE_SOURCES})
+add_executable(mobygrid ${SRC_DIR}/mobygrid.f90 ${MODULE_SOURCES})
 
 # =========================
 # Module directory
 # =========================
-set_target_properties(main PROPERTIES
-    Fortran_MODULE_DIRECTORY ${CMAKE_BINARY_DIR}/mod
-)
+foreach(target IN LISTS SOLVER_TARGETS)
+    set_target_properties(${target} PROPERTIES
+        Fortran_MODULE_DIRECTORY ${CMAKE_BINARY_DIR}/mod/${target}
+    )
+endforeach()
 
 # =========================
 # Compiler flags
 # =========================
-target_compile_options(main PRIVATE
-    $<$<COMPILE_LANGUAGE:Fortran>:-O2>
-    $<$<COMPILE_LANGUAGE:C>:-O2>
-)
+foreach(target IN LISTS SOLVER_TARGETS)
+    target_compile_options(${target} PRIVATE
+        $<$<COMPILE_LANGUAGE:Fortran>:-O2>
+        $<$<COMPILE_LANGUAGE:C>:-O2>
+    )
+endforeach()
 
 # Enable preprocessing depending on compiler.
 if (CMAKE_Fortran_COMPILER_ID STREQUAL "GNU")
-    target_compile_options(main PRIVATE $<$<COMPILE_LANGUAGE:Fortran>:-cpp>)
+    foreach(target IN LISTS SOLVER_TARGETS)
+        target_compile_options(${target} PRIVATE $<$<COMPILE_LANGUAGE:Fortran>:-cpp>)
+    endforeach()
 elseif (CMAKE_Fortran_COMPILER_ID MATCHES "Intel")
-    target_compile_options(main PRIVATE $<$<COMPILE_LANGUAGE:Fortran>:-fpp>)
+    foreach(target IN LISTS SOLVER_TARGETS)
+        target_compile_options(${target} PRIVATE $<$<COMPILE_LANGUAGE:Fortran>:-fpp>)
+    endforeach()
 elseif (CMAKE_Fortran_COMPILER_ID STREQUAL "NVHPC")
-    target_compile_options(main PRIVATE $<$<COMPILE_LANGUAGE:Fortran>:-Mpreprocess>)
+    foreach(target IN LISTS SOLVER_TARGETS)
+        target_compile_options(${target} PRIVATE $<$<COMPILE_LANGUAGE:Fortran>:-Mpreprocess>)
+    endforeach()
 endif()
 
 # =========================
@@ -106,37 +118,47 @@ if(MPI_FORTRAN_MODULE_DIR)
     message(STATUS "MPI Fortran module dir: ${MPI_FORTRAN_MODULE_DIR}")
 endif()
 
-if(NOT MPI_WRAPPER_LINK_FLAGS)
-    message(FATAL_ERROR "MPI_WRAPPER_LINK_FLAGS is required")
-endif()
-
-target_include_directories(main PRIVATE ${HDF5_C_INCLUDE_DIR})
-target_link_libraries(main PRIVATE ${HDF5_C_LIB})
+foreach(target IN LISTS SOLVER_TARGETS)
+    target_include_directories(${target} PRIVATE ${HDF5_C_INCLUDE_DIR})
+    target_link_libraries(${target} PRIVATE ${HDF5_C_LIB})
+endforeach()
 
 if(MPI_FORTRAN_MODULE_DIR)
-    target_include_directories(main PRIVATE ${MPI_FORTRAN_MODULE_DIR})
+    foreach(target IN LISTS SOLVER_TARGETS)
+        target_include_directories(${target} PRIVATE ${MPI_FORTRAN_MODULE_DIR})
+    endforeach()
 endif()
 
 separate_arguments(MPI_WRAPPER_COMPILE_FLAGS_LIST NATIVE_COMMAND "${MPI_WRAPPER_COMPILE_FLAGS}")
 separate_arguments(MPI_WRAPPER_LINK_FLAGS_LIST NATIVE_COMMAND "${MPI_WRAPPER_LINK_FLAGS}")
 
 foreach(flag IN LISTS MPI_WRAPPER_COMPILE_FLAGS_LIST)
-    target_compile_options(main PRIVATE
-        $<$<COMPILE_LANGUAGE:Fortran>:${flag}>
-        $<$<COMPILE_LANGUAGE:C>:${flag}>
-    )
+    foreach(target IN LISTS SOLVER_TARGETS)
+        target_compile_options(${target} PRIVATE
+            $<$<COMPILE_LANGUAGE:Fortran>:${flag}>
+            $<$<COMPILE_LANGUAGE:C>:${flag}>
+        )
+    endforeach()
 endforeach()
 
-target_link_libraries(main PRIVATE ${MPI_WRAPPER_LINK_FLAGS_LIST})
+if(MPI_WRAPPER_LINK_FLAGS_LIST)
+    foreach(target IN LISTS SOLVER_TARGETS)
+        target_link_libraries(${target} PRIVATE ${MPI_WRAPPER_LINK_FLAGS_LIST})
+    endforeach()
+endif()
 
 # =========================
 # Optional features
 # =========================
 if(USE_OPENMP_OFFLOAD)
-    target_compile_definitions(main PRIVATE USE_OPENMP_OFFLOAD)
+    foreach(target IN LISTS SOLVER_TARGETS)
+        target_compile_definitions(${target} PRIVATE USE_OPENMP_OFFLOAD)
+    endforeach()
 
     find_package(OpenMP REQUIRED COMPONENTS Fortran)
-    target_link_libraries(main PRIVATE OpenMP::OpenMP_Fortran)
+    foreach(target IN LISTS SOLVER_TARGETS)
+        target_link_libraries(${target} PRIVATE OpenMP::OpenMP_Fortran)
+    endforeach()
 
     if(NOT OPENMP_OFFLOAD_FLAGS)
         if(CMAKE_Fortran_COMPILER_ID STREQUAL "NVHPC")
@@ -151,12 +173,18 @@ if(USE_OPENMP_OFFLOAD)
     if(OPENMP_OFFLOAD_FLAGS)
         separate_arguments(OPENMP_OFFLOAD_FLAGS_LIST NATIVE_COMMAND "${OPENMP_OFFLOAD_FLAGS}")
         foreach(flag IN LISTS OPENMP_OFFLOAD_FLAGS_LIST)
-            target_compile_options(main PRIVATE $<$<COMPILE_LANGUAGE:Fortran>:${flag}>)
+            foreach(target IN LISTS SOLVER_TARGETS)
+                target_compile_options(${target} PRIVATE $<$<COMPILE_LANGUAGE:Fortran>:${flag}>)
+            endforeach()
         endforeach()
-        target_link_options(main PRIVATE ${OPENMP_OFFLOAD_FLAGS_LIST})
+        foreach(target IN LISTS SOLVER_TARGETS)
+            target_link_options(${target} PRIVATE ${OPENMP_OFFLOAD_FLAGS_LIST})
+        endforeach()
     endif()
 endif()
 
 if(USE_IBM_SECONDORDER)
-    target_compile_definitions(main PRIVATE USE_IBM_SECONDORDER)
+    foreach(target IN LISTS SOLVER_TARGETS)
+        target_compile_definitions(${target} PRIVATE USE_IBM_SECONDORDER)
+    endforeach()
 endif()

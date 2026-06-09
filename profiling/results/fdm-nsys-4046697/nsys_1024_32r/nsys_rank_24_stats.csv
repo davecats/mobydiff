@@ -1,0 +1,20 @@
+Generating SQLite file /hkfs/work/workspace/scratch/xt8786-mobydiff/mobydiff/profiling/results/fdm-nsys-4046697/nsys_1024_32r/nsys_rank_24.sqlite from /hkfs/work/workspace/scratch/xt8786-mobydiff/mobydiff/profiling/results/fdm-nsys-4046697/nsys_1024_32r/nsys_rank_24.nsys-rep
+Processing [/hkfs/work/workspace/scratch/xt8786-mobydiff/mobydiff/profiling/results/fdm-nsys-4046697/nsys_1024_32r/nsys_rank_24.sqlite] with [/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/profilers/Nsight_Systems/host-linux-x64/reports/cuda_gpu_kern_sum.py]... 
+Time (%),Total Time (ns),Instances,Avg (ns),Med (ns),Min (ns),Max (ns),StdDev (ns),Name
+55.4,149736224,54,2772893.0,2793051.0,2641819,2882906,96580.1,nvkernel_pressure_solver_redblack_sweep__F1L114_2_
+31.7,85635035,9,9515003.9,9616205.0,8982255,9939405,416728.2,nvkernel_step_momentum__F1L64_2_
+4.3,11710250,9,1301138.9,1304222.0,1273054,1325373,22139.4,nvkernel_step_momentum__F1L216_4_
+3.4,9148174,3,3049391.3,3049242.0,3049082,3049850,405.2,nvkernel_ibmm_set_ibm_coeff__F1L180_2_
+2.9,7891026,64,123297.3,117856.0,110176,167776,16018.8,nvkernel_comm_unpack_q_boxes__F1L430_6_
+2.2,6070360,64,94849.4,90816.0,84192,128927,12360.4,nvkernel_comm_pack_q_boxes__F1L394_2_
+
+Processing [/hkfs/work/workspace/scratch/xt8786-mobydiff/mobydiff/profiling/results/fdm-nsys-4046697/nsys_1024_32r/nsys_rank_24.sqlite] with [/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/profilers/Nsight_Systems/host-linux-x64/reports/cuda_gpu_mem_time_sum.py]... 
+Time (%),Total Time (ns),Count,Avg (ns),Med (ns),Min (ns),Max (ns),StdDev (ns),Operation
+97.6,335308541,886,378452.1,1472.0,1024,103476922,5652521.4,[CUDA memcpy Host-to-Device]
+2.2,7691473,128,60089.6,63440.0,36544,96352,20325.7,[CUDA memcpy Peer-to-Peer]
+0.1,317663,213,1491.4,1536.0,1088,2048,250.9,[CUDA memset]
+0.1,269631,128,2106.5,2080.0,1824,4576,314.4,[CUDA memcpy Device-to-Host]
+
+Processing [/hkfs/work/workspace/scratch/xt8786-mobydiff/mobydiff/profiling/results/fdm-nsys-4046697/nsys_1024_32r/nsys_rank_24.sqlite] with [/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/profilers/Nsight_Systems/host-linux-x64/reports/mpi_event_sum.py]... 
+SKIPPED: /hkfs/work/workspace/scratch/xt8786-mobydiff/mobydiff/profiling/results/fdm-nsys-4046697/nsys_1024_32r/nsys_rank_24.sqlite does not contain MPI event data.
+

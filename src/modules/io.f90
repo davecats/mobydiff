@@ -37,6 +37,23 @@ module io
             integer(C_INT) :: ierr
         end function fdm_h5_write_field
 
+        function fdm_h5_write_grid(file_name, nx, ny, nz, lx, ly, lz, &
+                periodic, grid_distribution, grid_stretch, grid_natural_one_sided, &
+                x_node, y_node, z_node, xu, yu, zu, xv, yv, zv, xw, yw, zw) &
+                bind(C, name="fdm_h5_write_grid") result(ierr)
+            import :: C_CHAR, C_INT, C_DOUBLE
+            character(kind=C_CHAR), intent(in) :: file_name(*)
+            integer(C_INT), value :: nx, ny, nz
+            real(C_DOUBLE), value :: lx, ly, lz
+            integer(C_INT), intent(in) :: periodic(*), grid_distribution(*), grid_natural_one_sided(*)
+            real(C_DOUBLE), intent(in) :: grid_stretch(*)
+            real(C_DOUBLE), intent(in) :: x_node(*), y_node(*), z_node(*)
+            real(C_DOUBLE), intent(in) :: xu(*), yu(*), zu(*)
+            real(C_DOUBLE), intent(in) :: xv(*), yv(*), zv(*)
+            real(C_DOUBLE), intent(in) :: xw(*), yw(*), zw(*)
+            integer(C_INT) :: ierr
+        end function fdm_h5_write_grid
+
         function fdm_h5_read_metadata(file_name, global_nx, global_ny, global_nz, &
                 step, nsteps, lx, ly, lz, re, dt, t_final, t_current, cfl, &
                 cflmax, pecletmax, dtmax, forcing, &
@@ -161,6 +178,42 @@ subroutine write_field(f, dns, g, step, c, bc, pressure_niter, pressure_sor)
 
     if (c%has_terminal) call write_xdmf(xdmf_file_name, h5_file_name, dns, g)
 end subroutine write_field
+
+subroutine write_grid_export(dns, g, bc, file_name, has_terminal)
+    type(dns_type), intent(in) :: dns
+    type(grid_type), intent(in) :: g
+    type(boundary_type), intent(in) :: bc
+    character(len=*), intent(in) :: file_name
+    logical, intent(in), optional :: has_terminal
+
+    character(kind=C_CHAR,len=:), allocatable :: c_file_name
+    integer(C_INT) :: ierr
+    integer(C_INT) :: nx, ny, nz
+    integer(C_INT) :: periodic(1:3)
+    integer(C_INT) :: natural_one_sided(1:3)
+    logical :: terminal
+
+    terminal = .true.
+    if (present(has_terminal)) terminal = has_terminal
+
+    nx = dns%globalSize(1)
+    ny = dns%globalSize(2)
+    nz = dns%globalSize(3)
+    periodic = merge(1_C_INT, 0_C_INT, bc%isPeriodic)
+    natural_one_sided = merge(1_C_INT, 0_C_INT, g%natural_one_sided)
+
+    c_file_name = to_c_string(file_name)
+    ierr = fdm_h5_write_grid(c_file_name, nx, ny, nz, dns%leng(1), dns%leng(2), dns%leng(3), &
+        periodic, g%distribution(1:3), g%stretch(1:3), natural_one_sided, &
+        g%xNode(0:int(nx)), g%yNode(0:int(ny)), g%zNode(0:int(nz)), &
+        g%x(0:int(nx)+1,VAR_U), g%y(0:int(ny)+1,VAR_U), g%z(0:int(nz)+1,VAR_U), &
+        g%x(0:int(nx)+1,VAR_V), g%y(0:int(ny)+1,VAR_V), g%z(0:int(nz)+1,VAR_V), &
+        g%x(0:int(nx)+1,VAR_W), g%y(0:int(ny)+1,VAR_W), g%z(0:int(nz)+1,VAR_W))
+    if (ierr /= 0_C_INT) then
+        if (terminal) print *, "error: could not write HDF5 grid file: ", trim(file_name)
+        error stop
+    end if
+end subroutine write_grid_export
 
 subroutine read_restart_metadata(dns, g, bc, pressure_niter, pressure_sor, file_name, c)
     type(dns_type), intent(inout) :: dns

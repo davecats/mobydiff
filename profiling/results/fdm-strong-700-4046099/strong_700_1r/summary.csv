@@ -1,0 +1,2 @@
+case,nodes,ranks,tasks_per_node,nx,ny,nz,dims,nsteps,loop_seconds,seconds_per_step,exit_code
+strong_700_1r,1,1,1,700,700,700,"1 1 1",20,1.88300738E+01,9.41503690E-01,0

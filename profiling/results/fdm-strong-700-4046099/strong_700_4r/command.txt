@@ -1,0 +1,1 @@
+mpirun -np 4 --map-by ppr:4:node --bind-to none /hkfs/work/workspace/scratch/xt8786-mobydiff/mobydiff/build_gpu/main /hkfs/work/workspace/scratch/xt8786-mobydiff/mobydiff/profiling/results/fdm-strong-700-4046099/strong_700_4r/input.ini 

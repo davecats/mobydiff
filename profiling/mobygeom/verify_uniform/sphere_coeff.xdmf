@@ -1,0 +1,40 @@
+<?xml version="1.0" ?>
+<Xdmf Version="2.0">
+  <Domain>
+    <Grid Name="mobyDiff IBM coefficients" GridType="Collection" CollectionType="Spatial">
+      <Grid Name="coef_u" GridType="Uniform">
+        <Topology TopologyType="3DRectMesh" Dimensions="12 12 12"/>
+        <Geometry GeometryType="VXVYVZ">
+          <DataItem Name="X" Dimensions="12" NumberType="Float" Precision="8" Format="HDF">sphere_coeff.h5:/xdmf/u/x</DataItem>
+          <DataItem Name="Y" Dimensions="12" NumberType="Float" Precision="8" Format="HDF">sphere_coeff.h5:/xdmf/u/y</DataItem>
+          <DataItem Name="Z" Dimensions="12" NumberType="Float" Precision="8" Format="HDF">sphere_coeff.h5:/xdmf/u/z</DataItem>
+        </Geometry>
+        <Attribute Name="coef_u" AttributeType="Scalar" Center="Node">
+          <DataItem Dimensions="12 12 12" NumberType="Float" Precision="8" Format="HDF">sphere_coeff.h5:/coef_u</DataItem>
+        </Attribute>
+      </Grid>
+      <Grid Name="coef_v" GridType="Uniform">
+        <Topology TopologyType="3DRectMesh" Dimensions="12 12 12"/>
+        <Geometry GeometryType="VXVYVZ">
+          <DataItem Name="X" Dimensions="12" NumberType="Float" Precision="8" Format="HDF">sphere_coeff.h5:/xdmf/v/x</DataItem>
+          <DataItem Name="Y" Dimensions="12" NumberType="Float" Precision="8" Format="HDF">sphere_coeff.h5:/xdmf/v/y</DataItem>
+          <DataItem Name="Z" Dimensions="12" NumberType="Float" Precision="8" Format="HDF">sphere_coeff.h5:/xdmf/v/z</DataItem>
+        </Geometry>
+        <Attribute Name="coef_v" AttributeType="Scalar" Center="Node">
+          <DataItem Dimensions="12 12 12" NumberType="Float" Precision="8" Format="HDF">sphere_coeff.h5:/coef_v</DataItem>
+        </Attribute>
+      </Grid>
+      <Grid Name="coef_w" GridType="Uniform">
+        <Topology TopologyType="3DRectMesh" Dimensions="12 12 12"/>
+        <Geometry GeometryType="VXVYVZ">
+          <DataItem Name="X" Dimensions="12" NumberType="Float" Precision="8" Format="HDF">sphere_coeff.h5:/xdmf/w/x</DataItem>
+          <DataItem Name="Y" Dimensions="12" NumberType="Float" Precision="8" Format="HDF">sphere_coeff.h5:/xdmf/w/y</DataItem>
+          <DataItem Name="Z" Dimensions="12" NumberType="Float" Precision="8" Format="HDF">sphere_coeff.h5:/xdmf/w/z</DataItem>
+        </Geometry>
+        <Attribute Name="coef_w" AttributeType="Scalar" Center="Node">
+          <DataItem Dimensions="12 12 12" NumberType="Float" Precision="8" Format="HDF">sphere_coeff.h5:/coef_w</DataItem>
+        </Attribute>
+      </Grid>
+    </Grid>
+  </Domain>
+</Xdmf>

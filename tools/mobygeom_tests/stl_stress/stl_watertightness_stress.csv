@@ -1,0 +1,3 @@
+case,status,description,stl_file,h5_file,vertices,faces,watertight,euler_number,boundary_edges,nonmanifold_edges,ambiguous_points,crossing_segments,fallback_segments,fluid_ray_checks,fluid_ray_ambiguous,fluid_ray_disagreements,fluid_ray_overrides,max_abs,l2,max_rel_active,solid_mismatch
+clean,ok,clean watertight reference,/home/davide/Codes/FDM/tools/mobygeom_tests/stl_stress/clean.stl,,162,320,True,2,0,0,0,102,0,3993,0,0,0,0.8815674194007039,0.09251729357070487,0.1680210453115716,0
+cap_10,ok,"removed polar cap, half-angle 10 degrees",/home/davide/Codes/FDM/tools/mobygeom_tests/stl_stress/cap_10.stl,,162,320,True,2,0,0,0,102,0,3993,0,0,0,0.8815674194007039,0.09251729357070487,0.1680210453115716,0

@@ -1,0 +1,5 @@
+case,nodes,ranks,tasks_per_node,nx,ny,nz,dims,nsteps,loop_seconds,seconds_per_step,exit_code,summary_file
+strong_700_1r,1,1,1,700,700,700,1 1 1,20,1.88300738E+01,9.41503690E-01,0,/hkfs/work/workspace/scratch/xt8786-mobydiff/mobydiff/profiling/results/fdm-strong-700-4046099/strong_700_1r/summary.csv
+strong_700_2r,1,2,2,700,700,700,1 1 2,20,9.30797380E+00,4.65398690E-01,0,/hkfs/work/workspace/scratch/xt8786-mobydiff/mobydiff/profiling/results/fdm-strong-700-4046099/strong_700_2r/summary.csv
+strong_700_4r,1,4,4,700,700,700,1 2 2,20,4.41017100E+00,2.20508550E-01,0,/hkfs/work/workspace/scratch/xt8786-mobydiff/mobydiff/profiling/results/fdm-strong-700-4046099/strong_700_4r/summary.csv
+strong_700_8r,2,8,4,700,700,700,2 2 2,20,2.74450580E+00,1.37225290E-01,0,/hkfs/work/workspace/scratch/xt8786-mobydiff/mobydiff/profiling/results/fdm-strong-700-4046099/strong_700_8r/summary.csv

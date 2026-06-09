@@ -1,6 +1,7 @@
 #include <mpi.h>
 #include <hdf5.h>
 #include <stdlib.h>
+#include <stdio.h>
 
 #ifndef H5_HAVE_PARALLEL
 #error "field_hdf5.c requires HDF5 built with parallel MPI-IO support"
@@ -69,6 +70,11 @@ static hid_t open_parallel_file(const char *filename)
     file = H5Fopen(filename, H5F_ACC_RDONLY, plist);
     H5Pclose(plist);
     return file;
+}
+
+static hid_t create_serial_file(const char *filename)
+{
+    return H5Fcreate(filename, H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
 }
 
 static int write_attr_int(hid_t file, const char *name, int value)
@@ -419,6 +425,79 @@ static int write_coord_dataset(hid_t file, const char *name, int n, int rank, co
     H5Dclose(dset);
     H5Sclose(space);
     return status < 0;
+}
+
+static int create_group(hid_t file, const char *name)
+{
+    hid_t group = H5Gcreate2(file, name, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+    if (group < 0) return 1;
+    return H5Gclose(group) < 0;
+}
+
+static int write_grid_staggered_coords(hid_t file, const char *var_name,
+                                       int nx, int ny, int nz,
+                                       const double *x, const double *y, const double *z)
+{
+    char group_name[64];
+    char dataset_name[96];
+    int ierr = 0;
+
+    snprintf(group_name, sizeof(group_name), "staggered/%s", var_name);
+    ierr |= create_group(file, group_name);
+
+    snprintf(dataset_name, sizeof(dataset_name), "staggered/%s/x", var_name);
+    ierr |= write_coord_dataset(file, dataset_name, nx + 2, 0, x);
+    snprintf(dataset_name, sizeof(dataset_name), "staggered/%s/y", var_name);
+    ierr |= write_coord_dataset(file, dataset_name, ny + 2, 0, y);
+    snprintf(dataset_name, sizeof(dataset_name), "staggered/%s/z", var_name);
+    ierr |= write_coord_dataset(file, dataset_name, nz + 2, 0, z);
+
+    return ierr != 0;
+}
+
+int fdm_h5_write_grid(const char *filename, int nx, int ny, int nz,
+                      double lx, double ly, double lz,
+                      const int *periodic, const int *grid_distribution,
+                      const double *grid_stretch, const int *grid_natural_one_sided,
+                      const double *x_node, const double *y_node, const double *z_node,
+                      const double *xu, const double *yu, const double *zu,
+                      const double *xv, const double *yv, const double *zv,
+                      const double *xw, const double *yw, const double *zw)
+{
+    hid_t file;
+    int ierr = 0;
+    int staggered_counts[3] = {nx + 2, ny + 2, nz + 2};
+
+    if (nx < 1 || ny < 1 || nz < 1) return 1;
+
+    file = create_serial_file(filename);
+    if (file < 0) return 1;
+
+    ierr |= write_attr_int(file, "mobygrid_format", 1);
+    ierr |= write_attr_int(file, "nx", nx);
+    ierr |= write_attr_int(file, "ny", ny);
+    ierr |= write_attr_int(file, "nz", nz);
+    ierr |= write_attr_double(file, "lx", lx);
+    ierr |= write_attr_double(file, "ly", ly);
+    ierr |= write_attr_double(file, "lz", lz);
+    ierr |= write_attr_int(file, "parallel_hdf5", 0);
+    ierr |= write_attr_int_array(file, "periodic", periodic, 3);
+    ierr |= write_attr_int_array(file, "grid_distribution", grid_distribution, 3);
+    ierr |= write_attr_double_array(file, "grid_stretch", grid_stretch, 3);
+    ierr |= write_attr_int_array(file, "grid_natural_one_sided", grid_natural_one_sided, 3);
+    ierr |= write_attr_int_array(file, "staggered_counts", staggered_counts, 3);
+
+    ierr |= write_coord_dataset(file, "x_nodes", nx + 1, 0, x_node);
+    ierr |= write_coord_dataset(file, "y_nodes", ny + 1, 0, y_node);
+    ierr |= write_coord_dataset(file, "z_nodes", nz + 1, 0, z_node);
+
+    ierr |= create_group(file, "staggered");
+    ierr |= write_grid_staggered_coords(file, "u", nx, ny, nz, xu, yu, zu);
+    ierr |= write_grid_staggered_coords(file, "v", nx, ny, nz, xv, yv, zv);
+    ierr |= write_grid_staggered_coords(file, "w", nx, ny, nz, xw, yw, zw);
+
+    ierr |= H5Fclose(file) < 0;
+    return ierr != 0;
 }
 
 static int read_global_dataset3(hid_t file, const char *name,
