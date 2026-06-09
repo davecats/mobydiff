@@ -585,6 +585,8 @@ int fdm_h5_read_metadata(const char *filename,
                          int *grid_distribution, double *grid_stretch)
 {
     hid_t file;
+    int file_nranks = 0;
+    int file_parallel_hdf5 = 0;
     int ierr = 0;
 
     file = H5Fopen(filename, H5F_ACC_RDONLY, H5P_DEFAULT);
@@ -593,29 +595,33 @@ int fdm_h5_read_metadata(const char *filename,
     ierr |= read_attr_int(file, "nx", global_nx, 1);
     ierr |= read_attr_int(file, "ny", global_ny, 1);
     ierr |= read_attr_int(file, "nz", global_nz, 1);
-    ierr |= read_attr_int(file, "step", step, 0);
-    ierr |= read_attr_int(file, "nsteps", nsteps, 0);
+    ierr |= read_attr_int(file, "nranks", &file_nranks, 1);
+    ierr |= read_attr_int(file, "parallel_hdf5", &file_parallel_hdf5, 1);
+    ierr |= file_nranks < 1;
+    ierr |= file_parallel_hdf5 < 0 || file_parallel_hdf5 > 1;
+    ierr |= read_attr_int(file, "step", step, 1);
+    ierr |= read_attr_int(file, "nsteps", nsteps, 1);
 
     ierr |= read_attr_double(file, "lx", lx, 1);
     ierr |= read_attr_double(file, "ly", ly, 1);
     ierr |= read_attr_double(file, "lz", lz, 1);
     ierr |= read_attr_double(file, "re", re, 1);
     ierr |= read_attr_double(file, "dt", dt, 1);
-    ierr |= read_attr_double(file, "t_final", t_final, 0);
+    ierr |= read_attr_double(file, "t_final", t_final, 1);
     ierr |= read_attr_double(file, "t_current", t_current, 1);
-    ierr |= read_attr_double_array(file, "cfl", cfl, 2, 0);
-    ierr |= read_attr_double(file, "cflmax", cflmax, 0);
-    ierr |= read_attr_double(file, "pecletmax", pecletmax, 0);
-    ierr |= read_attr_double(file, "dtmax", dtmax, 0);
-    ierr |= read_attr_double(file, "forcing_x", &forcing[0], 0);
-    ierr |= read_attr_double(file, "forcing_y", &forcing[1], 0);
-    ierr |= read_attr_double(file, "forcing_z", &forcing[2], 0);
-    ierr |= read_attr_int(file, "pressure_niter", pressure_niter, 0);
-    ierr |= read_attr_double(file, "pressure_sor", pressure_sor, 0);
+    ierr |= read_attr_double_array(file, "cfl", cfl, 2, 1);
+    ierr |= read_attr_double(file, "cflmax", cflmax, 1);
+    ierr |= read_attr_double(file, "pecletmax", pecletmax, 1);
+    ierr |= read_attr_double(file, "dtmax", dtmax, 1);
+    ierr |= read_attr_double(file, "forcing_x", &forcing[0], 1);
+    ierr |= read_attr_double(file, "forcing_y", &forcing[1], 1);
+    ierr |= read_attr_double(file, "forcing_z", &forcing[2], 1);
+    ierr |= read_attr_int(file, "pressure_niter", pressure_niter, 1);
+    ierr |= read_attr_double(file, "pressure_sor", pressure_sor, 1);
     ierr |= read_attr_int(file, "ibm_enabled", ibm_enabled, 1);
-    ierr |= read_attr_int_array(file, "periodic", periodic, 3, 0);
-    ierr |= read_attr_int_array(file, "bc_type", bc_type, (hsize_t)bc_count, 0);
-    ierr |= read_attr_double_array(file, "bc_value", bc_value, (hsize_t)bc_count, 0);
+    ierr |= read_attr_int_array(file, "periodic", periodic, 3, 1);
+    ierr |= read_attr_int_array(file, "bc_type", bc_type, (hsize_t)bc_count, 1);
+    ierr |= read_attr_double_array(file, "bc_value", bc_value, (hsize_t)bc_count, 1);
     ierr |= read_attr_int_array(file, "grid_distribution", grid_distribution, 3, 1);
     ierr |= read_attr_double_array(file, "grid_stretch", grid_stretch, 3, 1);
 
@@ -814,6 +820,7 @@ int fdm_h5_write_channel_stats(const char *filename, int nwall, int nstat,
 
     ierr |= write_attr_int(file, "nwall", nwall);
     ierr |= write_attr_int(file, "nstat", nstat);
+    ierr |= write_attr_int(file, "sample_weighting", 1);
     ierr |= write_attr_int(file, "step", step);
     ierr |= write_attr_int(file, "wall_dir", wall_dir);
     ierr |= write_attr_double(file, "t_current", t_current);
@@ -837,6 +844,7 @@ int fdm_h5_read_channel_stats(const char *filename, int nwall, int nstat,
     hid_t file;
     int file_nwall = nwall;
     int file_nstat = nstat;
+    int sample_weighting = 0;
     int ierr = 0;
 
     file = H5Fopen(filename, H5F_ACC_RDONLY, H5P_DEFAULT);
@@ -844,10 +852,11 @@ int fdm_h5_read_channel_stats(const char *filename, int nwall, int nstat,
 
     ierr |= read_attr_int(file, "nwall", &file_nwall, 1);
     ierr |= read_attr_int(file, "nstat", &file_nstat, 1);
-    ierr |= read_attr_int(file, "step", step, 0);
-    ierr |= read_attr_double(file, "t_current", t_current, 0);
+    ierr |= read_attr_int(file, "sample_weighting", &sample_weighting, 1);
+    ierr |= read_attr_int(file, "step", step, 1);
+    ierr |= read_attr_double(file, "t_current", t_current, 1);
 
-    if (file_nwall != nwall || file_nstat != nstat) {
+    if (file_nwall != nwall || file_nstat != nstat || sample_weighting != 1) {
         H5Fclose(file);
         return 1;
     }

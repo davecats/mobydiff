@@ -126,7 +126,7 @@ contains
             allocate(sample_count(size(this%count)))
             call collect_channel_sample(f, dns, g, sample_sum, sample_count)
             call add_channel_sample(this, sample_sum, sample_count)
-            call write_runtime_sample(this, dns, c, sample_sum, sample_count)
+            call write_runtime_sample(this, dns, g, c, sample_sum, sample_count)
         end if
 
         if (write_stats) call this%write_hdf5(dns, c)
@@ -147,7 +147,8 @@ contains
         type(grid_type), intent(in) :: g
         real(C_DOUBLE), intent(inout) :: sample_sum(:), sample_count(:)
 
-        integer :: i, j, k, s, nx, ny, nz, global_wall_idx, base
+        integer :: i, j, k, s, nx, ny, nz, global_i, global_k, global_wall_idx, base
+        real(C_DOUBLE) :: cell_area
         real(C_DOUBLE) :: p, kin, eps, velocity(3), sample(CHANNEL_NSTAT)
 
         nx = int(dns%localSize(1,2))
@@ -159,13 +160,17 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do collapse(3) &
         !$omp& map(to: dns, g, f%q) map(tofrom: sample_sum, sample_count) &
-        !$omp& private(i,j,k,s,global_wall_idx,base,p,kin,eps,velocity,sample)
+        !$omp& private(i,j,k,s,global_i,global_k,global_wall_idx,base,cell_area,p,kin,eps,velocity,sample)
 #endif
         do k = 1, nz
             do j = 1, ny
                 do i = 1, nx
+                    global_i = int(dns%localSize(1,0)) + i - 1
+                    global_k = int(dns%localSize(3,0)) + k - 1
                     global_wall_idx = int(dns%localSize(2,0)) + j - 1
                     base = CHANNEL_NSTAT*(global_wall_idx - 1)
+                    cell_area = (g%xNode(global_i) - g%xNode(global_i - 1)) * &
+                                (g%zNode(global_k) - g%zNode(global_k - 1))
 
                     call centered_velocity(f, i, j, k, velocity)
                     p = f%q(i,j,k,VAR_P)
@@ -174,10 +179,10 @@ contains
                     sample = channel_sample(velocity, p, kin, eps)
 
                     !$omp atomic update
-                    sample_count(global_wall_idx) = sample_count(global_wall_idx) + 1.0d0
+                    sample_count(global_wall_idx) = sample_count(global_wall_idx) + cell_area
                     do s = 1, CHANNEL_NSTAT
                         !$omp atomic update
-                        sample_sum(base + s) = sample_sum(base + s) + sample(s)
+                        sample_sum(base + s) = sample_sum(base + s) + cell_area*sample(s)
                     end do
                 end do
             end do
@@ -195,9 +200,10 @@ contains
         this%count = this%count + sample_count
     end subroutine add_channel_sample
 
-    subroutine write_runtime_sample(this, dns, c, sample_sum, sample_count)
+    subroutine write_runtime_sample(this, dns, g, c, sample_sum, sample_count)
         class(channel_stats_type), intent(inout) :: this
         type(dns_type), intent(in) :: dns
+        type(grid_type), intent(in) :: g
         type(comm_type), intent(in) :: c
         real(C_DOUBLE), intent(in) :: sample_sum(:), sample_count(:)
 
@@ -212,7 +218,7 @@ contains
         call comm_allreduce_sum(c, reduced_sum)
         call comm_allreduce_sum(c, reduced_count)
 
-        call channel_runtime_values(this, dns, reduced_sum, reduced_count, flow_values, volume_values)
+        call channel_runtime_values(this, dns, g, reduced_sum, reduced_count, flow_values, volume_values)
         wall_seconds_per_step = channel_wall_seconds_per_step(this, dns)
         if (c%has_terminal) then
             call write_runtime_output(this, dns, flow_values, volume_values, wall_seconds_per_step)
@@ -436,15 +442,17 @@ contains
         end if
     end subroutine write_runtime_output
 
-    subroutine channel_runtime_values(this, dns, sample_sum, sample_count, flow_values, volume_values)
+    subroutine channel_runtime_values(this, dns, g, sample_sum, sample_count, flow_values, volume_values)
         class(channel_stats_type), intent(in) :: this
         type(dns_type), intent(in) :: dns
+        type(grid_type), intent(in) :: g
         real(C_DOUBLE), intent(in) :: sample_sum(:), sample_count(:)
         real(C_DOUBLE), intent(out) :: flow_values(2)
         real(C_DOUBLE), intent(out) :: volume_values(2)
 
         integer :: nwall, base, mean_base, n
-        real(C_DOUBLE) :: total_count, mean_eps
+        real(C_DOUBLE) :: dy, total_volume, mean_eps, k_turb, eps_turb
+        real(C_DOUBLE) :: flow_integral(2), volume_integral(2)
         real(C_DOUBLE), allocatable :: mean_velocity(:)
 
         nwall = size(sample_count)
@@ -453,7 +461,9 @@ contains
 
         flow_values = 0.0d0
         volume_values = 0.0d0
-        total_count = sum(sample_count)
+        flow_integral = 0.0d0
+        volume_integral = 0.0d0
+        total_volume = 0.0d0
 
         do n = 1, nwall
             if (sample_count(n) <= 0.0d0) cycle
@@ -468,19 +478,26 @@ contains
             if (sample_count(n) <= 0.0d0) cycle
             base = CHANNEL_NSTAT*(n - 1)
             mean_base = 3*(n - 1)
-            flow_values(1) = flow_values(1) + sample_sum(base+STAT_U)
-            flow_values(2) = flow_values(2) + sample_sum(base+STAT_W)
-            volume_values(1) = volume_values(1) + sample_count(n)*max(0.0d0, &
-                sample_sum(base+STAT_K)/sample_count(n) - 0.5d0*(mean_velocity(mean_base+1)**2 + &
-                mean_velocity(mean_base+2)**2 + mean_velocity(mean_base+3)**2))
+            dy = g%yNode(n) - g%yNode(n - 1)
+            total_volume = total_volume + dy*sample_count(n)
+
+            flow_integral(1) = flow_integral(1) + dy*sample_sum(base+STAT_U)
+            flow_integral(2) = flow_integral(2) + dy*sample_sum(base+STAT_W)
+
+            k_turb = max(0.0d0, sample_sum(base+STAT_K)/sample_count(n) - &
+                0.5d0*(mean_velocity(mean_base+1)**2 + mean_velocity(mean_base+2)**2 + &
+                mean_velocity(mean_base+3)**2))
             mean_eps = mean_profile_dissipation_at(mean_velocity, this%coord, sample_count, n, dns%re)
-            volume_values(2) = volume_values(2) + sample_count(n)*max(0.0d0, &
-                sample_sum(base+STAT_EPSILON)/sample_count(n) - mean_eps)
+            eps_turb = max(0.0d0, sample_sum(base+STAT_EPSILON)/sample_count(n) - mean_eps)
+
+            volume_integral(1) = volume_integral(1) + dy*sample_count(n)*k_turb
+            volume_integral(2) = volume_integral(2) + dy*sample_count(n)*eps_turb
         end do
 
-        if (total_count > 0.0d0) then
-            flow_values = flow_values/total_count
-            volume_values = volume_values/total_count
+        if (dns%leng(1) > 0.0d0) flow_values(1) = flow_integral(1)/dns%leng(1)
+        if (dns%leng(3) > 0.0d0) flow_values(2) = flow_integral(2)/dns%leng(3)
+        if (total_volume > 0.0d0) then
+            volume_values = volume_integral/total_volume
         end if
     end subroutine channel_runtime_values
 
@@ -540,9 +557,8 @@ contains
         ierr = fdm_h5_read_channel_stats(c_file_name, int(size(this%count), C_INT), &
             int(CHANNEL_NSTAT, C_INT), restart_step, restart_time, this%sum, this%count)
         if (ierr /= 0_C_INT) then
-            if (c%has_terminal) print *, "warning: could not read channel statistics file: ", trim(this%file)
-            this%sum = 0.0d0
-            this%count = 0.0d0
+            if (c%has_terminal) print *, "error: could not read channel statistics file: ", trim(this%file)
+            error stop
         else if (c%has_terminal) then
             print *, "continuing channel statistics from: ", trim(this%file)
         end if
