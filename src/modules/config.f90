@@ -189,6 +189,8 @@ subroutine apply_config_value(section, key, value, dns, g, ps, bc, c, seen, line
         select case (key_l)
         case ("enabled")
             call read_bool(value, dns%ibm_enabled, line_no)
+        case ("coeff_file")
+            dns%ibm_coeff_file = clean_string(value)
         end select
     case ("mpi")
         call apply_mpi_value(key_l, value, c, line_no)

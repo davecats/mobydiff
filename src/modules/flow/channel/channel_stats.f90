@@ -100,7 +100,7 @@ contains
             this%coord(n) = 0.5d0*(g%yNode(n-1) + g%yNode(n))
         end do
 
-        if (this%sample_interval > 0 .or. this%write_interval > 0) then
+        if (len_trim(dns%restart_file) > 0) then
             call read_channel_stats_restart(this, dns, c)
         end if
 
@@ -494,9 +494,8 @@ contains
             volume_integral(2) = volume_integral(2) + dy*sample_count(n)*eps_turb
         end do
 
-        if (dns%leng(1) > 0.0d0) flow_values(1) = flow_integral(1)/dns%leng(1)
-        if (dns%leng(3) > 0.0d0) flow_values(2) = flow_integral(2)/dns%leng(3)
         if (total_volume > 0.0d0) then
+            flow_values = flow_integral/total_volume
             volume_values = volume_integral/total_volume
         end if
     end subroutine channel_runtime_values

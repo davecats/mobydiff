@@ -15,6 +15,7 @@
 module ibmm
     use, intrinsic :: iso_c_binding
     use :: init, only: dns_type, grid_type, VAR_U, VAR_V, VAR_W
+    use :: io, only: to_c_string
     implicit none
 
     real(C_DOUBLE), parameter :: SOLID = 1.0d30
@@ -33,6 +34,21 @@ module ibmm
         real(C_DOUBLE), allocatable :: mu(:,:,:,:)
 
     end type ibm_type
+
+    interface
+        function fdm_h5_read_ibm_coeff(file_name, nx, ny, nz, &
+                global_nx, global_ny, global_nz, local_i_first, local_j_first, local_k_first, &
+                lx, ly, lz, re, coef) bind(C, name="fdm_h5_read_ibm_coeff") result(ierr)
+            import :: C_CHAR, C_INT, C_DOUBLE
+            character(kind=C_CHAR), intent(in) :: file_name(*)
+            integer(C_INT), value :: nx, ny, nz
+            integer(C_INT), value :: global_nx, global_ny, global_nz
+            integer(C_INT), value :: local_i_first, local_j_first, local_k_first
+            real(C_DOUBLE), value :: lx, ly, lz, re
+            real(C_DOUBLE), intent(inout) :: coef(*)
+            integer(C_INT) :: ierr
+        end function fdm_h5_read_ibm_coeff
+    end interface
 
 !$omp declare target(isInBody, distance3, bisection, add_neighbor_coeff)
 
@@ -82,6 +98,33 @@ contains
         !$omp target exit data map(delete: ibm)
 #endif
     end subroutine exit_ibm_data
+
+    subroutine read_ibm_coeff_file(ibm, dns, has_terminal)
+        type(ibm_type), intent(inout) :: ibm
+        type(dns_type), intent(in) :: dns
+        logical, intent(in) :: has_terminal
+
+        character(kind=C_CHAR,len=:), allocatable :: c_file_name
+        integer(C_INT) :: ierr
+        integer(C_INT) :: nx, ny, nz
+
+        nx = dns%localSize(1,2)
+        ny = dns%localSize(2,2)
+        nz = dns%localSize(3,2)
+
+        if (len_trim(dns%ibm_coeff_file) == 0) return
+        if (has_terminal) print *, "reading IBM coefficients: ", trim(dns%ibm_coeff_file)
+
+        c_file_name = to_c_string(dns%ibm_coeff_file)
+        ierr = fdm_h5_read_ibm_coeff(c_file_name, nx, ny, nz, &
+            dns%globalSize(1), dns%globalSize(2), dns%globalSize(3), &
+            dns%localSize(1,0), dns%localSize(2,0), dns%localSize(3,0), &
+            dns%leng(1), dns%leng(2), dns%leng(3), dns%re, ibm%coef)
+        if (ierr /= 0_C_INT) then
+            if (has_terminal) print *, "error: could not read IBM coefficient file: ", trim(dns%ibm_coeff_file)
+            error stop
+        end if
+    end subroutine read_ibm_coeff_file
 
 
     logical function isInBody(xIN, ibm, dns)

@@ -64,6 +64,7 @@ contains
         bc%isPeriodic(CHANNEL_WALL_DIR) = .false.
         g%distribution(CHANNEL_WALL_DIR) = GRID_NATURAL
         g%stretch(CHANNEL_WALL_DIR) = this%natural_blend_index
+        g%natural_one_sided(CHANNEL_WALL_DIR) = this%n_walls == 1
 
         call set_channel_wall_bcs(this, bc)
     end subroutine channel_apply_defaults

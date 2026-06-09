@@ -30,7 +30,6 @@ module comm
         logical :: periodic(3) = [.false., .false., .false.]
         logical :: physicalLow(3) = [.false., .false., .false.]
         logical :: physicalHigh(3) = [.false., .false., .false.]
-        logical :: communicatedDir(3) = [.false., .false., .false.]
 
         integer :: nNeighbors = 0
         integer :: neighborRank(MAX_NEIGHBORS) = MPI_PROC_NULL
@@ -109,8 +108,6 @@ contains
         end if
         c%physicalLow = (.not. c%periodic) .and. (c%coords == 0)
         c%physicalHigh = (.not. c%periodic) .and. (c%coords == c%dims - 1)
-        c%communicatedDir = c%periodic .or. (c%dims > 1)
-
         do dir = 1, 3
             call local_range(int(dns%globalSize(dir)), c%dims(dir), c%coords(dir), &
                              dns%localSize(dir,0), dns%localSize(dir,1))
@@ -312,8 +309,7 @@ contains
                     c%offset(:,n) = off
                     call MPI_Cart_rank(c%cart_comm, neighborCoords, c%neighborRank(n), ierr)
                     call set_neighbor_boxes(local_n, off, c%physicalLow, c%physicalHigh, &
-                                            c%communicatedDir, c%sendLo(:,n), c%sendHi(:,n), &
-                                            c%recvLo(:,n), c%recvHi(:,n))
+                                            c%sendLo(:,n), c%sendHi(:,n), c%recvLo(:,n), c%recvHi(:,n))
                     c%nPoints(n) = box_point_count(c%sendLo(:,n), c%sendHi(:,n))
                     c%nNeighbors = n
                 end do
@@ -343,10 +339,9 @@ contains
         end do
     end subroutine get_neighbor_coords
 
-    subroutine set_neighbor_boxes(local_n, off, physicalLow, physicalHigh, communicatedDir, &
-                                   sendLo, sendHi, recvLo, recvHi)
+    subroutine set_neighbor_boxes(local_n, off, physicalLow, physicalHigh, sendLo, sendHi, recvLo, recvHi)
         integer, intent(in) :: local_n(3), off(3)
-        logical, intent(in) :: physicalLow(3), physicalHigh(3), communicatedDir(3)
+        logical, intent(in) :: physicalLow(3), physicalHigh(3)
         integer, intent(out) :: sendLo(3), sendHi(3), recvLo(3), recvHi(3)
 
         integer :: dir
@@ -359,13 +354,8 @@ contains
                 recvLo(dir) = 0
                 recvHi(dir) = 0
             case (0)
-                if (communicatedDir(dir)) then
-                    sendLo(dir) = 1
-                    sendHi(dir) = local_n(dir)
-                else
-                    sendLo(dir) = merge(0, 1, physicalLow(dir))
-                    sendHi(dir) = merge(local_n(dir)+1, local_n(dir), physicalHigh(dir))
-                end if
+                sendLo(dir) = merge(0, 1, physicalLow(dir))
+                sendHi(dir) = merge(local_n(dir)+1, local_n(dir), physicalHigh(dir))
                 recvLo(dir) = sendLo(dir)
                 recvHi(dir) = sendHi(dir)
             case (1)

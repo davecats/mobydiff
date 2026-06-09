@@ -73,10 +73,15 @@ program main
 
     if (c%has_terminal) print *, "initialising IBM..."
     call init_ibm(ibm, dns)
-    call enter_ibm_data(ibm, dns)
-    call set_ibm_coeff(dns, g, ibm, VAR_U)
-    call set_ibm_coeff(dns, g, ibm, VAR_V)
-    call set_ibm_coeff(dns, g, ibm, VAR_W)
+    if (dns%ibm_enabled .and. len_trim(dns%ibm_coeff_file) > 0) then
+        call read_ibm_coeff_file(ibm, dns, c%has_terminal)
+        call enter_ibm_data(ibm, dns)
+    else
+        call enter_ibm_data(ibm, dns)
+        call set_ibm_coeff(dns, g, ibm, VAR_U)
+        call set_ibm_coeff(dns, g, ibm, VAR_V)
+        call set_ibm_coeff(dns, g, ibm, VAR_W)
+    end if
 
     call apply_bc(f, dns, g, bc)
     call exchange_halos(c, f, [VAR_U, VAR_V, VAR_W, VAR_P])

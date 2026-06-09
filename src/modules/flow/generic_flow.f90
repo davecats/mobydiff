@@ -108,12 +108,14 @@ contains
         dns%dtmax = huge(1.0d0)
         dns%forcing = 0.0d0
         dns%ibm_enabled = .true.
+        dns%ibm_coeff_file = ""
         dns%field_prefix = "field"
         dns%field_interval = 0
         dns%restart_file = ""
 
         g%distribution = GRID_UNIFORM
         g%stretch = 0.0d0
+        g%natural_one_sided = .false.
 
         c%dims = 0
         ps%nIter = 3_C_INT

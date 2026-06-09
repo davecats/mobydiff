@@ -35,6 +35,7 @@ module init
         real(C_DOUBLE) :: dtmax = 0.0d0
         real(C_DOUBLE) :: forcing(1:3) = 0.0d0
         logical(C_BOOL) :: ibm_enabled = .true.
+        character(len=256) :: ibm_coeff_file = ""
         character(len=256) :: field_prefix = ""
         integer :: field_interval = 0
         character(len=256) :: restart_file = ""
@@ -44,6 +45,7 @@ module init
     type :: grid_type
         integer(C_INT) :: distribution(1:3) = GRID_UNIFORM
         real(C_DOUBLE) :: stretch(1:3) = 0.0d0
+        logical(C_BOOL) :: natural_one_sided(1:3) = .false.
         ! Global node coordinates; x/y/z below are local, variable-dependent coordinates.
         real(C_DOUBLE), allocatable :: xNode(:), yNode(:), zNode(:)
         real(C_DOUBLE), allocatable :: x(:,:), y(:,:), z(:,:)
@@ -109,13 +111,13 @@ subroutine init_grid(g, dns, periodic)
 
     call init_grid_direction(g%xNode, g%x, g%d1x, g%lapXm, g%lapX0, g%lapXp, &
         dns%globalSize(1), dns%localSize(1,0), nx, dns%leng(1), &
-        g%distribution(1), g%stretch(1), periodic(1), 1)
+        g%distribution(1), g%stretch(1), g%natural_one_sided(1), periodic(1), 1)
     call init_grid_direction(g%yNode, g%y, g%d1y, g%lapYm, g%lapY0, g%lapYp, &
         dns%globalSize(2), dns%localSize(2,0), ny, dns%leng(2), &
-        g%distribution(2), g%stretch(2), periodic(2), 2)
+        g%distribution(2), g%stretch(2), g%natural_one_sided(2), periodic(2), 2)
     call init_grid_direction(g%zNode, g%z, g%d1z, g%lapZm, g%lapZ0, g%lapZp, &
         dns%globalSize(3), dns%localSize(3,0), nz, dns%leng(3), &
-        g%distribution(3), g%stretch(3), periodic(3), 3)
+        g%distribution(3), g%stretch(3), g%natural_one_sided(3), periodic(3), 3)
 
 end subroutine init_grid
 
@@ -143,7 +145,7 @@ subroutine destroy_grid(g)
 end subroutine destroy_grid
 
 subroutine init_grid_direction(node, coord, d1, lapM, lap0, lapP, nGlobal, first, nLocal, &
-        length, distribution, stretch, periodic, dir)
+        length, distribution, stretch, natural_one_sided, periodic, dir)
     real(C_DOUBLE), intent(inout) :: node(0:)
     real(C_DOUBLE), intent(inout) :: coord(-1:,:)
     real(C_DOUBLE), intent(inout) :: d1(0:,:)
@@ -151,6 +153,7 @@ subroutine init_grid_direction(node, coord, d1, lapM, lap0, lapP, nGlobal, first
     integer(C_INT), intent(in) :: nGlobal, first, distribution
     integer, intent(in) :: nLocal, dir
     real(C_DOUBLE), intent(in) :: length, stretch
+    logical(C_BOOL), intent(in) :: natural_one_sided
     logical(C_BOOL), intent(in) :: periodic
 
     integer :: i, var, n, loCoord, hiCoord
@@ -160,7 +163,7 @@ subroutine init_grid_direction(node, coord, d1, lapM, lap0, lapP, nGlobal, first
     n = int(nGlobal)
     do i = 0, n
         s = real(i, C_DOUBLE) / real(n, C_DOUBLE)
-        node(i) = distribution_coordinate(s, length, distribution, stretch, n)
+        node(i) = distribution_coordinate(s, length, distribution, stretch, natural_one_sided, n)
     end do
     node(0) = 0.0d0
     node(n) = length
@@ -214,9 +217,10 @@ logical function is_face_staggered(dir, var)
                         (dir == 3 .and. var == VAR_W)
 end function is_face_staggered
 
-real(C_DOUBLE) function distribution_coordinate(s, length, distribution, stretch, n) result(x)
+real(C_DOUBLE) function distribution_coordinate(s, length, distribution, stretch, natural_one_sided, n) result(x)
     real(C_DOUBLE), intent(in) :: s, length, stretch
     integer(C_INT), intent(in) :: distribution
+    logical(C_BOOL), intent(in) :: natural_one_sided
     integer, intent(in) :: n
     real(C_DOUBLE), parameter :: pi = 3.1415926535897932384626433832795d0
     real(C_DOUBLE) :: a
@@ -228,19 +232,20 @@ real(C_DOUBLE) function distribution_coordinate(s, length, distribution, stretch
         a = max(stretch, 1.0d-12)
         x = 0.5d0 * length * (1.0d0 + tanh(a*(2.0d0*s - 1.0d0))/tanh(a))
     case (GRID_NATURAL)
-        x = natural_channel_coordinate(s, length, stretch, n)
+        x = natural_channel_coordinate(s, length, stretch, natural_one_sided, n)
     case default
         x = length*s
     end select
 end function distribution_coordinate
 
-real(C_DOUBLE) function natural_channel_coordinate(s, length, blend_index, n) result(x)
+real(C_DOUBLE) function natural_channel_coordinate(s, length, blend_index, one_sided, n) result(x)
     real(C_DOUBLE), intent(in) :: s, length, blend_index
+    logical(C_BOOL), intent(in) :: one_sided
     integer, intent(in) :: n
 
     real(C_DOUBLE) :: half_length, j, jmax, yplus, yplus_max
 
-    if (length > 1.5d0) then
+    if (.not. one_sided) then
         half_length = 0.5d0*length
         j = min(s, 1.0d0 - s) * real(n, C_DOUBLE)
         jmax = 0.5d0 * real(n, C_DOUBLE)

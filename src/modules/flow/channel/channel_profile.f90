@@ -49,10 +49,11 @@ contains
                         span_x = g%z(k,var)
                         wall_y = max(0.0d0, min(g%y(j,var), dns%leng(2)))
 
-                        call mean_profile(dns, n_walls, wall_y, mean_sine_amp, mean_u, envelope)
+                        call mean_profile(dns, n_walls, wall_y, mean_sine_amp, mean_u)
+                        envelope = disturbance_envelope(n_walls, var, wall_y, dns%leng(2))
 
                         large = large_disturbance(large_amp, var, stream_x, wall_y, span_x, &
-                            dns%leng(1), dns%leng(2), dns%leng(3))
+                            dns%leng(1), dns%leng(2), dns%leng(3), n_walls)
                         noise = noise_amp*envelope * &
                             deterministic_noise(i + int(dns%localSize(1,0)) - 1, &
                                                 j + int(dns%localSize(2,0)) - 1, &
@@ -65,35 +66,39 @@ contains
         end do
     end subroutine initialise_channel_fields
 
-    subroutine mean_profile(dns, n_walls, wall_y, mean_sine_amp, mean_u, envelope)
+    subroutine mean_profile(dns, n_walls, wall_y, mean_sine_amp, mean_u)
         type(dns_type), intent(in) :: dns
         integer, intent(in) :: n_walls
         real(C_DOUBLE), intent(in) :: wall_y, mean_sine_amp
-        real(C_DOUBLE), intent(out) :: mean_u, envelope
+        real(C_DOUBLE), intent(out) :: mean_u
 
         real(C_DOUBLE) :: wall_length
 
         wall_length = max(dns%leng(2), 1.0d-12)
+        mean_u = turbulent_channel_profile(dns, n_walls, wall_y)
         if (n_walls == 2) then
-            mean_u = turbulent_channel_profile(dns, wall_y)
-            envelope = sin(PI*wall_y/wall_length)
+            mean_u = mean_u + mean_sine_amp*sin(2.0d0*PI*wall_y/wall_length)
         else
-            mean_u = dns%re*dns%forcing(VAR_U)*(dns%leng(2)*wall_y - 0.5d0*wall_y*wall_y)
-            envelope = sin(0.5d0*PI*wall_y/wall_length)
+            mean_u = mean_u + mean_sine_amp*sin(0.5d0*PI*wall_y/wall_length)
         end if
-
-        mean_u = mean_u + mean_sine_amp*sin(2.0d0*PI*wall_y/wall_length)
     end subroutine mean_profile
 
-    real(C_DOUBLE) function turbulent_channel_profile(dns, wall_y) result(value)
+    real(C_DOUBLE) function turbulent_channel_profile(dns, n_walls, wall_y) result(value)
         type(dns_type), intent(in) :: dns
+        integer, intent(in) :: n_walls
         real(C_DOUBLE), intent(in) :: wall_y
 
-        real(C_DOUBLE) :: half_height, wall_distance, zplus, zouter
+        real(C_DOUBLE) :: outer_length, wall_distance, zplus, zouter
 
-        half_height = max(0.5d0*dns%leng(2), 1.0d-12)
-        wall_distance = max(0.0d0, min(wall_y, dns%leng(2) - wall_y))
-        zouter = min(1.0d0, wall_distance/half_height)
+        if (n_walls == 2) then
+            outer_length = max(0.5d0*dns%leng(2), 1.0d-12)
+            wall_distance = max(0.0d0, min(wall_y, dns%leng(2) - wall_y))
+        else
+            outer_length = max(dns%leng(2), 1.0d-12)
+            wall_distance = max(0.0d0, min(wall_y, dns%leng(2)))
+        end if
+
+        zouter = min(1.0d0, wall_distance/outer_length)
         zplus = dns%re*zouter
 
         value = luchini_wall_law(zplus) + luchini_plane_duct_wake(zouter)
@@ -127,14 +132,29 @@ contains
         value = merge(laminar_u, 0.0d0, var == VAR_U)
     end function stream_profile
 
+    real(C_DOUBLE) function disturbance_envelope(n_walls, var, wall_y, wall_length) result(value)
+        integer, intent(in) :: n_walls, var
+        real(C_DOUBLE), intent(in) :: wall_y, wall_length
+
+        real(C_DOUBLE) :: length
+
+        length = max(wall_length, 1.0d-12)
+        if (n_walls == 1 .and. var /= VAR_V) then
+            value = sin(0.5d0*PI*wall_y/length)
+        else
+            value = sin(PI*wall_y/length)
+        end if
+    end function disturbance_envelope
+
     real(C_DOUBLE) function large_disturbance(amplitude, var, stream_x, wall_y, span_x, &
-            stream_length, wall_length, span_length) result(value)
+            stream_length, wall_length, span_length, n_walls) result(value)
         real(C_DOUBLE), intent(in) :: amplitude, stream_x, wall_y, span_x
         real(C_DOUBLE), intent(in) :: stream_length, wall_length, span_length
-        integer, intent(in) :: var
+        integer, intent(in) :: var, n_walls
 
         integer :: mx, my, mz
         real(C_DOUBLE) :: stream_phase, wall_phase, span_phase, phase_shift, weight, norm
+        real(C_DOUBLE) :: wall_mode
 
         phase_shift = 0.37d0*real(var - VAR_U, C_DOUBLE)
         value = 0.0d0
@@ -142,7 +162,9 @@ contains
         do mz = 1, LARGE_DISTURBANCE_NMODES
             span_phase = 2.0d0*PI*real(mz, C_DOUBLE)*span_x/max(span_length, 1.0d-12)
             do my = 1, LARGE_DISTURBANCE_NMODES
-                wall_phase = PI*real(my, C_DOUBLE)*wall_y/max(wall_length, 1.0d-12)
+                wall_mode = real(my, C_DOUBLE)
+                if (n_walls == 1 .and. var /= VAR_V) wall_mode = wall_mode - 0.5d0
+                wall_phase = PI*wall_mode*wall_y/max(wall_length, 1.0d-12)
                 do mx = 1, LARGE_DISTURBANCE_NMODES
                     stream_phase = 2.0d0*PI*real(mx, C_DOUBLE)*stream_x/max(stream_length, 1.0d-12)
                     weight = 1.0d0/real(mx + my + mz, C_DOUBLE)

@@ -16,6 +16,29 @@ static size_t linear_hdf5(size_t i, size_t j, size_t k, size_t nj, size_t nk)
     return (i*nj + j)*nk + k;
 }
 
+static size_t linear_fortran4(size_t i, size_t j, size_t k, size_t v,
+                              size_t ni, size_t nj, size_t nk)
+{
+    return i + ni*(j + nj*(k + nk*v));
+}
+
+static int double_mismatch(double a, double b)
+{
+    double diff = a - b;
+    double scale = a;
+
+    if (diff < 0.0) diff = -diff;
+    if (scale < 0.0) scale = -scale;
+    if (b < 0.0) {
+        if (-b > scale) scale = -b;
+    } else {
+        if (b > scale) scale = b;
+    }
+    if (scale < 1.0) scale = 1.0;
+
+    return diff > 1.0e-10*scale;
+}
+
 static hid_t create_parallel_file(const char *filename)
 {
     hid_t plist = H5Pcreate(H5P_FILE_ACCESS);
@@ -271,7 +294,13 @@ static int write_decomposition(hid_t file, int rank, int nranks,
         H5Sclose(file_space);
         return 1;
     }
-    H5Pset_dxpl_mpio(xfer, H5FD_MPIO_COLLECTIVE);
+    /*
+     * IBM coefficient files may be chunked by the STL preprocessor.  Some
+     * MPI-HDF5 stacks have trouble mapping chunked collective reads to MPI-IO
+     * file views, while independent reads are robust and this startup-only
+     * path is not performance critical.
+     */
+    H5Pset_dxpl_mpio(xfer, H5FD_MPIO_INDEPENDENT);
 
     status = H5Dwrite(dset, H5T_NATIVE_INT, mem_space, file_space, xfer, range);
 
@@ -589,7 +618,7 @@ int fdm_h5_read_metadata(const char *filename,
     int file_parallel_hdf5 = 0;
     int ierr = 0;
 
-    file = H5Fopen(filename, H5F_ACC_RDONLY, H5P_DEFAULT);
+    file = open_parallel_file(filename);
     if (file < 0) return 1;
 
     ierr |= read_attr_int(file, "nx", global_nx, 1);
@@ -657,6 +686,127 @@ int fdm_h5_read_field(const char *filename, int nx, int ny, int nz,
 
     ierr |= H5Fclose(file) < 0;
     return ierr != 0;
+}
+
+int fdm_h5_read_ibm_coeff(const char *filename, int nx, int ny, int nz,
+                          int global_nx, int global_ny, int global_nz,
+                          int local_i_first, int local_j_first, int local_k_first,
+                          double lx, double ly, double lz, double re,
+                          double *coef)
+{
+    const size_t ni = (size_t)nx + 2;
+    const size_t nj = (size_t)ny + 2;
+    const size_t nk = (size_t)nz + 2;
+    const size_t n = ni*nj*nk*3;
+    hsize_t expected_dims[4] = {
+        (hsize_t)global_nx + 2,
+        (hsize_t)global_ny + 2,
+        (hsize_t)global_nz + 2,
+        3
+    };
+    hsize_t file_dims[4] = {0, 0, 0, 0};
+    hsize_t local_dims[4] = {
+        (hsize_t)nx + 2,
+        (hsize_t)ny + 2,
+        (hsize_t)nz + 2,
+        3
+    };
+    hsize_t start[4] = {
+        (hsize_t)local_i_first - 1,
+        (hsize_t)local_j_first - 1,
+        (hsize_t)local_k_first - 1,
+        0
+    };
+    hid_t file = -1;
+    hid_t dset = -1;
+    hid_t file_space = -1;
+    hid_t mem_space = -1;
+    double *buffer = NULL;
+    int file_nx = 0, file_ny = 0, file_nz = 0;
+    double file_lx = 0.0, file_ly = 0.0, file_lz = 0.0, file_re = 0.0;
+    int ierr = 0;
+    herr_t status = -1;
+
+    if (nx < 1 || ny < 1 || nz < 1) return 1;
+
+    file = H5Fopen(filename, H5F_ACC_RDONLY, H5P_DEFAULT);
+    if (file < 0) return 1;
+
+    ierr |= read_attr_int(file, "nx", &file_nx, 1);
+    ierr |= read_attr_int(file, "ny", &file_ny, 1);
+    ierr |= read_attr_int(file, "nz", &file_nz, 1);
+    ierr |= read_attr_double(file, "lx", &file_lx, 1);
+    ierr |= read_attr_double(file, "ly", &file_ly, 1);
+    ierr |= read_attr_double(file, "lz", &file_lz, 1);
+    ierr |= read_attr_double(file, "re", &file_re, 1);
+    ierr |= file_nx != global_nx || file_ny != global_ny || file_nz != global_nz;
+    ierr |= double_mismatch(file_lx, lx) || double_mismatch(file_ly, ly) ||
+            double_mismatch(file_lz, lz) || double_mismatch(file_re, re);
+
+    dset = H5Dopen2(file, "coef", H5P_DEFAULT);
+    if (dset < 0) {
+        H5Fclose(file);
+        return 1;
+    }
+
+    file_space = H5Dget_space(dset);
+    if (file_space < 0 || H5Sget_simple_extent_ndims(file_space) != 4) {
+        if (file_space >= 0) H5Sclose(file_space);
+        H5Dclose(dset);
+        H5Fclose(file);
+        return 1;
+    }
+
+    H5Sget_simple_extent_dims(file_space, file_dims, NULL);
+    for (int d = 0; d < 4; ++d) {
+        ierr |= file_dims[d] != expected_dims[d];
+    }
+
+    buffer = (double *)malloc(n*sizeof(double));
+    if (buffer == NULL) {
+        H5Sclose(file_space);
+        H5Dclose(dset);
+        H5Fclose(file);
+        return 1;
+    }
+
+    if (H5Sselect_hyperslab(file_space, H5S_SELECT_SET, start, NULL, local_dims, NULL) < 0) {
+        free(buffer);
+        H5Sclose(file_space);
+        H5Dclose(dset);
+        H5Fclose(file);
+        return 1;
+    }
+
+    mem_space = H5Screate_simple(4, local_dims, NULL);
+    if (mem_space < 0) {
+        free(buffer);
+        H5Sclose(file_space);
+        H5Dclose(dset);
+        H5Fclose(file);
+        return 1;
+    }
+
+    status = H5Dread(dset, H5T_NATIVE_DOUBLE, mem_space, file_space, H5P_DEFAULT, buffer);
+    if (status >= 0 && ierr == 0) {
+        for (size_t v = 0; v < 3; ++v) {
+            for (size_t k = 0; k < nk; ++k) {
+                for (size_t j = 0; j < nj; ++j) {
+                    for (size_t i = 0; i < ni; ++i) {
+                        size_t h5_idx = (((i*nj) + j)*nk + k)*3 + v;
+                        coef[linear_fortran4(i, j, k, v, ni, nj, nk)] = buffer[h5_idx];
+                    }
+                }
+            }
+        }
+    }
+
+    H5Sclose(mem_space);
+    free(buffer);
+    H5Sclose(file_space);
+    H5Dclose(dset);
+    ierr |= H5Fclose(file) < 0;
+    return ierr != 0 || status < 0;
 }
 
 static int write_dataset1(hid_t file, const char *name, hsize_t n, const double *values)
