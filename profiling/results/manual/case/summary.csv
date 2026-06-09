@@ -1,2 +1,0 @@
-case,nodes,ranks,tasks_per_node,nx,ny,nz,dims,nsteps,loop_seconds,seconds_per_step,exit_code
-case,1,1,1,200,200,200,"0 0 0",,,,1

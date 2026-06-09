@@ -1,2 +1,0 @@
-case,nodes,ranks,tasks_per_node,nx,ny,nz,dims,nsteps,loop_seconds,seconds_per_step,exit_code
-strong_1024_4r,1,4,4,1024,1024,1024,"1 2 2",20,1.42823388E+01,7.14116940E-01,0

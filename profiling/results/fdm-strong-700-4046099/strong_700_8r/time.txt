@@ -1,2 +1,0 @@
-elapsed_seconds 10.22
-maxrss_kb 5135252

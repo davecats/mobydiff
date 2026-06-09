@@ -1,1 +1,0 @@
-srun --nodes 1 --ntasks 1 --ntasks-per-node 1 --cpus-per-task 8 --gpus-per-task 1 --gpu-bind=single:1 /hkfs/work/workspace/scratch/xt8786-mobydiff/mobydiff/build_gpu/main /hkfs/work/workspace/scratch/xt8786-mobydiff/mobydiff/profiling/results/fdm-strong-700-4045992/strong_700_1r/input.ini 
