@@ -14,12 +14,14 @@ program main
     use :: pressure_solver
     use :: gpu_runtime
     use :: ibmm
-    use :: comm, only: comm_type, comm_init_world, comm_init, comm_finalize, exchange_halos
+    use :: les_model
+    use :: comm, only: comm_type, comm_init_world, comm_init, comm_finalize, exchange_halos, exchange_scalar_halos
     implicit none
 
     integer :: arg_status, rkStage
     integer(C_INT) :: loop_steps
     real(C_DOUBLE) :: dt_alpha, dt_beta, dt_gamma
+    real(C_DOUBLE) :: les_profile_start
     character(len=256) :: input_file
     type(chron_type) :: loop_timer
     class(case_type), allocatable :: flow
@@ -29,6 +31,8 @@ program main
     type(boundary_type) :: bc
     type(pressure_solver_type) :: ps
     type(ibm_type) :: ibm
+    type(les_type) :: les
+    type(les_profile_type) :: les_prof
     type(comm_type) :: c
 
     call comm_init_world(c)
@@ -41,7 +45,7 @@ program main
     if (c%has_terminal) print *, "reading input data..."
     call create_flow_case(flow, input_file, c%has_terminal)
     call flow%apply_defaults(dns, g, bc, c, ps)
-    call read_runtime_config(dns, g, ps, bc, c, input_file, c%has_terminal)
+    call read_runtime_config(dns, g, les, ps, bc, c, input_file, c%has_terminal)
     if (has_restart_file(dns)) then
         if (c%has_terminal) print *, "reading restart metadata: ", trim(dns%restart_file)
         call read_restart_metadata(dns, g, bc, ps%nIter, ps%sor, dns%restart_file, c)
@@ -83,13 +87,26 @@ program main
         call set_ibm_coeff(dns, g, ibm, VAR_W)
     end if
 
+    if (les_is_enabled(les)) then
+        if (c%has_terminal) print *, "initialising LES model..."
+        call init_les(les, dns, g)
+        call enter_les_data(les, dns)
+    end if
+
     call apply_bc(f, dns, g, bc)
     call exchange_halos(c, f, [VAR_U, VAR_V, VAR_W, VAR_P])
     call flow%setup_after_grid(f, dns, g, bc, c)
-    call update_timestep_limits(f, dns, g, c)
+    if (les_is_enabled(les)) then
+        call update_les_viscosity(les, f, dns, g, ibm)
+        call exchange_scalar_halos(c, les%nut)
+        call update_timestep_limits(f, dns, g, c, les)
+    else
+        call update_timestep_limits(f, dns, g, c)
+    end if
 
     if (c%has_terminal) print *, "main loop starting..."
     loop_steps = 0_C_INT
+    call reset_les_profile(les_prof)
     call start_chron(loop_timer)
     do while (run_should_continue(dns, loop_steps))
         call trim_dt_for_final_time(dns)
@@ -106,7 +123,17 @@ program main
 
             ! Predictor: advance tentative staggered velocities, then enforce solid/body constraints.
             call update_ibm_mu(ibm, dt_gamma)
-            call momentum(f, dns, g, dt_alpha, dt_beta, dt_gamma, ibm, bc)
+            if (les_is_enabled(les)) then
+                les_profile_start = les_wall_seconds()
+                call update_les_viscosity(les, f, dns, g, ibm)
+                call add_les_profile(les_prof, LES_PROF_NUT, les_wall_seconds() - les_profile_start)
+                les_profile_start = les_wall_seconds()
+                call exchange_scalar_halos(c, les%nut)
+                call add_les_profile(les_prof, LES_PROF_EXCHANGE, les_wall_seconds() - les_profile_start)
+                call momentum(f, dns, g, dt_alpha, dt_beta, dt_gamma, ibm, bc, les, les_prof)
+            else
+                call momentum(f, dns, g, dt_alpha, dt_beta, dt_gamma, ibm, bc)
+            end if
             call apply_bc(f, dns, g, bc)
             call exchange_halos(c, f, [VAR_U, VAR_V, VAR_W])
 
@@ -115,7 +142,11 @@ program main
 
         end do
 
-        call update_timestep_limits(f, dns, g, c)
+        if (les_is_enabled(les)) then
+            call update_timestep_limits(f, dns, g, c, les)
+        else
+            call update_timestep_limits(f, dns, g, c)
+        end if
 
         if (dns%field_interval > 0) then
             call maybe_write_field(f, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%sor)
@@ -128,12 +159,15 @@ program main
     if (c%has_terminal) then
         print *, "main loop ended..."
         call write_chron(loop_timer)
+        if (les_is_enabled(les)) call write_les_profile(les_prof, loop_steps)
     end if
 
     call write_field(f, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%sor)
 
     ! Release device-side data before the host allocatables go out of scope.
     call flow%finalize(dns, g, c)
+    if (les_is_enabled(les)) call exit_les_data(les, dns)
+    call destroy_les(les)
     call exit_ibm_data(ibm, dns)
     call exit_field_data(f, dns)
     call exit_boundary_data(bc)

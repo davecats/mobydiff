@@ -115,6 +115,7 @@ contains
 
         g%distribution = GRID_UNIFORM
         g%stretch = 0.0d0
+        g%natural_dyw_plus = 0.05d0
         g%natural_one_sided = .false.
 
         c%dims = 0

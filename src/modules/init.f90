@@ -45,6 +45,7 @@ module init
     type :: grid_type
         integer(C_INT) :: distribution(1:3) = GRID_UNIFORM
         real(C_DOUBLE) :: stretch(1:3) = 0.0d0
+        real(C_DOUBLE) :: natural_dyw_plus(1:3) = 0.05d0
         logical(C_BOOL) :: natural_one_sided(1:3) = .false.
         ! Global node coordinates; x/y/z below are local, variable-dependent coordinates.
         real(C_DOUBLE), allocatable :: xNode(:), yNode(:), zNode(:)
@@ -111,13 +112,16 @@ subroutine init_grid(g, dns, periodic)
 
     call init_grid_direction(g%xNode, g%x, g%d1x, g%lapXm, g%lapX0, g%lapXp, &
         dns%globalSize(1), dns%localSize(1,0), nx, dns%leng(1), &
-        g%distribution(1), g%stretch(1), g%natural_one_sided(1), periodic(1), 1)
+        g%distribution(1), g%stretch(1), g%natural_one_sided(1), &
+        g%natural_dyw_plus(1), periodic(1), 1)
     call init_grid_direction(g%yNode, g%y, g%d1y, g%lapYm, g%lapY0, g%lapYp, &
         dns%globalSize(2), dns%localSize(2,0), ny, dns%leng(2), &
-        g%distribution(2), g%stretch(2), g%natural_one_sided(2), periodic(2), 2)
+        g%distribution(2), g%stretch(2), g%natural_one_sided(2), &
+        g%natural_dyw_plus(2), periodic(2), 2)
     call init_grid_direction(g%zNode, g%z, g%d1z, g%lapZm, g%lapZ0, g%lapZp, &
         dns%globalSize(3), dns%localSize(3,0), nz, dns%leng(3), &
-        g%distribution(3), g%stretch(3), g%natural_one_sided(3), periodic(3), 3)
+        g%distribution(3), g%stretch(3), g%natural_one_sided(3), &
+        g%natural_dyw_plus(3), periodic(3), 3)
 
 end subroutine init_grid
 
@@ -145,14 +149,14 @@ subroutine destroy_grid(g)
 end subroutine destroy_grid
 
 subroutine init_grid_direction(node, coord, d1, lapM, lap0, lapP, nGlobal, first, nLocal, &
-        length, distribution, stretch, natural_one_sided, periodic, dir)
+        length, distribution, stretch, natural_one_sided, natural_dyw_plus, periodic, dir)
     real(C_DOUBLE), intent(inout) :: node(0:)
     real(C_DOUBLE), intent(inout) :: coord(-1:,:)
     real(C_DOUBLE), intent(inout) :: d1(0:,:)
     real(C_DOUBLE), intent(inout) :: lapM(0:,:), lap0(0:,:), lapP(0:,:)
     integer(C_INT), intent(in) :: nGlobal, first, distribution
     integer, intent(in) :: nLocal, dir
-    real(C_DOUBLE), intent(in) :: length, stretch
+    real(C_DOUBLE), intent(in) :: length, stretch, natural_dyw_plus
     logical(C_BOOL), intent(in) :: natural_one_sided
     logical(C_BOOL), intent(in) :: periodic
 
@@ -163,7 +167,8 @@ subroutine init_grid_direction(node, coord, d1, lapM, lap0, lapP, nGlobal, first
     n = int(nGlobal)
     do i = 0, n
         s = real(i, C_DOUBLE) / real(n, C_DOUBLE)
-        node(i) = distribution_coordinate(s, length, distribution, stretch, natural_one_sided, n)
+        node(i) = distribution_coordinate(s, length, distribution, stretch, &
+            natural_one_sided, natural_dyw_plus, n)
     end do
     node(0) = 0.0d0
     node(n) = length
@@ -217,8 +222,9 @@ logical function is_face_staggered(dir, var)
                         (dir == 3 .and. var == VAR_W)
 end function is_face_staggered
 
-real(C_DOUBLE) function distribution_coordinate(s, length, distribution, stretch, natural_one_sided, n) result(x)
-    real(C_DOUBLE), intent(in) :: s, length, stretch
+real(C_DOUBLE) function distribution_coordinate(s, length, distribution, stretch, natural_one_sided, &
+        natural_dyw_plus, n) result(x)
+    real(C_DOUBLE), intent(in) :: s, length, stretch, natural_dyw_plus
     integer(C_INT), intent(in) :: distribution
     logical(C_BOOL), intent(in) :: natural_one_sided
     integer, intent(in) :: n
@@ -232,14 +238,14 @@ real(C_DOUBLE) function distribution_coordinate(s, length, distribution, stretch
         a = max(stretch, 1.0d-12)
         x = 0.5d0 * length * (1.0d0 + tanh(a*(2.0d0*s - 1.0d0))/tanh(a))
     case (GRID_NATURAL)
-        x = natural_channel_coordinate(s, length, stretch, natural_one_sided, n)
+        x = natural_channel_coordinate(s, length, stretch, natural_one_sided, natural_dyw_plus, n)
     case default
         x = length*s
     end select
 end function distribution_coordinate
 
-real(C_DOUBLE) function natural_channel_coordinate(s, length, blend_index, one_sided, n) result(x)
-    real(C_DOUBLE), intent(in) :: s, length, blend_index
+real(C_DOUBLE) function natural_channel_coordinate(s, length, blend_index, one_sided, dy_wall_plus, n) result(x)
+    real(C_DOUBLE), intent(in) :: s, length, blend_index, dy_wall_plus
     logical(C_BOOL), intent(in) :: one_sided
     integer, intent(in) :: n
 
@@ -249,8 +255,8 @@ real(C_DOUBLE) function natural_channel_coordinate(s, length, blend_index, one_s
         half_length = 0.5d0*length
         j = min(s, 1.0d0 - s) * real(n, C_DOUBLE)
         jmax = 0.5d0 * real(n, C_DOUBLE)
-        yplus = natural_wall_coordinate(j, blend_index)
-        yplus_max = natural_wall_coordinate(jmax, blend_index)
+        yplus = natural_wall_coordinate(j, blend_index, dy_wall_plus)
+        yplus_max = natural_wall_coordinate(jmax, blend_index, dy_wall_plus)
         if (yplus_max <= 0.0d0) then
             x = length*s
         else if (s <= 0.5d0) then
@@ -261,8 +267,8 @@ real(C_DOUBLE) function natural_channel_coordinate(s, length, blend_index, one_s
     else
         j = s * real(n, C_DOUBLE)
         jmax = real(n, C_DOUBLE)
-        yplus = natural_wall_coordinate(j, blend_index)
-        yplus_max = natural_wall_coordinate(jmax, blend_index)
+        yplus = natural_wall_coordinate(j, blend_index, dy_wall_plus)
+        yplus_max = natural_wall_coordinate(jmax, blend_index, dy_wall_plus)
         if (yplus_max <= 0.0d0) then
             x = length*s
         else
@@ -271,13 +277,12 @@ real(C_DOUBLE) function natural_channel_coordinate(s, length, blend_index, one_s
     end if
 end function natural_channel_coordinate
 
-real(C_DOUBLE) function natural_wall_coordinate(j, blend_index) result(yplus)
-    real(C_DOUBLE), intent(in) :: j, blend_index
+real(C_DOUBLE) function natural_wall_coordinate(j, blend_index, dy_wall_plus) result(yplus)
+    real(C_DOUBLE), intent(in) :: j, blend_index, dy_wall_plus
 
     real(C_DOUBLE), parameter :: alpha = 1.25d0
     real(C_DOUBLE), parameter :: c_eta = 0.8d0
-    real(C_DOUBLE), parameter :: dy_wall = 0.05d0
-    real(C_DOUBLE) :: jb, blend, outer
+    real(C_DOUBLE) :: jb, blend, outer, dy_wall
 
     if (j <= 0.0d0) then
         yplus = 0.0d0
@@ -285,6 +290,7 @@ real(C_DOUBLE) function natural_wall_coordinate(j, blend_index) result(yplus)
     end if
 
     jb = merge(blend_index, 40.0d0, blend_index > 0.0d0)
+    dy_wall = merge(dy_wall_plus, 0.05d0, dy_wall_plus > 0.0d0)
     blend = (j/jb)**2
     outer = (0.75d0*alpha*c_eta*j)**(4.0d0/3.0d0)
     yplus = (dy_wall*j + outer*blend)/(1.0d0 + blend)

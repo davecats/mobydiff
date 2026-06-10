@@ -458,7 +458,8 @@ static int write_grid_staggered_coords(hid_t file, const char *var_name,
 int fdm_h5_write_grid(const char *filename, int nx, int ny, int nz,
                       double lx, double ly, double lz,
                       const int *periodic, const int *grid_distribution,
-                      const double *grid_stretch, const int *grid_natural_one_sided,
+                      const double *grid_stretch, const double *grid_natural_dyw_plus,
+                      const int *grid_natural_one_sided,
                       const double *x_node, const double *y_node, const double *z_node,
                       const double *xu, const double *yu, const double *zu,
                       const double *xv, const double *yv, const double *zv,
@@ -484,6 +485,7 @@ int fdm_h5_write_grid(const char *filename, int nx, int ny, int nz,
     ierr |= write_attr_int_array(file, "periodic", periodic, 3);
     ierr |= write_attr_int_array(file, "grid_distribution", grid_distribution, 3);
     ierr |= write_attr_double_array(file, "grid_stretch", grid_stretch, 3);
+    ierr |= write_attr_double_array(file, "grid_natural_dyw_plus", grid_natural_dyw_plus, 3);
     ierr |= write_attr_int_array(file, "grid_natural_one_sided", grid_natural_one_sided, 3);
     ierr |= write_attr_int_array(file, "staggered_counts", staggered_counts, 3);
 
@@ -614,6 +616,7 @@ int fdm_h5_write_field(const char *filename, int nx, int ny, int nz,
                        int pressure_niter, double pressure_sor, int ibm_enabled, int bc_count,
                        const int *periodic, const int *bc_type, const double *bc_value,
                        const int *grid_distribution, const double *grid_stretch,
+                       const double *grid_natural_dyw_plus,
                        const double *x_node, const double *y_node, const double *z_node,
                        const double *un, const double *vn,
                        const double *wn, const double *pn)
@@ -655,6 +658,7 @@ int fdm_h5_write_field(const char *filename, int nx, int ny, int nz,
     ierr |= write_attr_double_array(file, "bc_value", bc_value, (hsize_t)bc_count);
     ierr |= write_attr_int_array(file, "grid_distribution", grid_distribution, 3);
     ierr |= write_attr_double_array(file, "grid_stretch", grid_stretch, 3);
+    ierr |= write_attr_double_array(file, "grid_natural_dyw_plus", grid_natural_dyw_plus, 3);
 
     ierr |= write_decomposition(file, rank, nranks,
                                 local_i_first, local_i_last,
@@ -690,7 +694,7 @@ int fdm_h5_read_metadata(const char *filename,
                          double *forcing,
                          int *pressure_niter, double *pressure_sor, int *ibm_enabled, int bc_count,
                          int *periodic, int *bc_type, double *bc_value,
-                         int *grid_distribution, double *grid_stretch)
+                         int *grid_distribution, double *grid_stretch, double *grid_natural_dyw_plus)
 {
     hid_t file;
     int file_nranks = 0;
@@ -732,6 +736,8 @@ int fdm_h5_read_metadata(const char *filename,
     ierr |= read_attr_double_array(file, "bc_value", bc_value, (hsize_t)bc_count, 1);
     ierr |= read_attr_int_array(file, "grid_distribution", grid_distribution, 3, 1);
     ierr |= read_attr_double_array(file, "grid_stretch", grid_stretch, 3, 1);
+    for (int d = 0; d < 3; ++d) grid_natural_dyw_plus[d] = 0.05;
+    ierr |= read_attr_double_array(file, "grid_natural_dyw_plus", grid_natural_dyw_plus, 3, 0);
 
     ierr |= H5Fclose(file) < 0;
     return ierr != 0;

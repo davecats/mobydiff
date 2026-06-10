@@ -2,6 +2,7 @@ module config
     use, intrinsic :: iso_c_binding
     use :: init, only: dns_type, grid_type, VAR_U, VAR_V, VAR_W, VAR_P, &
         GRID_UNIFORM, GRID_COSINE, GRID_TANH, GRID_NATURAL
+    use :: les_model, only: les_type, LES_NONE, LES_SMAGORINSKY, LES_WALE
     use :: pressure_solver, only: pressure_solver_type
     use :: boundary, only: boundary_type, boundary_face_id
     use :: comm, only: comm_type
@@ -24,9 +25,10 @@ module config
 
 contains
 
-subroutine read_runtime_config(dns, g, ps, bc, c, input_file, has_terminal)
+subroutine read_runtime_config(dns, g, les, ps, bc, c, input_file, has_terminal)
     type(dns_type), intent(inout) :: dns
     type(grid_type), intent(inout) :: g
+    type(les_type), intent(inout) :: les
     type(pressure_solver_type), intent(inout) :: ps
     type(boundary_type), intent(inout) :: bc
     type(comm_type), intent(inout) :: c
@@ -72,7 +74,7 @@ subroutine read_runtime_config(dns, g, ps, bc, c, input_file, has_terminal)
 
         call split_key_value(line, key, value)
         if (len_trim(key) == 0) cycle
-        call apply_config_value(section, key, value, dns, g, ps, bc, c, seen, line_no)
+        call apply_config_value(section, key, value, dns, g, les, ps, bc, c, seen, line_no)
     end do
 
     close(unit)
@@ -82,12 +84,14 @@ subroutine read_runtime_config(dns, g, ps, bc, c, input_file, has_terminal)
     else
         call validate_runtime_config(dns, g, c, seen)
     end if
+    call validate_les_values(les)
 end subroutine read_runtime_config
 
-subroutine apply_config_value(section, key, value, dns, g, ps, bc, c, seen, line_no)
+subroutine apply_config_value(section, key, value, dns, g, les, ps, bc, c, seen, line_no)
     character(len=*), intent(in) :: section, key, value
     type(dns_type), intent(inout) :: dns
     type(grid_type), intent(inout) :: g
+    type(les_type), intent(inout) :: les
     type(pressure_solver_type), intent(inout) :: ps
     type(boundary_type), intent(inout) :: bc
     type(comm_type), intent(inout) :: c
@@ -192,6 +196,8 @@ subroutine apply_config_value(section, key, value, dns, g, ps, bc, c, seen, line
         case ("coeff_file")
             dns%ibm_coeff_file = clean_string(value)
         end select
+    case ("les")
+        call apply_les_value(key_l, value, les, line_no)
     case ("mpi")
         call apply_mpi_value(key_l, value, c, line_no)
     case ("boundary")
@@ -208,6 +214,25 @@ subroutine validate_runtime_config(dns, g, c, seen)
     call validate_dns_values(dns, g)
     if (any(c%dims < 0)) error stop "MPI dimensions must be non-negative"
 end subroutine validate_runtime_config
+
+subroutine validate_les_values(les)
+    type(les_type), intent(in) :: les
+
+    select case (les%model)
+    case (LES_NONE, LES_SMAGORINSKY, LES_WALE)
+    case default
+        error stop "invalid LES model"
+    end select
+    if (les%model == LES_NONE) return
+
+    if (les%model == LES_SMAGORINSKY .and. les%cs < 0.0d0) then
+        error stop "LES Smagorinsky constant must be non-negative"
+    end if
+    if (les%model == LES_WALE .and. les%cw < 0.0d0) then
+        error stop "LES WALE constant must be non-negative"
+    end if
+    if (les%delta_scale <= 0.0d0) error stop "LES delta_scale must be positive"
+end subroutine validate_les_values
 
 logical function has_restart_file(dns)
     type(dns_type), intent(in) :: dns
@@ -236,6 +261,7 @@ subroutine validate_dns_values(dns, g)
         error stop "invalid grid distribution"
     end if
     if (any(g%stretch < 0.0d0)) error stop "grid stretch values must be non-negative"
+    if (any(g%natural_dyw_plus <= 0.0d0)) error stop "natural grid dyw_plus values must be positive"
 end subroutine validate_dns_values
 
 subroutine apply_mpi_value(key, value, c, line_no)
@@ -248,6 +274,25 @@ subroutine apply_mpi_value(key, value, c, line_no)
         call read_integer3(value, c%dims, line_no)
     end select
 end subroutine apply_mpi_value
+
+subroutine apply_les_value(key, value, les, line_no)
+    character(len=*), intent(in) :: key, value
+    type(les_type), intent(inout) :: les
+    integer, intent(in) :: line_no
+
+    select case (trim(key))
+    case ("model")
+        call read_les_model(value, les%model, line_no)
+    case ("cs")
+        call read_real(value, les%cs, line_no)
+    case ("cw")
+        call read_real(value, les%cw, line_no)
+    case ("delta_scale")
+        call read_real(value, les%delta_scale, line_no)
+    case ("ibm_aware")
+        call read_bool(value, les%ibm_aware, line_no)
+    end select
+end subroutine apply_les_value
 
 subroutine apply_grid_axis_value(section, key, value, dns, g, seen, line_no)
     character(len=*), intent(in) :: section, key, value
@@ -266,6 +311,8 @@ subroutine apply_grid_axis_value(section, key, value, dns, g, seen, line_no)
         call read_grid_distribution(value, g%distribution(dir), line_no)
     case ("stretch")
         call read_real(value, g%stretch(dir), line_no)
+    case ("natural_dyw_plus", "dyw_plus", "dy_wall_plus", "dyw+")
+        call read_real(value, g%natural_dyw_plus(dir), line_no)
     case ("n")
         call read_c_int(value, dns%globalSize(dir), line_no)
         seen%size(dir) = .true.
@@ -473,6 +520,32 @@ subroutine read_grid_distribution(value, target, line_no)
         if (terminal_output) print *, "warning: unknown grid distribution on input line", line_no, ": ", trim(value_l)
     end select
 end subroutine read_grid_distribution
+
+subroutine read_les_model(value, target, line_no)
+    character(len=*), intent(in) :: value
+    integer(C_INT), intent(inout) :: target
+    integer, intent(in) :: line_no
+
+    integer :: stat, parsed
+    character(len=:), allocatable :: value_l
+
+    value_l = lower(clean_string(value))
+    select case (trim(value_l))
+    case ("none", "off", "disabled", "0")
+        target = LES_NONE
+    case ("smagorinsky", "smag", "1")
+        target = LES_SMAGORINSKY
+    case ("wale", "2")
+        target = LES_WALE
+    case default
+        read(value_l, *, iostat=stat) parsed
+        if (stat == 0 .and. parsed >= LES_NONE .and. parsed <= LES_WALE) then
+            target = int(parsed, C_INT)
+        else
+            if (terminal_output) print *, "warning: unknown LES model on input line", line_no, ": ", trim(value_l)
+        end if
+    end select
+end subroutine read_les_model
 
 subroutine parse_section(line, section)
     character(len=*), intent(in) :: line

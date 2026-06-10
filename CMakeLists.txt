@@ -21,10 +21,11 @@ set(MODULE_DIR ${SRC_DIR}/modules)
 set(MODULE_SOURCES
     ${MODULE_DIR}/init.f90
     ${MODULE_DIR}/chron.f90
-    ${MODULE_DIR}/config.f90
-    ${MODULE_DIR}/gpu_runtime.f90
     ${MODULE_DIR}/boundary.f90
     ${MODULE_DIR}/ibm.f90
+    ${MODULE_DIR}/les.f90
+    ${MODULE_DIR}/config.f90
+    ${MODULE_DIR}/gpu_runtime.f90
     ${MODULE_DIR}/field_hdf5.c
     ${MODULE_DIR}/io.f90
     ${MODULE_DIR}/comm.f90

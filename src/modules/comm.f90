@@ -54,7 +54,7 @@ module comm
 
     public :: comm_init_world, comm_init, comm_finalize
     public :: comm_allreduce_max, comm_allreduce_sum
-    public :: start_halo_exchange, finish_halo_exchange, exchange_halos
+    public :: start_halo_exchange, finish_halo_exchange, exchange_halos, exchange_scalar_halos
 
 contains
 
@@ -260,6 +260,57 @@ contains
         call start_halo_exchange(c, f, vars)
         call finish_halo_exchange(c, f)
     end subroutine exchange_halos
+
+    subroutine exchange_scalar_halos(c, scalar)
+        type(comm_type), intent(inout) :: c
+        real(C_DOUBLE), intent(inout) :: scalar(0:,0:,0:)
+
+        integer :: ierr, n, nRequest, recvOffset(3)
+
+        call require_ready(c)
+        if (c%exchangeActive) error stop "halo exchange already active"
+        if (c%nNeighbors == 0) return
+
+        call ensure_buffer_capacity(c, max(1, max_neighbor_points(c)))
+
+        c%request = MPI_REQUEST_NULL
+        c%bufferOffset = 0
+        c%totalActiveCount = 0
+        do n = 1, c%nNeighbors
+            c%activeCount(n) = c%nPoints(n)
+            c%bufferOffset(n) = c%totalActiveCount
+            c%totalActiveCount = c%totalActiveCount + c%activeCount(n)
+        end do
+
+        call pack_scalar_boxes(c, scalar)
+
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target data use_device_addr(c%sendbuf, c%recvbuf)
+#endif
+        do n = 1, c%nNeighbors
+            recvOffset = -c%offset(:,n)
+            call MPI_Irecv(c%recvbuf(1,n), c%activeCount(n), MPI_DOUBLE_PRECISION, &
+                c%neighborRank(n), halo_tag(recvOffset), c%cart_comm, c%request(n), ierr)
+        end do
+
+        do n = 1, c%nNeighbors
+            call MPI_Isend(c%sendbuf(1,n), c%activeCount(n), MPI_DOUBLE_PRECISION, &
+                c%neighborRank(n), halo_tag(c%offset(:,n)), c%cart_comm, &
+                c%request(c%nNeighbors+n), ierr)
+        end do
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp end target data
+#endif
+
+        c%exchangeActive = .true.
+        nRequest = 2*c%nNeighbors
+        call MPI_Waitall(nRequest, c%request(1:nRequest), MPI_STATUSES_IGNORE, ierr)
+        call unpack_scalar_boxes(c, scalar)
+
+        c%request = MPI_REQUEST_NULL
+        call clear_active_counts(c)
+        c%exchangeActive = .false.
+    end subroutine exchange_scalar_halos
 
     subroutine prepare_active_counts(c)
         type(comm_type), intent(inout) :: c
@@ -478,6 +529,74 @@ contains
         !$omp end target teams distribute parallel do
 #endif
     end subroutine unpack_q_boxes
+
+    subroutine pack_scalar_boxes(c, scalar)
+        type(comm_type), intent(inout) :: c
+        real(C_DOUBLE), intent(in) :: scalar(0:,0:,0:)
+
+        integer :: pAll, p, q, n
+        integer :: i, j, k, ni, nj
+
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target teams distribute parallel do &
+        !$omp& map(to: c%nNeighbors, c%totalActiveCount, c%bufferOffset, c%nPoints, &
+        !$omp& c%activeCount, c%sendLo, c%sendHi, scalar) &
+        !$omp& map(tofrom: c%sendbuf) &
+        !$omp& private(pAll,p,q,n,i,j,k,ni,nj)
+#endif
+        do pAll = 1, c%totalActiveCount
+            n = 1
+            do while (n < c%nNeighbors .and. pAll > c%bufferOffset(n) + c%activeCount(n))
+                n = n + 1
+            end do
+
+            p = pAll - c%bufferOffset(n)
+            ni = c%sendHi(1,n) - c%sendLo(1,n) + 1
+            nj = c%sendHi(2,n) - c%sendLo(2,n) + 1
+            q = p - 1
+            i = c%sendLo(1,n) + modulo(q, ni)
+            j = c%sendLo(2,n) + modulo(q / ni, nj)
+            k = c%sendLo(3,n) + q / (ni*nj)
+            c%sendbuf(p,n) = scalar(i,j,k)
+        end do
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp end target teams distribute parallel do
+#endif
+    end subroutine pack_scalar_boxes
+
+    subroutine unpack_scalar_boxes(c, scalar)
+        type(comm_type), intent(in) :: c
+        real(C_DOUBLE), intent(inout) :: scalar(0:,0:,0:)
+
+        integer :: pAll, p, q, n
+        integer :: i, j, k, ni, nj
+
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target teams distribute parallel do &
+        !$omp& map(to: c%nNeighbors, c%totalActiveCount, c%bufferOffset, c%nPoints, &
+        !$omp& c%activeCount, c%recvLo, c%recvHi, c%recvbuf) &
+        !$omp& map(tofrom: scalar) &
+        !$omp& private(pAll,p,q,n,i,j,k,ni,nj)
+#endif
+        do pAll = 1, c%totalActiveCount
+            n = 1
+            do while (n < c%nNeighbors .and. pAll > c%bufferOffset(n) + c%activeCount(n))
+                n = n + 1
+            end do
+
+            p = pAll - c%bufferOffset(n)
+            ni = c%recvHi(1,n) - c%recvLo(1,n) + 1
+            nj = c%recvHi(2,n) - c%recvLo(2,n) + 1
+            q = p - 1
+            i = c%recvLo(1,n) + modulo(q, ni)
+            j = c%recvLo(2,n) + modulo(q / ni, nj)
+            k = c%recvLo(3,n) + q / (ni*nj)
+            scalar(i,j,k) = c%recvbuf(p,n)
+        end do
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp end target teams distribute parallel do
+#endif
+    end subroutine unpack_scalar_boxes
 
     subroutine local_range(n_global, nproc_dir, coord, first, last)
         integer, intent(in) :: n_global, nproc_dir, coord

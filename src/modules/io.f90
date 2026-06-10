@@ -13,7 +13,7 @@ module io
                 re, dt, t_final, t_current, cfl, cflmax, pecletmax, dtmax, &
                 forcing, pressure_niter, pressure_sor, &
                 ibm_enabled, bc_count, periodic, bc_type, bc_value, grid_distribution, grid_stretch, &
-                x_node, y_node, z_node, un, vn, wn, pn) &
+                grid_natural_dyw_plus, x_node, y_node, z_node, un, vn, wn, pn) &
                 bind(C, name="fdm_h5_write_field") result(ierr)
             import :: C_CHAR, C_INT, C_DOUBLE
             character(kind=C_CHAR), intent(in) :: file_name(*)
@@ -32,13 +32,14 @@ module io
             integer(C_INT), value :: ibm_enabled
             integer(C_INT), value :: bc_count
             integer(C_INT), intent(in) :: periodic(*), bc_type(*), grid_distribution(*)
-            real(C_DOUBLE), intent(in) :: bc_value(*), grid_stretch(*), x_node(*), y_node(*), z_node(*)
+            real(C_DOUBLE), intent(in) :: bc_value(*), grid_stretch(*), grid_natural_dyw_plus(*)
+            real(C_DOUBLE), intent(in) :: x_node(*), y_node(*), z_node(*)
             real(C_DOUBLE), intent(in) :: un(*), vn(*), wn(*), pn(*)
             integer(C_INT) :: ierr
         end function fdm_h5_write_field
 
         function fdm_h5_write_grid(file_name, nx, ny, nz, lx, ly, lz, &
-                periodic, grid_distribution, grid_stretch, grid_natural_one_sided, &
+                periodic, grid_distribution, grid_stretch, grid_natural_dyw_plus, grid_natural_one_sided, &
                 x_node, y_node, z_node, xu, yu, zu, xv, yv, zv, xw, yw, zw) &
                 bind(C, name="fdm_h5_write_grid") result(ierr)
             import :: C_CHAR, C_INT, C_DOUBLE
@@ -46,7 +47,7 @@ module io
             integer(C_INT), value :: nx, ny, nz
             real(C_DOUBLE), value :: lx, ly, lz
             integer(C_INT), intent(in) :: periodic(*), grid_distribution(*), grid_natural_one_sided(*)
-            real(C_DOUBLE), intent(in) :: grid_stretch(*)
+            real(C_DOUBLE), intent(in) :: grid_stretch(*), grid_natural_dyw_plus(*)
             real(C_DOUBLE), intent(in) :: x_node(*), y_node(*), z_node(*)
             real(C_DOUBLE), intent(in) :: xu(*), yu(*), zu(*)
             real(C_DOUBLE), intent(in) :: xv(*), yv(*), zv(*)
@@ -58,7 +59,7 @@ module io
                 step, nsteps, lx, ly, lz, re, dt, t_final, t_current, cfl, &
                 cflmax, pecletmax, dtmax, forcing, &
                 pressure_niter, pressure_sor, ibm_enabled, bc_count, periodic, bc_type, bc_value, &
-                grid_distribution, grid_stretch) &
+                grid_distribution, grid_stretch, grid_natural_dyw_plus) &
                 bind(C, name="fdm_h5_read_metadata") result(ierr)
             import :: C_CHAR, C_INT, C_DOUBLE
             character(kind=C_CHAR), intent(in) :: file_name(*)
@@ -73,7 +74,7 @@ module io
             integer(C_INT), intent(inout) :: ibm_enabled
             integer(C_INT), value :: bc_count
             integer(C_INT), intent(inout) :: periodic(*), bc_type(*), grid_distribution(*)
-            real(C_DOUBLE), intent(inout) :: bc_value(*), grid_stretch(*)
+            real(C_DOUBLE), intent(inout) :: bc_value(*), grid_stretch(*), grid_natural_dyw_plus(*)
             integer(C_INT) :: ierr
         end function fdm_h5_read_metadata
 
@@ -165,7 +166,7 @@ subroutine write_field(f, dns, g, step, c, bc, pressure_niter, pressure_sor)
         dns%forcing, &
         pressure_niter, pressure_sor, ibm_enabled, int(size(bc%faceBcType), C_INT), periodic, &
         bc%faceBcType(VAR_U:VAR_P,1:NFACES), bc%faceBcDefaultValue(VAR_U:VAR_P,1:NFACES), &
-        g%distribution(1:3), g%stretch(1:3), &
+        g%distribution(1:3), g%stretch(1:3), g%natural_dyw_plus(1:3), &
         g%xNode(0:dns%globalSize(1)), g%yNode(0:dns%globalSize(2)), g%zNode(0:dns%globalSize(3)), &
         f%q(0:nx+1,0:ny+1,0:nz+1,VAR_U), &
         f%q(0:nx+1,0:ny+1,0:nz+1,VAR_V), &
@@ -204,7 +205,7 @@ subroutine write_grid_export(dns, g, bc, file_name, has_terminal)
 
     c_file_name = to_c_string(file_name)
     ierr = fdm_h5_write_grid(c_file_name, nx, ny, nz, dns%leng(1), dns%leng(2), dns%leng(3), &
-        periodic, g%distribution(1:3), g%stretch(1:3), natural_one_sided, &
+        periodic, g%distribution(1:3), g%stretch(1:3), g%natural_dyw_plus(1:3), natural_one_sided, &
         g%xNode(0:int(nx)), g%yNode(0:int(ny)), g%zNode(0:int(nz)), &
         g%x(0:int(nx)+1,VAR_U), g%y(0:int(ny)+1,VAR_U), g%z(0:int(nz)+1,VAR_U), &
         g%x(0:int(nx)+1,VAR_V), g%y(0:int(ny)+1,VAR_V), g%z(0:int(nz)+1,VAR_V), &
@@ -241,7 +242,7 @@ subroutine read_restart_metadata(dns, g, bc, pressure_niter, pressure_sor, file_
         dns%cflmax, dns%pecletmax, dns%dtmax, dns%forcing, &
         pressure_niter, pressure_sor, ibm_enabled, int(size(bc%faceBcType), C_INT), periodic, &
         bc%faceBcType(VAR_U:VAR_P,1:NFACES), bc%faceBcDefaultValue(VAR_U:VAR_P,1:NFACES), &
-        g%distribution(1:3), g%stretch(1:3))
+        g%distribution(1:3), g%stretch(1:3), g%natural_dyw_plus(1:3))
     if (ierr /= 0_C_INT) then
         if (c%has_terminal) print *, "error: could not read restart metadata: ", trim(file_name)
         error stop
