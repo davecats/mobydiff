@@ -48,33 +48,41 @@ enable 2:1 local refinement and removal of blocks buried inside the
 immersed boundary. Phased, each phase verified before the next:
 
 - Phase 0 (complete, validated 2026-06-11): the solver state lives in a
-  `block_set_type` with one block per rank; `field_type` and the grid
-  metric arrays are gone (`grid_type` keeps only generation parameters
-  and the node lines; blocks slice from them via `slice_grid_direction`).
-  Volume kernels (`step.f90`, `pressure_solver.f90`, `ibm.f90`, `les.f90`)
+  `block_set_type`; `field_type` and the grid metric arrays are gone
+  (`grid_type` keeps only generation parameters and the node lines;
+  blocks slice from them via `slice_grid_direction`). Volume kernels
   loop `do b = 1, blk%nBlocks` folded into their collapse; `ibm%coef/mu`
-  and `les%nut` carry the trailing block index. Still rank-shaped and
-  serving block slot 1 until Phase 1: comm.f90 send/recv boxes, io.f90
-  rank-box datasets, the `apply_bc` point list, channel statistics, the
-  LES 1D metric tables, the `uStartX`-style face masks and the scalar
-  `colorOffset`.
-  - Validated bit-exact vs `6c03b67` with both trees built `-Mnofma`
-    (CPU) / `-Mnofma -gpu=nofma` (GPU): channel_kmm180 restart 11 steps
-    (CPU 8 ranks + GPU 1 rank), sailplane 1 step (GPU), wavychannel
-    5 steps (CPU 8 ranks). With default FMA contraction the binaries
-    differ by 1-2 ulps/step (compiler instruction selection on the
-    re-indexed source, not arithmetic) — for "pure refactor" gates,
-    compare `-Mnofma` builds of both sides.
-  - GPU cost of the block index: none measurable (channel 50 steps,
-    interleaved x5: 0.201 vs 0.204 s/step, noise ±8% on this WSL box).
-  - `tutorials/sailplane/sailplane_ibm_coeff.h5` was corrupt in git
-    (unreadable by HDF5 since at least `2b5e517`); regenerated per the
-    tutorial README and recommitted.
-- Phase 1 (next): many same-level blocks per rank, block-pair halo
-  exchange entries (replace every "slot 1" above), Z-order distribution,
-  per-block face masks and red-black `colorOffset` from
-  `modulo(sum(blk%origin(:,b)), 2)`.
-- Phase 2: removal of solid blocks (`FACE_CLOSED` zero-flux faces).
+  and `les%nut` carry the trailing block index. Bit-exact vs `6c03b67`;
+  block-index GPU cost: none measurable.
+  `tutorials/sailplane/sailplane_ibm_coeff.h5` was corrupt in git since
+  at least `2b5e517`; regenerated per the tutorial README, recommitted.
+- Phase 1 (complete, validated 2026-06-11): many same-level blocks.
+  `[blocks] nb` (cubic, even, ≥4, must divide the global grid) makes the
+  grid a uniform block lattice numbered along a Z-order Morton curve and
+  split linearly over the ranks (`zorder_owner/start/count`, closed
+  form); default = one block per rank box. Everything is per block:
+  `physLow/physHigh` face masks drive the momentum starts, the SOR sweep
+  window/Neumann terms and `colorOffset = modulo(sum(origin(:,b)),2)`
+  inside the kernels; `apply_bc` points carry a block slot; LES tables,
+  channel stats likewise. comm.f90 holds block-pair exchange entries
+  (one per destination block × 26 directions, tangential extension into
+  physical halos as the old rank boxes): same-rank entries are one flat
+  device copy kernel overlapped with the MPI messages; off-rank entries
+  form one message per peer rank in a canonical order both ends derive
+  independently. Each block sweeps its open halo layer redundantly with
+  the owner (the rank-level red-black trick one level down), which makes
+  results EXACTLY independent of nb and rank count: channel/wavychannel/
+  sailplane all bit-exact vs Phase 0 for nb=default and small nb, on
+  1/2/8 ranks (channel nb=4 = 176k blocks). io writes one hyperslab per
+  block (independent transfers) into unchanged global datasets, plus the
+  Z-ordered `blocks` table (origin+level per global id, replacing
+  `rank_local_range`); restart works on any rank count.
+  GPU time/step (256x128x256 channel): nb=default at Phase-0 parity;
+  nb=32 +19% (the (34/32)^3-1 halo-layer overhead), nb=16 +49%; tiny nb
+  on big IBM cases is much worse (sailplane nb=10: ~25x) — choose nb=32+
+  until Phase 4 tackles exchange overlap.
+- Phase 2 (next): removal of solid blocks (`FACE_CLOSED` zero-flux
+  faces); `mobygrid`/`mobygeom` classification writes the block table.
 - Phase 3: 2:1 refinement (restrict/prolong in pack/unpack, fine-owns-face,
   finest-level buffer at the wall, per-level node lines via midpoint
   subdivision).
