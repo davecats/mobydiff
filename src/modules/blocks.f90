@@ -24,6 +24,7 @@
 
 module blocks
     use, intrinsic :: iso_c_binding
+    use, intrinsic :: iso_fortran_env, only: int64
     use :: init, only: dns_type, grid_type, NVAR, NVEL, slice_grid_direction
     implicit none
 
@@ -32,17 +33,35 @@ module blocks
     public :: init_block_set, destroy_block_set
     public :: enter_block_data, exit_block_data
     public :: subdivide_node_line
+    public :: zorder_owner, zorder_start, zorder_count
+    public :: DIST_RANKBOX, DIST_ZORDER
+
+    ! Block ownership: one block per rank box (default), or the global
+    ! Z-order lattice split linearly over the ranks ([blocks] nb).
+    integer(C_INT), parameter :: DIST_RANKBOX = 0_C_INT
+    integer(C_INT), parameter :: DIST_ZORDER  = 1_C_INT
 
     type :: block_set_type
         ! All blocks of a set share the same cell count nb(1:3): the cubic
         ! [blocks] nb when configured, otherwise the rank-local box (one
         ! block per rank, the Phase-0 layout).
         integer(C_INT) :: nb(1:3) = 0_C_INT
-        ! Blocks per direction of this rank's tile lattice (Phase 1a: every
-        ! rank still owns a Cartesian box of blocks).
-        integer(C_INT) :: nbt(1:3) = 0_C_INT
         integer(C_INT) :: nBlocks = 0_C_INT
         integer(C_INT) :: nLevels = 1_C_INT
+
+        ! Distribution of the global block table over the ranks.
+        !   DIST_RANKBOX: one block per rank box; globalId == rank.
+        !   DIST_ZORDER:  global lattice gnbt = globalSize/nb numbered along
+        !                 a Z-order (Morton) curve; rank p owns the
+        !                 consecutive ids [zorder_start(p), +zorder_count(p)).
+        ! Local slot s holds global id idStart + s - 1 in both modes.
+        integer(C_INT) :: distMode = DIST_RANKBOX
+        integer(C_INT) :: gnbt(1:3) = 0_C_INT
+        integer(C_INT) :: nBlocksGlobal = 0_C_INT
+        integer(C_INT) :: idStart = 0_C_INT
+        ! Z-order lookup tables, identical on every rank (host only).
+        integer(C_INT), allocatable :: zidOf(:,:,:)  ! lattice coords -> id
+        integer(C_INT), allocatable :: zcoord(:,:)   ! (3, id+1) -> lattice coords
 
         ! Per-block metadata (small, host + device).
         !   level:    refinement level; 0 = base grid, +1 per cell bisection
@@ -76,35 +95,47 @@ module blocks
 
 contains
 
-    ! Tile this rank's box of the global grid with equal blocks ([blocks] nb,
-    ! default: the whole box as one block) and slice each block's coordinates
-    ! and metrics from the global node lines via slice_grid_direction.
-    subroutine init_block_set(blk, dns, g, periodic, global_id)
+    ! Build this rank's blocks. With [blocks] nb the global grid is a
+    ! uniform block lattice numbered along a Z-order curve and split
+    ! linearly over the ranks (each owns floor((N+P-p-1)/P) consecutive
+    ! ids); without it every rank owns its Cartesian box as one block.
+    ! Coordinates and metrics are sliced from the global node lines via
+    ! slice_grid_direction either way.
+    subroutine init_block_set(blk, dns, g, periodic, nranks, myrank)
         type(block_set_type), intent(inout) :: blk
         type(dns_type), intent(in) :: dns
         type(grid_type), intent(in) :: g
         logical(C_BOOL), intent(in) :: periodic(1:3)
-        integer(C_INT), intent(in), optional :: global_id
+        integer(C_INT), intent(in) :: nranks, myrank
 
-        integer :: nx, ny, nz, b, bx, by, bz, d
+        integer :: nx, ny, nz, b, d, id
 
         call destroy_block_set(blk)
 
         if (dns%block_nb > 0_C_INT) then
+            blk%distMode = DIST_ZORDER
             blk%nb = dns%block_nb
             do d = 1, 3
-                if (mod(dns%localSize(d,2), dns%block_nb) /= 0_C_INT) then
-                    print *, "block size nb =", dns%block_nb, "does not divide the rank box", &
-                        dns%localSize(1:3,2), "in direction", d
-                    error stop "[blocks] nb must divide the rank-local box in every direction"
+                if (mod(dns%globalSize(d), dns%block_nb) /= 0_C_INT) then
+                    print *, "block size nb =", dns%block_nb, "does not divide the grid", &
+                        dns%globalSize(1:3), "in direction", d
+                    error stop "[blocks] nb must divide the global grid in every direction"
                 end if
             end do
+            blk%gnbt = dns%globalSize(1:3)/blk%nb
+            blk%nBlocksGlobal = product(blk%gnbt)
+            call build_zorder_table(blk)
+            blk%idStart = zorder_start(blk%nBlocksGlobal, nranks, myrank)
+            blk%nBlocks = zorder_count(blk%nBlocksGlobal, nranks, myrank)
         else
+            blk%distMode = DIST_RANKBOX
             blk%nb = dns%localSize(1:3,2)
+            blk%nBlocksGlobal = nranks
+            blk%idStart = myrank
+            blk%nBlocks = 1_C_INT
         end if
-        blk%nbt = dns%localSize(1:3,2)/blk%nb
-        blk%nBlocks = product(blk%nbt)
         blk%nLevels = 1_C_INT
+        if (blk%nBlocks < 1_C_INT) error stop "rank owns no blocks; use fewer ranks or smaller nb"
 
         nx = int(blk%nb(1))
         ny = int(blk%nb(2))
@@ -116,26 +147,20 @@ contains
         allocate(blk%physLow(3,blk%nBlocks))
         allocate(blk%physHigh(3,blk%nBlocks))
         blk%level = 0_C_INT
-        blk%globalId = 0_C_INT
 
-        ! Slot order: x fastest, then y, then z (the lattice index of a block
-        ! is recovered as slot = 1 + bx + nbt(1)*(by + nbt(2)*bz)).
-        b = 0
-        do bz = 0, int(blk%nbt(3)) - 1
-            do by = 0, int(blk%nbt(2)) - 1
-                do bx = 0, int(blk%nbt(1)) - 1
-                    b = b + 1
-                    blk%origin(1,b) = dns%localSize(1,0) - 1_C_INT + int(bx*nx, C_INT)
-                    blk%origin(2,b) = dns%localSize(2,0) - 1_C_INT + int(by*ny, C_INT)
-                    blk%origin(3,b) = dns%localSize(3,0) - 1_C_INT + int(bz*nz, C_INT)
-                    do d = 1, 3
-                        blk%physLow(d,b) = merge(1_C_INT, 0_C_INT, &
-                            .not. periodic(d) .and. blk%origin(d,b) == 0_C_INT)
-                        blk%physHigh(d,b) = merge(1_C_INT, 0_C_INT, &
-                            .not. periodic(d) .and. blk%origin(d,b) + blk%nb(d) == dns%globalSize(d))
-                    end do
-                    if (present(global_id)) blk%globalId(b) = global_id*blk%nBlocks + int(b - 1, C_INT)
-                end do
+        do b = 1, int(blk%nBlocks)
+            id = int(blk%idStart) + b - 1
+            blk%globalId(b) = int(id, C_INT)
+            if (blk%distMode == DIST_ZORDER) then
+                blk%origin(:,b) = blk%zcoord(:,id+1)*blk%nb
+            else
+                blk%origin(:,b) = dns%localSize(1:3,0) - 1_C_INT
+            end if
+            do d = 1, 3
+                blk%physLow(d,b) = merge(1_C_INT, 0_C_INT, &
+                    .not. periodic(d) .and. blk%origin(d,b) == 0_C_INT)
+                blk%physHigh(d,b) = merge(1_C_INT, 0_C_INT, &
+                    .not. periodic(d) .and. blk%origin(d,b) + blk%nb(d) == dns%globalSize(d))
             end do
         end do
 
@@ -200,9 +225,15 @@ contains
         if (allocated(blk%qs)) deallocate(blk%qs)
         if (allocated(blk%oldrhs)) deallocate(blk%oldrhs)
 
+        if (allocated(blk%zidOf)) deallocate(blk%zidOf)
+        if (allocated(blk%zcoord)) deallocate(blk%zcoord)
+
         blk%nb = 0_C_INT
-        blk%nbt = 0_C_INT
+        blk%gnbt = 0_C_INT
         blk%nBlocks = 0_C_INT
+        blk%nBlocksGlobal = 0_C_INT
+        blk%idStart = 0_C_INT
+        blk%distMode = DIST_RANKBOX
         blk%nLevels = 1_C_INT
     end subroutine destroy_block_set
 
@@ -237,6 +268,132 @@ contains
         !$omp target exit data map(delete: blk)
 #endif
     end subroutine exit_block_data
+
+    ! Number the global block lattice along a Z-order (Morton) curve:
+    ! sort lattice cells by their bit-interleaved coordinates. Identical on
+    ! every rank, so the distribution needs no communication.
+    subroutine build_zorder_table(blk)
+        type(block_set_type), intent(inout) :: blk
+
+        integer :: n, gx, gy, gz, i
+        integer(int64), allocatable :: keys(:)
+        integer, allocatable :: order(:)
+
+        n = int(blk%nBlocksGlobal)
+        allocate(blk%zidOf(0:int(blk%gnbt(1))-1, 0:int(blk%gnbt(2))-1, 0:int(blk%gnbt(3))-1))
+        allocate(blk%zcoord(3,n))
+        allocate(keys(n), order(n))
+
+        i = 0
+        do gz = 0, int(blk%gnbt(3)) - 1
+            do gy = 0, int(blk%gnbt(2)) - 1
+                do gx = 0, int(blk%gnbt(1)) - 1
+                    i = i + 1
+                    keys(i) = morton_key(gx, gy, gz)
+                    blk%zcoord(:,i) = int([gx, gy, gz], C_INT)
+                end do
+            end do
+        end do
+
+        call heapsort_index(keys, order)
+
+        ! After the permutation, zcoord(:,id+1) are the coords of Z-id `id`.
+        blk%zcoord(:,1:n) = blk%zcoord(:,order(1:n))
+        do i = 1, n
+            blk%zidOf(blk%zcoord(1,i), blk%zcoord(2,i), blk%zcoord(3,i)) = int(i - 1, C_INT)
+        end do
+
+        deallocate(keys, order)
+    end subroutine build_zorder_table
+
+    pure integer(int64) function morton_key(gx, gy, gz) result(key)
+        integer, intent(in) :: gx, gy, gz
+
+        integer :: bit
+
+        key = 0_int64
+        do bit = 0, 20
+            key = ior(key, ishft(iand(int(gx, int64), ishft(1_int64, bit)), 2*bit))
+            key = ior(key, ishft(iand(int(gy, int64), ishft(1_int64, bit)), 2*bit + 1))
+            key = ior(key, ishft(iand(int(gz, int64), ishft(1_int64, bit)), 2*bit + 2))
+        end do
+    end function morton_key
+
+    subroutine heapsort_index(keys, order)
+        integer(int64), intent(in) :: keys(:)
+        integer, intent(out) :: order(:)
+
+        integer :: n, i, tmp
+
+        n = size(keys)
+        do i = 1, n
+            order(i) = i
+        end do
+
+        do i = n/2, 1, -1
+            call sift_down(keys, order, i, n)
+        end do
+        do i = n, 2, -1
+            tmp = order(1)
+            order(1) = order(i)
+            order(i) = tmp
+            call sift_down(keys, order, 1, i - 1)
+        end do
+    end subroutine heapsort_index
+
+    subroutine sift_down(keys, order, start, last)
+        integer(int64), intent(in) :: keys(:)
+        integer, intent(inout) :: order(:)
+        integer, intent(in) :: start, last
+
+        integer :: root, child, tmp
+
+        root = start
+        do while (2*root <= last)
+            child = 2*root
+            if (child < last) then
+                if (keys(order(child)) < keys(order(child+1))) child = child + 1
+            end if
+            if (keys(order(root)) >= keys(order(child))) return
+            tmp = order(root)
+            order(root) = order(child)
+            order(child) = tmp
+            root = child
+        end do
+    end subroutine sift_down
+
+    ! Linear distribution of N Z-ordered blocks over P ranks: rank p owns
+    ! floor((N + P - p - 1)/P) consecutive ids.
+    pure integer(C_INT) function zorder_count(n, p_total, p) result(cnt)
+        integer(C_INT), intent(in) :: n, p_total, p
+
+        cnt = int((int(n) + int(p_total) - int(p) - 1)/int(p_total), C_INT)
+    end function zorder_count
+
+    pure integer(C_INT) function zorder_start(n, p_total, p) result(start)
+        integer(C_INT), intent(in) :: n, p_total, p
+
+        integer :: q, r
+
+        q = int(n)/int(p_total)
+        r = mod(int(n), int(p_total))
+        start = int(int(p)*q + min(int(p), r), C_INT)
+    end function zorder_start
+
+    pure integer(C_INT) function zorder_owner(id, n, p_total) result(owner)
+        integer(C_INT), intent(in) :: id, n, p_total
+
+        integer :: q, r, split
+
+        q = int(n)/int(p_total)
+        r = mod(int(n), int(p_total))
+        split = r*(q + 1)
+        if (int(id) < split) then
+            owner = int(int(id)/(q + 1), C_INT)
+        else
+            owner = int(r + (int(id) - split)/max(q, 1), C_INT)
+        end if
+    end function zorder_owner
 
     ! Midpoint subdivision of a node line: each coarse cell is split into two
     ! halves, so a level-l cell is exactly the union of its children. This is

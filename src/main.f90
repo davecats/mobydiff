@@ -64,7 +64,7 @@ program main
 
     ! Block refactor (docs/block_refinement_strategy.md): the solver state
     ! lives in a block set tiling this rank's box ([blocks] nb per block).
-    call init_block_set(blk, dns, g, bc%isPeriodic, global_id=int(c%cart_rank, C_INT))
+    call init_block_set(blk, dns, g, bc%isPeriodic, int(c%cart_size, C_INT), int(c%cart_rank, C_INT))
     call init_block_exchange(c, blk, dns)
     call precompute_peclet_rate(dns, blk, c)
     call init_boundary_faces(bc, blk)

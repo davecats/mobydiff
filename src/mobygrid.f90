@@ -57,7 +57,7 @@ program mobygrid
     ! Serial: one block spanning the whole grid provides the staggered
     ! coordinates for the export, regardless of any [blocks] nb setting.
     dns%block_nb = 0_C_INT
-    call init_block_set(blk, dns, g, bc%isPeriodic)
+    call init_block_set(blk, dns, g, bc%isPeriodic, 1_C_INT, 0_C_INT)
 
     if (c%has_terminal) print *, "writing grid file: ", trim(output_file)
     call write_grid_export(dns, g, blk, bc, output_file, c%has_terminal)

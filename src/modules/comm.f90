@@ -2,7 +2,7 @@ module comm
     use, intrinsic :: iso_c_binding
     use :: mpi_f08
     use :: init, only: dns_type, NVAR
-    use :: blocks, only: block_set_type
+    use :: blocks, only: block_set_type, DIST_ZORDER, zorder_owner, zorder_start, zorder_count
     use :: boundary, only: boundary_type
 #ifdef USE_OPENMP_OFFLOAD
     use omp_lib
@@ -11,9 +11,6 @@ module comm
 
     private
 
-    ! Phase 1a: ranks own Cartesian boxes of blocks, so at most the 26
-    ! Cartesian rank neighbours can appear as exchange peers.
-    integer, parameter :: MAX_PEERS = 26
     integer, parameter :: HALO_TAG = 1000
 
     type, public :: comm_type
@@ -47,9 +44,9 @@ module comm
         integer, allocatable :: lOff(:)                    ! (0:nLocal) point prefix
 
         integer :: nPeers = 0
-        integer :: peerRank(MAX_PEERS) = -1
-        integer :: peerSendOff(0:MAX_PEERS) = 0            ! point prefix per peer
-        integer :: peerRecvOff(0:MAX_PEERS) = 0
+        integer, allocatable :: peerRank(:)
+        integer, allocatable :: peerSendOff(:)             ! (0:nPeers) point prefix per peer
+        integer, allocatable :: peerRecvOff(:)
         integer :: nSend = 0, nRecv = 0
         integer, allocatable :: sSlot(:), sPeer(:)         ! (nSend)
         integer, allocatable :: sLo(:,:), sExt(:,:)        ! (3,nSend)
@@ -62,7 +59,7 @@ module comm
         real(C_DOUBLE), allocatable :: sendbuf(:,:)        ! (maxBufferCount, nPeers)
         real(C_DOUBLE), allocatable :: recvbuf(:,:)
 
-        type(MPI_Request) :: request(2*MAX_PEERS) = MPI_REQUEST_NULL
+        type(MPI_Request), allocatable :: request(:)       ! (2*nPeers)
         integer(C_INT) :: activeVars(NVAR) = 0_C_INT
         integer :: nActiveVars = 0
     end type comm_type
@@ -159,8 +156,8 @@ contains
         integer :: nb(3), gn(3)
         integer :: b, d, p, pass, owner, slot
         integer :: to(3), srcLo(3), dstLo(3), ext(3)
-        integer :: peerCoords(3), peerFirst(3), peerLast(3), peerNbt(3)
-        integer :: peerBlocks, pb, pbx, pby, pbz, dorigin(3)
+        integer :: peerCoords(3), peerFirst(3), peerLast(3)
+        integer :: peerBlocks, peerStart, pb, dorigin(3)
         integer :: nLocal, nSend, nRecv, pts, maxCount, ierr
         logical :: haveNeighbor
 
@@ -230,21 +227,29 @@ contains
                 end do
 
                 ! Send side of the message me -> peer p: walk the peer's
-                ! lattice exactly as the peer walks its own blocks above.
-                call MPI_Cart_coords(c%cart_comm, c%peerRank(p), 3, peerCoords, ierr)
-                call rank_box(dns, c%dims, peerCoords, peerFirst, peerLast)
-                peerNbt = (peerLast - peerFirst + 1)/nb
-                peerBlocks = peerNbt(1)*peerNbt(2)*peerNbt(3)
+                ! blocks exactly as the peer walks its own slot order above.
+                if (blk%distMode == DIST_ZORDER) then
+                    peerStart = int(zorder_start(blk%nBlocksGlobal, int(c%cart_size, C_INT), &
+                        int(c%peerRank(p), C_INT)))
+                    peerBlocks = int(zorder_count(blk%nBlocksGlobal, int(c%cart_size, C_INT), &
+                        int(c%peerRank(p), C_INT)))
+                else
+                    call MPI_Cart_coords(c%cart_comm, c%peerRank(p), 3, peerCoords, ierr)
+                    call rank_box(dns, c%dims, peerCoords, peerFirst, peerLast)
+                    peerStart = 0
+                    peerBlocks = 1
+                end if
                 c%peerSendOff(p) = c%peerSendOff(p-1)
                 do pb = 1, peerBlocks
-                    pbx = modulo(pb - 1, peerNbt(1))
-                    pby = modulo((pb - 1)/peerNbt(1), peerNbt(2))
-                    pbz = (pb - 1)/(peerNbt(1)*peerNbt(2))
-                    dorigin = peerFirst - 1 + [pbx, pby, pbz]*nb
+                    if (blk%distMode == DIST_ZORDER) then
+                        dorigin = int(blk%zcoord(:,peerStart + pb))*nb
+                    else
+                        dorigin = peerFirst - 1
+                    end if
                     do d = 1, 26
                         call neighbor_origin(c, dns, dorigin, off(:,d), nb, haveNeighbor, to)
                         if (.not. haveNeighbor) cycle
-                        if (.not. origin_is_mine(dns, to)) cycle
+                        if (.not. origin_is_mine(blk, dns, to)) cycle
                         call entry_boxes_at(c, dorigin, off(:,d), nb, gn, srcLo, dstLo, ext)
                         nSend = nSend + 1
                         pts = ext(1)*ext(2)*ext(3)
@@ -288,6 +293,8 @@ contains
         c%maxBufferCount = maxCount
         allocate(c%sendbuf(c%maxBufferCount, max(1, c%nPeers)))
         allocate(c%recvbuf(c%maxBufferCount, max(1, c%nPeers)))
+        allocate(c%request(2*max(1, c%nPeers)))
+        c%request = MPI_REQUEST_NULL
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target enter data map(to: &
@@ -313,14 +320,16 @@ contains
             deallocate(c%lSrcSlot, c%lDstSlot, c%lSrcLo, c%lDstLo, c%lExt, c%lOff)
             deallocate(c%sSlot, c%sPeer, c%sLo, c%sExt, c%sOff)
             deallocate(c%rSlot, c%rPeer, c%rLo, c%rExt, c%rOff)
+            deallocate(c%request)
         end if
+        if (allocated(c%peerRank)) deallocate(c%peerRank)
+        if (allocated(c%peerSendOff)) deallocate(c%peerSendOff)
+        if (allocated(c%peerRecvOff)) deallocate(c%peerRecvOff)
         c%nLocal = 0
         c%nLocalPts = 0
         c%nPeers = 0
         c%nSend = 0
         c%nRecv = 0
-        c%peerSendOff = 0
-        c%peerRecvOff = 0
         c%maxBufferCount = 0
     end subroutine free_block_exchange
 
@@ -358,7 +367,7 @@ contains
         owner = -1
         slot = -1
         if (.not. haveNeighbor) return
-        call owner_of_origin(c, dns, int(blk%nb), to, owner, slot)
+        call owner_of_origin(c, blk, dns, to, owner, slot)
     end subroutine neighbor_block
 
     ! Global cell origin of the neighbour block in direction off, with
@@ -387,26 +396,33 @@ contains
     end subroutine neighbor_origin
 
     ! Owner rank and owner-local slot of the block with global origin `to`.
-    subroutine owner_of_origin(c, dns, nb, to, owner, slot)
+    subroutine owner_of_origin(c, blk, dns, to, owner, slot)
         type(comm_type), intent(in) :: c
+        type(block_set_type), intent(in) :: blk
         type(dns_type), intent(in) :: dns
-        integer, intent(in) :: nb(3), to(3)
+        integer, intent(in) :: to(3)
         integer, intent(out) :: owner, slot
 
-        integer :: d, r, ierr
+        integer :: d, r, id, ierr
         integer(C_INT) :: first, last
-        integer :: ownerCoords(3), ownerFirst(3), ownerLast(3), ownerNbt(3), bcoord(3)
+        integer :: ownerCoords(3), bcoord(3)
 
-        ownerFirst = 1
-        ownerLast = 1
+        if (blk%distMode == DIST_ZORDER) then
+            bcoord = to/int(blk%nb)
+            id = int(blk%zidOf(bcoord(1), bcoord(2), bcoord(3)))
+            owner = int(zorder_owner(int(id, C_INT), blk%nBlocksGlobal, int(c%cart_size, C_INT)))
+            slot = id - int(zorder_start(blk%nBlocksGlobal, int(c%cart_size, C_INT), &
+                int(owner, C_INT))) + 1
+            return
+        end if
+
+        ! Rank-box mode: one block per rank, owner from the Cartesian ranges.
         do d = 1, 3
             ownerCoords(d) = -1
             do r = 0, c%dims(d) - 1
                 call local_range(int(dns%globalSize(d)), c%dims(d), r, first, last)
                 if (to(d) >= int(first) - 1 .and. to(d) <= int(last) - 1) then
                     ownerCoords(d) = r
-                    ownerFirst(d) = int(first)
-                    ownerLast(d) = int(last)
                     exit
                 end if
             end do
@@ -414,17 +430,25 @@ contains
         end do
 
         call MPI_Cart_rank(c%cart_comm, ownerCoords, owner, ierr)
-        ownerNbt = (ownerLast - ownerFirst + 1)/nb
-        bcoord = (to - (ownerFirst - 1))/nb
-        slot = 1 + bcoord(1) + ownerNbt(1)*(bcoord(2) + ownerNbt(2)*bcoord(3))
+        slot = 1
     end subroutine owner_of_origin
 
-    logical function origin_is_mine(dns, to)
+    logical function origin_is_mine(blk, dns, to)
+        type(block_set_type), intent(in) :: blk
         type(dns_type), intent(in) :: dns
         integer, intent(in) :: to(3)
 
-        origin_is_mine = all(to >= int(dns%localSize(1:3,0)) - 1) .and. &
-                         all(to <= int(dns%localSize(1:3,1)) - 1)
+        integer :: bcoord(3), id
+
+        if (blk%distMode == DIST_ZORDER) then
+            bcoord = to/int(blk%nb)
+            id = int(blk%zidOf(bcoord(1), bcoord(2), bcoord(3)))
+            origin_is_mine = id >= int(blk%idStart) .and. &
+                             id < int(blk%idStart) + int(blk%nBlocks)
+        else
+            origin_is_mine = all(to >= int(dns%localSize(1:3,0)) - 1) .and. &
+                             all(to <= int(dns%localSize(1:3,1)) - 1)
+        end if
     end function origin_is_mine
 
     integer function my_slot_of(blk, dns, to) result(slot)
@@ -434,8 +458,14 @@ contains
 
         integer :: bcoord(3)
 
-        bcoord = (to - (int(dns%localSize(1:3,0)) - 1))/int(blk%nb)
-        slot = 1 + bcoord(1) + int(blk%nbt(1))*(bcoord(2) + int(blk%nbt(2))*bcoord(3))
+        if (blk%distMode == DIST_ZORDER) then
+            bcoord = to/int(blk%nb)
+            slot = int(blk%zidOf(bcoord(1), bcoord(2), bcoord(3))) - int(blk%idStart) + 1
+        else
+            slot = 1
+        end if
+        associate(unused => dns)
+        end associate
     end function my_slot_of
 
     ! Source/destination boxes for the entry (dst block b, direction off):
@@ -509,8 +539,10 @@ contains
         integer, intent(in) :: off(3,26)
 
         integer :: b, d, owner, slot, to(3), p
+        integer, allocatable :: found(:)
         logical :: haveNeighbor, known
 
+        allocate(found(max(1, c%cart_size)))
         c%nPeers = 0
         do b = 1, int(blk%nBlocks)
             do d = 1, 26
@@ -519,18 +551,25 @@ contains
                 if (owner == c%cart_rank) cycle
                 known = .false.
                 do p = 1, c%nPeers
-                    if (c%peerRank(p) == owner) then
+                    if (found(p) == owner) then
                         known = .true.
                         exit
                     end if
                 end do
                 if (.not. known) then
-                    if (c%nPeers >= MAX_PEERS) error stop "too many halo exchange peers"
                     c%nPeers = c%nPeers + 1
-                    c%peerRank(c%nPeers) = owner
+                    found(c%nPeers) = owner
                 end if
             end do
         end do
+
+        allocate(c%peerRank(max(1, c%nPeers)))
+        allocate(c%peerSendOff(0:max(1, c%nPeers)))
+        allocate(c%peerRecvOff(0:max(1, c%nPeers)))
+        c%peerRank(1:c%nPeers) = found(1:c%nPeers)
+        c%peerSendOff = 0
+        c%peerRecvOff = 0
+        deallocate(found)
 
         call sort_peers(c)
     end subroutine collect_peers
