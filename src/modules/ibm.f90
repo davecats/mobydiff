@@ -37,14 +37,14 @@ module ibmm
     end type ibm_type
 
     interface
-        function fdm_h5_read_ibm_coeff(file_name, nx, ny, nz, &
-                global_nx, global_ny, global_nz, local_i_first, local_j_first, local_k_first, &
+        function fdm_h5_read_ibm_coeff(file_name, nbx, nby, nbz, n_blocks, block_origin, &
+                global_nx, global_ny, global_nz, &
                 lx, ly, lz, re, coef) bind(C, name="fdm_h5_read_ibm_coeff") result(ierr)
             import :: C_CHAR, C_INT, C_DOUBLE
             character(kind=C_CHAR), intent(in) :: file_name(*)
-            integer(C_INT), value :: nx, ny, nz
+            integer(C_INT), value :: nbx, nby, nbz, n_blocks
+            integer(C_INT), intent(in) :: block_origin(*)
             integer(C_INT), value :: global_nx, global_ny, global_nz
-            integer(C_INT), value :: local_i_first, local_j_first, local_k_first
             real(C_DOUBLE), value :: lx, ly, lz, re
             real(C_DOUBLE), intent(inout) :: coef(*)
             integer(C_INT) :: ierr
@@ -100,28 +100,23 @@ contains
 #endif
     end subroutine exit_ibm_data
 
-    subroutine read_ibm_coeff_file(ibm, dns, has_terminal)
+    subroutine read_ibm_coeff_file(ibm, dns, blk, has_terminal)
         type(ibm_type), intent(inout) :: ibm
         type(dns_type), intent(in) :: dns
+        type(block_set_type), intent(in) :: blk
         logical, intent(in) :: has_terminal
 
         character(kind=C_CHAR,len=:), allocatable :: c_file_name
         integer(C_INT) :: ierr
-        integer(C_INT) :: nx, ny, nz
-
-        nx = dns%localSize(1,2)
-        ny = dns%localSize(2,2)
-        nz = dns%localSize(3,2)
 
         if (len_trim(dns%ibm_coeff_file) == 0) return
         if (has_terminal) print *, "reading IBM coefficients: ", trim(dns%ibm_coeff_file)
 
         c_file_name = to_c_string(dns%ibm_coeff_file)
-        ierr = fdm_h5_read_ibm_coeff(c_file_name, nx, ny, nz, &
+        ierr = fdm_h5_read_ibm_coeff(c_file_name, blk%nb(1), blk%nb(2), blk%nb(3), &
+            blk%nBlocks, blk%origin, &
             dns%globalSize(1), dns%globalSize(2), dns%globalSize(3), &
-            dns%localSize(1,0), dns%localSize(2,0), dns%localSize(3,0), &
-            dns%leng(1), dns%leng(2), dns%leng(3), dns%re, &
-            ibm%coef(:,:,:,:,1)) ! rank-box file layout, served into block 1 (Phase 0)
+            dns%leng(1), dns%leng(2), dns%leng(3), dns%re, ibm%coef)
         if (ierr /= 0_C_INT) then
             if (has_terminal) print *, "error: could not read IBM coefficient file: ", trim(dns%ibm_coeff_file)
             error stop

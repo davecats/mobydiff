@@ -142,42 +142,44 @@ contains
         is_due = modulo(int(step), interval) == 0
     end function interval_is_due
 
-    ! Samples are gathered over this rank's box, i.e. block 1 in Phase 0.
     subroutine collect_channel_sample(blk, dns, g, sample_sum, sample_count)
         type(block_set_type), intent(inout) :: blk
         type(dns_type), intent(in) :: dns
         type(grid_type), intent(in) :: g
         real(C_DOUBLE), intent(inout) :: sample_sum(:), sample_count(:)
 
-        integer :: i, j, k, s, nx, ny, nz, global_i, global_k, global_wall_idx, base
+        integer :: i, j, k, b, s, nx, ny, nz, nBlocks, global_i, global_k, global_wall_idx, base
         real(C_DOUBLE) :: cell_area
         real(C_DOUBLE) :: p, kin, eps, velocity(3), sample(CHANNEL_NSTAT)
 
         nx = int(blk%nb(1))
         ny = int(blk%nb(2))
         nz = int(blk%nb(3))
+        nBlocks = int(blk%nBlocks)
         sample_sum = 0.0d0
         sample_count = 0.0d0
 
 #ifdef USE_OPENMP_OFFLOAD
-        !$omp target teams distribute parallel do collapse(3) &
-        !$omp& map(to: dns, g, blk%q, blk%d1x, blk%d1y, blk%d1z) map(tofrom: sample_sum, sample_count) &
-        !$omp& private(i,j,k,s,global_i,global_k,global_wall_idx,base,cell_area,p,kin,eps,velocity,sample)
+        !$omp target teams distribute parallel do collapse(4) &
+        !$omp& map(to: dns, g, blk%origin, blk%q, blk%d1x, blk%d1y, blk%d1z) &
+        !$omp& map(tofrom: sample_sum, sample_count) &
+        !$omp& private(i,j,k,b,s,global_i,global_k,global_wall_idx,base,cell_area,p,kin,eps,velocity,sample)
 #endif
+        do b = 1, nBlocks
         do k = 1, nz
             do j = 1, ny
                 do i = 1, nx
-                    global_i = int(dns%localSize(1,0)) + i - 1
-                    global_k = int(dns%localSize(3,0)) + k - 1
-                    global_wall_idx = int(dns%localSize(2,0)) + j - 1
+                    global_i = int(blk%origin(1,b)) + i
+                    global_k = int(blk%origin(3,b)) + k
+                    global_wall_idx = int(blk%origin(2,b)) + j
                     base = CHANNEL_NSTAT*(global_wall_idx - 1)
                     cell_area = (g%xNode(global_i) - g%xNode(global_i - 1)) * &
                                 (g%zNode(global_k) - g%zNode(global_k - 1))
 
-                    call centered_velocity(blk, i, j, k, velocity)
-                    p = blk%q(i,j,k,VAR_P,1)
+                    call centered_velocity(blk, b, i, j, k, velocity)
+                    p = blk%q(i,j,k,VAR_P,b)
                     kin = 0.5d0*sum(velocity*velocity)
-                    eps = channel_dissipation(blk, dns, i, j, k)
+                    eps = channel_dissipation(blk, dns, b, i, j, k)
                     sample = channel_sample(velocity, p, kin, eps)
 
                     !$omp atomic update
@@ -188,6 +190,7 @@ contains
                     end do
                 end do
             end do
+        end do
         end do
 #ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
@@ -273,14 +276,14 @@ contains
         call this%write_hdf5(dns, c)
     end subroutine channel_stats_finalize
 
-    subroutine centered_velocity(blk, i, j, k, velocity)
+    subroutine centered_velocity(blk, b, i, j, k, velocity)
         type(block_set_type), intent(in) :: blk
-        integer, intent(in) :: i, j, k
+        integer, intent(in) :: b, i, j, k
         real(C_DOUBLE), intent(out) :: velocity(3)
 
-        velocity(1) = 0.5d0*(blk%q(i,j,k,VAR_U,1) + blk%q(i+1,j,k,VAR_U,1))
-        velocity(2) = 0.5d0*(blk%q(i,j,k,VAR_V,1) + blk%q(i,j+1,k,VAR_V,1))
-        velocity(3) = 0.5d0*(blk%q(i,j,k,VAR_W,1) + blk%q(i,j,k+1,VAR_W,1))
+        velocity(1) = 0.5d0*(blk%q(i,j,k,VAR_U,b) + blk%q(i+1,j,k,VAR_U,b))
+        velocity(2) = 0.5d0*(blk%q(i,j,k,VAR_V,b) + blk%q(i,j+1,k,VAR_V,b))
+        velocity(3) = 0.5d0*(blk%q(i,j,k,VAR_W,b) + blk%q(i,j,k+1,VAR_W,b))
     end subroutine centered_velocity
 
     function channel_sample(velocity, p, kin, eps) result(sample)
@@ -303,30 +306,30 @@ contains
         sample(STAT_EPSILON) = eps
     end function channel_sample
 
-    real(C_DOUBLE) function channel_dissipation(blk, dns, i, j, k) result(eps)
+    real(C_DOUBLE) function channel_dissipation(blk, dns, b, i, j, k) result(eps)
         type(block_set_type), intent(in) :: blk
         type(dns_type), intent(in) :: dns
-        integer, intent(in) :: i, j, k
+        integer, intent(in) :: b, i, j, k
 
         real(C_DOUBLE) :: dudx, dudy, dudz, dvdx, dvdy, dvdz, dwdx, dwdy, dwdz
         real(C_DOUBLE) :: s11, s22, s33, s12, s13, s23
 
-        dudx = (blk%q(i+1,j,k,VAR_U,1) - blk%q(i,j,k,VAR_U,1))*blk%d1x(i,VAR_P,1)
-        dvdy = (blk%q(i,j+1,k,VAR_V,1) - blk%q(i,j,k,VAR_V,1))*blk%d1y(j,VAR_P,1)
-        dwdz = (blk%q(i,j,k+1,VAR_W,1) - blk%q(i,j,k,VAR_W,1))*blk%d1z(k,VAR_P,1)
+        dudx = (blk%q(i+1,j,k,VAR_U,b) - blk%q(i,j,k,VAR_U,b))*blk%d1x(i,VAR_P,b)
+        dvdy = (blk%q(i,j+1,k,VAR_V,b) - blk%q(i,j,k,VAR_V,b))*blk%d1y(j,VAR_P,b)
+        dwdz = (blk%q(i,j,k+1,VAR_W,b) - blk%q(i,j,k,VAR_W,b))*blk%d1z(k,VAR_P,b)
 
-        dudy = 0.25d0*((blk%q(i,j+1,k,VAR_U,1) + blk%q(i+1,j+1,k,VAR_U,1)) - &
-                       (blk%q(i,j-1,k,VAR_U,1) + blk%q(i+1,j-1,k,VAR_U,1)))*blk%d1y(j,VAR_U,1)
-        dudz = 0.25d0*((blk%q(i,j,k+1,VAR_U,1) + blk%q(i+1,j,k+1,VAR_U,1)) - &
-                       (blk%q(i,j,k-1,VAR_U,1) + blk%q(i+1,j,k-1,VAR_U,1)))*blk%d1z(k,VAR_U,1)
-        dvdx = 0.25d0*((blk%q(i+1,j,k,VAR_V,1) + blk%q(i+1,j+1,k,VAR_V,1)) - &
-                       (blk%q(i-1,j,k,VAR_V,1) + blk%q(i-1,j+1,k,VAR_V,1)))*blk%d1x(i,VAR_V,1)
-        dvdz = 0.25d0*((blk%q(i,j,k+1,VAR_V,1) + blk%q(i,j+1,k+1,VAR_V,1)) - &
-                       (blk%q(i,j,k-1,VAR_V,1) + blk%q(i,j+1,k-1,VAR_V,1)))*blk%d1z(k,VAR_V,1)
-        dwdx = 0.25d0*((blk%q(i+1,j,k,VAR_W,1) + blk%q(i+1,j,k+1,VAR_W,1)) - &
-                       (blk%q(i-1,j,k,VAR_W,1) + blk%q(i-1,j,k+1,VAR_W,1)))*blk%d1x(i,VAR_W,1)
-        dwdy = 0.25d0*((blk%q(i,j+1,k,VAR_W,1) + blk%q(i,j+1,k+1,VAR_W,1)) - &
-                       (blk%q(i,j-1,k,VAR_W,1) + blk%q(i,j-1,k+1,VAR_W,1)))*blk%d1y(j,VAR_W,1)
+        dudy = 0.25d0*((blk%q(i,j+1,k,VAR_U,b) + blk%q(i+1,j+1,k,VAR_U,b)) - &
+                       (blk%q(i,j-1,k,VAR_U,b) + blk%q(i+1,j-1,k,VAR_U,b)))*blk%d1y(j,VAR_U,b)
+        dudz = 0.25d0*((blk%q(i,j,k+1,VAR_U,b) + blk%q(i+1,j,k+1,VAR_U,b)) - &
+                       (blk%q(i,j,k-1,VAR_U,b) + blk%q(i+1,j,k-1,VAR_U,b)))*blk%d1z(k,VAR_U,b)
+        dvdx = 0.25d0*((blk%q(i+1,j,k,VAR_V,b) + blk%q(i+1,j+1,k,VAR_V,b)) - &
+                       (blk%q(i-1,j,k,VAR_V,b) + blk%q(i-1,j+1,k,VAR_V,b)))*blk%d1x(i,VAR_V,b)
+        dvdz = 0.25d0*((blk%q(i,j,k+1,VAR_V,b) + blk%q(i,j+1,k+1,VAR_V,b)) - &
+                       (blk%q(i,j,k-1,VAR_V,b) + blk%q(i,j+1,k-1,VAR_V,b)))*blk%d1z(k,VAR_V,b)
+        dwdx = 0.25d0*((blk%q(i+1,j,k,VAR_W,b) + blk%q(i+1,j,k+1,VAR_W,b)) - &
+                       (blk%q(i-1,j,k,VAR_W,b) + blk%q(i-1,j,k+1,VAR_W,b)))*blk%d1x(i,VAR_W,b)
+        dwdy = 0.25d0*((blk%q(i,j+1,k,VAR_W,b) + blk%q(i,j+1,k+1,VAR_W,b)) - &
+                       (blk%q(i,j-1,k,VAR_W,b) + blk%q(i,j-1,k+1,VAR_W,b)))*blk%d1y(j,VAR_W,b)
 
         s11 = dudx
         s22 = dvdy

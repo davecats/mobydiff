@@ -23,13 +23,14 @@ module les_model
         real(C_DOUBLE) :: delta_scale = 1.0d0
         logical(C_BOOL) :: ibm_aware = .true.
         real(C_DOUBLE), allocatable :: nut(:,:,:,:)   ! (0:nb+1,...,nBlocks)
-        real(C_DOUBLE), allocatable :: filter_x(:), filter_y(:), filter_z(:)
-        real(C_DOUBLE), allocatable :: d1xm(:,:), d1x0(:,:), d1xp(:,:)
-        real(C_DOUBLE), allocatable :: d1ym(:,:), d1y0(:,:), d1yp(:,:)
-        real(C_DOUBLE), allocatable :: d1zm(:,:), d1z0(:,:), d1zp(:,:)
-        real(C_DOUBLE), allocatable :: p_from_u_x(:), p_from_v_y(:), p_from_w_z(:)
-        real(C_DOUBLE), allocatable :: u_from_p_x(:), v_from_p_y(:), w_from_p_z(:)
-        real(C_DOUBLE), allocatable :: inv_dx(:,:), inv_dy(:,:), inv_dz(:,:)
+        ! Per-block 1D metric tables (trailing block index).
+        real(C_DOUBLE), allocatable :: filter_x(:,:), filter_y(:,:), filter_z(:,:)
+        real(C_DOUBLE), allocatable :: d1xm(:,:,:), d1x0(:,:,:), d1xp(:,:,:)
+        real(C_DOUBLE), allocatable :: d1ym(:,:,:), d1y0(:,:,:), d1yp(:,:,:)
+        real(C_DOUBLE), allocatable :: d1zm(:,:,:), d1z0(:,:,:), d1zp(:,:,:)
+        real(C_DOUBLE), allocatable :: p_from_u_x(:,:), p_from_v_y(:,:), p_from_w_z(:,:)
+        real(C_DOUBLE), allocatable :: u_from_p_x(:,:), v_from_p_y(:,:), w_from_p_z(:,:)
+        real(C_DOUBLE), allocatable :: inv_dx(:,:,:), inv_dy(:,:,:), inv_dz(:,:,:)
     end type les_type
 
     type, public :: les_profile_type
@@ -122,17 +123,20 @@ contains
         nz = int(blk%nb(3))
 
         allocate(les%nut(0:nx+1,0:ny+1,0:nz+1,blk%nBlocks))
-        allocate(les%filter_x(0:nx+1), les%filter_y(0:ny+1), les%filter_z(0:nz+1))
-        allocate(les%d1xm(0:nx+1,VAR_U:VAR_P), les%d1x0(0:nx+1,VAR_U:VAR_P), &
-            les%d1xp(0:nx+1,VAR_U:VAR_P))
-        allocate(les%d1ym(0:ny+1,VAR_U:VAR_P), les%d1y0(0:ny+1,VAR_U:VAR_P), &
-            les%d1yp(0:ny+1,VAR_U:VAR_P))
-        allocate(les%d1zm(0:nz+1,VAR_U:VAR_P), les%d1z0(0:nz+1,VAR_U:VAR_P), &
-            les%d1zp(0:nz+1,VAR_U:VAR_P))
-        allocate(les%p_from_u_x(0:nx+1), les%p_from_v_y(0:ny+1), les%p_from_w_z(0:nz+1))
-        allocate(les%u_from_p_x(0:nx+1), les%v_from_p_y(0:ny+1), les%w_from_p_z(0:nz+1))
-        allocate(les%inv_dx(0:nx+1,VAR_U:VAR_P), les%inv_dy(0:ny+1,VAR_U:VAR_P), &
-            les%inv_dz(0:nz+1,VAR_U:VAR_P))
+        allocate(les%filter_x(0:nx+1,blk%nBlocks), les%filter_y(0:ny+1,blk%nBlocks), &
+            les%filter_z(0:nz+1,blk%nBlocks))
+        allocate(les%d1xm(0:nx+1,VAR_U:VAR_P,blk%nBlocks), les%d1x0(0:nx+1,VAR_U:VAR_P,blk%nBlocks), &
+            les%d1xp(0:nx+1,VAR_U:VAR_P,blk%nBlocks))
+        allocate(les%d1ym(0:ny+1,VAR_U:VAR_P,blk%nBlocks), les%d1y0(0:ny+1,VAR_U:VAR_P,blk%nBlocks), &
+            les%d1yp(0:ny+1,VAR_U:VAR_P,blk%nBlocks))
+        allocate(les%d1zm(0:nz+1,VAR_U:VAR_P,blk%nBlocks), les%d1z0(0:nz+1,VAR_U:VAR_P,blk%nBlocks), &
+            les%d1zp(0:nz+1,VAR_U:VAR_P,blk%nBlocks))
+        allocate(les%p_from_u_x(0:nx+1,blk%nBlocks), les%p_from_v_y(0:ny+1,blk%nBlocks), &
+            les%p_from_w_z(0:nz+1,blk%nBlocks))
+        allocate(les%u_from_p_x(0:nx+1,blk%nBlocks), les%v_from_p_y(0:ny+1,blk%nBlocks), &
+            les%w_from_p_z(0:nz+1,blk%nBlocks))
+        allocate(les%inv_dx(0:nx+1,VAR_U:VAR_P,blk%nBlocks), les%inv_dy(0:ny+1,VAR_U:VAR_P,blk%nBlocks), &
+            les%inv_dz(0:nz+1,VAR_U:VAR_P,blk%nBlocks))
 
         les%nut = 0.0d0
         call precompute_les_metrics(les, blk, nx, ny, nz)
@@ -199,47 +203,46 @@ contains
         !$omp target exit data map(delete: les)
     end subroutine exit_les_data
 
-    ! Phase 0: the LES metric tables are still rank-shaped 1D lines, derived
-    ! from block 1 (== this rank's box). They gain a trailing block index when
-    ! blocks stop being congruent with ranks (Phase 1).
     subroutine precompute_les_metrics(les, blk, nx, ny, nz)
         type(les_type), intent(inout) :: les
         type(block_set_type), intent(in) :: blk
         integer, intent(in) :: nx, ny, nz
 
-        integer :: i, var
+        integer :: i, var, b
 
+        do b = 1, int(blk%nBlocks)
         do i = 0, nx+1
-            les%filter_x(i) = max(1.0d0/blk%d1x(i,VAR_P,1), 1.0d-30)**(1.0d0/3.0d0)
-            les%p_from_u_x(i) = linear_weight(blk%x(i,VAR_U,1), blk%x(i+1,VAR_U,1), blk%x(i,VAR_P,1))
-            les%u_from_p_x(i) = linear_weight(blk%x(i-1,VAR_P,1), blk%x(i,VAR_P,1), blk%x(i,VAR_U,1))
+            les%filter_x(i,b) = max(1.0d0/blk%d1x(i,VAR_P,b), 1.0d-30)**(1.0d0/3.0d0)
+            les%p_from_u_x(i,b) = linear_weight(blk%x(i,VAR_U,b), blk%x(i+1,VAR_U,b), blk%x(i,VAR_P,b))
+            les%u_from_p_x(i,b) = linear_weight(blk%x(i-1,VAR_P,b), blk%x(i,VAR_P,b), blk%x(i,VAR_U,b))
             do var = VAR_U, VAR_P
-                call first_derivative_coeffs(blk%x(i-1,var,1), blk%x(i,var,1), blk%x(i+1,var,1), &
-                    les%d1xm(i,var), les%d1x0(i,var), les%d1xp(i,var))
-                les%inv_dx(i,var) = safe_inv_delta(blk%x(i,var,1) - blk%x(i-1,var,1))
+                call first_derivative_coeffs(blk%x(i-1,var,b), blk%x(i,var,b), blk%x(i+1,var,b), &
+                    les%d1xm(i,var,b), les%d1x0(i,var,b), les%d1xp(i,var,b))
+                les%inv_dx(i,var,b) = safe_inv_delta(blk%x(i,var,b) - blk%x(i-1,var,b))
             end do
         end do
 
         do i = 0, ny+1
-            les%filter_y(i) = max(1.0d0/blk%d1y(i,VAR_P,1), 1.0d-30)**(1.0d0/3.0d0)
-            les%p_from_v_y(i) = linear_weight(blk%y(i,VAR_V,1), blk%y(i+1,VAR_V,1), blk%y(i,VAR_P,1))
-            les%v_from_p_y(i) = linear_weight(blk%y(i-1,VAR_P,1), blk%y(i,VAR_P,1), blk%y(i,VAR_V,1))
+            les%filter_y(i,b) = max(1.0d0/blk%d1y(i,VAR_P,b), 1.0d-30)**(1.0d0/3.0d0)
+            les%p_from_v_y(i,b) = linear_weight(blk%y(i,VAR_V,b), blk%y(i+1,VAR_V,b), blk%y(i,VAR_P,b))
+            les%v_from_p_y(i,b) = linear_weight(blk%y(i-1,VAR_P,b), blk%y(i,VAR_P,b), blk%y(i,VAR_V,b))
             do var = VAR_U, VAR_P
-                call first_derivative_coeffs(blk%y(i-1,var,1), blk%y(i,var,1), blk%y(i+1,var,1), &
-                    les%d1ym(i,var), les%d1y0(i,var), les%d1yp(i,var))
-                les%inv_dy(i,var) = safe_inv_delta(blk%y(i,var,1) - blk%y(i-1,var,1))
+                call first_derivative_coeffs(blk%y(i-1,var,b), blk%y(i,var,b), blk%y(i+1,var,b), &
+                    les%d1ym(i,var,b), les%d1y0(i,var,b), les%d1yp(i,var,b))
+                les%inv_dy(i,var,b) = safe_inv_delta(blk%y(i,var,b) - blk%y(i-1,var,b))
             end do
         end do
 
         do i = 0, nz+1
-            les%filter_z(i) = max(1.0d0/blk%d1z(i,VAR_P,1), 1.0d-30)**(1.0d0/3.0d0)
-            les%p_from_w_z(i) = linear_weight(blk%z(i,VAR_W,1), blk%z(i+1,VAR_W,1), blk%z(i,VAR_P,1))
-            les%w_from_p_z(i) = linear_weight(blk%z(i-1,VAR_P,1), blk%z(i,VAR_P,1), blk%z(i,VAR_W,1))
+            les%filter_z(i,b) = max(1.0d0/blk%d1z(i,VAR_P,b), 1.0d-30)**(1.0d0/3.0d0)
+            les%p_from_w_z(i,b) = linear_weight(blk%z(i,VAR_W,b), blk%z(i+1,VAR_W,b), blk%z(i,VAR_P,b))
+            les%w_from_p_z(i,b) = linear_weight(blk%z(i-1,VAR_P,b), blk%z(i,VAR_P,b), blk%z(i,VAR_W,b))
             do var = VAR_U, VAR_P
-                call first_derivative_coeffs(blk%z(i-1,var,1), blk%z(i,var,1), blk%z(i+1,var,1), &
-                    les%d1zm(i,var), les%d1z0(i,var), les%d1zp(i,var))
-                les%inv_dz(i,var) = safe_inv_delta(blk%z(i,var,1) - blk%z(i-1,var,1))
+                call first_derivative_coeffs(blk%z(i-1,var,b), blk%z(i,var,b), blk%z(i+1,var,b), &
+                    les%d1zm(i,var,b), les%d1z0(i,var,b), les%d1zp(i,var,b))
+                les%inv_dz(i,var,b) = safe_inv_delta(blk%z(i,var,b) - blk%z(i-1,var,b))
             end do
+        end do
         end do
     end subroutine precompute_les_metrics
 
@@ -357,59 +360,59 @@ contains
                     end if
                     if (solid_cell) cycle
 
-                    delta = delta_scale*les%filter_x(i)*les%filter_y(j)*les%filter_z(k)
+                    delta = delta_scale*les%filter_x(i,b)*les%filter_y(j,b)*les%filter_z(k,b)
 
                     g11 = (blk%q(i+1,j,k,VAR_U,b) - blk%q(i,j,k,VAR_U,b))*blk%d1x(i,VAR_P,b)
                     g22 = (blk%q(i,j+1,k,VAR_V,b) - blk%q(i,j,k,VAR_V,b))*blk%d1y(j,VAR_P,b)
                     g33 = (blk%q(i,j,k+1,VAR_W,b) - blk%q(i,j,k,VAR_W,b))*blk%d1z(k,VAR_P,b)
 
-                    d0 = les%d1ym(j,VAR_U)*blk%q(i,j-1,k,VAR_U,b) &
-                       + les%d1y0(j,VAR_U)*blk%q(i,j,k,VAR_U,b) &
-                       + les%d1yp(j,VAR_U)*blk%q(i,j+1,k,VAR_U,b)
-                    d1 = les%d1ym(j,VAR_U)*blk%q(i+1,j-1,k,VAR_U,b) &
-                       + les%d1y0(j,VAR_U)*blk%q(i+1,j,k,VAR_U,b) &
-                       + les%d1yp(j,VAR_U)*blk%q(i+1,j+1,k,VAR_U,b)
-                    g12 = (1.0d0 - les%p_from_u_x(i))*d0 + les%p_from_u_x(i)*d1
+                    d0 = les%d1ym(j,VAR_U,b)*blk%q(i,j-1,k,VAR_U,b) &
+                       + les%d1y0(j,VAR_U,b)*blk%q(i,j,k,VAR_U,b) &
+                       + les%d1yp(j,VAR_U,b)*blk%q(i,j+1,k,VAR_U,b)
+                    d1 = les%d1ym(j,VAR_U,b)*blk%q(i+1,j-1,k,VAR_U,b) &
+                       + les%d1y0(j,VAR_U,b)*blk%q(i+1,j,k,VAR_U,b) &
+                       + les%d1yp(j,VAR_U,b)*blk%q(i+1,j+1,k,VAR_U,b)
+                    g12 = (1.0d0 - les%p_from_u_x(i,b))*d0 + les%p_from_u_x(i,b)*d1
 
-                    d0 = les%d1zm(k,VAR_U)*blk%q(i,j,k-1,VAR_U,b) &
-                       + les%d1z0(k,VAR_U)*blk%q(i,j,k,VAR_U,b) &
-                       + les%d1zp(k,VAR_U)*blk%q(i,j,k+1,VAR_U,b)
-                    d1 = les%d1zm(k,VAR_U)*blk%q(i+1,j,k-1,VAR_U,b) &
-                       + les%d1z0(k,VAR_U)*blk%q(i+1,j,k,VAR_U,b) &
-                       + les%d1zp(k,VAR_U)*blk%q(i+1,j,k+1,VAR_U,b)
-                    g13 = (1.0d0 - les%p_from_u_x(i))*d0 + les%p_from_u_x(i)*d1
+                    d0 = les%d1zm(k,VAR_U,b)*blk%q(i,j,k-1,VAR_U,b) &
+                       + les%d1z0(k,VAR_U,b)*blk%q(i,j,k,VAR_U,b) &
+                       + les%d1zp(k,VAR_U,b)*blk%q(i,j,k+1,VAR_U,b)
+                    d1 = les%d1zm(k,VAR_U,b)*blk%q(i+1,j,k-1,VAR_U,b) &
+                       + les%d1z0(k,VAR_U,b)*blk%q(i+1,j,k,VAR_U,b) &
+                       + les%d1zp(k,VAR_U,b)*blk%q(i+1,j,k+1,VAR_U,b)
+                    g13 = (1.0d0 - les%p_from_u_x(i,b))*d0 + les%p_from_u_x(i,b)*d1
 
-                    d0 = les%d1xm(i,VAR_V)*blk%q(i-1,j,k,VAR_V,b) &
-                       + les%d1x0(i,VAR_V)*blk%q(i,j,k,VAR_V,b) &
-                       + les%d1xp(i,VAR_V)*blk%q(i+1,j,k,VAR_V,b)
-                    d1 = les%d1xm(i,VAR_V)*blk%q(i-1,j+1,k,VAR_V,b) &
-                       + les%d1x0(i,VAR_V)*blk%q(i,j+1,k,VAR_V,b) &
-                       + les%d1xp(i,VAR_V)*blk%q(i+1,j+1,k,VAR_V,b)
-                    g21 = (1.0d0 - les%p_from_v_y(j))*d0 + les%p_from_v_y(j)*d1
+                    d0 = les%d1xm(i,VAR_V,b)*blk%q(i-1,j,k,VAR_V,b) &
+                       + les%d1x0(i,VAR_V,b)*blk%q(i,j,k,VAR_V,b) &
+                       + les%d1xp(i,VAR_V,b)*blk%q(i+1,j,k,VAR_V,b)
+                    d1 = les%d1xm(i,VAR_V,b)*blk%q(i-1,j+1,k,VAR_V,b) &
+                       + les%d1x0(i,VAR_V,b)*blk%q(i,j+1,k,VAR_V,b) &
+                       + les%d1xp(i,VAR_V,b)*blk%q(i+1,j+1,k,VAR_V,b)
+                    g21 = (1.0d0 - les%p_from_v_y(j,b))*d0 + les%p_from_v_y(j,b)*d1
 
-                    d0 = les%d1zm(k,VAR_V)*blk%q(i,j,k-1,VAR_V,b) &
-                       + les%d1z0(k,VAR_V)*blk%q(i,j,k,VAR_V,b) &
-                       + les%d1zp(k,VAR_V)*blk%q(i,j,k+1,VAR_V,b)
-                    d1 = les%d1zm(k,VAR_V)*blk%q(i,j+1,k-1,VAR_V,b) &
-                       + les%d1z0(k,VAR_V)*blk%q(i,j+1,k,VAR_V,b) &
-                       + les%d1zp(k,VAR_V)*blk%q(i,j+1,k+1,VAR_V,b)
-                    g23 = (1.0d0 - les%p_from_v_y(j))*d0 + les%p_from_v_y(j)*d1
+                    d0 = les%d1zm(k,VAR_V,b)*blk%q(i,j,k-1,VAR_V,b) &
+                       + les%d1z0(k,VAR_V,b)*blk%q(i,j,k,VAR_V,b) &
+                       + les%d1zp(k,VAR_V,b)*blk%q(i,j,k+1,VAR_V,b)
+                    d1 = les%d1zm(k,VAR_V,b)*blk%q(i,j+1,k-1,VAR_V,b) &
+                       + les%d1z0(k,VAR_V,b)*blk%q(i,j+1,k,VAR_V,b) &
+                       + les%d1zp(k,VAR_V,b)*blk%q(i,j+1,k+1,VAR_V,b)
+                    g23 = (1.0d0 - les%p_from_v_y(j,b))*d0 + les%p_from_v_y(j,b)*d1
 
-                    d0 = les%d1xm(i,VAR_W)*blk%q(i-1,j,k,VAR_W,b) &
-                       + les%d1x0(i,VAR_W)*blk%q(i,j,k,VAR_W,b) &
-                       + les%d1xp(i,VAR_W)*blk%q(i+1,j,k,VAR_W,b)
-                    d1 = les%d1xm(i,VAR_W)*blk%q(i-1,j,k+1,VAR_W,b) &
-                       + les%d1x0(i,VAR_W)*blk%q(i,j,k+1,VAR_W,b) &
-                       + les%d1xp(i,VAR_W)*blk%q(i+1,j,k+1,VAR_W,b)
-                    g31 = (1.0d0 - les%p_from_w_z(k))*d0 + les%p_from_w_z(k)*d1
+                    d0 = les%d1xm(i,VAR_W,b)*blk%q(i-1,j,k,VAR_W,b) &
+                       + les%d1x0(i,VAR_W,b)*blk%q(i,j,k,VAR_W,b) &
+                       + les%d1xp(i,VAR_W,b)*blk%q(i+1,j,k,VAR_W,b)
+                    d1 = les%d1xm(i,VAR_W,b)*blk%q(i-1,j,k+1,VAR_W,b) &
+                       + les%d1x0(i,VAR_W,b)*blk%q(i,j,k+1,VAR_W,b) &
+                       + les%d1xp(i,VAR_W,b)*blk%q(i+1,j,k+1,VAR_W,b)
+                    g31 = (1.0d0 - les%p_from_w_z(k,b))*d0 + les%p_from_w_z(k,b)*d1
 
-                    d0 = les%d1ym(j,VAR_W)*blk%q(i,j-1,k,VAR_W,b) &
-                       + les%d1y0(j,VAR_W)*blk%q(i,j,k,VAR_W,b) &
-                       + les%d1yp(j,VAR_W)*blk%q(i,j+1,k,VAR_W,b)
-                    d1 = les%d1ym(j,VAR_W)*blk%q(i,j-1,k+1,VAR_W,b) &
-                       + les%d1y0(j,VAR_W)*blk%q(i,j,k+1,VAR_W,b) &
-                       + les%d1yp(j,VAR_W)*blk%q(i,j+1,k+1,VAR_W,b)
-                    g32 = (1.0d0 - les%p_from_w_z(k))*d0 + les%p_from_w_z(k)*d1
+                    d0 = les%d1ym(j,VAR_W,b)*blk%q(i,j-1,k,VAR_W,b) &
+                       + les%d1y0(j,VAR_W,b)*blk%q(i,j,k,VAR_W,b) &
+                       + les%d1yp(j,VAR_W,b)*blk%q(i,j+1,k,VAR_W,b)
+                    d1 = les%d1ym(j,VAR_W,b)*blk%q(i,j-1,k+1,VAR_W,b) &
+                       + les%d1y0(j,VAR_W,b)*blk%q(i,j,k+1,VAR_W,b) &
+                       + les%d1yp(j,VAR_W,b)*blk%q(i,j+1,k+1,VAR_W,b)
+                    g32 = (1.0d0 - les%p_from_w_z(k,b))*d0 + les%p_from_w_z(k,b)*d1
 
                     s11 = g11
                     s22 = g22
@@ -513,59 +516,59 @@ contains
                     end if
                     if (solid_cell) cycle
 
-                    delta = delta_scale*les%filter_x(i)*les%filter_y(j)*les%filter_z(k)
+                    delta = delta_scale*les%filter_x(i,b)*les%filter_y(j,b)*les%filter_z(k,b)
 
                     g11 = (blk%q(i+1,j,k,VAR_U,b) - blk%q(i,j,k,VAR_U,b))*blk%d1x(i,VAR_P,b)
                     g22 = (blk%q(i,j+1,k,VAR_V,b) - blk%q(i,j,k,VAR_V,b))*blk%d1y(j,VAR_P,b)
                     g33 = (blk%q(i,j,k+1,VAR_W,b) - blk%q(i,j,k,VAR_W,b))*blk%d1z(k,VAR_P,b)
 
-                    d0 = les%d1ym(j,VAR_U)*blk%q(i,j-1,k,VAR_U,b) &
-                       + les%d1y0(j,VAR_U)*blk%q(i,j,k,VAR_U,b) &
-                       + les%d1yp(j,VAR_U)*blk%q(i,j+1,k,VAR_U,b)
-                    d1 = les%d1ym(j,VAR_U)*blk%q(i+1,j-1,k,VAR_U,b) &
-                       + les%d1y0(j,VAR_U)*blk%q(i+1,j,k,VAR_U,b) &
-                       + les%d1yp(j,VAR_U)*blk%q(i+1,j+1,k,VAR_U,b)
-                    g12 = (1.0d0 - les%p_from_u_x(i))*d0 + les%p_from_u_x(i)*d1
+                    d0 = les%d1ym(j,VAR_U,b)*blk%q(i,j-1,k,VAR_U,b) &
+                       + les%d1y0(j,VAR_U,b)*blk%q(i,j,k,VAR_U,b) &
+                       + les%d1yp(j,VAR_U,b)*blk%q(i,j+1,k,VAR_U,b)
+                    d1 = les%d1ym(j,VAR_U,b)*blk%q(i+1,j-1,k,VAR_U,b) &
+                       + les%d1y0(j,VAR_U,b)*blk%q(i+1,j,k,VAR_U,b) &
+                       + les%d1yp(j,VAR_U,b)*blk%q(i+1,j+1,k,VAR_U,b)
+                    g12 = (1.0d0 - les%p_from_u_x(i,b))*d0 + les%p_from_u_x(i,b)*d1
 
-                    d0 = les%d1zm(k,VAR_U)*blk%q(i,j,k-1,VAR_U,b) &
-                       + les%d1z0(k,VAR_U)*blk%q(i,j,k,VAR_U,b) &
-                       + les%d1zp(k,VAR_U)*blk%q(i,j,k+1,VAR_U,b)
-                    d1 = les%d1zm(k,VAR_U)*blk%q(i+1,j,k-1,VAR_U,b) &
-                       + les%d1z0(k,VAR_U)*blk%q(i+1,j,k,VAR_U,b) &
-                       + les%d1zp(k,VAR_U)*blk%q(i+1,j,k+1,VAR_U,b)
-                    g13 = (1.0d0 - les%p_from_u_x(i))*d0 + les%p_from_u_x(i)*d1
+                    d0 = les%d1zm(k,VAR_U,b)*blk%q(i,j,k-1,VAR_U,b) &
+                       + les%d1z0(k,VAR_U,b)*blk%q(i,j,k,VAR_U,b) &
+                       + les%d1zp(k,VAR_U,b)*blk%q(i,j,k+1,VAR_U,b)
+                    d1 = les%d1zm(k,VAR_U,b)*blk%q(i+1,j,k-1,VAR_U,b) &
+                       + les%d1z0(k,VAR_U,b)*blk%q(i+1,j,k,VAR_U,b) &
+                       + les%d1zp(k,VAR_U,b)*blk%q(i+1,j,k+1,VAR_U,b)
+                    g13 = (1.0d0 - les%p_from_u_x(i,b))*d0 + les%p_from_u_x(i,b)*d1
 
-                    d0 = les%d1xm(i,VAR_V)*blk%q(i-1,j,k,VAR_V,b) &
-                       + les%d1x0(i,VAR_V)*blk%q(i,j,k,VAR_V,b) &
-                       + les%d1xp(i,VAR_V)*blk%q(i+1,j,k,VAR_V,b)
-                    d1 = les%d1xm(i,VAR_V)*blk%q(i-1,j+1,k,VAR_V,b) &
-                       + les%d1x0(i,VAR_V)*blk%q(i,j+1,k,VAR_V,b) &
-                       + les%d1xp(i,VAR_V)*blk%q(i+1,j+1,k,VAR_V,b)
-                    g21 = (1.0d0 - les%p_from_v_y(j))*d0 + les%p_from_v_y(j)*d1
+                    d0 = les%d1xm(i,VAR_V,b)*blk%q(i-1,j,k,VAR_V,b) &
+                       + les%d1x0(i,VAR_V,b)*blk%q(i,j,k,VAR_V,b) &
+                       + les%d1xp(i,VAR_V,b)*blk%q(i+1,j,k,VAR_V,b)
+                    d1 = les%d1xm(i,VAR_V,b)*blk%q(i-1,j+1,k,VAR_V,b) &
+                       + les%d1x0(i,VAR_V,b)*blk%q(i,j+1,k,VAR_V,b) &
+                       + les%d1xp(i,VAR_V,b)*blk%q(i+1,j+1,k,VAR_V,b)
+                    g21 = (1.0d0 - les%p_from_v_y(j,b))*d0 + les%p_from_v_y(j,b)*d1
 
-                    d0 = les%d1zm(k,VAR_V)*blk%q(i,j,k-1,VAR_V,b) &
-                       + les%d1z0(k,VAR_V)*blk%q(i,j,k,VAR_V,b) &
-                       + les%d1zp(k,VAR_V)*blk%q(i,j,k+1,VAR_V,b)
-                    d1 = les%d1zm(k,VAR_V)*blk%q(i,j+1,k-1,VAR_V,b) &
-                       + les%d1z0(k,VAR_V)*blk%q(i,j+1,k,VAR_V,b) &
-                       + les%d1zp(k,VAR_V)*blk%q(i,j+1,k+1,VAR_V,b)
-                    g23 = (1.0d0 - les%p_from_v_y(j))*d0 + les%p_from_v_y(j)*d1
+                    d0 = les%d1zm(k,VAR_V,b)*blk%q(i,j,k-1,VAR_V,b) &
+                       + les%d1z0(k,VAR_V,b)*blk%q(i,j,k,VAR_V,b) &
+                       + les%d1zp(k,VAR_V,b)*blk%q(i,j,k+1,VAR_V,b)
+                    d1 = les%d1zm(k,VAR_V,b)*blk%q(i,j+1,k-1,VAR_V,b) &
+                       + les%d1z0(k,VAR_V,b)*blk%q(i,j+1,k,VAR_V,b) &
+                       + les%d1zp(k,VAR_V,b)*blk%q(i,j+1,k+1,VAR_V,b)
+                    g23 = (1.0d0 - les%p_from_v_y(j,b))*d0 + les%p_from_v_y(j,b)*d1
 
-                    d0 = les%d1xm(i,VAR_W)*blk%q(i-1,j,k,VAR_W,b) &
-                       + les%d1x0(i,VAR_W)*blk%q(i,j,k,VAR_W,b) &
-                       + les%d1xp(i,VAR_W)*blk%q(i+1,j,k,VAR_W,b)
-                    d1 = les%d1xm(i,VAR_W)*blk%q(i-1,j,k+1,VAR_W,b) &
-                       + les%d1x0(i,VAR_W)*blk%q(i,j,k+1,VAR_W,b) &
-                       + les%d1xp(i,VAR_W)*blk%q(i+1,j,k+1,VAR_W,b)
-                    g31 = (1.0d0 - les%p_from_w_z(k))*d0 + les%p_from_w_z(k)*d1
+                    d0 = les%d1xm(i,VAR_W,b)*blk%q(i-1,j,k,VAR_W,b) &
+                       + les%d1x0(i,VAR_W,b)*blk%q(i,j,k,VAR_W,b) &
+                       + les%d1xp(i,VAR_W,b)*blk%q(i+1,j,k,VAR_W,b)
+                    d1 = les%d1xm(i,VAR_W,b)*blk%q(i-1,j,k+1,VAR_W,b) &
+                       + les%d1x0(i,VAR_W,b)*blk%q(i,j,k+1,VAR_W,b) &
+                       + les%d1xp(i,VAR_W,b)*blk%q(i+1,j,k+1,VAR_W,b)
+                    g31 = (1.0d0 - les%p_from_w_z(k,b))*d0 + les%p_from_w_z(k,b)*d1
 
-                    d0 = les%d1ym(j,VAR_W)*blk%q(i,j-1,k,VAR_W,b) &
-                       + les%d1y0(j,VAR_W)*blk%q(i,j,k,VAR_W,b) &
-                       + les%d1yp(j,VAR_W)*blk%q(i,j+1,k,VAR_W,b)
-                    d1 = les%d1ym(j,VAR_W)*blk%q(i,j-1,k+1,VAR_W,b) &
-                       + les%d1y0(j,VAR_W)*blk%q(i,j,k+1,VAR_W,b) &
-                       + les%d1yp(j,VAR_W)*blk%q(i,j+1,k+1,VAR_W,b)
-                    g32 = (1.0d0 - les%p_from_w_z(k))*d0 + les%p_from_w_z(k)*d1
+                    d0 = les%d1ym(j,VAR_W,b)*blk%q(i,j-1,k,VAR_W,b) &
+                       + les%d1y0(j,VAR_W,b)*blk%q(i,j,k,VAR_W,b) &
+                       + les%d1yp(j,VAR_W,b)*blk%q(i,j+1,k,VAR_W,b)
+                    d1 = les%d1ym(j,VAR_W,b)*blk%q(i,j-1,k+1,VAR_W,b) &
+                       + les%d1y0(j,VAR_W,b)*blk%q(i,j,k+1,VAR_W,b) &
+                       + les%d1yp(j,VAR_W,b)*blk%q(i,j+1,k+1,VAR_W,b)
+                    g32 = (1.0d0 - les%p_from_w_z(k,b))*d0 + les%p_from_w_z(k,b)*d1
 
                     s2 = g11*g11 + g22*g22 + g33*g33 &
                        + 0.5d0*((g12 + g21)*(g12 + g21) &

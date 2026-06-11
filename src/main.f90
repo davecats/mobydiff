@@ -17,7 +17,8 @@ program main
     use :: gpu_runtime
     use :: ibmm
     use :: les_model
-    use :: comm, only: comm_type, comm_init_world, comm_init, comm_finalize, exchange_halos, exchange_scalar_halos
+    use :: comm, only: comm_type, comm_init_world, comm_init, comm_finalize, &
+        init_block_exchange, exchange_halos, exchange_scalar_halos
     implicit none
 
     integer :: arg_status, rkStage
@@ -61,11 +62,12 @@ program main
     call init_grid(g, dns, bc%isPeriodic)
     call validate_dns_values(dns, g)
 
-    ! Phase 0 of the block refactor (docs/block_refinement_strategy.md): the
-    ! solver state lives in a one-block-per-rank block set.
+    ! Block refactor (docs/block_refinement_strategy.md): the solver state
+    ! lives in a block set tiling this rank's box ([blocks] nb per block).
     call init_block_set(blk, dns, g, bc%isPeriodic, global_id=int(c%cart_rank, C_INT))
+    call init_block_exchange(c, blk, dns)
     call precompute_peclet_rate(dns, blk, c)
-    call init_boundary_faces(bc, dns)
+    call init_boundary_faces(bc, blk)
     call init_openmp_offload(c%has_terminal)
     call enter_grid_data(g, dns)
     call enter_boundary_data(bc)
@@ -86,7 +88,7 @@ program main
     if (c%has_terminal) print *, "initialising IBM..."
     call init_ibm(ibm, blk)
     if (dns%ibm_enabled .and. len_trim(dns%ibm_coeff_file) > 0) then
-        call read_ibm_coeff_file(ibm, dns, c%has_terminal)
+        call read_ibm_coeff_file(ibm, dns, blk, c%has_terminal)
         call enter_ibm_data(ibm, dns)
     else
         call enter_ibm_data(ibm, dns)
@@ -138,9 +140,9 @@ program main
                 les_profile_start = les_wall_seconds()
                 call exchange_scalar_halos(c, les%nut)
                 call add_les_profile(les_prof, LES_PROF_EXCHANGE, les_wall_seconds() - les_profile_start)
-                call momentum(blk, dns, dt_alpha, dt_beta, dt_gamma, ibm, bc, les, les_prof)
+                call momentum(blk, dns, dt_alpha, dt_beta, dt_gamma, ibm, les, les_prof)
             else
-                call momentum(blk, dns, dt_alpha, dt_beta, dt_gamma, ibm, bc)
+                call momentum(blk, dns, dt_alpha, dt_beta, dt_gamma, ibm)
             end if
             call apply_bc(blk, bc)
             call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W])

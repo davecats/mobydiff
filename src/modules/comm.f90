@@ -11,8 +11,10 @@ module comm
 
     private
 
-    ! Diagonal halos are needed by staggered cross-fluxes at processor edges.
-    integer, parameter :: MAX_NEIGHBORS = 26
+    ! Phase 1a: ranks own Cartesian boxes of blocks, so at most the 26
+    ! Cartesian rank neighbours can appear as exchange peers.
+    integer, parameter :: MAX_PEERS = 26
+    integer, parameter :: HALO_TAG = 1000
 
     type, public :: comm_type
         logical :: initialized = .false.
@@ -29,32 +31,45 @@ module comm
         integer :: dims(3) = [0, 0, 0]
         integer :: coords(3) = [0, 0, 0]
         logical :: periodic(3) = [.false., .false., .false.]
-        logical :: physicalLow(3) = [.false., .false., .false.]
-        logical :: physicalHigh(3) = [.false., .false., .false.]
 
-        integer :: nNeighbors = 0
-        integer :: neighborRank(MAX_NEIGHBORS) = MPI_PROC_NULL
-        integer :: offset(3,MAX_NEIGHBORS) = 0
-        integer :: sendLo(3,MAX_NEIGHBORS) = 0
-        integer :: sendHi(3,MAX_NEIGHBORS) = 0
-        integer :: recvLo(3,MAX_NEIGHBORS) = 0
-        integer :: recvHi(3,MAX_NEIGHBORS) = 0
-        integer :: nPoints(MAX_NEIGHBORS) = 0
+        ! Block-pair halo exchange entries, built once by
+        ! init_block_exchange. One entry is the transfer of one block
+        ! face/edge/corner region from its owner block to a neighbour
+        ! block's halo. Same-rank entries are executed as a single flat
+        ! device copy kernel; off-rank entries are grouped into one message
+        ! per peer rank, with a canonical entry order (receiver's blocks in
+        ! slot order, fixed direction order) that both ends derive
+        ! independently, so the wire format needs no negotiation.
+        integer :: nLocal = 0
+        integer :: nLocalPts = 0
+        integer, allocatable :: lSrcSlot(:), lDstSlot(:)   ! (nLocal)
+        integer, allocatable :: lSrcLo(:,:), lDstLo(:,:), lExt(:,:) ! (3,nLocal)
+        integer, allocatable :: lOff(:)                    ! (0:nLocal) point prefix
+
+        integer :: nPeers = 0
+        integer :: peerRank(MAX_PEERS) = -1
+        integer :: peerSendOff(0:MAX_PEERS) = 0            ! point prefix per peer
+        integer :: peerRecvOff(0:MAX_PEERS) = 0
+        integer :: nSend = 0, nRecv = 0
+        integer, allocatable :: sSlot(:), sPeer(:)         ! (nSend)
+        integer, allocatable :: sLo(:,:), sExt(:,:)        ! (3,nSend)
+        integer, allocatable :: sOff(:)                    ! (0:nSend) point prefix, peer-major
+        integer, allocatable :: rSlot(:), rPeer(:)
+        integer, allocatable :: rLo(:,:), rExt(:,:)
+        integer, allocatable :: rOff(:)
 
         integer :: maxBufferCount = 0
-        integer :: totalActiveCount = 0
-        integer :: bufferOffset(MAX_NEIGHBORS) = 0
-        real(C_DOUBLE), allocatable :: sendbuf(:,:)
+        real(C_DOUBLE), allocatable :: sendbuf(:,:)        ! (maxBufferCount, nPeers)
         real(C_DOUBLE), allocatable :: recvbuf(:,:)
 
-        type(MPI_Request) :: request(2*MAX_NEIGHBORS) = MPI_REQUEST_NULL
+        type(MPI_Request) :: request(2*MAX_PEERS) = MPI_REQUEST_NULL
         integer(C_INT) :: activeVars(NVAR) = 0_C_INT
         integer :: nActiveVars = 0
-        integer :: activeCount(MAX_NEIGHBORS) = 0
     end type comm_type
 
     public :: comm_init_world, comm_init, comm_finalize
     public :: comm_allreduce_max, comm_allreduce_sum
+    public :: init_block_exchange
     public :: start_halo_exchange, finish_halo_exchange, exchange_halos, exchange_scalar_halos
 
 contains
@@ -107,8 +122,6 @@ contains
         if (c%has_terminal) then
             write(*,'(A,1X,I0,1X,I0,1X,I0)') "MPI Cartesian dimensions:", c%dims
         end if
-        c%physicalLow = (.not. c%periodic) .and. (c%coords == 0)
-        c%physicalHigh = (.not. c%periodic) .and. (c%coords == c%dims - 1)
         do dir = 1, 3
             call local_range(int(dns%globalSize(dir)), c%dims(dir), c%coords(dir), &
                              dns%localSize(dir,0), dns%localSize(dir,1))
@@ -117,8 +130,6 @@ contains
         end do
 
         if (any(local_n <= 0)) error stop "MPI decomposition produced an empty local block"
-
-        call build_neighbors(c, local_n)
 
         call MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL, local_comm, ierr)
         call MPI_Comm_rank(local_comm, c%local_rank, ierr)
@@ -130,10 +141,416 @@ contains
         end if
 #endif
 
-        call ensure_buffer_capacity(c, max(1, max_neighbor_points(c)))
-
         c%initialized = .true.
     end subroutine comm_init
+
+    ! Enumerate the block-pair exchange entries (Section 5 of the strategy
+    ! document). For each (destination block, 26-direction) pair the source
+    ! is the neighbour block on the global block lattice; box extents follow
+    ! the per-component rule of the old rank exchange, including the
+    ! tangential extension into physical-boundary halos that fills
+    ! wall-adjacent corners from apply_bc-set values.
+    subroutine init_block_exchange(c, blk, dns)
+        type(comm_type), intent(inout) :: c
+        type(block_set_type), intent(in) :: blk
+        type(dns_type), intent(in) :: dns
+
+        integer :: off(3,26)
+        integer :: nb(3), gn(3)
+        integer :: b, d, p, pass, owner, slot
+        integer :: to(3), srcLo(3), dstLo(3), ext(3)
+        integer :: peerCoords(3), peerFirst(3), peerLast(3), peerNbt(3)
+        integer :: peerBlocks, pb, pbx, pby, pbz, dorigin(3)
+        integer :: nLocal, nSend, nRecv, pts, maxCount, ierr
+        logical :: haveNeighbor
+
+        call build_direction_table(off)
+        nb = int(blk%nb)
+        gn = int(dns%globalSize)
+
+        call free_block_exchange(c)
+        call collect_peers(c, blk, dns, off)
+
+        ! Pass 1 counts, pass 2 fills; identical loop structure keeps the
+        ! enumeration canonical.
+        do pass = 1, 2
+            nLocal = 0
+            c%nLocalPts = 0
+
+            ! Local entries: my blocks' halos served by my own blocks
+            ! (including the periodic wrap inside a single rank).
+            do b = 1, int(blk%nBlocks)
+                do d = 1, 26
+                    call neighbor_block(c, blk, dns, b, off(:,d), haveNeighbor, owner, slot, to)
+                    if (.not. haveNeighbor) cycle
+                    if (owner /= c%cart_rank) cycle
+                    call entry_boxes(blk, b, off(:,d), nb, srcLo, dstLo, ext)
+                    nLocal = nLocal + 1
+                    pts = ext(1)*ext(2)*ext(3)
+                    if (pass == 2) then
+                        c%lSrcSlot(nLocal) = slot
+                        c%lDstSlot(nLocal) = b
+                        c%lSrcLo(:,nLocal) = srcLo
+                        c%lDstLo(:,nLocal) = dstLo
+                        c%lExt(:,nLocal) = ext
+                        c%lOff(nLocal) = c%lOff(nLocal-1) + pts
+                    end if
+                    c%nLocalPts = c%nLocalPts + pts
+                end do
+            end do
+            c%nLocal = nLocal
+
+            ! Recv entries: my blocks in slot order, fixed direction order,
+            ! grouped peer-major. Send entries mirror this by enumerating the
+            ! PEER's blocks in the peer's slot order, so both ends of each
+            ! message agree on the entry sequence without communication.
+            nRecv = 0
+            nSend = 0
+            c%peerSendOff(0) = 0
+            c%peerRecvOff(0) = 0
+            do p = 1, c%nPeers
+                c%peerRecvOff(p) = c%peerRecvOff(p-1)
+                do b = 1, int(blk%nBlocks)
+                    do d = 1, 26
+                        call neighbor_block(c, blk, dns, b, off(:,d), haveNeighbor, owner, slot, to)
+                        if (.not. haveNeighbor) cycle
+                        if (owner /= c%peerRank(p)) cycle
+                        call entry_boxes(blk, b, off(:,d), nb, srcLo, dstLo, ext)
+                        nRecv = nRecv + 1
+                        pts = ext(1)*ext(2)*ext(3)
+                        if (pass == 2) then
+                            c%rSlot(nRecv) = b
+                            c%rPeer(nRecv) = p
+                            c%rLo(:,nRecv) = dstLo
+                            c%rExt(:,nRecv) = ext
+                            c%rOff(nRecv) = c%rOff(nRecv-1) + pts
+                        end if
+                        c%peerRecvOff(p) = c%peerRecvOff(p) + pts
+                    end do
+                end do
+
+                ! Send side of the message me -> peer p: walk the peer's
+                ! lattice exactly as the peer walks its own blocks above.
+                call MPI_Cart_coords(c%cart_comm, c%peerRank(p), 3, peerCoords, ierr)
+                call rank_box(dns, c%dims, peerCoords, peerFirst, peerLast)
+                peerNbt = (peerLast - peerFirst + 1)/nb
+                peerBlocks = peerNbt(1)*peerNbt(2)*peerNbt(3)
+                c%peerSendOff(p) = c%peerSendOff(p-1)
+                do pb = 1, peerBlocks
+                    pbx = modulo(pb - 1, peerNbt(1))
+                    pby = modulo((pb - 1)/peerNbt(1), peerNbt(2))
+                    pbz = (pb - 1)/(peerNbt(1)*peerNbt(2))
+                    dorigin = peerFirst - 1 + [pbx, pby, pbz]*nb
+                    do d = 1, 26
+                        call neighbor_origin(c, dns, dorigin, off(:,d), nb, haveNeighbor, to)
+                        if (.not. haveNeighbor) cycle
+                        if (.not. origin_is_mine(dns, to)) cycle
+                        call entry_boxes_at(c, dorigin, off(:,d), nb, gn, srcLo, dstLo, ext)
+                        nSend = nSend + 1
+                        pts = ext(1)*ext(2)*ext(3)
+                        if (pass == 2) then
+                            c%sSlot(nSend) = my_slot_of(blk, dns, to)
+                            c%sPeer(nSend) = p
+                            c%sLo(:,nSend) = srcLo
+                            c%sExt(:,nSend) = ext
+                            c%sOff(nSend) = c%sOff(nSend-1) + pts
+                        end if
+                        c%peerSendOff(p) = c%peerSendOff(p) + pts
+                    end do
+                end do
+            end do
+            c%nRecv = nRecv
+            c%nSend = nSend
+
+            if (pass == 1) then
+                allocate(c%lSrcSlot(max(1,nLocal)), c%lDstSlot(max(1,nLocal)))
+                allocate(c%lSrcLo(3,max(1,nLocal)), c%lDstLo(3,max(1,nLocal)), c%lExt(3,max(1,nLocal)))
+                allocate(c%lOff(0:max(1,nLocal)))
+                allocate(c%sSlot(max(1,nSend)), c%sPeer(max(1,nSend)))
+                allocate(c%sLo(3,max(1,nSend)), c%sExt(3,max(1,nSend)))
+                allocate(c%sOff(0:max(1,nSend)))
+                allocate(c%rSlot(max(1,nRecv)), c%rPeer(max(1,nRecv)))
+                allocate(c%rLo(3,max(1,nRecv)), c%rExt(3,max(1,nRecv)))
+                allocate(c%rOff(0:max(1,nRecv)))
+                c%lOff = 0
+                c%sOff = 0
+                c%rOff = 0
+                c%peerSendOff = 0
+                c%peerRecvOff = 0
+            end if
+        end do
+
+        maxCount = 1
+        do p = 1, c%nPeers
+            maxCount = max(maxCount, (c%peerSendOff(p) - c%peerSendOff(p-1))*int(NVAR))
+            maxCount = max(maxCount, (c%peerRecvOff(p) - c%peerRecvOff(p-1))*int(NVAR))
+        end do
+        c%maxBufferCount = maxCount
+        allocate(c%sendbuf(c%maxBufferCount, max(1, c%nPeers)))
+        allocate(c%recvbuf(c%maxBufferCount, max(1, c%nPeers)))
+
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target enter data map(to: &
+        !$omp& c%lSrcSlot, c%lDstSlot, c%lSrcLo, c%lDstLo, c%lExt, c%lOff, &
+        !$omp& c%sSlot, c%sPeer, c%sLo, c%sExt, c%sOff, &
+        !$omp& c%rSlot, c%rPeer, c%rLo, c%rExt, c%rOff)
+        !$omp target enter data map(alloc: c%sendbuf, c%recvbuf)
+#endif
+    end subroutine init_block_exchange
+
+    subroutine free_block_exchange(c)
+        type(comm_type), intent(inout) :: c
+
+        if (allocated(c%sendbuf)) then
+#ifdef USE_OPENMP_OFFLOAD
+            !$omp target exit data map(delete: c%sendbuf, c%recvbuf)
+            !$omp target exit data map(delete: &
+            !$omp& c%lSrcSlot, c%lDstSlot, c%lSrcLo, c%lDstLo, c%lExt, c%lOff, &
+            !$omp& c%sSlot, c%sPeer, c%sLo, c%sExt, c%sOff, &
+            !$omp& c%rSlot, c%rPeer, c%rLo, c%rExt, c%rOff)
+#endif
+            deallocate(c%sendbuf, c%recvbuf)
+            deallocate(c%lSrcSlot, c%lDstSlot, c%lSrcLo, c%lDstLo, c%lExt, c%lOff)
+            deallocate(c%sSlot, c%sPeer, c%sLo, c%sExt, c%sOff)
+            deallocate(c%rSlot, c%rPeer, c%rLo, c%rExt, c%rOff)
+        end if
+        c%nLocal = 0
+        c%nLocalPts = 0
+        c%nPeers = 0
+        c%nSend = 0
+        c%nRecv = 0
+        c%peerSendOff = 0
+        c%peerRecvOff = 0
+        c%maxBufferCount = 0
+    end subroutine free_block_exchange
+
+    subroutine build_direction_table(off)
+        integer, intent(out) :: off(3,26)
+
+        integer :: ox, oy, oz, d
+
+        d = 0
+        do oz = -1, 1
+            do oy = -1, 1
+                do ox = -1, 1
+                    if (ox == 0 .and. oy == 0 .and. oz == 0) cycle
+                    d = d + 1
+                    off(:,d) = [ox, oy, oz]
+                end do
+            end do
+        end do
+    end subroutine build_direction_table
+
+    ! Neighbour of one of MY blocks: global origin, owner rank, local slot
+    ! on the owner.
+    subroutine neighbor_block(c, blk, dns, b, off, haveNeighbor, owner, slot, to)
+        type(comm_type), intent(in) :: c
+        type(block_set_type), intent(in) :: blk
+        type(dns_type), intent(in) :: dns
+        integer, intent(in) :: b, off(3)
+        logical, intent(out) :: haveNeighbor
+        integer, intent(out) :: owner, slot, to(3)
+
+        integer :: dorigin(3)
+
+        dorigin = int(blk%origin(:,b))
+        call neighbor_origin(c, dns, dorigin, off, int(blk%nb), haveNeighbor, to)
+        owner = -1
+        slot = -1
+        if (.not. haveNeighbor) return
+        call owner_of_origin(c, dns, int(blk%nb), to, owner, slot)
+    end subroutine neighbor_block
+
+    ! Global cell origin of the neighbour block in direction off, with
+    ! periodic wrap; haveNeighbor is false outside non-periodic boundaries.
+    subroutine neighbor_origin(c, dns, dorigin, off, nb, haveNeighbor, to)
+        type(comm_type), intent(in) :: c
+        type(dns_type), intent(in) :: dns
+        integer, intent(in) :: dorigin(3), off(3), nb(3)
+        logical, intent(out) :: haveNeighbor
+        integer, intent(out) :: to(3)
+
+        integer :: d
+
+        haveNeighbor = .true.
+        to = 0
+        do d = 1, 3
+            to(d) = dorigin(d) + off(d)*nb(d)
+            if (to(d) < 0 .or. to(d) >= int(dns%globalSize(d))) then
+                if (.not. c%periodic(d)) then
+                    haveNeighbor = .false.
+                    return
+                end if
+                to(d) = modulo(to(d), int(dns%globalSize(d)))
+            end if
+        end do
+    end subroutine neighbor_origin
+
+    ! Owner rank and owner-local slot of the block with global origin `to`.
+    subroutine owner_of_origin(c, dns, nb, to, owner, slot)
+        type(comm_type), intent(in) :: c
+        type(dns_type), intent(in) :: dns
+        integer, intent(in) :: nb(3), to(3)
+        integer, intent(out) :: owner, slot
+
+        integer :: d, r, ierr
+        integer(C_INT) :: first, last
+        integer :: ownerCoords(3), ownerFirst(3), ownerLast(3), ownerNbt(3), bcoord(3)
+
+        ownerFirst = 1
+        ownerLast = 1
+        do d = 1, 3
+            ownerCoords(d) = -1
+            do r = 0, c%dims(d) - 1
+                call local_range(int(dns%globalSize(d)), c%dims(d), r, first, last)
+                if (to(d) >= int(first) - 1 .and. to(d) <= int(last) - 1) then
+                    ownerCoords(d) = r
+                    ownerFirst(d) = int(first)
+                    ownerLast(d) = int(last)
+                    exit
+                end if
+            end do
+            if (ownerCoords(d) < 0) error stop "block neighbour outside the rank decomposition"
+        end do
+
+        call MPI_Cart_rank(c%cart_comm, ownerCoords, owner, ierr)
+        ownerNbt = (ownerLast - ownerFirst + 1)/nb
+        bcoord = (to - (ownerFirst - 1))/nb
+        slot = 1 + bcoord(1) + ownerNbt(1)*(bcoord(2) + ownerNbt(2)*bcoord(3))
+    end subroutine owner_of_origin
+
+    logical function origin_is_mine(dns, to)
+        type(dns_type), intent(in) :: dns
+        integer, intent(in) :: to(3)
+
+        origin_is_mine = all(to >= int(dns%localSize(1:3,0)) - 1) .and. &
+                         all(to <= int(dns%localSize(1:3,1)) - 1)
+    end function origin_is_mine
+
+    integer function my_slot_of(blk, dns, to) result(slot)
+        type(block_set_type), intent(in) :: blk
+        type(dns_type), intent(in) :: dns
+        integer, intent(in) :: to(3)
+
+        integer :: bcoord(3)
+
+        bcoord = (to - (int(dns%localSize(1:3,0)) - 1))/int(blk%nb)
+        slot = 1 + bcoord(1) + int(blk%nbt(1))*(bcoord(2) + int(blk%nbt(2))*bcoord(3))
+    end function my_slot_of
+
+    ! Source/destination boxes for the entry (dst block b, direction off):
+    ! src is in the neighbour block's local frame, dst in b's. The
+    ! tangential ranges extend into physical halos exactly like the old
+    ! rank-level set_neighbor_boxes, which fills wall-adjacent corner halos
+    ! from the neighbour's apply_bc-set values.
+    subroutine entry_boxes(blk, b, off, nb, srcLo, dstLo, ext)
+        type(block_set_type), intent(in) :: blk
+        integer, intent(in) :: b, off(3), nb(3)
+        integer, intent(out) :: srcLo(3), dstLo(3), ext(3)
+
+        integer :: d, lo, hi
+
+        do d = 1, 3
+            select case (off(d))
+            case (1)
+                srcLo(d) = 1
+                dstLo(d) = nb(d) + 1
+                ext(d) = 1
+            case (-1)
+                srcLo(d) = nb(d)
+                dstLo(d) = 0
+                ext(d) = 1
+            case default
+                lo = merge(0, 1, blk%physLow(d,b) /= 0_C_INT)
+                hi = merge(nb(d) + 1, nb(d), blk%physHigh(d,b) /= 0_C_INT)
+                srcLo(d) = lo
+                dstLo(d) = lo
+                ext(d) = hi - lo + 1
+            end select
+        end do
+    end subroutine entry_boxes
+
+    ! Same as entry_boxes for a destination block given by its global
+    ! origin (used to mirror a peer's recv enumeration on the send side).
+    subroutine entry_boxes_at(c, dorigin, off, nb, gn, srcLo, dstLo, ext)
+        type(comm_type), intent(in) :: c
+        integer, intent(in) :: dorigin(3), off(3), nb(3), gn(3)
+        integer, intent(out) :: srcLo(3), dstLo(3), ext(3)
+
+        integer :: d, lo, hi
+        logical :: physLo, physHi
+
+        do d = 1, 3
+            select case (off(d))
+            case (1)
+                srcLo(d) = 1
+                dstLo(d) = nb(d) + 1
+                ext(d) = 1
+            case (-1)
+                srcLo(d) = nb(d)
+                dstLo(d) = 0
+                ext(d) = 1
+            case default
+                physLo = (.not. c%periodic(d)) .and. dorigin(d) == 0
+                physHi = (.not. c%periodic(d)) .and. dorigin(d) + nb(d) == gn(d)
+                lo = merge(0, 1, physLo)
+                hi = merge(nb(d) + 1, nb(d), physHi)
+                srcLo(d) = lo
+                dstLo(d) = lo
+                ext(d) = hi - lo + 1
+            end select
+        end do
+    end subroutine entry_boxes_at
+
+    subroutine collect_peers(c, blk, dns, off)
+        type(comm_type), intent(inout) :: c
+        type(block_set_type), intent(in) :: blk
+        type(dns_type), intent(in) :: dns
+        integer, intent(in) :: off(3,26)
+
+        integer :: b, d, owner, slot, to(3), p
+        logical :: haveNeighbor, known
+
+        c%nPeers = 0
+        do b = 1, int(blk%nBlocks)
+            do d = 1, 26
+                call neighbor_block(c, blk, dns, b, off(:,d), haveNeighbor, owner, slot, to)
+                if (.not. haveNeighbor) cycle
+                if (owner == c%cart_rank) cycle
+                known = .false.
+                do p = 1, c%nPeers
+                    if (c%peerRank(p) == owner) then
+                        known = .true.
+                        exit
+                    end if
+                end do
+                if (.not. known) then
+                    if (c%nPeers >= MAX_PEERS) error stop "too many halo exchange peers"
+                    c%nPeers = c%nPeers + 1
+                    c%peerRank(c%nPeers) = owner
+                end if
+            end do
+        end do
+
+        call sort_peers(c)
+    end subroutine collect_peers
+
+    subroutine sort_peers(c)
+        type(comm_type), intent(inout) :: c
+
+        integer :: i, j, tmp
+
+        do i = 2, c%nPeers
+            tmp = c%peerRank(i)
+            j = i - 1
+            do while (j >= 1)
+                if (c%peerRank(j) <= tmp) exit
+                c%peerRank(j+1) = c%peerRank(j)
+                j = j - 1
+            end do
+            c%peerRank(j+1) = tmp
+        end do
+    end subroutine sort_peers
 
     subroutine comm_finalize(c)
         type(comm_type), intent(inout) :: c
@@ -142,13 +559,7 @@ contains
 
         if (c%exchangeActive) error stop "cannot finalize MPI while a halo exchange is active"
 
-        if (allocated(c%sendbuf)) then
-#ifdef USE_OPENMP_OFFLOAD
-            !$omp target exit data map(delete: c%sendbuf, c%recvbuf)
-#endif
-            deallocate(c%sendbuf)
-            deallocate(c%recvbuf)
-        end if
+        call free_block_exchange(c)
 
         if (c%cart_comm /= MPI_COMM_NULL) then
             call MPI_Comm_free(c%cart_comm, ierr)
@@ -182,45 +593,37 @@ contains
         type(block_set_type), intent(inout) :: blk
         integer(C_INT), intent(in) :: vars(:)
 
-        integer :: ierr, n, count, recvOffset(3)
+        integer :: ierr, p, nv
 
         call require_ready(c)
         if (c%exchangeActive) error stop "halo exchange already active"
 
         call set_active_vars(c, vars)
-        if (c%nNeighbors == 0 .or. c%nActiveVars == 0) return
-
-        count = max_neighbor_points(c) * c%nActiveVars
-        call ensure_buffer_capacity(c, count)
+        nv = c%nActiveVars
+        if (nv == 0) return
 
         c%request = MPI_REQUEST_NULL
-        c%bufferOffset = 0
-        c%totalActiveCount = 0
-        do n = 1, c%nNeighbors
-            c%activeCount(n) = c%nPoints(n) * c%nActiveVars
-            c%bufferOffset(n) = c%totalActiveCount
-            c%totalActiveCount = c%totalActiveCount + c%activeCount(n)
-        end do
-
-        call pack_q_boxes(c, blk)
-
+        if (c%nPeers > 0) then
+            call pack_entries(c, blk)
 #ifdef USE_OPENMP_OFFLOAD
-        !$omp target data use_device_addr(c%sendbuf, c%recvbuf)
+            !$omp target data use_device_addr(c%sendbuf, c%recvbuf)
 #endif
-        do n = 1, c%nNeighbors
-            recvOffset = -c%offset(:,n)
-            call MPI_Irecv(c%recvbuf(1,n), c%activeCount(n), MPI_DOUBLE_PRECISION, &
-                c%neighborRank(n), halo_tag(recvOffset), c%cart_comm, c%request(n), ierr)
-        end do
-
-        do n = 1, c%nNeighbors
-            call MPI_Isend(c%sendbuf(1,n), c%activeCount(n), MPI_DOUBLE_PRECISION, &
-                c%neighborRank(n), halo_tag(c%offset(:,n)), c%cart_comm, &
-                c%request(c%nNeighbors+n), ierr)
-        end do
+            do p = 1, c%nPeers
+                call MPI_Irecv(c%recvbuf(1,p), (c%peerRecvOff(p) - c%peerRecvOff(p-1))*nv, &
+                    MPI_DOUBLE_PRECISION, c%peerRank(p), HALO_TAG, c%cart_comm, c%request(p), ierr)
+            end do
+            do p = 1, c%nPeers
+                call MPI_Isend(c%sendbuf(1,p), (c%peerSendOff(p) - c%peerSendOff(p-1))*nv, &
+                    MPI_DOUBLE_PRECISION, c%peerRank(p), HALO_TAG, c%cart_comm, &
+                    c%request(c%nPeers+p), ierr)
+            end do
 #ifdef USE_OPENMP_OFFLOAD
-        !$omp end target data
+            !$omp end target data
 #endif
+        end if
+
+        ! Same-rank block-pair copies overlap with the messages in flight.
+        call copy_local_entries(c, blk)
 
         c%exchangeActive = .true.
     end subroutine start_halo_exchange
@@ -229,19 +632,17 @@ contains
         type(comm_type), intent(inout) :: c
         type(block_set_type), intent(inout) :: blk
 
-        integer :: ierr, n, nRequest
+        integer :: ierr, nRequest
 
         if (.not. c%exchangeActive) return
 
-        nRequest = 2*c%nNeighbors
-        call MPI_Waitall(nRequest, c%request(1:nRequest), MPI_STATUSES_IGNORE, ierr)
-
-        call unpack_q_boxes(c, blk)
+        if (c%nPeers > 0) then
+            nRequest = 2*c%nPeers
+            call MPI_Waitall(nRequest, c%request(1:nRequest), MPI_STATUSES_IGNORE, ierr)
+            call unpack_entries(c, blk)
+        end if
 
         c%request = MPI_REQUEST_NULL
-        c%activeCount = 0
-        c%bufferOffset = 0
-        c%totalActiveCount = 0
         c%activeVars = 0_C_INT
         c%nActiveVars = 0
         c%exchangeActive = .false.
@@ -252,198 +653,287 @@ contains
         type(block_set_type), intent(inout) :: blk
         integer(C_INT), intent(in) :: vars(:)
 
-        call require_ready(c)
-        if (c%exchangeActive) error stop "halo exchange already active"
-
-        call set_active_vars(c, vars)
-        if (c%nNeighbors == 0 .or. c%nActiveVars == 0) return
-
         call start_halo_exchange(c, blk, vars)
         call finish_halo_exchange(c, blk)
     end subroutine exchange_halos
 
-    ! Per-block scalar (e.g. les%nut); the rank-box exchange serves block 1
-    ! until Phase 1 introduces block-pair entries.
+    ! Per-block scalar halos (e.g. les%nut) on the same exchange entries.
     subroutine exchange_scalar_halos(c, scalar)
         type(comm_type), intent(inout) :: c
         real(C_DOUBLE), intent(inout) :: scalar(0:,0:,0:,1:)
 
-        integer :: ierr, n, nRequest, recvOffset(3)
+        integer :: ierr, p, nRequest
 
         call require_ready(c)
         if (c%exchangeActive) error stop "halo exchange already active"
-        if (c%nNeighbors == 0) return
 
-        call ensure_buffer_capacity(c, max(1, max_neighbor_points(c)))
-
-        c%request = MPI_REQUEST_NULL
-        c%bufferOffset = 0
-        c%totalActiveCount = 0
-        do n = 1, c%nNeighbors
-            c%activeCount(n) = c%nPoints(n)
-            c%bufferOffset(n) = c%totalActiveCount
-            c%totalActiveCount = c%totalActiveCount + c%activeCount(n)
-        end do
-
-        call pack_scalar_boxes(c, scalar)
-
+        if (c%nPeers > 0) then
+            call pack_scalar_entries(c, scalar)
+            c%request = MPI_REQUEST_NULL
 #ifdef USE_OPENMP_OFFLOAD
-        !$omp target data use_device_addr(c%sendbuf, c%recvbuf)
+            !$omp target data use_device_addr(c%sendbuf, c%recvbuf)
 #endif
-        do n = 1, c%nNeighbors
-            recvOffset = -c%offset(:,n)
-            call MPI_Irecv(c%recvbuf(1,n), c%activeCount(n), MPI_DOUBLE_PRECISION, &
-                c%neighborRank(n), halo_tag(recvOffset), c%cart_comm, c%request(n), ierr)
-        end do
-
-        do n = 1, c%nNeighbors
-            call MPI_Isend(c%sendbuf(1,n), c%activeCount(n), MPI_DOUBLE_PRECISION, &
-                c%neighborRank(n), halo_tag(c%offset(:,n)), c%cart_comm, &
-                c%request(c%nNeighbors+n), ierr)
-        end do
+            do p = 1, c%nPeers
+                call MPI_Irecv(c%recvbuf(1,p), c%peerRecvOff(p) - c%peerRecvOff(p-1), &
+                    MPI_DOUBLE_PRECISION, c%peerRank(p), HALO_TAG, c%cart_comm, c%request(p), ierr)
+            end do
+            do p = 1, c%nPeers
+                call MPI_Isend(c%sendbuf(1,p), c%peerSendOff(p) - c%peerSendOff(p-1), &
+                    MPI_DOUBLE_PRECISION, c%peerRank(p), HALO_TAG, c%cart_comm, &
+                    c%request(c%nPeers+p), ierr)
+            end do
 #ifdef USE_OPENMP_OFFLOAD
-        !$omp end target data
+            !$omp end target data
 #endif
+        end if
 
-        c%exchangeActive = .true.
-        nRequest = 2*c%nNeighbors
-        call MPI_Waitall(nRequest, c%request(1:nRequest), MPI_STATUSES_IGNORE, ierr)
-        call unpack_scalar_boxes(c, scalar)
+        call copy_local_scalar_entries(c, scalar)
 
-        c%request = MPI_REQUEST_NULL
-        call clear_active_counts(c)
-        c%exchangeActive = .false.
+        if (c%nPeers > 0) then
+            nRequest = 2*c%nPeers
+            call MPI_Waitall(nRequest, c%request(1:nRequest), MPI_STATUSES_IGNORE, ierr)
+            call unpack_scalar_entries(c, scalar)
+            c%request = MPI_REQUEST_NULL
+        end if
     end subroutine exchange_scalar_halos
 
-    subroutine prepare_active_counts(c)
+    subroutine copy_local_entries(c, blk)
         type(comm_type), intent(inout) :: c
+        type(block_set_type), intent(inout) :: blk
 
-        integer :: n
+        integer :: p, gp, v, e, pt, ni, nj
+        integer :: si, sj, sk, di, dj, dk, var, nv, totalItems
 
-        c%bufferOffset = 0
-        c%totalActiveCount = 0
-        do n = 1, c%nNeighbors
-            c%activeCount(n) = c%nPoints(n) * c%nActiveVars
-            c%bufferOffset(n) = c%totalActiveCount
-            c%totalActiveCount = c%totalActiveCount + c%activeCount(n)
+        nv = c%nActiveVars
+        totalItems = c%nLocalPts*nv
+        if (totalItems == 0) return
+
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target teams distribute parallel do &
+        !$omp& map(to: totalItems, nv, c%nLocal, c%lOff, c%lSrcSlot, c%lDstSlot, &
+        !$omp& c%lSrcLo, c%lDstLo, c%lExt, c%activeVars) &
+        !$omp& map(tofrom: blk%q) &
+        !$omp& private(p,gp,v,e,pt,ni,nj,si,sj,sk,di,dj,dk,var)
+#endif
+        do p = 1, totalItems
+            gp = (p - 1)/nv
+            v = p - 1 - gp*nv
+            e = find_entry(c%lOff, c%nLocal, gp)
+            pt = gp - c%lOff(e-1)
+            ni = c%lExt(1,e)
+            nj = c%lExt(2,e)
+            si = c%lSrcLo(1,e) + modulo(pt, ni)
+            sj = c%lSrcLo(2,e) + modulo(pt/ni, nj)
+            sk = c%lSrcLo(3,e) + pt/(ni*nj)
+            di = c%lDstLo(1,e) + modulo(pt, ni)
+            dj = c%lDstLo(2,e) + modulo(pt/ni, nj)
+            dk = c%lDstLo(3,e) + pt/(ni*nj)
+            var = int(c%activeVars(v+1))
+            blk%q(di,dj,dk,var,c%lDstSlot(e)) = blk%q(si,sj,sk,var,c%lSrcSlot(e))
         end do
-    end subroutine prepare_active_counts
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp end target teams distribute parallel do
+#endif
+    end subroutine copy_local_entries
 
-    subroutine clear_active_counts(c)
+    subroutine copy_local_scalar_entries(c, scalar)
         type(comm_type), intent(inout) :: c
+        real(C_DOUBLE), intent(inout) :: scalar(0:,0:,0:,1:)
 
-        c%activeCount = 0
-        c%bufferOffset = 0
-        c%totalActiveCount = 0
-        c%activeVars = 0_C_INT
-        c%nActiveVars = 0
-    end subroutine clear_active_counts
+        integer :: p, e, pt, ni, nj
+        integer :: si, sj, sk, di, dj, dk, totalItems
 
-    subroutine build_neighbors(c, local_n)
-        type(comm_type), intent(inout) :: c
-        integer, intent(in) :: local_n(3)
+        totalItems = c%nLocalPts
+        if (totalItems == 0) return
 
-        integer :: ox, oy, oz, ierr, n
-        integer :: off(3), neighborCoords(3)
-        logical :: valid
-
-        c%nNeighbors = 0
-        do oz = -1, 1
-            do oy = -1, 1
-                do ox = -1, 1
-                    off = [ox, oy, oz]
-                    if (all(off == 0)) cycle
-
-                    call get_neighbor_coords(c, off, neighborCoords, valid)
-                    if (.not. valid) cycle
-
-                    n = c%nNeighbors + 1
-                    if (n > MAX_NEIGHBORS) error stop "too many MPI halo neighbors"
-
-                    c%offset(:,n) = off
-                    call MPI_Cart_rank(c%cart_comm, neighborCoords, c%neighborRank(n), ierr)
-                    call set_neighbor_boxes(local_n, off, c%physicalLow, c%physicalHigh, &
-                                            c%sendLo(:,n), c%sendHi(:,n), c%recvLo(:,n), c%recvHi(:,n))
-                    c%nPoints(n) = box_point_count(c%sendLo(:,n), c%sendHi(:,n))
-                    c%nNeighbors = n
-                end do
-            end do
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target teams distribute parallel do &
+        !$omp& map(to: totalItems, c%nLocal, c%lOff, c%lSrcSlot, c%lDstSlot, &
+        !$omp& c%lSrcLo, c%lDstLo, c%lExt) &
+        !$omp& map(tofrom: scalar) &
+        !$omp& private(p,e,pt,ni,nj,si,sj,sk,di,dj,dk)
+#endif
+        do p = 1, totalItems
+            e = find_entry(c%lOff, c%nLocal, p - 1)
+            pt = p - 1 - c%lOff(e-1)
+            ni = c%lExt(1,e)
+            nj = c%lExt(2,e)
+            si = c%lSrcLo(1,e) + modulo(pt, ni)
+            sj = c%lSrcLo(2,e) + modulo(pt/ni, nj)
+            sk = c%lSrcLo(3,e) + pt/(ni*nj)
+            di = c%lDstLo(1,e) + modulo(pt, ni)
+            dj = c%lDstLo(2,e) + modulo(pt/ni, nj)
+            dk = c%lDstLo(3,e) + pt/(ni*nj)
+            scalar(di,dj,dk,c%lDstSlot(e)) = scalar(si,sj,sk,c%lSrcSlot(e))
         end do
-    end subroutine build_neighbors
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp end target teams distribute parallel do
+#endif
+    end subroutine copy_local_scalar_entries
 
-    subroutine get_neighbor_coords(c, off, neighborCoords, valid)
+    subroutine pack_entries(c, blk)
+        type(comm_type), intent(inout) :: c
+        type(block_set_type), intent(in) :: blk
+
+        integer :: p, gp, v, e, pt, ni, nj
+        integer :: i, j, k, var, peer, pos, nv, totalItems
+
+        nv = c%nActiveVars
+        totalItems = c%peerSendOff(c%nPeers)*nv
+        if (totalItems == 0) return
+
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target teams distribute parallel do &
+        !$omp& map(to: totalItems, nv, c%nSend, c%sOff, c%sSlot, c%sPeer, &
+        !$omp& c%sLo, c%sExt, c%peerSendOff, c%activeVars, blk%q) &
+        !$omp& map(tofrom: c%sendbuf) &
+        !$omp& private(p,gp,v,e,pt,ni,nj,i,j,k,var,peer,pos)
+#endif
+        do p = 1, totalItems
+            gp = (p - 1)/nv
+            v = p - 1 - gp*nv
+            e = find_entry(c%sOff, c%nSend, gp)
+            pt = gp - c%sOff(e-1)
+            ni = c%sExt(1,e)
+            nj = c%sExt(2,e)
+            i = c%sLo(1,e) + modulo(pt, ni)
+            j = c%sLo(2,e) + modulo(pt/ni, nj)
+            k = c%sLo(3,e) + pt/(ni*nj)
+            var = int(c%activeVars(v+1))
+            peer = c%sPeer(e)
+            pos = (gp - c%peerSendOff(peer-1))*nv + v + 1
+            c%sendbuf(pos,peer) = blk%q(i,j,k,var,c%sSlot(e))
+        end do
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp end target teams distribute parallel do
+#endif
+    end subroutine pack_entries
+
+    subroutine unpack_entries(c, blk)
         type(comm_type), intent(in) :: c
-        integer, intent(in) :: off(3)
-        integer, intent(out) :: neighborCoords(3)
-        logical, intent(out) :: valid
+        type(block_set_type), intent(inout) :: blk
 
-        integer :: dir, coord
+        integer :: p, gp, v, e, pt, ni, nj
+        integer :: i, j, k, var, peer, pos, nv, totalItems
 
-        valid = .true.
-        do dir = 1, 3
-            coord = c%coords(dir) + off(dir)
-            if (coord < 0 .or. coord >= c%dims(dir)) then
-                if (.not. c%periodic(dir)) then
-                    valid = .false.
-                    return
-                end if
-                coord = modulo(coord, c%dims(dir))
+        nv = c%nActiveVars
+        totalItems = c%peerRecvOff(c%nPeers)*nv
+        if (totalItems == 0) return
+
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target teams distribute parallel do &
+        !$omp& map(to: totalItems, nv, c%nRecv, c%rOff, c%rSlot, c%rPeer, &
+        !$omp& c%rLo, c%rExt, c%peerRecvOff, c%activeVars, c%recvbuf) &
+        !$omp& map(tofrom: blk%q) &
+        !$omp& private(p,gp,v,e,pt,ni,nj,i,j,k,var,peer,pos)
+#endif
+        do p = 1, totalItems
+            gp = (p - 1)/nv
+            v = p - 1 - gp*nv
+            e = find_entry(c%rOff, c%nRecv, gp)
+            pt = gp - c%rOff(e-1)
+            ni = c%rExt(1,e)
+            nj = c%rExt(2,e)
+            i = c%rLo(1,e) + modulo(pt, ni)
+            j = c%rLo(2,e) + modulo(pt/ni, nj)
+            k = c%rLo(3,e) + pt/(ni*nj)
+            var = int(c%activeVars(v+1))
+            peer = c%rPeer(e)
+            pos = (gp - c%peerRecvOff(peer-1))*nv + v + 1
+            blk%q(i,j,k,var,c%rSlot(e)) = c%recvbuf(pos,peer)
+        end do
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp end target teams distribute parallel do
+#endif
+    end subroutine unpack_entries
+
+    subroutine pack_scalar_entries(c, scalar)
+        type(comm_type), intent(inout) :: c
+        real(C_DOUBLE), intent(in) :: scalar(0:,0:,0:,1:)
+
+        integer :: p, e, pt, ni, nj
+        integer :: i, j, k, peer, pos, totalItems
+
+        totalItems = c%peerSendOff(c%nPeers)
+        if (totalItems == 0) return
+
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target teams distribute parallel do &
+        !$omp& map(to: totalItems, c%nSend, c%sOff, c%sSlot, c%sPeer, &
+        !$omp& c%sLo, c%sExt, c%peerSendOff, scalar) &
+        !$omp& map(tofrom: c%sendbuf) &
+        !$omp& private(p,e,pt,ni,nj,i,j,k,peer,pos)
+#endif
+        do p = 1, totalItems
+            e = find_entry(c%sOff, c%nSend, p - 1)
+            pt = p - 1 - c%sOff(e-1)
+            ni = c%sExt(1,e)
+            nj = c%sExt(2,e)
+            i = c%sLo(1,e) + modulo(pt, ni)
+            j = c%sLo(2,e) + modulo(pt/ni, nj)
+            k = c%sLo(3,e) + pt/(ni*nj)
+            peer = c%sPeer(e)
+            pos = p - c%peerSendOff(peer-1)
+            c%sendbuf(pos,peer) = scalar(i,j,k,c%sSlot(e))
+        end do
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp end target teams distribute parallel do
+#endif
+    end subroutine pack_scalar_entries
+
+    subroutine unpack_scalar_entries(c, scalar)
+        type(comm_type), intent(in) :: c
+        real(C_DOUBLE), intent(inout) :: scalar(0:,0:,0:,1:)
+
+        integer :: p, e, pt, ni, nj
+        integer :: i, j, k, peer, pos, totalItems
+
+        totalItems = c%peerRecvOff(c%nPeers)
+        if (totalItems == 0) return
+
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target teams distribute parallel do &
+        !$omp& map(to: totalItems, c%nRecv, c%rOff, c%rSlot, c%rPeer, &
+        !$omp& c%rLo, c%rExt, c%peerRecvOff, c%recvbuf) &
+        !$omp& map(tofrom: scalar) &
+        !$omp& private(p,e,pt,ni,nj,i,j,k,peer,pos)
+#endif
+        do p = 1, totalItems
+            e = find_entry(c%rOff, c%nRecv, p - 1)
+            pt = p - 1 - c%rOff(e-1)
+            ni = c%rExt(1,e)
+            nj = c%rExt(2,e)
+            i = c%rLo(1,e) + modulo(pt, ni)
+            j = c%rLo(2,e) + modulo(pt/ni, nj)
+            k = c%rLo(3,e) + pt/(ni*nj)
+            peer = c%rPeer(e)
+            pos = p - c%peerRecvOff(peer-1)
+            scalar(i,j,k,c%rSlot(e)) = c%recvbuf(pos,peer)
+        end do
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp end target teams distribute parallel do
+#endif
+    end subroutine unpack_scalar_entries
+
+    ! Largest e in 1..n with off(e-1) <= gp (off is a 0:n point prefix).
+    pure integer function find_entry(off, n, gp) result(e)
+!$omp declare target
+        integer, intent(in) :: off(0:), n, gp
+
+        integer :: lo, hi, mid
+
+        lo = 1
+        hi = n
+        do while (lo < hi)
+            mid = (lo + hi)/2
+            if (gp >= off(mid)) then
+                lo = mid + 1
+            else
+                hi = mid
             end if
-            neighborCoords(dir) = coord
         end do
-    end subroutine get_neighbor_coords
-
-    subroutine set_neighbor_boxes(local_n, off, physicalLow, physicalHigh, sendLo, sendHi, recvLo, recvHi)
-        integer, intent(in) :: local_n(3), off(3)
-        logical, intent(in) :: physicalLow(3), physicalHigh(3)
-        integer, intent(out) :: sendLo(3), sendHi(3), recvLo(3), recvHi(3)
-
-        integer :: dir
-
-        do dir = 1, 3
-            select case (off(dir))
-            case (-1)
-                sendLo(dir) = 1
-                sendHi(dir) = 1
-                recvLo(dir) = 0
-                recvHi(dir) = 0
-            case (0)
-                sendLo(dir) = merge(0, 1, physicalLow(dir))
-                sendHi(dir) = merge(local_n(dir)+1, local_n(dir), physicalHigh(dir))
-                recvLo(dir) = sendLo(dir)
-                recvHi(dir) = sendHi(dir)
-            case (1)
-                sendLo(dir) = local_n(dir)
-                sendHi(dir) = local_n(dir)
-                recvLo(dir) = local_n(dir) + 1
-                recvHi(dir) = local_n(dir) + 1
-            case default
-                error stop "invalid MPI neighbor offset"
-            end select
-        end do
-    end subroutine set_neighbor_boxes
-
-    integer function box_point_count(lo, hi) result(n)
-        integer, intent(in) :: lo(3), hi(3)
-
-        n = (hi(1)-lo(1)+1) * (hi(2)-lo(2)+1) * (hi(3)-lo(3)+1)
-    end function box_point_count
-
-    integer function max_neighbor_points(c) result(n)
-        type(comm_type), intent(in) :: c
-
-        if (c%nNeighbors == 0) then
-            n = 1
-        else
-            n = maxval(c%nPoints(1:c%nNeighbors))
-        end if
-    end function max_neighbor_points
-
-    integer function halo_tag(off) result(tag)
-        integer, intent(in) :: off(3)
-
-        tag = 1000 + (off(1)+1)*9 + (off(2)+1)*3 + (off(3)+1)
-    end function halo_tag
+        e = lo
+    end function find_entry
 
     subroutine set_active_vars(c, vars)
         type(comm_type), intent(inout) :: c
@@ -461,147 +951,20 @@ contains
         end do
     end subroutine set_active_vars
 
-    ! The send/recv boxes span this rank's box, which in Phase 0 is exactly
-    ! block 1. Phase 1 replaces them with per-block-pair exchange entries.
-    subroutine pack_q_boxes(c, blk)
-        type(comm_type), intent(inout) :: c
-        type(block_set_type), intent(in) :: blk
+    subroutine rank_box(dns, dims, coords, first, last)
+        type(dns_type), intent(in) :: dns
+        integer, intent(in) :: dims(3), coords(3)
+        integer, intent(out) :: first(3), last(3)
 
-        integer :: pAll, p, q, n, nv, var
-        integer :: i, j, k, ni, nj
+        integer :: d
+        integer(C_INT) :: f, l
 
-#ifdef USE_OPENMP_OFFLOAD
-        !$omp target teams distribute parallel do &
-        !$omp& map(to: c%nNeighbors, c%totalActiveCount, c%bufferOffset, c%nPoints, &
-        !$omp& c%activeCount, c%sendLo, c%sendHi, c%activeVars, blk%q) &
-        !$omp& map(tofrom: c%sendbuf) &
-        !$omp& private(pAll,p,q,n,nv,var,i,j,k,ni,nj)
-#endif
-        do pAll = 1, c%totalActiveCount
-            n = 1
-            do while (n < c%nNeighbors .and. pAll > c%bufferOffset(n) + c%activeCount(n))
-                n = n + 1
-            end do
-
-            p = pAll - c%bufferOffset(n)
-            ni = c%sendHi(1,n) - c%sendLo(1,n) + 1
-            nj = c%sendHi(2,n) - c%sendLo(2,n) + 1
-            nv = (p - 1) / c%nPoints(n) + 1
-            q = modulo(p - 1, c%nPoints(n))
-            i = c%sendLo(1,n) + modulo(q, ni)
-            j = c%sendLo(2,n) + modulo(q / ni, nj)
-            k = c%sendLo(3,n) + q / (ni*nj)
-            var = int(c%activeVars(nv))
-            c%sendbuf(p,n) = blk%q(i,j,k,var,1)
+        do d = 1, 3
+            call local_range(int(dns%globalSize(d)), dims(d), coords(d), f, l)
+            first(d) = int(f)
+            last(d) = int(l)
         end do
-#ifdef USE_OPENMP_OFFLOAD
-        !$omp end target teams distribute parallel do
-#endif
-    end subroutine pack_q_boxes
-
-    subroutine unpack_q_boxes(c, blk)
-        type(comm_type), intent(in) :: c
-        type(block_set_type), intent(inout) :: blk
-
-        integer :: pAll, p, q, n, nv, var
-        integer :: i, j, k, ni, nj
-
-#ifdef USE_OPENMP_OFFLOAD
-        !$omp target teams distribute parallel do &
-        !$omp& map(to: c%nNeighbors, c%totalActiveCount, c%bufferOffset, c%nPoints, &
-        !$omp& c%activeCount, c%recvLo, c%recvHi, c%activeVars, c%recvbuf) &
-        !$omp& map(tofrom: blk%q) &
-        !$omp& private(pAll,p,q,n,nv,var,i,j,k,ni,nj)
-#endif
-        do pAll = 1, c%totalActiveCount
-            n = 1
-            do while (n < c%nNeighbors .and. pAll > c%bufferOffset(n) + c%activeCount(n))
-                n = n + 1
-            end do
-
-            p = pAll - c%bufferOffset(n)
-            ni = c%recvHi(1,n) - c%recvLo(1,n) + 1
-            nj = c%recvHi(2,n) - c%recvLo(2,n) + 1
-            nv = (p - 1) / c%nPoints(n) + 1
-            q = modulo(p - 1, c%nPoints(n))
-            i = c%recvLo(1,n) + modulo(q, ni)
-            j = c%recvLo(2,n) + modulo(q / ni, nj)
-            k = c%recvLo(3,n) + q / (ni*nj)
-            var = int(c%activeVars(nv))
-            blk%q(i,j,k,var,1) = c%recvbuf(p,n)
-        end do
-#ifdef USE_OPENMP_OFFLOAD
-        !$omp end target teams distribute parallel do
-#endif
-    end subroutine unpack_q_boxes
-
-    subroutine pack_scalar_boxes(c, scalar)
-        type(comm_type), intent(inout) :: c
-        real(C_DOUBLE), intent(in) :: scalar(0:,0:,0:,1:)
-
-        integer :: pAll, p, q, n
-        integer :: i, j, k, ni, nj
-
-#ifdef USE_OPENMP_OFFLOAD
-        !$omp target teams distribute parallel do &
-        !$omp& map(to: c%nNeighbors, c%totalActiveCount, c%bufferOffset, c%nPoints, &
-        !$omp& c%activeCount, c%sendLo, c%sendHi, scalar) &
-        !$omp& map(tofrom: c%sendbuf) &
-        !$omp& private(pAll,p,q,n,i,j,k,ni,nj)
-#endif
-        do pAll = 1, c%totalActiveCount
-            n = 1
-            do while (n < c%nNeighbors .and. pAll > c%bufferOffset(n) + c%activeCount(n))
-                n = n + 1
-            end do
-
-            p = pAll - c%bufferOffset(n)
-            ni = c%sendHi(1,n) - c%sendLo(1,n) + 1
-            nj = c%sendHi(2,n) - c%sendLo(2,n) + 1
-            q = p - 1
-            i = c%sendLo(1,n) + modulo(q, ni)
-            j = c%sendLo(2,n) + modulo(q / ni, nj)
-            k = c%sendLo(3,n) + q / (ni*nj)
-            c%sendbuf(p,n) = scalar(i,j,k,1)
-        end do
-#ifdef USE_OPENMP_OFFLOAD
-        !$omp end target teams distribute parallel do
-#endif
-    end subroutine pack_scalar_boxes
-
-    subroutine unpack_scalar_boxes(c, scalar)
-        type(comm_type), intent(in) :: c
-        real(C_DOUBLE), intent(inout) :: scalar(0:,0:,0:,1:)
-
-        integer :: pAll, p, q, n
-        integer :: i, j, k, ni, nj
-
-#ifdef USE_OPENMP_OFFLOAD
-        !$omp target teams distribute parallel do &
-        !$omp& map(to: c%nNeighbors, c%totalActiveCount, c%bufferOffset, c%nPoints, &
-        !$omp& c%activeCount, c%recvLo, c%recvHi, c%recvbuf) &
-        !$omp& map(tofrom: scalar) &
-        !$omp& private(pAll,p,q,n,i,j,k,ni,nj)
-#endif
-        do pAll = 1, c%totalActiveCount
-            n = 1
-            do while (n < c%nNeighbors .and. pAll > c%bufferOffset(n) + c%activeCount(n))
-                n = n + 1
-            end do
-
-            p = pAll - c%bufferOffset(n)
-            ni = c%recvHi(1,n) - c%recvLo(1,n) + 1
-            nj = c%recvHi(2,n) - c%recvLo(2,n) + 1
-            q = p - 1
-            i = c%recvLo(1,n) + modulo(q, ni)
-            j = c%recvLo(2,n) + modulo(q / ni, nj)
-            k = c%recvLo(3,n) + q / (ni*nj)
-            scalar(i,j,k,1) = c%recvbuf(p,n)
-        end do
-#ifdef USE_OPENMP_OFFLOAD
-        !$omp end target teams distribute parallel do
-#endif
-    end subroutine unpack_scalar_boxes
+    end subroutine rank_box
 
     subroutine local_range(n_global, nproc_dir, coord, first, last)
         integer, intent(in) :: n_global, nproc_dir, coord
@@ -611,36 +974,11 @@ contains
         last = int(((coord+1)*n_global)/nproc_dir, C_INT)
     end subroutine local_range
 
-    subroutine ensure_buffer_capacity(c, count)
-        type(comm_type), intent(inout) :: c
-        integer, intent(in) :: count
-
-        integer :: capacity
-
-        capacity = max(1, count)
-        if (allocated(c%sendbuf) .and. capacity <= c%maxBufferCount) return
-
-        if (allocated(c%sendbuf)) then
-#ifdef USE_OPENMP_OFFLOAD
-            !$omp target exit data map(delete: c%sendbuf, c%recvbuf)
-#endif
-            deallocate(c%sendbuf)
-            deallocate(c%recvbuf)
-        end if
-
-        c%maxBufferCount = capacity
-        allocate(c%sendbuf(c%maxBufferCount, MAX_NEIGHBORS))
-        allocate(c%recvbuf(c%maxBufferCount, MAX_NEIGHBORS))
-#ifdef USE_OPENMP_OFFLOAD
-        !$omp target enter data map(alloc: c%sendbuf, c%recvbuf)
-#endif
-    end subroutine ensure_buffer_capacity
-
     subroutine require_ready(c)
         type(comm_type), intent(in) :: c
 
         if (.not. c%initialized) error stop "comm_type has not been initialized"
-        if (.not. allocated(c%sendbuf)) error stop "comm_type buffers have not been allocated"
+        if (.not. allocated(c%sendbuf)) error stop "comm_type exchange entries have not been built"
     end subroutine require_ready
 
 end module comm

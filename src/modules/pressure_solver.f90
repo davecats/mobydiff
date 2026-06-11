@@ -14,9 +14,6 @@ module pressure_solver
     type :: pressure_solver_type
         integer(C_INT) :: nIter=3
         real(C_DOUBLE) :: sor=1.5d0
-        integer(C_INT) :: sweepLo(1:3) = 1_C_INT
-        logical(C_BOOL) :: pressureNeumannLow(1:3) = .false.
-        logical(C_BOOL) :: pressureNeumannHigh(1:3) = .false.
     end type pressure_solver_type
 
 contains
@@ -43,18 +40,6 @@ contains
             end if
         end do
 
-        ps%sweepLo = 1_C_INT
-        ps%pressureNeumannLow = .false.
-        ps%pressureNeumannHigh = .false.
-
-        do dir = 1, 3
-            if (bc%isPeriodic(dir) .or. dns%localSize(dir,0) > 1_C_INT) then
-                ps%sweepLo(dir) = 0_C_INT
-            end if
-            ps%pressureNeumannLow(dir) = (.not. bc%isPeriodic(dir)) .and. dns%localSize(dir,0) == 1_C_INT
-            ps%pressureNeumannHigh(dir) = (.not. bc%isPeriodic(dir)) .and. dns%localSize(dir,1) == dns%globalSize(dir)
-        end do
-
     end subroutine init_pressure_solver
 
     subroutine pressure_projection(ps, blk, dns, dt_gamma, ibm, bc, c)
@@ -67,17 +52,10 @@ contains
         type(comm_type), intent(inout) :: c
 
         integer(C_INT) :: iIter, color
-        integer(C_INT) :: local_n(1:3), colorOffset
-
-        local_n = blk%nb(1:3)
-        ! Red-black parity from the block's global cell origin. Phase 0: one block
-        ! per rank, so a single offset; Phase 1 moves this inside the sweep, one
-        ! offset per block.
-        colorOffset = modulo(sum(blk%origin(1:3,1)), 2_C_INT)
 
         do iIter = 1_C_INT, ps%nIter
             do color = 1_C_INT, 0_C_INT, -1_C_INT
-                call redblack_sweep(ps, blk, dt_gamma, ibm, local_n, color, colorOffset)
+                call redblack_sweep(ps, blk, dt_gamma, ibm, color)
                 call apply_bc(blk, bc)
                 if (iIter == ps%nIter .and. color == 0_C_INT) then
                     call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W, VAR_P])
@@ -89,44 +67,51 @@ contains
 
     end subroutine pressure_projection
 
-    subroutine redblack_sweep(ps, blk, dt_gamma, ibm, local_n, color, colorOffset)
+    subroutine redblack_sweep(ps, blk, dt_gamma, ibm, color)
         type(pressure_solver_type), intent(in) :: ps
         type(block_set_type), intent(inout) :: blk
         real(C_DOUBLE), intent(in) :: dt_gamma
         type(ibm_type), intent(in) :: ibm
-        integer(C_INT), intent(in) :: local_n(1:3), color, colorOffset
+        integer(C_INT), intent(in) :: color
 
         real(C_DOUBLE) :: phi,denom,idt,sor
         real(C_DOUBLE) :: div
         real(C_DOUBLE) :: mu_u_i,mu_u_ip,mu_v_j,mu_v_jp,mu_w_k,mu_w_kp
         integer(C_INT) :: i,ip,j,jp,k,kp,b,nBlocks,nLowerHaloDirections,iColor,nColorX
-        integer(C_INT) :: lo(1:3), hi(1:3)
-        logical(C_BOOL) :: pressureNeumannLow(1:3), pressureNeumannHigh(1:3)
+        integer(C_INT) :: iLo,jLo,kLo,colorOffset
+        integer(C_INT) :: hi(1:3)
 
-        lo = ps%sweepLo
-        hi = local_n
-        pressureNeumannLow = ps%pressureNeumannLow
-        pressureNeumannHigh = ps%pressureNeumannHigh
+        ! Each block sweeps from 0 (its halo layer, redundantly with the
+        ! neighbour that owns those cells) except on physical boundaries,
+        ! exactly the rank-level scheme one level down. Red-black parity is
+        ! anchored to the global index space through the block origin.
+        hi = blk%nb(1:3)
         sor = ps%sor
-        nColorX = (hi(1) - lo(1) + 2_C_INT)/2_C_INT
+        nColorX = (hi(1) + 2_C_INT)/2_C_INT
         nBlocks = blk%nBlocks
 
         idt = 1.0_C_DOUBLE/dt_gamma
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do collapse(4) &
-        !$omp& map(to: color, colorOffset, nColorX, sor, idt, dt_gamma, &
-        !$omp& lo(1:3), hi(1:3), pressureNeumannLow(1:3), pressureNeumannHigh(1:3), &
+        !$omp& map(to: color, nColorX, sor, idt, dt_gamma, hi(1:3), &
+        !$omp& blk%origin, blk%physLow, blk%physHigh, &
         !$omp& blk%d1x, blk%d1y, blk%d1z, ibm%mu) &
         !$omp& map(tofrom: blk%q) &
-        !$omp& private(i,ip,j,jp,k,kp,b,iColor,phi,denom,div,nLowerHaloDirections, &
+        !$omp& private(i,ip,j,jp,k,kp,b,iColor,iLo,jLo,kLo,colorOffset, &
+        !$omp& phi,denom,div,nLowerHaloDirections, &
         !$omp& mu_u_i,mu_u_ip,mu_v_j,mu_v_jp,mu_w_k,mu_w_kp)
 #endif
         DO b=1_C_INT,nBlocks
-        DO k=lo(3),hi(3)
-            DO j=lo(2),hi(2)
+        DO k=0_C_INT,hi(3)
+            DO j=0_C_INT,hi(2)
                 DO iColor=0_C_INT,nColorX-1_C_INT
-                    i = lo(1) + modulo(color - modulo(lo(1)+j+k+colorOffset, 2_C_INT), 2_C_INT) &
+                    iLo = blk%physLow(1,b)
+                    jLo = blk%physLow(2,b)
+                    kLo = blk%physLow(3,b)
+                    if (j < jLo .or. k < kLo) cycle
+                    colorOffset = modulo(blk%origin(1,b) + blk%origin(2,b) + blk%origin(3,b), 2_C_INT)
+                    i = iLo + modulo(color - modulo(iLo+j+k+colorOffset, 2_C_INT), 2_C_INT) &
                         + 2_C_INT*iColor
                     if (i > hi(1)) cycle
 
@@ -148,17 +133,17 @@ contains
                     mu_w_kp = ibm%mu(i,j,kp,VAR_W,b)
 
                     denom = (merge(0.0d0, mu_u_i*blk%d1x(i,VAR_U,b), &
-                                      pressureNeumannLow(1) .and. i == 1_C_INT) &
+                                      blk%physLow(1,b) /= 0_C_INT .and. i == 1_C_INT) &
                            + merge(0.0d0, mu_u_ip*blk%d1x(ip,VAR_U,b), &
-                                      pressureNeumannHigh(1) .and. i == hi(1)))*blk%d1x(i,VAR_P,b) &
+                                      blk%physHigh(1,b) /= 0_C_INT .and. i == hi(1)))*blk%d1x(i,VAR_P,b) &
                           + (merge(0.0d0, mu_v_j*blk%d1y(j,VAR_V,b), &
-                                      pressureNeumannLow(2) .and. j == 1_C_INT) &
+                                      blk%physLow(2,b) /= 0_C_INT .and. j == 1_C_INT) &
                            + merge(0.0d0, mu_v_jp*blk%d1y(jp,VAR_V,b), &
-                                      pressureNeumannHigh(2) .and. j == hi(2)))*blk%d1y(j,VAR_P,b) &
+                                      blk%physHigh(2,b) /= 0_C_INT .and. j == hi(2)))*blk%d1y(j,VAR_P,b) &
                           + (merge(0.0d0, mu_w_k*blk%d1z(k,VAR_W,b), &
-                                      pressureNeumannLow(3) .and. k == 1_C_INT) &
+                                      blk%physLow(3,b) /= 0_C_INT .and. k == 1_C_INT) &
                            + merge(0.0d0, mu_w_kp*blk%d1z(kp,VAR_W,b), &
-                                      pressureNeumannHigh(3) .and. k == hi(3)))*blk%d1z(k,VAR_P,b)
+                                      blk%physHigh(3,b) /= 0_C_INT .and. k == hi(3)))*blk%d1z(k,VAR_P,b)
 
                     div = (blk%q(ip,j,k,VAR_U,b)-blk%q(i,j,k,VAR_U,b))*blk%d1x(i,VAR_P,b) &
                         + (blk%q(i,jp,k,VAR_V,b)-blk%q(i,j,k,VAR_V,b))*blk%d1y(j,VAR_P,b) &

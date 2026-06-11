@@ -198,6 +198,11 @@ subroutine apply_config_value(section, key, value, dns, g, les, ps, bc, c, seen,
         case ("coeff_file")
             dns%ibm_coeff_file = clean_string(value)
         end select
+    case ("blocks")
+        select case (key_l)
+        case ("nb")
+            call read_c_int(value, dns%block_nb, line_no)
+        end select
     case ("les")
         call apply_les_value(key_l, value, les, line_no)
     case ("mpi")
@@ -259,6 +264,11 @@ subroutine validate_dns_values(dns, g)
     if (dns%pecletmax < 0.0d0) error stop "pecletmax must be non-negative"
     if (dns%dtmax <= 0.0d0) error stop "dtmax must be positive"
     if (dns%field_interval < 0) error stop "field interval must be non-negative"
+    if (dns%block_nb < 0_C_INT) error stop "block size nb must be non-negative"
+    if (dns%block_nb > 0_C_INT) then
+        if (dns%block_nb < 4_C_INT) error stop "block size nb must be at least 4"
+        if (mod(dns%block_nb, 2_C_INT) /= 0_C_INT) error stop "block size nb must be even (red-black)"
+    end if
     if (any(g%distribution < GRID_UNIFORM) .or. any(g%distribution > GRID_NATURAL)) then
         error stop "invalid grid distribution"
     end if

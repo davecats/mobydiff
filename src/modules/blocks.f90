@@ -34,23 +34,30 @@ module blocks
     public :: subdivide_node_line
 
     type :: block_set_type
-        ! All blocks of a set share the same cell count nb(1:3).
-        ! Phase 0: nb = rank-local box (one block); later phases: a cube.
+        ! All blocks of a set share the same cell count nb(1:3): the cubic
+        ! [blocks] nb when configured, otherwise the rank-local box (one
+        ! block per rank, the Phase-0 layout).
         integer(C_INT) :: nb(1:3) = 0_C_INT
+        ! Blocks per direction of this rank's tile lattice (Phase 1a: every
+        ! rank still owns a Cartesian box of blocks).
+        integer(C_INT) :: nbt(1:3) = 0_C_INT
         integer(C_INT) :: nBlocks = 0_C_INT
         integer(C_INT) :: nLevels = 1_C_INT
 
-        ! Per-block metadata (small, host-resident).
+        ! Per-block metadata (small, host + device).
         !   level:    refinement level; 0 = base grid, +1 per cell bisection
         !   origin:   zero-based cell origin of the block in the level-l
         !             global index space
         !   globalId: position in the global (Z-ordered) block table
-        ! Neighbour adjacency and per-face kinds (same/coarse/fine/physical/
-        ! closed) are introduced in Phase 1 together with the block-pair
-        ! halo exchange; see the strategy document.
+        !   physLow/physHigh: 1 where the block face lies on a non-periodic
+        !             global boundary (per direction); the per-block face
+        !             masks used by the momentum starts, the SOR sweep and
+        !             the boundary-condition point list
         integer(C_INT), allocatable :: level(:)        ! (nBlocks)
         integer(C_INT), allocatable :: origin(:,:)     ! (3,nBlocks)
         integer(C_INT), allocatable :: globalId(:)     ! (nBlocks)
+        integer(C_INT), allocatable :: physLow(:,:)    ! (3,nBlocks)
+        integer(C_INT), allocatable :: physHigh(:,:)   ! (3,nBlocks)
 
         ! Per-block staggered coordinates and finite-difference metrics,
         ! sliced from the (level-specific) global node lines. Shapes mirror
@@ -69,9 +76,9 @@ module blocks
 
 contains
 
-    ! Phase 0 constructor: one block spanning this rank's box of the global
-    ! grid, with coordinates and metrics sliced from the global node lines
-    ! by slice_grid_direction.
+    ! Tile this rank's box of the global grid with equal blocks ([blocks] nb,
+    ! default: the whole box as one block) and slice each block's coordinates
+    ! and metrics from the global node lines via slice_grid_direction.
     subroutine init_block_set(blk, dns, g, periodic, global_id)
         type(block_set_type), intent(inout) :: blk
         type(dns_type), intent(in) :: dns
@@ -79,25 +86,58 @@ contains
         logical(C_BOOL), intent(in) :: periodic(1:3)
         integer(C_INT), intent(in), optional :: global_id
 
-        integer :: nx, ny, nz, b
+        integer :: nx, ny, nz, b, bx, by, bz, d
 
         call destroy_block_set(blk)
 
-        nx = int(dns%localSize(1,2))
-        ny = int(dns%localSize(2,2))
-        nz = int(dns%localSize(3,2))
-
-        blk%nb = dns%localSize(1:3,2)
-        blk%nBlocks = 1_C_INT
+        if (dns%block_nb > 0_C_INT) then
+            blk%nb = dns%block_nb
+            do d = 1, 3
+                if (mod(dns%localSize(d,2), dns%block_nb) /= 0_C_INT) then
+                    print *, "block size nb =", dns%block_nb, "does not divide the rank box", &
+                        dns%localSize(1:3,2), "in direction", d
+                    error stop "[blocks] nb must divide the rank-local box in every direction"
+                end if
+            end do
+        else
+            blk%nb = dns%localSize(1:3,2)
+        end if
+        blk%nbt = dns%localSize(1:3,2)/blk%nb
+        blk%nBlocks = product(blk%nbt)
         blk%nLevels = 1_C_INT
+
+        nx = int(blk%nb(1))
+        ny = int(blk%nb(2))
+        nz = int(blk%nb(3))
 
         allocate(blk%level(blk%nBlocks))
         allocate(blk%origin(3,blk%nBlocks))
         allocate(blk%globalId(blk%nBlocks))
+        allocate(blk%physLow(3,blk%nBlocks))
+        allocate(blk%physHigh(3,blk%nBlocks))
         blk%level = 0_C_INT
-        blk%origin(:,1) = dns%localSize(1:3,0) - 1_C_INT
         blk%globalId = 0_C_INT
-        if (present(global_id)) blk%globalId(1) = global_id
+
+        ! Slot order: x fastest, then y, then z (the lattice index of a block
+        ! is recovered as slot = 1 + bx + nbt(1)*(by + nbt(2)*bz)).
+        b = 0
+        do bz = 0, int(blk%nbt(3)) - 1
+            do by = 0, int(blk%nbt(2)) - 1
+                do bx = 0, int(blk%nbt(1)) - 1
+                    b = b + 1
+                    blk%origin(1,b) = dns%localSize(1,0) - 1_C_INT + int(bx*nx, C_INT)
+                    blk%origin(2,b) = dns%localSize(2,0) - 1_C_INT + int(by*ny, C_INT)
+                    blk%origin(3,b) = dns%localSize(3,0) - 1_C_INT + int(bz*nz, C_INT)
+                    do d = 1, 3
+                        blk%physLow(d,b) = merge(1_C_INT, 0_C_INT, &
+                            .not. periodic(d) .and. blk%origin(d,b) == 0_C_INT)
+                        blk%physHigh(d,b) = merge(1_C_INT, 0_C_INT, &
+                            .not. periodic(d) .and. blk%origin(d,b) + blk%nb(d) == dns%globalSize(d))
+                    end do
+                    if (present(global_id)) blk%globalId(b) = global_id*blk%nBlocks + int(b - 1, C_INT)
+                end do
+            end do
+        end do
 
         allocate(blk%x(-1:nx+2,NVAR,blk%nBlocks), blk%d1x(0:nx+1,NVAR,blk%nBlocks))
         allocate(blk%y(-1:ny+2,NVAR,blk%nBlocks), blk%d1y(0:ny+1,NVAR,blk%nBlocks))
@@ -139,6 +179,8 @@ contains
         if (allocated(blk%level)) deallocate(blk%level)
         if (allocated(blk%origin)) deallocate(blk%origin)
         if (allocated(blk%globalId)) deallocate(blk%globalId)
+        if (allocated(blk%physLow)) deallocate(blk%physLow)
+        if (allocated(blk%physHigh)) deallocate(blk%physHigh)
         if (allocated(blk%x)) deallocate(blk%x)
         if (allocated(blk%y)) deallocate(blk%y)
         if (allocated(blk%z)) deallocate(blk%z)
@@ -159,6 +201,7 @@ contains
         if (allocated(blk%oldrhs)) deallocate(blk%oldrhs)
 
         blk%nb = 0_C_INT
+        blk%nbt = 0_C_INT
         blk%nBlocks = 0_C_INT
         blk%nLevels = 1_C_INT
     end subroutine destroy_block_set
@@ -171,6 +214,7 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target enter data map(to: blk)
         !$omp target enter data map(to: &
+        !$omp& blk%origin, blk%physLow, blk%physHigh, &
         !$omp& blk%x, blk%y, blk%z, blk%d1x, blk%d1y, blk%d1z, &
         !$omp& blk%lapXm, blk%lapX0, blk%lapXp, &
         !$omp& blk%lapYm, blk%lapY0, blk%lapYp, &
@@ -184,6 +228,7 @@ contains
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target exit data map(delete: &
+        !$omp& blk%origin, blk%physLow, blk%physHigh, &
         !$omp& blk%x, blk%y, blk%z, blk%d1x, blk%d1y, blk%d1z, &
         !$omp& blk%lapXm, blk%lapX0, blk%lapXp, &
         !$omp& blk%lapYm, blk%lapY0, blk%lapYp, &

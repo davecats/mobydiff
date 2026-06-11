@@ -317,40 +317,32 @@ static int write_decomposition(hid_t file, int rank, int nranks,
     return status < 0;
 }
 
-static int write_global_dataset3(hid_t file, const char *name,
-                                 int nx, int ny, int nz,
-                                 int global_nx, int global_ny, int global_nz,
-                                 int local_i_first, int local_j_first, int local_k_first,
-                                 const double *field)
+/*
+ * One hyperslab per block into the unchanged global dataset. Dataset
+ * creation is collective; the per-block transfers are independent because
+ * ranks own different block counts.
+ */
+static int write_global_dataset_blocks(hid_t file, const char *name,
+                                       int nbx, int nby, int nbz,
+                                       int n_blocks, const int *block_origin,
+                                       int global_nx, int global_ny, int global_nz,
+                                       const double *q, size_t block_stride)
 {
-    const size_t ni = (size_t)nx + 2;
-    const size_t nj = (size_t)ny + 2;
-    const size_t n = (size_t)nx*(size_t)ny*(size_t)nz;
+    const size_t ni = (size_t)nbx + 2;
+    const size_t nj = (size_t)nby + 2;
+    const size_t n = (size_t)nbx*(size_t)nby*(size_t)nbz;
     hsize_t global_dims[3] = {(hsize_t)global_nz, (hsize_t)global_ny, (hsize_t)global_nx};
-    hsize_t local_dims[3] = {(hsize_t)nz, (hsize_t)ny, (hsize_t)nx};
-    hsize_t start[3] = {
-        (hsize_t)local_k_first - 1,
-        (hsize_t)local_j_first - 1,
-        (hsize_t)local_i_first - 1
-    };
+    hsize_t local_dims[3] = {(hsize_t)nbz, (hsize_t)nby, (hsize_t)nbx};
     hid_t file_space = -1;
     hid_t mem_space = -1;
     hid_t dset = -1;
     hid_t xfer = -1;
     double *buffer = NULL;
-    herr_t status;
+    herr_t status = 0;
+    int ierr = 0;
 
     buffer = (double *)malloc(n*sizeof(double));
     if (buffer == NULL) return 1;
-
-    for (size_t k = 1; k <= (size_t)nz; ++k) {
-        for (size_t j = 1; j <= (size_t)ny; ++j) {
-            for (size_t i = 1; i <= (size_t)nx; ++i) {
-                buffer[linear_hdf5(k-1, j-1, i-1, (size_t)ny, (size_t)nx)] =
-                    field[linear_fortran(i, j, k, ni, nj)];
-            }
-        }
-    }
 
     file_space = H5Screate_simple(3, global_dims, NULL);
     if (file_space < 0) {
@@ -366,39 +358,52 @@ static int write_global_dataset3(hid_t file, const char *name,
         return 1;
     }
 
-    if (H5Sselect_hyperslab(file_space, H5S_SELECT_SET, start, NULL, local_dims, NULL) < 0) {
-        H5Dclose(dset);
-        H5Sclose(file_space);
-        free(buffer);
-        return 1;
-    }
-
     mem_space = H5Screate_simple(3, local_dims, NULL);
-    if (mem_space < 0) {
-        H5Dclose(dset);
-        H5Sclose(file_space);
-        free(buffer);
-        return 1;
-    }
-
     xfer = H5Pcreate(H5P_DATASET_XFER);
-    if (xfer < 0) {
-        H5Sclose(mem_space);
+    if (mem_space < 0 || xfer < 0) {
+        if (mem_space >= 0) H5Sclose(mem_space);
+        if (xfer >= 0) H5Pclose(xfer);
         H5Dclose(dset);
         H5Sclose(file_space);
         free(buffer);
         return 1;
     }
-    H5Pset_dxpl_mpio(xfer, H5FD_MPIO_COLLECTIVE);
+    H5Pset_dxpl_mpio(xfer, H5FD_MPIO_INDEPENDENT);
 
-    status = H5Dwrite(dset, H5T_NATIVE_DOUBLE, mem_space, file_space, xfer, buffer);
+    for (int b = 0; b < n_blocks; ++b) {
+        const double *field = q + (size_t)b*block_stride;
+        hsize_t start[3] = {
+            (hsize_t)block_origin[3*b + 2],
+            (hsize_t)block_origin[3*b + 1],
+            (hsize_t)block_origin[3*b + 0]
+        };
+
+        for (size_t k = 1; k <= (size_t)nbz; ++k) {
+            for (size_t j = 1; j <= (size_t)nby; ++j) {
+                for (size_t i = 1; i <= (size_t)nbx; ++i) {
+                    buffer[linear_hdf5(k-1, j-1, i-1, (size_t)nby, (size_t)nbx)] =
+                        field[linear_fortran(i, j, k, ni, nj)];
+                }
+            }
+        }
+
+        if (H5Sselect_hyperslab(file_space, H5S_SELECT_SET, start, NULL, local_dims, NULL) < 0) {
+            ierr = 1;
+            break;
+        }
+        status = H5Dwrite(dset, H5T_NATIVE_DOUBLE, mem_space, file_space, xfer, buffer);
+        if (status < 0) {
+            ierr = 1;
+            break;
+        }
+    }
 
     H5Pclose(xfer);
     H5Sclose(mem_space);
     H5Dclose(dset);
     H5Sclose(file_space);
     free(buffer);
-    return status < 0;
+    return ierr;
 }
 
 static int write_coord_dataset(hid_t file, const char *name, int n, int rank, const double *coord)
@@ -502,41 +507,32 @@ int fdm_h5_write_grid(const char *filename, int nx, int ny, int nz,
     return ierr != 0;
 }
 
-static int read_global_dataset3(hid_t file, const char *name,
-                                int nx, int ny, int nz,
-                                int global_nx, int global_ny, int global_nz,
-                                int local_i_first, int local_j_first, int local_k_first,
-                                double *field)
+static int read_global_dataset_blocks(hid_t file, const char *name,
+                                      int nbx, int nby, int nbz,
+                                      int n_blocks, const int *block_origin,
+                                      int global_nx, int global_ny, int global_nz,
+                                      double *q, size_t block_stride)
 {
-    const size_t ni = (size_t)nx + 2;
-    const size_t nj = (size_t)ny + 2;
-    const size_t n = (size_t)nx*(size_t)ny*(size_t)nz;
+    const size_t ni = (size_t)nbx + 2;
+    const size_t nj = (size_t)nby + 2;
+    const size_t n = (size_t)nbx*(size_t)nby*(size_t)nbz;
     hsize_t expected_dims[3] = {(hsize_t)global_nz, (hsize_t)global_ny, (hsize_t)global_nx};
     hsize_t file_dims[3] = {0, 0, 0};
-    hsize_t local_dims[3] = {(hsize_t)nz, (hsize_t)ny, (hsize_t)nx};
-    hsize_t start[3] = {
-        (hsize_t)local_k_first - 1,
-        (hsize_t)local_j_first - 1,
-        (hsize_t)local_i_first - 1
-    };
+    hsize_t local_dims[3] = {(hsize_t)nbz, (hsize_t)nby, (hsize_t)nbx};
     hid_t dset = -1;
     hid_t file_space = -1;
     hid_t mem_space = -1;
     hid_t xfer = -1;
     double *buffer = NULL;
-    herr_t status;
+    herr_t status = 0;
+    int ierr = 0;
 
     dset = H5Dopen2(file, name, H5P_DEFAULT);
     if (dset < 0) return 1;
 
     file_space = H5Dget_space(dset);
-    if (file_space < 0) {
-        H5Dclose(dset);
-        return 1;
-    }
-
-    if (H5Sget_simple_extent_ndims(file_space) != 3) {
-        H5Sclose(file_space);
+    if (file_space < 0 || H5Sget_simple_extent_ndims(file_space) != 3) {
+        if (file_space >= 0) H5Sclose(file_space);
         H5Dclose(dset);
         return 1;
     }
@@ -551,44 +547,41 @@ static int read_global_dataset3(hid_t file, const char *name,
     }
 
     buffer = (double *)malloc(n*sizeof(double));
-    if (buffer == NULL) {
-        H5Sclose(file_space);
-        H5Dclose(dset);
-        return 1;
-    }
-
-    if (H5Sselect_hyperslab(file_space, H5S_SELECT_SET, start, NULL, local_dims, NULL) < 0) {
-        free(buffer);
-        H5Sclose(file_space);
-        H5Dclose(dset);
-        return 1;
-    }
-
     mem_space = H5Screate_simple(3, local_dims, NULL);
-    if (mem_space < 0) {
-        free(buffer);
-        H5Sclose(file_space);
-        H5Dclose(dset);
-        return 1;
-    }
-
     xfer = H5Pcreate(H5P_DATASET_XFER);
-    if (xfer < 0) {
-        H5Sclose(mem_space);
-        free(buffer);
+    if (buffer == NULL || mem_space < 0 || xfer < 0) {
+        if (buffer != NULL) free(buffer);
+        if (mem_space >= 0) H5Sclose(mem_space);
+        if (xfer >= 0) H5Pclose(xfer);
         H5Sclose(file_space);
         H5Dclose(dset);
         return 1;
     }
-    H5Pset_dxpl_mpio(xfer, H5FD_MPIO_COLLECTIVE);
+    H5Pset_dxpl_mpio(xfer, H5FD_MPIO_INDEPENDENT);
 
-    status = H5Dread(dset, H5T_NATIVE_DOUBLE, mem_space, file_space, xfer, buffer);
-    if (status >= 0) {
-        for (size_t k = 1; k <= (size_t)nz; ++k) {
-            for (size_t j = 1; j <= (size_t)ny; ++j) {
-                for (size_t i = 1; i <= (size_t)nx; ++i) {
+    for (int b = 0; b < n_blocks; ++b) {
+        double *field = q + (size_t)b*block_stride;
+        hsize_t start[3] = {
+            (hsize_t)block_origin[3*b + 2],
+            (hsize_t)block_origin[3*b + 1],
+            (hsize_t)block_origin[3*b + 0]
+        };
+
+        if (H5Sselect_hyperslab(file_space, H5S_SELECT_SET, start, NULL, local_dims, NULL) < 0) {
+            ierr = 1;
+            break;
+        }
+        status = H5Dread(dset, H5T_NATIVE_DOUBLE, mem_space, file_space, xfer, buffer);
+        if (status < 0) {
+            ierr = 1;
+            break;
+        }
+
+        for (size_t k = 1; k <= (size_t)nbz; ++k) {
+            for (size_t j = 1; j <= (size_t)nby; ++j) {
+                for (size_t i = 1; i <= (size_t)nbx; ++i) {
                     field[linear_fortran(i, j, k, ni, nj)] =
-                        buffer[linear_hdf5(k-1, j-1, i-1, (size_t)ny, (size_t)nx)];
+                        buffer[linear_hdf5(k-1, j-1, i-1, (size_t)nby, (size_t)nbx)];
                 }
             }
         }
@@ -599,10 +592,11 @@ static int read_global_dataset3(hid_t file, const char *name,
     free(buffer);
     H5Sclose(file_space);
     H5Dclose(dset);
-    return status < 0;
+    return ierr;
 }
 
-int fdm_h5_write_field(const char *filename, int nx, int ny, int nz,
+int fdm_h5_write_field(const char *filename, int nbx, int nby, int nbz,
+                       int n_blocks, const int *block_origin,
                        int rank, int nranks,
                        int global_nx, int global_ny, int global_nz,
                        int local_i_first, int local_i_last,
@@ -618,13 +612,16 @@ int fdm_h5_write_field(const char *filename, int nx, int ny, int nz,
                        const int *grid_distribution, const double *grid_stretch,
                        const double *grid_natural_dyw_plus,
                        const double *x_node, const double *y_node, const double *z_node,
-                       const double *un, const double *vn,
-                       const double *wn, const double *pn)
+                       const double *q)
 {
+    /* q is the solver's (0:nb+1,0:nb+1,0:nb+1, 4 vars, n_blocks) array. */
+    const size_t var_stride = (size_t)(nbx + 2)*(size_t)(nby + 2)*(size_t)(nbz + 2);
+    const size_t block_stride = var_stride*4;
+    static const char *var_name[4] = {"un", "vn", "wn", "pn"};
     hid_t file;
     int ierr = 0;
 
-    if (nx < 1 || ny < 1 || nz < 1) return 1;
+    if (nbx < 1 || nby < 1 || nbz < 1 || n_blocks < 1) return 1;
 
     file = create_parallel_file(filename);
     if (file < 0) return 1;
@@ -665,18 +662,12 @@ int fdm_h5_write_field(const char *filename, int nx, int ny, int nz,
                                 local_j_first, local_j_last,
                                 local_k_first, local_k_last);
 
-    ierr |= write_global_dataset3(file, "un", nx, ny, nz,
-                                  global_nx, global_ny, global_nz,
-                                  local_i_first, local_j_first, local_k_first, un);
-    ierr |= write_global_dataset3(file, "vn", nx, ny, nz,
-                                  global_nx, global_ny, global_nz,
-                                  local_i_first, local_j_first, local_k_first, vn);
-    ierr |= write_global_dataset3(file, "wn", nx, ny, nz,
-                                  global_nx, global_ny, global_nz,
-                                  local_i_first, local_j_first, local_k_first, wn);
-    ierr |= write_global_dataset3(file, "pn", nx, ny, nz,
-                                  global_nx, global_ny, global_nz,
-                                  local_i_first, local_j_first, local_k_first, pn);
+    for (int v = 0; v < 4; ++v) {
+        ierr |= write_global_dataset_blocks(file, var_name[v], nbx, nby, nbz,
+                                            n_blocks, block_origin,
+                                            global_nx, global_ny, global_nz,
+                                            q + (size_t)v*var_stride, block_stride);
+    }
     ierr |= write_coord_dataset(file, "x", global_nx + 1, rank, x_node);
     ierr |= write_coord_dataset(file, "y", global_ny + 1, rank, y_node);
     ierr |= write_coord_dataset(file, "z", global_nz + 1, rank, z_node);
@@ -743,46 +734,46 @@ int fdm_h5_read_metadata(const char *filename,
     return ierr != 0;
 }
 
-int fdm_h5_read_field(const char *filename, int nx, int ny, int nz,
+int fdm_h5_read_field(const char *filename, int nbx, int nby, int nbz,
+                      int n_blocks, const int *block_origin,
                       int global_nx, int global_ny, int global_nz,
-                      int local_i_first, int local_j_first, int local_k_first,
-                      double *un, double *vn, double *wn, double *pn)
+                      double *q)
 {
+    const size_t var_stride = (size_t)(nbx + 2)*(size_t)(nby + 2)*(size_t)(nbz + 2);
+    const size_t block_stride = var_stride*4;
+    static const char *var_name[4] = {"un", "vn", "wn", "pn"};
     hid_t file;
     int ierr = 0;
 
-    if (nx < 1 || ny < 1 || nz < 1) return 1;
+    if (nbx < 1 || nby < 1 || nbz < 1 || n_blocks < 1) return 1;
 
     file = open_parallel_file(filename);
     if (file < 0) return 1;
 
-    ierr |= read_global_dataset3(file, "un", nx, ny, nz,
-                                 global_nx, global_ny, global_nz,
-                                 local_i_first, local_j_first, local_k_first, un);
-    ierr |= read_global_dataset3(file, "vn", nx, ny, nz,
-                                 global_nx, global_ny, global_nz,
-                                 local_i_first, local_j_first, local_k_first, vn);
-    ierr |= read_global_dataset3(file, "wn", nx, ny, nz,
-                                 global_nx, global_ny, global_nz,
-                                 local_i_first, local_j_first, local_k_first, wn);
-    ierr |= read_global_dataset3(file, "pn", nx, ny, nz,
-                                 global_nx, global_ny, global_nz,
-                                 local_i_first, local_j_first, local_k_first, pn);
+    for (int v = 0; v < 4; ++v) {
+        ierr |= read_global_dataset_blocks(file, var_name[v], nbx, nby, nbz,
+                                           n_blocks, block_origin,
+                                           global_nx, global_ny, global_nz,
+                                           q + (size_t)v*var_stride, block_stride);
+    }
 
     ierr |= H5Fclose(file) < 0;
     return ierr != 0;
 }
 
-int fdm_h5_read_ibm_coeff(const char *filename, int nx, int ny, int nz,
+int fdm_h5_read_ibm_coeff(const char *filename, int nbx, int nby, int nbz,
+                          int n_blocks, const int *block_origin,
                           int global_nx, int global_ny, int global_nz,
-                          int local_i_first, int local_j_first, int local_k_first,
                           double lx, double ly, double lz, double re,
                           double *coef)
 {
-    const size_t ni = (size_t)nx + 2;
-    const size_t nj = (size_t)ny + 2;
-    const size_t nk = (size_t)nz + 2;
+    /* The coefficient file carries the global ghost layer, so a block's
+     * window (halos included) starts at its zero-based cell origin. */
+    const size_t ni = (size_t)nbx + 2;
+    const size_t nj = (size_t)nby + 2;
+    const size_t nk = (size_t)nbz + 2;
     const size_t n = ni*nj*nk*3;
+    const size_t block_stride = n;
     hsize_t expected_dims[4] = {
         (hsize_t)global_nx + 2,
         (hsize_t)global_ny + 2,
@@ -791,16 +782,10 @@ int fdm_h5_read_ibm_coeff(const char *filename, int nx, int ny, int nz,
     };
     hsize_t file_dims[4] = {0, 0, 0, 0};
     hsize_t local_dims[4] = {
-        (hsize_t)nx + 2,
-        (hsize_t)ny + 2,
-        (hsize_t)nz + 2,
+        (hsize_t)nbx + 2,
+        (hsize_t)nby + 2,
+        (hsize_t)nbz + 2,
         3
-    };
-    hsize_t start[4] = {
-        (hsize_t)local_i_first - 1,
-        (hsize_t)local_j_first - 1,
-        (hsize_t)local_k_first - 1,
-        0
     };
     hid_t file = -1;
     hid_t dset = -1;
@@ -810,9 +795,9 @@ int fdm_h5_read_ibm_coeff(const char *filename, int nx, int ny, int nz,
     int file_nx = 0, file_ny = 0, file_nz = 0;
     double file_lx = 0.0, file_ly = 0.0, file_lz = 0.0, file_re = 0.0;
     int ierr = 0;
-    herr_t status = -1;
+    herr_t status = 0;
 
-    if (nx < 1 || ny < 1 || nz < 1) return 1;
+    if (nbx < 1 || nby < 1 || nbz < 1 || n_blocks < 1) return 1;
 
     file = H5Fopen(filename, H5F_ACC_RDONLY, H5P_DEFAULT);
     if (file < 0) return 1;
@@ -855,14 +840,6 @@ int fdm_h5_read_ibm_coeff(const char *filename, int nx, int ny, int nz,
         return 1;
     }
 
-    if (H5Sselect_hyperslab(file_space, H5S_SELECT_SET, start, NULL, local_dims, NULL) < 0) {
-        free(buffer);
-        H5Sclose(file_space);
-        H5Dclose(dset);
-        H5Fclose(file);
-        return 1;
-    }
-
     mem_space = H5Screate_simple(4, local_dims, NULL);
     if (mem_space < 0) {
         free(buffer);
@@ -872,14 +849,30 @@ int fdm_h5_read_ibm_coeff(const char *filename, int nx, int ny, int nz,
         return 1;
     }
 
-    status = H5Dread(dset, H5T_NATIVE_DOUBLE, mem_space, file_space, H5P_DEFAULT, buffer);
-    if (status >= 0 && ierr == 0) {
+    for (int b = 0; b < n_blocks && ierr == 0; ++b) {
+        double *block_coef = coef + (size_t)b*block_stride;
+        hsize_t start[4] = {
+            (hsize_t)block_origin[3*b + 0],
+            (hsize_t)block_origin[3*b + 1],
+            (hsize_t)block_origin[3*b + 2],
+            0
+        };
+
+        if (H5Sselect_hyperslab(file_space, H5S_SELECT_SET, start, NULL, local_dims, NULL) < 0) {
+            ierr = 1;
+            break;
+        }
+        status = H5Dread(dset, H5T_NATIVE_DOUBLE, mem_space, file_space, H5P_DEFAULT, buffer);
+        if (status < 0) {
+            ierr = 1;
+            break;
+        }
         for (size_t v = 0; v < 3; ++v) {
             for (size_t k = 0; k < nk; ++k) {
                 for (size_t j = 0; j < nj; ++j) {
                     for (size_t i = 0; i < ni; ++i) {
                         size_t h5_idx = (((i*nj) + j)*nk + k)*3 + v;
-                        coef[linear_fortran4(i, j, k, v, ni, nj, nk)] = buffer[h5_idx];
+                        block_coef[linear_fortran4(i, j, k, v, ni, nj, nk)] = buffer[h5_idx];
                     }
                 }
             }

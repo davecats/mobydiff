@@ -7,18 +7,19 @@ module io
     implicit none
 
     interface
-        function fdm_h5_write_field(file_name, nx, ny, nz, rank, nranks, &
-                global_nx, global_ny, global_nz, &
+        function fdm_h5_write_field(file_name, nbx, nby, nbz, n_blocks, block_origin, &
+                rank, nranks, global_nx, global_ny, global_nz, &
                 local_i_first, local_i_last, local_j_first, local_j_last, &
                 local_k_first, local_k_last, step, nsteps, lx, ly, lz, &
                 re, dt, t_final, t_current, cfl, cflmax, pecletmax, dtmax, &
                 forcing, pressure_niter, pressure_sor, &
                 ibm_enabled, bc_count, periodic, bc_type, bc_value, grid_distribution, grid_stretch, &
-                grid_natural_dyw_plus, x_node, y_node, z_node, un, vn, wn, pn) &
+                grid_natural_dyw_plus, x_node, y_node, z_node, q) &
                 bind(C, name="fdm_h5_write_field") result(ierr)
             import :: C_CHAR, C_INT, C_DOUBLE
             character(kind=C_CHAR), intent(in) :: file_name(*)
-            integer(C_INT), value :: nx, ny, nz, rank, nranks
+            integer(C_INT), value :: nbx, nby, nbz, n_blocks, rank, nranks
+            integer(C_INT), intent(in) :: block_origin(*)
             integer(C_INT), value :: global_nx, global_ny, global_nz
             integer(C_INT), value :: local_i_first, local_i_last
             integer(C_INT), value :: local_j_first, local_j_last
@@ -35,7 +36,7 @@ module io
             integer(C_INT), intent(in) :: periodic(*), bc_type(*), grid_distribution(*)
             real(C_DOUBLE), intent(in) :: bc_value(*), grid_stretch(*), grid_natural_dyw_plus(*)
             real(C_DOUBLE), intent(in) :: x_node(*), y_node(*), z_node(*)
-            real(C_DOUBLE), intent(in) :: un(*), vn(*), wn(*), pn(*)
+            real(C_DOUBLE), intent(in) :: q(*)
             integer(C_INT) :: ierr
         end function fdm_h5_write_field
 
@@ -79,17 +80,15 @@ module io
             integer(C_INT) :: ierr
         end function fdm_h5_read_metadata
 
-        function fdm_h5_read_field(file_name, nx, ny, nz, &
-                global_nx, global_ny, global_nz, &
-                local_i_first, local_j_first, local_k_first, &
-                un, vn, wn, pn) &
+        function fdm_h5_read_field(file_name, nbx, nby, nbz, n_blocks, block_origin, &
+                global_nx, global_ny, global_nz, q) &
                 bind(C, name="fdm_h5_read_field") result(ierr)
             import :: C_CHAR, C_INT, C_DOUBLE
             character(kind=C_CHAR), intent(in) :: file_name(*)
-            integer(C_INT), value :: nx, ny, nz
+            integer(C_INT), value :: nbx, nby, nbz, n_blocks
+            integer(C_INT), intent(in) :: block_origin(*)
             integer(C_INT), value :: global_nx, global_ny, global_nz
-            integer(C_INT), value :: local_i_first, local_j_first, local_k_first
-            real(C_DOUBLE), intent(out) :: un(*), vn(*), wn(*), pn(*)
+            real(C_DOUBLE), intent(out) :: q(*)
             integer(C_INT) :: ierr
         end function fdm_h5_read_field
     end interface
@@ -122,8 +121,7 @@ end subroutine maybe_write_field
 
 subroutine write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor)
     ! Parallel HDF5 call: all MPI ranks must enter this routine together.
-    ! Datasets keep the rank-box layout, served from block 1 (Phase 0); the
-    ! block-table layout arrives with many blocks per rank.
+    ! Global datasets, one hyperslab per block.
     type(block_set_type), intent(inout) :: blk
     type(dns_type), intent(in) :: dns
     type(grid_type), intent(in) :: g
@@ -136,13 +134,9 @@ subroutine write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor)
     character(len=256) :: h5_file_name, xdmf_file_name
     character(kind=C_CHAR,len=:), allocatable :: c_file_name
     integer(C_INT) :: ierr
-    integer :: nx, ny, nz
     integer(C_INT) :: periodic(1:3)
     integer(C_INT) :: ibm_enabled
 
-    nx = int(dns%localSize(1,2))
-    ny = int(dns%localSize(2,2))
-    nz = int(dns%localSize(3,2))
     periodic = merge(1_C_INT, 0_C_INT, bc%isPeriodic)
     ibm_enabled = merge(1_C_INT, 0_C_INT, dns%ibm_enabled)
 
@@ -157,7 +151,8 @@ subroutine write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor)
 #endif
 
     c_file_name = to_c_string(h5_file_name)
-    ierr = fdm_h5_write_field(c_file_name, int(nx, C_INT), int(ny, C_INT), int(nz, C_INT), &
+    ierr = fdm_h5_write_field(c_file_name, blk%nb(1), blk%nb(2), blk%nb(3), &
+        blk%nBlocks, blk%origin, &
         int(c%world_rank, C_INT), int(c%world_size, C_INT), &
         dns%globalSize(1), dns%globalSize(2), dns%globalSize(3), &
         dns%localSize(1,0), dns%localSize(1,1), dns%localSize(2,0), dns%localSize(2,1), &
@@ -171,10 +166,7 @@ subroutine write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor)
         bc%faceBcType(VAR_U:VAR_P,1:NFACES), bc%faceBcDefaultValue(VAR_U:VAR_P,1:NFACES), &
         g%distribution(1:3), g%stretch(1:3), g%natural_dyw_plus(1:3), &
         g%xNode(0:dns%globalSize(1)), g%yNode(0:dns%globalSize(2)), g%zNode(0:dns%globalSize(3)), &
-        blk%q(0:nx+1,0:ny+1,0:nz+1,VAR_U,1), &
-        blk%q(0:nx+1,0:ny+1,0:nz+1,VAR_V,1), &
-        blk%q(0:nx+1,0:ny+1,0:nz+1,VAR_W,1), &
-        blk%q(0:nx+1,0:ny+1,0:nz+1,VAR_P,1))
+        blk%q)
     if (ierr /= 0_C_INT) then
         if (c%has_terminal) print *, "error: could not write HDF5 field file: ", trim(h5_file_name)
         error stop
@@ -290,20 +282,12 @@ subroutine read_field(blk, dns, file_name, c)
 
     character(kind=C_CHAR,len=:), allocatable :: c_file_name
     integer(C_INT) :: ierr
-    integer :: nx, ny, nz
-
-    nx = int(dns%localSize(1,2))
-    ny = int(dns%localSize(2,2))
-    nz = int(dns%localSize(3,2))
 
     c_file_name = to_c_string(file_name)
-    ierr = fdm_h5_read_field(c_file_name, int(nx, C_INT), int(ny, C_INT), int(nz, C_INT), &
+    ierr = fdm_h5_read_field(c_file_name, blk%nb(1), blk%nb(2), blk%nb(3), &
+        blk%nBlocks, blk%origin, &
         dns%globalSize(1), dns%globalSize(2), dns%globalSize(3), &
-        dns%localSize(1,0), dns%localSize(2,0), dns%localSize(3,0), &
-        blk%q(0:nx+1,0:ny+1,0:nz+1,VAR_U,1), &
-        blk%q(0:nx+1,0:ny+1,0:nz+1,VAR_V,1), &
-        blk%q(0:nx+1,0:ny+1,0:nz+1,VAR_W,1), &
-        blk%q(0:nx+1,0:ny+1,0:nz+1,VAR_P,1))
+        blk%q)
     if (ierr /= 0_C_INT) then
         if (c%has_terminal) print *, "error: could not read HDF5 field file: ", trim(file_name)
         error stop
