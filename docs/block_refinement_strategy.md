@@ -198,20 +198,37 @@ solver is already in at rank boundaries.
 
 ## 7. Closed faces: removal inside the immersed boundary
 
-A `FACE_CLOSED` face (neighbour removed) is implemented as a zero-flux face,
-and the existing formulas absorb it without new branches:
+A `FACE_CLOSED` face (neighbour removed) is an exact zero-flux face. As
+implemented (Phase 2), the mechanism is the per-block face-mask machinery
+already used for physical walls, NOT the `mu = 0` device this section
+originally proposed (`mu` keeps its penalized value; making it exactly zero
+would have required special-casing `update_ibm_mu`):
 
-- velocity halo on that face = 0, and `ibm%mu` at the face location = 0;
-- the pressure sweep then automatically drops the face from `denom` (the
-  `mu_*` factors already multiply every term) and never corrects its flux;
-- the momentum predictor reads a zero velocity in a `mu->0` region it is about
-  to penalize anyway — consistent with the staircase wall of the BCM paper,
-  but here the *real* wall is still the (second-order) penalization IBM in the
-  surviving wall blocks; the closed face sits strictly inside the solid, at
-  least one full block away from any fluid cell, so it carries no physics.
+- the halo layer and the pinned interface velocity are zeroed once at init
+  and never written again: momentum skips the pinned face (the same
+  per-block start masks as walls), the SOR sweep window starts inside, and
+  both the `denom` merge() and — new in Phase 2 — the face-correction
+  merge() carry the same no-flux condition (on physical walls the masked
+  correction was a dead value that apply_bc overwrote, so masking it
+  changes nothing there);
+- no exchange entries point at removed blocks, and the tangential halo
+  extension generalizes from "physical wall" to "combined edge/corner
+  neighbour absent", which is identical when nothing is removed;
+- apply_bc serves `FACE_PHYS` faces only.
+
+The closed face sits at least one cell inside the solid (the dilation
+margin; a full block once the Phase-3 finest-level wall buffer exists), so
+it carries no physics. Measured on the wavy-wall and sphere cases: fluid
+cells agree EXACTLY with the no-removal run; velocities everywhere differ
+at most by the `SOLID*mu` penalization residual (~1e-26); the only O(1)
+differences are the decoupled penalized pressure inside surviving solid
+cells, which nothing reads back.
 
 Safety criterion recap: removable ⇔ block dilated by one cell is solid at all
-four variable locations. Everything else (partially solid blocks) stays and is
+four variable locations (cell centres and the three staggered grids). The
+analytic IBM classifies at solver init; the file-based IBM reads the
+`block_active` table written by `mobygeom.py block-active` into the
+coefficient file. Everything else (partially solid blocks) stays and is
 handled by the IBM exactly as now.
 
 Payoff: for a typical immersed body the interior of the geometry plus the

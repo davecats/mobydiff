@@ -1428,6 +1428,73 @@ def coeff_from_stl(args: argparse.Namespace) -> np.ndarray:
     return None if use_chunked else coef
 
 
+def window_all_solid(solid_ext: np.ndarray, nb: int, gnbt: tuple[int, int, int]) -> np.ndarray:
+    """Per-lattice-block test: every point of the one-halo dilated window solid.
+
+    solid_ext covers extended indices -1..n+2 (cell index + 1). The dilated
+    window of the block at lattice (bx,by,bz) spans cells [o, o+nb+1] with
+    o = b*nb, i.e. extended slice [o+1, o+nb+3). Windows of neighbouring
+    blocks overlap, so the reduction uses a 3D integral image.
+    """
+    cnt = np.zeros(tuple(d + 1 for d in solid_ext.shape), dtype=np.int64)
+    cnt[1:, 1:, 1:] = solid_ext.astype(np.int64)
+    cnt = cnt.cumsum(axis=0).cumsum(axis=1).cumsum(axis=2)
+
+    w = nb + 2
+    lo = [np.arange(g)*nb + 1 for g in gnbt]
+    hi = [l + w for l in lo]
+    ix0, iy0, iz0 = np.meshgrid(lo[0], lo[1], lo[2], indexing="ij")
+    ix1, iy1, iz1 = np.meshgrid(hi[0], hi[1], hi[2], indexing="ij")
+    total = (cnt[ix1, iy1, iz1] - cnt[ix0, iy1, iz1] - cnt[ix1, iy0, iz1] - cnt[ix1, iy1, iz0]
+             + cnt[ix0, iy0, iz1] + cnt[ix0, iy1, iz0] + cnt[ix1, iy0, iz0] - cnt[ix0, iy0, iz0])
+    return total == w**3
+
+
+def block_active_from_stl(args: argparse.Namespace) -> None:
+    """Write the per-block keep flags used by the solver's solid-block removal.
+
+    A block is removable iff the block dilated by one halo cell is solid at
+    cell centres and all three staggered locations. The flags go into the
+    coefficient file as the 1D dataset "block_active" (x-fastest lattice
+    raster order, 1 = keep) plus a block_nb attribute.
+    """
+    finalize_grid_args(args)
+    nb = int(args.block_nb)
+    if nb < 4 or nb % 2:
+        raise SystemExit("--block-nb must be even and >= 4")
+    for n, name in ((args.nx, "nx"), (args.ny, "ny"), (args.nz, "nz")):
+        if n % nb:
+            raise SystemExit(f"--block-nb {nb} does not divide {name} = {n}")
+    gnbt = (args.nx // nb, args.ny // nb, args.nz // nb)
+
+    geometry_values = args.geometry if isinstance(args.geometry, list) else [args.geometry]
+    geometries = [Path(value).resolve() for value in geometry_values]
+    output = Path(args.output).resolve()
+    mesh, vertices, faces = load_stl_meshes(geometries, repair=not args.no_repair)
+    mesh, vertices, faces = apply_stl_transform(mesh, args)
+    prepare_fluid_points(args)
+    for name in ("_fluid_ray_checks", "_fluid_ray_ambiguous", "_fluid_ray_disagreements", "_fluid_ray_overrides"):
+        setattr(args, name, 0)
+    args._ray_intersector = None
+
+    removable = np.ones(gnbt, dtype=bool)
+    for var in (VAR_U, VAR_V, VAR_W, 0):  # 0 = cell centres (never face-staggered)
+        inside_ext, _, _, _ = classify_stl_extended_grid(mesh, vertices, faces, var, args)
+        solid_ext = ~inside_ext if getattr(args, "inside_is_fluid", False) else inside_ext
+        removable &= window_all_solid(solid_ext, nb, gnbt)
+
+    active = (~removable).astype(np.int32)
+    with h5py.File(output, "r+") as h5:
+        if "block_active" in h5:
+            del h5["block_active"]
+        # x-fastest raster order, matching the solver's lattice indexing
+        h5.create_dataset("block_active", data=active.transpose(2, 1, 0).ravel())
+        h5.attrs["block_nb"] = np.int32(nb)
+    print(f"block lattice: {gnbt[0]} x {gnbt[1]} x {gnbt[2]} (nb = {nb})")
+    print(f"removable blocks: {int(removable.sum())} of {int(removable.size)}")
+    print(f"block_active written to: {output}")
+
+
 def make_sphere_stl(args: argparse.Namespace) -> None:
     center = np.asarray(args.center, dtype=np.float64)
     mesh = make_stl_sphere_mesh(center, args.radius, args.subdivisions)
@@ -2378,6 +2445,16 @@ def main(argv: list[str] | None = None) -> int:
     add_common_grid_args(p)
     add_stl_args(p)
     p.set_defaults(func=coeff_from_stl)
+
+    p = sub.add_parser("block-active", help="write per-block solid-removal flags into a coefficient file")
+    p.add_argument("--geometry", required=True, nargs="+")
+    p.add_argument("--output", required=True,
+                   help="existing coefficient HDF5 to amend with block_active")
+    p.add_argument("--block-nb", type=int, required=True,
+                   help="cubic block edge in cells ([blocks] nb in the solver input)")
+    add_common_grid_args(p)
+    add_stl_args(p)
+    p.set_defaults(func=block_active_from_stl)
 
     p = sub.add_parser("check-stl-geometry", help="run generic STL mesh/probe classification checks")
     p.add_argument("--geometry", required=True, nargs="+")
