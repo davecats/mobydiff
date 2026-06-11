@@ -31,7 +31,6 @@ module blocks
     public :: block_set_type
     public :: init_block_set, destroy_block_set
     public :: enter_block_data, exit_block_data
-    public :: block_set_matches_grid
     public :: subdivide_node_line
 
     type :: block_set_type
@@ -71,9 +70,8 @@ module blocks
 contains
 
     ! Phase 0 constructor: one block spanning this rank's box of the global
-    ! grid. Metrics are sliced with the same code path used by init_grid
-    ! (slice_grid_direction), so the block content is bit-identical to
-    ! grid_type; block_set_matches_grid verifies exactly that.
+    ! grid, with coordinates and metrics sliced from the global node lines
+    ! by slice_grid_direction.
     subroutine init_block_set(blk, dns, g, periodic, global_id)
         type(block_set_type), intent(inout) :: blk
         type(dns_type), intent(in) :: dns
@@ -194,33 +192,6 @@ contains
         !$omp target exit data map(delete: blk)
 #endif
     end subroutine exit_block_data
-
-    ! Phase 0 verification hook: the single block must reproduce grid_type
-    ! exactly. Same code path on the same inputs implies bitwise equality,
-    ! so any difference at all indicates a bug.
-    logical function block_set_matches_grid(blk, g) result(ok)
-        type(block_set_type), intent(in) :: blk
-        type(grid_type), intent(in) :: g
-
-        ok = blk%nBlocks == 1_C_INT
-        if (.not. ok) return
-
-        ok = all(blk%x(:,:,1) == g%x) .and. &
-             all(blk%y(:,:,1) == g%y) .and. &
-             all(blk%z(:,:,1) == g%z) .and. &
-             all(blk%d1x(:,:,1) == g%d1x) .and. &
-             all(blk%d1y(:,:,1) == g%d1y) .and. &
-             all(blk%d1z(:,:,1) == g%d1z) .and. &
-             all(blk%lapXm(:,:,1) == g%lapXm) .and. &
-             all(blk%lapX0(:,:,1) == g%lapX0) .and. &
-             all(blk%lapXp(:,:,1) == g%lapXp) .and. &
-             all(blk%lapYm(:,:,1) == g%lapYm) .and. &
-             all(blk%lapY0(:,:,1) == g%lapY0) .and. &
-             all(blk%lapYp(:,:,1) == g%lapYp) .and. &
-             all(blk%lapZm(:,:,1) == g%lapZm) .and. &
-             all(blk%lapZ0(:,:,1) == g%lapZ0) .and. &
-             all(blk%lapZp(:,:,1) == g%lapZp)
-    end function block_set_matches_grid
 
     ! Midpoint subdivision of a node line: each coarse cell is split into two
     ! halves, so a level-l cell is exactly the union of its children. This is

@@ -41,19 +41,15 @@ module init
         character(len=256) :: restart_file = ""
     end type dns_type
 
-    ! Geometry and finite-difference coefficients for the staggered grid.
+    ! Grid generation parameters and the global node lines. The staggered
+    ! coordinates and finite-difference metrics live per block in
+    ! block_set_type, sliced from these lines (slice_grid_direction).
     type :: grid_type
         integer(C_INT) :: distribution(1:3) = GRID_UNIFORM
         real(C_DOUBLE) :: stretch(1:3) = 0.0d0
         real(C_DOUBLE) :: natural_dyw_plus(1:3) = 0.05d0
         logical(C_BOOL) :: natural_one_sided(1:3) = .false.
-        ! Global node coordinates; x/y/z below are local, variable-dependent coordinates.
         real(C_DOUBLE), allocatable :: xNode(:), yNode(:), zNode(:)
-        real(C_DOUBLE), allocatable :: x(:,:), y(:,:), z(:,:)
-        real(C_DOUBLE), allocatable :: d1x(:,:), d1y(:,:), d1z(:,:)
-        real(C_DOUBLE), allocatable :: lapXm(:,:), lapX0(:,:), lapXp(:,:)
-        real(C_DOUBLE), allocatable :: lapYm(:,:), lapY0(:,:), lapYp(:,:)
-        real(C_DOUBLE), allocatable :: lapZm(:,:), lapZ0(:,:), lapZp(:,:)
     end type grid_type
 
 contains
@@ -85,38 +81,18 @@ subroutine init_grid(g, dns, periodic)
     type(dns_type), intent(inout)  :: dns
     logical(C_BOOL), intent(in)    :: periodic(1:3)
 
-    integer :: nx, ny, nz
-
-    nx = int(dns%localSize(1,2))
-    ny = int(dns%localSize(2,2))
-    nz = int(dns%localSize(3,2))
-
     call destroy_grid(g)
 
-    ! Store full node lines for output/restart metadata, and local arrays with halos.
     allocate(g%xNode(0:int(dns%globalSize(1))))
     allocate(g%yNode(0:int(dns%globalSize(2))))
     allocate(g%zNode(0:int(dns%globalSize(3))))
-    allocate(g%x(-1:nx+2,NVAR), g%d1x(0:nx+1,NVAR))
-    allocate(g%y(-1:ny+2,NVAR), g%d1y(0:ny+1,NVAR))
-    allocate(g%z(-1:nz+2,NVAR), g%d1z(0:nz+1,NVAR))
-    allocate(g%lapXm(0:nx+1,NVAR), g%lapX0(0:nx+1,NVAR), g%lapXp(0:nx+1,NVAR))
-    allocate(g%lapYm(0:ny+1,NVAR), g%lapY0(0:ny+1,NVAR), g%lapYp(0:ny+1,NVAR))
-    allocate(g%lapZm(0:nz+1,NVAR), g%lapZ0(0:nz+1,NVAR), g%lapZp(0:nz+1,NVAR))
 
-    call init_grid_direction(g%xNode, g%x, g%d1x, g%lapXm, g%lapX0, g%lapXp, &
-        dns%globalSize(1), dns%localSize(1,0), nx, dns%leng(1), &
-        g%distribution(1), g%stretch(1), g%natural_one_sided(1), &
-        g%natural_dyw_plus(1), periodic(1), 1)
-    call init_grid_direction(g%yNode, g%y, g%d1y, g%lapYm, g%lapY0, g%lapYp, &
-        dns%globalSize(2), dns%localSize(2,0), ny, dns%leng(2), &
-        g%distribution(2), g%stretch(2), g%natural_one_sided(2), &
-        g%natural_dyw_plus(2), periodic(2), 2)
-    call init_grid_direction(g%zNode, g%z, g%d1z, g%lapZm, g%lapZ0, g%lapZp, &
-        dns%globalSize(3), dns%localSize(3,0), nz, dns%leng(3), &
-        g%distribution(3), g%stretch(3), g%natural_one_sided(3), &
-        g%natural_dyw_plus(3), periodic(3), 3)
-
+    call build_node_line(g%xNode, dns%globalSize(1), dns%leng(1), &
+        g%distribution(1), g%stretch(1), g%natural_one_sided(1), g%natural_dyw_plus(1))
+    call build_node_line(g%yNode, dns%globalSize(2), dns%leng(2), &
+        g%distribution(2), g%stretch(2), g%natural_one_sided(2), g%natural_dyw_plus(2))
+    call build_node_line(g%zNode, dns%globalSize(3), dns%leng(3), &
+        g%distribution(3), g%stretch(3), g%natural_one_sided(3), g%natural_dyw_plus(3))
 end subroutine init_grid
 
 subroutine destroy_grid(g)
@@ -125,39 +101,18 @@ subroutine destroy_grid(g)
     if (allocated(g%xNode)) deallocate(g%xNode)
     if (allocated(g%yNode)) deallocate(g%yNode)
     if (allocated(g%zNode)) deallocate(g%zNode)
-    if (allocated(g%x)) deallocate(g%x)
-    if (allocated(g%y)) deallocate(g%y)
-    if (allocated(g%z)) deallocate(g%z)
-    if (allocated(g%d1x)) deallocate(g%d1x)
-    if (allocated(g%d1y)) deallocate(g%d1y)
-    if (allocated(g%d1z)) deallocate(g%d1z)
-    if (allocated(g%lapXm)) deallocate(g%lapXm)
-    if (allocated(g%lapX0)) deallocate(g%lapX0)
-    if (allocated(g%lapXp)) deallocate(g%lapXp)
-    if (allocated(g%lapYm)) deallocate(g%lapYm)
-    if (allocated(g%lapY0)) deallocate(g%lapY0)
-    if (allocated(g%lapYp)) deallocate(g%lapYp)
-    if (allocated(g%lapZm)) deallocate(g%lapZm)
-    if (allocated(g%lapZ0)) deallocate(g%lapZ0)
-    if (allocated(g%lapZp)) deallocate(g%lapZp)
 end subroutine destroy_grid
 
-subroutine init_grid_direction(node, coord, d1, lapM, lap0, lapP, nGlobal, first, nLocal, &
-        length, distribution, stretch, natural_one_sided, natural_dyw_plus, periodic, dir)
+subroutine build_node_line(node, nGlobal, length, distribution, stretch, &
+        natural_one_sided, natural_dyw_plus)
     real(C_DOUBLE), intent(inout) :: node(0:)
-    real(C_DOUBLE), intent(inout) :: coord(-1:,:)
-    real(C_DOUBLE), intent(inout) :: d1(0:,:)
-    real(C_DOUBLE), intent(inout) :: lapM(0:,:), lap0(0:,:), lapP(0:,:)
-    integer(C_INT), intent(in) :: nGlobal, first, distribution
-    integer, intent(in) :: nLocal, dir
+    integer(C_INT), intent(in) :: nGlobal, distribution
     real(C_DOUBLE), intent(in) :: length, stretch, natural_dyw_plus
     logical(C_BOOL), intent(in) :: natural_one_sided
-    logical(C_BOOL), intent(in) :: periodic
 
     integer :: i, n
     real(C_DOUBLE) :: s
 
-    ! Build the global node line first; local coordinates are sampled from it below.
     n = int(nGlobal)
     do i = 0, n
         s = real(i, C_DOUBLE) / real(n, C_DOUBLE)
@@ -166,10 +121,7 @@ subroutine init_grid_direction(node, coord, d1, lapM, lap0, lapP, nGlobal, first
     end do
     node(0) = 0.0d0
     node(n) = length
-
-    call slice_grid_direction(node, coord, d1, lapM, lap0, lapP, nGlobal, first, nLocal, &
-        length, periodic, dir)
-end subroutine init_grid_direction
+end subroutine build_node_line
 
 ! Sample the local, variable-staggered coordinates and the second-order
 ! finite-difference metrics for a window of nLocal cells starting at the

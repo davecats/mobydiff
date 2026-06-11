@@ -183,9 +183,12 @@ subroutine write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor)
     if (c%has_terminal) call write_xdmf(xdmf_file_name, h5_file_name, dns, g)
 end subroutine write_field
 
-subroutine write_grid_export(dns, g, bc, file_name, has_terminal)
+subroutine write_grid_export(dns, g, blk, bc, file_name, has_terminal)
+    ! Serial preprocessing path (mobygrid): the single block covers the whole
+    ! grid, so its slot-1 staggered coordinates are the global ones.
     type(dns_type), intent(in) :: dns
     type(grid_type), intent(in) :: g
+    type(block_set_type), intent(in) :: blk
     type(boundary_type), intent(in) :: bc
     character(len=*), intent(in) :: file_name
     logical, intent(in), optional :: has_terminal
@@ -210,9 +213,9 @@ subroutine write_grid_export(dns, g, bc, file_name, has_terminal)
     ierr = fdm_h5_write_grid(c_file_name, nx, ny, nz, dns%leng(1), dns%leng(2), dns%leng(3), &
         periodic, g%distribution(1:3), g%stretch(1:3), g%natural_dyw_plus(1:3), natural_one_sided, &
         g%xNode(0:int(nx)), g%yNode(0:int(ny)), g%zNode(0:int(nz)), &
-        g%x(0:int(nx)+1,VAR_U), g%y(0:int(ny)+1,VAR_U), g%z(0:int(nz)+1,VAR_U), &
-        g%x(0:int(nx)+1,VAR_V), g%y(0:int(ny)+1,VAR_V), g%z(0:int(nz)+1,VAR_V), &
-        g%x(0:int(nx)+1,VAR_W), g%y(0:int(ny)+1,VAR_W), g%z(0:int(nz)+1,VAR_W))
+        blk%x(0:int(nx)+1,VAR_U,1), blk%y(0:int(ny)+1,VAR_U,1), blk%z(0:int(nz)+1,VAR_U,1), &
+        blk%x(0:int(nx)+1,VAR_V,1), blk%y(0:int(ny)+1,VAR_V,1), blk%z(0:int(nz)+1,VAR_V,1), &
+        blk%x(0:int(nx)+1,VAR_W,1), blk%y(0:int(ny)+1,VAR_W,1), blk%z(0:int(nz)+1,VAR_W,1))
     if (ierr /= 0_C_INT) then
         if (terminal) print *, "error: could not write HDF5 grid file: ", trim(file_name)
         error stop

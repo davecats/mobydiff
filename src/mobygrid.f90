@@ -1,6 +1,7 @@
 program mobygrid
     use, intrinsic :: iso_c_binding, only: C_INT
     use :: init, only: dns_type, grid_type, init_grid, destroy_grid
+    use :: blocks, only: block_set_type, init_block_set, destroy_block_set
     use :: flow_case, only: case_type, create_flow_case
     use :: config, only: config_seen_type, read_runtime_config, has_restart_file, validate_dns_values
     use :: boundary, only: boundary_type
@@ -16,6 +17,7 @@ program mobygrid
     class(case_type), allocatable :: flow
     type(dns_type) :: dns
     type(grid_type) :: g
+    type(block_set_type) :: blk
     type(boundary_type) :: bc
     type(pressure_solver_type) :: ps
     type(les_type) :: les
@@ -52,9 +54,14 @@ program mobygrid
     call init_grid(g, dns, bc%isPeriodic)
     call validate_dns_values(dns, g)
 
-    if (c%has_terminal) print *, "writing grid file: ", trim(output_file)
-    call write_grid_export(dns, g, bc, output_file, c%has_terminal)
+    ! Serial: one block spanning the whole grid provides the staggered
+    ! coordinates for the export.
+    call init_block_set(blk, dns, g, bc%isPeriodic)
 
+    if (c%has_terminal) print *, "writing grid file: ", trim(output_file)
+    call write_grid_export(dns, g, blk, bc, output_file, c%has_terminal)
+
+    call destroy_block_set(blk)
     call destroy_grid(g)
     call comm_finalize(c)
 

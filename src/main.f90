@@ -6,7 +6,7 @@
 program main
     use :: init
     use :: blocks, only: block_set_type, init_block_set, destroy_block_set, &
-        block_set_matches_grid, enter_block_data, exit_block_data
+        enter_block_data, exit_block_data
     use :: chron, only: chron_type, start_chron, stop_chron, write_chron
     use :: flow_case, only: case_type, create_flow_case
     use :: config
@@ -62,13 +62,8 @@ program main
     call validate_dns_values(dns, g)
 
     ! Phase 0 of the block refactor (docs/block_refinement_strategy.md): the
-    ! solver state lives in a one-block-per-rank block set. The bitwise check
-    ! against grid_type is a temporary scaffold kept until the dead grid
-    ! arrays are removed.
+    ! solver state lives in a one-block-per-rank block set.
     call init_block_set(blk, dns, g, bc%isPeriodic, global_id=int(c%cart_rank, C_INT))
-    if (.not. block_set_matches_grid(blk, g)) then
-        error stop "phase-0 block set does not reproduce the grid metrics"
-    end if
     call precompute_peclet_rate(dns, blk, c)
     call init_boundary_faces(bc, dns)
     call init_openmp_offload(c%has_terminal)

@@ -32,12 +32,7 @@ contains
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target enter data map(to: g)
-        !$omp target enter data map(to: &
-        !$omp& g%xNode, g%yNode, g%zNode, &
-        !$omp& g%x, g%y, g%z, g%d1x, g%d1y, g%d1z, &
-        !$omp& g%lapXm, g%lapX0, g%lapXp, &
-        !$omp& g%lapYm, g%lapY0, g%lapYp, &
-        !$omp& g%lapZm, g%lapZ0, g%lapZp)
+        !$omp target enter data map(to: g%xNode, g%yNode, g%zNode)
 #endif
     end subroutine enter_grid_data
 
@@ -46,12 +41,7 @@ contains
         type(dns_type), intent(in)     :: dns
 
 #ifdef USE_OPENMP_OFFLOAD
-        !$omp target exit data map(delete: &
-        !$omp& g%xNode, g%yNode, g%zNode, &
-        !$omp& g%x, g%y, g%z, g%d1x, g%d1y, g%d1z, &
-        !$omp& g%lapXm, g%lapX0, g%lapXp, &
-        !$omp& g%lapYm, g%lapY0, g%lapYp, &
-        !$omp& g%lapZm, g%lapZ0, g%lapZp)
+        !$omp target exit data map(delete: g%xNode, g%yNode, g%zNode)
         !$omp target exit data map(delete: g)
 #endif
     end subroutine exit_grid_data
