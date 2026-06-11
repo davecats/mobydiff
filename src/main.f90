@@ -33,6 +33,7 @@ program main
     type(ibm_type) :: ibm
     type(les_type) :: les
     type(les_profile_type) :: les_prof
+    type(config_seen_type) :: config_seen
     type(comm_type) :: c
 
     call comm_init_world(c)
@@ -45,10 +46,12 @@ program main
     if (c%has_terminal) print *, "reading input data..."
     call create_flow_case(flow, input_file, c%has_terminal)
     call flow%apply_defaults(dns, g, bc, c, ps)
-    call read_runtime_config(dns, g, les, ps, bc, c, input_file, c%has_terminal)
+    call read_runtime_config(dns, g, les, ps, bc, c, input_file, c%has_terminal, config_seen)
     if (has_restart_file(dns)) then
         if (c%has_terminal) print *, "reading restart metadata: ", trim(dns%restart_file)
-        call read_restart_metadata(dns, g, bc, ps%nIter, ps%sor, dns%restart_file, c)
+        call read_restart_metadata(dns, g, bc, ps%nIter, ps%sor, dns%restart_file, c, &
+            preserve_cflmax=config_seen%cflmax, preserve_pecletmax=config_seen%pecletmax, &
+            preserve_dtmax=config_seen%dtmax, preserve_t_final=config_seen%t_final)
     end if
     call comm_init(c, dns, bc)
 

@@ -2,7 +2,7 @@ program mobygrid
     use, intrinsic :: iso_c_binding, only: C_INT
     use :: init, only: dns_type, grid_type, init_grid, destroy_grid
     use :: flow_case, only: case_type, create_flow_case
-    use :: config, only: read_runtime_config, has_restart_file, validate_dns_values
+    use :: config, only: config_seen_type, read_runtime_config, has_restart_file, validate_dns_values
     use :: boundary, only: boundary_type
     use :: io, only: write_grid_export, read_restart_metadata
     use :: pressure_solver, only: pressure_solver_type
@@ -19,6 +19,7 @@ program mobygrid
     type(boundary_type) :: bc
     type(pressure_solver_type) :: ps
     type(les_type) :: les
+    type(config_seen_type) :: config_seen
     type(comm_type) :: c
 
     call comm_init_world(c)
@@ -39,10 +40,12 @@ program mobygrid
     if (c%has_terminal) print *, "reading input data: ", trim(input_file)
     call create_flow_case(flow, input_file, c%has_terminal)
     call flow%apply_defaults(dns, g, bc, c, ps)
-    call read_runtime_config(dns, g, les, ps, bc, c, input_file, c%has_terminal)
+    call read_runtime_config(dns, g, les, ps, bc, c, input_file, c%has_terminal, config_seen)
     if (has_restart_file(dns)) then
         if (c%has_terminal) print *, "reading restart metadata: ", trim(dns%restart_file)
-        call read_restart_metadata(dns, g, bc, ps%nIter, ps%sor, dns%restart_file, c)
+        call read_restart_metadata(dns, g, bc, ps%nIter, ps%sor, dns%restart_file, c, &
+            preserve_cflmax=config_seen%cflmax, preserve_pecletmax=config_seen%pecletmax, &
+            preserve_dtmax=config_seen%dtmax, preserve_t_final=config_seen%t_final)
     end if
 
     call set_serial_local_size(dns)

@@ -216,7 +216,8 @@ subroutine write_grid_export(dns, g, bc, file_name, has_terminal)
     end if
 end subroutine write_grid_export
 
-subroutine read_restart_metadata(dns, g, bc, pressure_niter, pressure_sor, file_name, c)
+subroutine read_restart_metadata(dns, g, bc, pressure_niter, pressure_sor, file_name, c, &
+        preserve_cflmax, preserve_pecletmax, preserve_dtmax, preserve_t_final)
     type(dns_type), intent(inout) :: dns
     type(grid_type), intent(inout) :: g
     type(boundary_type), intent(inout) :: bc
@@ -224,6 +225,7 @@ subroutine read_restart_metadata(dns, g, bc, pressure_niter, pressure_sor, file_
     real(C_DOUBLE), intent(inout) :: pressure_sor
     character(len=*), intent(in) :: file_name
     type(comm_type), intent(in) :: c
+    logical, intent(in), optional :: preserve_cflmax, preserve_pecletmax, preserve_dtmax, preserve_t_final
 
     character(kind=C_CHAR,len=:), allocatable :: c_file_name
     integer(C_INT) :: ierr
@@ -231,10 +233,15 @@ subroutine read_restart_metadata(dns, g, bc, pressure_niter, pressure_sor, file_
     integer(C_INT) :: periodic(1:3)
     integer(C_INT) :: ibm_enabled
     integer :: dir
+    real(C_DOUBLE) :: input_cflmax, input_pecletmax, input_dtmax, input_t_final
 
     file_nsteps = dns%nsteps
     periodic = merge(1_C_INT, 0_C_INT, bc%isPeriodic)
     ibm_enabled = merge(1_C_INT, 0_C_INT, dns%ibm_enabled)
+    input_cflmax = dns%cflmax
+    input_pecletmax = dns%pecletmax
+    input_dtmax = dns%dtmax
+    input_t_final = dns%t_final
     c_file_name = to_c_string(file_name)
     ierr = fdm_h5_read_metadata(c_file_name, dns%globalSize(1), dns%globalSize(2), dns%globalSize(3), &
         dns%step_current, file_nsteps, &
@@ -246,6 +253,19 @@ subroutine read_restart_metadata(dns, g, bc, pressure_niter, pressure_sor, file_
     if (ierr /= 0_C_INT) then
         if (c%has_terminal) print *, "error: could not read restart metadata: ", trim(file_name)
         error stop
+    end if
+
+    if (present(preserve_cflmax)) then
+        if (preserve_cflmax) dns%cflmax = input_cflmax
+    end if
+    if (present(preserve_pecletmax)) then
+        if (preserve_pecletmax) dns%pecletmax = input_pecletmax
+    end if
+    if (present(preserve_dtmax)) then
+        if (preserve_dtmax) dns%dtmax = input_dtmax
+    end if
+    if (present(preserve_t_final)) then
+        if (preserve_t_final) dns%t_final = input_t_final
     end if
 
     if (dns%nsteps <= 0_C_INT) dns%nsteps = file_nsteps

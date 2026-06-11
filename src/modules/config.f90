@@ -25,7 +25,7 @@ module config
 
 contains
 
-subroutine read_runtime_config(dns, g, les, ps, bc, c, input_file, has_terminal)
+subroutine read_runtime_config(dns, g, les, ps, bc, c, input_file, has_terminal, seen_config)
     type(dns_type), intent(inout) :: dns
     type(grid_type), intent(inout) :: g
     type(les_type), intent(inout) :: les
@@ -34,6 +34,7 @@ subroutine read_runtime_config(dns, g, les, ps, bc, c, input_file, has_terminal)
     type(comm_type), intent(inout) :: c
     character(len=*), intent(in) :: input_file
     logical, intent(in), optional :: has_terminal
+    type(config_seen_type), intent(out), optional :: seen_config
 
     integer :: unit, stat, line_no
     character(len=512) :: line, key, value
@@ -78,6 +79,7 @@ subroutine read_runtime_config(dns, g, les, ps, bc, c, input_file, has_terminal)
     end do
 
     close(unit)
+    if (present(seen_config)) seen_config = seen
 
     if (has_restart_file(dns)) then
         if (dns%field_interval < 0) error stop "field interval must be non-negative"
