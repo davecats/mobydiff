@@ -17,7 +17,7 @@ classification tooling lives in `tools/mobygeom*`.
 
 ```bash
 module load /opt/nvidia/hpc_sdk/modulefiles/nvhpc-hpcx-cuda13/26.3
-./compile.sh all          # builds build_cpu/ and build_gpu/
+./compile.sh cpu && ./compile.sh gpu   # builds build_cpu/ and build_gpu/
 mpirun -n 1 ./build_gpu/main path/to/input.ini
 ```
 
@@ -47,9 +47,8 @@ BCM-style equal-size blocks (Nakahashi & Kim 2004; Jansson et al. 2019) to
 enable 2:1 local refinement and removal of blocks buried inside the
 immersed boundary. Phased, each phase verified before the next:
 
-- Phase 0 (in progress): `block_set_type` container, one block per rank,
-  bit-identical to current behaviour.
-  Done so far (may be uncommitted in the working tree):
+- Phase 0 (scaffold committed and validated 2026-06-11): `block_set_type`
+  container, one block per rank, bit-identical to current behaviour.
   - `init.f90`: `slice_grid_direction` extracted from `init_grid_direction`
     (shared metric construction, pure refactor).
   - `src/modules/blocks.f90`: `block_set_type`, Phase-0 builder, device
@@ -57,9 +56,13 @@ immersed boundary. Phased, each phase verified before the next:
   - `CMakeLists.txt`: module added.
   - `main.f90`: temporary scaffold building + verifying + freeing the block
     set after `init_grid` (remove when the solver actually uses blocks).
-  Next: commit, build, run a case to validate; then migrate solver kernels
-  (`step.f90`, `pressure_solver.f90`, `ibm.f90`, `comm.f90`, `io.f90`) to
-  read `blk%` arrays with an outer block loop (`collapse(4)`).
+  - Validated: `channel_kmm180` restarted from
+    `channel_kmm180_restart.h5`, 11 steps, CPU (8 ranks) and GPU (1 rank)
+    both bit-exact vs. pre-refactor commit `92c6518`
+    (`tools/compare_fields.py`, max_abs = 0 on un/vn/wn/pn).
+  Next: migrate solver kernels (`step.f90`, `pressure_solver.f90`,
+  `ibm.f90`, `comm.f90`, `io.f90`) to read `blk%` arrays with an outer
+  block loop (`collapse(4)`).
 - Phase 1: many same-level blocks per rank, block-pair halo exchange,
   Z-order distribution.
 - Phase 2: removal of solid blocks (`FACE_CLOSED` zero-flux faces).
