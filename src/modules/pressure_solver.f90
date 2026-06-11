@@ -140,12 +140,12 @@ contains
                     kp = k + 1
                     ip = i + 1
 
-                    mu_u_i  = ibm%mu(i,j,k,VAR_U)
-                    mu_u_ip = ibm%mu(ip,j,k,VAR_U)
-                    mu_v_j  = ibm%mu(i,j,k,VAR_V)
-                    mu_v_jp = ibm%mu(i,jp,k,VAR_V)
-                    mu_w_k  = ibm%mu(i,j,k,VAR_W)
-                    mu_w_kp = ibm%mu(i,j,kp,VAR_W)
+                    mu_u_i  = ibm%mu(i,j,k,VAR_U,b)
+                    mu_u_ip = ibm%mu(ip,j,k,VAR_U,b)
+                    mu_v_j  = ibm%mu(i,j,k,VAR_V,b)
+                    mu_v_jp = ibm%mu(i,jp,k,VAR_V,b)
+                    mu_w_k  = ibm%mu(i,j,k,VAR_W,b)
+                    mu_w_kp = ibm%mu(i,j,kp,VAR_W,b)
 
                     denom = (merge(0.0d0, mu_u_i*blk%d1x(i,VAR_U,b), &
                                       pressureNeumannLow(1) .and. i == 1_C_INT) &

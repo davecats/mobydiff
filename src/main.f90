@@ -89,7 +89,7 @@ program main
     call init_pressure_solver(ps, dns, bc, c%has_terminal)
 
     if (c%has_terminal) print *, "initialising IBM..."
-    call init_ibm(ibm, dns)
+    call init_ibm(ibm, blk)
     if (dns%ibm_enabled .and. len_trim(dns%ibm_coeff_file) > 0) then
         call read_ibm_coeff_file(ibm, dns, c%has_terminal)
         call enter_ibm_data(ibm, dns)

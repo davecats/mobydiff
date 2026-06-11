@@ -22,7 +22,7 @@ module les_model
         real(C_DOUBLE) :: cw = 0.325d0
         real(C_DOUBLE) :: delta_scale = 1.0d0
         logical(C_BOOL) :: ibm_aware = .true.
-        real(C_DOUBLE), allocatable :: nut(:,:,:)
+        real(C_DOUBLE), allocatable :: nut(:,:,:,:)   ! (0:nb+1,...,nBlocks)
         real(C_DOUBLE), allocatable :: filter_x(:), filter_y(:), filter_z(:)
         real(C_DOUBLE), allocatable :: d1xm(:,:), d1x0(:,:), d1xp(:,:)
         real(C_DOUBLE), allocatable :: d1ym(:,:), d1y0(:,:), d1yp(:,:)
@@ -121,7 +121,7 @@ contains
         ny = int(blk%nb(2))
         nz = int(blk%nb(3))
 
-        allocate(les%nut(0:nx+1,0:ny+1,0:nz+1))
+        allocate(les%nut(0:nx+1,0:ny+1,0:nz+1,blk%nBlocks))
         allocate(les%filter_x(0:nx+1), les%filter_y(0:ny+1), les%filter_z(0:nz+1))
         allocate(les%d1xm(0:nx+1,VAR_U:VAR_P), les%d1x0(0:nx+1,VAR_U:VAR_P), &
             les%d1xp(0:nx+1,VAR_U:VAR_P))
@@ -344,16 +344,16 @@ contains
         do k = 1, nz
             do j = 1, ny
                 do i = 1, nx
-                    les%nut(i,j,k) = 0.0d0
+                    les%nut(i,j,k,b) = 0.0d0
 
                     solid_cell = .false.
                     if (ibm_aware .and. ibm_enabled) then
-                        solid_cell = abs(ibm%coef(i,j,k,VAR_U)) > solid_threshold .or. &
-                                     abs(ibm%coef(i+1,j,k,VAR_U)) > solid_threshold .or. &
-                                     abs(ibm%coef(i,j,k,VAR_V)) > solid_threshold .or. &
-                                     abs(ibm%coef(i,j+1,k,VAR_V)) > solid_threshold .or. &
-                                     abs(ibm%coef(i,j,k,VAR_W)) > solid_threshold .or. &
-                                     abs(ibm%coef(i,j,k+1,VAR_W)) > solid_threshold
+                        solid_cell = abs(ibm%coef(i,j,k,VAR_U,b)) > solid_threshold .or. &
+                                     abs(ibm%coef(i+1,j,k,VAR_U,b)) > solid_threshold .or. &
+                                     abs(ibm%coef(i,j,k,VAR_V,b)) > solid_threshold .or. &
+                                     abs(ibm%coef(i,j+1,k,VAR_V,b)) > solid_threshold .or. &
+                                     abs(ibm%coef(i,j,k,VAR_W,b)) > solid_threshold .or. &
+                                     abs(ibm%coef(i,j,k+1,VAR_W,b)) > solid_threshold
                     end if
                     if (solid_cell) cycle
 
@@ -422,7 +422,7 @@ contains
                     select case (model)
                     case (LES_SMAGORINSKY)
                         strain_mag = sqrt(max(0.0d0, 2.0d0*s2))
-                        les%nut(i,j,k) = cs2*delta*delta*strain_mag
+                        les%nut(i,j,k,b) = cs2*delta*delta*strain_mag
                     case (LES_WALE)
                         g2_11 = g11*g11 + g12*g21 + g13*g31
                         g2_12 = g11*g12 + g12*g22 + g13*g32
@@ -450,7 +450,7 @@ contains
                         sd2_32 = sd2*sqrt_sd2
                         sd2_54 = sd2*sqrt(sqrt_sd2)
                         denom = s2_52 + sd2_54 + 1.0d-30
-                        les%nut(i,j,k) = cw2*delta*delta*sd2_32/denom
+                        les%nut(i,j,k,b) = cw2*delta*delta*sd2_32/denom
                     end select
                 end do
             end do
@@ -500,16 +500,16 @@ contains
         do k = 1, nz
             do j = 1, ny
                 do i = 1, nx
-                    les%nut(i,j,k) = 0.0d0
+                    les%nut(i,j,k,b) = 0.0d0
 
                     solid_cell = .false.
                     if (ibm_aware .and. ibm_enabled) then
-                        solid_cell = abs(ibm%coef(i,j,k,VAR_U)) > solid_threshold .or. &
-                                     abs(ibm%coef(i+1,j,k,VAR_U)) > solid_threshold .or. &
-                                     abs(ibm%coef(i,j,k,VAR_V)) > solid_threshold .or. &
-                                     abs(ibm%coef(i,j+1,k,VAR_V)) > solid_threshold .or. &
-                                     abs(ibm%coef(i,j,k,VAR_W)) > solid_threshold .or. &
-                                     abs(ibm%coef(i,j,k+1,VAR_W)) > solid_threshold
+                        solid_cell = abs(ibm%coef(i,j,k,VAR_U,b)) > solid_threshold .or. &
+                                     abs(ibm%coef(i+1,j,k,VAR_U,b)) > solid_threshold .or. &
+                                     abs(ibm%coef(i,j,k,VAR_V,b)) > solid_threshold .or. &
+                                     abs(ibm%coef(i,j+1,k,VAR_V,b)) > solid_threshold .or. &
+                                     abs(ibm%coef(i,j,k,VAR_W,b)) > solid_threshold .or. &
+                                     abs(ibm%coef(i,j,k+1,VAR_W,b)) > solid_threshold
                     end if
                     if (solid_cell) cycle
 
@@ -595,7 +595,7 @@ contains
                     sd2_32 = sd2*sqrt_sd2
                     sd2_54 = sd2*sqrt(sqrt_sd2)
                     denom = s2_52 + sd2_54 + 1.0d-30
-                    les%nut(i,j,k) = cw2*delta*delta*sd2_32/denom
+                    les%nut(i,j,k,b) = cw2*delta*delta*sd2_32/denom
                 end do
             end do
         end do

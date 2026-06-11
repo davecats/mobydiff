@@ -262,9 +262,11 @@ contains
         call finish_halo_exchange(c, blk)
     end subroutine exchange_halos
 
+    ! Per-block scalar (e.g. les%nut); the rank-box exchange serves block 1
+    ! until Phase 1 introduces block-pair entries.
     subroutine exchange_scalar_halos(c, scalar)
         type(comm_type), intent(inout) :: c
-        real(C_DOUBLE), intent(inout) :: scalar(0:,0:,0:)
+        real(C_DOUBLE), intent(inout) :: scalar(0:,0:,0:,1:)
 
         integer :: ierr, n, nRequest, recvOffset(3)
 
@@ -535,7 +537,7 @@ contains
 
     subroutine pack_scalar_boxes(c, scalar)
         type(comm_type), intent(inout) :: c
-        real(C_DOUBLE), intent(in) :: scalar(0:,0:,0:)
+        real(C_DOUBLE), intent(in) :: scalar(0:,0:,0:,1:)
 
         integer :: pAll, p, q, n
         integer :: i, j, k, ni, nj
@@ -560,7 +562,7 @@ contains
             i = c%sendLo(1,n) + modulo(q, ni)
             j = c%sendLo(2,n) + modulo(q / ni, nj)
             k = c%sendLo(3,n) + q / (ni*nj)
-            c%sendbuf(p,n) = scalar(i,j,k)
+            c%sendbuf(p,n) = scalar(i,j,k,1)
         end do
 #ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
@@ -569,7 +571,7 @@ contains
 
     subroutine unpack_scalar_boxes(c, scalar)
         type(comm_type), intent(in) :: c
-        real(C_DOUBLE), intent(inout) :: scalar(0:,0:,0:)
+        real(C_DOUBLE), intent(inout) :: scalar(0:,0:,0:,1:)
 
         integer :: pAll, p, q, n
         integer :: i, j, k, ni, nj
@@ -594,7 +596,7 @@ contains
             i = c%recvLo(1,n) + modulo(q, ni)
             j = c%recvLo(2,n) + modulo(q / ni, nj)
             k = c%recvLo(3,n) + q / (ni*nj)
-            scalar(i,j,k) = c%recvbuf(p,n)
+            scalar(i,j,k,1) = c%recvbuf(p,n)
         end do
 #ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do

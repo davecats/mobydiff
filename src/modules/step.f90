@@ -162,7 +162,7 @@ contains
                         blk%qs(i,j,k,VAR_U,b) = blk%q(i,j,k,VAR_U,b) + dt_alpha*rhsu &
                             + dt_beta*blk%oldrhs(i,j,k,VAR_U,b) - dt_gamma*dpx
 
-                        mu_u = ibm%mu(i,j,k,VAR_U)
+                        mu_u = ibm%mu(i,j,k,VAR_U,b)
                         blk%qs(i,j,k,VAR_U,b) = blk%qs(i,j,k,VAR_U,b)*mu_u
 
                         blk%oldrhs(i,j,k,VAR_U,b) = rhsu
@@ -204,7 +204,7 @@ contains
                         blk%qs(i,j,k,VAR_V,b) = blk%q(i,j,k,VAR_V,b) + dt_alpha*rhsv &
                             + dt_beta*blk%oldrhs(i,j,k,VAR_V,b) - dt_gamma*dpy
 
-                        mu_v = ibm%mu(i,j,k,VAR_V)
+                        mu_v = ibm%mu(i,j,k,VAR_V,b)
                         blk%qs(i,j,k,VAR_V,b) = blk%qs(i,j,k,VAR_V,b)*mu_v
 
                         blk%oldrhs(i,j,k,VAR_V,b) = rhsv
@@ -246,7 +246,7 @@ contains
                         blk%qs(i,j,k,VAR_W,b) = blk%q(i,j,k,VAR_W,b) + dt_alpha*rhsw &
                             + dt_beta*blk%oldrhs(i,j,k,VAR_W,b) - dt_gamma*dpz
 
-                        mu_w = ibm%mu(i,j,k,VAR_W)
+                        mu_w = ibm%mu(i,j,k,VAR_W,b)
                         blk%qs(i,j,k,VAR_W,b) = blk%qs(i,j,k,VAR_W,b)*mu_w
 
                         blk%oldrhs(i,j,k,VAR_W,b) = rhsw
@@ -332,15 +332,15 @@ contains
                     km = k - 1
 
                     if (i >= uStartX) then
-                        tau_xp = 2.0d0*les%nut(i,j,k) &
+                        tau_xp = 2.0d0*les%nut(i,j,k,b) &
                                * (blk%q(ip,j,k,VAR_U,b) - blk%q(i,j,k,VAR_U,b))*blk%d1x(i,VAR_P,b)
-                        tau_xm = 2.0d0*les%nut(im,j,k) &
+                        tau_xm = 2.0d0*les%nut(im,j,k,b) &
                                * (blk%q(i,j,k,VAR_U,b) - blk%q(im,j,k,VAR_U,b))*blk%d1x(im,VAR_P,b)
 
                         wx = les%u_from_p_x(i)
                         wy = les%v_from_p_y(jp)
-                        nut0 = (1.0d0 - wx)*les%nut(im,j,k) + wx*les%nut(i,j,k)
-                        nut1 = (1.0d0 - wx)*les%nut(im,jp,k) + wx*les%nut(i,jp,k)
+                        nut0 = (1.0d0 - wx)*les%nut(im,j,k,b) + wx*les%nut(i,j,k,b)
+                        nut1 = (1.0d0 - wx)*les%nut(im,jp,k,b) + wx*les%nut(i,jp,k,b)
                         nut_edge = (1.0d0 - wy)*nut0 + wy*nut1
                         tau_yp = nut_edge*( &
                             (blk%q(i,jp,k,VAR_U,b) - blk%q(i,j,k,VAR_U,b))*les%inv_dy(jp,VAR_U) &
@@ -348,8 +348,8 @@ contains
 
                         wx = les%u_from_p_x(i)
                         wy = les%v_from_p_y(j)
-                        nut0 = (1.0d0 - wx)*les%nut(im,jm,k) + wx*les%nut(i,jm,k)
-                        nut1 = (1.0d0 - wx)*les%nut(im,j,k) + wx*les%nut(i,j,k)
+                        nut0 = (1.0d0 - wx)*les%nut(im,jm,k,b) + wx*les%nut(i,jm,k,b)
+                        nut1 = (1.0d0 - wx)*les%nut(im,j,k,b) + wx*les%nut(i,j,k,b)
                         nut_edge = (1.0d0 - wy)*nut0 + wy*nut1
                         tau_ym = nut_edge*( &
                             (blk%q(i,j,k,VAR_U,b) - blk%q(i,jm,k,VAR_U,b))*les%inv_dy(j,VAR_U) &
@@ -357,8 +357,8 @@ contains
 
                         wx = les%u_from_p_x(i)
                         wy = les%w_from_p_z(kp)
-                        nut0 = (1.0d0 - wx)*les%nut(im,j,k) + wx*les%nut(i,j,k)
-                        nut1 = (1.0d0 - wx)*les%nut(im,j,kp) + wx*les%nut(i,j,kp)
+                        nut0 = (1.0d0 - wx)*les%nut(im,j,k,b) + wx*les%nut(i,j,k,b)
+                        nut1 = (1.0d0 - wx)*les%nut(im,j,kp,b) + wx*les%nut(i,j,kp,b)
                         nut_edge = (1.0d0 - wy)*nut0 + wy*nut1
                         tau_zp = nut_edge*( &
                             (blk%q(i,j,kp,VAR_U,b) - blk%q(i,j,k,VAR_U,b))*les%inv_dz(kp,VAR_U) &
@@ -366,8 +366,8 @@ contains
 
                         wx = les%u_from_p_x(i)
                         wy = les%w_from_p_z(k)
-                        nut0 = (1.0d0 - wx)*les%nut(im,j,km) + wx*les%nut(i,j,km)
-                        nut1 = (1.0d0 - wx)*les%nut(im,j,k) + wx*les%nut(i,j,k)
+                        nut0 = (1.0d0 - wx)*les%nut(im,j,km,b) + wx*les%nut(i,j,km,b)
+                        nut1 = (1.0d0 - wx)*les%nut(im,j,k,b) + wx*les%nut(i,j,k,b)
                         nut_edge = (1.0d0 - wy)*nut0 + wy*nut1
                         tau_zm = nut_edge*( &
                             (blk%q(i,j,k,VAR_U,b) - blk%q(i,j,km,VAR_U,b))*les%inv_dz(k,VAR_U) &
@@ -377,7 +377,7 @@ contains
                               + (tau_yp - tau_ym)*blk%d1y(j,VAR_U,b) &
                               + (tau_zp - tau_zm)*blk%d1z(k,VAR_U,b)
 
-                        mu_u = ibm%mu(i,j,k,VAR_U)
+                        mu_u = ibm%mu(i,j,k,VAR_U,b)
                         blk%qs(i,j,k,VAR_U,b) = blk%qs(i,j,k,VAR_U,b) + dt_alpha*sgs_u*mu_u
                         blk%oldrhs(i,j,k,VAR_U,b) = blk%oldrhs(i,j,k,VAR_U,b) + sgs_u
                     end if
@@ -385,8 +385,8 @@ contains
                     if (j >= vStartY) then
                         wx = les%u_from_p_x(ip)
                         wy = les%v_from_p_y(j)
-                        nut0 = (1.0d0 - wx)*les%nut(i,jm,k) + wx*les%nut(ip,jm,k)
-                        nut1 = (1.0d0 - wx)*les%nut(i,j,k) + wx*les%nut(ip,j,k)
+                        nut0 = (1.0d0 - wx)*les%nut(i,jm,k,b) + wx*les%nut(ip,jm,k,b)
+                        nut1 = (1.0d0 - wx)*les%nut(i,j,k,b) + wx*les%nut(ip,j,k,b)
                         nut_edge = (1.0d0 - wy)*nut0 + wy*nut1
                         tau_xp = nut_edge*( &
                             (blk%q(ip,j,k,VAR_U,b) - blk%q(ip,jm,k,VAR_U,b))*les%inv_dy(j,VAR_U) &
@@ -394,22 +394,22 @@ contains
 
                         wx = les%u_from_p_x(i)
                         wy = les%v_from_p_y(j)
-                        nut0 = (1.0d0 - wx)*les%nut(im,jm,k) + wx*les%nut(i,jm,k)
-                        nut1 = (1.0d0 - wx)*les%nut(im,j,k) + wx*les%nut(i,j,k)
+                        nut0 = (1.0d0 - wx)*les%nut(im,jm,k,b) + wx*les%nut(i,jm,k,b)
+                        nut1 = (1.0d0 - wx)*les%nut(im,j,k,b) + wx*les%nut(i,j,k,b)
                         nut_edge = (1.0d0 - wy)*nut0 + wy*nut1
                         tau_xm = nut_edge*( &
                             (blk%q(i,j,k,VAR_U,b) - blk%q(i,jm,k,VAR_U,b))*les%inv_dy(j,VAR_U) &
                           + (blk%q(i,j,k,VAR_V,b) - blk%q(im,j,k,VAR_V,b))*les%inv_dx(i,VAR_V) )
 
-                        tau_yp = 2.0d0*les%nut(i,j,k) &
+                        tau_yp = 2.0d0*les%nut(i,j,k,b) &
                                * (blk%q(i,jp,k,VAR_V,b) - blk%q(i,j,k,VAR_V,b))*blk%d1y(j,VAR_P,b)
-                        tau_ym = 2.0d0*les%nut(i,jm,k) &
+                        tau_ym = 2.0d0*les%nut(i,jm,k,b) &
                                * (blk%q(i,j,k,VAR_V,b) - blk%q(i,jm,k,VAR_V,b))*blk%d1y(jm,VAR_P,b)
 
                         wx = les%v_from_p_y(j)
                         wy = les%w_from_p_z(kp)
-                        nut0 = (1.0d0 - wx)*les%nut(i,jm,k) + wx*les%nut(i,j,k)
-                        nut1 = (1.0d0 - wx)*les%nut(i,jm,kp) + wx*les%nut(i,j,kp)
+                        nut0 = (1.0d0 - wx)*les%nut(i,jm,k,b) + wx*les%nut(i,j,k,b)
+                        nut1 = (1.0d0 - wx)*les%nut(i,jm,kp,b) + wx*les%nut(i,j,kp,b)
                         nut_edge = (1.0d0 - wy)*nut0 + wy*nut1
                         tau_zp = nut_edge*( &
                             (blk%q(i,j,kp,VAR_V,b) - blk%q(i,j,k,VAR_V,b))*les%inv_dz(kp,VAR_V) &
@@ -417,8 +417,8 @@ contains
 
                         wx = les%v_from_p_y(j)
                         wy = les%w_from_p_z(k)
-                        nut0 = (1.0d0 - wx)*les%nut(i,jm,km) + wx*les%nut(i,j,km)
-                        nut1 = (1.0d0 - wx)*les%nut(i,jm,k) + wx*les%nut(i,j,k)
+                        nut0 = (1.0d0 - wx)*les%nut(i,jm,km,b) + wx*les%nut(i,j,km,b)
+                        nut1 = (1.0d0 - wx)*les%nut(i,jm,k,b) + wx*les%nut(i,j,k,b)
                         nut_edge = (1.0d0 - wy)*nut0 + wy*nut1
                         tau_zm = nut_edge*( &
                             (blk%q(i,j,k,VAR_V,b) - blk%q(i,j,km,VAR_V,b))*les%inv_dz(k,VAR_V) &
@@ -428,7 +428,7 @@ contains
                               + (tau_yp - tau_ym)*blk%d1y(j,VAR_V,b) &
                               + (tau_zp - tau_zm)*blk%d1z(k,VAR_V,b)
 
-                        mu_v = ibm%mu(i,j,k,VAR_V)
+                        mu_v = ibm%mu(i,j,k,VAR_V,b)
                         blk%qs(i,j,k,VAR_V,b) = blk%qs(i,j,k,VAR_V,b) + dt_alpha*sgs_v*mu_v
                         blk%oldrhs(i,j,k,VAR_V,b) = blk%oldrhs(i,j,k,VAR_V,b) + sgs_v
                     end if
@@ -436,8 +436,8 @@ contains
                     if (k >= wStartZ) then
                         wx = les%u_from_p_x(ip)
                         wy = les%w_from_p_z(k)
-                        nut0 = (1.0d0 - wx)*les%nut(i,j,km) + wx*les%nut(ip,j,km)
-                        nut1 = (1.0d0 - wx)*les%nut(i,j,k) + wx*les%nut(ip,j,k)
+                        nut0 = (1.0d0 - wx)*les%nut(i,j,km,b) + wx*les%nut(ip,j,km,b)
+                        nut1 = (1.0d0 - wx)*les%nut(i,j,k,b) + wx*les%nut(ip,j,k,b)
                         nut_edge = (1.0d0 - wy)*nut0 + wy*nut1
                         tau_xp = nut_edge*( &
                             (blk%q(ip,j,k,VAR_U,b) - blk%q(ip,j,km,VAR_U,b))*les%inv_dz(k,VAR_U) &
@@ -445,8 +445,8 @@ contains
 
                         wx = les%u_from_p_x(i)
                         wy = les%w_from_p_z(k)
-                        nut0 = (1.0d0 - wx)*les%nut(im,j,km) + wx*les%nut(i,j,km)
-                        nut1 = (1.0d0 - wx)*les%nut(im,j,k) + wx*les%nut(i,j,k)
+                        nut0 = (1.0d0 - wx)*les%nut(im,j,km,b) + wx*les%nut(i,j,km,b)
+                        nut1 = (1.0d0 - wx)*les%nut(im,j,k,b) + wx*les%nut(i,j,k,b)
                         nut_edge = (1.0d0 - wy)*nut0 + wy*nut1
                         tau_xm = nut_edge*( &
                             (blk%q(i,j,k,VAR_U,b) - blk%q(i,j,km,VAR_U,b))*les%inv_dz(k,VAR_U) &
@@ -454,8 +454,8 @@ contains
 
                         wx = les%v_from_p_y(jp)
                         wy = les%w_from_p_z(k)
-                        nut0 = (1.0d0 - wx)*les%nut(i,j,km) + wx*les%nut(i,jp,km)
-                        nut1 = (1.0d0 - wx)*les%nut(i,j,k) + wx*les%nut(i,jp,k)
+                        nut0 = (1.0d0 - wx)*les%nut(i,j,km,b) + wx*les%nut(i,jp,km,b)
+                        nut1 = (1.0d0 - wx)*les%nut(i,j,k,b) + wx*les%nut(i,jp,k,b)
                         nut_edge = (1.0d0 - wy)*nut0 + wy*nut1
                         tau_yp = nut_edge*( &
                             (blk%q(i,jp,k,VAR_V,b) - blk%q(i,jp,km,VAR_V,b))*les%inv_dz(k,VAR_V) &
@@ -463,23 +463,23 @@ contains
 
                         wx = les%v_from_p_y(j)
                         wy = les%w_from_p_z(k)
-                        nut0 = (1.0d0 - wx)*les%nut(i,jm,km) + wx*les%nut(i,j,km)
-                        nut1 = (1.0d0 - wx)*les%nut(i,jm,k) + wx*les%nut(i,j,k)
+                        nut0 = (1.0d0 - wx)*les%nut(i,jm,km,b) + wx*les%nut(i,j,km,b)
+                        nut1 = (1.0d0 - wx)*les%nut(i,jm,k,b) + wx*les%nut(i,j,k,b)
                         nut_edge = (1.0d0 - wy)*nut0 + wy*nut1
                         tau_ym = nut_edge*( &
                             (blk%q(i,j,k,VAR_V,b) - blk%q(i,j,km,VAR_V,b))*les%inv_dz(k,VAR_V) &
                           + (blk%q(i,j,k,VAR_W,b) - blk%q(i,jm,k,VAR_W,b))*les%inv_dy(j,VAR_W) )
 
-                        tau_zp = 2.0d0*les%nut(i,j,k) &
+                        tau_zp = 2.0d0*les%nut(i,j,k,b) &
                                * (blk%q(i,j,kp,VAR_W,b) - blk%q(i,j,k,VAR_W,b))*blk%d1z(k,VAR_P,b)
-                        tau_zm = 2.0d0*les%nut(i,j,km) &
+                        tau_zm = 2.0d0*les%nut(i,j,km,b) &
                                * (blk%q(i,j,k,VAR_W,b) - blk%q(i,j,km,VAR_W,b))*blk%d1z(km,VAR_P,b)
 
                         sgs_w = (tau_xp - tau_xm)*blk%d1x(i,VAR_W,b) &
                               + (tau_yp - tau_ym)*blk%d1y(j,VAR_W,b) &
                               + (tau_zp - tau_zm)*blk%d1z(k,VAR_W,b)
 
-                        mu_w = ibm%mu(i,j,k,VAR_W)
+                        mu_w = ibm%mu(i,j,k,VAR_W,b)
                         blk%qs(i,j,k,VAR_W,b) = blk%qs(i,j,k,VAR_W,b) + dt_alpha*sgs_w*mu_w
                         blk%oldrhs(i,j,k,VAR_W,b) = blk%oldrhs(i,j,k,VAR_W,b) + sgs_w
                     end if
@@ -542,7 +542,7 @@ contains
         do k = 1, nz
             do j = 1, ny
                 do i = 1, nx
-                    nu_eff = ire + max(0.0d0, les%nut(i,j,k))
+                    nu_eff = ire + max(0.0d0, les%nut(i,j,k,b))
                     peclet_rate = max(peclet_rate, nu_eff*blk%d1x(i,VAR_P,b)**2)
                     peclet_rate = max(peclet_rate, nu_eff*blk%d1y(j,VAR_P,b)**2)
                     peclet_rate = max(peclet_rate, nu_eff*blk%d1z(k,VAR_P,b)**2)

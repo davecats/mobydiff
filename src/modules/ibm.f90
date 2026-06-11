@@ -31,8 +31,8 @@ module ibmm
         real(C_DOUBLE) :: amp_x, phase_x
         real(C_DOUBLE) :: amp_z, phase_z
 
-        real(C_DOUBLE), allocatable :: coef(:,:,:,:)
-        real(C_DOUBLE), allocatable :: mu(:,:,:,:)
+        real(C_DOUBLE), allocatable :: coef(:,:,:,:,:) ! (0:nb+1,...,VAR_U:VAR_W,nBlocks)
+        real(C_DOUBLE), allocatable :: mu(:,:,:,:,:)
 
     end type ibm_type
 
@@ -58,14 +58,14 @@ contains
 !========================
 ! INITIALIZE IBM
 !========================
-    subroutine init_ibm(ibm, dns)
+    subroutine init_ibm(ibm, blk)
         type(ibm_type), intent(inout) :: ibm
-        type(dns_type), intent(in)    :: dns
+        type(block_set_type), intent(in) :: blk
         integer :: nx, ny, nz
 
-        nx = int(dns%localSize(1,2))
-        ny = int(dns%localSize(2,2))
-        nz = int(dns%localSize(3,2))
+        nx = int(blk%nb(1))
+        ny = int(blk%nb(2))
+        nz = int(blk%nb(3))
 
         ibm%n_wave_x = 1
         ibm%n_wave_z = 1
@@ -74,8 +74,8 @@ contains
         ibm%phase_x = 0.0d0
         ibm%phase_z = 0.0d0
 
-        allocate(ibm%coef(0:nx+1,0:ny+1,0:nz+1,VAR_U:VAR_W))
-        allocate(ibm%mu(0:nx+1,0:ny+1,0:nz+1,VAR_U:VAR_W))
+        allocate(ibm%coef(0:nx+1,0:ny+1,0:nz+1,VAR_U:VAR_W,blk%nBlocks))
+        allocate(ibm%mu(0:nx+1,0:ny+1,0:nz+1,VAR_U:VAR_W,blk%nBlocks))
         ibm%coef = 0.0d0
         ibm%mu = 1.0d0
     end subroutine init_ibm
@@ -120,7 +120,8 @@ contains
         ierr = fdm_h5_read_ibm_coeff(c_file_name, nx, ny, nz, &
             dns%globalSize(1), dns%globalSize(2), dns%globalSize(3), &
             dns%localSize(1,0), dns%localSize(2,0), dns%localSize(3,0), &
-            dns%leng(1), dns%leng(2), dns%leng(3), dns%re, ibm%coef)
+            dns%leng(1), dns%leng(2), dns%leng(3), dns%re, &
+            ibm%coef(:,:,:,:,1)) ! rank-box file layout, served into block 1 (Phase 0)
         if (ierr /= 0_C_INT) then
             if (has_terminal) print *, "error: could not read IBM coefficient file: ", trim(dns%ibm_coeff_file)
             error stop
@@ -196,16 +197,13 @@ contains
         end if
     end subroutine add_neighbor_coeff
 
-    ! Phase 0: ibm%coef is still rank-shaped, so the coordinates are read from
-    ! block 1 (== this rank's box). The coefficient array gains a trailing block
-    ! index together with the loop over blocks.
     subroutine set_ibm_coeff(dns, blk, ibm, var)
         type(dns_type), intent(in) :: dns
         type(block_set_type), intent(in) :: blk
         type(ibm_type), intent(inout) :: ibm
         integer(C_INT), intent(in) :: var
 
-        integer :: ix, iy, iz
+        integer :: ix, iy, iz, b, nBlocks
         integer :: ilo, ihi, jlo, jhi, klo, khi
         real(C_DOUBLE) :: xA(1:3), xB(1:3), coeff
         real(C_DOUBLE) :: re_inv, solid_coef
@@ -219,50 +217,53 @@ contains
         jhi = ubound(ibm%coef,2)
         klo = lbound(ibm%coef,3)
         khi = ubound(ibm%coef,3)
+        nBlocks = size(ibm%coef,5)
 
         enabled = dns%ibm_enabled
         re_inv = 1.0d0/dns%re
         solid_coef = SOLID*re_inv
 #ifdef USE_OPENMP_OFFLOAD
-        !$omp target teams distribute parallel do collapse(3) &
-        !$omp& map(to: var, enabled, re_inv, solid_coef, ilo, ihi, jlo, jhi, klo, khi, dns, ibm, blk, &
+        !$omp target teams distribute parallel do collapse(4) &
+        !$omp& map(to: var, enabled, re_inv, solid_coef, ilo, ihi, jlo, jhi, klo, khi, nBlocks, dns, ibm, blk, &
         !$omp& blk%x, blk%y, blk%z) &
         !$omp& map(tofrom: ibm%coef) &
-        !$omp& private(ix,iy,iz,xA,xB,coeff)
+        !$omp& private(ix,iy,iz,b,xA,xB,coeff)
 #endif
+        do b = 1, nBlocks
         do iz = klo, khi
             do iy = jlo, jhi
                 do ix = ilo, ihi
-                    ibm%coef(ix,iy,iz,var) = 0.0d0
+                    ibm%coef(ix,iy,iz,var,b) = 0.0d0
                     if (.not. enabled) cycle
 
-                    xA(1) = blk%x(ix,var,1)
-                    xA(2) = blk%y(iy,var,1)
-                    xA(3) = blk%z(iz,var,1)
+                    xA(1) = blk%x(ix,var,b)
+                    xA(2) = blk%y(iy,var,b)
+                    xA(3) = blk%z(iz,var,b)
                     if (isInBody(xA, ibm, dns)) then
-                        ibm%coef(ix,iy,iz,var) = solid_coef
+                        ibm%coef(ix,iy,iz,var,b) = solid_coef
 #ifdef USE_IBM_SECONDORDER
                     else
                         coeff = 0.0d0
 
-                        xB(1) = blk%x(ix-1,var,1); xB(2) = xA(2);             xB(3) = xA(3)
+                        xB(1) = blk%x(ix-1,var,b); xB(2) = xA(2);             xB(3) = xA(3)
                         call add_neighbor_coeff(coeff, xA, xB, ibm, dns)
-                        xB(1) = blk%x(ix+1,var,1); xB(2) = xA(2);             xB(3) = xA(3)
+                        xB(1) = blk%x(ix+1,var,b); xB(2) = xA(2);             xB(3) = xA(3)
                         call add_neighbor_coeff(coeff, xA, xB, ibm, dns)
-                        xB(1) = xA(1);             xB(2) = blk%y(iy-1,var,1); xB(3) = xA(3)
+                        xB(1) = xA(1);             xB(2) = blk%y(iy-1,var,b); xB(3) = xA(3)
                         call add_neighbor_coeff(coeff, xA, xB, ibm, dns)
-                        xB(1) = xA(1);             xB(2) = blk%y(iy+1,var,1); xB(3) = xA(3)
+                        xB(1) = xA(1);             xB(2) = blk%y(iy+1,var,b); xB(3) = xA(3)
                         call add_neighbor_coeff(coeff, xA, xB, ibm, dns)
-                        xB(1) = xA(1);             xB(2) = xA(2);             xB(3) = blk%z(iz-1,var,1)
+                        xB(1) = xA(1);             xB(2) = xA(2);             xB(3) = blk%z(iz-1,var,b)
                         call add_neighbor_coeff(coeff, xA, xB, ibm, dns)
-                        xB(1) = xA(1);             xB(2) = xA(2);             xB(3) = blk%z(iz+1,var,1)
+                        xB(1) = xA(1);             xB(2) = xA(2);             xB(3) = blk%z(iz+1,var,b)
                         call add_neighbor_coeff(coeff, xA, xB, ibm, dns)
 
-                        ibm%coef(ix,iy,iz,var) = coeff*re_inv
+                        ibm%coef(ix,iy,iz,var,b) = coeff*re_inv
 #endif
                     end if
                 end do
             end do
+        end do
         end do
 #ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
@@ -273,9 +274,10 @@ contains
         type(ibm_type), intent(inout) :: ibm
         real(C_DOUBLE), intent(in) :: dt_gamma
 
-        integer :: ix, iy, iz, var
+        integer :: ix, iy, iz, var, b, nBlocks
         integer :: ilo, ihi, jlo, jhi, klo, khi
 
+        nBlocks = size(ibm%coef,5)
         ilo = lbound(ibm%coef,1)
         ihi = ubound(ibm%coef,1)
         jlo = lbound(ibm%coef,2)
@@ -284,19 +286,21 @@ contains
         khi = ubound(ibm%coef,3)
 
 #ifdef USE_OPENMP_OFFLOAD
-        !$omp target teams distribute parallel do collapse(4) &
-        !$omp& map(to: dt_gamma, ilo, ihi, jlo, jhi, klo, khi, ibm%coef) &
+        !$omp target teams distribute parallel do collapse(5) &
+        !$omp& map(to: dt_gamma, ilo, ihi, jlo, jhi, klo, khi, nBlocks, ibm%coef) &
         !$omp& map(tofrom: ibm%mu) &
-        !$omp& private(ix,iy,iz,var)
+        !$omp& private(ix,iy,iz,var,b)
 #endif
+        do b = 1, nBlocks
         do var = VAR_U, VAR_W
             do iz = klo, khi
                 do iy = jlo, jhi
                     do ix = ilo, ihi
-                        ibm%mu(ix,iy,iz,var) = 1.0d0/(1.0d0 + dt_gamma*ibm%coef(ix,iy,iz,var))
+                        ibm%mu(ix,iy,iz,var,b) = 1.0d0/(1.0d0 + dt_gamma*ibm%coef(ix,iy,iz,var,b))
                     end do
                 end do
             end do
+        end do
         end do
 #ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
