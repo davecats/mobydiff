@@ -202,6 +202,8 @@ subroutine apply_config_value(section, key, value, dns, g, les, ps, bc, c, seen,
         select case (key_l)
         case ("nb")
             call read_c_int(value, dns%block_nb, line_no)
+        case ("remove_solid")
+            call read_bool(value, dns%block_remove_solid, line_no)
         end select
     case ("les")
         call apply_les_value(key_l, value, les, line_no)

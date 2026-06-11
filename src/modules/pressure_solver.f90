@@ -106,9 +106,9 @@ contains
         DO k=0_C_INT,hi(3)
             DO j=0_C_INT,hi(2)
                 DO iColor=0_C_INT,nColorX-1_C_INT
-                    iLo = blk%physLow(1,b)
-                    jLo = blk%physLow(2,b)
-                    kLo = blk%physLow(3,b)
+                    iLo = merge(1_C_INT, 0_C_INT, blk%physLow(1,b) /= 0_C_INT)
+                    jLo = merge(1_C_INT, 0_C_INT, blk%physLow(2,b) /= 0_C_INT)
+                    kLo = merge(1_C_INT, 0_C_INT, blk%physLow(3,b) /= 0_C_INT)
                     if (j < jLo .or. k < kLo) cycle
                     colorOffset = modulo(blk%origin(1,b) + blk%origin(2,b) + blk%origin(3,b), 2_C_INT)
                     i = iLo + modulo(color - modulo(iLo+j+k+colorOffset, 2_C_INT), 2_C_INT) &
@@ -153,12 +153,29 @@ contains
 
                     blk%q(i,j,k,VAR_P,b) = blk%q(i,j,k,VAR_P,b) + phi*idt
 
-                    blk%q(i,j,k,VAR_U,b) = blk%q(i,j,k,VAR_U,b) - phi*blk%d1x(i,VAR_U,b)*mu_u_i
-                    blk%q(ip,j,k,VAR_U,b) = blk%q(ip,j,k,VAR_U,b) + phi*blk%d1x(ip,VAR_U,b)*mu_u_ip
-                    blk%q(i,j,k,VAR_V,b) = blk%q(i,j,k,VAR_V,b) - phi*blk%d1y(j,VAR_V,b)*mu_v_j
-                    blk%q(i,jp,k,VAR_V,b) = blk%q(i,jp,k,VAR_V,b) + phi*blk%d1y(jp,VAR_V,b)*mu_v_jp
-                    blk%q(i,j,k,VAR_W,b) = blk%q(i,j,k,VAR_W,b) - phi*blk%d1z(k,VAR_W,b)*mu_w_k
-                    blk%q(i,j,kp,VAR_W,b) = blk%q(i,j,kp,VAR_W,b) + phi*blk%d1z(kp,VAR_W,b)*mu_w_kp
+                    ! Face corrections are masked on no-flux faces with the
+                    ! same conditions as denom. On physical walls the value
+                    ! was dead anyway (apply_bc overwrites it before any
+                    ! read); on FACE_CLOSED faces this keeps the pinned
+                    ! interface velocity exactly zero.
+                    blk%q(i,j,k,VAR_U,b) = blk%q(i,j,k,VAR_U,b) &
+                        - merge(0.0d0, phi*blk%d1x(i,VAR_U,b)*mu_u_i, &
+                                blk%physLow(1,b) /= 0_C_INT .and. i == 1_C_INT)
+                    blk%q(ip,j,k,VAR_U,b) = blk%q(ip,j,k,VAR_U,b) &
+                        + merge(0.0d0, phi*blk%d1x(ip,VAR_U,b)*mu_u_ip, &
+                                blk%physHigh(1,b) /= 0_C_INT .and. i == hi(1))
+                    blk%q(i,j,k,VAR_V,b) = blk%q(i,j,k,VAR_V,b) &
+                        - merge(0.0d0, phi*blk%d1y(j,VAR_V,b)*mu_v_j, &
+                                blk%physLow(2,b) /= 0_C_INT .and. j == 1_C_INT)
+                    blk%q(i,jp,k,VAR_V,b) = blk%q(i,jp,k,VAR_V,b) &
+                        + merge(0.0d0, phi*blk%d1y(jp,VAR_V,b)*mu_v_jp, &
+                                blk%physHigh(2,b) /= 0_C_INT .and. j == hi(2))
+                    blk%q(i,j,k,VAR_W,b) = blk%q(i,j,k,VAR_W,b) &
+                        - merge(0.0d0, phi*blk%d1z(k,VAR_W,b)*mu_w_k, &
+                                blk%physLow(3,b) /= 0_C_INT .and. k == 1_C_INT)
+                    blk%q(i,j,kp,VAR_W,b) = blk%q(i,j,kp,VAR_W,b) &
+                        + merge(0.0d0, phi*blk%d1z(kp,VAR_W,b)*mu_w_kp, &
+                                blk%physHigh(3,b) /= 0_C_INT .and. k == hi(3))
                 END DO
             END DO
         END DO

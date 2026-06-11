@@ -117,9 +117,9 @@ contains
                     jm = j-1
                     kp = k+1
                     km = k-1
-                    uStartX = 1 + int(blk%physLow(1,b))
-                    vStartY = 1 + int(blk%physLow(2,b))
-                    wStartZ = 1 + int(blk%physLow(3,b))
+                    uStartX = merge(2, 1, blk%physLow(1,b) /= 0_C_INT)
+                    vStartY = merge(2, 1, blk%physLow(2,b) /= 0_C_INT)
+                    wStartZ = merge(2, 1, blk%physLow(3,b) /= 0_C_INT)
 
                     if (i >= uStartX) then
                         uu_p = (blk%q(i,j,k,VAR_U,b) + blk%q(ip,j,k,VAR_U,b))**2
@@ -323,9 +323,9 @@ contains
                     jm = j - 1
                     kp = k + 1
                     km = k - 1
-                    uStartX = 1 + int(blk%physLow(1,b))
-                    vStartY = 1 + int(blk%physLow(2,b))
-                    wStartZ = 1 + int(blk%physLow(3,b))
+                    uStartX = merge(2, 1, blk%physLow(1,b) /= 0_C_INT)
+                    vStartY = merge(2, 1, blk%physLow(2,b) /= 0_C_INT)
+                    wStartZ = merge(2, 1, blk%physLow(3,b) /= 0_C_INT)
 
                     if (i >= uStartX) then
                         tau_xp = 2.0d0*les%nut(i,j,k,b) &

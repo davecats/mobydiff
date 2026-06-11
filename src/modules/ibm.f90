@@ -14,7 +14,8 @@
 
 module ibmm
     use, intrinsic :: iso_c_binding
-    use :: init, only: dns_type, VAR_U, VAR_V, VAR_W
+    use :: init, only: dns_type, grid_type, VAR_U, VAR_V, VAR_W, VAR_P, &
+        is_face_staggered, face_at, cell_center_at
     use :: blocks, only: block_set_type
     use :: io, only: to_c_string
     implicit none
@@ -58,6 +59,20 @@ contains
 !========================
 ! INITIALIZE IBM
 !========================
+    ! The analytic wavy-wall geometry parameters, needed both by the
+    ! coefficient kernels and by the block classification that runs before
+    ! the block set exists.
+    subroutine set_ibm_geometry_defaults(ibm)
+        type(ibm_type), intent(inout) :: ibm
+
+        ibm%n_wave_x = 1
+        ibm%n_wave_z = 1
+        ibm%amp_x = 2.5d-2
+        ibm%amp_z = 2.5d-2
+        ibm%phase_x = 0.0d0
+        ibm%phase_z = 0.0d0
+    end subroutine set_ibm_geometry_defaults
+
     subroutine init_ibm(ibm, blk)
         type(ibm_type), intent(inout) :: ibm
         type(block_set_type), intent(in) :: blk
@@ -67,12 +82,7 @@ contains
         ny = int(blk%nb(2))
         nz = int(blk%nb(3))
 
-        ibm%n_wave_x = 1
-        ibm%n_wave_z = 1
-        ibm%amp_x = 2.5d-2
-        ibm%amp_z = 2.5d-2
-        ibm%phase_x = 0.0d0
-        ibm%phase_z = 0.0d0
+        call set_ibm_geometry_defaults(ibm)
 
         allocate(ibm%coef(0:nx+1,0:ny+1,0:nz+1,VAR_U:VAR_W,blk%nBlocks))
         allocate(ibm%mu(0:nx+1,0:ny+1,0:nz+1,VAR_U:VAR_W,blk%nBlocks))
@@ -191,6 +201,81 @@ contains
             coeff = coeff + ((d0-d)/d)/d0**2
         end if
     end subroutine add_neighbor_coeff
+
+    ! Phase 2 classification for the analytic IBM: a block is removable iff
+    ! the block dilated by one halo cell is solid (isInBody) at cell centres
+    ! and all three staggered locations. active is in x-fastest lattice
+    ! raster order, 1 = keep.
+    subroutine classify_active_blocks(active, dns, g, ibm, periodic)
+        integer(C_INT), intent(out) :: active(:)
+        type(dns_type), intent(in) :: dns
+        type(grid_type), intent(in) :: g
+        type(ibm_type), intent(inout) :: ibm
+        logical(C_BOOL), intent(in) :: periodic(1:3)
+
+        integer :: nb, gnbt(3), gx, gy, gz, raster, d
+        integer :: i, j, k, var, o(3)
+        real(C_DOUBLE) :: xA(3)
+        logical :: buried
+
+        call set_ibm_geometry_defaults(ibm)
+
+        nb = int(dns%block_nb)
+        do d = 1, 3
+            if (mod(int(dns%globalSize(d)), nb) /= 0) then
+                error stop "[blocks] nb must divide the global grid in every direction"
+            end if
+            gnbt(d) = int(dns%globalSize(d))/nb
+        end do
+        if (size(active) /= product(gnbt)) error stop "block active mask size mismatch"
+
+        raster = 0
+        do gz = 0, gnbt(3) - 1
+            do gy = 0, gnbt(2) - 1
+                do gx = 0, gnbt(1) - 1
+                    raster = raster + 1
+                    o = [gx, gy, gz]*nb
+                    buried = .true.
+                    outer: do var = int(VAR_U), int(VAR_P)
+                        ! Dilated window: 1-based cell indices o .. o+nb+1.
+                        do k = o(3), o(3) + nb + 1
+                            do j = o(2), o(2) + nb + 1
+                                do i = o(1), o(1) + nb + 1
+                                    xA(1) = location_coord(g%xNode, dns%globalSize(1), &
+                                        dns%leng(1), periodic(1), 1, var, i)
+                                    xA(2) = location_coord(g%yNode, dns%globalSize(2), &
+                                        dns%leng(2), periodic(2), 2, var, j)
+                                    xA(3) = location_coord(g%zNode, dns%globalSize(3), &
+                                        dns%leng(3), periodic(3), 3, var, k)
+                                    if (.not. isInBody(xA, ibm, dns)) then
+                                        buried = .false.
+                                        exit outer
+                                    end if
+                                end do
+                            end do
+                        end do
+                    end do outer
+                    active(raster) = merge(0_C_INT, 1_C_INT, buried)
+                end do
+            end do
+        end do
+    end subroutine classify_active_blocks
+
+    ! Coordinate of variable `var` at 1-based global cell index `idx` along
+    ! direction `dir`, matching slice_grid_direction's staggering.
+    real(C_DOUBLE) function location_coord(node, nGlobal, length, periodic, dir, var, idx) result(x)
+        real(C_DOUBLE), intent(in) :: node(0:)
+        integer(C_INT), intent(in) :: nGlobal
+        real(C_DOUBLE), intent(in) :: length
+        logical(C_BOOL), intent(in) :: periodic
+        integer, intent(in) :: dir, var, idx
+
+        if (is_face_staggered(dir, var)) then
+            x = face_at(node, int(nGlobal), length, idx - 1, periodic)
+        else
+            x = cell_center_at(node, int(nGlobal), length, idx, periodic)
+        end if
+    end function location_coord
 
     subroutine set_ibm_coeff(dns, blk, ibm, var)
         type(dns_type), intent(in) :: dns

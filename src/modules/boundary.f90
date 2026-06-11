@@ -1,7 +1,7 @@
 module boundary
     use, intrinsic :: iso_c_binding
     use :: init, only: dns_type, VAR_U, VAR_V, VAR_W, VAR_P
-    use :: blocks, only: block_set_type
+    use :: blocks, only: block_set_type, FACE_PHYS
     implicit none
 
     integer(C_INT), parameter :: DIR_X = 1_C_INT
@@ -85,10 +85,12 @@ contains
         type(block_set_type), intent(in) :: blk
         integer, intent(in) :: b, dir, side
 
+        ! FACE_PHYS only: FACE_CLOSED faces get zeroed halos, not boundary
+        ! conditions.
         if (side == SIDE_MIN) then
-            block_face_is_physical = blk%physLow(dir,b) /= 0_C_INT
+            block_face_is_physical = blk%physLow(dir,b) == FACE_PHYS
         else
-            block_face_is_physical = blk%physHigh(dir,b) /= 0_C_INT
+            block_face_is_physical = blk%physHigh(dir,b) == FACE_PHYS
         end if
     end function block_face_is_physical
 

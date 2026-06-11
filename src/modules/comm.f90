@@ -181,7 +181,7 @@ contains
                     call neighbor_block(c, blk, dns, b, off(:,d), haveNeighbor, owner, slot, to)
                     if (.not. haveNeighbor) cycle
                     if (owner /= c%cart_rank) cycle
-                    call entry_boxes(blk, b, off(:,d), nb, srcLo, dstLo, ext)
+                    call entry_boxes(c, blk, dns, int(blk%origin(:,b)), off(:,d), nb, srcLo, dstLo, ext)
                     nLocal = nLocal + 1
                     pts = ext(1)*ext(2)*ext(3)
                     if (pass == 2) then
@@ -212,7 +212,7 @@ contains
                         call neighbor_block(c, blk, dns, b, off(:,d), haveNeighbor, owner, slot, to)
                         if (.not. haveNeighbor) cycle
                         if (owner /= c%peerRank(p)) cycle
-                        call entry_boxes(blk, b, off(:,d), nb, srcLo, dstLo, ext)
+                        call entry_boxes(c, blk, dns, int(blk%origin(:,b)), off(:,d), nb, srcLo, dstLo, ext)
                         nRecv = nRecv + 1
                         pts = ext(1)*ext(2)*ext(3)
                         if (pass == 2) then
@@ -250,7 +250,7 @@ contains
                         call neighbor_origin(c, dns, dorigin, off(:,d), nb, haveNeighbor, to)
                         if (.not. haveNeighbor) cycle
                         if (.not. origin_is_mine(blk, dns, to)) cycle
-                        call entry_boxes_at(c, dorigin, off(:,d), nb, gn, srcLo, dstLo, ext)
+                        call entry_boxes(c, blk, dns, dorigin, off(:,d), nb, srcLo, dstLo, ext)
                         nSend = nSend + 1
                         pts = ext(1)*ext(2)*ext(3)
                         if (pass == 2) then
@@ -368,6 +368,8 @@ contains
         slot = -1
         if (.not. haveNeighbor) return
         call owner_of_origin(c, blk, dns, to, owner, slot)
+        ! Removed (solid-buried) neighbour: a FACE_CLOSED face, no entry.
+        if (owner < 0) haveNeighbor = .false.
     end subroutine neighbor_block
 
     ! Global cell origin of the neighbour block in direction off, with
@@ -410,6 +412,11 @@ contains
         if (blk%distMode == DIST_ZORDER) then
             bcoord = to/int(blk%nb)
             id = int(blk%zidOf(bcoord(1), bcoord(2), bcoord(3)))
+            if (id < 0) then
+                owner = -1
+                slot = -1
+                return
+            end if
             owner = int(zorder_owner(int(id, C_INT), blk%nBlocksGlobal, int(c%cart_size, C_INT)))
             slot = id - int(zorder_start(blk%nBlocksGlobal, int(c%cart_size, C_INT), &
                 int(owner, C_INT))) + 1
@@ -468,14 +475,20 @@ contains
         end associate
     end function my_slot_of
 
-    ! Source/destination boxes for the entry (dst block b, direction off):
-    ! src is in the neighbour block's local frame, dst in b's. The
-    ! tangential ranges extend into physical halos exactly like the old
-    ! rank-level set_neighbor_boxes, which fills wall-adjacent corner halos
-    ! from the neighbour's apply_bc-set values.
-    subroutine entry_boxes(blk, b, off, nb, srcLo, dstLo, ext)
+    ! Source/destination boxes for the entry (dst block B, direction off):
+    ! src is in the neighbour block's local frame, dst in B's. The
+    ! tangential range in dim d extends into the halo on side s exactly
+    ! when the combined neighbour at offset off + s*e_d is absent (outside
+    ! a non-periodic boundary or removed): the corner data then cannot
+    ! come from an edge/corner entry, and the source block's own halo on
+    ! that side is an apply_bc wall halo or a zeroed closed halo, never
+    ! exchange-written, so the copy is race-free. With nothing removed
+    ! this reduces to the old physical-wall rule.
+    subroutine entry_boxes(c, blk, dns, dorigin, off, nb, srcLo, dstLo, ext)
+        type(comm_type), intent(in) :: c
         type(block_set_type), intent(in) :: blk
-        integer, intent(in) :: b, off(3), nb(3)
+        type(dns_type), intent(in) :: dns
+        integer, intent(in) :: dorigin(3), off(3), nb(3)
         integer, intent(out) :: srcLo(3), dstLo(3), ext(3)
 
         integer :: d, lo, hi
@@ -491,8 +504,10 @@ contains
                 dstLo(d) = 0
                 ext(d) = 1
             case default
-                lo = merge(0, 1, blk%physLow(d,b) /= 0_C_INT)
-                hi = merge(nb(d) + 1, nb(d), blk%physHigh(d,b) /= 0_C_INT)
+                lo = merge(0, 1, &
+                    .not. combined_neighbor_exists(c, blk, dns, dorigin, off, nb, d, -1))
+                hi = merge(nb(d) + 1, nb(d), &
+                    .not. combined_neighbor_exists(c, blk, dns, dorigin, off, nb, d, +1))
                 srcLo(d) = lo
                 dstLo(d) = lo
                 ext(d) = hi - lo + 1
@@ -500,37 +515,24 @@ contains
         end do
     end subroutine entry_boxes
 
-    ! Same as entry_boxes for a destination block given by its global
-    ! origin (used to mirror a peer's recv enumeration on the send side).
-    subroutine entry_boxes_at(c, dorigin, off, nb, gn, srcLo, dstLo, ext)
+    ! Does the block at lattice offset off + side*e_d from `dorigin` exist
+    ! (inside the domain or periodic image, and not removed)?
+    logical function combined_neighbor_exists(c, blk, dns, dorigin, off, nb, d, side) result(exists)
         type(comm_type), intent(in) :: c
-        integer, intent(in) :: dorigin(3), off(3), nb(3), gn(3)
-        integer, intent(out) :: srcLo(3), dstLo(3), ext(3)
+        type(block_set_type), intent(in) :: blk
+        type(dns_type), intent(in) :: dns
+        integer, intent(in) :: dorigin(3), off(3), nb(3), d, side
 
-        integer :: d, lo, hi
-        logical :: physLo, physHi
+        integer :: offc(3), to(3)
 
-        do d = 1, 3
-            select case (off(d))
-            case (1)
-                srcLo(d) = 1
-                dstLo(d) = nb(d) + 1
-                ext(d) = 1
-            case (-1)
-                srcLo(d) = nb(d)
-                dstLo(d) = 0
-                ext(d) = 1
-            case default
-                physLo = (.not. c%periodic(d)) .and. dorigin(d) == 0
-                physHi = (.not. c%periodic(d)) .and. dorigin(d) + nb(d) == gn(d)
-                lo = merge(0, 1, physLo)
-                hi = merge(nb(d) + 1, nb(d), physHi)
-                srcLo(d) = lo
-                dstLo(d) = lo
-                ext(d) = hi - lo + 1
-            end select
-        end do
-    end subroutine entry_boxes_at
+        offc = off
+        offc(d) = side
+        call neighbor_origin(c, dns, dorigin, offc, nb, exists, to)
+        if (.not. exists) return
+        if (blk%distMode == DIST_ZORDER) then
+            exists = blk%zidOf(to(1)/nb(1), to(2)/nb(2), to(3)/nb(3)) >= 0_C_INT
+        end if
+    end function combined_neighbor_exists
 
     subroutine collect_peers(c, blk, dns, off)
         type(comm_type), intent(inout) :: c

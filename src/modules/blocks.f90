@@ -25,7 +25,7 @@
 module blocks
     use, intrinsic :: iso_c_binding
     use, intrinsic :: iso_fortran_env, only: int64
-    use :: init, only: dns_type, grid_type, NVAR, NVEL, slice_grid_direction
+    use :: init, only: dns_type, grid_type, NVAR, NVEL, VAR_U, VAR_V, VAR_W, slice_grid_direction
     implicit none
 
     private
@@ -34,12 +34,21 @@ module blocks
     public :: enter_block_data, exit_block_data
     public :: subdivide_node_line
     public :: zorder_owner, zorder_start, zorder_count
+    public :: zero_closed_halos, face_kind
     public :: DIST_RANKBOX, DIST_ZORDER
+    public :: FACE_OPEN, FACE_PHYS, FACE_CLOSED
 
     ! Block ownership: one block per rank box (default), or the global
     ! Z-order lattice split linearly over the ranks ([blocks] nb).
     integer(C_INT), parameter :: DIST_RANKBOX = 0_C_INT
     integer(C_INT), parameter :: DIST_ZORDER  = 1_C_INT
+
+    ! Per-block face kinds held in physLow/physHigh. Kernels treat any
+    ! nonzero kind as a no-flux face; only FACE_PHYS faces receive
+    ! boundary conditions, and FACE_CLOSED halos are zeroed once at init.
+    integer(C_INT), parameter :: FACE_OPEN   = 0_C_INT
+    integer(C_INT), parameter :: FACE_PHYS   = 1_C_INT
+    integer(C_INT), parameter :: FACE_CLOSED = 2_C_INT
 
     type :: block_set_type
         ! All blocks of a set share the same cell count nb(1:3): the cubic
@@ -68,10 +77,11 @@ module blocks
         !   origin:   zero-based cell origin of the block in the level-l
         !             global index space
         !   globalId: position in the global (Z-ordered) block table
-        !   physLow/physHigh: 1 where the block face lies on a non-periodic
-        !             global boundary (per direction); the per-block face
-        !             masks used by the momentum starts, the SOR sweep and
-        !             the boundary-condition point list
+        !   physLow/physHigh: per-direction face kind (FACE_OPEN /
+        !             FACE_PHYS on a non-periodic global boundary /
+        !             FACE_CLOSED towards a removed solid block); the
+        !             per-block face masks used by the momentum starts,
+        !             the SOR sweep and the boundary-condition point list
         integer(C_INT), allocatable :: level(:)        ! (nBlocks)
         integer(C_INT), allocatable :: origin(:,:)     ! (3,nBlocks)
         integer(C_INT), allocatable :: globalId(:)     ! (nBlocks)
@@ -101,14 +111,18 @@ contains
     ! ids); without it every rank owns its Cartesian box as one block.
     ! Coordinates and metrics are sliced from the global node lines via
     ! slice_grid_direction either way.
-    subroutine init_block_set(blk, dns, g, periodic, nranks, myrank)
+    subroutine init_block_set(blk, dns, g, periodic, nranks, myrank, active)
         type(block_set_type), intent(inout) :: blk
         type(dns_type), intent(in) :: dns
         type(grid_type), intent(in) :: g
         logical(C_BOOL), intent(in) :: periodic(1:3)
         integer(C_INT), intent(in) :: nranks, myrank
+        ! Optional per-lattice-cell keep flags (x-fastest raster order, 1 =
+        ! keep). Blocks buried inside the immersed boundary are dropped from
+        ! the global table; only meaningful with [blocks] nb.
+        integer(C_INT), intent(in), optional :: active(:)
 
-        integer :: nx, ny, nz, b, d, id
+        integer :: nx, ny, nz, b, d, id, nRemoved
 
         call destroy_block_set(blk)
 
@@ -123,8 +137,12 @@ contains
                 end if
             end do
             blk%gnbt = dns%globalSize(1:3)/blk%nb
-            blk%nBlocksGlobal = product(blk%gnbt)
-            call build_zorder_table(blk)
+            call build_zorder_table(blk, active)
+            nRemoved = int(product(blk%gnbt)) - int(blk%nBlocksGlobal)
+            if (nRemoved > 0 .and. myrank == 0_C_INT) then
+                print *, "removed", nRemoved, "of", product(blk%gnbt), &
+                    "blocks buried inside the immersed boundary"
+            end if
             blk%idStart = zorder_start(blk%nBlocksGlobal, nranks, myrank)
             blk%nBlocks = zorder_count(blk%nBlocksGlobal, nranks, myrank)
         else
@@ -157,10 +175,8 @@ contains
                 blk%origin(:,b) = dns%localSize(1:3,0) - 1_C_INT
             end if
             do d = 1, 3
-                blk%physLow(d,b) = merge(1_C_INT, 0_C_INT, &
-                    .not. periodic(d) .and. blk%origin(d,b) == 0_C_INT)
-                blk%physHigh(d,b) = merge(1_C_INT, 0_C_INT, &
-                    .not. periodic(d) .and. blk%origin(d,b) + blk%nb(d) == dns%globalSize(d))
+                blk%physLow(d,b) = face_kind(blk, dns, periodic, blk%origin(:,b), d, -1)
+                blk%physHigh(d,b) = face_kind(blk, dns, periodic, blk%origin(:,b), d, +1)
             end do
         end do
 
@@ -270,19 +286,28 @@ contains
     end subroutine exit_block_data
 
     ! Number the global block lattice along a Z-order (Morton) curve:
-    ! sort lattice cells by their bit-interleaved coordinates. Identical on
-    ! every rank, so the distribution needs no communication.
-    subroutine build_zorder_table(blk)
+    ! sort lattice cells by their bit-interleaved coordinates, then assign
+    ! compact ids to the surviving (active) blocks only; removed lattice
+    ! cells get zidOf = -1. Identical on every rank, so the distribution
+    ! needs no communication.
+    subroutine build_zorder_table(blk, active)
         type(block_set_type), intent(inout) :: blk
+        integer(C_INT), intent(in), optional :: active(:)
 
-        integer :: n, gx, gy, gz, i
+        integer :: n, gx, gy, gz, i, id, raster
         integer(int64), allocatable :: keys(:)
         integer, allocatable :: order(:)
+        integer(C_INT), allocatable :: coordTmp(:,:)
+        logical :: keep
 
-        n = int(blk%nBlocksGlobal)
+        n = int(product(blk%gnbt))
+        if (present(active)) then
+            if (size(active) /= n) error stop "block active mask does not match the lattice"
+        end if
         allocate(blk%zidOf(0:int(blk%gnbt(1))-1, 0:int(blk%gnbt(2))-1, 0:int(blk%gnbt(3))-1))
-        allocate(blk%zcoord(3,n))
+        allocate(coordTmp(3,n))
         allocate(keys(n), order(n))
+        blk%zidOf = -1_C_INT
 
         i = 0
         do gz = 0, int(blk%gnbt(3)) - 1
@@ -290,21 +315,102 @@ contains
                 do gx = 0, int(blk%gnbt(1)) - 1
                     i = i + 1
                     keys(i) = morton_key(gx, gy, gz)
-                    blk%zcoord(:,i) = int([gx, gy, gz], C_INT)
+                    coordTmp(:,i) = int([gx, gy, gz], C_INT)
                 end do
             end do
         end do
 
         call heapsort_index(keys, order)
 
-        ! After the permutation, zcoord(:,id+1) are the coords of Z-id `id`.
-        blk%zcoord(:,1:n) = blk%zcoord(:,order(1:n))
+        ! Walk the curve and hand out ids to survivors; zcoord(:,id+1) are
+        ! the lattice coords of Z-id `id`.
+        allocate(blk%zcoord(3,n))
+        id = 0
         do i = 1, n
-            blk%zidOf(blk%zcoord(1,i), blk%zcoord(2,i), blk%zcoord(3,i)) = int(i - 1, C_INT)
+            keep = .true.
+            if (present(active)) then
+                raster = 1 + int(coordTmp(1,order(i))) &
+                    + int(blk%gnbt(1))*(int(coordTmp(2,order(i))) &
+                    + int(blk%gnbt(2))*int(coordTmp(3,order(i))))
+                keep = active(raster) /= 0_C_INT
+            end if
+            if (.not. keep) cycle
+            id = id + 1
+            blk%zcoord(:,id) = coordTmp(:,order(i))
+            blk%zidOf(coordTmp(1,order(i)), coordTmp(2,order(i)), coordTmp(3,order(i))) = &
+                int(id - 1, C_INT)
+        end do
+        blk%nBlocksGlobal = int(id, C_INT)
+
+        deallocate(keys, order, coordTmp)
+    end subroutine build_zorder_table
+
+    ! Face kind of the block at `origin` in direction d, side -1/+1: a
+    ! physical wall outside non-periodic boundaries, closed towards a
+    ! removed block, open otherwise.
+    integer(C_INT) function face_kind(blk, dns, periodic, origin, d, side) result(fk)
+        type(block_set_type), intent(in) :: blk
+        type(dns_type), intent(in) :: dns
+        logical(C_BOOL), intent(in) :: periodic(1:3)
+        integer(C_INT), intent(in) :: origin(3)
+        integer, intent(in) :: d, side
+
+        integer :: to(3)
+
+        to = int(origin)
+        to(d) = to(d) + side*int(blk%nb(d))
+        if (to(d) < 0 .or. to(d) >= int(dns%globalSize(d))) then
+            if (.not. periodic(d)) then
+                fk = FACE_PHYS
+                return
+            end if
+            to(d) = modulo(to(d), int(dns%globalSize(d)))
+        end if
+        fk = FACE_OPEN
+        if (blk%distMode == DIST_ZORDER) then
+            if (blk%zidOf(to(1)/int(blk%nb(1)), to(2)/int(blk%nb(2)), &
+                          to(3)/int(blk%nb(3))) < 0_C_INT) fk = FACE_CLOSED
+        end if
+    end function face_kind
+
+    ! FACE_CLOSED faces are exact zero-flux faces: the halo layer and the
+    ! pinned interface velocity are zeroed once here and never written
+    ! again (momentum skips the face, the sweep corrections are masked,
+    ! and no exchange entries point at removed blocks).
+    subroutine zero_closed_halos(blk)
+        type(block_set_type), intent(inout) :: blk
+
+        integer :: b, nx, ny, nz, nClosed
+
+        nx = int(blk%nb(1))
+        ny = int(blk%nb(2))
+        nz = int(blk%nb(3))
+
+        nClosed = count(blk%physLow == FACE_CLOSED) + count(blk%physHigh == FACE_CLOSED)
+        if (nClosed == 0) return
+
+        do b = 1, int(blk%nBlocks)
+            if (blk%physLow(1,b) == FACE_CLOSED) then
+                blk%q(0,:,:,:,b) = 0.0d0
+                blk%q(1,:,:,VAR_U,b) = 0.0d0
+            end if
+            if (blk%physHigh(1,b) == FACE_CLOSED) blk%q(nx+1,:,:,:,b) = 0.0d0
+            if (blk%physLow(2,b) == FACE_CLOSED) then
+                blk%q(:,0,:,:,b) = 0.0d0
+                blk%q(:,1,:,VAR_V,b) = 0.0d0
+            end if
+            if (blk%physHigh(2,b) == FACE_CLOSED) blk%q(:,ny+1,:,:,b) = 0.0d0
+            if (blk%physLow(3,b) == FACE_CLOSED) then
+                blk%q(:,:,0,:,b) = 0.0d0
+                blk%q(:,:,1,VAR_W,b) = 0.0d0
+            end if
+            if (blk%physHigh(3,b) == FACE_CLOSED) blk%q(:,:,nz+1,:,b) = 0.0d0
         end do
 
-        deallocate(keys, order)
-    end subroutine build_zorder_table
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target update to(blk%q)
+#endif
+    end subroutine zero_closed_halos
 
     pure integer(int64) function morton_key(gx, gy, gz) result(key)
         integer, intent(in) :: gx, gy, gz

@@ -36,6 +36,8 @@ module init
         real(C_DOUBLE) :: forcing(1:3) = 0.0d0
         ! [blocks] nb: cubic block edge in cells; 0 = one block per rank box.
         integer(C_INT) :: block_nb = 0_C_INT
+        ! [blocks] remove_solid: drop blocks buried inside the immersed body.
+        logical(C_BOOL) :: block_remove_solid = .true.
         logical(C_BOOL) :: ibm_enabled = .true.
         character(len=256) :: ibm_coeff_file = ""
         character(len=256) :: field_prefix = ""

@@ -78,6 +78,16 @@ module io
             integer(C_INT) :: ierr
         end function fdm_h5_read_metadata
 
+        function fdm_h5_read_block_active(file_name, n_lattice, block_nb, found, active) &
+                bind(C, name="fdm_h5_read_block_active") result(ierr)
+            import :: C_CHAR, C_INT
+            character(kind=C_CHAR), intent(in) :: file_name(*)
+            integer(C_INT), value :: n_lattice, block_nb
+            integer(C_INT), intent(out) :: found
+            integer(C_INT), intent(out) :: active(*)
+            integer(C_INT) :: ierr
+        end function fdm_h5_read_block_active
+
         function fdm_h5_read_field(file_name, nbx, nby, nbz, n_blocks, block_origin, &
                 global_nx, global_ny, global_nz, q) &
                 bind(C, name="fdm_h5_read_field") result(ierr)
@@ -268,6 +278,28 @@ subroutine read_restart_metadata(dns, g, bc, pressure_niter, pressure_sor, file_
     end do
     dns%ibm_enabled = ibm_enabled /= 0_C_INT
 end subroutine read_restart_metadata
+
+! Per-block keep flags from the IBM coefficient file (mobygeom
+! block-active). found is false when the file carries no table.
+subroutine read_block_active(active, found, dns, has_terminal)
+    integer(C_INT), intent(out) :: active(:)
+    logical, intent(out) :: found
+    type(dns_type), intent(in) :: dns
+    logical, intent(in) :: has_terminal
+
+    character(kind=C_CHAR,len=:), allocatable :: c_file_name
+    integer(C_INT) :: ierr, c_found
+
+    c_file_name = to_c_string(dns%ibm_coeff_file)
+    ierr = fdm_h5_read_block_active(c_file_name, int(size(active), C_INT), &
+        dns%block_nb, c_found, active)
+    if (ierr /= 0_C_INT) then
+        if (has_terminal) print *, "error: could not read block_active from: ", &
+            trim(dns%ibm_coeff_file)
+        error stop
+    end if
+    found = c_found /= 0_C_INT
+end subroutine read_block_active
 
 subroutine read_field(blk, dns, file_name, c)
     ! Parallel HDF5 call: all MPI ranks must enter this routine together.

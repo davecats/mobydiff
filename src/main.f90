@@ -6,7 +6,7 @@
 program main
     use :: init
     use :: blocks, only: block_set_type, init_block_set, destroy_block_set, &
-        enter_block_data, exit_block_data
+        enter_block_data, exit_block_data, zero_closed_halos
     use :: chron, only: chron_type, start_chron, stop_chron, write_chron
     use :: flow_case, only: case_type, create_flow_case
     use :: config
@@ -38,6 +38,8 @@ program main
     type(les_profile_type) :: les_prof
     type(config_seen_type) :: config_seen
     type(comm_type) :: c
+    integer(C_INT), allocatable :: blockActive(:)
+    logical :: blockActiveFound
 
     call comm_init_world(c)
     call splash(c%has_terminal)
@@ -63,8 +65,31 @@ program main
     call validate_dns_values(dns, g)
 
     ! Block refactor (docs/block_refinement_strategy.md): the solver state
-    ! lives in a block set tiling this rank's box ([blocks] nb per block).
-    call init_block_set(blk, dns, g, bc%isPeriodic, int(c%cart_size, C_INT), int(c%cart_rank, C_INT))
+    ! lives in a block set tiling the grid ([blocks] nb per block). With an
+    ! immersed boundary, blocks buried inside the body are removed from the
+    ! global table before the set is built.
+    if (dns%block_nb > 0_C_INT .and. dns%ibm_enabled .and. dns%block_remove_solid) then
+        if (any(mod(dns%globalSize, dns%block_nb) /= 0_C_INT)) then
+            error stop "[blocks] nb must divide the global grid in every direction"
+        end if
+        allocate(blockActive(product(dns%globalSize/dns%block_nb)))
+        if (len_trim(dns%ibm_coeff_file) > 0) then
+            call read_block_active(blockActive, blockActiveFound, dns, c%has_terminal)
+            if (.not. blockActiveFound) then
+                if (c%has_terminal) print *, &
+                    "coefficient file has no block_active table; keeping all blocks"
+                blockActive = 1_C_INT
+            end if
+        else
+            call classify_active_blocks(blockActive, dns, g, ibm, bc%isPeriodic)
+        end if
+        call init_block_set(blk, dns, g, bc%isPeriodic, int(c%cart_size, C_INT), &
+            int(c%cart_rank, C_INT), blockActive)
+        deallocate(blockActive)
+    else
+        call init_block_set(blk, dns, g, bc%isPeriodic, int(c%cart_size, C_INT), &
+            int(c%cart_rank, C_INT))
+    end if
     call init_block_exchange(c, blk, dns)
     call precompute_peclet_rate(dns, blk, c)
     call init_boundary_faces(bc, blk)
@@ -81,6 +106,7 @@ program main
         if (c%has_terminal) print *, "reading restart fields: ", trim(dns%restart_file)
         call read_field(blk, dns, dns%restart_file, c)
     end if
+    call zero_closed_halos(blk)
 
     if (c%has_terminal) print *, "initialising pressure solver..."
     call init_pressure_solver(ps, dns, bc, c%has_terminal)

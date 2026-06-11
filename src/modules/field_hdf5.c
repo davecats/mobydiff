@@ -761,6 +761,68 @@ int fdm_h5_read_field(const char *filename, int nbx, int nby, int nbz,
     return ierr != 0;
 }
 
+/*
+ * Optional per-block keep flags written by mobygeom block-active
+ * (x-fastest lattice raster order). *found = 0 when the dataset is absent,
+ * which is not an error: the solver then keeps every block.
+ */
+int fdm_h5_read_block_active(const char *filename, int n_lattice, int block_nb,
+                             int *found, int *active)
+{
+    hsize_t dims[1] = {0};
+    hid_t file = -1;
+    hid_t dset = -1;
+    hid_t space = -1;
+    htri_t exists;
+    int file_nb = 0;
+    herr_t status;
+
+    *found = 0;
+
+    file = H5Fopen(filename, H5F_ACC_RDONLY, H5P_DEFAULT);
+    if (file < 0) return 1;
+
+    exists = H5Lexists(file, "block_active", H5P_DEFAULT);
+    if (exists <= 0) {
+        H5Fclose(file);
+        return 0;
+    }
+
+    if (read_attr_int(file, "block_nb", &file_nb, 1) != 0 || file_nb != block_nb) {
+        H5Fclose(file);
+        return 1;
+    }
+
+    dset = H5Dopen2(file, "block_active", H5P_DEFAULT);
+    if (dset < 0) {
+        H5Fclose(file);
+        return 1;
+    }
+    space = H5Dget_space(dset);
+    if (space < 0 || H5Sget_simple_extent_ndims(space) != 1) {
+        if (space >= 0) H5Sclose(space);
+        H5Dclose(dset);
+        H5Fclose(file);
+        return 1;
+    }
+    H5Sget_simple_extent_dims(space, dims, NULL);
+    if (dims[0] != (hsize_t)n_lattice) {
+        H5Sclose(space);
+        H5Dclose(dset);
+        H5Fclose(file);
+        return 1;
+    }
+
+    status = H5Dread(dset, H5T_NATIVE_INT, H5S_ALL, H5S_ALL, H5P_DEFAULT, active);
+    H5Sclose(space);
+    H5Dclose(dset);
+    H5Fclose(file);
+    if (status < 0) return 1;
+
+    *found = 1;
+    return 0;
+}
+
 int fdm_h5_read_ibm_coeff(const char *filename, int nbx, int nby, int nbz,
                           int n_blocks, const int *block_origin,
                           int global_nx, int global_ny, int global_nz,
