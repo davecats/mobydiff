@@ -81,11 +81,34 @@ immersed boundary. Phased, each phase verified before the next:
   nb=32 +19% (the (34/32)^3-1 halo-layer overhead), nb=16 +49%; tiny nb
   on big IBM cases is much worse (sailplane nb=10: ~25x) — choose nb=32+
   until Phase 4 tackles exchange overlap.
-- Phase 2 (next): removal of solid blocks (`FACE_CLOSED` zero-flux
-  faces); `mobygrid`/`mobygeom` classification writes the block table.
-- Phase 3: 2:1 refinement (restrict/prolong in pack/unpack, fine-owns-face,
-  finest-level buffer at the wall, per-level node lines via midpoint
-  subdivision).
+- Phase 2 (complete, validated 2026-06-12): removal of blocks buried
+  inside the immersed boundary. Removable ⇔ block dilated by one halo
+  cell solid at cell centres + all three staggered locations; analytic
+  IBM classifies at init (`classify_active_blocks`), file-based IBM
+  reads the `block_active` table written by `mobygeom.py block-active`
+  into the coefficient file (absent table ⇒ keep all, warn).
+  `[blocks] remove_solid = false` disables removal. Z-order ids are
+  compacted to survivors (`zidOf = -1` for removed); `physLow/physHigh`
+  are face kinds (`FACE_OPEN/FACE_PHYS/FACE_CLOSED`): closed faces are
+  exact zero-flux via the wall mask machinery (momentum skip, sweep
+  window, denom + face-correction merge(), halos and pinned faces
+  zeroed once at init, no exchange entries toward removed blocks, the
+  tangential extension keyed to "combined edge/corner neighbour
+  absent"). apply_bc serves FACE_PHYS only. See strategy doc §7
+  (updated: face masks instead of mu=0 at the face).
+  Gates: wavychannel nb=4 (1150/125000 removed) and a sphere case
+  (file path, 8/1728): fluid cells EXACTLY equal to no-removal,
+  velocities ≤ ~1e-26 everywhere (SOLID·mu residual; only the
+  decoupled solid-cell pressure differs O(1)); global mass residual
+  1e-22; nb-unset / fully-fluid / remove_solid=false / no-flags all
+  bit-exact vs Phase 1 (nofma). GPU s/step gain ≈ removed fraction
+  (wavychannel −0.9%); tutorial-resolution bodies bury few blocks
+  (sailplane at nb=10: zero) — payoff grows with volumetric bodies and
+  finer grids. Beware: face-kind consumers must test `/= 0` (no-flux)
+  vs `== FACE_PHYS` (BCs) — never treat the kind as arithmetic 0/1.
+- Phase 3 (next): 2:1 refinement (restrict/prolong in pack/unpack,
+  fine-owns-face, finest-level buffer at the wall, per-level node lines
+  via midpoint subdivision).
 - Phase 4: performance (overlap, see `docs/nonblocking_overlap_strategy.md`).
 
 If the branch `claude/blocks` does not exist yet, create it from the
