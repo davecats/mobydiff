@@ -3,18 +3,19 @@
 !       Time-stepper       !
 !          module          !
 !                          !
-!--------------------------! 
-! 
+!--------------------------!
+!
 ! authors: Dr.-Ing. Davide Gatti
 !          B.Sc. Ahmet Cumhur
-! 
+!
 ! date:    28.04.26
-! 
+!
 
 module step
     use, intrinsic :: iso_c_binding
-    use :: init, only: dns_type, grid_type, field_type, VAR_U, VAR_V, VAR_W, VAR_P, &
+    use :: init, only: dns_type, VAR_U, VAR_V, VAR_W, VAR_P, &
         CFL_COURANT, CFL_PECLET, NCFL
+    use :: blocks, only: block_set_type
     use :: ibmm, only: ibm_type
     use :: boundary, only: boundary_type
     use :: comm, only: comm_type, comm_allreduce_max
@@ -28,46 +29,47 @@ module step
 
 contains
 
-    subroutine precompute_peclet_rate(dns, g, c)
+    subroutine precompute_peclet_rate(dns, blk, c)
         type(dns_type), intent(inout) :: dns
-        type(grid_type), intent(in) :: g
+        type(block_set_type), intent(in) :: blk
         type(comm_type), intent(in) :: c
 
-        integer :: i, nx, ny, nz
+        integer :: i, b, nx, ny, nz
         real(C_DOUBLE) :: ire, local_rate(1)
 
-        nx = int(dns%localSize(1,2))
-        ny = int(dns%localSize(2,2))
-        nz = int(dns%localSize(3,2))
+        nx = int(blk%nb(1))
+        ny = int(blk%nb(2))
+        nz = int(blk%nb(3))
         ire = 1.0d0/dns%re
 
         local_rate = 0.0d0
-        do i = 0, nx+1
-            local_rate(1) = max(local_rate(1), ire*g%d1x(i,VAR_P)**2)
-        end do
-        do i = 0, ny+1
-            local_rate(1) = max(local_rate(1), ire*g%d1y(i,VAR_P)**2)
-        end do
-        do i = 0, nz+1
-            local_rate(1) = max(local_rate(1), ire*g%d1z(i,VAR_P)**2)
+        do b = 1, int(blk%nBlocks)
+            do i = 0, nx+1
+                local_rate(1) = max(local_rate(1), ire*blk%d1x(i,VAR_P,b)**2)
+            end do
+            do i = 0, ny+1
+                local_rate(1) = max(local_rate(1), ire*blk%d1y(i,VAR_P,b)**2)
+            end do
+            do i = 0, nz+1
+                local_rate(1) = max(local_rate(1), ire*blk%d1z(i,VAR_P,b)**2)
+            end do
         end do
 
         call comm_allreduce_max(c, local_rate)
         dns%peclet_rate = local_rate(1)
     end subroutine precompute_peclet_rate
 
-    subroutine momentum(f, dns, g, dt_alpha, dt_beta, dt_gamma, ibm, bc, les, les_prof)
-        type(field_type), intent(inout) :: f
+    subroutine momentum(blk, dns, dt_alpha, dt_beta, dt_gamma, ibm, bc, les, les_prof)
+        type(block_set_type), intent(inout) :: blk
         type(dns_type),   intent(in)    :: dns
-        type(grid_type),  intent(in)    :: g
         real(C_DOUBLE),   intent(in)    :: dt_alpha, dt_beta, dt_gamma
         type(ibm_type),   intent(in)    :: ibm
         type(boundary_type),   intent(in)  :: bc
         type(les_type),   intent(in), optional :: les
         type(les_profile_type), intent(inout), optional :: les_prof
 
-        integer :: i,j,k,ip,im,kp,km,jp,jm
-        integer :: nx, ny, nz, uStartX, vStartY, wStartZ
+        integer :: i,j,k,b,ip,im,kp,km,jp,jm
+        integer :: nx, ny, nz, nBlocks, uStartX, vStartY, wStartZ
 
         real(C_DOUBLE) :: diff_ux,diff_uy,diff_uz
         real(C_DOUBLE) :: diff_vx,diff_vy,diff_vz
@@ -83,32 +85,37 @@ contains
         real(C_DOUBLE) :: forcing(1:3)
         logical :: use_les
 
-        nx = int(dns%localSize(1,2))
-        ny = int(dns%localSize(2,2))
-        nz = int(dns%localSize(3,2))
+        nx = int(blk%nb(1))
+        ny = int(blk%nb(2))
+        nz = int(blk%nb(3))
+        nBlocks = int(blk%nBlocks)
         ire = 1.0d0/dns%re
         forcing = dns%forcing
+        ! Skip the staggered face that lies on a physical lower boundary; held by
+        ! apply_bc. Phase 0: one block per rank, so a rank-wide scalar derived from
+        ! the block origin suffices. Phase 1 turns these into per-block face masks.
         uStartX = 1
         vStartY = 1
         wStartZ = 1
-        if (.not. bc%isPeriodic(1) .and. dns%localSize(1,0) == 1_C_INT) uStartX = 2
-        if (.not. bc%isPeriodic(2) .and. dns%localSize(2,0) == 1_C_INT) vStartY = 2
-        if (.not. bc%isPeriodic(3) .and. dns%localSize(3,0) == 1_C_INT) wStartZ = 2
+        if (.not. bc%isPeriodic(1) .and. blk%origin(1,1) == 0_C_INT) uStartX = 2
+        if (.not. bc%isPeriodic(2) .and. blk%origin(2,1) == 0_C_INT) vStartY = 2
+        if (.not. bc%isPeriodic(3) .and. blk%origin(3,1) == 0_C_INT) wStartZ = 2
         use_les = .false.
         if (present(les)) use_les = les_is_enabled(les) .and. allocated(les%nut)
 
         ! Predictor for all staggered velocity components.
-        !$omp target teams distribute parallel do collapse(3) &
+        !$omp target teams distribute parallel do collapse(4) &
         !$omp& map(to: dt_alpha, dt_beta, dt_gamma, uStartX, vStartY, wStartZ, &
         !$omp& ire, forcing(1:3), &
-        !$omp& g%d1x, g%d1y, g%d1z, &
-        !$omp& g%lapXm, g%lapX0, g%lapXp, g%lapYm, g%lapY0, g%lapYp, &
-        !$omp& g%lapZm, g%lapZ0, g%lapZp, f%q, ibm%mu) &
-        !$omp& map(tofrom: f%qs, f%oldrhs) &
-        !$omp& private(i,j,k,ip,im,jp,jm,kp,km,uu_p,uu_m,uv_p,uv_m,uw_p,uw_m, &
+        !$omp& blk%d1x, blk%d1y, blk%d1z, &
+        !$omp& blk%lapXm, blk%lapX0, blk%lapXp, blk%lapYm, blk%lapY0, blk%lapYp, &
+        !$omp& blk%lapZm, blk%lapZ0, blk%lapZp, blk%q, ibm%mu) &
+        !$omp& map(tofrom: blk%qs, blk%oldrhs) &
+        !$omp& private(i,j,k,b,ip,im,jp,jm,kp,km,uu_p,uu_m,uv_p,uv_m,uw_p,uw_m, &
         !$omp& vu_p,vu_m,vv_p,vv_m,vw_p,vw_m,wu_p,wu_m,ww_p,ww_m,wv_p,wv_m, &
         !$omp& diff_ux,diff_uy,diff_uz,diff_vx,diff_vy,diff_vz,diff_wx,diff_wy,diff_wz, &
         !$omp& dpx,dpy,dpz,rhsu,rhsv,rhsw,mu_u,mu_v,mu_w)
+        do b = 1, nBlocks
         do k = 1, nz
             do j = 1, ny
                 do i = 1, nx
@@ -120,196 +127,200 @@ contains
                     km = k-1
 
                     if (i >= uStartX) then
-                        uu_p = (f%q(i,j,k,VAR_U) + f%q(ip,j,k,VAR_U))**2
-                        uu_m = (f%q(im,j,k,VAR_U) + f%q(i,j,k,VAR_U))**2
+                        uu_p = (blk%q(i,j,k,VAR_U,b) + blk%q(ip,j,k,VAR_U,b))**2
+                        uu_m = (blk%q(im,j,k,VAR_U,b) + blk%q(i,j,k,VAR_U,b))**2
 
-                        uv_p = (f%q(i,j,k,VAR_U) + f%q(i,jp,k,VAR_U)) &
-                             * (f%q(im,jp,k,VAR_V) + f%q(i,jp,k,VAR_V))
-                        uv_m = (f%q(i,jm,k,VAR_U) + f%q(i,j,k,VAR_U)) &
-                             * (f%q(im,j,k,VAR_V) + f%q(i,j,k,VAR_V))
+                        uv_p = (blk%q(i,j,k,VAR_U,b) + blk%q(i,jp,k,VAR_U,b)) &
+                             * (blk%q(im,jp,k,VAR_V,b) + blk%q(i,jp,k,VAR_V,b))
+                        uv_m = (blk%q(i,jm,k,VAR_U,b) + blk%q(i,j,k,VAR_U,b)) &
+                             * (blk%q(im,j,k,VAR_V,b) + blk%q(i,j,k,VAR_V,b))
 
-                        uw_p = (f%q(i,j,k,VAR_U) + f%q(i,j,kp,VAR_U)) &
-                             * (f%q(im,j,kp,VAR_W) + f%q(i,j,kp,VAR_W))
-                        uw_m = (f%q(i,j,km,VAR_U) + f%q(i,j,k,VAR_U)) &
-                             * (f%q(im,j,k,VAR_W) + f%q(i,j,k,VAR_W))
+                        uw_p = (blk%q(i,j,k,VAR_U,b) + blk%q(i,j,kp,VAR_U,b)) &
+                             * (blk%q(im,j,kp,VAR_W,b) + blk%q(i,j,kp,VAR_W,b))
+                        uw_m = (blk%q(i,j,km,VAR_U,b) + blk%q(i,j,k,VAR_U,b)) &
+                             * (blk%q(im,j,k,VAR_W,b) + blk%q(i,j,k,VAR_W,b))
 
-                        diff_ux = g%lapXm(i,VAR_U)*f%q(im,j,k,VAR_U) &
-                                + g%lapX0(i,VAR_U)*f%q(i,j,k,VAR_U) &
-                                + g%lapXp(i,VAR_U)*f%q(ip,j,k,VAR_U)
-                        diff_uy = g%lapYm(j,VAR_U)*f%q(i,jm,k,VAR_U) &
-                                + g%lapY0(j,VAR_U)*f%q(i,j,k,VAR_U) &
-                                + g%lapYp(j,VAR_U)*f%q(i,jp,k,VAR_U)
-                        diff_uz = g%lapZm(k,VAR_U)*f%q(i,j,km,VAR_U) &
-                                + g%lapZ0(k,VAR_U)*f%q(i,j,k,VAR_U) &
-                                + g%lapZp(k,VAR_U)*f%q(i,j,kp,VAR_U)
+                        diff_ux = blk%lapXm(i,VAR_U,b)*blk%q(im,j,k,VAR_U,b) &
+                                + blk%lapX0(i,VAR_U,b)*blk%q(i,j,k,VAR_U,b) &
+                                + blk%lapXp(i,VAR_U,b)*blk%q(ip,j,k,VAR_U,b)
+                        diff_uy = blk%lapYm(j,VAR_U,b)*blk%q(i,jm,k,VAR_U,b) &
+                                + blk%lapY0(j,VAR_U,b)*blk%q(i,j,k,VAR_U,b) &
+                                + blk%lapYp(j,VAR_U,b)*blk%q(i,jp,k,VAR_U,b)
+                        diff_uz = blk%lapZm(k,VAR_U,b)*blk%q(i,j,km,VAR_U,b) &
+                                + blk%lapZ0(k,VAR_U,b)*blk%q(i,j,k,VAR_U,b) &
+                                + blk%lapZp(k,VAR_U,b)*blk%q(i,j,kp,VAR_U,b)
 
-                        dpx = (f%q(i,j,k,VAR_P)-f%q(im,j,k,VAR_P))*g%d1x(i,VAR_U)
+                        dpx = (blk%q(i,j,k,VAR_P,b)-blk%q(im,j,k,VAR_P,b))*blk%d1x(i,VAR_U,b)
 
                         rhsu = ( &
-                            -0.25d0*( (uu_p-uu_m)*g%d1x(i,VAR_U) &
-                                     +(uv_p-uv_m)*g%d1y(j,VAR_U) &
-                                     +(uw_p-uw_m)*g%d1z(k,VAR_U)) &
+                            -0.25d0*( (uu_p-uu_m)*blk%d1x(i,VAR_U,b) &
+                                     +(uv_p-uv_m)*blk%d1y(j,VAR_U,b) &
+                                     +(uw_p-uw_m)*blk%d1z(k,VAR_U,b)) &
                             + forcing(VAR_U) &
                             + ire*(diff_ux + diff_uy + diff_uz) )
 
-                        f%qs(i,j,k,VAR_U) = f%q(i,j,k,VAR_U) + dt_alpha*rhsu &
-                            + dt_beta*f%oldrhs(i,j,k,VAR_U) - dt_gamma*dpx
+                        blk%qs(i,j,k,VAR_U,b) = blk%q(i,j,k,VAR_U,b) + dt_alpha*rhsu &
+                            + dt_beta*blk%oldrhs(i,j,k,VAR_U,b) - dt_gamma*dpx
 
                         mu_u = ibm%mu(i,j,k,VAR_U)
-                        f%qs(i,j,k,VAR_U) = f%qs(i,j,k,VAR_U)*mu_u
+                        blk%qs(i,j,k,VAR_U,b) = blk%qs(i,j,k,VAR_U,b)*mu_u
 
-                        f%oldrhs(i,j,k,VAR_U) = rhsu
+                        blk%oldrhs(i,j,k,VAR_U,b) = rhsu
                     end if
 
                     if (j >= vStartY) then
-                        vu_p = (f%q(i,j,k,VAR_V) + f%q(ip,j,k,VAR_V)) &
-                             * (f%q(ip,jm,k,VAR_U) + f%q(ip,j,k,VAR_U))
-                        vu_m = (f%q(im,j,k,VAR_V) + f%q(i,j,k,VAR_V)) &
-                             * (f%q(i,jm,k,VAR_U) + f%q(i,j,k,VAR_U))
+                        vu_p = (blk%q(i,j,k,VAR_V,b) + blk%q(ip,j,k,VAR_V,b)) &
+                             * (blk%q(ip,jm,k,VAR_U,b) + blk%q(ip,j,k,VAR_U,b))
+                        vu_m = (blk%q(im,j,k,VAR_V,b) + blk%q(i,j,k,VAR_V,b)) &
+                             * (blk%q(i,jm,k,VAR_U,b) + blk%q(i,j,k,VAR_U,b))
 
-                        vv_p = (f%q(i,j,k,VAR_V) + f%q(i,jp,k,VAR_V))**2
-                        vv_m = (f%q(i,jm,k,VAR_V) + f%q(i,j,k,VAR_V))**2
+                        vv_p = (blk%q(i,j,k,VAR_V,b) + blk%q(i,jp,k,VAR_V,b))**2
+                        vv_m = (blk%q(i,jm,k,VAR_V,b) + blk%q(i,j,k,VAR_V,b))**2
 
-                        vw_p = (f%q(i,j,k,VAR_V) + f%q(i,j,kp,VAR_V)) &
-                             * (f%q(i,jm,kp,VAR_W) + f%q(i,j,kp,VAR_W))
-                        vw_m = (f%q(i,j,km,VAR_V) + f%q(i,j,k,VAR_V)) &
-                             * (f%q(i,jm,k,VAR_W) + f%q(i,j,k,VAR_W))
+                        vw_p = (blk%q(i,j,k,VAR_V,b) + blk%q(i,j,kp,VAR_V,b)) &
+                             * (blk%q(i,jm,kp,VAR_W,b) + blk%q(i,j,kp,VAR_W,b))
+                        vw_m = (blk%q(i,j,km,VAR_V,b) + blk%q(i,j,k,VAR_V,b)) &
+                             * (blk%q(i,jm,k,VAR_W,b) + blk%q(i,j,k,VAR_W,b))
 
-                        diff_vx = g%lapXm(i,VAR_V)*f%q(im,j,k,VAR_V) &
-                                + g%lapX0(i,VAR_V)*f%q(i,j,k,VAR_V) &
-                                + g%lapXp(i,VAR_V)*f%q(ip,j,k,VAR_V)
-                        diff_vy = g%lapYm(j,VAR_V)*f%q(i,jm,k,VAR_V) &
-                                + g%lapY0(j,VAR_V)*f%q(i,j,k,VAR_V) &
-                                + g%lapYp(j,VAR_V)*f%q(i,jp,k,VAR_V)
-                        diff_vz = g%lapZm(k,VAR_V)*f%q(i,j,km,VAR_V) &
-                                + g%lapZ0(k,VAR_V)*f%q(i,j,k,VAR_V) &
-                                + g%lapZp(k,VAR_V)*f%q(i,j,kp,VAR_V)
+                        diff_vx = blk%lapXm(i,VAR_V,b)*blk%q(im,j,k,VAR_V,b) &
+                                + blk%lapX0(i,VAR_V,b)*blk%q(i,j,k,VAR_V,b) &
+                                + blk%lapXp(i,VAR_V,b)*blk%q(ip,j,k,VAR_V,b)
+                        diff_vy = blk%lapYm(j,VAR_V,b)*blk%q(i,jm,k,VAR_V,b) &
+                                + blk%lapY0(j,VAR_V,b)*blk%q(i,j,k,VAR_V,b) &
+                                + blk%lapYp(j,VAR_V,b)*blk%q(i,jp,k,VAR_V,b)
+                        diff_vz = blk%lapZm(k,VAR_V,b)*blk%q(i,j,km,VAR_V,b) &
+                                + blk%lapZ0(k,VAR_V,b)*blk%q(i,j,k,VAR_V,b) &
+                                + blk%lapZp(k,VAR_V,b)*blk%q(i,j,kp,VAR_V,b)
 
-                        dpy = (f%q(i,j,k,VAR_P)-f%q(i,jm,k,VAR_P))*g%d1y(j,VAR_V)
+                        dpy = (blk%q(i,j,k,VAR_P,b)-blk%q(i,jm,k,VAR_P,b))*blk%d1y(j,VAR_V,b)
 
                         rhsv = ( &
-                            -0.25d0*((vu_p-vu_m)*g%d1x(i,VAR_V) &
-                                    +(vv_p-vv_m)*g%d1y(j,VAR_V) &
-                                    +(vw_p-vw_m)*g%d1z(k,VAR_V)) &
+                            -0.25d0*((vu_p-vu_m)*blk%d1x(i,VAR_V,b) &
+                                    +(vv_p-vv_m)*blk%d1y(j,VAR_V,b) &
+                                    +(vw_p-vw_m)*blk%d1z(k,VAR_V,b)) &
                             + forcing(VAR_V) &
                             + ire*(diff_vx + diff_vy + diff_vz) )
 
-                        f%qs(i,j,k,VAR_V) = f%q(i,j,k,VAR_V) + dt_alpha*rhsv &
-                            + dt_beta*f%oldrhs(i,j,k,VAR_V) - dt_gamma*dpy
+                        blk%qs(i,j,k,VAR_V,b) = blk%q(i,j,k,VAR_V,b) + dt_alpha*rhsv &
+                            + dt_beta*blk%oldrhs(i,j,k,VAR_V,b) - dt_gamma*dpy
 
                         mu_v = ibm%mu(i,j,k,VAR_V)
-                        f%qs(i,j,k,VAR_V) = f%qs(i,j,k,VAR_V)*mu_v
+                        blk%qs(i,j,k,VAR_V,b) = blk%qs(i,j,k,VAR_V,b)*mu_v
 
-                        f%oldrhs(i,j,k,VAR_V) = rhsv
+                        blk%oldrhs(i,j,k,VAR_V,b) = rhsv
                     end if
 
                     if (k >= wStartZ) then
-                        wu_p = (f%q(i,j,k,VAR_W) + f%q(ip,j,k,VAR_W)) &
-                             * (f%q(ip,j,km,VAR_U) + f%q(ip,j,k,VAR_U))
-                        wu_m = (f%q(im,j,k,VAR_W) + f%q(i,j,k,VAR_W)) &
-                             * (f%q(i,j,km,VAR_U) + f%q(i,j,k,VAR_U))
+                        wu_p = (blk%q(i,j,k,VAR_W,b) + blk%q(ip,j,k,VAR_W,b)) &
+                             * (blk%q(ip,j,km,VAR_U,b) + blk%q(ip,j,k,VAR_U,b))
+                        wu_m = (blk%q(im,j,k,VAR_W,b) + blk%q(i,j,k,VAR_W,b)) &
+                             * (blk%q(i,j,km,VAR_U,b) + blk%q(i,j,k,VAR_U,b))
 
-                        ww_p = (f%q(i,j,k,VAR_W) + f%q(i,j,kp,VAR_W))**2
-                        ww_m = (f%q(i,j,km,VAR_W) + f%q(i,j,k,VAR_W))**2
+                        ww_p = (blk%q(i,j,k,VAR_W,b) + blk%q(i,j,kp,VAR_W,b))**2
+                        ww_m = (blk%q(i,j,km,VAR_W,b) + blk%q(i,j,k,VAR_W,b))**2
 
-                        wv_p = (f%q(i,j,k,VAR_W) + f%q(i,jp,k,VAR_W)) &
-                             * (f%q(i,jp,km,VAR_V) + f%q(i,jp,k,VAR_V))
-                        wv_m = (f%q(i,jm,k,VAR_W) + f%q(i,j,k,VAR_W)) &
-                             * (f%q(i,j,km,VAR_V) + f%q(i,j,k,VAR_V))
+                        wv_p = (blk%q(i,j,k,VAR_W,b) + blk%q(i,jp,k,VAR_W,b)) &
+                             * (blk%q(i,jp,km,VAR_V,b) + blk%q(i,jp,k,VAR_V,b))
+                        wv_m = (blk%q(i,jm,k,VAR_W,b) + blk%q(i,j,k,VAR_W,b)) &
+                             * (blk%q(i,j,km,VAR_V,b) + blk%q(i,j,k,VAR_V,b))
 
-                        diff_wx = g%lapXm(i,VAR_W)*f%q(im,j,k,VAR_W) &
-                                + g%lapX0(i,VAR_W)*f%q(i,j,k,VAR_W) &
-                                + g%lapXp(i,VAR_W)*f%q(ip,j,k,VAR_W)
-                        diff_wy = g%lapYm(j,VAR_W)*f%q(i,jm,k,VAR_W) &
-                                + g%lapY0(j,VAR_W)*f%q(i,j,k,VAR_W) &
-                                + g%lapYp(j,VAR_W)*f%q(i,jp,k,VAR_W)
-                        diff_wz = g%lapZm(k,VAR_W)*f%q(i,j,km,VAR_W) &
-                                + g%lapZ0(k,VAR_W)*f%q(i,j,k,VAR_W) &
-                                + g%lapZp(k,VAR_W)*f%q(i,j,kp,VAR_W)
+                        diff_wx = blk%lapXm(i,VAR_W,b)*blk%q(im,j,k,VAR_W,b) &
+                                + blk%lapX0(i,VAR_W,b)*blk%q(i,j,k,VAR_W,b) &
+                                + blk%lapXp(i,VAR_W,b)*blk%q(ip,j,k,VAR_W,b)
+                        diff_wy = blk%lapYm(j,VAR_W,b)*blk%q(i,jm,k,VAR_W,b) &
+                                + blk%lapY0(j,VAR_W,b)*blk%q(i,j,k,VAR_W,b) &
+                                + blk%lapYp(j,VAR_W,b)*blk%q(i,jp,k,VAR_W,b)
+                        diff_wz = blk%lapZm(k,VAR_W,b)*blk%q(i,j,km,VAR_W,b) &
+                                + blk%lapZ0(k,VAR_W,b)*blk%q(i,j,k,VAR_W,b) &
+                                + blk%lapZp(k,VAR_W,b)*blk%q(i,j,kp,VAR_W,b)
 
-                        dpz = (f%q(i,j,k,VAR_P)-f%q(i,j,km,VAR_P))*g%d1z(k,VAR_W)
+                        dpz = (blk%q(i,j,k,VAR_P,b)-blk%q(i,j,km,VAR_P,b))*blk%d1z(k,VAR_W,b)
 
                         rhsw = ( &
-                            -0.25d0*( (wu_p-wu_m)*g%d1x(i,VAR_W) &
-                                     +(wv_p-wv_m)*g%d1y(j,VAR_W) &
-                                     +(ww_p-ww_m)*g%d1z(k,VAR_W)) &
+                            -0.25d0*( (wu_p-wu_m)*blk%d1x(i,VAR_W,b) &
+                                     +(wv_p-wv_m)*blk%d1y(j,VAR_W,b) &
+                                     +(ww_p-ww_m)*blk%d1z(k,VAR_W,b)) &
                             + forcing(VAR_W) &
                             + ire*(diff_wx + diff_wy + diff_wz) )
 
-                        f%qs(i,j,k,VAR_W) = f%q(i,j,k,VAR_W) + dt_alpha*rhsw &
-                            + dt_beta*f%oldrhs(i,j,k,VAR_W) - dt_gamma*dpz
+                        blk%qs(i,j,k,VAR_W,b) = blk%q(i,j,k,VAR_W,b) + dt_alpha*rhsw &
+                            + dt_beta*blk%oldrhs(i,j,k,VAR_W,b) - dt_gamma*dpz
 
                         mu_w = ibm%mu(i,j,k,VAR_W)
-                        f%qs(i,j,k,VAR_W) = f%qs(i,j,k,VAR_W)*mu_w
+                        blk%qs(i,j,k,VAR_W,b) = blk%qs(i,j,k,VAR_W,b)*mu_w
 
-                        f%oldrhs(i,j,k,VAR_W) = rhsw
+                        blk%oldrhs(i,j,k,VAR_W,b) = rhsw
                     end if
                 end do
             end do
+        end do
         end do
         !$omp end target teams distribute parallel do
 
         if (present(les)) then
             if (use_les) then
                 if (present(les_prof)) then
-                    call add_les_momentum_correction(f, dns, g, dt_alpha, ibm, les, &
+                    call add_les_momentum_correction(blk, dns, dt_alpha, ibm, les, &
                         uStartX, vStartY, wStartZ, les_prof)
                 else
-                    call add_les_momentum_correction(f, dns, g, dt_alpha, ibm, les, &
+                    call add_les_momentum_correction(blk, dns, dt_alpha, ibm, les, &
                         uStartX, vStartY, wStartZ)
                 end if
             end if
         end if
 
-        !$omp target teams distribute parallel do collapse(3) &
-        !$omp& map(to: f%qs) &
-        !$omp& map(tofrom: f%q) &
-        !$omp& private(i,j,k)
+        !$omp target teams distribute parallel do collapse(4) &
+        !$omp& map(to: blk%qs) &
+        !$omp& map(tofrom: blk%q) &
+        !$omp& private(i,j,k,b)
+        do b = 1, nBlocks
         do k = 1, nz
             do j = 1, ny
                 do i = 1, nx
-                    f%q(i,j,k,VAR_U) = f%qs(i,j,k,VAR_U)
-                    f%q(i,j,k,VAR_V) = f%qs(i,j,k,VAR_V)
-                    f%q(i,j,k,VAR_W) = f%qs(i,j,k,VAR_W)
+                    blk%q(i,j,k,VAR_U,b) = blk%qs(i,j,k,VAR_U,b)
+                    blk%q(i,j,k,VAR_V,b) = blk%qs(i,j,k,VAR_V,b)
+                    blk%q(i,j,k,VAR_W,b) = blk%qs(i,j,k,VAR_W,b)
                 end do
             end do
+        end do
         end do
         !$omp end target teams distribute parallel do
 
     end subroutine momentum
 
 
-    subroutine add_les_momentum_correction(f, dns, g, dt_alpha, ibm, les, uStartX, vStartY, wStartZ, les_prof)
-        type(field_type), intent(inout) :: f
+    subroutine add_les_momentum_correction(blk, dns, dt_alpha, ibm, les, uStartX, vStartY, wStartZ, les_prof)
+        type(block_set_type), intent(inout) :: blk
         type(dns_type), intent(in) :: dns
-        type(grid_type), intent(in) :: g
         real(C_DOUBLE), intent(in) :: dt_alpha
         type(ibm_type), intent(in) :: ibm
         type(les_type), intent(in) :: les
         integer, intent(in) :: uStartX, vStartY, wStartZ
         type(les_profile_type), intent(inout), optional :: les_prof
 
-        integer :: i, j, k, ip, im, jp, jm, kp, km
-        integer :: nx, ny, nz
+        integer :: i, j, k, b, ip, im, jp, jm, kp, km
+        integer :: nx, ny, nz, nBlocks
         real(C_DOUBLE) :: sgs_u, sgs_v, sgs_w
         real(C_DOUBLE) :: tau_xp, tau_xm, tau_yp, tau_ym, tau_zp, tau_zm
         real(C_DOUBLE) :: nut_edge, nut0, nut1, wx, wy, mu_u, mu_v, mu_w
         real(C_DOUBLE) :: profile_start
 
-        nx = int(dns%localSize(1,2))
-        ny = int(dns%localSize(2,2))
-        nz = int(dns%localSize(3,2))
+        nx = int(blk%nb(1))
+        ny = int(blk%nb(2))
+        nz = int(blk%nb(3))
+        nBlocks = int(blk%nBlocks)
 
         if (present(les_prof)) profile_start = les_wall_seconds()
 
-        !$omp target teams distribute parallel do collapse(3) &
+        !$omp target teams distribute parallel do collapse(4) &
         !$omp& map(to: dt_alpha, uStartX, vStartY, wStartZ, &
-        !$omp& g%d1x, g%d1y, g%d1z, f%q, ibm%mu, les%nut, &
+        !$omp& blk%d1x, blk%d1y, blk%d1z, blk%q, ibm%mu, les%nut, &
         !$omp& les%u_from_p_x, les%v_from_p_y, les%w_from_p_z, &
         !$omp& les%inv_dx, les%inv_dy, les%inv_dz) &
-        !$omp& map(tofrom: f%qs, f%oldrhs) &
-        !$omp& private(i,j,k,ip,im,jp,jm,kp,km,sgs_u,sgs_v,sgs_w,tau_xp,tau_xm, &
+        !$omp& map(tofrom: blk%qs, blk%oldrhs) &
+        !$omp& private(i,j,k,b,ip,im,jp,jm,kp,km,sgs_u,sgs_v,sgs_w,tau_xp,tau_xm, &
         !$omp& tau_yp,tau_ym,tau_zp,tau_zm,nut_edge,nut0,nut1,wx,wy,mu_u,mu_v,mu_w)
+        do b = 1, nBlocks
         do k = 1, nz
             do j = 1, ny
                 do i = 1, nx
@@ -322,9 +333,9 @@ contains
 
                     if (i >= uStartX) then
                         tau_xp = 2.0d0*les%nut(i,j,k) &
-                               * (f%q(ip,j,k,VAR_U) - f%q(i,j,k,VAR_U))*g%d1x(i,VAR_P)
+                               * (blk%q(ip,j,k,VAR_U,b) - blk%q(i,j,k,VAR_U,b))*blk%d1x(i,VAR_P,b)
                         tau_xm = 2.0d0*les%nut(im,j,k) &
-                               * (f%q(i,j,k,VAR_U) - f%q(im,j,k,VAR_U))*g%d1x(im,VAR_P)
+                               * (blk%q(i,j,k,VAR_U,b) - blk%q(im,j,k,VAR_U,b))*blk%d1x(im,VAR_P,b)
 
                         wx = les%u_from_p_x(i)
                         wy = les%v_from_p_y(jp)
@@ -332,8 +343,8 @@ contains
                         nut1 = (1.0d0 - wx)*les%nut(im,jp,k) + wx*les%nut(i,jp,k)
                         nut_edge = (1.0d0 - wy)*nut0 + wy*nut1
                         tau_yp = nut_edge*( &
-                            (f%q(i,jp,k,VAR_U) - f%q(i,j,k,VAR_U))*les%inv_dy(jp,VAR_U) &
-                          + (f%q(i,jp,k,VAR_V) - f%q(im,jp,k,VAR_V))*les%inv_dx(i,VAR_V) )
+                            (blk%q(i,jp,k,VAR_U,b) - blk%q(i,j,k,VAR_U,b))*les%inv_dy(jp,VAR_U) &
+                          + (blk%q(i,jp,k,VAR_V,b) - blk%q(im,jp,k,VAR_V,b))*les%inv_dx(i,VAR_V) )
 
                         wx = les%u_from_p_x(i)
                         wy = les%v_from_p_y(j)
@@ -341,8 +352,8 @@ contains
                         nut1 = (1.0d0 - wx)*les%nut(im,j,k) + wx*les%nut(i,j,k)
                         nut_edge = (1.0d0 - wy)*nut0 + wy*nut1
                         tau_ym = nut_edge*( &
-                            (f%q(i,j,k,VAR_U) - f%q(i,jm,k,VAR_U))*les%inv_dy(j,VAR_U) &
-                          + (f%q(i,j,k,VAR_V) - f%q(im,j,k,VAR_V))*les%inv_dx(i,VAR_V) )
+                            (blk%q(i,j,k,VAR_U,b) - blk%q(i,jm,k,VAR_U,b))*les%inv_dy(j,VAR_U) &
+                          + (blk%q(i,j,k,VAR_V,b) - blk%q(im,j,k,VAR_V,b))*les%inv_dx(i,VAR_V) )
 
                         wx = les%u_from_p_x(i)
                         wy = les%w_from_p_z(kp)
@@ -350,8 +361,8 @@ contains
                         nut1 = (1.0d0 - wx)*les%nut(im,j,kp) + wx*les%nut(i,j,kp)
                         nut_edge = (1.0d0 - wy)*nut0 + wy*nut1
                         tau_zp = nut_edge*( &
-                            (f%q(i,j,kp,VAR_U) - f%q(i,j,k,VAR_U))*les%inv_dz(kp,VAR_U) &
-                          + (f%q(i,j,kp,VAR_W) - f%q(im,j,kp,VAR_W))*les%inv_dx(i,VAR_W) )
+                            (blk%q(i,j,kp,VAR_U,b) - blk%q(i,j,k,VAR_U,b))*les%inv_dz(kp,VAR_U) &
+                          + (blk%q(i,j,kp,VAR_W,b) - blk%q(im,j,kp,VAR_W,b))*les%inv_dx(i,VAR_W) )
 
                         wx = les%u_from_p_x(i)
                         wy = les%w_from_p_z(k)
@@ -359,16 +370,16 @@ contains
                         nut1 = (1.0d0 - wx)*les%nut(im,j,k) + wx*les%nut(i,j,k)
                         nut_edge = (1.0d0 - wy)*nut0 + wy*nut1
                         tau_zm = nut_edge*( &
-                            (f%q(i,j,k,VAR_U) - f%q(i,j,km,VAR_U))*les%inv_dz(k,VAR_U) &
-                          + (f%q(i,j,k,VAR_W) - f%q(im,j,k,VAR_W))*les%inv_dx(i,VAR_W) )
+                            (blk%q(i,j,k,VAR_U,b) - blk%q(i,j,km,VAR_U,b))*les%inv_dz(k,VAR_U) &
+                          + (blk%q(i,j,k,VAR_W,b) - blk%q(im,j,k,VAR_W,b))*les%inv_dx(i,VAR_W) )
 
-                        sgs_u = (tau_xp - tau_xm)*g%d1x(i,VAR_U) &
-                              + (tau_yp - tau_ym)*g%d1y(j,VAR_U) &
-                              + (tau_zp - tau_zm)*g%d1z(k,VAR_U)
+                        sgs_u = (tau_xp - tau_xm)*blk%d1x(i,VAR_U,b) &
+                              + (tau_yp - tau_ym)*blk%d1y(j,VAR_U,b) &
+                              + (tau_zp - tau_zm)*blk%d1z(k,VAR_U,b)
 
                         mu_u = ibm%mu(i,j,k,VAR_U)
-                        f%qs(i,j,k,VAR_U) = f%qs(i,j,k,VAR_U) + dt_alpha*sgs_u*mu_u
-                        f%oldrhs(i,j,k,VAR_U) = f%oldrhs(i,j,k,VAR_U) + sgs_u
+                        blk%qs(i,j,k,VAR_U,b) = blk%qs(i,j,k,VAR_U,b) + dt_alpha*sgs_u*mu_u
+                        blk%oldrhs(i,j,k,VAR_U,b) = blk%oldrhs(i,j,k,VAR_U,b) + sgs_u
                     end if
 
                     if (j >= vStartY) then
@@ -378,8 +389,8 @@ contains
                         nut1 = (1.0d0 - wx)*les%nut(i,j,k) + wx*les%nut(ip,j,k)
                         nut_edge = (1.0d0 - wy)*nut0 + wy*nut1
                         tau_xp = nut_edge*( &
-                            (f%q(ip,j,k,VAR_U) - f%q(ip,jm,k,VAR_U))*les%inv_dy(j,VAR_U) &
-                          + (f%q(ip,j,k,VAR_V) - f%q(i,j,k,VAR_V))*les%inv_dx(ip,VAR_V) )
+                            (blk%q(ip,j,k,VAR_U,b) - blk%q(ip,jm,k,VAR_U,b))*les%inv_dy(j,VAR_U) &
+                          + (blk%q(ip,j,k,VAR_V,b) - blk%q(i,j,k,VAR_V,b))*les%inv_dx(ip,VAR_V) )
 
                         wx = les%u_from_p_x(i)
                         wy = les%v_from_p_y(j)
@@ -387,13 +398,13 @@ contains
                         nut1 = (1.0d0 - wx)*les%nut(im,j,k) + wx*les%nut(i,j,k)
                         nut_edge = (1.0d0 - wy)*nut0 + wy*nut1
                         tau_xm = nut_edge*( &
-                            (f%q(i,j,k,VAR_U) - f%q(i,jm,k,VAR_U))*les%inv_dy(j,VAR_U) &
-                          + (f%q(i,j,k,VAR_V) - f%q(im,j,k,VAR_V))*les%inv_dx(i,VAR_V) )
+                            (blk%q(i,j,k,VAR_U,b) - blk%q(i,jm,k,VAR_U,b))*les%inv_dy(j,VAR_U) &
+                          + (blk%q(i,j,k,VAR_V,b) - blk%q(im,j,k,VAR_V,b))*les%inv_dx(i,VAR_V) )
 
                         tau_yp = 2.0d0*les%nut(i,j,k) &
-                               * (f%q(i,jp,k,VAR_V) - f%q(i,j,k,VAR_V))*g%d1y(j,VAR_P)
+                               * (blk%q(i,jp,k,VAR_V,b) - blk%q(i,j,k,VAR_V,b))*blk%d1y(j,VAR_P,b)
                         tau_ym = 2.0d0*les%nut(i,jm,k) &
-                               * (f%q(i,j,k,VAR_V) - f%q(i,jm,k,VAR_V))*g%d1y(jm,VAR_P)
+                               * (blk%q(i,j,k,VAR_V,b) - blk%q(i,jm,k,VAR_V,b))*blk%d1y(jm,VAR_P,b)
 
                         wx = les%v_from_p_y(j)
                         wy = les%w_from_p_z(kp)
@@ -401,8 +412,8 @@ contains
                         nut1 = (1.0d0 - wx)*les%nut(i,jm,kp) + wx*les%nut(i,j,kp)
                         nut_edge = (1.0d0 - wy)*nut0 + wy*nut1
                         tau_zp = nut_edge*( &
-                            (f%q(i,j,kp,VAR_V) - f%q(i,j,k,VAR_V))*les%inv_dz(kp,VAR_V) &
-                          + (f%q(i,j,kp,VAR_W) - f%q(i,jm,kp,VAR_W))*les%inv_dy(j,VAR_W) )
+                            (blk%q(i,j,kp,VAR_V,b) - blk%q(i,j,k,VAR_V,b))*les%inv_dz(kp,VAR_V) &
+                          + (blk%q(i,j,kp,VAR_W,b) - blk%q(i,jm,kp,VAR_W,b))*les%inv_dy(j,VAR_W) )
 
                         wx = les%v_from_p_y(j)
                         wy = les%w_from_p_z(k)
@@ -410,16 +421,16 @@ contains
                         nut1 = (1.0d0 - wx)*les%nut(i,jm,k) + wx*les%nut(i,j,k)
                         nut_edge = (1.0d0 - wy)*nut0 + wy*nut1
                         tau_zm = nut_edge*( &
-                            (f%q(i,j,k,VAR_V) - f%q(i,j,km,VAR_V))*les%inv_dz(k,VAR_V) &
-                          + (f%q(i,j,k,VAR_W) - f%q(i,jm,k,VAR_W))*les%inv_dy(j,VAR_W) )
+                            (blk%q(i,j,k,VAR_V,b) - blk%q(i,j,km,VAR_V,b))*les%inv_dz(k,VAR_V) &
+                          + (blk%q(i,j,k,VAR_W,b) - blk%q(i,jm,k,VAR_W,b))*les%inv_dy(j,VAR_W) )
 
-                        sgs_v = (tau_xp - tau_xm)*g%d1x(i,VAR_V) &
-                              + (tau_yp - tau_ym)*g%d1y(j,VAR_V) &
-                              + (tau_zp - tau_zm)*g%d1z(k,VAR_V)
+                        sgs_v = (tau_xp - tau_xm)*blk%d1x(i,VAR_V,b) &
+                              + (tau_yp - tau_ym)*blk%d1y(j,VAR_V,b) &
+                              + (tau_zp - tau_zm)*blk%d1z(k,VAR_V,b)
 
                         mu_v = ibm%mu(i,j,k,VAR_V)
-                        f%qs(i,j,k,VAR_V) = f%qs(i,j,k,VAR_V) + dt_alpha*sgs_v*mu_v
-                        f%oldrhs(i,j,k,VAR_V) = f%oldrhs(i,j,k,VAR_V) + sgs_v
+                        blk%qs(i,j,k,VAR_V,b) = blk%qs(i,j,k,VAR_V,b) + dt_alpha*sgs_v*mu_v
+                        blk%oldrhs(i,j,k,VAR_V,b) = blk%oldrhs(i,j,k,VAR_V,b) + sgs_v
                     end if
 
                     if (k >= wStartZ) then
@@ -429,8 +440,8 @@ contains
                         nut1 = (1.0d0 - wx)*les%nut(i,j,k) + wx*les%nut(ip,j,k)
                         nut_edge = (1.0d0 - wy)*nut0 + wy*nut1
                         tau_xp = nut_edge*( &
-                            (f%q(ip,j,k,VAR_U) - f%q(ip,j,km,VAR_U))*les%inv_dz(k,VAR_U) &
-                          + (f%q(ip,j,k,VAR_W) - f%q(i,j,k,VAR_W))*les%inv_dx(ip,VAR_W) )
+                            (blk%q(ip,j,k,VAR_U,b) - blk%q(ip,j,km,VAR_U,b))*les%inv_dz(k,VAR_U) &
+                          + (blk%q(ip,j,k,VAR_W,b) - blk%q(i,j,k,VAR_W,b))*les%inv_dx(ip,VAR_W) )
 
                         wx = les%u_from_p_x(i)
                         wy = les%w_from_p_z(k)
@@ -438,8 +449,8 @@ contains
                         nut1 = (1.0d0 - wx)*les%nut(im,j,k) + wx*les%nut(i,j,k)
                         nut_edge = (1.0d0 - wy)*nut0 + wy*nut1
                         tau_xm = nut_edge*( &
-                            (f%q(i,j,k,VAR_U) - f%q(i,j,km,VAR_U))*les%inv_dz(k,VAR_U) &
-                          + (f%q(i,j,k,VAR_W) - f%q(im,j,k,VAR_W))*les%inv_dx(i,VAR_W) )
+                            (blk%q(i,j,k,VAR_U,b) - blk%q(i,j,km,VAR_U,b))*les%inv_dz(k,VAR_U) &
+                          + (blk%q(i,j,k,VAR_W,b) - blk%q(im,j,k,VAR_W,b))*les%inv_dx(i,VAR_W) )
 
                         wx = les%v_from_p_y(jp)
                         wy = les%w_from_p_z(k)
@@ -447,8 +458,8 @@ contains
                         nut1 = (1.0d0 - wx)*les%nut(i,j,k) + wx*les%nut(i,jp,k)
                         nut_edge = (1.0d0 - wy)*nut0 + wy*nut1
                         tau_yp = nut_edge*( &
-                            (f%q(i,jp,k,VAR_V) - f%q(i,jp,km,VAR_V))*les%inv_dz(k,VAR_V) &
-                          + (f%q(i,jp,k,VAR_W) - f%q(i,j,k,VAR_W))*les%inv_dy(jp,VAR_W) )
+                            (blk%q(i,jp,k,VAR_V,b) - blk%q(i,jp,km,VAR_V,b))*les%inv_dz(k,VAR_V) &
+                          + (blk%q(i,jp,k,VAR_W,b) - blk%q(i,j,k,VAR_W,b))*les%inv_dy(jp,VAR_W) )
 
                         wx = les%v_from_p_y(j)
                         wy = les%w_from_p_z(k)
@@ -456,24 +467,25 @@ contains
                         nut1 = (1.0d0 - wx)*les%nut(i,jm,k) + wx*les%nut(i,j,k)
                         nut_edge = (1.0d0 - wy)*nut0 + wy*nut1
                         tau_ym = nut_edge*( &
-                            (f%q(i,j,k,VAR_V) - f%q(i,j,km,VAR_V))*les%inv_dz(k,VAR_V) &
-                          + (f%q(i,j,k,VAR_W) - f%q(i,jm,k,VAR_W))*les%inv_dy(j,VAR_W) )
+                            (blk%q(i,j,k,VAR_V,b) - blk%q(i,j,km,VAR_V,b))*les%inv_dz(k,VAR_V) &
+                          + (blk%q(i,j,k,VAR_W,b) - blk%q(i,jm,k,VAR_W,b))*les%inv_dy(j,VAR_W) )
 
                         tau_zp = 2.0d0*les%nut(i,j,k) &
-                               * (f%q(i,j,kp,VAR_W) - f%q(i,j,k,VAR_W))*g%d1z(k,VAR_P)
+                               * (blk%q(i,j,kp,VAR_W,b) - blk%q(i,j,k,VAR_W,b))*blk%d1z(k,VAR_P,b)
                         tau_zm = 2.0d0*les%nut(i,j,km) &
-                               * (f%q(i,j,k,VAR_W) - f%q(i,j,km,VAR_W))*g%d1z(km,VAR_P)
+                               * (blk%q(i,j,k,VAR_W,b) - blk%q(i,j,km,VAR_W,b))*blk%d1z(km,VAR_P,b)
 
-                        sgs_w = (tau_xp - tau_xm)*g%d1x(i,VAR_W) &
-                              + (tau_yp - tau_ym)*g%d1y(j,VAR_W) &
-                              + (tau_zp - tau_zm)*g%d1z(k,VAR_W)
+                        sgs_w = (tau_xp - tau_xm)*blk%d1x(i,VAR_W,b) &
+                              + (tau_yp - tau_ym)*blk%d1y(j,VAR_W,b) &
+                              + (tau_zp - tau_zm)*blk%d1z(k,VAR_W,b)
 
                         mu_w = ibm%mu(i,j,k,VAR_W)
-                        f%qs(i,j,k,VAR_W) = f%qs(i,j,k,VAR_W) + dt_alpha*sgs_w*mu_w
-                        f%oldrhs(i,j,k,VAR_W) = f%oldrhs(i,j,k,VAR_W) + sgs_w
+                        blk%qs(i,j,k,VAR_W,b) = blk%qs(i,j,k,VAR_W,b) + dt_alpha*sgs_w*mu_w
+                        blk%oldrhs(i,j,k,VAR_W,b) = blk%oldrhs(i,j,k,VAR_W,b) + sgs_w
                     end if
                 end do
             end do
+        end do
         end do
         !$omp end target teams distribute parallel do
 
@@ -481,36 +493,38 @@ contains
             les_wall_seconds() - profile_start)
     end subroutine add_les_momentum_correction
 
-    subroutine get_timestep_rates(f, dns, g, rates, les)
-        type(field_type), intent(inout) :: f
+    subroutine get_timestep_rates(blk, dns, rates, les)
+        type(block_set_type), intent(inout) :: blk
         type(dns_type),   intent(in)    :: dns
-        type(grid_type),  intent(in)    :: g
         real(C_DOUBLE), intent(out) :: rates(1:NCFL)
         type(les_type), intent(in), optional :: les
 
-        integer :: i,j,k
-        integer :: nx, ny, nz
+        integer :: i,j,k,b
+        integer :: nx, ny, nz, nBlocks
         real(C_DOUBLE) :: cfl_rate, peclet_rate, ire, nu_eff
         logical :: use_les
 
-        nx = int(dns%localSize(1,2))
-        ny = int(dns%localSize(2,2))
-        nz = int(dns%localSize(3,2))
+        nx = int(blk%nb(1))
+        ny = int(blk%nb(2))
+        nz = int(blk%nb(3))
+        nBlocks = int(blk%nBlocks)
         cfl_rate = 0.0d0
         use_les = .false.
         if (present(les)) use_les = les_is_enabled(les) .and. allocated(les%nut)
 
-        !$omp target teams distribute parallel do collapse(3) reduction(max:cfl_rate) &
-        !$omp& map(to: g%d1x, g%d1y, g%d1z, f%q) &
-        !$omp& private(i,j,k)
+        !$omp target teams distribute parallel do collapse(4) reduction(max:cfl_rate) &
+        !$omp& map(to: blk%d1x, blk%d1y, blk%d1z, blk%q) &
+        !$omp& private(i,j,k,b)
+        do b = 1, nBlocks
         do k = 0, nz+1
             do j = 0, ny+1
                 do i = 0, nx+1
-                    cfl_rate = max(cfl_rate, abs(f%q(i,j,k,VAR_U)*g%d1x(i,VAR_U)))
-                    cfl_rate = max(cfl_rate, abs(f%q(i,j,k,VAR_V)*g%d1y(j,VAR_V)))
-                    cfl_rate = max(cfl_rate, abs(f%q(i,j,k,VAR_W)*g%d1z(k,VAR_W)))
+                    cfl_rate = max(cfl_rate, abs(blk%q(i,j,k,VAR_U,b)*blk%d1x(i,VAR_U,b)))
+                    cfl_rate = max(cfl_rate, abs(blk%q(i,j,k,VAR_V,b)*blk%d1y(j,VAR_V,b)))
+                    cfl_rate = max(cfl_rate, abs(blk%q(i,j,k,VAR_W,b)*blk%d1z(k,VAR_W,b)))
                 end do
             end do
+        end do
         end do
         !$omp end target teams distribute parallel do
 
@@ -521,18 +535,20 @@ contains
         peclet_rate = dns%peclet_rate
         ire = 1.0d0/dns%re
 
-        !$omp target teams distribute parallel do collapse(3) reduction(max:peclet_rate) &
-        !$omp& map(to: g%d1x, g%d1y, g%d1z, les%nut) &
-        !$omp& private(i,j,k,nu_eff)
+        !$omp target teams distribute parallel do collapse(4) reduction(max:peclet_rate) &
+        !$omp& map(to: blk%d1x, blk%d1y, blk%d1z, les%nut) &
+        !$omp& private(i,j,k,b,nu_eff)
+        do b = 1, nBlocks
         do k = 1, nz
             do j = 1, ny
                 do i = 1, nx
                     nu_eff = ire + max(0.0d0, les%nut(i,j,k))
-                    peclet_rate = max(peclet_rate, nu_eff*g%d1x(i,VAR_P)**2)
-                    peclet_rate = max(peclet_rate, nu_eff*g%d1y(j,VAR_P)**2)
-                    peclet_rate = max(peclet_rate, nu_eff*g%d1z(k,VAR_P)**2)
+                    peclet_rate = max(peclet_rate, nu_eff*blk%d1x(i,VAR_P,b)**2)
+                    peclet_rate = max(peclet_rate, nu_eff*blk%d1y(j,VAR_P,b)**2)
+                    peclet_rate = max(peclet_rate, nu_eff*blk%d1z(k,VAR_P,b)**2)
                 end do
             end do
+        end do
         end do
         !$omp end target teams distribute parallel do
 
@@ -564,10 +580,9 @@ contains
         dns%dt = min(dns%dt, max(0.0d0, remaining))
     end subroutine trim_dt_for_final_time
 
-    subroutine update_timestep_limits(f, dns, g, c, les)
-        type(field_type), intent(inout) :: f
+    subroutine update_timestep_limits(blk, dns, c, les)
+        type(block_set_type), intent(inout) :: blk
         type(dns_type), intent(inout) :: dns
-        type(grid_type), intent(in) :: g
         type(comm_type), intent(in) :: c
         type(les_type), intent(in), optional :: les
 
@@ -577,9 +592,9 @@ contains
         if (dns%cflmax <= 0.0d0 .and. dns%pecletmax <= 0.0d0) return
 
         if (present(les)) then
-            call get_timestep_rates(f, dns, g, rates, les)
+            call get_timestep_rates(blk, dns, rates, les)
         else
-            call get_timestep_rates(f, dns, g, rates)
+            call get_timestep_rates(blk, dns, rates)
         end if
         call comm_allreduce_max(c, rates)
 

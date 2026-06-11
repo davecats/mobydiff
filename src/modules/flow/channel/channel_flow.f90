@@ -2,7 +2,8 @@ module channel_flow
     use, intrinsic :: iso_c_binding
     use :: flow_case_base, only: case_type
     use :: generic_flow, only: set_generic_defaults
-    use :: init, only: dns_type, grid_type, field_type, VAR_U, VAR_V, VAR_W, VAR_P, GRID_NATURAL
+    use :: init, only: dns_type, grid_type, VAR_U, VAR_V, VAR_W, VAR_P, GRID_NATURAL
+    use :: blocks, only: block_set_type
     use :: boundary, only: boundary_type, boundary_face_id
     use :: pressure_solver, only: pressure_solver_type
     use :: comm, only: comm_type
@@ -69,9 +70,9 @@ contains
         call set_channel_wall_bcs(this, bc)
     end subroutine channel_apply_defaults
 
-    subroutine channel_setup_after_grid(this, f, dns, g, bc, c)
+    subroutine channel_setup_after_grid(this, blk, dns, g, bc, c)
         class(channel_case_type), intent(inout) :: this
-        type(field_type), intent(inout) :: f
+        type(block_set_type), intent(inout) :: blk
         type(dns_type), intent(in) :: dns
         type(grid_type), intent(in) :: g
         type(boundary_type), intent(in) :: bc
@@ -80,26 +81,26 @@ contains
         call this%stats%setup(dns, g, c)
     end subroutine channel_setup_after_grid
 
-    subroutine channel_initialise_fields(this, f, dns, g, bc, c)
+    subroutine channel_initialise_fields(this, blk, dns, g, bc, c)
         class(channel_case_type), intent(inout) :: this
-        type(field_type), intent(inout) :: f
+        type(block_set_type), intent(inout) :: blk
         type(dns_type), intent(in) :: dns
         type(grid_type), intent(in) :: g
         type(boundary_type), intent(in) :: bc
         type(comm_type), intent(in) :: c
 
-        call initialise_channel_fields(f, dns, g, this%n_walls, this%mean_profile_sine_amplitude, &
+        call initialise_channel_fields(blk, dns, this%n_walls, this%mean_profile_sine_amplitude, &
             this%large_disturbance_amplitude, this%small_noise_amplitude)
     end subroutine channel_initialise_fields
 
-    subroutine channel_after_step(this, f, dns, g, c)
+    subroutine channel_after_step(this, blk, dns, g, c)
         class(channel_case_type), intent(inout) :: this
-        type(field_type), intent(inout) :: f
+        type(block_set_type), intent(inout) :: blk
         type(dns_type), intent(in) :: dns
         type(grid_type), intent(in) :: g
         type(comm_type), intent(in) :: c
 
-        call this%stats%after_step(f, dns, g, c)
+        call this%stats%after_step(blk, dns, g, c)
     end subroutine channel_after_step
 
     subroutine channel_finalize(this, dns, g, c)

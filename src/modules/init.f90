@@ -56,12 +56,6 @@ module init
         real(C_DOUBLE), allocatable :: lapZm(:,:), lapZ0(:,:), lapZp(:,:)
     end type grid_type
 
-    type :: field_type
-        real(C_DOUBLE), allocatable :: q(:,:,:,:)      ! current u/v/w/p
-        real(C_DOUBLE), allocatable :: qs(:,:,:,:)     ! tentative u/v/w
-        real(C_DOUBLE), allocatable :: oldrhs(:,:,:,:) ! RK history for u/v/w
-    end type field_type
-
 contains
 
 subroutine splash(has_terminal)
@@ -354,23 +348,5 @@ real(C_DOUBLE) function cell_center_at(node, n, length, idx, periodic) result(x)
     x = 0.5d0 * (face_at(node, n, length, idx - 1, periodic) + &
                  face_at(node, n, length, idx, periodic))
 end function cell_center_at
-
-subroutine init_field(f, dns)
-    type(field_type), intent(inout) :: f
-    type(dns_type), intent(in)      :: dns
-    integer :: nx, ny, nz
-
-    nx = int(dns%localSize(1,2))
-    ny = int(dns%localSize(2,2))
-    nz = int(dns%localSize(3,2))
-
-    allocate(f%q(0:nx+1,0:ny+1,0:nz+1,NVAR))
-    allocate(f%qs(0:nx+1,0:ny+1,0:nz+1,NVEL))
-    allocate(f%oldrhs(1:nx,1:ny,1:nz,NVEL))
-
-    f%q = 0.0d0
-    f%qs = 0.0d0
-    f%oldrhs = 0.0d0
-end subroutine init_field
 
 end module init

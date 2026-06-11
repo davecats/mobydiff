@@ -1,7 +1,8 @@
 module comm
     use, intrinsic :: iso_c_binding
     use :: mpi_f08
-    use :: init, only: dns_type, field_type, NVAR
+    use :: init, only: dns_type, NVAR
+    use :: blocks, only: block_set_type
     use :: boundary, only: boundary_type
 #ifdef USE_OPENMP_OFFLOAD
     use omp_lib
@@ -176,9 +177,9 @@ contains
         call MPI_Allreduce(MPI_IN_PLACE, values, size(values), MPI_DOUBLE_PRECISION, MPI_SUM, c%cart_comm, ierr)
     end subroutine comm_allreduce_sum
 
-    subroutine start_halo_exchange(c, f, vars)
+    subroutine start_halo_exchange(c, blk, vars)
         type(comm_type), intent(inout) :: c
-        type(field_type), intent(inout) :: f
+        type(block_set_type), intent(inout) :: blk
         integer(C_INT), intent(in) :: vars(:)
 
         integer :: ierr, n, count, recvOffset(3)
@@ -201,7 +202,7 @@ contains
             c%totalActiveCount = c%totalActiveCount + c%activeCount(n)
         end do
 
-        call pack_q_boxes(c, f)
+        call pack_q_boxes(c, blk)
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target data use_device_addr(c%sendbuf, c%recvbuf)
@@ -224,9 +225,9 @@ contains
         c%exchangeActive = .true.
     end subroutine start_halo_exchange
 
-    subroutine finish_halo_exchange(c, f)
+    subroutine finish_halo_exchange(c, blk)
         type(comm_type), intent(inout) :: c
-        type(field_type), intent(inout) :: f
+        type(block_set_type), intent(inout) :: blk
 
         integer :: ierr, n, nRequest
 
@@ -235,7 +236,7 @@ contains
         nRequest = 2*c%nNeighbors
         call MPI_Waitall(nRequest, c%request(1:nRequest), MPI_STATUSES_IGNORE, ierr)
 
-        call unpack_q_boxes(c, f)
+        call unpack_q_boxes(c, blk)
 
         c%request = MPI_REQUEST_NULL
         c%activeCount = 0
@@ -246,9 +247,9 @@ contains
         c%exchangeActive = .false.
     end subroutine finish_halo_exchange
 
-    subroutine exchange_halos(c, f, vars)
+    subroutine exchange_halos(c, blk, vars)
         type(comm_type), intent(inout) :: c
-        type(field_type), intent(inout) :: f
+        type(block_set_type), intent(inout) :: blk
         integer(C_INT), intent(in) :: vars(:)
 
         call require_ready(c)
@@ -257,8 +258,8 @@ contains
         call set_active_vars(c, vars)
         if (c%nNeighbors == 0 .or. c%nActiveVars == 0) return
 
-        call start_halo_exchange(c, f, vars)
-        call finish_halo_exchange(c, f)
+        call start_halo_exchange(c, blk, vars)
+        call finish_halo_exchange(c, blk)
     end subroutine exchange_halos
 
     subroutine exchange_scalar_halos(c, scalar)
@@ -458,9 +459,11 @@ contains
         end do
     end subroutine set_active_vars
 
-    subroutine pack_q_boxes(c, f)
+    ! The send/recv boxes span this rank's box, which in Phase 0 is exactly
+    ! block 1. Phase 1 replaces them with per-block-pair exchange entries.
+    subroutine pack_q_boxes(c, blk)
         type(comm_type), intent(inout) :: c
-        type(field_type), intent(in) :: f
+        type(block_set_type), intent(in) :: blk
 
         integer :: pAll, p, q, n, nv, var
         integer :: i, j, k, ni, nj
@@ -468,7 +471,7 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
         !$omp& map(to: c%nNeighbors, c%totalActiveCount, c%bufferOffset, c%nPoints, &
-        !$omp& c%activeCount, c%sendLo, c%sendHi, c%activeVars, f%q) &
+        !$omp& c%activeCount, c%sendLo, c%sendHi, c%activeVars, blk%q) &
         !$omp& map(tofrom: c%sendbuf) &
         !$omp& private(pAll,p,q,n,nv,var,i,j,k,ni,nj)
 #endif
@@ -487,16 +490,16 @@ contains
             j = c%sendLo(2,n) + modulo(q / ni, nj)
             k = c%sendLo(3,n) + q / (ni*nj)
             var = int(c%activeVars(nv))
-            c%sendbuf(p,n) = f%q(i,j,k,var)
+            c%sendbuf(p,n) = blk%q(i,j,k,var,1)
         end do
 #ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
 #endif
     end subroutine pack_q_boxes
 
-    subroutine unpack_q_boxes(c, f)
+    subroutine unpack_q_boxes(c, blk)
         type(comm_type), intent(in) :: c
-        type(field_type), intent(inout) :: f
+        type(block_set_type), intent(inout) :: blk
 
         integer :: pAll, p, q, n, nv, var
         integer :: i, j, k, ni, nj
@@ -505,7 +508,7 @@ contains
         !$omp target teams distribute parallel do &
         !$omp& map(to: c%nNeighbors, c%totalActiveCount, c%bufferOffset, c%nPoints, &
         !$omp& c%activeCount, c%recvLo, c%recvHi, c%activeVars, c%recvbuf) &
-        !$omp& map(tofrom: f%q) &
+        !$omp& map(tofrom: blk%q) &
         !$omp& private(pAll,p,q,n,nv,var,i,j,k,ni,nj)
 #endif
         do pAll = 1, c%totalActiveCount
@@ -523,7 +526,7 @@ contains
             j = c%recvLo(2,n) + modulo(q / ni, nj)
             k = c%recvLo(3,n) + q / (ni*nj)
             var = int(c%activeVars(nv))
-            f%q(i,j,k,var) = c%recvbuf(p,n)
+            blk%q(i,j,k,var,1) = c%recvbuf(p,n)
         end do
 #ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do

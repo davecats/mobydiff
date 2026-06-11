@@ -14,7 +14,8 @@
 
 module ibmm
     use, intrinsic :: iso_c_binding
-    use :: init, only: dns_type, grid_type, VAR_U, VAR_V, VAR_W
+    use :: init, only: dns_type, VAR_U, VAR_V, VAR_W
+    use :: blocks, only: block_set_type
     use :: io, only: to_c_string
     implicit none
 
@@ -195,9 +196,12 @@ contains
         end if
     end subroutine add_neighbor_coeff
 
-    subroutine set_ibm_coeff(dns, g, ibm, var)
+    ! Phase 0: ibm%coef is still rank-shaped, so the coordinates are read from
+    ! block 1 (== this rank's box). The coefficient array gains a trailing block
+    ! index together with the loop over blocks.
+    subroutine set_ibm_coeff(dns, blk, ibm, var)
         type(dns_type), intent(in) :: dns
-        type(grid_type), intent(in) :: g
+        type(block_set_type), intent(in) :: blk
         type(ibm_type), intent(inout) :: ibm
         integer(C_INT), intent(in) :: var
 
@@ -221,8 +225,8 @@ contains
         solid_coef = SOLID*re_inv
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do collapse(3) &
-        !$omp& map(to: var, enabled, re_inv, solid_coef, ilo, ihi, jlo, jhi, klo, khi, dns, ibm, g, &
-        !$omp& g%x, g%y, g%z) &
+        !$omp& map(to: var, enabled, re_inv, solid_coef, ilo, ihi, jlo, jhi, klo, khi, dns, ibm, blk, &
+        !$omp& blk%x, blk%y, blk%z) &
         !$omp& map(tofrom: ibm%coef) &
         !$omp& private(ix,iy,iz,xA,xB,coeff)
 #endif
@@ -232,26 +236,26 @@ contains
                     ibm%coef(ix,iy,iz,var) = 0.0d0
                     if (.not. enabled) cycle
 
-                    xA(1) = g%x(ix,var)
-                    xA(2) = g%y(iy,var)
-                    xA(3) = g%z(iz,var)
+                    xA(1) = blk%x(ix,var,1)
+                    xA(2) = blk%y(iy,var,1)
+                    xA(3) = blk%z(iz,var,1)
                     if (isInBody(xA, ibm, dns)) then
                         ibm%coef(ix,iy,iz,var) = solid_coef
 #ifdef USE_IBM_SECONDORDER
                     else
                         coeff = 0.0d0
 
-                        xB(1) = g%x(ix-1,var); xB(2) = xA(2);          xB(3) = xA(3)
+                        xB(1) = blk%x(ix-1,var,1); xB(2) = xA(2);             xB(3) = xA(3)
                         call add_neighbor_coeff(coeff, xA, xB, ibm, dns)
-                        xB(1) = g%x(ix+1,var); xB(2) = xA(2);          xB(3) = xA(3)
+                        xB(1) = blk%x(ix+1,var,1); xB(2) = xA(2);             xB(3) = xA(3)
                         call add_neighbor_coeff(coeff, xA, xB, ibm, dns)
-                        xB(1) = xA(1);          xB(2) = g%y(iy-1,var); xB(3) = xA(3)
+                        xB(1) = xA(1);             xB(2) = blk%y(iy-1,var,1); xB(3) = xA(3)
                         call add_neighbor_coeff(coeff, xA, xB, ibm, dns)
-                        xB(1) = xA(1);          xB(2) = g%y(iy+1,var); xB(3) = xA(3)
+                        xB(1) = xA(1);             xB(2) = blk%y(iy+1,var,1); xB(3) = xA(3)
                         call add_neighbor_coeff(coeff, xA, xB, ibm, dns)
-                        xB(1) = xA(1);          xB(2) = xA(2);          xB(3) = g%z(iz-1,var)
+                        xB(1) = xA(1);             xB(2) = xA(2);             xB(3) = blk%z(iz-1,var,1)
                         call add_neighbor_coeff(coeff, xA, xB, ibm, dns)
-                        xB(1) = xA(1);          xB(2) = xA(2);          xB(3) = g%z(iz+1,var)
+                        xB(1) = xA(1);             xB(2) = xA(2);             xB(3) = blk%z(iz+1,var,1)
                         call add_neighbor_coeff(coeff, xA, xB, ibm, dns)
 
                         ibm%coef(ix,iy,iz,var) = coeff*re_inv

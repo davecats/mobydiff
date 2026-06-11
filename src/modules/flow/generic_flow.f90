@@ -1,7 +1,8 @@
 module generic_flow
     use, intrinsic :: iso_c_binding
     use :: flow_case_base, only: case_type
-    use :: init, only: dns_type, grid_type, field_type, GRID_UNIFORM
+    use :: init, only: dns_type, grid_type, GRID_UNIFORM
+    use :: blocks, only: block_set_type
     use :: boundary, only: boundary_type, init_bc
     use :: pressure_solver, only: pressure_solver_type
     use :: comm, only: comm_type
@@ -51,27 +52,27 @@ contains
         this%name = GENERIC_CASE_NAME
     end subroutine generic_apply_defaults
 
-    subroutine generic_setup_after_grid(this, f, dns, g, bc, c)
+    subroutine generic_setup_after_grid(this, blk, dns, g, bc, c)
         class(generic_case_type), intent(inout) :: this
-        type(field_type), intent(inout) :: f
+        type(block_set_type), intent(inout) :: blk
         type(dns_type), intent(in) :: dns
         type(grid_type), intent(in) :: g
         type(boundary_type), intent(in) :: bc
         type(comm_type), intent(in) :: c
     end subroutine generic_setup_after_grid
 
-    subroutine generic_initialise_fields(this, f, dns, g, bc, c)
+    subroutine generic_initialise_fields(this, blk, dns, g, bc, c)
         class(generic_case_type), intent(inout) :: this
-        type(field_type), intent(inout) :: f
+        type(block_set_type), intent(inout) :: blk
         type(dns_type), intent(in) :: dns
         type(grid_type), intent(in) :: g
         type(boundary_type), intent(in) :: bc
         type(comm_type), intent(in) :: c
     end subroutine generic_initialise_fields
 
-    subroutine generic_after_step(this, f, dns, g, c)
+    subroutine generic_after_step(this, blk, dns, g, c)
         class(generic_case_type), intent(inout) :: this
-        type(field_type), intent(inout) :: f
+        type(block_set_type), intent(inout) :: blk
         type(dns_type), intent(in) :: dns
         type(grid_type), intent(in) :: g
         type(comm_type), intent(in) :: c

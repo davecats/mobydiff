@@ -1,7 +1,8 @@
 module channel_profile
     use, intrinsic :: iso_c_binding
     use, intrinsic :: iso_fortran_env, only: int64
-    use :: init, only: dns_type, grid_type, field_type, VAR_U, VAR_V, VAR_W
+    use :: init, only: dns_type, VAR_U, VAR_V, VAR_W
+    use :: blocks, only: block_set_type
     implicit none
 
     private
@@ -22,10 +23,10 @@ module channel_profile
 
 contains
 
-    subroutine initialise_channel_fields(f, dns, g, n_walls, mean_sine_amp, large_amp, noise_amp)
-        type(field_type), intent(inout) :: f
+    subroutine initialise_channel_fields(blk, dns, n_walls, mean_sine_amp, large_amp, noise_amp)
+        ! Initial condition on the single Phase-0 block (== this rank's box).
+        type(block_set_type), intent(inout) :: blk
         type(dns_type), intent(in) :: dns
-        type(grid_type), intent(in) :: g
         integer, intent(in) :: n_walls
         real(C_DOUBLE), intent(in) :: mean_sine_amp, large_amp, noise_amp
 
@@ -33,21 +34,21 @@ contains
         real(C_DOUBLE) :: stream_x, span_x, wall_y, envelope, mean_u
         real(C_DOUBLE) :: large, noise
 
-        nx = int(dns%localSize(1,2))
-        ny = int(dns%localSize(2,2))
-        nz = int(dns%localSize(3,2))
+        nx = int(blk%nb(1))
+        ny = int(blk%nb(2))
+        nz = int(blk%nb(3))
 
-        f%q = 0.0d0
-        f%qs = 0.0d0
-        f%oldrhs = 0.0d0
+        blk%q = 0.0d0
+        blk%qs = 0.0d0
+        blk%oldrhs = 0.0d0
 
         do k = 1, nz
             do j = 1, ny
                 do i = 1, nx
                     do var = VAR_U, VAR_W
-                        stream_x = g%x(i,var)
-                        span_x = g%z(k,var)
-                        wall_y = max(0.0d0, min(g%y(j,var), dns%leng(2)))
+                        stream_x = blk%x(i,var,1)
+                        span_x = blk%z(k,var,1)
+                        wall_y = max(0.0d0, min(blk%y(j,var,1), dns%leng(2)))
 
                         call mean_profile(dns, n_walls, wall_y, mean_sine_amp, mean_u)
                         envelope = disturbance_envelope(n_walls, var, wall_y, dns%leng(2))
@@ -59,7 +60,7 @@ contains
                                                 j + int(dns%localSize(2,0)) - 1, &
                                                 k + int(dns%localSize(3,0)) - 1, var)
 
-                        f%q(i,j,k,var) = stream_profile(var, mean_u) + large + noise
+                        blk%q(i,j,k,var,1) = stream_profile(var, mean_u) + large + noise
                     end do
                 end do
             end do

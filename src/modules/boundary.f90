@@ -1,6 +1,7 @@
 module boundary
     use, intrinsic :: iso_c_binding
-    use :: init, only: dns_type, grid_type, field_type, VAR_U, VAR_V, VAR_W, VAR_P
+    use :: init, only: dns_type, VAR_U, VAR_V, VAR_W, VAR_P
+    use :: blocks, only: block_set_type
     implicit none
 
     integer(C_INT), parameter :: DIR_X = 1_C_INT
@@ -35,10 +36,9 @@ contains
         bc%faceBcType(VAR_P,:) = 1_C_INT
     end subroutine init_bc
 
-    subroutine init_boundary_faces(bc, dns, g)
+    subroutine init_boundary_faces(bc, dns)
         type(boundary_type), intent(inout) :: bc
         type(dns_type), intent(in) :: dns
-        type(grid_type), intent(in) :: g
         integer :: nx, ny, nz
         integer :: dir, side, face_id, pos, total
 
@@ -73,7 +73,7 @@ contains
             end do
         end do
 
-        call update_boundary_values(bc, dns, g)
+        call update_boundary_values(bc)
     end subroutine init_boundary_faces
 
     logical function is_physical_boundary(bc, dns, dir, side)
@@ -127,10 +127,8 @@ contains
         bc%nTotal = 0_C_INT
     end subroutine destroy_boundary_faces
 
-    subroutine update_boundary_values(bc, dns, g)
+    subroutine update_boundary_values(bc)
         type(boundary_type), intent(inout) :: bc
-        type(dns_type), intent(in) :: dns
-        type(grid_type), intent(in) :: g
         integer :: n, var, face_id, npts
 
         npts = int(bc%nTotal)
@@ -225,10 +223,10 @@ contains
         side = modulo(face_id - 1, 2)
     end function boundary_face_side
 
-    subroutine apply_bc(f, dns, g, bc)
-        type(field_type), intent(inout) :: f
-        type(dns_type), intent(in) :: dns
-        type(grid_type), intent(in) :: g
+    subroutine apply_bc(blk, bc)
+        ! The boundary point list spans this rank's box, which in Phase 0 is
+        ! exactly block 1. Phase 1 rebuilds the list per block (FACE_PHYS faces).
+        type(block_set_type), intent(inout) :: blk
         type(boundary_type), intent(in) :: bc
         integer :: n, npts, i, j, k, face_id, var
         integer :: dir, side
@@ -240,13 +238,13 @@ contains
         npts = int(bc%nTotal)
         if (npts <= 0) return
 
-        local_n = dns%localSize(1:3,2)
+        local_n = blk%nb(1:3)
 
         !$omp target teams distribute parallel do &
-        !$omp& map(to: npts, local_n(1:3), g%x, g%y, g%z, &
+        !$omp& map(to: npts, local_n(1:3), blk%x, blk%y, blk%z, &
         !$omp& bc%pointFace(1:npts), bc%i(1:npts), bc%j(1:npts), bc%k(1:npts), &
         !$omp& bc%faceBcType(VAR_U:VAR_P,1:NFACES), bc%pointBcValue(VAR_U:VAR_P,1:npts)) &
-        !$omp& map(tofrom: f%q) &
+        !$omp& map(tofrom: blk%q) &
         !$omp& private(n,i,j,k,face_id,var,dir,side,n_dir, &
         !$omp& ghost_idx,interior_idx_dir,face_idx_dir,neighbor_idx, &
         !$omp& idx,interior_idx,face_idx,dn,bc_value)
@@ -285,18 +283,18 @@ contains
                     interior_idx(dir) = neighbor_idx
                     select case (dir)
                     case (DIR_X)
-                        dn = g%x(face_idx(1),var) - g%x(interior_idx(1),var)
+                        dn = blk%x(face_idx(1),var,1) - blk%x(interior_idx(1),var,1)
                     case (DIR_Y)
-                        dn = g%y(face_idx(2),var) - g%y(interior_idx(2),var)
+                        dn = blk%y(face_idx(2),var,1) - blk%y(interior_idx(2),var,1)
                     case (DIR_Z)
-                        dn = g%z(face_idx(3),var) - g%z(interior_idx(3),var)
+                        dn = blk%z(face_idx(3),var,1) - blk%z(interior_idx(3),var,1)
                     end select
                     if (bc%faceBcType(var,face_id) == 0_C_INT) then
-                        f%q(face_idx(1),face_idx(2),face_idx(3),var) = bc_value
+                        blk%q(face_idx(1),face_idx(2),face_idx(3),var,1) = bc_value
                     else
                         ! Neumann data are stored as the normal derivative.
-                        f%q(face_idx(1),face_idx(2),face_idx(3),var) = &
-                            f%q(interior_idx(1),interior_idx(2),interior_idx(3),var) &
+                        blk%q(face_idx(1),face_idx(2),face_idx(3),var,1) = &
+                            blk%q(interior_idx(1),interior_idx(2),interior_idx(3),var,1) &
                           + dn*bc_value
                     end if
                 else
@@ -305,20 +303,20 @@ contains
                     interior_idx(dir) = interior_idx_dir
                     select case (dir)
                     case (DIR_X)
-                        dn = g%x(face_idx(1),var) - g%x(interior_idx(1),var)
+                        dn = blk%x(face_idx(1),var,1) - blk%x(interior_idx(1),var,1)
                     case (DIR_Y)
-                        dn = g%y(face_idx(2),var) - g%y(interior_idx(2),var)
+                        dn = blk%y(face_idx(2),var,1) - blk%y(interior_idx(2),var,1)
                     case (DIR_Z)
-                        dn = g%z(face_idx(3),var) - g%z(interior_idx(3),var)
+                        dn = blk%z(face_idx(3),var,1) - blk%z(interior_idx(3),var,1)
                     end select
                     if (bc%faceBcType(var,face_id) == 0_C_INT) then
                         ! Dirichlet ghost value chosen so the boundary midpoint has bc_value.
-                        f%q(face_idx(1),face_idx(2),face_idx(3),var) = &
+                        blk%q(face_idx(1),face_idx(2),face_idx(3),var,1) = &
                             2.0d0*bc_value &
-                          - f%q(interior_idx(1),interior_idx(2),interior_idx(3),var)
+                          - blk%q(interior_idx(1),interior_idx(2),interior_idx(3),var,1)
                     else
-                        f%q(face_idx(1),face_idx(2),face_idx(3),var) = &
-                            f%q(interior_idx(1),interior_idx(2),interior_idx(3),var) &
+                        blk%q(face_idx(1),face_idx(2),face_idx(3),var,1) = &
+                            blk%q(interior_idx(1),interior_idx(2),interior_idx(3),var,1) &
                           + dn*bc_value
                     end if
                 end if

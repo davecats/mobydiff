@@ -1,7 +1,8 @@
 module les_model
     use, intrinsic :: iso_c_binding
     use, intrinsic :: iso_fortran_env, only: int64
-    use :: init, only: dns_type, grid_type, field_type, VAR_U, VAR_V, VAR_W, VAR_P
+    use :: init, only: dns_type, VAR_U, VAR_V, VAR_W, VAR_P
+    use :: blocks, only: block_set_type
     use :: ibmm, only: ibm_type
     implicit none
 
@@ -106,19 +107,19 @@ contains
         les_is_enabled = les%model /= LES_NONE
     end function les_is_enabled
 
-    subroutine init_les(les, dns, g)
+    subroutine init_les(les, dns, blk)
         type(les_type), intent(inout) :: les
         type(dns_type), intent(in) :: dns
-        type(grid_type), intent(in) :: g
+        type(block_set_type), intent(in) :: blk
 
         integer :: nx, ny, nz
 
         call destroy_les(les)
         if (.not. les_is_enabled(les)) return
 
-        nx = int(dns%localSize(1,2))
-        ny = int(dns%localSize(2,2))
-        nz = int(dns%localSize(3,2))
+        nx = int(blk%nb(1))
+        ny = int(blk%nb(2))
+        nz = int(blk%nb(3))
 
         allocate(les%nut(0:nx+1,0:ny+1,0:nz+1))
         allocate(les%filter_x(0:nx+1), les%filter_y(0:ny+1), les%filter_z(0:nz+1))
@@ -134,7 +135,7 @@ contains
             les%inv_dz(0:nz+1,VAR_U:VAR_P))
 
         les%nut = 0.0d0
-        call precompute_les_metrics(les, g, nx, ny, nz)
+        call precompute_les_metrics(les, blk, nx, ny, nz)
     end subroutine init_les
 
     subroutine destroy_les(les)
@@ -198,43 +199,46 @@ contains
         !$omp target exit data map(delete: les)
     end subroutine exit_les_data
 
-    subroutine precompute_les_metrics(les, g, nx, ny, nz)
+    ! Phase 0: the LES metric tables are still rank-shaped 1D lines, derived
+    ! from block 1 (== this rank's box). They gain a trailing block index when
+    ! blocks stop being congruent with ranks (Phase 1).
+    subroutine precompute_les_metrics(les, blk, nx, ny, nz)
         type(les_type), intent(inout) :: les
-        type(grid_type), intent(in) :: g
+        type(block_set_type), intent(in) :: blk
         integer, intent(in) :: nx, ny, nz
 
         integer :: i, var
 
         do i = 0, nx+1
-            les%filter_x(i) = max(1.0d0/g%d1x(i,VAR_P), 1.0d-30)**(1.0d0/3.0d0)
-            les%p_from_u_x(i) = linear_weight(g%x(i,VAR_U), g%x(i+1,VAR_U), g%x(i,VAR_P))
-            les%u_from_p_x(i) = linear_weight(g%x(i-1,VAR_P), g%x(i,VAR_P), g%x(i,VAR_U))
+            les%filter_x(i) = max(1.0d0/blk%d1x(i,VAR_P,1), 1.0d-30)**(1.0d0/3.0d0)
+            les%p_from_u_x(i) = linear_weight(blk%x(i,VAR_U,1), blk%x(i+1,VAR_U,1), blk%x(i,VAR_P,1))
+            les%u_from_p_x(i) = linear_weight(blk%x(i-1,VAR_P,1), blk%x(i,VAR_P,1), blk%x(i,VAR_U,1))
             do var = VAR_U, VAR_P
-                call first_derivative_coeffs(g%x(i-1,var), g%x(i,var), g%x(i+1,var), &
+                call first_derivative_coeffs(blk%x(i-1,var,1), blk%x(i,var,1), blk%x(i+1,var,1), &
                     les%d1xm(i,var), les%d1x0(i,var), les%d1xp(i,var))
-                les%inv_dx(i,var) = safe_inv_delta(g%x(i,var) - g%x(i-1,var))
+                les%inv_dx(i,var) = safe_inv_delta(blk%x(i,var,1) - blk%x(i-1,var,1))
             end do
         end do
 
         do i = 0, ny+1
-            les%filter_y(i) = max(1.0d0/g%d1y(i,VAR_P), 1.0d-30)**(1.0d0/3.0d0)
-            les%p_from_v_y(i) = linear_weight(g%y(i,VAR_V), g%y(i+1,VAR_V), g%y(i,VAR_P))
-            les%v_from_p_y(i) = linear_weight(g%y(i-1,VAR_P), g%y(i,VAR_P), g%y(i,VAR_V))
+            les%filter_y(i) = max(1.0d0/blk%d1y(i,VAR_P,1), 1.0d-30)**(1.0d0/3.0d0)
+            les%p_from_v_y(i) = linear_weight(blk%y(i,VAR_V,1), blk%y(i+1,VAR_V,1), blk%y(i,VAR_P,1))
+            les%v_from_p_y(i) = linear_weight(blk%y(i-1,VAR_P,1), blk%y(i,VAR_P,1), blk%y(i,VAR_V,1))
             do var = VAR_U, VAR_P
-                call first_derivative_coeffs(g%y(i-1,var), g%y(i,var), g%y(i+1,var), &
+                call first_derivative_coeffs(blk%y(i-1,var,1), blk%y(i,var,1), blk%y(i+1,var,1), &
                     les%d1ym(i,var), les%d1y0(i,var), les%d1yp(i,var))
-                les%inv_dy(i,var) = safe_inv_delta(g%y(i,var) - g%y(i-1,var))
+                les%inv_dy(i,var) = safe_inv_delta(blk%y(i,var,1) - blk%y(i-1,var,1))
             end do
         end do
 
         do i = 0, nz+1
-            les%filter_z(i) = max(1.0d0/g%d1z(i,VAR_P), 1.0d-30)**(1.0d0/3.0d0)
-            les%p_from_w_z(i) = linear_weight(g%z(i,VAR_W), g%z(i+1,VAR_W), g%z(i,VAR_P))
-            les%w_from_p_z(i) = linear_weight(g%z(i-1,VAR_P), g%z(i,VAR_P), g%z(i,VAR_W))
+            les%filter_z(i) = max(1.0d0/blk%d1z(i,VAR_P,1), 1.0d-30)**(1.0d0/3.0d0)
+            les%p_from_w_z(i) = linear_weight(blk%z(i,VAR_W,1), blk%z(i+1,VAR_W,1), blk%z(i,VAR_P,1))
+            les%w_from_p_z(i) = linear_weight(blk%z(i-1,VAR_P,1), blk%z(i,VAR_P,1), blk%z(i,VAR_W,1))
             do var = VAR_U, VAR_P
-                call first_derivative_coeffs(g%z(i-1,var), g%z(i,var), g%z(i+1,var), &
+                call first_derivative_coeffs(blk%z(i-1,var,1), blk%z(i,var,1), blk%z(i+1,var,1), &
                     les%d1zm(i,var), les%d1z0(i,var), les%d1zp(i,var))
-                les%inv_dz(i,var) = safe_inv_delta(g%z(i,var) - g%z(i-1,var))
+                les%inv_dz(i,var) = safe_inv_delta(blk%z(i,var,1) - blk%z(i-1,var,1))
             end do
         end do
     end subroutine precompute_les_metrics
@@ -268,11 +272,10 @@ contains
         inv = 1.0d0/max(delta, 1.0d-30)
     end function safe_inv_delta
 
-    subroutine update_les_viscosity(les, f, dns, g, ibm)
+    subroutine update_les_viscosity(les, blk, dns, ibm)
         type(les_type), intent(inout) :: les
-        type(field_type), intent(in) :: f
+        type(block_set_type), intent(inout) :: blk
         type(dns_type), intent(in) :: dns
-        type(grid_type), intent(in) :: g
         type(ibm_type), intent(in) :: ibm
 
         if (.not. allocated(les%nut)) return
@@ -281,20 +284,19 @@ contains
         case (LES_NONE)
             return
         case (LES_WALE)
-            call update_wale_viscosity(les, f, dns, g, ibm)
+            call update_wale_viscosity(les, blk, dns, ibm)
         case default
-            call update_generic_les_viscosity(les, f, dns, g, ibm)
+            call update_generic_les_viscosity(les, blk, dns, ibm)
         end select
     end subroutine update_les_viscosity
 
-    subroutine update_generic_les_viscosity(les, f, dns, g, ibm)
+    subroutine update_generic_les_viscosity(les, blk, dns, ibm)
         type(les_type), intent(inout) :: les
-        type(field_type), intent(in) :: f
+        type(block_set_type), intent(inout) :: blk
         type(dns_type), intent(in) :: dns
-        type(grid_type), intent(in) :: g
         type(ibm_type), intent(in) :: ibm
 
-        integer :: i, j, k, nx, ny, nz
+        integer :: i, j, k, b, nx, ny, nz, nBlocks
         integer(C_INT) :: model
         logical(C_BOOL) :: ibm_aware, ibm_enabled
         real(C_DOUBLE) :: cs, cw, cs2, cw2, delta_scale
@@ -309,9 +311,10 @@ contains
 
         if (.not. allocated(les%nut)) return
 
-        nx = int(dns%localSize(1,2))
-        ny = int(dns%localSize(2,2))
-        nz = int(dns%localSize(3,2))
+        nx = int(blk%nb(1))
+        ny = int(blk%nb(2))
+        nz = int(blk%nb(3))
+        nBlocks = int(blk%nBlocks)
         model = les%model
         cs = les%cs
         cw = les%cw
@@ -324,19 +327,20 @@ contains
 
         if (model == LES_NONE) return
 
-        !$omp target teams distribute parallel do collapse(3) &
+        !$omp target teams distribute parallel do collapse(4) &
         !$omp& map(to: model, cs2, cw2, delta_scale, ibm_aware, ibm_enabled, solid_threshold, &
-        !$omp& f%q, g%d1x, g%d1y, g%d1z, ibm%coef, &
+        !$omp& blk%q, blk%d1x, blk%d1y, blk%d1z, ibm%coef, &
         !$omp& les%filter_x, les%filter_y, les%filter_z, &
         !$omp& les%d1xm, les%d1x0, les%d1xp, les%d1ym, les%d1y0, les%d1yp, &
         !$omp& les%d1zm, les%d1z0, les%d1zp, &
         !$omp& les%p_from_u_x, les%p_from_v_y, les%p_from_w_z) &
         !$omp& map(tofrom: les%nut) &
-        !$omp& private(i,j,k,delta,g11,g12,g13,g21,g22,g23,g31,g32,g33, &
+        !$omp& private(i,j,k,b,delta,g11,g12,g13,g21,g22,g23,g31,g32,g33, &
         !$omp& s11,s22,s33,s12,s13,s23,s2,strain_mag,g2_11,g2_12,g2_13, &
         !$omp& g2_21,g2_22,g2_23,g2_31,g2_32,g2_33,trace_g2,sd11,sd22,sd33, &
         !$omp& sd12,sd13,sd23,sd2,denom,sqrt_s2,sqrt_sd2, &
         !$omp& s2_52,sd2_32,sd2_54,d0,d1,solid_cell)
+        do b = 1, nBlocks
         do k = 1, nz
             do j = 1, ny
                 do i = 1, nx
@@ -355,56 +359,56 @@ contains
 
                     delta = delta_scale*les%filter_x(i)*les%filter_y(j)*les%filter_z(k)
 
-                    g11 = (f%q(i+1,j,k,VAR_U) - f%q(i,j,k,VAR_U))*g%d1x(i,VAR_P)
-                    g22 = (f%q(i,j+1,k,VAR_V) - f%q(i,j,k,VAR_V))*g%d1y(j,VAR_P)
-                    g33 = (f%q(i,j,k+1,VAR_W) - f%q(i,j,k,VAR_W))*g%d1z(k,VAR_P)
+                    g11 = (blk%q(i+1,j,k,VAR_U,b) - blk%q(i,j,k,VAR_U,b))*blk%d1x(i,VAR_P,b)
+                    g22 = (blk%q(i,j+1,k,VAR_V,b) - blk%q(i,j,k,VAR_V,b))*blk%d1y(j,VAR_P,b)
+                    g33 = (blk%q(i,j,k+1,VAR_W,b) - blk%q(i,j,k,VAR_W,b))*blk%d1z(k,VAR_P,b)
 
-                    d0 = les%d1ym(j,VAR_U)*f%q(i,j-1,k,VAR_U) &
-                       + les%d1y0(j,VAR_U)*f%q(i,j,k,VAR_U) &
-                       + les%d1yp(j,VAR_U)*f%q(i,j+1,k,VAR_U)
-                    d1 = les%d1ym(j,VAR_U)*f%q(i+1,j-1,k,VAR_U) &
-                       + les%d1y0(j,VAR_U)*f%q(i+1,j,k,VAR_U) &
-                       + les%d1yp(j,VAR_U)*f%q(i+1,j+1,k,VAR_U)
+                    d0 = les%d1ym(j,VAR_U)*blk%q(i,j-1,k,VAR_U,b) &
+                       + les%d1y0(j,VAR_U)*blk%q(i,j,k,VAR_U,b) &
+                       + les%d1yp(j,VAR_U)*blk%q(i,j+1,k,VAR_U,b)
+                    d1 = les%d1ym(j,VAR_U)*blk%q(i+1,j-1,k,VAR_U,b) &
+                       + les%d1y0(j,VAR_U)*blk%q(i+1,j,k,VAR_U,b) &
+                       + les%d1yp(j,VAR_U)*blk%q(i+1,j+1,k,VAR_U,b)
                     g12 = (1.0d0 - les%p_from_u_x(i))*d0 + les%p_from_u_x(i)*d1
 
-                    d0 = les%d1zm(k,VAR_U)*f%q(i,j,k-1,VAR_U) &
-                       + les%d1z0(k,VAR_U)*f%q(i,j,k,VAR_U) &
-                       + les%d1zp(k,VAR_U)*f%q(i,j,k+1,VAR_U)
-                    d1 = les%d1zm(k,VAR_U)*f%q(i+1,j,k-1,VAR_U) &
-                       + les%d1z0(k,VAR_U)*f%q(i+1,j,k,VAR_U) &
-                       + les%d1zp(k,VAR_U)*f%q(i+1,j,k+1,VAR_U)
+                    d0 = les%d1zm(k,VAR_U)*blk%q(i,j,k-1,VAR_U,b) &
+                       + les%d1z0(k,VAR_U)*blk%q(i,j,k,VAR_U,b) &
+                       + les%d1zp(k,VAR_U)*blk%q(i,j,k+1,VAR_U,b)
+                    d1 = les%d1zm(k,VAR_U)*blk%q(i+1,j,k-1,VAR_U,b) &
+                       + les%d1z0(k,VAR_U)*blk%q(i+1,j,k,VAR_U,b) &
+                       + les%d1zp(k,VAR_U)*blk%q(i+1,j,k+1,VAR_U,b)
                     g13 = (1.0d0 - les%p_from_u_x(i))*d0 + les%p_from_u_x(i)*d1
 
-                    d0 = les%d1xm(i,VAR_V)*f%q(i-1,j,k,VAR_V) &
-                       + les%d1x0(i,VAR_V)*f%q(i,j,k,VAR_V) &
-                       + les%d1xp(i,VAR_V)*f%q(i+1,j,k,VAR_V)
-                    d1 = les%d1xm(i,VAR_V)*f%q(i-1,j+1,k,VAR_V) &
-                       + les%d1x0(i,VAR_V)*f%q(i,j+1,k,VAR_V) &
-                       + les%d1xp(i,VAR_V)*f%q(i+1,j+1,k,VAR_V)
+                    d0 = les%d1xm(i,VAR_V)*blk%q(i-1,j,k,VAR_V,b) &
+                       + les%d1x0(i,VAR_V)*blk%q(i,j,k,VAR_V,b) &
+                       + les%d1xp(i,VAR_V)*blk%q(i+1,j,k,VAR_V,b)
+                    d1 = les%d1xm(i,VAR_V)*blk%q(i-1,j+1,k,VAR_V,b) &
+                       + les%d1x0(i,VAR_V)*blk%q(i,j+1,k,VAR_V,b) &
+                       + les%d1xp(i,VAR_V)*blk%q(i+1,j+1,k,VAR_V,b)
                     g21 = (1.0d0 - les%p_from_v_y(j))*d0 + les%p_from_v_y(j)*d1
 
-                    d0 = les%d1zm(k,VAR_V)*f%q(i,j,k-1,VAR_V) &
-                       + les%d1z0(k,VAR_V)*f%q(i,j,k,VAR_V) &
-                       + les%d1zp(k,VAR_V)*f%q(i,j,k+1,VAR_V)
-                    d1 = les%d1zm(k,VAR_V)*f%q(i,j+1,k-1,VAR_V) &
-                       + les%d1z0(k,VAR_V)*f%q(i,j+1,k,VAR_V) &
-                       + les%d1zp(k,VAR_V)*f%q(i,j+1,k+1,VAR_V)
+                    d0 = les%d1zm(k,VAR_V)*blk%q(i,j,k-1,VAR_V,b) &
+                       + les%d1z0(k,VAR_V)*blk%q(i,j,k,VAR_V,b) &
+                       + les%d1zp(k,VAR_V)*blk%q(i,j,k+1,VAR_V,b)
+                    d1 = les%d1zm(k,VAR_V)*blk%q(i,j+1,k-1,VAR_V,b) &
+                       + les%d1z0(k,VAR_V)*blk%q(i,j+1,k,VAR_V,b) &
+                       + les%d1zp(k,VAR_V)*blk%q(i,j+1,k+1,VAR_V,b)
                     g23 = (1.0d0 - les%p_from_v_y(j))*d0 + les%p_from_v_y(j)*d1
 
-                    d0 = les%d1xm(i,VAR_W)*f%q(i-1,j,k,VAR_W) &
-                       + les%d1x0(i,VAR_W)*f%q(i,j,k,VAR_W) &
-                       + les%d1xp(i,VAR_W)*f%q(i+1,j,k,VAR_W)
-                    d1 = les%d1xm(i,VAR_W)*f%q(i-1,j,k+1,VAR_W) &
-                       + les%d1x0(i,VAR_W)*f%q(i,j,k+1,VAR_W) &
-                       + les%d1xp(i,VAR_W)*f%q(i+1,j,k+1,VAR_W)
+                    d0 = les%d1xm(i,VAR_W)*blk%q(i-1,j,k,VAR_W,b) &
+                       + les%d1x0(i,VAR_W)*blk%q(i,j,k,VAR_W,b) &
+                       + les%d1xp(i,VAR_W)*blk%q(i+1,j,k,VAR_W,b)
+                    d1 = les%d1xm(i,VAR_W)*blk%q(i-1,j,k+1,VAR_W,b) &
+                       + les%d1x0(i,VAR_W)*blk%q(i,j,k+1,VAR_W,b) &
+                       + les%d1xp(i,VAR_W)*blk%q(i+1,j,k+1,VAR_W,b)
                     g31 = (1.0d0 - les%p_from_w_z(k))*d0 + les%p_from_w_z(k)*d1
 
-                    d0 = les%d1ym(j,VAR_W)*f%q(i,j-1,k,VAR_W) &
-                       + les%d1y0(j,VAR_W)*f%q(i,j,k,VAR_W) &
-                       + les%d1yp(j,VAR_W)*f%q(i,j+1,k,VAR_W)
-                    d1 = les%d1ym(j,VAR_W)*f%q(i,j-1,k+1,VAR_W) &
-                       + les%d1y0(j,VAR_W)*f%q(i,j,k+1,VAR_W) &
-                       + les%d1yp(j,VAR_W)*f%q(i,j+1,k+1,VAR_W)
+                    d0 = les%d1ym(j,VAR_W)*blk%q(i,j-1,k,VAR_W,b) &
+                       + les%d1y0(j,VAR_W)*blk%q(i,j,k,VAR_W,b) &
+                       + les%d1yp(j,VAR_W)*blk%q(i,j+1,k,VAR_W,b)
+                    d1 = les%d1ym(j,VAR_W)*blk%q(i,j-1,k+1,VAR_W,b) &
+                       + les%d1y0(j,VAR_W)*blk%q(i,j,k+1,VAR_W,b) &
+                       + les%d1yp(j,VAR_W)*blk%q(i,j+1,k+1,VAR_W,b)
                     g32 = (1.0d0 - les%p_from_w_z(k))*d0 + les%p_from_w_z(k)*d1
 
                     s11 = g11
@@ -451,17 +455,17 @@ contains
                 end do
             end do
         end do
+        end do
         !$omp end target teams distribute parallel do
     end subroutine update_generic_les_viscosity
 
-    subroutine update_wale_viscosity(les, f, dns, g, ibm)
+    subroutine update_wale_viscosity(les, blk, dns, ibm)
         type(les_type), intent(inout) :: les
-        type(field_type), intent(in) :: f
+        type(block_set_type), intent(inout) :: blk
         type(dns_type), intent(in) :: dns
-        type(grid_type), intent(in) :: g
         type(ibm_type), intent(in) :: ibm
 
-        integer :: i, j, k, nx, ny, nz
+        integer :: i, j, k, b, nx, ny, nz, nBlocks
         logical(C_BOOL) :: ibm_aware, ibm_enabled
         real(C_DOUBLE) :: cw2, delta_scale, delta
         real(C_DOUBLE) :: g11, g12, g13, g21, g22, g23, g31, g32, g33
@@ -471,26 +475,28 @@ contains
         real(C_DOUBLE) :: d0, d1, solid_threshold
         logical :: solid_cell
 
-        nx = int(dns%localSize(1,2))
-        ny = int(dns%localSize(2,2))
-        nz = int(dns%localSize(3,2))
+        nx = int(blk%nb(1))
+        ny = int(blk%nb(2))
+        nz = int(blk%nb(3))
+        nBlocks = int(blk%nBlocks)
         cw2 = les%cw*les%cw
         delta_scale = les%delta_scale
         ibm_aware = les%ibm_aware
         ibm_enabled = dns%ibm_enabled
         solid_threshold = 1.0d20
 
-        !$omp target teams distribute parallel do collapse(3) &
+        !$omp target teams distribute parallel do collapse(4) &
         !$omp& map(to: cw2, delta_scale, ibm_aware, ibm_enabled, solid_threshold, &
-        !$omp& f%q, g%d1x, g%d1y, g%d1z, ibm%coef, &
+        !$omp& blk%q, blk%d1x, blk%d1y, blk%d1z, ibm%coef, &
         !$omp& les%filter_x, les%filter_y, les%filter_z, &
         !$omp& les%d1xm, les%d1x0, les%d1xp, les%d1ym, les%d1y0, les%d1yp, &
         !$omp& les%d1zm, les%d1z0, les%d1zp, &
         !$omp& les%p_from_u_x, les%p_from_v_y, les%p_from_w_z) &
         !$omp& map(tofrom: les%nut) &
-        !$omp& private(i,j,k,delta,g11,g12,g13,g21,g22,g23,g31,g32,g33, &
+        !$omp& private(i,j,k,b,delta,g11,g12,g13,g21,g22,g23,g31,g32,g33, &
         !$omp& s2,g2_11,g2_22,g2_33,trace_g2,sd11,sd22,sd33,sd12,sd13,sd23, &
         !$omp& sd2,denom,sqrt_s2,sqrt_sd2,s2_52,sd2_32,sd2_54,d0,d1,solid_cell)
+        do b = 1, nBlocks
         do k = 1, nz
             do j = 1, ny
                 do i = 1, nx
@@ -509,56 +515,56 @@ contains
 
                     delta = delta_scale*les%filter_x(i)*les%filter_y(j)*les%filter_z(k)
 
-                    g11 = (f%q(i+1,j,k,VAR_U) - f%q(i,j,k,VAR_U))*g%d1x(i,VAR_P)
-                    g22 = (f%q(i,j+1,k,VAR_V) - f%q(i,j,k,VAR_V))*g%d1y(j,VAR_P)
-                    g33 = (f%q(i,j,k+1,VAR_W) - f%q(i,j,k,VAR_W))*g%d1z(k,VAR_P)
+                    g11 = (blk%q(i+1,j,k,VAR_U,b) - blk%q(i,j,k,VAR_U,b))*blk%d1x(i,VAR_P,b)
+                    g22 = (blk%q(i,j+1,k,VAR_V,b) - blk%q(i,j,k,VAR_V,b))*blk%d1y(j,VAR_P,b)
+                    g33 = (blk%q(i,j,k+1,VAR_W,b) - blk%q(i,j,k,VAR_W,b))*blk%d1z(k,VAR_P,b)
 
-                    d0 = les%d1ym(j,VAR_U)*f%q(i,j-1,k,VAR_U) &
-                       + les%d1y0(j,VAR_U)*f%q(i,j,k,VAR_U) &
-                       + les%d1yp(j,VAR_U)*f%q(i,j+1,k,VAR_U)
-                    d1 = les%d1ym(j,VAR_U)*f%q(i+1,j-1,k,VAR_U) &
-                       + les%d1y0(j,VAR_U)*f%q(i+1,j,k,VAR_U) &
-                       + les%d1yp(j,VAR_U)*f%q(i+1,j+1,k,VAR_U)
+                    d0 = les%d1ym(j,VAR_U)*blk%q(i,j-1,k,VAR_U,b) &
+                       + les%d1y0(j,VAR_U)*blk%q(i,j,k,VAR_U,b) &
+                       + les%d1yp(j,VAR_U)*blk%q(i,j+1,k,VAR_U,b)
+                    d1 = les%d1ym(j,VAR_U)*blk%q(i+1,j-1,k,VAR_U,b) &
+                       + les%d1y0(j,VAR_U)*blk%q(i+1,j,k,VAR_U,b) &
+                       + les%d1yp(j,VAR_U)*blk%q(i+1,j+1,k,VAR_U,b)
                     g12 = (1.0d0 - les%p_from_u_x(i))*d0 + les%p_from_u_x(i)*d1
 
-                    d0 = les%d1zm(k,VAR_U)*f%q(i,j,k-1,VAR_U) &
-                       + les%d1z0(k,VAR_U)*f%q(i,j,k,VAR_U) &
-                       + les%d1zp(k,VAR_U)*f%q(i,j,k+1,VAR_U)
-                    d1 = les%d1zm(k,VAR_U)*f%q(i+1,j,k-1,VAR_U) &
-                       + les%d1z0(k,VAR_U)*f%q(i+1,j,k,VAR_U) &
-                       + les%d1zp(k,VAR_U)*f%q(i+1,j,k+1,VAR_U)
+                    d0 = les%d1zm(k,VAR_U)*blk%q(i,j,k-1,VAR_U,b) &
+                       + les%d1z0(k,VAR_U)*blk%q(i,j,k,VAR_U,b) &
+                       + les%d1zp(k,VAR_U)*blk%q(i,j,k+1,VAR_U,b)
+                    d1 = les%d1zm(k,VAR_U)*blk%q(i+1,j,k-1,VAR_U,b) &
+                       + les%d1z0(k,VAR_U)*blk%q(i+1,j,k,VAR_U,b) &
+                       + les%d1zp(k,VAR_U)*blk%q(i+1,j,k+1,VAR_U,b)
                     g13 = (1.0d0 - les%p_from_u_x(i))*d0 + les%p_from_u_x(i)*d1
 
-                    d0 = les%d1xm(i,VAR_V)*f%q(i-1,j,k,VAR_V) &
-                       + les%d1x0(i,VAR_V)*f%q(i,j,k,VAR_V) &
-                       + les%d1xp(i,VAR_V)*f%q(i+1,j,k,VAR_V)
-                    d1 = les%d1xm(i,VAR_V)*f%q(i-1,j+1,k,VAR_V) &
-                       + les%d1x0(i,VAR_V)*f%q(i,j+1,k,VAR_V) &
-                       + les%d1xp(i,VAR_V)*f%q(i+1,j+1,k,VAR_V)
+                    d0 = les%d1xm(i,VAR_V)*blk%q(i-1,j,k,VAR_V,b) &
+                       + les%d1x0(i,VAR_V)*blk%q(i,j,k,VAR_V,b) &
+                       + les%d1xp(i,VAR_V)*blk%q(i+1,j,k,VAR_V,b)
+                    d1 = les%d1xm(i,VAR_V)*blk%q(i-1,j+1,k,VAR_V,b) &
+                       + les%d1x0(i,VAR_V)*blk%q(i,j+1,k,VAR_V,b) &
+                       + les%d1xp(i,VAR_V)*blk%q(i+1,j+1,k,VAR_V,b)
                     g21 = (1.0d0 - les%p_from_v_y(j))*d0 + les%p_from_v_y(j)*d1
 
-                    d0 = les%d1zm(k,VAR_V)*f%q(i,j,k-1,VAR_V) &
-                       + les%d1z0(k,VAR_V)*f%q(i,j,k,VAR_V) &
-                       + les%d1zp(k,VAR_V)*f%q(i,j,k+1,VAR_V)
-                    d1 = les%d1zm(k,VAR_V)*f%q(i,j+1,k-1,VAR_V) &
-                       + les%d1z0(k,VAR_V)*f%q(i,j+1,k,VAR_V) &
-                       + les%d1zp(k,VAR_V)*f%q(i,j+1,k+1,VAR_V)
+                    d0 = les%d1zm(k,VAR_V)*blk%q(i,j,k-1,VAR_V,b) &
+                       + les%d1z0(k,VAR_V)*blk%q(i,j,k,VAR_V,b) &
+                       + les%d1zp(k,VAR_V)*blk%q(i,j,k+1,VAR_V,b)
+                    d1 = les%d1zm(k,VAR_V)*blk%q(i,j+1,k-1,VAR_V,b) &
+                       + les%d1z0(k,VAR_V)*blk%q(i,j+1,k,VAR_V,b) &
+                       + les%d1zp(k,VAR_V)*blk%q(i,j+1,k+1,VAR_V,b)
                     g23 = (1.0d0 - les%p_from_v_y(j))*d0 + les%p_from_v_y(j)*d1
 
-                    d0 = les%d1xm(i,VAR_W)*f%q(i-1,j,k,VAR_W) &
-                       + les%d1x0(i,VAR_W)*f%q(i,j,k,VAR_W) &
-                       + les%d1xp(i,VAR_W)*f%q(i+1,j,k,VAR_W)
-                    d1 = les%d1xm(i,VAR_W)*f%q(i-1,j,k+1,VAR_W) &
-                       + les%d1x0(i,VAR_W)*f%q(i,j,k+1,VAR_W) &
-                       + les%d1xp(i,VAR_W)*f%q(i+1,j,k+1,VAR_W)
+                    d0 = les%d1xm(i,VAR_W)*blk%q(i-1,j,k,VAR_W,b) &
+                       + les%d1x0(i,VAR_W)*blk%q(i,j,k,VAR_W,b) &
+                       + les%d1xp(i,VAR_W)*blk%q(i+1,j,k,VAR_W,b)
+                    d1 = les%d1xm(i,VAR_W)*blk%q(i-1,j,k+1,VAR_W,b) &
+                       + les%d1x0(i,VAR_W)*blk%q(i,j,k+1,VAR_W,b) &
+                       + les%d1xp(i,VAR_W)*blk%q(i+1,j,k+1,VAR_W,b)
                     g31 = (1.0d0 - les%p_from_w_z(k))*d0 + les%p_from_w_z(k)*d1
 
-                    d0 = les%d1ym(j,VAR_W)*f%q(i,j-1,k,VAR_W) &
-                       + les%d1y0(j,VAR_W)*f%q(i,j,k,VAR_W) &
-                       + les%d1yp(j,VAR_W)*f%q(i,j+1,k,VAR_W)
-                    d1 = les%d1ym(j,VAR_W)*f%q(i,j-1,k+1,VAR_W) &
-                       + les%d1y0(j,VAR_W)*f%q(i,j,k+1,VAR_W) &
-                       + les%d1yp(j,VAR_W)*f%q(i,j+1,k+1,VAR_W)
+                    d0 = les%d1ym(j,VAR_W)*blk%q(i,j-1,k,VAR_W,b) &
+                       + les%d1y0(j,VAR_W)*blk%q(i,j,k,VAR_W,b) &
+                       + les%d1yp(j,VAR_W)*blk%q(i,j+1,k,VAR_W,b)
+                    d1 = les%d1ym(j,VAR_W)*blk%q(i,j-1,k+1,VAR_W,b) &
+                       + les%d1y0(j,VAR_W)*blk%q(i,j,k+1,VAR_W,b) &
+                       + les%d1yp(j,VAR_W)*blk%q(i,j+1,k+1,VAR_W,b)
                     g32 = (1.0d0 - les%p_from_w_z(k))*d0 + les%p_from_w_z(k)*d1
 
                     s2 = g11*g11 + g22*g22 + g33*g33 &
@@ -592,6 +598,7 @@ contains
                     les%nut(i,j,k) = cw2*delta*delta*sd2_32/denom
                 end do
             end do
+        end do
         end do
         !$omp end target teams distribute parallel do
     end subroutine update_wale_viscosity

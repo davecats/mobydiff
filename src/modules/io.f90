@@ -1,6 +1,7 @@
 module io
     use, intrinsic :: iso_c_binding
-    use :: init, only: dns_type, grid_type, field_type, VAR_U, VAR_V, VAR_W, VAR_P
+    use :: init, only: dns_type, grid_type, VAR_U, VAR_V, VAR_W, VAR_P
+    use :: blocks, only: block_set_type
     use :: boundary, only: boundary_type, NFACES
     use :: comm, only: comm_type
     implicit none
@@ -105,8 +106,8 @@ logical function output_is_due(step, output_interval)
     end if
 end function output_is_due
 
-subroutine maybe_write_field(f, dns, g, step, c, bc, pressure_niter, pressure_sor)
-    type(field_type), intent(inout) :: f
+subroutine maybe_write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor)
+    type(block_set_type), intent(inout) :: blk
     type(dns_type), intent(in) :: dns
     type(grid_type), intent(in) :: g
     integer, intent(in) :: step
@@ -116,12 +117,14 @@ subroutine maybe_write_field(f, dns, g, step, c, bc, pressure_niter, pressure_so
     real(C_DOUBLE), intent(in) :: pressure_sor
 
     if (.not. output_is_due(step, dns%field_interval)) return
-    call write_field(f, dns, g, step, c, bc, pressure_niter, pressure_sor)
+    call write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor)
 end subroutine maybe_write_field
 
-subroutine write_field(f, dns, g, step, c, bc, pressure_niter, pressure_sor)
+subroutine write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor)
     ! Parallel HDF5 call: all MPI ranks must enter this routine together.
-    type(field_type), intent(inout) :: f
+    ! Datasets keep the rank-box layout, served from block 1 (Phase 0); the
+    ! block-table layout arrives with many blocks per rank.
+    type(block_set_type), intent(inout) :: blk
     type(dns_type), intent(in) :: dns
     type(grid_type), intent(in) :: g
     integer, intent(in) :: step
@@ -150,7 +153,7 @@ subroutine write_field(f, dns, g, step, c, bc, pressure_niter, pressure_sor)
     end if
 
 #ifdef USE_OPENMP_OFFLOAD
-    !$omp target update from(f%q)
+    !$omp target update from(blk%q)
 #endif
 
     c_file_name = to_c_string(h5_file_name)
@@ -168,10 +171,10 @@ subroutine write_field(f, dns, g, step, c, bc, pressure_niter, pressure_sor)
         bc%faceBcType(VAR_U:VAR_P,1:NFACES), bc%faceBcDefaultValue(VAR_U:VAR_P,1:NFACES), &
         g%distribution(1:3), g%stretch(1:3), g%natural_dyw_plus(1:3), &
         g%xNode(0:dns%globalSize(1)), g%yNode(0:dns%globalSize(2)), g%zNode(0:dns%globalSize(3)), &
-        f%q(0:nx+1,0:ny+1,0:nz+1,VAR_U), &
-        f%q(0:nx+1,0:ny+1,0:nz+1,VAR_V), &
-        f%q(0:nx+1,0:ny+1,0:nz+1,VAR_W), &
-        f%q(0:nx+1,0:ny+1,0:nz+1,VAR_P))
+        blk%q(0:nx+1,0:ny+1,0:nz+1,VAR_U,1), &
+        blk%q(0:nx+1,0:ny+1,0:nz+1,VAR_V,1), &
+        blk%q(0:nx+1,0:ny+1,0:nz+1,VAR_W,1), &
+        blk%q(0:nx+1,0:ny+1,0:nz+1,VAR_P,1))
     if (ierr /= 0_C_INT) then
         if (c%has_terminal) print *, "error: could not write HDF5 field file: ", trim(h5_file_name)
         error stop
@@ -275,9 +278,9 @@ subroutine read_restart_metadata(dns, g, bc, pressure_niter, pressure_sor, file_
     dns%ibm_enabled = ibm_enabled /= 0_C_INT
 end subroutine read_restart_metadata
 
-subroutine read_field(f, dns, file_name, c)
+subroutine read_field(blk, dns, file_name, c)
     ! Parallel HDF5 call: all MPI ranks must enter this routine together.
-    type(field_type), intent(inout) :: f
+    type(block_set_type), intent(inout) :: blk
     type(dns_type), intent(in) :: dns
     character(len=*), intent(in) :: file_name
     type(comm_type), intent(in) :: c
@@ -294,17 +297,17 @@ subroutine read_field(f, dns, file_name, c)
     ierr = fdm_h5_read_field(c_file_name, int(nx, C_INT), int(ny, C_INT), int(nz, C_INT), &
         dns%globalSize(1), dns%globalSize(2), dns%globalSize(3), &
         dns%localSize(1,0), dns%localSize(2,0), dns%localSize(3,0), &
-        f%q(0:nx+1,0:ny+1,0:nz+1,VAR_U), &
-        f%q(0:nx+1,0:ny+1,0:nz+1,VAR_V), &
-        f%q(0:nx+1,0:ny+1,0:nz+1,VAR_W), &
-        f%q(0:nx+1,0:ny+1,0:nz+1,VAR_P))
+        blk%q(0:nx+1,0:ny+1,0:nz+1,VAR_U,1), &
+        blk%q(0:nx+1,0:ny+1,0:nz+1,VAR_V,1), &
+        blk%q(0:nx+1,0:ny+1,0:nz+1,VAR_W,1), &
+        blk%q(0:nx+1,0:ny+1,0:nz+1,VAR_P,1))
     if (ierr /= 0_C_INT) then
         if (c%has_terminal) print *, "error: could not read HDF5 field file: ", trim(file_name)
         error stop
     end if
 
 #ifdef USE_OPENMP_OFFLOAD
-    !$omp target update to(f%q)
+    !$omp target update to(blk%q)
 #endif
 end subroutine read_field
 

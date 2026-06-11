@@ -6,7 +6,7 @@
 program main
     use :: init
     use :: blocks, only: block_set_type, init_block_set, destroy_block_set, &
-        block_set_matches_grid
+        block_set_matches_grid, enter_block_data, exit_block_data
     use :: chron, only: chron_type, start_chron, stop_chron, write_chron
     use :: flow_case, only: case_type, create_flow_case
     use :: config
@@ -30,7 +30,6 @@ program main
     type(dns_type) :: dns
     type(grid_type) :: g
     type(block_set_type) :: blk
-    type(field_type) :: f
     type(boundary_type) :: bc
     type(pressure_solver_type) :: ps
     type(ibm_type) :: ibm
@@ -62,30 +61,28 @@ program main
     call init_grid(g, dns, bc%isPeriodic)
     call validate_dns_values(dns, g)
 
-    ! Phase 0 of the block refactor (docs/block_refinement_strategy.md):
-    ! build the one-block-per-rank block set and check that it reproduces the
-    ! grid metrics bit-for-bit. Temporary scaffold; the block set replaces
-    ! grid_type/field_type as the solver's data layout in the next phase.
+    ! Phase 0 of the block refactor (docs/block_refinement_strategy.md): the
+    ! solver state lives in a one-block-per-rank block set. The bitwise check
+    ! against grid_type is a temporary scaffold kept until the dead grid
+    ! arrays are removed.
     call init_block_set(blk, dns, g, bc%isPeriodic, global_id=int(c%cart_rank, C_INT))
     if (.not. block_set_matches_grid(blk, g)) then
         error stop "phase-0 block set does not reproduce the grid metrics"
     end if
-    call destroy_block_set(blk)
-    call precompute_peclet_rate(dns, g, c)
-    call init_boundary_faces(bc, dns, g)
+    call precompute_peclet_rate(dns, blk, c)
+    call init_boundary_faces(bc, dns)
     call init_openmp_offload(c%has_terminal)
     call enter_grid_data(g, dns)
     call enter_boundary_data(bc)
 
     if (c%has_terminal) print *, "initialising fields..."
-    call init_field(f, dns)
     if (.not. has_restart_file(dns)) then
-        call flow%initialise_fields(f, dns, g, bc, c)
+        call flow%initialise_fields(blk, dns, g, bc, c)
     end if
-    call enter_field_data(f, dns)
+    call enter_block_data(blk)
     if (has_restart_file(dns)) then
         if (c%has_terminal) print *, "reading restart fields: ", trim(dns%restart_file)
-        call read_field(f, dns, dns%restart_file, c)
+        call read_field(blk, dns, dns%restart_file, c)
     end if
 
     if (c%has_terminal) print *, "initialising pressure solver..."
@@ -98,26 +95,26 @@ program main
         call enter_ibm_data(ibm, dns)
     else
         call enter_ibm_data(ibm, dns)
-        call set_ibm_coeff(dns, g, ibm, VAR_U)
-        call set_ibm_coeff(dns, g, ibm, VAR_V)
-        call set_ibm_coeff(dns, g, ibm, VAR_W)
+        call set_ibm_coeff(dns, blk, ibm, VAR_U)
+        call set_ibm_coeff(dns, blk, ibm, VAR_V)
+        call set_ibm_coeff(dns, blk, ibm, VAR_W)
     end if
 
     if (les_is_enabled(les)) then
         if (c%has_terminal) print *, "initialising LES model..."
-        call init_les(les, dns, g)
+        call init_les(les, dns, blk)
         call enter_les_data(les, dns)
     end if
 
-    call apply_bc(f, dns, g, bc)
-    call exchange_halos(c, f, [VAR_U, VAR_V, VAR_W, VAR_P])
-    call flow%setup_after_grid(f, dns, g, bc, c)
+    call apply_bc(blk, bc)
+    call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W, VAR_P])
+    call flow%setup_after_grid(blk, dns, g, bc, c)
     if (les_is_enabled(les)) then
-        call update_les_viscosity(les, f, dns, g, ibm)
+        call update_les_viscosity(les, blk, dns, ibm)
         call exchange_scalar_halos(c, les%nut)
-        call update_timestep_limits(f, dns, g, c, les)
+        call update_timestep_limits(blk, dns, c, les)
     else
-        call update_timestep_limits(f, dns, g, c)
+        call update_timestep_limits(blk, dns, c)
     end if
 
     if (c%has_terminal) print *, "main loop starting..."
@@ -141,33 +138,33 @@ program main
             call update_ibm_mu(ibm, dt_gamma)
             if (les_is_enabled(les)) then
                 les_profile_start = les_wall_seconds()
-                call update_les_viscosity(les, f, dns, g, ibm)
+                call update_les_viscosity(les, blk, dns, ibm)
                 call add_les_profile(les_prof, LES_PROF_NUT, les_wall_seconds() - les_profile_start)
                 les_profile_start = les_wall_seconds()
                 call exchange_scalar_halos(c, les%nut)
                 call add_les_profile(les_prof, LES_PROF_EXCHANGE, les_wall_seconds() - les_profile_start)
-                call momentum(f, dns, g, dt_alpha, dt_beta, dt_gamma, ibm, bc, les, les_prof)
+                call momentum(blk, dns, dt_alpha, dt_beta, dt_gamma, ibm, bc, les, les_prof)
             else
-                call momentum(f, dns, g, dt_alpha, dt_beta, dt_gamma, ibm, bc)
+                call momentum(blk, dns, dt_alpha, dt_beta, dt_gamma, ibm, bc)
             end if
-            call apply_bc(f, dns, g, bc)
-            call exchange_halos(c, f, [VAR_U, VAR_V, VAR_W])
+            call apply_bc(blk, bc)
+            call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W])
 
             ! Projection: solve for pressure correction and project tentative velocities.
-            call pressure_projection(ps, f, dns, g, dt_gamma, ibm, bc, c)
+            call pressure_projection(ps, blk, dns, dt_gamma, ibm, bc, c)
 
         end do
 
         if (les_is_enabled(les)) then
-            call update_timestep_limits(f, dns, g, c, les)
+            call update_timestep_limits(blk, dns, c, les)
         else
-            call update_timestep_limits(f, dns, g, c)
+            call update_timestep_limits(blk, dns, c)
         end if
 
         if (dns%field_interval > 0) then
-            call maybe_write_field(f, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%sor)
+            call maybe_write_field(blk, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%sor)
         end if
-        call flow%after_step(f, dns, g, c)
+        call flow%after_step(blk, dns, g, c)
 
     end do
     call stop_chron(loop_timer, loop_steps)
@@ -178,16 +175,17 @@ program main
         if (les_is_enabled(les)) call write_les_profile(les_prof, loop_steps)
     end if
 
-    call write_field(f, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%sor)
+    call write_field(blk, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%sor)
 
     ! Release device-side data before the host allocatables go out of scope.
     call flow%finalize(dns, g, c)
     if (les_is_enabled(les)) call exit_les_data(les, dns)
     call destroy_les(les)
     call exit_ibm_data(ibm, dns)
-    call exit_field_data(f, dns)
+    call exit_block_data(blk)
     call exit_boundary_data(bc)
     call exit_grid_data(g, dns)
+    call destroy_block_set(blk)
     call destroy_grid(g)
     call destroy_boundary_faces(bc)
     call comm_finalize(c)

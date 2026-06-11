@@ -1,5 +1,6 @@
 module flow_case_base
-    use :: init, only: dns_type, grid_type, field_type
+    use :: init, only: dns_type, grid_type
+    use :: blocks, only: block_set_type
     use :: boundary, only: boundary_type
     use :: pressure_solver, only: pressure_solver_type
     use :: comm, only: comm_type
@@ -36,30 +37,30 @@ module flow_case_base
             type(pressure_solver_type), intent(inout) :: ps
         end subroutine case_apply_defaults
 
-        subroutine case_setup_after_grid(this, f, dns, g, bc, c)
-            import :: case_type, field_type, dns_type, grid_type, boundary_type, comm_type
+        subroutine case_setup_after_grid(this, blk, dns, g, bc, c)
+            import :: case_type, block_set_type, dns_type, grid_type, boundary_type, comm_type
             class(case_type), intent(inout) :: this
-            type(field_type), intent(inout) :: f
+            type(block_set_type), intent(inout) :: blk
             type(dns_type), intent(in) :: dns
             type(grid_type), intent(in) :: g
             type(boundary_type), intent(in) :: bc
             type(comm_type), intent(in) :: c
         end subroutine case_setup_after_grid
 
-        subroutine case_initialise_fields(this, f, dns, g, bc, c)
-            import :: case_type, field_type, dns_type, grid_type, boundary_type, comm_type
+        subroutine case_initialise_fields(this, blk, dns, g, bc, c)
+            import :: case_type, block_set_type, dns_type, grid_type, boundary_type, comm_type
             class(case_type), intent(inout) :: this
-            type(field_type), intent(inout) :: f
+            type(block_set_type), intent(inout) :: blk
             type(dns_type), intent(in) :: dns
             type(grid_type), intent(in) :: g
             type(boundary_type), intent(in) :: bc
             type(comm_type), intent(in) :: c
         end subroutine case_initialise_fields
 
-        subroutine case_after_step(this, f, dns, g, c)
-            import :: case_type, field_type, dns_type, grid_type, comm_type
+        subroutine case_after_step(this, blk, dns, g, c)
+            import :: case_type, block_set_type, dns_type, grid_type, comm_type
             class(case_type), intent(inout) :: this
-            type(field_type), intent(inout) :: f
+            type(block_set_type), intent(inout) :: blk
             type(dns_type), intent(in) :: dns
             type(grid_type), intent(in) :: g
             type(comm_type), intent(in) :: c
