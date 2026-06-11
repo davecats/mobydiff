@@ -251,69 +251,69 @@ static int read_attr_double_array(hid_t file, const char *name, double *values, 
     return status < 0;
 }
 
-static int write_decomposition(hid_t file, int rank, int nranks,
-                               int local_i_first, int local_i_last,
-                               int local_j_first, int local_j_last,
-                               int local_k_first, int local_k_last)
+/*
+ * Global block table, rows indexed by global block id: zero-based cell
+ * origin (3) and refinement level. Each rank writes its own contiguous id
+ * range with an independent transfer under the collectively created
+ * dataset.
+ */
+static int write_block_table(hid_t file, int n_blocks_global, int id_start,
+                             int n_blocks, const int *block_origin,
+                             const int *block_level)
 {
-    hsize_t dims[2] = {(hsize_t)nranks, 6};
-    hsize_t start[2] = {(hsize_t)rank, 0};
-    hsize_t count[2] = {1, 6};
-    int range[6] = {
-        local_i_first, local_i_last,
-        local_j_first, local_j_last,
-        local_k_first, local_k_last
-    };
+    hsize_t dims[2] = {(hsize_t)n_blocks_global, 4};
+    hsize_t start[2] = {(hsize_t)id_start, 0};
+    hsize_t count[2] = {(hsize_t)n_blocks, 4};
     hid_t file_space = -1;
     hid_t mem_space = -1;
     hid_t dset = -1;
     hid_t xfer = -1;
+    int *rows = NULL;
     herr_t status;
 
-    file_space = H5Screate_simple(2, dims, NULL);
-    if (file_space < 0) return 1;
+    rows = (int *)malloc((size_t)n_blocks*4*sizeof(int));
+    if (rows == NULL) return 1;
+    for (int b = 0; b < n_blocks; ++b) {
+        rows[4*b + 0] = block_origin[3*b + 0];
+        rows[4*b + 1] = block_origin[3*b + 1];
+        rows[4*b + 2] = block_origin[3*b + 2];
+        rows[4*b + 3] = block_level[b];
+    }
 
-    dset = H5Dcreate2(file, "rank_local_range", H5T_NATIVE_INT, file_space,
-                      H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
-    if (dset < 0) {
-        H5Sclose(file_space);
+    file_space = H5Screate_simple(2, dims, NULL);
+    if (file_space < 0) {
+        free(rows);
         return 1;
     }
 
-    if (H5Sselect_hyperslab(file_space, H5S_SELECT_SET, start, NULL, count, NULL) < 0) {
-        H5Dclose(dset);
+    dset = H5Dcreate2(file, "blocks", H5T_NATIVE_INT, file_space,
+                      H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+    if (dset < 0) {
         H5Sclose(file_space);
+        free(rows);
         return 1;
     }
 
     mem_space = H5Screate_simple(2, count, NULL);
-    if (mem_space < 0) {
-        H5Dclose(dset);
-        H5Sclose(file_space);
-        return 1;
-    }
-
     xfer = H5Pcreate(H5P_DATASET_XFER);
-    if (xfer < 0) {
-        H5Sclose(mem_space);
+    if (mem_space < 0 || xfer < 0 ||
+        H5Sselect_hyperslab(file_space, H5S_SELECT_SET, start, NULL, count, NULL) < 0) {
+        if (mem_space >= 0) H5Sclose(mem_space);
+        if (xfer >= 0) H5Pclose(xfer);
         H5Dclose(dset);
         H5Sclose(file_space);
+        free(rows);
         return 1;
     }
-    /*
-     * IBM coefficient files may be chunked by the STL preprocessor.  Some
-     * MPI-HDF5 stacks have trouble mapping chunked collective reads to MPI-IO
-     * file views, while independent reads are robust and this startup-only
-     * path is not performance critical.
-     */
     H5Pset_dxpl_mpio(xfer, H5FD_MPIO_INDEPENDENT);
 
-    status = H5Dwrite(dset, H5T_NATIVE_INT, mem_space, file_space, xfer, range);
+    status = H5Dwrite(dset, H5T_NATIVE_INT, mem_space, file_space, xfer, rows);
 
     H5Pclose(xfer);
     H5Sclose(mem_space);
     H5Dclose(dset);
     H5Sclose(file_space);
+    free(rows);
     return status < 0;
 }
 
@@ -596,12 +596,10 @@ static int read_global_dataset_blocks(hid_t file, const char *name,
 }
 
 int fdm_h5_write_field(const char *filename, int nbx, int nby, int nbz,
-                       int n_blocks, const int *block_origin,
+                       int n_blocks, int n_blocks_global, int id_start,
+                       const int *block_origin, const int *block_level,
                        int rank, int nranks,
                        int global_nx, int global_ny, int global_nz,
-                       int local_i_first, int local_i_last,
-                       int local_j_first, int local_j_last,
-                       int local_k_first, int local_k_last,
                        int step, int nsteps,
                        double lx, double ly, double lz,
                        double re, double dt, double t_final, double t_current,
@@ -631,6 +629,10 @@ int fdm_h5_write_field(const char *filename, int nbx, int nby, int nbz,
     ierr |= write_attr_int(file, "nz", global_nz);
     ierr |= write_attr_int(file, "nranks", nranks);
     ierr |= write_attr_int(file, "parallel_hdf5", 1);
+    ierr |= write_attr_int(file, "block_nb_x", nbx);
+    ierr |= write_attr_int(file, "block_nb_y", nby);
+    ierr |= write_attr_int(file, "block_nb_z", nbz);
+    ierr |= write_attr_int(file, "n_blocks", n_blocks_global);
     ierr |= write_attr_int(file, "step", step);
     ierr |= write_attr_int(file, "nsteps", nsteps);
     ierr |= write_attr_double(file, "lx", lx);
@@ -657,10 +659,8 @@ int fdm_h5_write_field(const char *filename, int nbx, int nby, int nbz,
     ierr |= write_attr_double_array(file, "grid_stretch", grid_stretch, 3);
     ierr |= write_attr_double_array(file, "grid_natural_dyw_plus", grid_natural_dyw_plus, 3);
 
-    ierr |= write_decomposition(file, rank, nranks,
-                                local_i_first, local_i_last,
-                                local_j_first, local_j_last,
-                                local_k_first, local_k_last);
+    ierr |= write_block_table(file, n_blocks_global, id_start, n_blocks,
+                              block_origin, block_level);
 
     for (int v = 0; v < 4; ++v) {
         ierr |= write_global_dataset_blocks(file, var_name[v], nbx, nby, nbz,

@@ -7,10 +7,10 @@ module io
     implicit none
 
     interface
-        function fdm_h5_write_field(file_name, nbx, nby, nbz, n_blocks, block_origin, &
+        function fdm_h5_write_field(file_name, nbx, nby, nbz, n_blocks, &
+                n_blocks_global, id_start, block_origin, block_level, &
                 rank, nranks, global_nx, global_ny, global_nz, &
-                local_i_first, local_i_last, local_j_first, local_j_last, &
-                local_k_first, local_k_last, step, nsteps, lx, ly, lz, &
+                step, nsteps, lx, ly, lz, &
                 re, dt, t_final, t_current, cfl, cflmax, pecletmax, dtmax, &
                 forcing, pressure_niter, pressure_sor, &
                 ibm_enabled, bc_count, periodic, bc_type, bc_value, grid_distribution, grid_stretch, &
@@ -18,12 +18,10 @@ module io
                 bind(C, name="fdm_h5_write_field") result(ierr)
             import :: C_CHAR, C_INT, C_DOUBLE
             character(kind=C_CHAR), intent(in) :: file_name(*)
-            integer(C_INT), value :: nbx, nby, nbz, n_blocks, rank, nranks
-            integer(C_INT), intent(in) :: block_origin(*)
+            integer(C_INT), value :: nbx, nby, nbz, n_blocks, n_blocks_global, id_start
+            integer(C_INT), value :: rank, nranks
+            integer(C_INT), intent(in) :: block_origin(*), block_level(*)
             integer(C_INT), value :: global_nx, global_ny, global_nz
-            integer(C_INT), value :: local_i_first, local_i_last
-            integer(C_INT), value :: local_j_first, local_j_last
-            integer(C_INT), value :: local_k_first, local_k_last
             integer(C_INT), value :: step, nsteps
             real(C_DOUBLE), value :: lx, ly, lz, re, dt, t_final, t_current
             real(C_DOUBLE), value :: cflmax, pecletmax, dtmax
@@ -152,11 +150,9 @@ subroutine write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor)
 
     c_file_name = to_c_string(h5_file_name)
     ierr = fdm_h5_write_field(c_file_name, blk%nb(1), blk%nb(2), blk%nb(3), &
-        blk%nBlocks, blk%origin, &
+        blk%nBlocks, blk%nBlocksGlobal, blk%idStart, blk%origin, blk%level, &
         int(c%world_rank, C_INT), int(c%world_size, C_INT), &
         dns%globalSize(1), dns%globalSize(2), dns%globalSize(3), &
-        dns%localSize(1,0), dns%localSize(1,1), dns%localSize(2,0), dns%localSize(2,1), &
-        dns%localSize(3,0), dns%localSize(3,1), &
         dns%step_current, dns%nsteps, &
         dns%leng(1), dns%leng(2), dns%leng(3), &
         dns%re, dns%dt, dns%t_final, dns%t_current, &
