@@ -5,6 +5,8 @@
 
 program main
     use :: init
+    use :: blocks, only: block_set_type, init_block_set, destroy_block_set, &
+        block_set_matches_grid
     use :: chron, only: chron_type, start_chron, stop_chron, write_chron
     use :: flow_case, only: case_type, create_flow_case
     use :: config
@@ -27,6 +29,7 @@ program main
     class(case_type), allocatable :: flow
     type(dns_type) :: dns
     type(grid_type) :: g
+    type(block_set_type) :: blk
     type(field_type) :: f
     type(boundary_type) :: bc
     type(pressure_solver_type) :: ps
@@ -58,6 +61,16 @@ program main
     if (c%has_terminal) print *, "initialising grid..."
     call init_grid(g, dns, bc%isPeriodic)
     call validate_dns_values(dns, g)
+
+    ! Phase 0 of the block refactor (docs/block_refinement_strategy.md):
+    ! build the one-block-per-rank block set and check that it reproduces the
+    ! grid metrics bit-for-bit. Temporary scaffold; the block set replaces
+    ! grid_type/field_type as the solver's data layout in the next phase.
+    call init_block_set(blk, dns, g, bc%isPeriodic, global_id=int(c%cart_rank, C_INT))
+    if (.not. block_set_matches_grid(blk, g)) then
+        error stop "phase-0 block set does not reproduce the grid metrics"
+    end if
+    call destroy_block_set(blk)
     call precompute_peclet_rate(dns, g, c)
     call init_boundary_faces(bc, dns, g)
     call init_openmp_offload(c%has_terminal)

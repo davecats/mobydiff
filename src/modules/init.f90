@@ -160,8 +160,8 @@ subroutine init_grid_direction(node, coord, d1, lapM, lap0, lapP, nGlobal, first
     logical(C_BOOL), intent(in) :: natural_one_sided
     logical(C_BOOL), intent(in) :: periodic
 
-    integer :: i, var, n, loCoord, hiCoord
-    real(C_DOUBLE) :: s, hm, hp
+    integer :: i, n
+    real(C_DOUBLE) :: s
 
     ! Build the global node line first; local coordinates are sampled from it below.
     n = int(nGlobal)
@@ -173,7 +173,32 @@ subroutine init_grid_direction(node, coord, d1, lapM, lap0, lapP, nGlobal, first
     node(0) = 0.0d0
     node(n) = length
 
+    call slice_grid_direction(node, coord, d1, lapM, lap0, lapP, nGlobal, first, nLocal, &
+        length, periodic, dir)
+end subroutine init_grid_direction
 
+! Sample the local, variable-staggered coordinates and the second-order
+! finite-difference metrics for a window of nLocal cells starting at the
+! 1-based global cell index `first` of a given global node line.
+!
+! This is shared by the rank-local grid setup (init_grid_direction above) and
+! by the per-block metric setup in the blocks module, so the discrete
+! operators are defined in exactly one place.
+subroutine slice_grid_direction(node, coord, d1, lapM, lap0, lapP, nGlobal, first, nLocal, &
+        length, periodic, dir)
+    real(C_DOUBLE), intent(in) :: node(0:)
+    real(C_DOUBLE), intent(inout) :: coord(-1:,:)
+    real(C_DOUBLE), intent(inout) :: d1(0:,:)
+    real(C_DOUBLE), intent(inout) :: lapM(0:,:), lap0(0:,:), lapP(0:,:)
+    integer(C_INT), intent(in) :: nGlobal, first
+    integer, intent(in) :: nLocal, dir
+    real(C_DOUBLE), intent(in) :: length
+    logical(C_BOOL), intent(in) :: periodic
+
+    integer :: i, var, n, loCoord, hiCoord
+    real(C_DOUBLE) :: hm, hp
+
+    n = int(nGlobal)
     loCoord = lbound(coord,1)
     hiCoord = ubound(coord,1)
 
@@ -212,7 +237,7 @@ subroutine init_grid_direction(node, coord, d1, lapM, lap0, lapP, nGlobal, first
             lap0(i,var) = -(lapM(i,var) + lapP(i,var))
         end do
     end do
-end subroutine init_grid_direction
+end subroutine slice_grid_direction
 
 logical function is_face_staggered(dir, var)
     integer, intent(in) :: dir, var

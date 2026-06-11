@@ -20,6 +20,7 @@ set(MODULE_DIR ${SRC_DIR}/modules)
 
 set(MODULE_SOURCES
     ${MODULE_DIR}/init.f90
+    ${MODULE_DIR}/blocks.f90
     ${MODULE_DIR}/chron.f90
     ${MODULE_DIR}/boundary.f90
     ${MODULE_DIR}/ibm.f90
