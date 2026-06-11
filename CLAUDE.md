@@ -47,24 +47,33 @@ BCM-style equal-size blocks (Nakahashi & Kim 2004; Jansson et al. 2019) to
 enable 2:1 local refinement and removal of blocks buried inside the
 immersed boundary. Phased, each phase verified before the next:
 
-- Phase 0 (scaffold committed and validated 2026-06-11): `block_set_type`
-  container, one block per rank, bit-identical to current behaviour.
-  - `init.f90`: `slice_grid_direction` extracted from `init_grid_direction`
-    (shared metric construction, pure refactor).
-  - `src/modules/blocks.f90`: `block_set_type`, Phase-0 builder, device
-    mapping, `block_set_matches_grid` bitwise check, `subdivide_node_line`.
-  - `CMakeLists.txt`: module added.
-  - `main.f90`: temporary scaffold building + verifying + freeing the block
-    set after `init_grid` (remove when the solver actually uses blocks).
-  - Validated: `channel_kmm180` restarted from
-    `channel_kmm180_restart.h5`, 11 steps, CPU (8 ranks) and GPU (1 rank)
-    both bit-exact vs. pre-refactor commit `92c6518`
-    (`tools/compare_fields.py`, max_abs = 0 on un/vn/wn/pn).
-  Next: migrate solver kernels (`step.f90`, `pressure_solver.f90`,
-  `ibm.f90`, `comm.f90`, `io.f90`) to read `blk%` arrays with an outer
-  block loop (`collapse(4)`).
-- Phase 1: many same-level blocks per rank, block-pair halo exchange,
-  Z-order distribution.
+- Phase 0 (complete, validated 2026-06-11): the solver state lives in a
+  `block_set_type` with one block per rank; `field_type` and the grid
+  metric arrays are gone (`grid_type` keeps only generation parameters
+  and the node lines; blocks slice from them via `slice_grid_direction`).
+  Volume kernels (`step.f90`, `pressure_solver.f90`, `ibm.f90`, `les.f90`)
+  loop `do b = 1, blk%nBlocks` folded into their collapse; `ibm%coef/mu`
+  and `les%nut` carry the trailing block index. Still rank-shaped and
+  serving block slot 1 until Phase 1: comm.f90 send/recv boxes, io.f90
+  rank-box datasets, the `apply_bc` point list, channel statistics, the
+  LES 1D metric tables, the `uStartX`-style face masks and the scalar
+  `colorOffset`.
+  - Validated bit-exact vs `6c03b67` with both trees built `-Mnofma`
+    (CPU) / `-Mnofma -gpu=nofma` (GPU): channel_kmm180 restart 11 steps
+    (CPU 8 ranks + GPU 1 rank), sailplane 1 step (GPU), wavychannel
+    5 steps (CPU 8 ranks). With default FMA contraction the binaries
+    differ by 1-2 ulps/step (compiler instruction selection on the
+    re-indexed source, not arithmetic) — for "pure refactor" gates,
+    compare `-Mnofma` builds of both sides.
+  - GPU cost of the block index: none measurable (channel 50 steps,
+    interleaved x5: 0.201 vs 0.204 s/step, noise ±8% on this WSL box).
+  - `tutorials/sailplane/sailplane_ibm_coeff.h5` was corrupt in git
+    (unreadable by HDF5 since at least `2b5e517`); regenerated per the
+    tutorial README and recommitted.
+- Phase 1 (next): many same-level blocks per rank, block-pair halo
+  exchange entries (replace every "slot 1" above), Z-order distribution,
+  per-block face masks and red-black `colorOffset` from
+  `modulo(sum(blk%origin(:,b)), 2)`.
 - Phase 2: removal of solid blocks (`FACE_CLOSED` zero-flux faces).
 - Phase 3: 2:1 refinement (restrict/prolong in pack/unpack, fine-owns-face,
   finest-level buffer at the wall, per-level node lines via midpoint
@@ -76,10 +85,14 @@ current checkout (`codex/les`) before committing: `git switch -c claude/blocks`.
 
 ## Verification
 
-- Phase 0 must be bit-exact vs. the pre-refactor code: compare output
-  fields with `tools/compare_fields.py`.
-- Channel sanity: `tools/check_parabolic_channel.py`. IBM case:
-  `tutorials/sailplane/`.
+- Pure refactors must be bit-exact vs. the pre-refactor code: compare
+  output fields with `tools/compare_fields.py`. Build BOTH sides with
+  `-Mnofma` (CPU) / `-Mnofma -gpu=nofma` (GPU) for the comparison —
+  default FMA contraction makes the compiler introduce 1-2 ulp
+  differences for arithmetically identical source.
+- Channel sanity: `tools/check_parabolic_channel.py`. IBM cases:
+  `tutorials/sailplane/` (coefficient file path),
+  `tutorials/wavychannel/` (analytic `set_ibm_coeff`).
 - Refinement phases: uniform-flow preservation across interfaces and global
   mass conservation to round-off (see strategy doc §11 for the full list).
 - Never declare a phase done with failing builds or unverified results.
