@@ -55,7 +55,8 @@ program mobygrid
     call validate_dns_values(dns, g)
 
     ! Serial: one block spanning the whole grid provides the staggered
-    ! coordinates for the export.
+    ! coordinates for the export, regardless of any [blocks] nb setting.
+    dns%block_nb = 0_C_INT
     call init_block_set(blk, dns, g, bc%isPeriodic)
 
     if (c%has_terminal) print *, "writing grid file: ", trim(output_file)
