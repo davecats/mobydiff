@@ -1,7 +1,8 @@
 module pressure_solver
     use, intrinsic :: iso_c_binding
     use :: init, only: dns_type, VAR_U, VAR_V, VAR_W, VAR_P
-    use :: blocks, only: block_set_type, FACE_OPEN, FACE_PHYS, FACE_CLOSED
+    use :: blocks, only: block_set_type, FACE_OPEN, FACE_PHYS, FACE_CLOSED, &
+        FACE_COARSE, FACE_FINE
     use :: ibmm, only: ibm_type
     use :: boundary, only: boundary_type, apply_bc
     use :: comm, only: comm_type, exchange_halos
@@ -53,6 +54,12 @@ contains
 
         integer(C_INT) :: iIter, color
 
+        ! Per-colour exchanges refresh only same-level copies (interp =
+        ! false): each side of a 2:1 interface relaxes its own copy of the
+        ! interface faces against stage-frozen cross-level ghosts, which
+        ! keeps the block iteration contractive. The final full exchange
+        ! reconciles the copies conservatively (restriction of the fine
+        ! faces / injection of the coarse face).
         do iIter = 1_C_INT, ps%nIter
             do color = 1_C_INT, 0_C_INT, -1_C_INT
                 call redblack_sweep(ps, blk, dt_gamma, ibm, color)
@@ -60,7 +67,7 @@ contains
                 if (iIter == ps%nIter .and. color == 0_C_INT) then
                     call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W, VAR_P])
                 else
-                    call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W])
+                    call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W], interp=.false.)
                 end if
             end do
         end do
@@ -132,18 +139,27 @@ contains
                     mu_w_k  = ibm%mu(i,j,k,VAR_W,b)
                     mu_w_kp = ibm%mu(i,j,kp,VAR_W,b)
 
+                    ! The denominator drops only faces whose flux is pinned
+                    ! to zero forever (walls, closed faces). A 2:1 interface
+                    ! flux is a live unknown relaxed by the owning block, so
+                    ! it stays in the diagonal even where this block must
+                    ! not correct it: removing it would make this cell
+                    ! over-compensate through its remaining faces while the
+                    ! interface flux keeps moving, an irregular splitting
+                    ! that diverges (observed as exponential growth seeded
+                    ! at coarse blocks next to refined regions).
                     denom = (merge(0.0d0, mu_u_i*blk%d1x(i,VAR_U,b), &
-                                      noflux_low(blk%physLow(1,b)) .and. i == 1_C_INT) &
+                                      face_pinned(blk%physLow(1,b)) .and. i == 1_C_INT) &
                            + merge(0.0d0, mu_u_ip*blk%d1x(ip,VAR_U,b), &
-                                      noflux_high(blk%physHigh(1,b)) .and. i == hi(1)))*blk%d1x(i,VAR_P,b) &
+                                      face_pinned(blk%physHigh(1,b)) .and. i == hi(1)))*blk%d1x(i,VAR_P,b) &
                           + (merge(0.0d0, mu_v_j*blk%d1y(j,VAR_V,b), &
-                                      noflux_low(blk%physLow(2,b)) .and. j == 1_C_INT) &
+                                      face_pinned(blk%physLow(2,b)) .and. j == 1_C_INT) &
                            + merge(0.0d0, mu_v_jp*blk%d1y(jp,VAR_V,b), &
-                                      noflux_high(blk%physHigh(2,b)) .and. j == hi(2)))*blk%d1y(j,VAR_P,b) &
+                                      face_pinned(blk%physHigh(2,b)) .and. j == hi(2)))*blk%d1y(j,VAR_P,b) &
                           + (merge(0.0d0, mu_w_k*blk%d1z(k,VAR_W,b), &
-                                      noflux_low(blk%physLow(3,b)) .and. k == 1_C_INT) &
+                                      face_pinned(blk%physLow(3,b)) .and. k == 1_C_INT) &
                            + merge(0.0d0, mu_w_kp*blk%d1z(kp,VAR_W,b), &
-                                      noflux_high(blk%physHigh(3,b)) .and. k == hi(3)))*blk%d1z(k,VAR_P,b)
+                                      face_pinned(blk%physHigh(3,b)) .and. k == hi(3)))*blk%d1z(k,VAR_P,b)
 
                     div = (blk%q(ip,j,k,VAR_U,b)-blk%q(i,j,k,VAR_U,b))*blk%d1x(i,VAR_P,b) &
                         + (blk%q(i,jp,k,VAR_V,b)-blk%q(i,j,k,VAR_V,b))*blk%d1y(j,VAR_P,b) &
@@ -153,29 +169,34 @@ contains
 
                     blk%q(i,j,k,VAR_P,b) = blk%q(i,j,k,VAR_P,b) + phi*idt
 
-                    ! Face corrections are masked on no-flux faces with the
-                    ! same conditions as denom. On physical walls the value
-                    ! was dead anyway (apply_bc overwrites it before any
-                    ! read); on FACE_CLOSED faces this keeps the pinned
-                    ! interface velocity exactly zero.
+                    ! Face corrections are symmetric, as on a single grid:
+                    ! every non-pinned face of the cell is corrected,
+                    ! including this block's own copy of a 2:1 interface
+                    ! face. During the sweeps the two sides' copies of an
+                    ! interface face evolve independently against their own
+                    ! lagged ghosts (the per-colour exchange does not
+                    ! overwrite them); the final exchange of the projection
+                    ! reconciles the copies conservatively. One-sided
+                    ! corrections are not an option here - they make the
+                    ! block iteration non-contractive and blow up.
                     blk%q(i,j,k,VAR_U,b) = blk%q(i,j,k,VAR_U,b) &
                         - merge(0.0d0, phi*blk%d1x(i,VAR_U,b)*mu_u_i, &
-                                noflux_low(blk%physLow(1,b)) .and. i == 1_C_INT)
+                                face_pinned(blk%physLow(1,b)) .and. i == 1_C_INT)
                     blk%q(ip,j,k,VAR_U,b) = blk%q(ip,j,k,VAR_U,b) &
                         + merge(0.0d0, phi*blk%d1x(ip,VAR_U,b)*mu_u_ip, &
-                                noflux_high(blk%physHigh(1,b)) .and. i == hi(1))
+                                face_pinned(blk%physHigh(1,b)) .and. i == hi(1))
                     blk%q(i,j,k,VAR_V,b) = blk%q(i,j,k,VAR_V,b) &
                         - merge(0.0d0, phi*blk%d1y(j,VAR_V,b)*mu_v_j, &
-                                noflux_low(blk%physLow(2,b)) .and. j == 1_C_INT)
+                                face_pinned(blk%physLow(2,b)) .and. j == 1_C_INT)
                     blk%q(i,jp,k,VAR_V,b) = blk%q(i,jp,k,VAR_V,b) &
                         + merge(0.0d0, phi*blk%d1y(jp,VAR_V,b)*mu_v_jp, &
-                                noflux_high(blk%physHigh(2,b)) .and. j == hi(2))
+                                face_pinned(blk%physHigh(2,b)) .and. j == hi(2))
                     blk%q(i,j,k,VAR_W,b) = blk%q(i,j,k,VAR_W,b) &
                         - merge(0.0d0, phi*blk%d1z(k,VAR_W,b)*mu_w_k, &
-                                noflux_low(blk%physLow(3,b)) .and. k == 1_C_INT)
+                                face_pinned(blk%physLow(3,b)) .and. k == 1_C_INT)
                     blk%q(i,j,kp,VAR_W,b) = blk%q(i,j,kp,VAR_W,b) &
                         + merge(0.0d0, phi*blk%d1z(kp,VAR_W,b)*mu_w_kp, &
-                                noflux_high(blk%physHigh(3,b)) .and. k == hi(3))
+                                face_pinned(blk%physHigh(3,b)) .and. k == hi(3))
                 END DO
             END DO
         END DO
@@ -186,24 +207,18 @@ contains
 
     end subroutine redblack_sweep
 
-    ! Faces excluded from the sweep denominator and corrections. The
-    ! LOW-side block owns a 2:1 shared face (strategy doc 6): low faces
-    ! are masked only at physical walls and closed faces, while a block's
-    ! HIGH face is masked at any interface too - its halo copy is
-    ! refreshed by the exchange (restriction or injection) and only feeds
-    ! the divergence.
-    pure logical function noflux_low(fk)
+    ! Pinned faces carry zero flux forever (physical walls, closed faces
+    ! against removed blocks): they leave both the denominator and the
+    ! corrections. Every other face, including each side's copy of a 2:1
+    ! interface face, stays in the denominator and is corrected by both
+    ! adjacent relaxations (strategy doc 6).
+    pure logical function face_pinned(fk)
 !$omp declare target
         integer(C_INT), intent(in) :: fk
 
-        noflux_low = fk == FACE_PHYS .or. fk == FACE_CLOSED
-    end function noflux_low
+        face_pinned = fk == FACE_PHYS .or. fk == FACE_CLOSED
+    end function face_pinned
 
-    pure logical function noflux_high(fk)
-!$omp declare target
-        integer(C_INT), intent(in) :: fk
 
-        noflux_high = fk /= FACE_OPEN
-    end function noflux_high
 
 end module pressure_solver

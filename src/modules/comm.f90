@@ -1,7 +1,7 @@
 module comm
     use, intrinsic :: iso_c_binding
     use :: mpi_f08
-    use :: init, only: dns_type, NVAR
+    use :: init, only: dns_type, NVAR, VAR_P
     use :: blocks, only: block_set_type, DIST_ZORDER, zorder_owner, zorder_start, zorder_count, &
         leaf_at, level_cells
     use :: boundary, only: boundary_type
@@ -52,6 +52,7 @@ module comm
         integer, allocatable :: lSrcSlot(:), lDstSlot(:)   ! (nLocal)
         integer, allocatable :: lSrcLo(:,:), lDstLo(:,:), lExt(:,:) ! (3,nLocal)
         integer, allocatable :: lOp(:), lDir(:,:), lTq(:,:) ! op, direction, fine quarter
+        real(C_DOUBLE), allocatable :: lBlend(:)           ! pressure ghost weight (1 = plain)
         integer, allocatable :: lOff(:)                    ! (0:nLocal) point prefix
 
         integer :: nPeers = 0
@@ -66,6 +67,8 @@ module comm
         integer, allocatable :: sOff(:)                    ! (0:nSend) point prefix, peer-major
         integer, allocatable :: rSlot(:), rPeer(:)
         integer, allocatable :: rLo(:,:), rExt(:,:)
+        integer, allocatable :: rDir(:,:), rOp(:)
+        real(C_DOUBLE), allocatable :: rBlend(:)
         integer, allocatable :: rOff(:)
 
         integer :: maxBufferCount = 0
@@ -75,6 +78,11 @@ module comm
         type(MPI_Request), allocatable :: request(:)       ! (2*nPeers)
         integer(C_INT) :: activeVars(NVAR) = 0_C_INT
         integer :: nActiveVars = 0
+        ! When false, the exchange applies only same-level copies: the
+        ! cross-level (restrict/prolong) writes are skipped on the apply
+        ! side, leaving interface ghosts and face copies frozen. Used by
+        ! the per-colour exchanges inside the pressure projection.
+        logical :: applyInterp = .true.
     end type comm_type
 
     public :: comm_init_world, comm_init, comm_finalize
@@ -208,6 +216,8 @@ contains
                             c%lOp(nLocal) = opc(cand)
                             c%lDir(:,nLocal) = off(:,d)
                             c%lTq(:,nLocal) = tqc(:,cand)
+                            c%lBlend(nLocal) = entry_blend(blk, dns, int(blk%level(b)), &
+                                int(blk%origin(:,b)), off(:,d), opc(cand))
                             c%lOff(nLocal) = c%lOff(nLocal-1) + pts
                         end if
                         c%nLocalPts = c%nLocalPts + pts
@@ -241,6 +251,10 @@ contains
                                 c%rPeer(nRecv) = p
                                 c%rLo(:,nRecv) = dstLo
                                 c%rExt(:,nRecv) = ext
+                                c%rDir(:,nRecv) = off(:,d)
+                                c%rOp(nRecv) = opc(cand)
+                                c%rBlend(nRecv) = entry_blend(blk, dns, int(blk%level(b)), &
+                                    int(blk%origin(:,b)), off(:,d), opc(cand))
                                 c%rOff(nRecv) = c%rOff(nRecv-1) + pts
                             end if
                             c%peerRecvOff(p) = c%peerRecvOff(p) + pts
@@ -302,6 +316,7 @@ contains
                 allocate(c%lSrcSlot(max(1,nLocal)), c%lDstSlot(max(1,nLocal)))
                 allocate(c%lSrcLo(3,max(1,nLocal)), c%lDstLo(3,max(1,nLocal)), c%lExt(3,max(1,nLocal)))
                 allocate(c%lOp(max(1,nLocal)), c%lDir(3,max(1,nLocal)), c%lTq(3,max(1,nLocal)))
+                allocate(c%lBlend(max(1,nLocal)))
                 allocate(c%lOff(0:max(1,nLocal)))
                 allocate(c%sSlot(max(1,nSend)), c%sPeer(max(1,nSend)))
                 allocate(c%sLo(3,max(1,nSend)), c%sExt(3,max(1,nSend)))
@@ -310,7 +325,10 @@ contains
                 allocate(c%sOff(0:max(1,nSend)))
                 allocate(c%rSlot(max(1,nRecv)), c%rPeer(max(1,nRecv)))
                 allocate(c%rLo(3,max(1,nRecv)), c%rExt(3,max(1,nRecv)))
+                allocate(c%rDir(3,max(1,nRecv)), c%rOp(max(1,nRecv)), c%rBlend(max(1,nRecv)))
                 allocate(c%rOff(0:max(1,nRecv)))
+                c%lBlend = 1.0d0
+                c%rBlend = 1.0d0
                 c%lOff = 0
                 c%sOff = 0
                 c%rOff = 0
@@ -333,10 +351,10 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target enter data map(to: &
         !$omp& c%lSrcSlot, c%lDstSlot, c%lSrcLo, c%lDstLo, c%lExt, c%lOff, &
-        !$omp& c%lOp, c%lDir, c%lTq, &
+        !$omp& c%lOp, c%lDir, c%lTq, c%lBlend, &
         !$omp& c%sSlot, c%sPeer, c%sLo, c%sExt, c%sOff, &
         !$omp& c%sOp, c%sDir, c%sTq, c%sDstLo, &
-        !$omp& c%rSlot, c%rPeer, c%rLo, c%rExt, c%rOff)
+        !$omp& c%rSlot, c%rPeer, c%rLo, c%rExt, c%rDir, c%rOp, c%rBlend, c%rOff)
         !$omp target enter data map(alloc: c%sendbuf, c%recvbuf)
 #endif
     end subroutine init_block_exchange
@@ -349,17 +367,17 @@ contains
             !$omp target exit data map(delete: c%sendbuf, c%recvbuf)
             !$omp target exit data map(delete: &
             !$omp& c%lSrcSlot, c%lDstSlot, c%lSrcLo, c%lDstLo, c%lExt, c%lOff, &
-            !$omp& c%lOp, c%lDir, c%lTq, &
+            !$omp& c%lOp, c%lDir, c%lTq, c%lBlend, &
             !$omp& c%sSlot, c%sPeer, c%sLo, c%sExt, c%sOff, &
             !$omp& c%sOp, c%sDir, c%sTq, c%sDstLo, &
-            !$omp& c%rSlot, c%rPeer, c%rLo, c%rExt, c%rOff)
+            !$omp& c%rSlot, c%rPeer, c%rLo, c%rExt, c%rDir, c%rOp, c%rBlend, c%rOff)
 #endif
             deallocate(c%sendbuf, c%recvbuf)
             deallocate(c%lSrcSlot, c%lDstSlot, c%lSrcLo, c%lDstLo, c%lExt, c%lOff)
-            deallocate(c%lOp, c%lDir, c%lTq)
+            deallocate(c%lOp, c%lDir, c%lTq, c%lBlend)
             deallocate(c%sSlot, c%sPeer, c%sLo, c%sExt, c%sOff)
             deallocate(c%sOp, c%sDir, c%sTq, c%sDstLo)
-            deallocate(c%rSlot, c%rPeer, c%rLo, c%rExt, c%rOff)
+            deallocate(c%rSlot, c%rPeer, c%rLo, c%rExt, c%rDir, c%rOp, c%rBlend, c%rOff)
             deallocate(c%request)
         end if
         if (allocated(c%peerRank)) deallocate(c%peerRank)
@@ -526,6 +544,66 @@ contains
             end select
         end do
     end subroutine interface_boxes
+
+    ! Ghost-interpolation weight for the pressure on a PROLONG face entry.
+    ! Plain injection puts the coarse cell value at the fine halo centre,
+    ! so the face-normal pressure gradient at the interface is evaluated
+    ! over a gap 1.5x larger than the fine metric assumes - a systematic
+    ! overdriving of the interface velocity that feeds back through the
+    ! projection and blows up. Blending the coarse value with the first
+    ! interior fine cell places the ghost where the fine stencil expects
+    ! it (uniform 2:1: ghost = (2*coarse + fine)/3). Edges and corners
+    ! keep plain injection: only face halos enter the pressure gradient.
+    function entry_blend(blk, dns, level, dorigin, off, op) result(w)
+        type(block_set_type), intent(in) :: blk
+        type(dns_type), intent(in) :: dns
+        integer, intent(in) :: level, dorigin(3), off(3), op
+        real(C_DOUBLE) :: w
+
+        integer :: d, g, gnl
+        real(C_DOUBLE) :: aHalf, bHalf, cHalf
+
+        w = 1.0d0
+        if (op /= OP_PROLONG) return
+        if (sum(abs(off)) /= 1) return
+        do d = 1, 3
+            if (off(d) == 0) cycle
+            gnl = int(level_cells(dns, d, int(level, C_INT)))
+            if (off(d) == -1) then
+                g = modulo(dorigin(d) - 1, gnl)
+            else
+                g = modulo(dorigin(d) + int(blk%nb(d)), gnl)
+            end if
+            ! Half-widths from the level node lines: fine halo cell (bHalf),
+            ! its covering coarse cell (aHalf), first interior cell (cHalf).
+            ! All three centres sit on the face normal; the face is a shared
+            ! node of both lines, so distances reduce to half-widths.
+            bHalf = 0.5d0*level_cell_width(blk, d, level, g)
+            aHalf = 0.5d0*level_cell_width(blk, d, level - 1, g/2)
+            if (off(d) == -1) then
+                cHalf = 0.5d0*level_cell_width(blk, d, level, dorigin(d))
+            else
+                cHalf = 0.5d0*level_cell_width(blk, d, level, dorigin(d) + int(blk%nb(d)) - 1)
+            end if
+            w = 1.0d0 - (aHalf - bHalf)/(aHalf + cHalf)
+        end do
+    end function entry_blend
+
+    ! Width of 0-based cell g of the level-l node line in direction d.
+    function level_cell_width(blk, d, level, g) result(width)
+        type(block_set_type), intent(in) :: blk
+        integer, intent(in) :: d, level, g
+        real(C_DOUBLE) :: width
+
+        select case (d)
+        case (1)
+            width = blk%lineX(g + 1, level + 1) - blk%lineX(g, level + 1)
+        case (2)
+            width = blk%lineY(g + 1, level + 1) - blk%lineY(g, level + 1)
+        case default
+            width = blk%lineZ(g + 1, level + 1) - blk%lineZ(g, level + 1)
+        end select
+    end function level_cell_width
 
     ! Level-l cell origin of the neighbour block in direction off, with
     ! periodic wrap; haveNeighbor is false outside non-periodic boundaries.
@@ -883,13 +961,17 @@ contains
         c%exchangeActive = .false.
     end subroutine finish_halo_exchange
 
-    subroutine exchange_halos(c, blk, vars)
+    subroutine exchange_halos(c, blk, vars, interp)
         type(comm_type), intent(inout) :: c
         type(block_set_type), intent(inout) :: blk
         integer(C_INT), intent(in) :: vars(:)
+        logical, intent(in), optional :: interp
 
+        c%applyInterp = .true.
+        if (present(interp)) c%applyInterp = interp
         call start_halo_exchange(c, blk, vars)
         call finish_halo_exchange(c, blk)
+        c%applyInterp = .true.
     end subroutine exchange_halos
 
     ! Per-block scalar halos (e.g. les%nut) on the same exchange entries.
@@ -941,14 +1023,17 @@ contains
         integer :: b1, b2, b3, c1, c2, c3, s1, s2, s3
         real(C_DOUBLE) :: val
 
+        integer :: applyInterp
+
         nv = c%nActiveVars
         totalItems = c%nLocalPts*nv
         if (totalItems == 0) return
+        applyInterp = merge(1, 0, c%applyInterp)
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
-        !$omp& map(to: totalItems, nv, c%nLocal, c%lOff, c%lSrcSlot, c%lDstSlot, &
-        !$omp& c%lSrcLo, c%lDstLo, c%lExt, c%lOp, c%lDir, c%lTq, c%activeVars) &
+        !$omp& map(to: totalItems, nv, applyInterp, c%nLocal, c%lOff, c%lSrcSlot, c%lDstSlot, &
+        !$omp& c%lSrcLo, c%lDstLo, c%lExt, c%lOp, c%lDir, c%lTq, c%lBlend, c%activeVars) &
         !$omp& map(tofrom: blk%q) &
         !$omp& private(p,gp,v,e,pt,ni,nj,di,dj,dk,var,b1,b2,b3,c1,c2,c3,s1,s2,s3,val)
 #endif
@@ -956,6 +1041,7 @@ contains
             gp = (p - 1)/nv
             v = p - 1 - gp*nv
             e = find_entry(c%lOff, c%nLocal, gp)
+            if (applyInterp == 0 .and. c%lOp(e) /= OP_COPY) cycle
             pt = gp - c%lOff(e-1)
             ni = c%lExt(1,e)
             nj = c%lExt(2,e)
@@ -977,7 +1063,14 @@ contains
                     end do
                 end do
             end do
-            blk%q(di,dj,dk,var,c%lDstSlot(e)) = val/real(c1*c2*c3, C_DOUBLE)
+            val = val/real(c1*c2*c3, C_DOUBLE)
+            ! Pressure ghost interpolation at 2:1 faces (entries write only
+            ! halo cells, so the interior cell read here is never a dst).
+            if (var == VAR_P .and. c%lBlend(e) /= 1.0d0) then
+                val = c%lBlend(e)*val + (1.0d0 - c%lBlend(e)) &
+                    *blk%q(di-c%lDir(1,e), dj-c%lDir(2,e), dk-c%lDir(3,e), var, c%lDstSlot(e))
+            end if
+            blk%q(di,dj,dk,var,c%lDstSlot(e)) = val
         end do
 #ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
@@ -1096,22 +1189,26 @@ contains
 
         integer :: p, gp, v, e, pt, ni, nj
         integer :: i, j, k, var, peer, pos, nv, totalItems
+        integer :: applyInterp
+        real(C_DOUBLE) :: val
 
         nv = c%nActiveVars
         totalItems = c%peerRecvOff(c%nPeers)*nv
         if (totalItems == 0) return
+        applyInterp = merge(1, 0, c%applyInterp)
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
-        !$omp& map(to: totalItems, nv, c%nRecv, c%rOff, c%rSlot, c%rPeer, &
-        !$omp& c%rLo, c%rExt, c%peerRecvOff, c%activeVars, c%recvbuf) &
+        !$omp& map(to: totalItems, nv, applyInterp, c%nRecv, c%rOff, c%rSlot, c%rPeer, &
+        !$omp& c%rLo, c%rExt, c%rDir, c%rOp, c%rBlend, c%peerRecvOff, c%activeVars, c%recvbuf) &
         !$omp& map(tofrom: blk%q) &
-        !$omp& private(p,gp,v,e,pt,ni,nj,i,j,k,var,peer,pos)
+        !$omp& private(p,gp,v,e,pt,ni,nj,i,j,k,var,peer,pos,val)
 #endif
         do p = 1, totalItems
             gp = (p - 1)/nv
             v = p - 1 - gp*nv
             e = find_entry(c%rOff, c%nRecv, gp)
+            if (applyInterp == 0 .and. c%rOp(e) /= OP_COPY) cycle
             pt = gp - c%rOff(e-1)
             ni = c%rExt(1,e)
             nj = c%rExt(2,e)
@@ -1121,7 +1218,12 @@ contains
             var = int(c%activeVars(v+1))
             peer = c%rPeer(e)
             pos = (gp - c%peerRecvOff(peer-1))*nv + v + 1
-            blk%q(i,j,k,var,c%rSlot(e)) = c%recvbuf(pos,peer)
+            val = c%recvbuf(pos,peer)
+            if (var == VAR_P .and. c%rBlend(e) /= 1.0d0) then
+                val = c%rBlend(e)*val + (1.0d0 - c%rBlend(e)) &
+                    *blk%q(i-c%rDir(1,e), j-c%rDir(2,e), k-c%rDir(3,e), var, c%rSlot(e))
+            end if
+            blk%q(i,j,k,var,c%rSlot(e)) = val
         end do
 #ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
@@ -1241,7 +1343,16 @@ contains
         else
             cnt = 1
             if (dird /= 0) then
-                base = srcLod
+                ! Coarse cell covering the halo layer. The off-based row
+                ! (1 or nb) is only right when the coarse block ends at the
+                ! shared boundary; across edge/corner directions the coarse
+                ! neighbour can span past it (it is twice the size), and the
+                ! covering row depends on the fine block's parity tq.
+                if (dird == -1) then
+                    base = nbd - tqd*nbd/2
+                else
+                    base = nbd/2 + 1 - tqd*nbd/2
+                end if
             else
                 base = (tqd*nbd + dstIdx - 1)/2 + 1
             end if
