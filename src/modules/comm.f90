@@ -42,33 +42,43 @@ module comm
         ! Block-pair halo exchange entries, built once by
         ! init_block_exchange. One entry is the transfer of one block
         ! face/edge/corner region from its owner block to a neighbour
-        ! block's halo. Same-rank entries are executed as a single flat
-        ! device copy kernel; off-rank entries are grouped into one message
-        ! per peer rank, with a canonical entry order (receiver's blocks in
-        ! slot order, fixed direction order) that both ends derive
-        ! independently, so the wire format needs no negotiation.
+        ! block's halo, executed as a single weighted gather: per
+        ! dimension, the source rows for destination index i are
+        ! base..base+cnt-1 with base = ishft(ga*i + gb, -gs), a form that
+        ! covers same-level copies, restrictions and prolongations alike
+        ! (entry_gather_map). Entries are ordered same-level COPY first
+        ! (per peer), with prefix counts, so a copy-only exchange is a
+        ! prefix of the full one. Same-rank entries run as one flat device
+        ! kernel; off-rank entries form one message per peer rank, in a
+        ! canonical order (receiver's blocks in slot order, fixed
+        ! direction order, copies first) both ends derive independently,
+        ! so the wire format needs no negotiation.
         integer :: nLocal = 0
         integer :: nLocalPts = 0
+        integer :: nLocalCopyPts = 0
         integer, allocatable :: lSrcSlot(:), lDstSlot(:)   ! (nLocal)
-        integer, allocatable :: lSrcLo(:,:), lDstLo(:,:), lExt(:,:) ! (3,nLocal)
-        integer, allocatable :: lOp(:), lDir(:,:), lTq(:,:) ! op, direction, fine quarter
-        real(C_DOUBLE), allocatable :: lBlend(:)           ! pressure ghost weight (1 = plain)
+        integer, allocatable :: lDstLo(:,:), lExt(:,:)     ! (3,nLocal)
+        integer, allocatable :: lGA(:,:), lGB(:,:), lGS(:,:), lGC(:,:) ! gather map (3,nLocal)
+        integer, allocatable :: lDir(:,:)                  ! direction (dst-completion adjacency)
+        real(C_DOUBLE), allocatable :: lWp(:), lWpDst(:)   ! pressure dst-completion weights
         integer, allocatable :: lOff(:)                    ! (0:nLocal) point prefix
 
         integer :: nPeers = 0
         integer, allocatable :: peerRank(:)
         integer, allocatable :: peerSendOff(:)             ! (0:nPeers) point prefix per peer
         integer, allocatable :: peerRecvOff(:)
+        integer, allocatable :: peerSendCopyOff(:)         ! (0:nPeers) same-level copy prefix
+        integer, allocatable :: peerRecvCopyOff(:)
         integer :: nSend = 0, nRecv = 0
         integer, allocatable :: sSlot(:), sPeer(:)         ! (nSend)
-        integer, allocatable :: sLo(:,:), sExt(:,:)        ! (3,nSend)
-        integer, allocatable :: sOp(:), sDir(:,:), sTq(:,:)
-        integer, allocatable :: sDstLo(:,:)                ! dst box lo (for sampling formulas)
+        integer, allocatable :: sExt(:,:)                  ! (3,nSend)
+        integer, allocatable :: sGA(:,:), sGB(:,:), sGS(:,:), sGC(:,:)
+        integer, allocatable :: sDstLo(:,:)                ! dst box lo (gather indexing)
         integer, allocatable :: sOff(:)                    ! (0:nSend) point prefix, peer-major
         integer, allocatable :: rSlot(:), rPeer(:)
         integer, allocatable :: rLo(:,:), rExt(:,:)
-        integer, allocatable :: rDir(:,:), rOp(:)
-        real(C_DOUBLE), allocatable :: rBlend(:)
+        integer, allocatable :: rDir(:,:)
+        real(C_DOUBLE), allocatable :: rWp(:), rWpDst(:)
         integer, allocatable :: rOff(:)
 
         integer :: maxBufferCount = 0
@@ -78,11 +88,11 @@ module comm
         type(MPI_Request), allocatable :: request(:)       ! (2*nPeers)
         integer(C_INT) :: activeVars(NVAR) = 0_C_INT
         integer :: nActiveVars = 0
-        ! When false, the exchange applies only same-level copies: the
-        ! cross-level (restrict/prolong) writes are skipped on the apply
-        ! side, leaving interface ghosts and face copies frozen. Used by
-        ! the per-colour exchanges inside the pressure projection.
-        logical :: applyInterp = .true.
+        ! When true, the exchange touches only the same-level COPY prefix
+        ! of the entry lists, leaving interface ghosts and face copies
+        ! frozen (the messages shrink to the per-peer copy prefixes).
+        ! Used by the per-colour exchanges inside the pressure projection.
+        logical :: copyOnly = .false.
     end type comm_type
 
     public :: comm_init_world, comm_init, comm_finalize
@@ -180,7 +190,7 @@ contains
         integer :: srcLo(3), dstLo(3), ext(3)
         integer :: peerCoords(3), peerFirst(3), peerLast(3)
         integer :: peerBlocks, peerStart, pb, dorigin(3), dlevel
-        integer :: nLocal, nSend, nRecv, pts, maxCount, ierr, e
+        integer :: nLocal, nSend, nRecv, pts, maxCount, ierr, e, round
 
         call build_direction_table(off)
         nb = int(blk%nb)
@@ -196,33 +206,40 @@ contains
             c%nLocalPts = 0
 
             ! Local entries: my blocks' halos served by my own blocks
-            ! (including the periodic wrap inside a single rank).
-            do b = 1, int(blk%nBlocks)
-                do d = 1, 26
-                    call resolve_neighbors(c, blk, dns, int(blk%level(b)), int(blk%origin(:,b)), &
-                        off(:,d), ncand, owner, slot, opc, tqc)
-                    do cand = 1, ncand
-                        if (owner(cand) /= c%cart_rank) cycle
-                        call candidate_boxes(c, blk, dns, int(blk%level(b)), int(blk%origin(:,b)), &
-                            off(:,d), nb, opc(cand), tqc(:,cand), srcLo, dstLo, ext)
-                        nLocal = nLocal + 1
-                        pts = ext(1)*ext(2)*ext(3)
-                        if (pass == 2) then
-                            c%lSrcSlot(nLocal) = slot(cand)
-                            c%lDstSlot(nLocal) = b
-                            c%lSrcLo(:,nLocal) = srcLo
-                            c%lDstLo(:,nLocal) = dstLo
-                            c%lExt(:,nLocal) = ext
-                            c%lOp(nLocal) = opc(cand)
-                            c%lDir(:,nLocal) = off(:,d)
-                            c%lTq(:,nLocal) = tqc(:,cand)
-                            c%lBlend(nLocal) = entry_blend(blk, dns, int(blk%level(b)), &
-                                int(blk%origin(:,b)), off(:,d), opc(cand))
-                            c%lOff(nLocal) = c%lOff(nLocal-1) + pts
-                        end if
-                        c%nLocalPts = c%nLocalPts + pts
+            ! (including the periodic wrap inside a single rank). Round 1
+            ! emits the same-level copies, round 2 the cross-level
+            ! entries, so the copy-only view is a prefix.
+            do round = 1, 2
+                do b = 1, int(blk%nBlocks)
+                    do d = 1, 26
+                        call resolve_neighbors(c, blk, dns, int(blk%level(b)), int(blk%origin(:,b)), &
+                            off(:,d), ncand, owner, slot, opc, tqc)
+                        do cand = 1, ncand
+                            if (owner(cand) /= c%cart_rank) cycle
+                            if ((opc(cand) == OP_COPY) .neqv. (round == 1)) cycle
+                            call candidate_boxes(c, blk, dns, int(blk%level(b)), int(blk%origin(:,b)), &
+                                off(:,d), nb, opc(cand), tqc(:,cand), srcLo, dstLo, ext)
+                            nLocal = nLocal + 1
+                            pts = ext(1)*ext(2)*ext(3)
+                            if (pass == 2) then
+                                c%lSrcSlot(nLocal) = slot(cand)
+                                c%lDstSlot(nLocal) = b
+                                c%lDstLo(:,nLocal) = dstLo
+                                c%lExt(:,nLocal) = ext
+                                c%lDir(:,nLocal) = off(:,d)
+                                call entry_gather_map(opc(cand), off(:,d), tqc(:,cand), nb, &
+                                    srcLo, dstLo, c%lGA(:,nLocal), c%lGB(:,nLocal), &
+                                    c%lGS(:,nLocal), c%lGC(:,nLocal))
+                                c%lWp(nLocal) = entry_blend(blk, dns, int(blk%level(b)), &
+                                    int(blk%origin(:,b)), off(:,d), opc(cand))
+                                c%lWpDst(nLocal) = 1.0d0 - c%lWp(nLocal)
+                                c%lOff(nLocal) = c%lOff(nLocal-1) + pts
+                            end if
+                            c%nLocalPts = c%nLocalPts + pts
+                        end do
                     end do
                 end do
+                if (round == 1) c%nLocalCopyPts = c%nLocalPts
             end do
             c%nLocal = nLocal
 
@@ -234,32 +251,39 @@ contains
             nSend = 0
             c%peerSendOff(0) = 0
             c%peerRecvOff(0) = 0
+            c%peerSendCopyOff(0) = 0
+            c%peerRecvCopyOff(0) = 0
             do p = 1, c%nPeers
                 c%peerRecvOff(p) = c%peerRecvOff(p-1)
-                do b = 1, int(blk%nBlocks)
-                    do d = 1, 26
-                        call resolve_neighbors(c, blk, dns, int(blk%level(b)), int(blk%origin(:,b)), &
-                            off(:,d), ncand, owner, slot, opc, tqc)
-                        do cand = 1, ncand
-                            if (owner(cand) /= c%peerRank(p)) cycle
-                            call candidate_boxes(c, blk, dns, int(blk%level(b)), int(blk%origin(:,b)), &
-                                off(:,d), nb, opc(cand), tqc(:,cand), srcLo, dstLo, ext)
-                            nRecv = nRecv + 1
-                            pts = ext(1)*ext(2)*ext(3)
-                            if (pass == 2) then
-                                c%rSlot(nRecv) = b
-                                c%rPeer(nRecv) = p
-                                c%rLo(:,nRecv) = dstLo
-                                c%rExt(:,nRecv) = ext
-                                c%rDir(:,nRecv) = off(:,d)
-                                c%rOp(nRecv) = opc(cand)
-                                c%rBlend(nRecv) = entry_blend(blk, dns, int(blk%level(b)), &
-                                    int(blk%origin(:,b)), off(:,d), opc(cand))
-                                c%rOff(nRecv) = c%rOff(nRecv-1) + pts
-                            end if
-                            c%peerRecvOff(p) = c%peerRecvOff(p) + pts
+                do round = 1, 2
+                    do b = 1, int(blk%nBlocks)
+                        do d = 1, 26
+                            call resolve_neighbors(c, blk, dns, int(blk%level(b)), int(blk%origin(:,b)), &
+                                off(:,d), ncand, owner, slot, opc, tqc)
+                            do cand = 1, ncand
+                                if (owner(cand) /= c%peerRank(p)) cycle
+                                if ((opc(cand) == OP_COPY) .neqv. (round == 1)) cycle
+                                call candidate_boxes(c, blk, dns, int(blk%level(b)), int(blk%origin(:,b)), &
+                                    off(:,d), nb, opc(cand), tqc(:,cand), srcLo, dstLo, ext)
+                                nRecv = nRecv + 1
+                                pts = ext(1)*ext(2)*ext(3)
+                                if (pass == 2) then
+                                    c%rSlot(nRecv) = b
+                                    c%rPeer(nRecv) = p
+                                    c%rLo(:,nRecv) = dstLo
+                                    c%rExt(:,nRecv) = ext
+                                    c%rDir(:,nRecv) = off(:,d)
+                                    c%rWp(nRecv) = entry_blend(blk, dns, int(blk%level(b)), &
+                                        int(blk%origin(:,b)), off(:,d), opc(cand))
+                                    c%rWpDst(nRecv) = 1.0d0 - c%rWp(nRecv)
+                                    c%rOff(nRecv) = c%rOff(nRecv-1) + pts
+                                end if
+                                c%peerRecvOff(p) = c%peerRecvOff(p) + pts
+                            end do
                         end do
                     end do
+                    if (round == 1) c%peerRecvCopyOff(p) = c%peerRecvCopyOff(p-1) &
+                        + (c%peerRecvOff(p) - c%peerRecvOff(p-1))
                 end do
 
                 ! Send side of the message me -> peer p: walk the peer's
@@ -276,37 +300,41 @@ contains
                     peerBlocks = 1
                 end if
                 c%peerSendOff(p) = c%peerSendOff(p-1)
-                do pb = 1, peerBlocks
-                    if (blk%distMode == DIST_ZORDER) then
-                        dorigin = int(blk%leafCoord(:,peerStart + pb))*nb
-                        dlevel = int(blk%leafLevel(peerStart + pb))
-                    else
-                        dorigin = peerFirst - 1
-                        dlevel = 0
-                    end if
-                    do d = 1, 26
-                        call resolve_neighbors(c, blk, dns, dlevel, dorigin, &
-                            off(:,d), ncand, owner, slot, opc, tqc)
-                        do cand = 1, ncand
-                            if (owner(cand) /= c%cart_rank) cycle
-                            call candidate_boxes(c, blk, dns, dlevel, dorigin, &
-                                off(:,d), nb, opc(cand), tqc(:,cand), srcLo, dstLo, ext)
-                            nSend = nSend + 1
-                            pts = ext(1)*ext(2)*ext(3)
-                            if (pass == 2) then
-                                c%sSlot(nSend) = slot(cand)
-                                c%sPeer(nSend) = p
-                                c%sLo(:,nSend) = srcLo
-                                c%sDstLo(:,nSend) = dstLo
-                                c%sExt(:,nSend) = ext
-                                c%sOp(nSend) = opc(cand)
-                                c%sDir(:,nSend) = off(:,d)
-                                c%sTq(:,nSend) = tqc(:,cand)
-                                c%sOff(nSend) = c%sOff(nSend-1) + pts
-                            end if
-                            c%peerSendOff(p) = c%peerSendOff(p) + pts
+                do round = 1, 2
+                    do pb = 1, peerBlocks
+                        if (blk%distMode == DIST_ZORDER) then
+                            dorigin = int(blk%leafCoord(:,peerStart + pb))*nb
+                            dlevel = int(blk%leafLevel(peerStart + pb))
+                        else
+                            dorigin = peerFirst - 1
+                            dlevel = 0
+                        end if
+                        do d = 1, 26
+                            call resolve_neighbors(c, blk, dns, dlevel, dorigin, &
+                                off(:,d), ncand, owner, slot, opc, tqc)
+                            do cand = 1, ncand
+                                if (owner(cand) /= c%cart_rank) cycle
+                                if ((opc(cand) == OP_COPY) .neqv. (round == 1)) cycle
+                                call candidate_boxes(c, blk, dns, dlevel, dorigin, &
+                                    off(:,d), nb, opc(cand), tqc(:,cand), srcLo, dstLo, ext)
+                                nSend = nSend + 1
+                                pts = ext(1)*ext(2)*ext(3)
+                                if (pass == 2) then
+                                    c%sSlot(nSend) = slot(cand)
+                                    c%sPeer(nSend) = p
+                                    c%sDstLo(:,nSend) = dstLo
+                                    c%sExt(:,nSend) = ext
+                                    call entry_gather_map(opc(cand), off(:,d), tqc(:,cand), nb, &
+                                        srcLo, dstLo, c%sGA(:,nSend), c%sGB(:,nSend), &
+                                        c%sGS(:,nSend), c%sGC(:,nSend))
+                                    c%sOff(nSend) = c%sOff(nSend-1) + pts
+                                end if
+                                c%peerSendOff(p) = c%peerSendOff(p) + pts
+                            end do
                         end do
                     end do
+                    if (round == 1) c%peerSendCopyOff(p) = c%peerSendCopyOff(p-1) &
+                        + (c%peerSendOff(p) - c%peerSendOff(p-1))
                 end do
             end do
             c%nRecv = nRecv
@@ -314,26 +342,34 @@ contains
 
             if (pass == 1) then
                 allocate(c%lSrcSlot(max(1,nLocal)), c%lDstSlot(max(1,nLocal)))
-                allocate(c%lSrcLo(3,max(1,nLocal)), c%lDstLo(3,max(1,nLocal)), c%lExt(3,max(1,nLocal)))
-                allocate(c%lOp(max(1,nLocal)), c%lDir(3,max(1,nLocal)), c%lTq(3,max(1,nLocal)))
-                allocate(c%lBlend(max(1,nLocal)))
+                allocate(c%lDstLo(3,max(1,nLocal)), c%lExt(3,max(1,nLocal)))
+                allocate(c%lGA(3,max(1,nLocal)), c%lGB(3,max(1,nLocal)))
+                allocate(c%lGS(3,max(1,nLocal)), c%lGC(3,max(1,nLocal)))
+                allocate(c%lDir(3,max(1,nLocal)))
+                allocate(c%lWp(max(1,nLocal)), c%lWpDst(max(1,nLocal)))
                 allocate(c%lOff(0:max(1,nLocal)))
                 allocate(c%sSlot(max(1,nSend)), c%sPeer(max(1,nSend)))
-                allocate(c%sLo(3,max(1,nSend)), c%sExt(3,max(1,nSend)))
-                allocate(c%sOp(max(1,nSend)), c%sDir(3,max(1,nSend)), c%sTq(3,max(1,nSend)))
+                allocate(c%sExt(3,max(1,nSend)))
+                allocate(c%sGA(3,max(1,nSend)), c%sGB(3,max(1,nSend)))
+                allocate(c%sGS(3,max(1,nSend)), c%sGC(3,max(1,nSend)))
                 allocate(c%sDstLo(3,max(1,nSend)))
                 allocate(c%sOff(0:max(1,nSend)))
                 allocate(c%rSlot(max(1,nRecv)), c%rPeer(max(1,nRecv)))
                 allocate(c%rLo(3,max(1,nRecv)), c%rExt(3,max(1,nRecv)))
-                allocate(c%rDir(3,max(1,nRecv)), c%rOp(max(1,nRecv)), c%rBlend(max(1,nRecv)))
+                allocate(c%rDir(3,max(1,nRecv)))
+                allocate(c%rWp(max(1,nRecv)), c%rWpDst(max(1,nRecv)))
                 allocate(c%rOff(0:max(1,nRecv)))
-                c%lBlend = 1.0d0
-                c%rBlend = 1.0d0
+                c%lWp = 1.0d0
+                c%lWpDst = 0.0d0
+                c%rWp = 1.0d0
+                c%rWpDst = 0.0d0
                 c%lOff = 0
                 c%sOff = 0
                 c%rOff = 0
                 c%peerSendOff = 0
                 c%peerRecvOff = 0
+                c%peerSendCopyOff = 0
+                c%peerRecvCopyOff = 0
             end if
         end do
 
@@ -350,11 +386,12 @@ contains
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target enter data map(to: &
-        !$omp& c%lSrcSlot, c%lDstSlot, c%lSrcLo, c%lDstLo, c%lExt, c%lOff, &
-        !$omp& c%lOp, c%lDir, c%lTq, c%lBlend, &
-        !$omp& c%sSlot, c%sPeer, c%sLo, c%sExt, c%sOff, &
-        !$omp& c%sOp, c%sDir, c%sTq, c%sDstLo, &
-        !$omp& c%rSlot, c%rPeer, c%rLo, c%rExt, c%rDir, c%rOp, c%rBlend, c%rOff)
+        !$omp& c%lSrcSlot, c%lDstSlot, c%lDstLo, c%lExt, c%lOff, &
+        !$omp& c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lWp, c%lWpDst, &
+        !$omp& c%sSlot, c%sPeer, c%sExt, c%sOff, &
+        !$omp& c%sGA, c%sGB, c%sGS, c%sGC, c%sDstLo, &
+        !$omp& c%peerSendOff, c%peerRecvOff, c%peerSendCopyOff, c%peerRecvCopyOff, &
+        !$omp& c%rSlot, c%rPeer, c%rLo, c%rExt, c%rDir, c%rWp, c%rWpDst, c%rOff)
         !$omp target enter data map(alloc: c%sendbuf, c%recvbuf)
 #endif
     end subroutine init_block_exchange
@@ -366,23 +403,26 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
             !$omp target exit data map(delete: c%sendbuf, c%recvbuf)
             !$omp target exit data map(delete: &
-            !$omp& c%lSrcSlot, c%lDstSlot, c%lSrcLo, c%lDstLo, c%lExt, c%lOff, &
-            !$omp& c%lOp, c%lDir, c%lTq, c%lBlend, &
-            !$omp& c%sSlot, c%sPeer, c%sLo, c%sExt, c%sOff, &
-            !$omp& c%sOp, c%sDir, c%sTq, c%sDstLo, &
-            !$omp& c%rSlot, c%rPeer, c%rLo, c%rExt, c%rDir, c%rOp, c%rBlend, c%rOff)
+            !$omp& c%lSrcSlot, c%lDstSlot, c%lDstLo, c%lExt, c%lOff, &
+            !$omp& c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lWp, c%lWpDst, &
+            !$omp& c%sSlot, c%sPeer, c%sExt, c%sOff, &
+            !$omp& c%sGA, c%sGB, c%sGS, c%sGC, c%sDstLo, &
+            !$omp& c%peerSendOff, c%peerRecvOff, c%peerSendCopyOff, c%peerRecvCopyOff, &
+            !$omp& c%rSlot, c%rPeer, c%rLo, c%rExt, c%rDir, c%rWp, c%rWpDst, c%rOff)
 #endif
             deallocate(c%sendbuf, c%recvbuf)
-            deallocate(c%lSrcSlot, c%lDstSlot, c%lSrcLo, c%lDstLo, c%lExt, c%lOff)
-            deallocate(c%lOp, c%lDir, c%lTq, c%lBlend)
-            deallocate(c%sSlot, c%sPeer, c%sLo, c%sExt, c%sOff)
-            deallocate(c%sOp, c%sDir, c%sTq, c%sDstLo)
-            deallocate(c%rSlot, c%rPeer, c%rLo, c%rExt, c%rDir, c%rOp, c%rBlend, c%rOff)
+            deallocate(c%lSrcSlot, c%lDstSlot, c%lDstLo, c%lExt, c%lOff)
+            deallocate(c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lWp, c%lWpDst)
+            deallocate(c%sSlot, c%sPeer, c%sExt, c%sOff)
+            deallocate(c%sGA, c%sGB, c%sGS, c%sGC, c%sDstLo)
+            deallocate(c%rSlot, c%rPeer, c%rLo, c%rExt, c%rDir, c%rWp, c%rWpDst, c%rOff)
             deallocate(c%request)
         end if
         if (allocated(c%peerRank)) deallocate(c%peerRank)
         if (allocated(c%peerSendOff)) deallocate(c%peerSendOff)
         if (allocated(c%peerRecvOff)) deallocate(c%peerRecvOff)
+        if (allocated(c%peerSendCopyOff)) deallocate(c%peerSendCopyOff)
+        if (allocated(c%peerRecvCopyOff)) deallocate(c%peerRecvCopyOff)
         c%nLocal = 0
         c%nLocalPts = 0
         c%nPeers = 0
@@ -544,6 +584,55 @@ contains
             end select
         end do
     end subroutine interface_boxes
+
+    ! Per-dimension affine gather map of one exchange entry: the source
+    ! rows for destination index i are base..base+cnt-1 with
+    ! base = ishft(ga*i + gb, -gs); variables staggered along a dimension
+    ! sample 1 row there instead of cnt (the matching face). One form
+    ! covers every transfer: same-level copies map index for index
+    ! (ga=1), restrictions gather the two covering fine rows (ga=2
+    ! tangentially, the srcLo row pair across the face), prolongations
+    ! read the covering coarse row (halving shift tangentially, the
+    ! tq-dependent covering row across the face).
+    subroutine entry_gather_map(op, off, tq, nb, srcLo, dstLo, ga, gb, gs, gc)
+        integer, intent(in) :: op, off(3), tq(3), nb(3), srcLo(3), dstLo(3)
+        integer, intent(out) :: ga(3), gb(3), gs(3), gc(3)
+
+        integer :: d
+
+        do d = 1, 3
+            gs(d) = 0
+            gc(d) = 1
+            if (op == OP_COPY) then
+                ga(d) = 1
+                gb(d) = srcLo(d) - dstLo(d)
+            else if (off(d) /= 0) then
+                ga(d) = 0
+                if (op == OP_RESTRICT) then
+                    gb(d) = srcLo(d)
+                    gc(d) = 2
+                else
+                    ! Coarse row covering the halo layer: depends on the
+                    ! fine block's parity tq because across edge/corner
+                    ! directions the coarse neighbour spans past the
+                    ! shared boundary (on faces 2:1 smoothing pins tq to
+                    ! the touching side and this reduces to 1 or nb).
+                    gb(d) = nb(d) - tq(d)*nb(d)/2
+                    if (off(d) == 1) gb(d) = nb(d)/2 + 1 - tq(d)*nb(d)/2
+                end if
+            else
+                if (op == OP_RESTRICT) then
+                    ga(d) = 2
+                    gb(d) = -tq(d)*nb(d) - 1
+                    gc(d) = 2
+                else
+                    ga(d) = 1
+                    gb(d) = tq(d)*nb(d) + 1
+                    gs(d) = 1
+                end if
+            end if
+        end do
+    end subroutine entry_gather_map
 
     ! Ghost-interpolation weight for the pressure on a PROLONG face entry.
     ! Plain injection puts the coarse cell value at the fine halo centre,
@@ -840,6 +929,8 @@ contains
         allocate(c%peerRank(max(1, c%nPeers)))
         allocate(c%peerSendOff(0:max(1, c%nPeers)))
         allocate(c%peerRecvOff(0:max(1, c%nPeers)))
+        allocate(c%peerSendCopyOff(0:max(1, c%nPeers)))
+        allocate(c%peerRecvCopyOff(0:max(1, c%nPeers)))
         c%peerRank(1:c%nPeers) = found(1:c%nPeers)
         c%peerSendOff = 0
         c%peerRecvOff = 0
@@ -906,7 +997,7 @@ contains
         type(block_set_type), intent(inout) :: blk
         integer(C_INT), intent(in) :: vars(:)
 
-        integer :: ierr, p, nv
+        integer :: ierr, p, nv, nRecvPts, nSendPts
 
         call require_ready(c)
         if (c%exchangeActive) error stop "halo exchange already active"
@@ -921,12 +1012,18 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
             !$omp target data use_device_addr(c%sendbuf, c%recvbuf)
 #endif
+            ! A copy-only exchange is a prefix of the full message on both
+            ! ends (entries are ordered same-level first per peer).
             do p = 1, c%nPeers
-                call MPI_Irecv(c%recvbuf(1,p), (c%peerRecvOff(p) - c%peerRecvOff(p-1))*nv, &
+                nRecvPts = c%peerRecvOff(p) - c%peerRecvOff(p-1)
+                if (c%copyOnly) nRecvPts = c%peerRecvCopyOff(p) - c%peerRecvCopyOff(p-1)
+                call MPI_Irecv(c%recvbuf(1,p), nRecvPts*nv, &
                     MPI_DOUBLE_PRECISION, c%peerRank(p), HALO_TAG, c%cart_comm, c%request(p), ierr)
             end do
             do p = 1, c%nPeers
-                call MPI_Isend(c%sendbuf(1,p), (c%peerSendOff(p) - c%peerSendOff(p-1))*nv, &
+                nSendPts = c%peerSendOff(p) - c%peerSendOff(p-1)
+                if (c%copyOnly) nSendPts = c%peerSendCopyOff(p) - c%peerSendCopyOff(p-1)
+                call MPI_Isend(c%sendbuf(1,p), nSendPts*nv, &
                     MPI_DOUBLE_PRECISION, c%peerRank(p), HALO_TAG, c%cart_comm, &
                     c%request(c%nPeers+p), ierr)
             end do
@@ -967,11 +1064,11 @@ contains
         integer(C_INT), intent(in) :: vars(:)
         logical, intent(in), optional :: interp
 
-        c%applyInterp = .true.
-        if (present(interp)) c%applyInterp = interp
+        c%copyOnly = .false.
+        if (present(interp)) c%copyOnly = .not. interp
         call start_halo_exchange(c, blk, vars)
         call finish_halo_exchange(c, blk)
-        c%applyInterp = .true.
+        c%copyOnly = .false.
     end subroutine exchange_halos
 
     ! Per-block scalar halos (e.g. les%nut) on the same exchange entries.
@@ -1023,17 +1120,15 @@ contains
         integer :: b1, b2, b3, c1, c2, c3, s1, s2, s3
         real(C_DOUBLE) :: val
 
-        integer :: applyInterp
-
         nv = c%nActiveVars
-        totalItems = c%nLocalPts*nv
+        totalItems = merge(c%nLocalCopyPts, c%nLocalPts, c%copyOnly)*nv
         if (totalItems == 0) return
-        applyInterp = merge(1, 0, c%applyInterp)
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
-        !$omp& map(to: totalItems, nv, applyInterp, c%nLocal, c%lOff, c%lSrcSlot, c%lDstSlot, &
-        !$omp& c%lSrcLo, c%lDstLo, c%lExt, c%lOp, c%lDir, c%lTq, c%lBlend, c%activeVars) &
+        !$omp& map(to: totalItems, nv, c%nLocal, c%lOff, c%lSrcSlot, c%lDstSlot, &
+        !$omp& c%lDstLo, c%lExt, c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lWp, c%lWpDst, &
+        !$omp& c%activeVars) &
         !$omp& map(tofrom: blk%q) &
         !$omp& private(p,gp,v,e,pt,ni,nj,di,dj,dk,var,b1,b2,b3,c1,c2,c3,s1,s2,s3,val)
 #endif
@@ -1041,7 +1136,6 @@ contains
             gp = (p - 1)/nv
             v = p - 1 - gp*nv
             e = find_entry(c%lOff, c%nLocal, gp)
-            if (applyInterp == 0 .and. c%lOp(e) /= OP_COPY) cycle
             pt = gp - c%lOff(e-1)
             ni = c%lExt(1,e)
             nj = c%lExt(2,e)
@@ -1049,12 +1143,12 @@ contains
             dj = c%lDstLo(2,e) + modulo(pt/ni, nj)
             dk = c%lDstLo(3,e) + pt/(ni*nj)
             var = int(c%activeVars(v+1))
-            call src_samples(c%lOp(e), c%lDir(1,e), c%lTq(1,e), var == 1, int(blk%nb(1)), &
-                di, c%lDstLo(1,e), c%lSrcLo(1,e), b1, c1)
-            call src_samples(c%lOp(e), c%lDir(2,e), c%lTq(2,e), var == 2, int(blk%nb(2)), &
-                dj, c%lDstLo(2,e), c%lSrcLo(2,e), b2, c2)
-            call src_samples(c%lOp(e), c%lDir(3,e), c%lTq(3,e), var == 3, int(blk%nb(3)), &
-                dk, c%lDstLo(3,e), c%lSrcLo(3,e), b3, c3)
+            b1 = ishft(c%lGA(1,e)*di + c%lGB(1,e), -c%lGS(1,e))
+            b2 = ishft(c%lGA(2,e)*dj + c%lGB(2,e), -c%lGS(2,e))
+            b3 = ishft(c%lGA(3,e)*dk + c%lGB(3,e), -c%lGS(3,e))
+            c1 = merge(1, c%lGC(1,e), var == 1)
+            c2 = merge(1, c%lGC(2,e), var == 2)
+            c3 = merge(1, c%lGC(3,e), var == 3)
             val = 0.0d0
             do s3 = 0, c3 - 1
                 do s2 = 0, c2 - 1
@@ -1064,10 +1158,11 @@ contains
                 end do
             end do
             val = val/real(c1*c2*c3, C_DOUBLE)
-            ! Pressure ghost interpolation at 2:1 faces (entries write only
-            ! halo cells, so the interior cell read here is never a dst).
-            if (var == VAR_P .and. c%lBlend(e) /= 1.0d0) then
-                val = c%lBlend(e)*val + (1.0d0 - c%lBlend(e)) &
+            ! Part of the pressure gather weight lives on the destination's
+            ! first interior cell (2:1 face ghosts; entries write only halo
+            ! cells, so the interior cell read here is never a dst).
+            if (var == VAR_P .and. c%lWpDst(e) /= 0.0d0) then
+                val = c%lWp(e)*val + c%lWpDst(e) &
                     *blk%q(di-c%lDir(1,e), dj-c%lDir(2,e), dk-c%lDir(3,e), var, c%lDstSlot(e))
             end if
             blk%q(di,dj,dk,var,c%lDstSlot(e)) = val
@@ -1082,20 +1177,17 @@ contains
         real(C_DOUBLE), intent(inout) :: scalar(0:,0:,0:,1:)
 
         integer :: p, e, pt, ni, nj
-        integer :: di, dj, dk, totalItems, nb1, nb2, nb3
+        integer :: di, dj, dk, totalItems
         integer :: b1, b2, b3, c1, c2, c3, s1, s2, s3
         real(C_DOUBLE) :: val
 
         totalItems = c%nLocalPts
         if (totalItems == 0) return
-        nb1 = ubound(scalar, 1) - 1
-        nb2 = ubound(scalar, 2) - 1
-        nb3 = ubound(scalar, 3) - 1
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
-        !$omp& map(to: totalItems, nb1, nb2, nb3, c%nLocal, c%lOff, c%lSrcSlot, c%lDstSlot, &
-        !$omp& c%lSrcLo, c%lDstLo, c%lExt, c%lOp, c%lDir, c%lTq) &
+        !$omp& map(to: totalItems, c%nLocal, c%lOff, c%lSrcSlot, c%lDstSlot, &
+        !$omp& c%lDstLo, c%lExt, c%lGA, c%lGB, c%lGS, c%lGC) &
         !$omp& map(tofrom: scalar) &
         !$omp& private(p,e,pt,ni,nj,di,dj,dk,b1,b2,b3,c1,c2,c3,s1,s2,s3,val)
 #endif
@@ -1107,12 +1199,12 @@ contains
             di = c%lDstLo(1,e) + modulo(pt, ni)
             dj = c%lDstLo(2,e) + modulo(pt/ni, nj)
             dk = c%lDstLo(3,e) + pt/(ni*nj)
-            call src_samples(c%lOp(e), c%lDir(1,e), c%lTq(1,e), .false., nb1, &
-                di, c%lDstLo(1,e), c%lSrcLo(1,e), b1, c1)
-            call src_samples(c%lOp(e), c%lDir(2,e), c%lTq(2,e), .false., nb2, &
-                dj, c%lDstLo(2,e), c%lSrcLo(2,e), b2, c2)
-            call src_samples(c%lOp(e), c%lDir(3,e), c%lTq(3,e), .false., nb3, &
-                dk, c%lDstLo(3,e), c%lSrcLo(3,e), b3, c3)
+            b1 = ishft(c%lGA(1,e)*di + c%lGB(1,e), -c%lGS(1,e))
+            b2 = ishft(c%lGA(2,e)*dj + c%lGB(2,e), -c%lGS(2,e))
+            b3 = ishft(c%lGA(3,e)*dk + c%lGB(3,e), -c%lGS(3,e))
+            c1 = c%lGC(1,e)
+            c2 = c%lGC(2,e)
+            c3 = c%lGC(3,e)
             val = 0.0d0
             do s3 = 0, c3 - 1
                 do s2 = 0, c2 - 1
@@ -1133,25 +1225,32 @@ contains
         type(block_set_type), intent(in) :: blk
 
         integer :: p, gp, v, e, pt, ni, nj
-        integer :: di, dj, dk, var, peer, pos, nv, totalItems
+        integer :: di, dj, dk, var, peer, pos, nv, totalItems, copyOnly
         integer :: b1, b2, b3, c1, c2, c3, s1, s2, s3
         real(C_DOUBLE) :: val
 
         nv = c%nActiveVars
-        totalItems = c%peerSendOff(c%nPeers)*nv
+        totalItems = merge(c%peerSendCopyOff(c%nPeers), c%peerSendOff(c%nPeers), c%copyOnly)*nv
         if (totalItems == 0) return
+        copyOnly = merge(1, 0, c%copyOnly)
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
-        !$omp& map(to: totalItems, nv, c%nSend, c%sOff, c%sSlot, c%sPeer, &
-        !$omp& c%sLo, c%sDstLo, c%sExt, c%sOp, c%sDir, c%sTq, &
-        !$omp& c%peerSendOff, c%activeVars, blk%q) &
+        !$omp& map(to: totalItems, nv, copyOnly, c%nPeers, c%nSend, c%sOff, c%sSlot, c%sPeer, &
+        !$omp& c%sDstLo, c%sExt, c%sGA, c%sGB, c%sGS, c%sGC, &
+        !$omp& c%peerSendOff, c%peerSendCopyOff, c%activeVars, blk%q) &
         !$omp& map(tofrom: c%sendbuf) &
         !$omp& private(p,gp,v,e,pt,ni,nj,di,dj,dk,var,peer,pos,b1,b2,b3,c1,c2,c3,s1,s2,s3,val)
 #endif
         do p = 1, totalItems
             gp = (p - 1)/nv
             v = p - 1 - gp*nv
+            ! A copy-only point index maps into the full enumeration via
+            ! the per-peer copy prefixes.
+            if (copyOnly == 1) then
+                peer = find_entry(c%peerSendCopyOff, c%nPeers, gp)
+                gp = c%peerSendOff(peer-1) + (gp - c%peerSendCopyOff(peer-1))
+            end if
             e = find_entry(c%sOff, c%nSend, gp)
             pt = gp - c%sOff(e-1)
             ni = c%sExt(1,e)
@@ -1160,12 +1259,12 @@ contains
             dj = c%sDstLo(2,e) + modulo(pt/ni, nj)
             dk = c%sDstLo(3,e) + pt/(ni*nj)
             var = int(c%activeVars(v+1))
-            call src_samples(c%sOp(e), c%sDir(1,e), c%sTq(1,e), var == 1, int(blk%nb(1)), &
-                di, c%sDstLo(1,e), c%sLo(1,e), b1, c1)
-            call src_samples(c%sOp(e), c%sDir(2,e), c%sTq(2,e), var == 2, int(blk%nb(2)), &
-                dj, c%sDstLo(2,e), c%sLo(2,e), b2, c2)
-            call src_samples(c%sOp(e), c%sDir(3,e), c%sTq(3,e), var == 3, int(blk%nb(3)), &
-                dk, c%sDstLo(3,e), c%sLo(3,e), b3, c3)
+            b1 = ishft(c%sGA(1,e)*di + c%sGB(1,e), -c%sGS(1,e))
+            b2 = ishft(c%sGA(2,e)*dj + c%sGB(2,e), -c%sGS(2,e))
+            b3 = ishft(c%sGA(3,e)*dk + c%sGB(3,e), -c%sGS(3,e))
+            c1 = merge(1, c%sGC(1,e), var == 1)
+            c2 = merge(1, c%sGC(2,e), var == 2)
+            c3 = merge(1, c%sGC(3,e), var == 3)
             val = 0.0d0
             do s3 = 0, c3 - 1
                 do s2 = 0, c2 - 1
@@ -1188,27 +1287,30 @@ contains
         type(block_set_type), intent(inout) :: blk
 
         integer :: p, gp, v, e, pt, ni, nj
-        integer :: i, j, k, var, peer, pos, nv, totalItems
-        integer :: applyInterp
+        integer :: i, j, k, var, peer, pos, nv, totalItems, copyOnly
         real(C_DOUBLE) :: val
 
         nv = c%nActiveVars
-        totalItems = c%peerRecvOff(c%nPeers)*nv
+        totalItems = merge(c%peerRecvCopyOff(c%nPeers), c%peerRecvOff(c%nPeers), c%copyOnly)*nv
         if (totalItems == 0) return
-        applyInterp = merge(1, 0, c%applyInterp)
+        copyOnly = merge(1, 0, c%copyOnly)
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
-        !$omp& map(to: totalItems, nv, applyInterp, c%nRecv, c%rOff, c%rSlot, c%rPeer, &
-        !$omp& c%rLo, c%rExt, c%rDir, c%rOp, c%rBlend, c%peerRecvOff, c%activeVars, c%recvbuf) &
+        !$omp& map(to: totalItems, nv, copyOnly, c%nPeers, c%nRecv, c%rOff, c%rSlot, c%rPeer, &
+        !$omp& c%rLo, c%rExt, c%rDir, c%rWp, c%rWpDst, &
+        !$omp& c%peerRecvOff, c%peerRecvCopyOff, c%activeVars, c%recvbuf) &
         !$omp& map(tofrom: blk%q) &
         !$omp& private(p,gp,v,e,pt,ni,nj,i,j,k,var,peer,pos,val)
 #endif
         do p = 1, totalItems
             gp = (p - 1)/nv
             v = p - 1 - gp*nv
+            if (copyOnly == 1) then
+                peer = find_entry(c%peerRecvCopyOff, c%nPeers, gp)
+                gp = c%peerRecvOff(peer-1) + (gp - c%peerRecvCopyOff(peer-1))
+            end if
             e = find_entry(c%rOff, c%nRecv, gp)
-            if (applyInterp == 0 .and. c%rOp(e) /= OP_COPY) cycle
             pt = gp - c%rOff(e-1)
             ni = c%rExt(1,e)
             nj = c%rExt(2,e)
@@ -1219,8 +1321,8 @@ contains
             peer = c%rPeer(e)
             pos = (gp - c%peerRecvOff(peer-1))*nv + v + 1
             val = c%recvbuf(pos,peer)
-            if (var == VAR_P .and. c%rBlend(e) /= 1.0d0) then
-                val = c%rBlend(e)*val + (1.0d0 - c%rBlend(e)) &
+            if (var == VAR_P .and. c%rWpDst(e) /= 0.0d0) then
+                val = c%rWp(e)*val + c%rWpDst(e) &
                     *blk%q(i-c%rDir(1,e), j-c%rDir(2,e), k-c%rDir(3,e), var, c%rSlot(e))
             end if
             blk%q(i,j,k,var,c%rSlot(e)) = val
@@ -1235,20 +1337,17 @@ contains
         real(C_DOUBLE), intent(in) :: scalar(0:,0:,0:,1:)
 
         integer :: p, e, pt, ni, nj
-        integer :: di, dj, dk, peer, pos, totalItems, nb1, nb2, nb3
+        integer :: di, dj, dk, peer, pos, totalItems
         integer :: b1, b2, b3, c1, c2, c3, s1, s2, s3
         real(C_DOUBLE) :: val
 
         totalItems = c%peerSendOff(c%nPeers)
         if (totalItems == 0) return
-        nb1 = ubound(scalar, 1) - 1
-        nb2 = ubound(scalar, 2) - 1
-        nb3 = ubound(scalar, 3) - 1
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
-        !$omp& map(to: totalItems, nb1, nb2, nb3, c%nSend, c%sOff, c%sSlot, c%sPeer, &
-        !$omp& c%sLo, c%sDstLo, c%sExt, c%sOp, c%sDir, c%sTq, c%peerSendOff, scalar) &
+        !$omp& map(to: totalItems, c%nSend, c%sOff, c%sSlot, c%sPeer, &
+        !$omp& c%sDstLo, c%sExt, c%sGA, c%sGB, c%sGS, c%sGC, c%peerSendOff, scalar) &
         !$omp& map(tofrom: c%sendbuf) &
         !$omp& private(p,e,pt,ni,nj,di,dj,dk,peer,pos,b1,b2,b3,c1,c2,c3,s1,s2,s3,val)
 #endif
@@ -1260,12 +1359,12 @@ contains
             di = c%sDstLo(1,e) + modulo(pt, ni)
             dj = c%sDstLo(2,e) + modulo(pt/ni, nj)
             dk = c%sDstLo(3,e) + pt/(ni*nj)
-            call src_samples(c%sOp(e), c%sDir(1,e), c%sTq(1,e), .false., nb1, &
-                di, c%sDstLo(1,e), c%sLo(1,e), b1, c1)
-            call src_samples(c%sOp(e), c%sDir(2,e), c%sTq(2,e), .false., nb2, &
-                dj, c%sDstLo(2,e), c%sLo(2,e), b2, c2)
-            call src_samples(c%sOp(e), c%sDir(3,e), c%sTq(3,e), .false., nb3, &
-                dk, c%sDstLo(3,e), c%sLo(3,e), b3, c3)
+            b1 = ishft(c%sGA(1,e)*di + c%sGB(1,e), -c%sGS(1,e))
+            b2 = ishft(c%sGA(2,e)*dj + c%sGB(2,e), -c%sGS(2,e))
+            b3 = ishft(c%sGA(3,e)*dk + c%sGB(3,e), -c%sGS(3,e))
+            c1 = c%sGC(1,e)
+            c2 = c%sGC(2,e)
+            c3 = c%sGC(3,e)
             val = 0.0d0
             do s3 = 0, c3 - 1
                 do s2 = 0, c2 - 1
@@ -1316,48 +1415,6 @@ contains
         !$omp end target teams distribute parallel do
 #endif
     end subroutine unpack_scalar_entries
-
-    ! Per-dimension source sampling for one destination point of an
-    ! exchange entry. COPY: the mirrored index. RESTRICT: the 1 (matching
-    ! staggered face) or 2 (cell-centred) fine samples covering the coarse
-    ! destination. PROLONG: the covering coarse index (injection).
-    pure subroutine src_samples(op, dird, tqd, fs, nbd, dstIdx, dstLod, srcLod, base, cnt)
-!$omp declare target
-        integer, intent(in) :: op, dird, tqd, nbd, dstIdx, dstLod, srcLod
-        logical, intent(in) :: fs
-        integer, intent(out) :: base, cnt
-
-        integer :: jl
-
-        if (op == OP_COPY) then
-            base = srcLod + (dstIdx - dstLod)
-            cnt = 1
-        else if (op == OP_RESTRICT) then
-            if (dird /= 0) then
-                base = srcLod
-            else
-                jl = dstIdx - tqd*nbd/2
-                base = 2*jl - 1
-            end if
-            cnt = merge(1, 2, fs)
-        else
-            cnt = 1
-            if (dird /= 0) then
-                ! Coarse cell covering the halo layer. The off-based row
-                ! (1 or nb) is only right when the coarse block ends at the
-                ! shared boundary; across edge/corner directions the coarse
-                ! neighbour can span past it (it is twice the size), and the
-                ! covering row depends on the fine block's parity tq.
-                if (dird == -1) then
-                    base = nbd - tqd*nbd/2
-                else
-                    base = nbd/2 + 1 - tqd*nbd/2
-                end if
-            else
-                base = (tqd*nbd + dstIdx - 1)/2 + 1
-            end if
-        end if
-    end subroutine src_samples
 
     ! Largest e in 1..n with off(e-1) <= gp (off is a 0:n point prefix).
     pure integer function find_entry(off, n, gp) result(e)

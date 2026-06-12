@@ -159,16 +159,31 @@ packed buffers, one flat GPU loop over all points for pack/unpack. The
 generalization is to make the *exchange entry*, not the rank, the unit:
 
 - At init, build a list of exchange entries, one per (block face/edge/corner,
-  neighbour) pair, each carrying: source slot + box, destination slot + box,
-  operation (`COPY`, `RESTRICT`, `PROLONG`), and destination rank.
+  neighbour) pair, each carrying: source slot, destination slot + box,
+  destination rank, and a per-dimension *gather map* precomputed from the
+  node lines (`entry_gather_map`). Every transfer is the same weighted
+  gather: for destination index i along a dimension, the source rows are
+  `base..base+cnt-1` with `base = ishft(ga*i + gb, -gs)`, and variables
+  staggered along that dimension sample the single matching face row.
+  Same-level copies (ga=1, cnt=1), restrictions (the two covering fine
+  rows: ga=2 tangentially, the row pair across the face) and
+  prolongations (the covering coarse row: a halving shift tangentially,
+  the tq-dependent row across the face) are all instances — there is no
+  per-operation branch in the kernels, and the pressure ghost blend of
+  Section 6 is just a destination-completion weight pair (wp, wpDst)
+  applied on the receiving side.
+- Entries are ordered **same-level copies first** (per peer), with prefix
+  point counts, so the copy-only exchange the projection uses per colour
+  (`interp=.false.`) is literally a prefix of the full one: shorter
+  messages and shorter flat loops, no runtime filtering.
 - **Local entries** (neighbour on same rank, the common case after Z-order
   distribution) are executed as a single device kernel — a flat loop over the
   concatenated entry points, exactly the current `pack_q_boxes` indexing
   pattern, but writing directly into the destination halo. No MPI, no host.
 - **Remote entries** are grouped per neighbour rank into one message; pack and
   unpack kernels are the current ones with the entry-offset table replacing the
-  26-neighbour offset table. Restriction/prolongation are applied *inside*
-  pack/unpack so the wire format stays a flat real array.
+  26-neighbour offset table. The gather is applied *inside* pack so the wire
+  format stays a flat real array (destination-point values).
 - The nonblocking `start/finish_halo_exchange` split survives unchanged, and
   the internal/external block zoning of Jansson (overlap local exchange and
   interior kernels with MPI) composes naturally with
@@ -231,11 +246,11 @@ never see it). The cure is the BCM regime (Nakahashi), made conservative:
   side, the `u(nb+1)` halo on the other). Only walls and closed faces
   (`FACE_PHYS`/`FACE_CLOSED`) are pinned.
 - **Stage-frozen ghosts.** The per-colour exchanges inside the
-  projection apply same-level copies only (`interp=.false.`); the
-  cross-level entries are skipped on the apply side, so each side
-  relaxes against stage-frozen ghosts and its own evolving copy of the
-  interface faces. This is a regular damped block iteration; the
-  one-sided overwrite-every-colour variant is what diverges.
+  projection run only the same-level copy prefix of the entry lists
+  (`interp=.false.`, Section 5), so each side relaxes against
+  stage-frozen ghosts and its own evolving copy of the interface faces.
+  This is a regular damped block iteration; the one-sided
+  overwrite-every-colour variant is what diverges.
 - **Conservative reconciliation.** The final full exchange of the
   projection snaps the non-owner copies back to the owner's values, so
   the state entering the next stage is owner-consistent and mass
@@ -244,10 +259,12 @@ never see it). The cure is the BCM regime (Nakahashi), made conservative:
   value at the fine halo centre, so the momentum pressure gradient at
   the interface is evaluated over a gap 1.5x larger than the fine metric
   assumes - a systematic overdriving of the interface velocity. PROLONG
-  *face* entries for `p` therefore blend: ghost = w*coarse +
-  (1-w)*first-interior with w from the node lines (uniform 2:1:
-  w = 2/3, the classic ghost = (2 p_C + p_f)/3). Edges and corners stay
-  plain injection; only face halos enter the pressure gradient.
+  *face* entries for `p` therefore blend: ghost = wp*coarse +
+  wpDst*first-interior with the weights from the node lines (uniform
+  2:1: ghost = (2 p_C + p_f)/3). In the exchange this is the
+  destination-completion weight pair of the gather (Section 5), applied
+  on the receiving side. Edges and corners stay plain injection; only
+  face halos enter the pressure gradient.
 - **Covering-cell prolong sources.** A PROLONG entry's source row in an
   off-dimension is the *covering* coarse cell of the halo layer, which
   depends on the fine block's parity tq (an edge/corner's coarse

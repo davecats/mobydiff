@@ -1,8 +1,7 @@
 module pressure_solver
     use, intrinsic :: iso_c_binding
     use :: init, only: dns_type, VAR_U, VAR_V, VAR_W, VAR_P
-    use :: blocks, only: block_set_type, FACE_OPEN, FACE_PHYS, FACE_CLOSED, &
-        FACE_COARSE, FACE_FINE
+    use :: blocks, only: block_set_type, FACE_PHYS, FACE_CLOSED
     use :: ibmm, only: ibm_type
     use :: boundary, only: boundary_type, apply_bc
     use :: comm, only: comm_type, exchange_halos
