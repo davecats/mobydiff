@@ -177,17 +177,42 @@ Operations (Jansson Fig. 3, adapted to the staggered grid):
   value), as in BCM; v2 = trilinear interpolation for second-order interface
   accuracy. Make the operator a switch so accuracy can be assessed by diff.
 
-Interface ownership rule, to keep the projection conservative and simple:
-**the fine side owns the shared face**. Concretely, in the red-black sweep a
-coarse cell adjacent to a `FACE_FINE` face treats that face velocity like the
-current `pressureNeumann*` faces: the face flux is excluded from the
-*correction* (the `merge(0.0d0, ...)` machinery, generalized from per-direction
-flags to per-block per-face masks) but kept in the *divergence*. The fine side
-updates the face; the next per-colour halo exchange restricts it back to the
-coarse side. This is exactly the role the rank-boundary logic
-(`nLowerHaloDirections`, `sweepLo`) plays today, extended to interior block
-faces — one mechanism for physical boundaries, MPI boundaries, level jumps and
-closed faces.
+Interface ownership rule, to keep the projection conservative and simple.
+The original draft of this section said "the fine side owns the shared
+face" unconditionally; the implementation (Phase 3c) revises this to
+**the low-side block owns the shared face**, for the following storage
+reason. A block owns the staggered faces it computes, `u(1..nb)`; its
+`u(nb+1)` is halo. A fine block EAST of an interface holds the fine face
+DOFs as its `u(1)` — interior storage, momentum-predictable (the stencil
+reads the prolonged halo) and sweep-correctable: there fine-owns-face
+works exactly as drafted. But when the fine blocks sit WEST, the
+fine-level face DOFs are their `u(nb+1)` halos: fine momentum cannot
+predict them (the stencil would need `q(nb+2)`, beyond the one-cell
+halo), and restricting them back would write the coarse neighbour's
+INTERIOR `u(1)` plane with variable-discriminating entries while the
+prolong of the same DOFs reads it — an intra-kernel cycle.
+
+The low-side-owns rule is orientation-symmetric and needs no new
+machinery:
+
+- The owner treats the face as a normal interior face (momentum predicts
+  it, the sweep corrects it). The other side's halo copy is refreshed by
+  the existing exchange: RESTRICT (4-sub-face average) when the high side
+  is coarse, PROLONG injection when the high side is fine.
+- In the sweep, a block masks its HIGH face at any 2:1 interface
+  (excluded from `denom` and from the corrections, like walls and closed
+  faces) but keeps the exchanged value in the divergence; LOW interface
+  faces are never masked. This is the `pressureNeumann*` machinery of
+  the rank boundaries, applied per block face.
+- Conservation is exact in both orientations: the restricted coarse flux
+  is the equal-area average of the fine sub-fluxes (midpoint subdivision
+  halves cells exactly), and the injected fine sub-fluxes sum to the
+  coarse flux by construction.
+- Accuracy: a coarse-owned face carries a uniform (coarse-resolution)
+  flux across its four sub-faces until the trilinear prolong upgrade;
+  fine-owned faces carry full fine resolution. With the finest-level
+  wall buffer (Section 4) interfaces sit in smooth flow, where this is a
+  second-order-consistent approximation.
 
 Red-black parity: with `nb` even, define each block's `colorOffset` from the
 parity of its global level-l origin (`modulo(sum(origin),2)`), the direct
