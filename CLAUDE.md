@@ -212,6 +212,24 @@ immersed boundary. Phased, each phase verified before the next:
     kernels), and entries are ordered same-level-copies-first with
     prefix counts so the per-colour copy-only exchange is a prefix of
     the full one (shorter messages, no runtime filtering).
+  - 3e (setup complete 2026-06-12, long runs pending): turbulence
+    validation of the 2:1 interfaces, `validation/channel_interface/`
+    (see its README). Re_tau=180 channel: uniform 256x128x256 reference
+    vs 128x64x128 with both wall bands refined to level 1 (interfaces at
+    y+=112 and y+=55, nb=8). New machinery: `[grid.*] subdivided = true`
+    builds a line as the midpoint subdivision of its half-resolution
+    line, so the reference grid is BITWISE the refined cases' fine level
+    (verified); `[blocks] refine` is repeatable (multiple boxes — the
+    box must end INSIDE the last refined block row, any overlap
+    refines); `[flow] initial_noise` adds white noise to the generic
+    IC; channel stats accumulate per level (level l rows in
+    `<stats_file>_l<l>.h5`, level 0 keeps the configured name).
+    `tools/make_channel_restart.py` interpolates the KMM restart onto
+    both grids (block-table IC bit-matches the solver's leaf table —
+    verified); `tools/channel_interface_validation.py` overlays
+    profiles/spectra and reports interface-band vs interior divergence.
+    Smoke-validated end to end on 5-step runs; chanp and channel nb=4
+    remain bit-exact vs `828e78d` (nofma).
 - Phase 4: performance (overlap, see `docs/nonblocking_overlap_strategy.md`).
 
 If the branch `claude/blocks` does not exist yet, create it from the
@@ -229,4 +247,9 @@ current checkout (`codex/les`) before committing: `git switch -c claude/blocks`.
   `tutorials/wavychannel/` (analytic `set_ibm_coeff`).
 - Refinement phases: uniform-flow preservation across interfaces and global
   mass conservation to round-off (see strategy doc §11 for the full list).
+- Interface stability: `tutorials/interface_decay` (white noise on a
+  refined 3D patch, no forcing) + `tools/check_interface_decay.py` —
+  max|u|,|p| must contract over 200 steps. Run this whenever the
+  interface relaxation or transfers change; smooth-flow gates are blind
+  to the instability class it catches.
 - Never declare a phase done with failing builds or unverified results.
