@@ -106,9 +106,24 @@ immersed boundary. Phased, each phase verified before the next:
   (sailplane at nb=10: zero) — payoff grows with volumetric bodies and
   finer grids. Beware: face-kind consumers must test `/= 0` (no-flux)
   vs `== FACE_PHYS` (BCs) — never treat the kind as arithmetic 0/1.
-- Phase 3 (next): 2:1 refinement (restrict/prolong in pack/unpack,
-  fine-owns-face, finest-level buffer at the wall, per-level node lines
-  via midpoint subdivision).
+- Phase 3 (in progress): 2:1 refinement, gated sub-steps.
+  - 3a (complete, validated 2026-06-12): multi-level infrastructure.
+    Per-level node lines (midpoint subdivision); leaf block table
+    (level, origin in level-l cells) replacing the single lattice, ids
+    along the finest-lattice Morton curve; per-level `lidOf` lookup;
+    `[blocks] refine = x0 x1 y0 y1 z0 z1` + `refine_levels` box
+    refinement with 26-neighbour 2:1 smoothing; face kinds gain
+    FACE_COARSE/FACE_FINE (interfaces error out until 3b); field io is
+    the block-table layout ((nBlocksGlobal, nb^3) datasets, one
+    independent row-range write per rank; legacy 3D restarts still
+    read; no XDMF — reassemble via compare_fields.py --export-global).
+    Gates (nofma, vs Phase 2 c87e1b0): channel nb=4 level 0 bit-exact;
+    all-refined 64^3 (4096 level-1 leaves) bit-exact vs 128^3 — exact
+    because midpoint subdivision of dyadic uniform lines is bitwise the
+    doubled-resolution line.
+  - 3b (next): cell-centred RESTRICT/PROLONG in the exchange entries.
+  - 3c: staggered flux matching, FACE_COARSE/FACE_FINE sweep masks.
+  - 3d: geometry-driven refinement in mobygrid/mobygeom.
 - Phase 4: performance (overlap, see `docs/nonblocking_overlap_strategy.md`).
 
 If the branch `claude/blocks` does not exist yet, create it from the

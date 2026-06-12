@@ -204,6 +204,10 @@ subroutine apply_config_value(section, key, value, dns, g, les, ps, bc, c, seen,
             call read_c_int(value, dns%block_nb, line_no)
         case ("remove_solid")
             call read_bool(value, dns%block_remove_solid, line_no)
+        case ("refine")
+            call read_real6(value, dns%block_refine_box, line_no)
+        case ("refine_levels")
+            call read_c_int(value, dns%block_refine_levels, line_no)
         end select
     case ("les")
         call apply_les_value(key_l, value, les, line_no)
@@ -624,6 +628,21 @@ subroutine read_integer(value, target, line_no)
         if (terminal_output) print *, "warning: could not parse integer on input line", line_no
     end if
 end subroutine read_integer
+
+subroutine read_real6(value, target, line_no)
+    character(len=*), intent(in) :: value
+    real(C_DOUBLE), intent(inout) :: target(1:6)
+    integer, intent(in) :: line_no
+    integer :: stat
+    real(C_DOUBLE) :: parsed(6)
+
+    read(value, *, iostat=stat) parsed
+    if (stat == 0) then
+        target = parsed
+    else
+        if (terminal_output) print *, "warning: could not parse six real values on input line", line_no
+    end if
+end subroutine read_real6
 
 subroutine read_integer3(value, target, line_no)
     character(len=*), intent(in) :: value

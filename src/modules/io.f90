@@ -88,12 +88,13 @@ module io
             integer(C_INT) :: ierr
         end function fdm_h5_read_block_active
 
-        function fdm_h5_read_field(file_name, nbx, nby, nbz, n_blocks, block_origin, &
+        function fdm_h5_read_field(file_name, nbx, nby, nbz, n_blocks, &
+                n_blocks_global, id_start, block_origin, &
                 global_nx, global_ny, global_nz, q) &
                 bind(C, name="fdm_h5_read_field") result(ierr)
             import :: C_CHAR, C_INT, C_DOUBLE
             character(kind=C_CHAR), intent(in) :: file_name(*)
-            integer(C_INT), value :: nbx, nby, nbz, n_blocks
+            integer(C_INT), value :: nbx, nby, nbz, n_blocks, n_blocks_global, id_start
             integer(C_INT), intent(in) :: block_origin(*)
             integer(C_INT), value :: global_nx, global_ny, global_nz
             real(C_DOUBLE), intent(out) :: q(*)
@@ -178,7 +179,8 @@ subroutine write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor)
         error stop
     end if
 
-    if (c%has_terminal) call write_xdmf(xdmf_file_name, h5_file_name, dns, g)
+    ! No XDMF for the block-table layout; reassemble with
+    ! tools/compare_fields.py --export-global for visualization.
 end subroutine write_field
 
 subroutine write_grid_export(dns, g, blk, bc, file_name, has_terminal)
@@ -313,7 +315,7 @@ subroutine read_field(blk, dns, file_name, c)
 
     c_file_name = to_c_string(file_name)
     ierr = fdm_h5_read_field(c_file_name, blk%nb(1), blk%nb(2), blk%nb(3), &
-        blk%nBlocks, blk%origin, &
+        blk%nBlocks, blk%nBlocksGlobal, blk%idStart, blk%origin, &
         dns%globalSize(1), dns%globalSize(2), dns%globalSize(3), &
         blk%q)
     if (ierr /= 0_C_INT) then

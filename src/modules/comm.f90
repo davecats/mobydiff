@@ -2,7 +2,8 @@ module comm
     use, intrinsic :: iso_c_binding
     use :: mpi_f08
     use :: init, only: dns_type, NVAR
-    use :: blocks, only: block_set_type, DIST_ZORDER, zorder_owner, zorder_start, zorder_count
+    use :: blocks, only: block_set_type, DIST_ZORDER, zorder_owner, zorder_start, zorder_count, &
+        leaf_at, level_cells
     use :: boundary, only: boundary_type
 #ifdef USE_OPENMP_OFFLOAD
     use omp_lib
@@ -157,7 +158,7 @@ contains
         integer :: b, d, p, pass, owner, slot
         integer :: to(3), srcLo(3), dstLo(3), ext(3)
         integer :: peerCoords(3), peerFirst(3), peerLast(3)
-        integer :: peerBlocks, peerStart, pb, dorigin(3)
+        integer :: peerBlocks, peerStart, pb, dorigin(3), dlevel
         integer :: nLocal, nSend, nRecv, pts, maxCount, ierr
         logical :: haveNeighbor
 
@@ -181,7 +182,8 @@ contains
                     call neighbor_block(c, blk, dns, b, off(:,d), haveNeighbor, owner, slot, to)
                     if (.not. haveNeighbor) cycle
                     if (owner /= c%cart_rank) cycle
-                    call entry_boxes(c, blk, dns, int(blk%origin(:,b)), off(:,d), nb, srcLo, dstLo, ext)
+                    call entry_boxes(c, blk, dns, int(blk%level(b)), int(blk%origin(:,b)), &
+                        off(:,d), nb, srcLo, dstLo, ext)
                     nLocal = nLocal + 1
                     pts = ext(1)*ext(2)*ext(3)
                     if (pass == 2) then
@@ -212,7 +214,8 @@ contains
                         call neighbor_block(c, blk, dns, b, off(:,d), haveNeighbor, owner, slot, to)
                         if (.not. haveNeighbor) cycle
                         if (owner /= c%peerRank(p)) cycle
-                        call entry_boxes(c, blk, dns, int(blk%origin(:,b)), off(:,d), nb, srcLo, dstLo, ext)
+                        call entry_boxes(c, blk, dns, int(blk%level(b)), int(blk%origin(:,b)), &
+                            off(:,d), nb, srcLo, dstLo, ext)
                         nRecv = nRecv + 1
                         pts = ext(1)*ext(2)*ext(3)
                         if (pass == 2) then
@@ -242,19 +245,21 @@ contains
                 c%peerSendOff(p) = c%peerSendOff(p-1)
                 do pb = 1, peerBlocks
                     if (blk%distMode == DIST_ZORDER) then
-                        dorigin = int(blk%zcoord(:,peerStart + pb))*nb
+                        dorigin = int(blk%leafCoord(:,peerStart + pb))*nb
+                        dlevel = int(blk%leafLevel(peerStart + pb))
                     else
                         dorigin = peerFirst - 1
+                        dlevel = 0
                     end if
                     do d = 1, 26
-                        call neighbor_origin(c, dns, dorigin, off(:,d), nb, haveNeighbor, to)
+                        call neighbor_origin(c, dns, dlevel, dorigin, off(:,d), nb, haveNeighbor, to)
                         if (.not. haveNeighbor) cycle
-                        if (.not. origin_is_mine(blk, dns, to)) cycle
-                        call entry_boxes(c, blk, dns, dorigin, off(:,d), nb, srcLo, dstLo, ext)
+                        if (.not. origin_is_mine(blk, dns, dlevel, to)) cycle
+                        call entry_boxes(c, blk, dns, dlevel, dorigin, off(:,d), nb, srcLo, dstLo, ext)
                         nSend = nSend + 1
                         pts = ext(1)*ext(2)*ext(3)
                         if (pass == 2) then
-                            c%sSlot(nSend) = my_slot_of(blk, dns, to)
+                            c%sSlot(nSend) = my_slot_of(blk, dns, dlevel, to)
                             c%sPeer(nSend) = p
                             c%sLo(:,nSend) = srcLo
                             c%sExt(:,nSend) = ext
@@ -350,8 +355,8 @@ contains
         end do
     end subroutine build_direction_table
 
-    ! Neighbour of one of MY blocks: global origin, owner rank, local slot
-    ! on the owner.
+    ! Neighbour of one of MY blocks: global origin (level-l cells), owner
+    ! rank, local slot on the owner.
     subroutine neighbor_block(c, blk, dns, b, off, haveNeighbor, owner, slot, to)
         type(comm_type), intent(in) :: c
         type(block_set_type), intent(in) :: blk
@@ -363,56 +368,71 @@ contains
         integer :: dorigin(3)
 
         dorigin = int(blk%origin(:,b))
-        call neighbor_origin(c, dns, dorigin, off, int(blk%nb), haveNeighbor, to)
+        call neighbor_origin(c, dns, int(blk%level(b)), dorigin, off, int(blk%nb), haveNeighbor, to)
         owner = -1
         slot = -1
         if (.not. haveNeighbor) return
-        call owner_of_origin(c, blk, dns, to, owner, slot)
+        call owner_of_origin(c, blk, dns, int(blk%level(b)), to, owner, slot)
         ! Removed (solid-buried) neighbour: a FACE_CLOSED face, no entry.
         if (owner < 0) haveNeighbor = .false.
     end subroutine neighbor_block
 
-    ! Global cell origin of the neighbour block in direction off, with
+    ! Level-l cell origin of the neighbour block in direction off, with
     ! periodic wrap; haveNeighbor is false outside non-periodic boundaries.
-    subroutine neighbor_origin(c, dns, dorigin, off, nb, haveNeighbor, to)
+    subroutine neighbor_origin(c, dns, level, dorigin, off, nb, haveNeighbor, to)
         type(comm_type), intent(in) :: c
         type(dns_type), intent(in) :: dns
-        integer, intent(in) :: dorigin(3), off(3), nb(3)
+        integer, intent(in) :: level, dorigin(3), off(3), nb(3)
         logical, intent(out) :: haveNeighbor
         integer, intent(out) :: to(3)
 
-        integer :: d
+        integer :: d, gnl
 
         haveNeighbor = .true.
         to = 0
         do d = 1, 3
+            gnl = int(level_cells(dns, d, int(level, C_INT)))
             to(d) = dorigin(d) + off(d)*nb(d)
-            if (to(d) < 0 .or. to(d) >= int(dns%globalSize(d))) then
+            if (to(d) < 0 .or. to(d) >= gnl) then
                 if (.not. c%periodic(d)) then
                     haveNeighbor = .false.
                     return
                 end if
-                to(d) = modulo(to(d), int(dns%globalSize(d)))
+                to(d) = modulo(to(d), gnl)
             end if
         end do
     end subroutine neighbor_origin
 
-    ! Owner rank and owner-local slot of the block with global origin `to`.
-    subroutine owner_of_origin(c, blk, dns, to, owner, slot)
+    ! Owner rank and owner-local slot of the leaf at level-l origin `to`.
+    subroutine owner_of_origin(c, blk, dns, level, to, owner, slot)
         type(comm_type), intent(in) :: c
         type(block_set_type), intent(in) :: blk
         type(dns_type), intent(in) :: dns
-        integer, intent(in) :: to(3)
+        integer, intent(in) :: level, to(3)
         integer, intent(out) :: owner, slot
 
-        integer :: d, r, id, ierr
+        integer :: d, r, id, ierr, sx, sy, sz
         integer(C_INT) :: first, last
         integer :: ownerCoords(3), bcoord(3)
 
         if (blk%distMode == DIST_ZORDER) then
             bcoord = to/int(blk%nb)
-            id = int(blk%zidOf(bcoord(1), bcoord(2), bcoord(3)))
+            id = int(leaf_at(blk, level, bcoord))
             if (id < 0) then
+                ! A coarser or finer occupant is a 2:1 interface; transfer
+                ! operators arrive in Phase 3b/3c.
+                if (int(leaf_at(blk, level - 1, bcoord/2)) >= 0) then
+                    error stop "2:1 level interfaces are not supported yet (Phase 3b)"
+                end if
+                do sz = 0, 1
+                    do sy = 0, 1
+                        do sx = 0, 1
+                            if (int(leaf_at(blk, level + 1, 2*bcoord + [sx, sy, sz])) >= 0) then
+                                error stop "2:1 level interfaces are not supported yet (Phase 3b)"
+                            end if
+                        end do
+                    end do
+                end do
                 owner = -1
                 slot = -1
                 return
@@ -440,16 +460,15 @@ contains
         slot = 1
     end subroutine owner_of_origin
 
-    logical function origin_is_mine(blk, dns, to)
+    logical function origin_is_mine(blk, dns, level, to)
         type(block_set_type), intent(in) :: blk
         type(dns_type), intent(in) :: dns
-        integer, intent(in) :: to(3)
+        integer, intent(in) :: level, to(3)
 
-        integer :: bcoord(3), id
+        integer :: id
 
         if (blk%distMode == DIST_ZORDER) then
-            bcoord = to/int(blk%nb)
-            id = int(blk%zidOf(bcoord(1), bcoord(2), bcoord(3)))
+            id = int(leaf_at(blk, level, to/int(blk%nb)))
             origin_is_mine = id >= int(blk%idStart) .and. &
                              id < int(blk%idStart) + int(blk%nBlocks)
         else
@@ -458,16 +477,13 @@ contains
         end if
     end function origin_is_mine
 
-    integer function my_slot_of(blk, dns, to) result(slot)
+    integer function my_slot_of(blk, dns, level, to) result(slot)
         type(block_set_type), intent(in) :: blk
         type(dns_type), intent(in) :: dns
-        integer, intent(in) :: to(3)
-
-        integer :: bcoord(3)
+        integer, intent(in) :: level, to(3)
 
         if (blk%distMode == DIST_ZORDER) then
-            bcoord = to/int(blk%nb)
-            slot = int(blk%zidOf(bcoord(1), bcoord(2), bcoord(3))) - int(blk%idStart) + 1
+            slot = int(leaf_at(blk, level, to/int(blk%nb))) - int(blk%idStart) + 1
         else
             slot = 1
         end if
@@ -484,11 +500,11 @@ contains
     ! that side is an apply_bc wall halo or a zeroed closed halo, never
     ! exchange-written, so the copy is race-free. With nothing removed
     ! this reduces to the old physical-wall rule.
-    subroutine entry_boxes(c, blk, dns, dorigin, off, nb, srcLo, dstLo, ext)
+    subroutine entry_boxes(c, blk, dns, level, dorigin, off, nb, srcLo, dstLo, ext)
         type(comm_type), intent(in) :: c
         type(block_set_type), intent(in) :: blk
         type(dns_type), intent(in) :: dns
-        integer, intent(in) :: dorigin(3), off(3), nb(3)
+        integer, intent(in) :: level, dorigin(3), off(3), nb(3)
         integer, intent(out) :: srcLo(3), dstLo(3), ext(3)
 
         integer :: d, lo, hi
@@ -505,9 +521,9 @@ contains
                 ext(d) = 1
             case default
                 lo = merge(0, 1, &
-                    .not. combined_neighbor_exists(c, blk, dns, dorigin, off, nb, d, -1))
+                    .not. combined_neighbor_exists(c, blk, dns, level, dorigin, off, nb, d, -1))
                 hi = merge(nb(d) + 1, nb(d), &
-                    .not. combined_neighbor_exists(c, blk, dns, dorigin, off, nb, d, +1))
+                    .not. combined_neighbor_exists(c, blk, dns, level, dorigin, off, nb, d, +1))
                 srcLo(d) = lo
                 dstLo(d) = lo
                 ext(d) = hi - lo + 1
@@ -517,20 +533,20 @@ contains
 
     ! Does the block at lattice offset off + side*e_d from `dorigin` exist
     ! (inside the domain or periodic image, and not removed)?
-    logical function combined_neighbor_exists(c, blk, dns, dorigin, off, nb, d, side) result(exists)
+    logical function combined_neighbor_exists(c, blk, dns, level, dorigin, off, nb, d, side) result(exists)
         type(comm_type), intent(in) :: c
         type(block_set_type), intent(in) :: blk
         type(dns_type), intent(in) :: dns
-        integer, intent(in) :: dorigin(3), off(3), nb(3), d, side
+        integer, intent(in) :: level, dorigin(3), off(3), nb(3), d, side
 
         integer :: offc(3), to(3)
 
         offc = off
         offc(d) = side
-        call neighbor_origin(c, dns, dorigin, offc, nb, exists, to)
+        call neighbor_origin(c, dns, level, dorigin, offc, nb, exists, to)
         if (.not. exists) return
         if (blk%distMode == DIST_ZORDER) then
-            exists = blk%zidOf(to(1)/nb(1), to(2)/nb(2), to(3)/nb(3)) >= 0_C_INT
+            exists = leaf_at(blk, level, to/nb) >= 0_C_INT
         end if
     end function combined_neighbor_exists
 

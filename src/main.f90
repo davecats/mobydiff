@@ -72,6 +72,9 @@ program main
         if (any(mod(dns%globalSize, dns%block_nb) /= 0_C_INT)) then
             error stop "[blocks] nb must divide the global grid in every direction"
         end if
+        if (dns%block_refine_box(1) <= dns%block_refine_box(2)) then
+            error stop "solid-block removal with refinement is Phase 3d; set remove_solid = false"
+        end if
         allocate(blockActive(product(dns%globalSize/dns%block_nb)))
         if (len_trim(dns%ibm_coeff_file) > 0) then
             call read_block_active(blockActive, blockActiveFound, dns, c%has_terminal)

@@ -34,21 +34,24 @@ module blocks
     public :: enter_block_data, exit_block_data
     public :: subdivide_node_line
     public :: zorder_owner, zorder_start, zorder_count
-    public :: zero_closed_halos, face_kind
+    public :: zero_closed_halos, face_kind, leaf_at, level_cells
     public :: DIST_RANKBOX, DIST_ZORDER
-    public :: FACE_OPEN, FACE_PHYS, FACE_CLOSED
+    public :: FACE_OPEN, FACE_PHYS, FACE_CLOSED, FACE_COARSE, FACE_FINE
 
     ! Block ownership: one block per rank box (default), or the global
     ! Z-order lattice split linearly over the ranks ([blocks] nb).
     integer(C_INT), parameter :: DIST_RANKBOX = 0_C_INT
     integer(C_INT), parameter :: DIST_ZORDER  = 1_C_INT
 
-    ! Per-block face kinds held in physLow/physHigh. Kernels treat any
-    ! nonzero kind as a no-flux face; only FACE_PHYS faces receive
-    ! boundary conditions, and FACE_CLOSED halos are zeroed once at init.
+    ! Per-block face kinds held in physLow/physHigh. The momentum starts
+    ! and the SOR sweep treat PHYS and CLOSED as no-flux faces; only
+    ! FACE_PHYS faces receive boundary conditions; FACE_CLOSED halos are
+    ! zeroed once at init; COARSE/FINE mark 2:1 level interfaces.
     integer(C_INT), parameter :: FACE_OPEN   = 0_C_INT
     integer(C_INT), parameter :: FACE_PHYS   = 1_C_INT
     integer(C_INT), parameter :: FACE_CLOSED = 2_C_INT
+    integer(C_INT), parameter :: FACE_COARSE = 3_C_INT
+    integer(C_INT), parameter :: FACE_FINE   = 4_C_INT
 
     type :: block_set_type
         ! All blocks of a set share the same cell count nb(1:3): the cubic
@@ -65,12 +68,23 @@ module blocks
         !                 consecutive ids [zorder_start(p), +zorder_count(p)).
         ! Local slot s holds global id idStart + s - 1 in both modes.
         integer(C_INT) :: distMode = DIST_RANKBOX
-        integer(C_INT) :: gnbt(1:3) = 0_C_INT
+        integer(C_INT) :: gnbt(1:3) = 0_C_INT        ! root (level-0) lattice
         integer(C_INT) :: nBlocksGlobal = 0_C_INT
         integer(C_INT) :: idStart = 0_C_INT
-        ! Z-order lookup tables, identical on every rank (host only).
-        integer(C_INT), allocatable :: zidOf(:,:,:)  ! lattice coords -> id
-        integer(C_INT), allocatable :: zcoord(:,:)   ! (3, id+1) -> lattice coords
+
+        ! Global leaf table, identical on every rank (host only). Leaves of
+        ! the refinement forest are numbered along the Z-order curve of the
+        ! finest lattice (coord << (nLevels-1-level) per dimension).
+        integer(C_INT), allocatable :: leafLevel(:)  ! (nBlocksGlobal), id+1
+        integer(C_INT), allocatable :: leafCoord(:,:)! (3, id+1) level-l lattice coords
+        ! Per-level lattice -> leaf id (or -1), x-fastest, level l starting
+        ! at lidOff(l)+1.
+        integer(C_INT), allocatable :: lidOf(:)
+        integer(C_INT), allocatable :: lidOff(:)     ! (0:nLevels)
+
+        ! Per-level global node lines (level l in column l+1; the level-l
+        ! line has globalSize*2^l + 1 nodes, allocated at the finest length).
+        real(C_DOUBLE), allocatable :: lineX(:,:), lineY(:,:), lineZ(:,:)
 
         ! Per-block metadata (small, host + device).
         !   level:    refinement level; 0 = base grid, +1 per cell bisection
@@ -137,9 +151,12 @@ contains
                 end if
             end do
             blk%gnbt = dns%globalSize(1:3)/blk%nb
-            call build_zorder_table(blk, active)
-            nRemoved = int(product(blk%gnbt)) - int(blk%nBlocksGlobal)
-            if (nRemoved > 0 .and. myrank == 0_C_INT) then
+            blk%nLevels = 1_C_INT
+            if (refine_box_set(dns)) blk%nLevels = 1_C_INT + max(dns%block_refine_levels, 0_C_INT)
+            call build_level_lines(blk, dns, g)
+            call build_leaf_table(blk, dns, periodic, active, myrank)
+            nRemoved = int(product(blk%gnbt)) - count_level0_leaves(blk)
+            if (nRemoved > 0 .and. myrank == 0_C_INT .and. blk%nLevels == 1_C_INT) then
                 print *, "removed", nRemoved, "of", product(blk%gnbt), &
                     "blocks buried inside the immersed boundary"
             end if
@@ -151,8 +168,8 @@ contains
             blk%nBlocksGlobal = nranks
             blk%idStart = myrank
             blk%nBlocks = 1_C_INT
+            blk%nLevels = 1_C_INT
         end if
-        blk%nLevels = 1_C_INT
         if (blk%nBlocks < 1_C_INT) error stop "rank owns no blocks; use fewer ranks or smaller nb"
 
         nx = int(blk%nb(1))
@@ -170,13 +187,16 @@ contains
             id = int(blk%idStart) + b - 1
             blk%globalId(b) = int(id, C_INT)
             if (blk%distMode == DIST_ZORDER) then
-                blk%origin(:,b) = blk%zcoord(:,id+1)*blk%nb
+                blk%level(b) = blk%leafLevel(id+1)
+                blk%origin(:,b) = blk%leafCoord(:,id+1)*blk%nb
             else
                 blk%origin(:,b) = dns%localSize(1:3,0) - 1_C_INT
             end if
             do d = 1, 3
-                blk%physLow(d,b) = face_kind(blk, dns, periodic, blk%origin(:,b), d, -1)
-                blk%physHigh(d,b) = face_kind(blk, dns, periodic, blk%origin(:,b), d, +1)
+                blk%physLow(d,b) = face_kind(blk, dns, periodic, blk%origin(:,b), &
+                    blk%level(b), d, -1)
+                blk%physHigh(d,b) = face_kind(blk, dns, periodic, blk%origin(:,b), &
+                    blk%level(b), d, +1)
             end do
         end do
 
@@ -190,20 +210,35 @@ contains
         allocate(blk%lapZm(0:nz+1,NVAR,blk%nBlocks), blk%lapZ0(0:nz+1,NVAR,blk%nBlocks), &
                  blk%lapZp(0:nz+1,NVAR,blk%nBlocks))
 
-        ! Slice per-block metrics from the global node lines. From Phase 3 on
-        ! the line passed here is the block-level line obtained by midpoint
-        ! subdivision (subdivide_node_line), which preserves stretched base
-        ! grids and makes a coarse cell the exact union of its children.
+        ! Slice per-block metrics from the block-level node lines (level l
+        ! is the level-0 line after l midpoint subdivisions, so a coarse
+        ! cell is the exact union of its children even on stretched grids).
         do b = 1, int(blk%nBlocks)
-            call slice_grid_direction(g%xNode, blk%x(:,:,b), blk%d1x(:,:,b), &
-                blk%lapXm(:,:,b), blk%lapX0(:,:,b), blk%lapXp(:,:,b), &
-                dns%globalSize(1), blk%origin(1,b) + 1_C_INT, nx, dns%leng(1), periodic(1), 1)
-            call slice_grid_direction(g%yNode, blk%y(:,:,b), blk%d1y(:,:,b), &
-                blk%lapYm(:,:,b), blk%lapY0(:,:,b), blk%lapYp(:,:,b), &
-                dns%globalSize(2), blk%origin(2,b) + 1_C_INT, ny, dns%leng(2), periodic(2), 2)
-            call slice_grid_direction(g%zNode, blk%z(:,:,b), blk%d1z(:,:,b), &
-                blk%lapZm(:,:,b), blk%lapZ0(:,:,b), blk%lapZp(:,:,b), &
-                dns%globalSize(3), blk%origin(3,b) + 1_C_INT, nz, dns%leng(3), periodic(3), 3)
+            if (blk%distMode == DIST_ZORDER) then
+                d = int(blk%level(b)) + 1
+                call slice_grid_direction(blk%lineX(:,d), blk%x(:,:,b), blk%d1x(:,:,b), &
+                    blk%lapXm(:,:,b), blk%lapX0(:,:,b), blk%lapXp(:,:,b), &
+                    level_cells(dns, 1, blk%level(b)), blk%origin(1,b) + 1_C_INT, nx, &
+                    dns%leng(1), periodic(1), 1)
+                call slice_grid_direction(blk%lineY(:,d), blk%y(:,:,b), blk%d1y(:,:,b), &
+                    blk%lapYm(:,:,b), blk%lapY0(:,:,b), blk%lapYp(:,:,b), &
+                    level_cells(dns, 2, blk%level(b)), blk%origin(2,b) + 1_C_INT, ny, &
+                    dns%leng(2), periodic(2), 2)
+                call slice_grid_direction(blk%lineZ(:,d), blk%z(:,:,b), blk%d1z(:,:,b), &
+                    blk%lapZm(:,:,b), blk%lapZ0(:,:,b), blk%lapZp(:,:,b), &
+                    level_cells(dns, 3, blk%level(b)), blk%origin(3,b) + 1_C_INT, nz, &
+                    dns%leng(3), periodic(3), 3)
+            else
+                call slice_grid_direction(g%xNode, blk%x(:,:,b), blk%d1x(:,:,b), &
+                    blk%lapXm(:,:,b), blk%lapX0(:,:,b), blk%lapXp(:,:,b), &
+                    dns%globalSize(1), blk%origin(1,b) + 1_C_INT, nx, dns%leng(1), periodic(1), 1)
+                call slice_grid_direction(g%yNode, blk%y(:,:,b), blk%d1y(:,:,b), &
+                    blk%lapYm(:,:,b), blk%lapY0(:,:,b), blk%lapYp(:,:,b), &
+                    dns%globalSize(2), blk%origin(2,b) + 1_C_INT, ny, dns%leng(2), periodic(2), 2)
+                call slice_grid_direction(g%zNode, blk%z(:,:,b), blk%d1z(:,:,b), &
+                    blk%lapZm(:,:,b), blk%lapZ0(:,:,b), blk%lapZp(:,:,b), &
+                    dns%globalSize(3), blk%origin(3,b) + 1_C_INT, nz, dns%leng(3), periodic(3), 3)
+            end if
         end do
 
         allocate(blk%q(0:nx+1,0:ny+1,0:nz+1,NVAR,blk%nBlocks))
@@ -241,8 +276,13 @@ contains
         if (allocated(blk%qs)) deallocate(blk%qs)
         if (allocated(blk%oldrhs)) deallocate(blk%oldrhs)
 
-        if (allocated(blk%zidOf)) deallocate(blk%zidOf)
-        if (allocated(blk%zcoord)) deallocate(blk%zcoord)
+        if (allocated(blk%leafLevel)) deallocate(blk%leafLevel)
+        if (allocated(blk%leafCoord)) deallocate(blk%leafCoord)
+        if (allocated(blk%lidOf)) deallocate(blk%lidOf)
+        if (allocated(blk%lidOff)) deallocate(blk%lidOff)
+        if (allocated(blk%lineX)) deallocate(blk%lineX)
+        if (allocated(blk%lineY)) deallocate(blk%lineY)
+        if (allocated(blk%lineZ)) deallocate(blk%lineZ)
 
         blk%nb = 0_C_INT
         blk%gnbt = 0_C_INT
@@ -285,92 +325,321 @@ contains
 #endif
     end subroutine exit_block_data
 
-    ! Number the global block lattice along a Z-order (Morton) curve:
-    ! sort lattice cells by their bit-interleaved coordinates, then assign
-    ! compact ids to the surviving (active) blocks only; removed lattice
-    ! cells get zidOf = -1. Identical on every rank, so the distribution
-    ! needs no communication.
-    subroutine build_zorder_table(blk, active)
+    logical function refine_box_set(dns)
+        type(dns_type), intent(in) :: dns
+
+        refine_box_set = dns%block_refine_box(1) <= dns%block_refine_box(2) .and. &
+                         dns%block_refine_box(3) <= dns%block_refine_box(4) .and. &
+                         dns%block_refine_box(5) <= dns%block_refine_box(6)
+    end function refine_box_set
+
+    ! Cells of the level-l global grid in direction d.
+    pure integer(C_INT) function level_cells(dns, d, level) result(n)
+        type(dns_type), intent(in) :: dns
+        integer, intent(in) :: d
+        integer(C_INT), intent(in) :: level
+
+        n = dns%globalSize(d)*int(2**int(level), C_INT)
+    end function level_cells
+
+    ! Per-level node lines: level 0 is the configured grid, level l+1 the
+    ! midpoint subdivision of level l (subdivide_node_line).
+    subroutine build_level_lines(blk, dns, g)
         type(block_set_type), intent(inout) :: blk
+        type(dns_type), intent(in) :: dns
+        type(grid_type), intent(in) :: g
+
+        integer :: l, nf(3)
+
+        nf = int(dns%globalSize)*2**(int(blk%nLevels) - 1)
+        allocate(blk%lineX(0:nf(1), blk%nLevels))
+        allocate(blk%lineY(0:nf(2), blk%nLevels))
+        allocate(blk%lineZ(0:nf(3), blk%nLevels))
+        blk%lineX(0:int(dns%globalSize(1)),1) = g%xNode
+        blk%lineY(0:int(dns%globalSize(2)),1) = g%yNode
+        blk%lineZ(0:int(dns%globalSize(3)),1) = g%zNode
+        do l = 2, int(blk%nLevels)
+            call subdivide_node_line(blk%lineX(0:int(dns%globalSize(1))*2**(l-2), l-1), &
+                                     blk%lineX(0:int(dns%globalSize(1))*2**(l-1), l))
+            call subdivide_node_line(blk%lineY(0:int(dns%globalSize(2))*2**(l-2), l-1), &
+                                     blk%lineY(0:int(dns%globalSize(2))*2**(l-1), l))
+            call subdivide_node_line(blk%lineZ(0:int(dns%globalSize(3))*2**(l-2), l-1), &
+                                     blk%lineZ(0:int(dns%globalSize(3))*2**(l-1), l))
+        end do
+    end subroutine build_level_lines
+
+    pure integer function lid_index(blk, level, c) result(idx)
+        type(block_set_type), intent(in) :: blk
+        integer, intent(in) :: level, c(3)
+
+        integer :: nl(3)
+
+        nl = int(blk%gnbt)*2**level
+        idx = int(blk%lidOff(level)) + 1 + c(1) + nl(1)*(c(2) + nl(2)*c(3))
+    end function lid_index
+
+    ! Leaf id occupying the level-`level` lattice cell c, or -1.
+    integer(C_INT) function leaf_at(blk, level, c) result(id)
+        type(block_set_type), intent(in) :: blk
+        integer, intent(in) :: level, c(3)
+
+        id = -1_C_INT
+        if (level < 0 .or. level >= int(blk%nLevels)) return
+        if (any(c < 0) .or. any(c >= int(blk%gnbt)*2**level)) return
+        id = blk%lidOf(lid_index(blk, level, c))
+    end function leaf_at
+
+    ! Build the global leaf table: root tiling minus removed blocks, box
+    ! refinement rounds, 2:1 smoothing over the 26-neighbourhood, then
+    ! leaf ids along the Z-order curve of the finest lattice. Identical on
+    ! every rank, so the distribution needs no communication.
+    subroutine build_leaf_table(blk, dns, periodic, active, myrank)
+        type(block_set_type), intent(inout) :: blk
+        type(dns_type), intent(in) :: dns
+        logical(C_BOOL), intent(in) :: periodic(1:3)
         integer(C_INT), intent(in), optional :: active(:)
+        integer(C_INT), intent(in) :: myrank
 
-        integer :: n, gx, gy, gz, i, id, raster
+        ! lidOf markers during construction: -1 none/covered, -2 split,
+        ! 0 leaf placeholder (real ids assigned at the end).
+        integer, parameter :: M_NONE = -1, M_SPLIT = -2, M_LEAF = 0
+
+        integer :: nLat, l, c(3), cn(3), cc(3), gx, gy, gz, i, n, id, raster
+        integer :: ox, oy, oz, sx, sy, sz, lmax, round
         integer(int64), allocatable :: keys(:)
-        integer, allocatable :: order(:)
-        integer(C_INT), allocatable :: coordTmp(:,:)
-        logical :: keep
+        integer, allocatable :: order(:), tmpLevel(:), tmpCoord(:,:)
+        logical :: changed, hit
+        real(C_DOUBLE) :: lo(3), hi(3)
 
-        n = int(product(blk%gnbt))
-        if (present(active)) then
-            if (size(active) /= n) error stop "block active mask does not match the lattice"
-        end if
-        allocate(blk%zidOf(0:int(blk%gnbt(1))-1, 0:int(blk%gnbt(2))-1, 0:int(blk%gnbt(3))-1))
-        allocate(coordTmp(3,n))
-        allocate(keys(n), order(n))
-        blk%zidOf = -1_C_INT
+        lmax = int(blk%nLevels) - 1
+        allocate(blk%lidOff(0:int(blk%nLevels)))
+        blk%lidOff(0) = 0_C_INT
+        do l = 0, lmax
+            blk%lidOff(l+1) = blk%lidOff(l) + int(product(int(blk%gnbt)*2**l), C_INT)
+        end do
+        allocate(blk%lidOf(int(blk%lidOff(int(blk%nLevels)))))
+        blk%lidOf = int(M_NONE, C_INT)
 
+        ! Root tiling, minus blocks removed inside the immersed boundary.
         i = 0
         do gz = 0, int(blk%gnbt(3)) - 1
             do gy = 0, int(blk%gnbt(2)) - 1
                 do gx = 0, int(blk%gnbt(1)) - 1
                     i = i + 1
-                    keys(i) = morton_key(gx, gy, gz)
-                    coordTmp(:,i) = int([gx, gy, gz], C_INT)
+                    raster = i
+                    if (present(active)) then
+                        if (active(raster) == 0_C_INT) cycle
+                    end if
+                    blk%lidOf(lid_index(blk, 0, [gx, gy, gz])) = int(M_LEAF, C_INT)
                 end do
             end do
         end do
 
+        ! Box refinement rounds: split leaves whose physical region
+        ! intersects the [blocks] refine box.
+        do round = 1, lmax
+            l = round - 1
+            do gz = 0, int(blk%gnbt(3))*2**l - 1
+                do gy = 0, int(blk%gnbt(2))*2**l - 1
+                    do gx = 0, int(blk%gnbt(1))*2**l - 1
+                        c = [gx, gy, gz]
+                        if (blk%lidOf(lid_index(blk, l, c)) /= int(M_LEAF, C_INT)) cycle
+                        lo(1) = blk%lineX(c(1)*int(blk%nb(1)), l+1)
+                        hi(1) = blk%lineX((c(1)+1)*int(blk%nb(1)), l+1)
+                        lo(2) = blk%lineY(c(2)*int(blk%nb(2)), l+1)
+                        hi(2) = blk%lineY((c(2)+1)*int(blk%nb(2)), l+1)
+                        lo(3) = blk%lineZ(c(3)*int(blk%nb(3)), l+1)
+                        hi(3) = blk%lineZ((c(3)+1)*int(blk%nb(3)), l+1)
+                        hit = lo(1) < dns%block_refine_box(2) .and. hi(1) > dns%block_refine_box(1) &
+                        .and. lo(2) < dns%block_refine_box(4) .and. hi(2) > dns%block_refine_box(3) &
+                        .and. lo(3) < dns%block_refine_box(6) .and. hi(3) > dns%block_refine_box(5)
+                        if (hit) call split_leaf(blk, l, c)
+                    end do
+                end do
+            end do
+        end do
+
+        ! 2:1 smoothing: a leaf whose 26-neighbour cell is split into
+        ! grandchildren (level >= l+2 below it) must split too. Iterate to
+        ! a fixed point.
+        changed = .true.
+        do while (changed)
+            changed = .false.
+            do l = 0, lmax - 2
+                do gz = 0, int(blk%gnbt(3))*2**l - 1
+                    do gy = 0, int(blk%gnbt(2))*2**l - 1
+                        do gx = 0, int(blk%gnbt(1))*2**l - 1
+                            c = [gx, gy, gz]
+                            if (blk%lidOf(lid_index(blk, l, c)) /= int(M_LEAF, C_INT)) cycle
+                            outer: do oz = -1, 1
+                            do oy = -1, 1
+                            do ox = -1, 1
+                                if (ox == 0 .and. oy == 0 .and. oz == 0) cycle
+                                cn = c + [ox, oy, oz]
+                                if (.not. wrap_lattice(blk, periodic, l, cn)) cycle
+                                if (blk%lidOf(lid_index(blk, l, cn)) /= int(M_SPLIT, C_INT)) cycle
+                                ! any split child => neighbour reaches l+2
+                                do sz = 0, 1
+                                do sy = 0, 1
+                                do sx = 0, 1
+                                    cc = 2*cn + [sx, sy, sz]
+                                    if (blk%lidOf(lid_index(blk, l+1, cc)) == int(M_SPLIT, C_INT)) then
+                                        call split_leaf(blk, l, c)
+                                        changed = .true.
+                                        exit outer
+                                    end if
+                                end do
+                                end do
+                                end do
+                            end do
+                            end do
+                            end do outer
+                        end do
+                    end do
+                end do
+            end do
+        end do
+
+        ! Collect leaves and number them along the finest-lattice Z-order.
+        n = 0
+        do l = 0, lmax
+            n = n + count(blk%lidOf(int(blk%lidOff(l))+1:int(blk%lidOff(l+1))) == int(M_LEAF, C_INT))
+        end do
+        allocate(tmpLevel(n), tmpCoord(3,n), keys(n), order(n))
+        i = 0
+        do l = 0, lmax
+            do gz = 0, int(blk%gnbt(3))*2**l - 1
+                do gy = 0, int(blk%gnbt(2))*2**l - 1
+                    do gx = 0, int(blk%gnbt(1))*2**l - 1
+                        if (blk%lidOf(lid_index(blk, l, [gx, gy, gz])) /= int(M_LEAF, C_INT)) cycle
+                        i = i + 1
+                        tmpLevel(i) = l
+                        tmpCoord(:,i) = [gx, gy, gz]
+                        keys(i) = morton_key(gx*2**(lmax-l), gy*2**(lmax-l), gz*2**(lmax-l))
+                    end do
+                end do
+            end do
+        end do
         call heapsort_index(keys, order)
 
-        ! Walk the curve and hand out ids to survivors; zcoord(:,id+1) are
-        ! the lattice coords of Z-id `id`.
-        allocate(blk%zcoord(3,n))
-        id = 0
+        blk%nBlocksGlobal = int(n, C_INT)
+        allocate(blk%leafLevel(max(1,n)), blk%leafCoord(3,max(1,n)))
         do i = 1, n
-            keep = .true.
-            if (present(active)) then
-                raster = 1 + int(coordTmp(1,order(i))) &
-                    + int(blk%gnbt(1))*(int(coordTmp(2,order(i))) &
-                    + int(blk%gnbt(2))*int(coordTmp(3,order(i))))
-                keep = active(raster) /= 0_C_INT
-            end if
-            if (.not. keep) cycle
-            id = id + 1
-            blk%zcoord(:,id) = coordTmp(:,order(i))
-            blk%zidOf(coordTmp(1,order(i)), coordTmp(2,order(i)), coordTmp(3,order(i))) = &
-                int(id - 1, C_INT)
+            id = i - 1
+            blk%leafLevel(i) = int(tmpLevel(order(i)), C_INT)
+            blk%leafCoord(:,i) = int(tmpCoord(:,order(i)), C_INT)
+            blk%lidOf(lid_index(blk, tmpLevel(order(i)), tmpCoord(:,order(i)))) = int(id, C_INT)
         end do
-        blk%nBlocksGlobal = int(id, C_INT)
+        ! Clear construction markers so lookups see only leaf ids and -1.
+        where (blk%lidOf == int(M_SPLIT, C_INT)) blk%lidOf = -1_C_INT
 
-        deallocate(keys, order, coordTmp)
-    end subroutine build_zorder_table
+        if (lmax > 0 .and. myrank == 0_C_INT) then
+            print *, "block refinement:", n, "leaves,", &
+                count(blk%leafLevel(1:n) > 0_C_INT), "refined"
+        end if
 
-    ! Face kind of the block at `origin` in direction d, side -1/+1: a
-    ! physical wall outside non-periodic boundaries, closed towards a
-    ! removed block, open otherwise.
-    integer(C_INT) function face_kind(blk, dns, periodic, origin, d, side) result(fk)
+        deallocate(tmpLevel, tmpCoord, keys, order)
+    end subroutine build_leaf_table
+
+    subroutine split_leaf(blk, l, c)
+        type(block_set_type), intent(inout) :: blk
+        integer, intent(in) :: l, c(3)
+
+        integer :: sx, sy, sz
+
+        blk%lidOf(lid_index(blk, l, c)) = -2_C_INT
+        do sz = 0, 1
+            do sy = 0, 1
+                do sx = 0, 1
+                    blk%lidOf(lid_index(blk, l+1, 2*c + [sx, sy, sz])) = 0_C_INT
+                end do
+            end do
+        end do
+    end subroutine split_leaf
+
+    ! Wrap level-l lattice coords in periodic directions; .false. outside
+    ! non-periodic boundaries.
+    logical function wrap_lattice(blk, periodic, l, c)
+        type(block_set_type), intent(in) :: blk
+        logical(C_BOOL), intent(in) :: periodic(1:3)
+        integer, intent(in) :: l
+        integer, intent(inout) :: c(3)
+
+        integer :: d, nl
+
+        wrap_lattice = .true.
+        do d = 1, 3
+            nl = int(blk%gnbt(d))*2**l
+            if (c(d) < 0 .or. c(d) >= nl) then
+                if (.not. periodic(d)) then
+                    wrap_lattice = .false.
+                    return
+                end if
+                c(d) = modulo(c(d), nl)
+            end if
+        end do
+    end function wrap_lattice
+
+    integer(C_INT) function count_level0_leaves(blk) result(n)
+        type(block_set_type), intent(in) :: blk
+
+        n = int(count(blk%lidOf(1:int(blk%lidOff(1))) >= 0_C_INT), C_INT)
+    end function count_level0_leaves
+
+    ! Face kind of the level-`level` block at `origin` (level-l cells) in
+    ! direction d, side -1/+1: physical wall outside non-periodic
+    ! boundaries; open towards a same-level leaf; COARSE/FINE towards a
+    ! coarser/finer leaf (2:1 interface); closed towards a removed block.
+    integer(C_INT) function face_kind(blk, dns, periodic, origin, level, d, side) result(fk)
         type(block_set_type), intent(in) :: blk
         type(dns_type), intent(in) :: dns
         logical(C_BOOL), intent(in) :: periodic(1:3)
-        integer(C_INT), intent(in) :: origin(3)
+        integer(C_INT), intent(in) :: origin(3), level
         integer, intent(in) :: d, side
 
-        integer :: to(3)
+        integer :: to(3), cl(3), cc(3), l, sx, sy, sz
 
+        if (blk%distMode /= DIST_ZORDER) then
+            ! Rank-box mode: one block per rank, walls only.
+            to = int(origin)
+            to(d) = to(d) + side*int(blk%nb(d))
+            fk = FACE_OPEN
+            if ((to(d) < 0 .or. to(d) >= int(dns%globalSize(d))) .and. .not. periodic(d)) fk = FACE_PHYS
+            return
+        end if
+
+        l = int(level)
         to = int(origin)
         to(d) = to(d) + side*int(blk%nb(d))
-        if (to(d) < 0 .or. to(d) >= int(dns%globalSize(d))) then
+        if (to(d) < 0 .or. to(d) >= int(level_cells(dns, d, level))) then
             if (.not. periodic(d)) then
                 fk = FACE_PHYS
                 return
             end if
-            to(d) = modulo(to(d), int(dns%globalSize(d)))
+            to(d) = modulo(to(d), int(level_cells(dns, d, level)))
         end if
-        fk = FACE_OPEN
-        if (blk%distMode == DIST_ZORDER) then
-            if (blk%zidOf(to(1)/int(blk%nb(1)), to(2)/int(blk%nb(2)), &
-                          to(3)/int(blk%nb(3))) < 0_C_INT) fk = FACE_CLOSED
+
+        cl = to/int(blk%nb)
+        if (leaf_at(blk, l, cl) >= 0_C_INT) then
+            fk = FACE_OPEN
+            return
         end if
+        if (leaf_at(blk, l - 1, cl/2) >= 0_C_INT) then
+            fk = FACE_COARSE
+            return
+        end if
+        do sz = 0, 1
+            do sy = 0, 1
+                do sx = 0, 1
+                    cc = 2*cl + [sx, sy, sz]
+                    if (leaf_at(blk, l + 1, cc) >= 0_C_INT) then
+                        fk = FACE_FINE
+                        return
+                    end if
+                end do
+            end do
+        end do
+        fk = FACE_CLOSED
     end function face_kind
 
     ! FACE_CLOSED faces are exact zero-flux faces: the halo layer and the
