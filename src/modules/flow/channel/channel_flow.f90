@@ -78,7 +78,7 @@ contains
         type(boundary_type), intent(in) :: bc
         type(comm_type), intent(in) :: c
 
-        call this%stats%setup(dns, g, c)
+        call this%stats%setup(blk, dns, g, c)
     end subroutine channel_setup_after_grid
 
     subroutine channel_initialise_fields(this, blk, dns, g, bc, c)

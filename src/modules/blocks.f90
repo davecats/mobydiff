@@ -334,9 +334,7 @@ contains
     logical function refine_box_set(dns)
         type(dns_type), intent(in) :: dns
 
-        refine_box_set = dns%block_refine_box(1) <= dns%block_refine_box(2) .and. &
-                         dns%block_refine_box(3) <= dns%block_refine_box(4) .and. &
-                         dns%block_refine_box(5) <= dns%block_refine_box(6)
+        refine_box_set = dns%block_refine_nboxes > 0_C_INT
     end function refine_box_set
 
     ! Cells of the level-l global grid in direction d.
@@ -412,7 +410,7 @@ contains
         integer, parameter :: M_NONE = -1, M_SPLIT = -2, M_LEAF = 0
 
         integer :: nLat, l, c(3), cn(3), cc(3), gx, gy, gz, i, n, id, raster
-        integer :: ox, oy, oz, sx, sy, sz, lmax, round
+        integer :: ox, oy, oz, sx, sy, sz, lmax, round, box
         integer(int64), allocatable :: keys(:)
         integer, allocatable :: order(:), tmpLevel(:), tmpCoord(:,:)
         logical :: changed, hit
@@ -454,16 +452,19 @@ contains
                         c = [gx, gy, gz]
                         if (blk%lidOf(lid_index(blk, l, c)) /= int(M_LEAF, C_INT)) cycle
                         hit = .false.
-                        if (refine_box_set(dns)) then
+                        if (dns%block_refine_nboxes > 0_C_INT) then
                             lo(1) = blk%lineX(c(1)*int(blk%nb(1)), l+1)
                             hi(1) = blk%lineX((c(1)+1)*int(blk%nb(1)), l+1)
                             lo(2) = blk%lineY(c(2)*int(blk%nb(2)), l+1)
                             hi(2) = blk%lineY((c(2)+1)*int(blk%nb(2)), l+1)
                             lo(3) = blk%lineZ(c(3)*int(blk%nb(3)), l+1)
                             hi(3) = blk%lineZ((c(3)+1)*int(blk%nb(3)), l+1)
-                            hit = lo(1) < dns%block_refine_box(2) .and. hi(1) > dns%block_refine_box(1) &
-                            .and. lo(2) < dns%block_refine_box(4) .and. hi(2) > dns%block_refine_box(3) &
-                            .and. lo(3) < dns%block_refine_box(6) .and. hi(3) > dns%block_refine_box(5)
+                            do box = 1, int(dns%block_refine_nboxes)
+                                hit = hit .or. &
+                                  (lo(1) < dns%block_refine_box(2,box) .and. hi(1) > dns%block_refine_box(1,box) &
+                              .and. lo(2) < dns%block_refine_box(4,box) .and. hi(2) > dns%block_refine_box(3,box) &
+                              .and. lo(3) < dns%block_refine_box(6,box) .and. hi(3) > dns%block_refine_box(5,box))
+                            end do
                         end if
                         if (.not. hit .and. present(touch)) then
                             hit = touch(level_raster(blk, l, c), l+1) /= 0_C_INT

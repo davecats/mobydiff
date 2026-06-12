@@ -1542,10 +1542,15 @@ def build_leaf_table_py(gnbt, levels, periodic, touch, buried, refine_box, lines
                         continue
                     hit = False
                     if refine_box is not None:
+                        # One box (6 floats) or a list of boxes, mirroring the
+                        # repeatable [blocks] refine key.
+                        boxes = refine_box
+                        if boxes and not hasattr(boxes[0], "__len__"):
+                            boxes = [boxes]
                         lo = [lines[d][l][[cx, cy, cz][d]*nb] for d in range(3)]
                         hi = [lines[d][l][([cx, cy, cz][d]+1)*nb] for d in range(3)]
-                        hit = all(lo[d] < refine_box[2*d+1] and hi[d] > refine_box[2*d]
-                                  for d in range(3))
+                        hit = any(all(box[2*d] < hi[d] and box[2*d+1] > lo[d]
+                                      for d in range(3)) for box in boxes)
                     if not hit and touch is not None:
                         hit = bool(touch[l][cx, cy, cz])
                         if not hit:

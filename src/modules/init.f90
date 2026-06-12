@@ -36,13 +36,16 @@ module init
         real(C_DOUBLE) :: forcing(1:3) = 0.0d0
         ! [flow] initial_u/v/w: uniform initial velocity (generic case).
         real(C_DOUBLE) :: initial_velocity(1:3) = 0.0d0
+        real(C_DOUBLE) :: initial_noise = 0.0d0
         ! [blocks] nb: cubic block edge in cells; 0 = one block per rank box.
         integer(C_INT) :: block_nb = 0_C_INT
         ! [blocks] remove_solid: drop blocks buried inside the immersed body.
         logical(C_BOOL) :: block_remove_solid = .true.
         ! [blocks] refine = x0 x1 y0 y1 z0 z1: refine blocks intersecting this
         ! physical box (test option; lo > hi means unset).
-        real(C_DOUBLE) :: block_refine_box(6) = [1.0d0, 0.0d0, 1.0d0, 0.0d0, 1.0d0, 0.0d0]
+        ! Up to 4 refinement boxes ([blocks] refine, repeatable key).
+        real(C_DOUBLE) :: block_refine_box(6,4) = 0.0d0
+        integer(C_INT) :: block_refine_nboxes = 0_C_INT
         ! [blocks] refine_levels: rounds of box refinement (max level).
         integer(C_INT) :: block_refine_levels = 1_C_INT
         ! [blocks] refine_body: refine blocks whose dilated region meets the
@@ -61,6 +64,12 @@ module init
     ! block_set_type, sliced from these lines (slice_grid_direction).
     type :: grid_type
         integer(C_INT) :: distribution(1:3) = GRID_UNIFORM
+        ! Build the n-point line by midpoint subdivision of the (n/2)-point
+        ! line generated with the same parameters - bitwise identical to
+        ! one refinement level of the coarser line (blocks.f90 does the
+        ! same subdivision), so a uniformly fine reference run can share
+        ! its grid exactly with a refined run's fine level.
+        logical(C_BOOL) :: subdivided(1:3) = .false.
         real(C_DOUBLE) :: stretch(1:3) = 0.0d0
         real(C_DOUBLE) :: natural_dyw_plus(1:3) = 0.05d0
         logical(C_BOOL) :: natural_one_sided(1:3) = .false.
@@ -103,11 +112,14 @@ subroutine init_grid(g, dns, periodic)
     allocate(g%zNode(0:int(dns%globalSize(3))))
 
     call build_node_line(g%xNode, dns%globalSize(1), dns%leng(1), &
-        g%distribution(1), g%stretch(1), g%natural_one_sided(1), g%natural_dyw_plus(1))
+        g%distribution(1), g%stretch(1), g%natural_one_sided(1), g%natural_dyw_plus(1), &
+        g%subdivided(1))
     call build_node_line(g%yNode, dns%globalSize(2), dns%leng(2), &
-        g%distribution(2), g%stretch(2), g%natural_one_sided(2), g%natural_dyw_plus(2))
+        g%distribution(2), g%stretch(2), g%natural_one_sided(2), g%natural_dyw_plus(2), &
+        g%subdivided(2))
     call build_node_line(g%zNode, dns%globalSize(3), dns%leng(3), &
-        g%distribution(3), g%stretch(3), g%natural_one_sided(3), g%natural_dyw_plus(3))
+        g%distribution(3), g%stretch(3), g%natural_one_sided(3), g%natural_dyw_plus(3), &
+        g%subdivided(3))
 end subroutine init_grid
 
 subroutine destroy_grid(g)
@@ -118,17 +130,35 @@ subroutine destroy_grid(g)
     if (allocated(g%zNode)) deallocate(g%zNode)
 end subroutine destroy_grid
 
-subroutine build_node_line(node, nGlobal, length, distribution, stretch, &
-        natural_one_sided, natural_dyw_plus)
+recursive subroutine build_node_line(node, nGlobal, length, distribution, stretch, &
+        natural_one_sided, natural_dyw_plus, subdivided)
     real(C_DOUBLE), intent(inout) :: node(0:)
     integer(C_INT), intent(in) :: nGlobal, distribution
     real(C_DOUBLE), intent(in) :: length, stretch, natural_dyw_plus
     logical(C_BOOL), intent(in) :: natural_one_sided
+    logical(C_BOOL), intent(in), optional :: subdivided
 
     integer :: i, n
     real(C_DOUBLE) :: s
+    real(C_DOUBLE), allocatable :: coarse(:)
 
     n = int(nGlobal)
+    if (present(subdivided)) then
+        if (subdivided) then
+            ! Midpoint subdivision of the half-resolution line, exactly as
+            ! blocks.f90 builds refinement-level lines.
+            if (mod(n, 2) /= 0) error stop "subdivided grid needs an even point count"
+            allocate(coarse(0:n/2))
+            call build_node_line(coarse, int(n/2, C_INT), length, distribution, stretch, &
+                natural_one_sided, natural_dyw_plus)
+            do i = 0, n/2 - 1
+                node(2*i) = coarse(i)
+                node(2*i+1) = 0.5d0*(coarse(i) + coarse(i+1))
+            end do
+            node(n) = coarse(n/2)
+            return
+        end if
+    end if
     do i = 0, n
         s = real(i, C_DOUBLE) / real(n, C_DOUBLE)
         node(i) = distribution_coordinate(s, length, distribution, stretch, &

@@ -35,10 +35,18 @@ module channel_stats
         integer(int64) :: clock_rate = 0_int64
         integer(C_INT) :: clock_step_start = 0_C_INT
         integer(C_INT) :: last_write_step = -1_C_INT
+        ! Wall-normal tables are per refinement level, concatenated: level
+        ! l owns rows lvlOff(l)+1 .. lvlOff(l+1) (ny*2^l rows), each block
+        ! accumulating into its own level's rows. Level 0 is written to
+        ! `file`, level l to the same name with an _l<l> suffix, so
+        ! single-level runs are unchanged.
+        integer :: nLevels = 1
+        integer, allocatable :: lvlOff(:)
         real(C_DOUBLE), allocatable :: sum(:)
         real(C_DOUBLE), allocatable :: count(:)
         real(C_DOUBLE), allocatable :: profile(:)
         real(C_DOUBLE), allocatable :: coord(:)
+        real(C_DOUBLE), allocatable :: width(:)
     contains
         procedure :: setup => channel_stats_setup
         procedure :: after_step => channel_stats_after_step
@@ -72,13 +80,14 @@ module channel_stats
 
 contains
 
-    subroutine channel_stats_setup(this, dns, g, c)
+    subroutine channel_stats_setup(this, blk, dns, g, c)
         class(channel_stats_type), intent(inout) :: this
+        type(block_set_type), intent(in) :: blk
         type(dns_type), intent(in) :: dns
         type(grid_type), intent(in) :: g
         type(comm_type), intent(in) :: c
 
-        integer :: nwall, n
+        integer :: total, l, n, nwall, off
 
         if (this%sample_interval <= 0 .and. this%write_interval <= 0) return
 
@@ -87,20 +96,39 @@ contains
         this%runtime_header_written = .false.
         this%last_write_step = -1_C_INT
 
-        nwall = int(dns%globalSize(2))
-        allocate(this%sum(CHANNEL_NSTAT*nwall))
-        allocate(this%count(nwall))
-        allocate(this%profile(CHANNEL_NSTAT*nwall))
-        allocate(this%coord(nwall))
+        this%nLevels = int(blk%nLevels)
+        allocate(this%lvlOff(0:this%nLevels))
+        this%lvlOff(0) = 0
+        do l = 1, this%nLevels
+            this%lvlOff(l) = this%lvlOff(l-1) + int(dns%globalSize(2))*2**(l-1)
+        end do
+        total = this%lvlOff(this%nLevels)
+
+        allocate(this%sum(CHANNEL_NSTAT*total))
+        allocate(this%count(total))
+        allocate(this%profile(CHANNEL_NSTAT*total))
+        allocate(this%coord(total))
+        allocate(this%width(total))
 
         this%sum = 0.0d0
         this%count = 0.0d0
         this%profile = 0.0d0
 
-        do n = 1, nwall
-            this%coord(n) = 0.5d0*(g%yNode(n-1) + g%yNode(n))
+        ! Per-level y lines come from the block set; without [blocks] nb
+        ! (rank-box mode) only level 0 exists and the global line serves.
+        do l = 0, this%nLevels - 1
+            nwall = int(dns%globalSize(2))*2**l
+            off = this%lvlOff(l)
+            do n = 1, nwall
+                if (allocated(blk%lineY)) then
+                    this%coord(off+n) = 0.5d0*(blk%lineY(n-1, l+1) + blk%lineY(n, l+1))
+                    this%width(off+n) = blk%lineY(n, l+1) - blk%lineY(n-1, l+1)
+                else
+                    this%coord(off+n) = 0.5d0*(g%yNode(n-1) + g%yNode(n))
+                    this%width(off+n) = g%yNode(n) - g%yNode(n-1)
+                end if
+            end do
         end do
-
         if (len_trim(dns%restart_file) > 0) then
             call read_channel_stats_restart(this, dns, c)
         end if
@@ -125,7 +153,7 @@ contains
         if (sample_stats) then
             allocate(sample_sum(size(this%sum)))
             allocate(sample_count(size(this%count)))
-            call collect_channel_sample(blk, dns, g, sample_sum, sample_count)
+            call collect_channel_sample(this, blk, dns, sample_sum, sample_count)
             call add_channel_sample(this, sample_sum, sample_count)
             call write_runtime_sample(this, dns, g, c, sample_sum, sample_count)
         end if
@@ -142,13 +170,14 @@ contains
         is_due = modulo(int(step), interval) == 0
     end function interval_is_due
 
-    subroutine collect_channel_sample(blk, dns, g, sample_sum, sample_count)
+    subroutine collect_channel_sample(this, blk, dns, sample_sum, sample_count)
+        class(channel_stats_type), intent(in) :: this
         type(block_set_type), intent(inout) :: blk
         type(dns_type), intent(in) :: dns
-        type(grid_type), intent(in) :: g
         real(C_DOUBLE), intent(inout) :: sample_sum(:), sample_count(:)
 
-        integer :: i, j, k, b, s, nx, ny, nz, nBlocks, global_i, global_k, global_wall_idx, base
+        integer :: i, j, k, b, s, nx, ny, nz, nBlocks, global_wall_idx, base, row
+        integer :: lvlOff(0:this%nLevels)
         real(C_DOUBLE) :: cell_area
         real(C_DOUBLE) :: p, kin, eps, velocity(3), sample(CHANNEL_NSTAT)
 
@@ -156,25 +185,29 @@ contains
         ny = int(blk%nb(2))
         nz = int(blk%nb(3))
         nBlocks = int(blk%nBlocks)
+        lvlOff = this%lvlOff
         sample_sum = 0.0d0
         sample_count = 0.0d0
 
+        ! Each block accumulates into its own level's rows; cell areas come
+        ! from the block's level-l coordinate slices (bitwise the global
+        ! line values at level 0).
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do collapse(4) &
-        !$omp& map(to: dns, g, blk%origin, blk%q, blk%d1x, blk%d1y, blk%d1z) &
+        !$omp& map(to: dns, lvlOff, blk%origin, blk%level, blk%q, blk%x, blk%z, &
+        !$omp& blk%d1x, blk%d1y, blk%d1z) &
         !$omp& map(tofrom: sample_sum, sample_count) &
-        !$omp& private(i,j,k,b,s,global_i,global_k,global_wall_idx,base,cell_area,p,kin,eps,velocity,sample)
+        !$omp& private(i,j,k,b,s,global_wall_idx,base,row,cell_area,p,kin,eps,velocity,sample)
 #endif
         do b = 1, nBlocks
         do k = 1, nz
             do j = 1, ny
                 do i = 1, nx
-                    global_i = int(blk%origin(1,b)) + i
-                    global_k = int(blk%origin(3,b)) + k
                     global_wall_idx = int(blk%origin(2,b)) + j
-                    base = CHANNEL_NSTAT*(global_wall_idx - 1)
-                    cell_area = (g%xNode(global_i) - g%xNode(global_i - 1)) * &
-                                (g%zNode(global_k) - g%zNode(global_k - 1))
+                    row = lvlOff(int(blk%level(b))) + global_wall_idx
+                    base = CHANNEL_NSTAT*(row - 1)
+                    cell_area = (blk%x(i+1,VAR_U,b) - blk%x(i,VAR_U,b)) * &
+                                (blk%z(k+1,VAR_W,b) - blk%z(k,VAR_W,b))
 
                     call centered_velocity(blk, b, i, j, k, velocity)
                     p = blk%q(i,j,k,VAR_P,b)
@@ -183,7 +216,7 @@ contains
                     sample = channel_sample(velocity, p, kin, eps)
 
                     !$omp atomic update
-                    sample_count(global_wall_idx) = sample_count(global_wall_idx) + cell_area
+                    sample_count(row) = sample_count(row) + cell_area
                     do s = 1, CHANNEL_NSTAT
                         !$omp atomic update
                         sample_sum(base + s) = sample_sum(base + s) + cell_area*sample(s)
@@ -240,10 +273,11 @@ contains
         integer :: nwall
         real(C_DOUBLE), allocatable :: raw_sum(:), reduced_count(:)
 
+        integer :: l, off, base
+
         if (.not. allocated(this%sum)) return
         if (this%last_write_step == dns%step_current) return
 
-        nwall = size(this%count)
         allocate(raw_sum(size(this%sum)))
         allocate(reduced_count(size(this%count)))
         raw_sum = this%sum
@@ -254,15 +288,25 @@ contains
 
         call build_channel_profile(this, raw_sum, reduced_count, dns)
 
+        ! One file per level (level 0 keeps the configured name), each in
+        ! the single-level layout the existing tooling reads.
         if (c%has_terminal) then
-            c_file_name = to_c_string(this%file)
-            ierr = fdm_h5_write_channel_stats(c_file_name, int(nwall, C_INT), int(CHANNEL_NSTAT, C_INT), &
-                dns%step_current, dns%t_current, int(2, C_INT), dns%re, dns%forcing, &
-                this%coord, this%profile, raw_sum, reduced_count)
-            if (ierr /= 0_C_INT) then
-                print *, "error: could not write channel statistics file: ", trim(this%file)
-                error stop
-            end if
+            do l = 0, this%nLevels - 1
+                off = this%lvlOff(l)
+                nwall = this%lvlOff(l+1) - off
+                base = CHANNEL_NSTAT*off
+                if (sum(reduced_count(off+1:off+nwall)) <= 0.0d0) cycle
+                c_file_name = to_c_string(level_file_name(this%file, l))
+                ierr = fdm_h5_write_channel_stats(c_file_name, int(nwall, C_INT), int(CHANNEL_NSTAT, C_INT), &
+                    dns%step_current, dns%t_current, int(2, C_INT), dns%re, dns%forcing, &
+                    this%coord(off+1:off+nwall), this%profile(base+1:base+CHANNEL_NSTAT*nwall), &
+                    raw_sum(base+1:base+CHANNEL_NSTAT*nwall), reduced_count(off+1:off+nwall))
+                if (ierr /= 0_C_INT) then
+                    print *, "error: could not write channel statistics file: ", &
+                        trim(level_file_name(this%file, l))
+                    error stop
+                end if
+            end do
         end if
 
         this%last_write_step = dns%step_current
@@ -368,28 +412,35 @@ contains
         type(dns_type), intent(in) :: dns
         real(C_DOUBLE), intent(in) :: reduced_count(:)
 
-        integer :: n, nwall, base, mean_base
+        integer :: n, nwall, base, mean_base, l, off
         real(C_DOUBLE), allocatable :: mean_velocity(:)
         real(C_DOUBLE) :: mean_eps
 
-        nwall = size(reduced_count)
-        if (nwall < 2) return
+        ! Per level: the wall-normal finite differences below must not mix
+        ! rows of different levels.
+        do l = 0, this%nLevels - 1
+            off = this%lvlOff(l)
+            nwall = this%lvlOff(l+1) - off
+            if (nwall < 2) cycle
 
-        allocate(mean_velocity(3*nwall))
-        mean_velocity = 0.0d0
-        do n = 1, nwall
-            base = CHANNEL_NSTAT*(n - 1)
-            mean_base = 3*(n - 1)
-            mean_velocity(mean_base+1) = this%profile(base+STAT_U)
-            mean_velocity(mean_base+2) = this%profile(base+STAT_V)
-            mean_velocity(mean_base+3) = this%profile(base+STAT_W)
-        end do
+            if (allocated(mean_velocity)) deallocate(mean_velocity)
+            allocate(mean_velocity(3*nwall))
+            mean_velocity = 0.0d0
+            do n = 1, nwall
+                base = CHANNEL_NSTAT*(off + n - 1)
+                mean_base = 3*(n - 1)
+                mean_velocity(mean_base+1) = this%profile(base+STAT_U)
+                mean_velocity(mean_base+2) = this%profile(base+STAT_V)
+                mean_velocity(mean_base+3) = this%profile(base+STAT_W)
+            end do
 
-        do n = 1, nwall
-            if (reduced_count(n) <= 0.0d0) cycle
-            base = CHANNEL_NSTAT*(n - 1)
-            mean_eps = mean_profile_dissipation_at(mean_velocity, this%coord, reduced_count, n, dns%re)
-            this%profile(base+STAT_EPSILON) = max(0.0d0, this%profile(base+STAT_EPSILON) - mean_eps)
+            do n = 1, nwall
+                if (reduced_count(off+n) <= 0.0d0) cycle
+                base = CHANNEL_NSTAT*(off + n - 1)
+                mean_eps = mean_profile_dissipation_at(mean_velocity, &
+                    this%coord(off+1:off+nwall), reduced_count(off+1:off+nwall), n, dns%re)
+                this%profile(base+STAT_EPSILON) = max(0.0d0, this%profile(base+STAT_EPSILON) - mean_eps)
+            end do
         end do
     end subroutine subtract_mean_profile_dissipation
 
@@ -454,14 +505,10 @@ contains
         real(C_DOUBLE), intent(out) :: flow_values(2)
         real(C_DOUBLE), intent(out) :: volume_values(2)
 
-        integer :: nwall, base, mean_base, n
+        integer :: nwall, base, mean_base, n, l, off
         real(C_DOUBLE) :: dy, total_volume, mean_eps, k_turb, eps_turb
         real(C_DOUBLE) :: flow_integral(2), volume_integral(2)
         real(C_DOUBLE), allocatable :: mean_velocity(:)
-
-        nwall = size(sample_count)
-        allocate(mean_velocity(3*nwall))
-        mean_velocity = 0.0d0
 
         flow_values = 0.0d0
         volume_values = 0.0d0
@@ -469,33 +516,45 @@ contains
         volume_integral = 0.0d0
         total_volume = 0.0d0
 
-        do n = 1, nwall
-            if (sample_count(n) <= 0.0d0) cycle
-            base = CHANNEL_NSTAT*(n - 1)
-            mean_base = 3*(n - 1)
-            mean_velocity(mean_base+1) = sample_sum(base+STAT_U)/sample_count(n)
-            mean_velocity(mean_base+2) = sample_sum(base+STAT_V)/sample_count(n)
-            mean_velocity(mean_base+3) = sample_sum(base+STAT_W)/sample_count(n)
-        end do
+        ! Levels tile the volume (each cell is counted at its block's
+        ! level), so the volume integrals just accumulate over all levels.
+        do l = 0, this%nLevels - 1
+            off = this%lvlOff(l)
+            nwall = this%lvlOff(l+1) - off
 
-        do n = 1, nwall
-            if (sample_count(n) <= 0.0d0) cycle
-            base = CHANNEL_NSTAT*(n - 1)
-            mean_base = 3*(n - 1)
-            dy = g%yNode(n) - g%yNode(n - 1)
-            total_volume = total_volume + dy*sample_count(n)
+            if (allocated(mean_velocity)) deallocate(mean_velocity)
+            allocate(mean_velocity(3*nwall))
+            mean_velocity = 0.0d0
 
-            flow_integral(1) = flow_integral(1) + dy*sample_sum(base+STAT_U)
-            flow_integral(2) = flow_integral(2) + dy*sample_sum(base+STAT_W)
+            do n = 1, nwall
+                if (sample_count(off+n) <= 0.0d0) cycle
+                base = CHANNEL_NSTAT*(off + n - 1)
+                mean_base = 3*(n - 1)
+                mean_velocity(mean_base+1) = sample_sum(base+STAT_U)/sample_count(off+n)
+                mean_velocity(mean_base+2) = sample_sum(base+STAT_V)/sample_count(off+n)
+                mean_velocity(mean_base+3) = sample_sum(base+STAT_W)/sample_count(off+n)
+            end do
 
-            k_turb = max(0.0d0, sample_sum(base+STAT_K)/sample_count(n) - &
-                0.5d0*(mean_velocity(mean_base+1)**2 + mean_velocity(mean_base+2)**2 + &
-                mean_velocity(mean_base+3)**2))
-            mean_eps = mean_profile_dissipation_at(mean_velocity, this%coord, sample_count, n, dns%re)
-            eps_turb = max(0.0d0, sample_sum(base+STAT_EPSILON)/sample_count(n) - mean_eps)
+            do n = 1, nwall
+                if (sample_count(off+n) <= 0.0d0) cycle
+                base = CHANNEL_NSTAT*(off + n - 1)
+                mean_base = 3*(n - 1)
+                dy = this%width(off+n)
+                total_volume = total_volume + dy*sample_count(off+n)
 
-            volume_integral(1) = volume_integral(1) + dy*sample_count(n)*k_turb
-            volume_integral(2) = volume_integral(2) + dy*sample_count(n)*eps_turb
+                flow_integral(1) = flow_integral(1) + dy*sample_sum(base+STAT_U)
+                flow_integral(2) = flow_integral(2) + dy*sample_sum(base+STAT_W)
+
+                k_turb = max(0.0d0, sample_sum(base+STAT_K)/sample_count(off+n) - &
+                    0.5d0*(mean_velocity(mean_base+1)**2 + mean_velocity(mean_base+2)**2 + &
+                    mean_velocity(mean_base+3)**2))
+                mean_eps = mean_profile_dissipation_at(mean_velocity, &
+                    this%coord(off+1:off+nwall), sample_count(off+1:off+nwall), n, dns%re)
+                eps_turb = max(0.0d0, sample_sum(base+STAT_EPSILON)/sample_count(off+n) - mean_eps)
+
+                volume_integral(1) = volume_integral(1) + dy*sample_count(off+n)*k_turb
+                volume_integral(2) = volume_integral(2) + dy*sample_count(off+n)*eps_turb
+            end do
         end do
 
         if (total_volume > 0.0d0) then
@@ -550,21 +609,53 @@ contains
         real(C_DOUBLE) :: restart_time
         logical :: exists
 
-        inquire(file=trim(this%file), exist=exists)
-        if (.not. exists) return
+        integer :: l, off, nwall, base
+
         if (c%world_rank /= 0) return
 
-        restart_step = 0_C_INT
-        restart_time = 0.0d0
-        c_file_name = to_c_string(this%file)
-        ierr = fdm_h5_read_channel_stats(c_file_name, int(size(this%count), C_INT), &
-            int(CHANNEL_NSTAT, C_INT), restart_step, restart_time, this%sum, this%count)
-        if (ierr /= 0_C_INT) then
-            if (c%has_terminal) print *, "error: could not read channel statistics file: ", trim(this%file)
-            error stop
-        else if (c%has_terminal) then
-            print *, "continuing channel statistics from: ", trim(this%file)
-        end if
+        do l = 0, this%nLevels - 1
+            off = this%lvlOff(l)
+            nwall = this%lvlOff(l+1) - off
+            base = CHANNEL_NSTAT*off
+            inquire(file=trim(level_file_name(this%file, l)), exist=exists)
+            if (.not. exists) cycle
+
+            restart_step = 0_C_INT
+            restart_time = 0.0d0
+            c_file_name = to_c_string(level_file_name(this%file, l))
+            ierr = fdm_h5_read_channel_stats(c_file_name, int(nwall, C_INT), &
+                int(CHANNEL_NSTAT, C_INT), restart_step, restart_time, &
+                this%sum(base+1:base+CHANNEL_NSTAT*nwall), this%count(off+1:off+nwall))
+            if (ierr /= 0_C_INT) then
+                if (c%has_terminal) print *, "error: could not read channel statistics file: ", &
+                    trim(level_file_name(this%file, l))
+                error stop
+            else if (c%has_terminal) then
+                print *, "continuing channel statistics from: ", trim(level_file_name(this%file, l))
+            end if
+        end do
     end subroutine read_channel_stats_restart
+
+    ! channel_stats.h5 -> channel_stats.h5 (level 0), channel_stats_l1.h5, ...
+    function level_file_name(file, l) result(name)
+        character(len=*), intent(in) :: file
+        integer, intent(in) :: l
+        character(len=300) :: name
+
+        integer :: dot
+        character(len=8) :: tag
+
+        if (l == 0) then
+            name = file
+            return
+        end if
+        write(tag, '("_l",I0)') l
+        dot = index(file, ".", back=.true.)
+        if (dot > 0) then
+            name = file(1:dot-1)//trim(tag)//file(dot:)
+        else
+            name = trim(file)//trim(tag)
+        end if
+    end function level_file_name
 
 end module channel_stats

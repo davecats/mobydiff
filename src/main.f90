@@ -105,7 +105,7 @@ program main
         if (any(mod(dns%globalSize, dns%block_nb) /= 0_C_INT)) then
             error stop "[blocks] nb must divide the global grid in every direction"
         end if
-        if (dns%block_refine_box(1) <= dns%block_refine_box(2)) then
+        if (dns%block_refine_nboxes > 0_C_INT) then
             error stop "solid-block removal with box refinement is unsupported; use refine_body"
         end if
         allocate(blockActive(product(dns%globalSize/dns%block_nb)))

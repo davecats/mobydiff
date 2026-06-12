@@ -150,6 +150,8 @@ subroutine apply_config_value(section, key, value, dns, g, les, ps, bc, c, seen,
             call read_real(value, dns%initial_velocity(2), line_no)
         case ("initial_w")
             call read_real(value, dns%initial_velocity(3), line_no)
+        case ("initial_noise")
+            call read_real(value, dns%initial_noise, line_no)
         end select
     case ("time")
         select case (key_l)
@@ -211,7 +213,13 @@ subroutine apply_config_value(section, key, value, dns, g, les, ps, bc, c, seen,
         case ("remove_solid")
             call read_bool(value, dns%block_remove_solid, line_no)
         case ("refine")
-            call read_real6(value, dns%block_refine_box, line_no)
+            ! Repeatable: each occurrence adds one refinement box.
+            if (dns%block_refine_nboxes >= int(size(dns%block_refine_box, 2), C_INT)) then
+                print *, "too many [blocks] refine boxes at line", line_no
+                error stop "too many refinement boxes"
+            end if
+            dns%block_refine_nboxes = dns%block_refine_nboxes + 1_C_INT
+            call read_real6(value, dns%block_refine_box(:, dns%block_refine_nboxes), line_no)
         case ("refine_levels")
             call read_c_int(value, dns%block_refine_levels, line_no)
         case ("refine_body")
@@ -339,6 +347,8 @@ subroutine apply_grid_axis_value(section, key, value, dns, g, seen, line_no)
         call read_real(value, g%stretch(dir), line_no)
     case ("natural_dyw_plus", "dyw_plus", "dy_wall_plus", "dyw+")
         call read_real(value, g%natural_dyw_plus(dir), line_no)
+    case ("subdivided")
+        call read_bool(value, g%subdivided(dir), line_no)
     case ("n")
         call read_c_int(value, dns%globalSize(dir), line_no)
         seen%size(dir) = .true.

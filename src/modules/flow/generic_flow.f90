@@ -69,9 +69,35 @@ contains
         type(boundary_type), intent(in) :: bc
         type(comm_type), intent(in) :: c
 
+        integer :: i, j, k, v, b, nSeed
+        integer, allocatable :: seed(:)
+        real(C_DOUBLE) :: r
+
         blk%q(:,:,:,1,:) = dns%initial_velocity(1)
         blk%q(:,:,:,2,:) = dns%initial_velocity(2)
         blk%q(:,:,:,3,:) = dns%initial_velocity(3)
+
+        ! Optional white-noise perturbation ([flow] initial_noise), used by
+        ! the interface-decay gate. Deterministic per rank.
+        if (dns%initial_noise > 0.0d0) then
+            call random_seed(size=nSeed)
+            allocate(seed(nSeed))
+            seed = 20260612 + 7919*c%cart_rank
+            call random_seed(put=seed)
+            do b = 1, int(blk%nBlocks)
+                do v = 1, 3
+                    do k = 1, int(blk%nb(3))
+                        do j = 1, int(blk%nb(2))
+                            do i = 1, int(blk%nb(1))
+                                call random_number(r)
+                                blk%q(i,j,k,v,b) = blk%q(i,j,k,v,b) &
+                                    + dns%initial_noise*(2.0d0*r - 1.0d0)
+                            end do
+                        end do
+                    end do
+                end do
+            end do
+        end if
     end subroutine generic_initialise_fields
 
     subroutine generic_after_step(this, blk, dns, g, c)
