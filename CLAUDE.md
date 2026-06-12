@@ -121,7 +121,26 @@ immersed boundary. Phased, each phase verified before the next:
     all-refined 64^3 (4096 level-1 leaves) bit-exact vs 128^3 — exact
     because midpoint subdivision of dyadic uniform lines is bitwise the
     doubled-resolution line.
-  - 3b (next): cell-centred RESTRICT/PROLONG in the exchange entries.
+  - 3b (complete, validated 2026-06-12): 2:1 interface transfer in the
+    exchange entries. Entries carry an op (COPY/RESTRICT/PROLONG),
+    direction and fine-quarter parity; sampling happens on the SOURCE
+    side (src_samples: per dim, RESTRICT averages the 2 cell-centred or
+    1 matching face-staggered fine samples — 8/4/4 totals for p /
+    tangential / normal velocity — PROLONG injects the covering coarse
+    value), so the wire always carries destination-point values. A
+    coarse face is fed by up to 4 fine sub-entries (2 per edge, 1 per
+    corner), enumerated in fixed child order for the canonical wire
+    format. Corner extension generalizes to "combined neighbour
+    occupied at ANY level". Momentum predicts the shared face on BOTH
+    sides (pinning only PHYS/CLOSED — masking FACE_FINE froze qs=0 and
+    the copy kernel zeroed the face: instant blow-up); the sweep
+    denominator/correction masks (noflux) cover PHYS/CLOSED/FINE but
+    not COARSE, per the fine-owns-face split that 3c completes.
+    Gates: uniform (1, 0.5, 0.25) flow through a 216-block refined
+    patch preserved EXACTLY (max dev 0.0 after 10 steps; dyadic grid +
+    constants make even diffusion round-off vanish); channel-with-patch
+    50 steps stable and bounded; channel nb=4 without refinement still
+    bit-exact vs Phase 2.
   - 3c: staggered flux matching, FACE_COARSE/FACE_FINE sweep masks.
   - 3d: geometry-driven refinement in mobygrid/mobygeom.
 - Phase 4: performance (overlap, see `docs/nonblocking_overlap_strategy.md`).

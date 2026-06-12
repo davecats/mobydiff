@@ -68,6 +68,10 @@ contains
         type(grid_type), intent(in) :: g
         type(boundary_type), intent(in) :: bc
         type(comm_type), intent(in) :: c
+
+        blk%q(:,:,:,1,:) = dns%initial_velocity(1)
+        blk%q(:,:,:,2,:) = dns%initial_velocity(2)
+        blk%q(:,:,:,3,:) = dns%initial_velocity(3)
     end subroutine generic_initialise_fields
 
     subroutine generic_after_step(this, blk, dns, g, c)
@@ -108,6 +112,7 @@ contains
         dns%pecletmax = 0.0d0
         dns%dtmax = huge(1.0d0)
         dns%forcing = 0.0d0
+        dns%initial_velocity = 0.0d0
         dns%ibm_enabled = .true.
         dns%ibm_coeff_file = ""
         dns%field_prefix = "field"

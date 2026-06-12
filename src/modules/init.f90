@@ -34,6 +34,8 @@ module init
         real(C_DOUBLE) :: peclet_rate = 0.0d0
         real(C_DOUBLE) :: dtmax = 0.0d0
         real(C_DOUBLE) :: forcing(1:3) = 0.0d0
+        ! [flow] initial_u/v/w: uniform initial velocity (generic case).
+        real(C_DOUBLE) :: initial_velocity(1:3) = 0.0d0
         ! [blocks] nb: cubic block edge in cells; 0 = one block per rank box.
         integer(C_INT) :: block_nb = 0_C_INT
         ! [blocks] remove_solid: drop blocks buried inside the immersed body.

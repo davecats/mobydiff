@@ -15,7 +15,7 @@ module step
     use, intrinsic :: iso_c_binding
     use :: init, only: dns_type, VAR_U, VAR_V, VAR_W, VAR_P, &
         CFL_COURANT, CFL_PECLET, NCFL
-    use :: blocks, only: block_set_type
+    use :: blocks, only: block_set_type, FACE_PHYS, FACE_CLOSED
     use :: ibmm, only: ibm_type
     use :: comm, only: comm_type, comm_allreduce_max
     use :: les_model, only: les_type, les_is_enabled, les_profile_type, &
@@ -117,9 +117,12 @@ contains
                     jm = j-1
                     kp = k+1
                     km = k-1
-                    uStartX = merge(2, 1, blk%physLow(1,b) /= 0_C_INT)
-                    vStartY = merge(2, 1, blk%physLow(2,b) /= 0_C_INT)
-                    wStartZ = merge(2, 1, blk%physLow(3,b) /= 0_C_INT)
+                    ! Only physical walls and closed faces are pinned. Both
+                    ! sides of a 2:1 interface predict the shared face (the
+                    ! restriction overwrites the coarse copy, Phase 3c).
+                    uStartX = merge(2, 1, blk%physLow(1,b) == FACE_PHYS .or. blk%physLow(1,b) == FACE_CLOSED)
+                    vStartY = merge(2, 1, blk%physLow(2,b) == FACE_PHYS .or. blk%physLow(2,b) == FACE_CLOSED)
+                    wStartZ = merge(2, 1, blk%physLow(3,b) == FACE_PHYS .or. blk%physLow(3,b) == FACE_CLOSED)
 
                     if (i >= uStartX) then
                         uu_p = (blk%q(i,j,k,VAR_U,b) + blk%q(ip,j,k,VAR_U,b))**2
@@ -323,9 +326,12 @@ contains
                     jm = j - 1
                     kp = k + 1
                     km = k - 1
-                    uStartX = merge(2, 1, blk%physLow(1,b) /= 0_C_INT)
-                    vStartY = merge(2, 1, blk%physLow(2,b) /= 0_C_INT)
-                    wStartZ = merge(2, 1, blk%physLow(3,b) /= 0_C_INT)
+                    ! Only physical walls and closed faces are pinned. Both
+                    ! sides of a 2:1 interface predict the shared face (the
+                    ! restriction overwrites the coarse copy, Phase 3c).
+                    uStartX = merge(2, 1, blk%physLow(1,b) == FACE_PHYS .or. blk%physLow(1,b) == FACE_CLOSED)
+                    vStartY = merge(2, 1, blk%physLow(2,b) == FACE_PHYS .or. blk%physLow(2,b) == FACE_CLOSED)
+                    wStartZ = merge(2, 1, blk%physLow(3,b) == FACE_PHYS .or. blk%physLow(3,b) == FACE_CLOSED)
 
                     if (i >= uStartX) then
                         tau_xp = 2.0d0*les%nut(i,j,k,b) &

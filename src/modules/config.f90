@@ -144,6 +144,12 @@ subroutine apply_config_value(section, key, value, dns, g, les, ps, bc, c, seen,
         case ("forcing_z")
             call read_real(value, dns%forcing(3), line_no)
             seen%forcing(3) = .true.
+        case ("initial_u")
+            call read_real(value, dns%initial_velocity(1), line_no)
+        case ("initial_v")
+            call read_real(value, dns%initial_velocity(2), line_no)
+        case ("initial_w")
+            call read_real(value, dns%initial_velocity(3), line_no)
         end select
     case ("time")
         select case (key_l)

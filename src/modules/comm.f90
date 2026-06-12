@@ -14,6 +14,15 @@ module comm
 
     integer, parameter :: HALO_TAG = 1000
 
+    ! Exchange entry operations. RESTRICT averages the fine samples
+    ! covering each coarse destination point (8 cell-centred, 4 with one
+    ! face-staggered dimension, ...); PROLONG injects the covering coarse
+    ! value. Sampling happens on the SOURCE side (pack/local copy), so the
+    ! wire always carries destination-point values.
+    integer, parameter :: OP_COPY = 0
+    integer, parameter :: OP_RESTRICT = 1
+    integer, parameter :: OP_PROLONG = 2
+
     type, public :: comm_type
         logical :: initialized = .false.
         logical :: exchangeActive = .false.
@@ -42,6 +51,7 @@ module comm
         integer :: nLocalPts = 0
         integer, allocatable :: lSrcSlot(:), lDstSlot(:)   ! (nLocal)
         integer, allocatable :: lSrcLo(:,:), lDstLo(:,:), lExt(:,:) ! (3,nLocal)
+        integer, allocatable :: lOp(:), lDir(:,:), lTq(:,:) ! op, direction, fine quarter
         integer, allocatable :: lOff(:)                    ! (0:nLocal) point prefix
 
         integer :: nPeers = 0
@@ -51,6 +61,8 @@ module comm
         integer :: nSend = 0, nRecv = 0
         integer, allocatable :: sSlot(:), sPeer(:)         ! (nSend)
         integer, allocatable :: sLo(:,:), sExt(:,:)        ! (3,nSend)
+        integer, allocatable :: sOp(:), sDir(:,:), sTq(:,:)
+        integer, allocatable :: sDstLo(:,:)                ! dst box lo (for sampling formulas)
         integer, allocatable :: sOff(:)                    ! (0:nSend) point prefix, peer-major
         integer, allocatable :: rSlot(:), rPeer(:)
         integer, allocatable :: rLo(:,:), rExt(:,:)
@@ -155,12 +167,12 @@ contains
 
         integer :: off(3,26)
         integer :: nb(3), gn(3)
-        integer :: b, d, p, pass, owner, slot
-        integer :: to(3), srcLo(3), dstLo(3), ext(3)
+        integer :: b, d, p, pass, cand, ncand
+        integer :: owner(4), slot(4), opc(4), tqc(3,4)
+        integer :: srcLo(3), dstLo(3), ext(3)
         integer :: peerCoords(3), peerFirst(3), peerLast(3)
         integer :: peerBlocks, peerStart, pb, dorigin(3), dlevel
-        integer :: nLocal, nSend, nRecv, pts, maxCount, ierr
-        logical :: haveNeighbor
+        integer :: nLocal, nSend, nRecv, pts, maxCount, ierr, e
 
         call build_direction_table(off)
         nb = int(blk%nb)
@@ -179,22 +191,27 @@ contains
             ! (including the periodic wrap inside a single rank).
             do b = 1, int(blk%nBlocks)
                 do d = 1, 26
-                    call neighbor_block(c, blk, dns, b, off(:,d), haveNeighbor, owner, slot, to)
-                    if (.not. haveNeighbor) cycle
-                    if (owner /= c%cart_rank) cycle
-                    call entry_boxes(c, blk, dns, int(blk%level(b)), int(blk%origin(:,b)), &
-                        off(:,d), nb, srcLo, dstLo, ext)
-                    nLocal = nLocal + 1
-                    pts = ext(1)*ext(2)*ext(3)
-                    if (pass == 2) then
-                        c%lSrcSlot(nLocal) = slot
-                        c%lDstSlot(nLocal) = b
-                        c%lSrcLo(:,nLocal) = srcLo
-                        c%lDstLo(:,nLocal) = dstLo
-                        c%lExt(:,nLocal) = ext
-                        c%lOff(nLocal) = c%lOff(nLocal-1) + pts
-                    end if
-                    c%nLocalPts = c%nLocalPts + pts
+                    call resolve_neighbors(c, blk, dns, int(blk%level(b)), int(blk%origin(:,b)), &
+                        off(:,d), ncand, owner, slot, opc, tqc)
+                    do cand = 1, ncand
+                        if (owner(cand) /= c%cart_rank) cycle
+                        call candidate_boxes(c, blk, dns, int(blk%level(b)), int(blk%origin(:,b)), &
+                            off(:,d), nb, opc(cand), tqc(:,cand), srcLo, dstLo, ext)
+                        nLocal = nLocal + 1
+                        pts = ext(1)*ext(2)*ext(3)
+                        if (pass == 2) then
+                            c%lSrcSlot(nLocal) = slot(cand)
+                            c%lDstSlot(nLocal) = b
+                            c%lSrcLo(:,nLocal) = srcLo
+                            c%lDstLo(:,nLocal) = dstLo
+                            c%lExt(:,nLocal) = ext
+                            c%lOp(nLocal) = opc(cand)
+                            c%lDir(:,nLocal) = off(:,d)
+                            c%lTq(:,nLocal) = tqc(:,cand)
+                            c%lOff(nLocal) = c%lOff(nLocal-1) + pts
+                        end if
+                        c%nLocalPts = c%nLocalPts + pts
+                    end do
                 end do
             end do
             c%nLocal = nLocal
@@ -211,21 +228,23 @@ contains
                 c%peerRecvOff(p) = c%peerRecvOff(p-1)
                 do b = 1, int(blk%nBlocks)
                     do d = 1, 26
-                        call neighbor_block(c, blk, dns, b, off(:,d), haveNeighbor, owner, slot, to)
-                        if (.not. haveNeighbor) cycle
-                        if (owner /= c%peerRank(p)) cycle
-                        call entry_boxes(c, blk, dns, int(blk%level(b)), int(blk%origin(:,b)), &
-                            off(:,d), nb, srcLo, dstLo, ext)
-                        nRecv = nRecv + 1
-                        pts = ext(1)*ext(2)*ext(3)
-                        if (pass == 2) then
-                            c%rSlot(nRecv) = b
-                            c%rPeer(nRecv) = p
-                            c%rLo(:,nRecv) = dstLo
-                            c%rExt(:,nRecv) = ext
-                            c%rOff(nRecv) = c%rOff(nRecv-1) + pts
-                        end if
-                        c%peerRecvOff(p) = c%peerRecvOff(p) + pts
+                        call resolve_neighbors(c, blk, dns, int(blk%level(b)), int(blk%origin(:,b)), &
+                            off(:,d), ncand, owner, slot, opc, tqc)
+                        do cand = 1, ncand
+                            if (owner(cand) /= c%peerRank(p)) cycle
+                            call candidate_boxes(c, blk, dns, int(blk%level(b)), int(blk%origin(:,b)), &
+                                off(:,d), nb, opc(cand), tqc(:,cand), srcLo, dstLo, ext)
+                            nRecv = nRecv + 1
+                            pts = ext(1)*ext(2)*ext(3)
+                            if (pass == 2) then
+                                c%rSlot(nRecv) = b
+                                c%rPeer(nRecv) = p
+                                c%rLo(:,nRecv) = dstLo
+                                c%rExt(:,nRecv) = ext
+                                c%rOff(nRecv) = c%rOff(nRecv-1) + pts
+                            end if
+                            c%peerRecvOff(p) = c%peerRecvOff(p) + pts
+                        end do
                     end do
                 end do
 
@@ -252,20 +271,27 @@ contains
                         dlevel = 0
                     end if
                     do d = 1, 26
-                        call neighbor_origin(c, dns, dlevel, dorigin, off(:,d), nb, haveNeighbor, to)
-                        if (.not. haveNeighbor) cycle
-                        if (.not. origin_is_mine(blk, dns, dlevel, to)) cycle
-                        call entry_boxes(c, blk, dns, dlevel, dorigin, off(:,d), nb, srcLo, dstLo, ext)
-                        nSend = nSend + 1
-                        pts = ext(1)*ext(2)*ext(3)
-                        if (pass == 2) then
-                            c%sSlot(nSend) = my_slot_of(blk, dns, dlevel, to)
-                            c%sPeer(nSend) = p
-                            c%sLo(:,nSend) = srcLo
-                            c%sExt(:,nSend) = ext
-                            c%sOff(nSend) = c%sOff(nSend-1) + pts
-                        end if
-                        c%peerSendOff(p) = c%peerSendOff(p) + pts
+                        call resolve_neighbors(c, blk, dns, dlevel, dorigin, &
+                            off(:,d), ncand, owner, slot, opc, tqc)
+                        do cand = 1, ncand
+                            if (owner(cand) /= c%cart_rank) cycle
+                            call candidate_boxes(c, blk, dns, dlevel, dorigin, &
+                                off(:,d), nb, opc(cand), tqc(:,cand), srcLo, dstLo, ext)
+                            nSend = nSend + 1
+                            pts = ext(1)*ext(2)*ext(3)
+                            if (pass == 2) then
+                                c%sSlot(nSend) = slot(cand)
+                                c%sPeer(nSend) = p
+                                c%sLo(:,nSend) = srcLo
+                                c%sDstLo(:,nSend) = dstLo
+                                c%sExt(:,nSend) = ext
+                                c%sOp(nSend) = opc(cand)
+                                c%sDir(:,nSend) = off(:,d)
+                                c%sTq(:,nSend) = tqc(:,cand)
+                                c%sOff(nSend) = c%sOff(nSend-1) + pts
+                            end if
+                            c%peerSendOff(p) = c%peerSendOff(p) + pts
+                        end do
                     end do
                 end do
             end do
@@ -275,9 +301,12 @@ contains
             if (pass == 1) then
                 allocate(c%lSrcSlot(max(1,nLocal)), c%lDstSlot(max(1,nLocal)))
                 allocate(c%lSrcLo(3,max(1,nLocal)), c%lDstLo(3,max(1,nLocal)), c%lExt(3,max(1,nLocal)))
+                allocate(c%lOp(max(1,nLocal)), c%lDir(3,max(1,nLocal)), c%lTq(3,max(1,nLocal)))
                 allocate(c%lOff(0:max(1,nLocal)))
                 allocate(c%sSlot(max(1,nSend)), c%sPeer(max(1,nSend)))
                 allocate(c%sLo(3,max(1,nSend)), c%sExt(3,max(1,nSend)))
+                allocate(c%sOp(max(1,nSend)), c%sDir(3,max(1,nSend)), c%sTq(3,max(1,nSend)))
+                allocate(c%sDstLo(3,max(1,nSend)))
                 allocate(c%sOff(0:max(1,nSend)))
                 allocate(c%rSlot(max(1,nRecv)), c%rPeer(max(1,nRecv)))
                 allocate(c%rLo(3,max(1,nRecv)), c%rExt(3,max(1,nRecv)))
@@ -304,7 +333,9 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target enter data map(to: &
         !$omp& c%lSrcSlot, c%lDstSlot, c%lSrcLo, c%lDstLo, c%lExt, c%lOff, &
+        !$omp& c%lOp, c%lDir, c%lTq, &
         !$omp& c%sSlot, c%sPeer, c%sLo, c%sExt, c%sOff, &
+        !$omp& c%sOp, c%sDir, c%sTq, c%sDstLo, &
         !$omp& c%rSlot, c%rPeer, c%rLo, c%rExt, c%rOff)
         !$omp target enter data map(alloc: c%sendbuf, c%recvbuf)
 #endif
@@ -318,12 +349,16 @@ contains
             !$omp target exit data map(delete: c%sendbuf, c%recvbuf)
             !$omp target exit data map(delete: &
             !$omp& c%lSrcSlot, c%lDstSlot, c%lSrcLo, c%lDstLo, c%lExt, c%lOff, &
+            !$omp& c%lOp, c%lDir, c%lTq, &
             !$omp& c%sSlot, c%sPeer, c%sLo, c%sExt, c%sOff, &
+            !$omp& c%sOp, c%sDir, c%sTq, c%sDstLo, &
             !$omp& c%rSlot, c%rPeer, c%rLo, c%rExt, c%rOff)
 #endif
             deallocate(c%sendbuf, c%recvbuf)
             deallocate(c%lSrcSlot, c%lDstSlot, c%lSrcLo, c%lDstLo, c%lExt, c%lOff)
+            deallocate(c%lOp, c%lDir, c%lTq)
             deallocate(c%sSlot, c%sPeer, c%sLo, c%sExt, c%sOff)
+            deallocate(c%sOp, c%sDir, c%sTq, c%sDstLo)
             deallocate(c%rSlot, c%rPeer, c%rLo, c%rExt, c%rOff)
             deallocate(c%request)
         end if
@@ -355,27 +390,142 @@ contains
         end do
     end subroutine build_direction_table
 
-    ! Neighbour of one of MY blocks: global origin (level-l cells), owner
-    ! rank, local slot on the owner.
-    subroutine neighbor_block(c, blk, dns, b, off, haveNeighbor, owner, slot, to)
+    ! Neighbours of the level-`level` block at lattice cell origin
+    ! `dorigin` across direction off: one same-level or coarser leaf
+    ! (COPY/PROLONG), or up to 2^(tangential dims) finer leaves
+    ! (RESTRICT), in fixed child order so the enumeration is canonical on
+    ! both ends. tq holds the fine quarter (RESTRICT: child parity;
+    ! PROLONG: the destination block's own parity).
+    subroutine resolve_neighbors(c, blk, dns, level, dorigin, off, n, owner, slot, op, tq)
         type(comm_type), intent(in) :: c
         type(block_set_type), intent(in) :: blk
         type(dns_type), intent(in) :: dns
-        integer, intent(in) :: b, off(3)
-        logical, intent(out) :: haveNeighbor
-        integer, intent(out) :: owner, slot, to(3)
+        integer, intent(in) :: level, dorigin(3), off(3)
+        integer, intent(out) :: n, owner(4), slot(4), op(4), tq(3,4)
 
-        integer :: dorigin(3)
+        integer :: to(3), cl(3), cc(3), sub(3), id, d
+        integer :: sx, sy, sz
+        logical :: haveNeighbor
 
-        dorigin = int(blk%origin(:,b))
-        call neighbor_origin(c, dns, int(blk%level(b)), dorigin, off, int(blk%nb), haveNeighbor, to)
-        owner = -1
-        slot = -1
+        n = 0
+        call neighbor_origin(c, dns, level, dorigin, off, int(blk%nb), haveNeighbor, to)
         if (.not. haveNeighbor) return
-        call owner_of_origin(c, blk, dns, int(blk%level(b)), to, owner, slot)
-        ! Removed (solid-buried) neighbour: a FACE_CLOSED face, no entry.
-        if (owner < 0) haveNeighbor = .false.
-    end subroutine neighbor_block
+
+        if (blk%distMode /= DIST_ZORDER) then
+            call owner_of_origin(c, blk, dns, level, to, owner(1), slot(1))
+            if (owner(1) >= 0) then
+                n = 1
+                op(1) = OP_COPY
+                tq(:,1) = 0
+            end if
+            return
+        end if
+
+        cl = to/int(blk%nb)
+        id = int(leaf_at(blk, level, cl))
+        if (id >= 0) then
+            n = 1
+            op(1) = OP_COPY
+            tq(:,1) = 0
+            call id_owner_slot(c, blk, id, owner(1), slot(1))
+            return
+        end if
+
+        ! Coarser occupant: this block is the fine side of a 2:1 interface.
+        id = int(leaf_at(blk, level - 1, cl/2))
+        if (id >= 0) then
+            n = 1
+            op(1) = OP_PROLONG
+            tq(:,1) = modulo(dorigin/int(blk%nb), 2)
+            call id_owner_slot(c, blk, id, owner(1), slot(1))
+            return
+        end if
+
+        ! Finer occupants: the children adjacent to this block across off.
+        do sz = 0, 1
+            do sy = 0, 1
+                do sx = 0, 1
+                    sub = [sx, sy, sz]
+                    do d = 1, 3
+                        if (off(d) == 1 .and. sub(d) /= 0) sub(d) = -9
+                        if (off(d) == -1 .and. sub(d) /= 1) sub(d) = -9
+                    end do
+                    if (any(sub == -9)) cycle
+                    cc = 2*cl + sub
+                    id = int(leaf_at(blk, level + 1, cc))
+                    if (id < 0) cycle
+                    n = n + 1
+                    op(n) = OP_RESTRICT
+                    tq(:,n) = sub
+                    call id_owner_slot(c, blk, id, owner(n), slot(n))
+                end do
+            end do
+        end do
+    end subroutine resolve_neighbors
+
+    subroutine id_owner_slot(c, blk, id, owner, slot)
+        type(comm_type), intent(in) :: c
+        type(block_set_type), intent(in) :: blk
+        integer, intent(in) :: id
+        integer, intent(out) :: owner, slot
+
+        owner = int(zorder_owner(int(id, C_INT), blk%nBlocksGlobal, int(c%cart_size, C_INT)))
+        slot = id - int(zorder_start(blk%nBlocksGlobal, int(c%cart_size, C_INT), &
+            int(owner, C_INT))) + 1
+    end subroutine id_owner_slot
+
+    subroutine candidate_boxes(c, blk, dns, level, dorigin, off, nb, op, tq, srcLo, dstLo, ext)
+        type(comm_type), intent(in) :: c
+        type(block_set_type), intent(in) :: blk
+        type(dns_type), intent(in) :: dns
+        integer, intent(in) :: level, dorigin(3), off(3), nb(3), op, tq(3)
+        integer, intent(out) :: srcLo(3), dstLo(3), ext(3)
+
+        integer :: d
+
+        if (op == OP_COPY) then
+            call entry_boxes(c, blk, dns, level, dorigin, off, nb, srcLo, dstLo, ext)
+        else
+            call interface_boxes(op, off, nb, srcLo, dstLo, ext)
+            if (op == OP_RESTRICT) then
+                do d = 1, 3
+                    if (off(d) == 0) dstLo(d) = tq(d)*nb(d)/2 + 1
+                end do
+            end if
+        end if
+    end subroutine candidate_boxes
+
+    ! Destination box and per-dim source bases for a 2:1 interface entry.
+    ! Tangential source indices follow from tq and the destination index
+    ! inside the kernels; the normal-dimension base is stored in srcLo.
+    subroutine interface_boxes(op, off, nb, srcLo, dstLo, ext)
+        integer, intent(in) :: op, off(3), nb(3)
+        integer, intent(out) :: srcLo(3), dstLo(3), ext(3)
+
+        integer :: d
+
+        do d = 1, 3
+            select case (off(d))
+            case (1)
+                dstLo(d) = nb(d) + 1
+                ext(d) = 1
+                srcLo(d) = 1
+            case (-1)
+                dstLo(d) = 0
+                ext(d) = 1
+                srcLo(d) = merge(nb(d) - 1, nb(d), op == OP_RESTRICT)
+            case default
+                if (op == OP_RESTRICT) then
+                    dstLo(d) = 1          ! quarter offset added via tq in the builder
+                    ext(d) = nb(d)/2
+                else
+                    dstLo(d) = 1
+                    ext(d) = nb(d)
+                end if
+                srcLo(d) = 1
+            end select
+        end do
+    end subroutine interface_boxes
 
     ! Level-l cell origin of the neighbour block in direction off, with
     ! periodic wrap; haveNeighbor is false outside non-periodic boundaries.
@@ -546,9 +696,34 @@ contains
         call neighbor_origin(c, dns, level, dorigin, offc, nb, exists, to)
         if (.not. exists) return
         if (blk%distMode == DIST_ZORDER) then
-            exists = leaf_at(blk, level, to/nb) >= 0_C_INT
+            ! Occupied at the same, coarser, or finer level all count: the
+            ! corner data then arrives through an edge/corner entry (COPY,
+            ! RESTRICT or PROLONG), so the face entry must not extend.
+            exists = occupied_any_level(blk, level, to/nb)
         end if
     end function combined_neighbor_exists
+
+    logical function occupied_any_level(blk, level, cl) result(occ)
+        type(block_set_type), intent(in) :: blk
+        integer, intent(in) :: level, cl(3)
+
+        integer :: sx, sy, sz
+
+        occ = leaf_at(blk, level, cl) >= 0_C_INT
+        if (occ) return
+        occ = leaf_at(blk, level - 1, cl/2) >= 0_C_INT
+        if (occ) return
+        do sz = 0, 1
+            do sy = 0, 1
+                do sx = 0, 1
+                    if (leaf_at(blk, level + 1, 2*cl + [sx, sy, sz]) >= 0_C_INT) then
+                        occ = .true.
+                        return
+                    end if
+                end do
+            end do
+        end do
+    end function occupied_any_level
 
     subroutine collect_peers(c, blk, dns, off)
         type(comm_type), intent(inout) :: c
@@ -556,28 +731,31 @@ contains
         type(dns_type), intent(in) :: dns
         integer, intent(in) :: off(3,26)
 
-        integer :: b, d, owner, slot, to(3), p
+        integer :: b, d, p, cand, ncand
+        integer :: owner(4), slot(4), opc(4), tqc(3,4)
         integer, allocatable :: found(:)
-        logical :: haveNeighbor, known
+        logical :: known
 
         allocate(found(max(1, c%cart_size)))
         c%nPeers = 0
         do b = 1, int(blk%nBlocks)
             do d = 1, 26
-                call neighbor_block(c, blk, dns, b, off(:,d), haveNeighbor, owner, slot, to)
-                if (.not. haveNeighbor) cycle
-                if (owner == c%cart_rank) cycle
-                known = .false.
-                do p = 1, c%nPeers
-                    if (found(p) == owner) then
-                        known = .true.
-                        exit
+                call resolve_neighbors(c, blk, dns, int(blk%level(b)), int(blk%origin(:,b)), &
+                    off(:,d), ncand, owner, slot, opc, tqc)
+                do cand = 1, ncand
+                    if (owner(cand) == c%cart_rank) cycle
+                    known = .false.
+                    do p = 1, c%nPeers
+                        if (found(p) == owner(cand)) then
+                            known = .true.
+                            exit
+                        end if
+                    end do
+                    if (.not. known) then
+                        c%nPeers = c%nPeers + 1
+                        found(c%nPeers) = owner(cand)
                     end if
                 end do
-                if (.not. known) then
-                    c%nPeers = c%nPeers + 1
-                    found(c%nPeers) = owner
-                end if
             end do
         end do
 
@@ -759,7 +937,9 @@ contains
         type(block_set_type), intent(inout) :: blk
 
         integer :: p, gp, v, e, pt, ni, nj
-        integer :: si, sj, sk, di, dj, dk, var, nv, totalItems
+        integer :: di, dj, dk, var, nv, totalItems
+        integer :: b1, b2, b3, c1, c2, c3, s1, s2, s3
+        real(C_DOUBLE) :: val
 
         nv = c%nActiveVars
         totalItems = c%nLocalPts*nv
@@ -768,9 +948,9 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
         !$omp& map(to: totalItems, nv, c%nLocal, c%lOff, c%lSrcSlot, c%lDstSlot, &
-        !$omp& c%lSrcLo, c%lDstLo, c%lExt, c%activeVars) &
+        !$omp& c%lSrcLo, c%lDstLo, c%lExt, c%lOp, c%lDir, c%lTq, c%activeVars) &
         !$omp& map(tofrom: blk%q) &
-        !$omp& private(p,gp,v,e,pt,ni,nj,si,sj,sk,di,dj,dk,var)
+        !$omp& private(p,gp,v,e,pt,ni,nj,di,dj,dk,var,b1,b2,b3,c1,c2,c3,s1,s2,s3,val)
 #endif
         do p = 1, totalItems
             gp = (p - 1)/nv
@@ -779,14 +959,25 @@ contains
             pt = gp - c%lOff(e-1)
             ni = c%lExt(1,e)
             nj = c%lExt(2,e)
-            si = c%lSrcLo(1,e) + modulo(pt, ni)
-            sj = c%lSrcLo(2,e) + modulo(pt/ni, nj)
-            sk = c%lSrcLo(3,e) + pt/(ni*nj)
             di = c%lDstLo(1,e) + modulo(pt, ni)
             dj = c%lDstLo(2,e) + modulo(pt/ni, nj)
             dk = c%lDstLo(3,e) + pt/(ni*nj)
             var = int(c%activeVars(v+1))
-            blk%q(di,dj,dk,var,c%lDstSlot(e)) = blk%q(si,sj,sk,var,c%lSrcSlot(e))
+            call src_samples(c%lOp(e), c%lDir(1,e), c%lTq(1,e), var == 1, int(blk%nb(1)), &
+                di, c%lDstLo(1,e), c%lSrcLo(1,e), b1, c1)
+            call src_samples(c%lOp(e), c%lDir(2,e), c%lTq(2,e), var == 2, int(blk%nb(2)), &
+                dj, c%lDstLo(2,e), c%lSrcLo(2,e), b2, c2)
+            call src_samples(c%lOp(e), c%lDir(3,e), c%lTq(3,e), var == 3, int(blk%nb(3)), &
+                dk, c%lDstLo(3,e), c%lSrcLo(3,e), b3, c3)
+            val = 0.0d0
+            do s3 = 0, c3 - 1
+                do s2 = 0, c2 - 1
+                    do s1 = 0, c1 - 1
+                        val = val + blk%q(b1+s1, b2+s2, b3+s3, var, c%lSrcSlot(e))
+                    end do
+                end do
+            end do
+            blk%q(di,dj,dk,var,c%lDstSlot(e)) = val/real(c1*c2*c3, C_DOUBLE)
         end do
 #ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
@@ -798,30 +989,46 @@ contains
         real(C_DOUBLE), intent(inout) :: scalar(0:,0:,0:,1:)
 
         integer :: p, e, pt, ni, nj
-        integer :: si, sj, sk, di, dj, dk, totalItems
+        integer :: di, dj, dk, totalItems, nb1, nb2, nb3
+        integer :: b1, b2, b3, c1, c2, c3, s1, s2, s3
+        real(C_DOUBLE) :: val
 
         totalItems = c%nLocalPts
         if (totalItems == 0) return
+        nb1 = ubound(scalar, 1) - 1
+        nb2 = ubound(scalar, 2) - 1
+        nb3 = ubound(scalar, 3) - 1
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
-        !$omp& map(to: totalItems, c%nLocal, c%lOff, c%lSrcSlot, c%lDstSlot, &
-        !$omp& c%lSrcLo, c%lDstLo, c%lExt) &
+        !$omp& map(to: totalItems, nb1, nb2, nb3, c%nLocal, c%lOff, c%lSrcSlot, c%lDstSlot, &
+        !$omp& c%lSrcLo, c%lDstLo, c%lExt, c%lOp, c%lDir, c%lTq) &
         !$omp& map(tofrom: scalar) &
-        !$omp& private(p,e,pt,ni,nj,si,sj,sk,di,dj,dk)
+        !$omp& private(p,e,pt,ni,nj,di,dj,dk,b1,b2,b3,c1,c2,c3,s1,s2,s3,val)
 #endif
         do p = 1, totalItems
             e = find_entry(c%lOff, c%nLocal, p - 1)
             pt = p - 1 - c%lOff(e-1)
             ni = c%lExt(1,e)
             nj = c%lExt(2,e)
-            si = c%lSrcLo(1,e) + modulo(pt, ni)
-            sj = c%lSrcLo(2,e) + modulo(pt/ni, nj)
-            sk = c%lSrcLo(3,e) + pt/(ni*nj)
             di = c%lDstLo(1,e) + modulo(pt, ni)
             dj = c%lDstLo(2,e) + modulo(pt/ni, nj)
             dk = c%lDstLo(3,e) + pt/(ni*nj)
-            scalar(di,dj,dk,c%lDstSlot(e)) = scalar(si,sj,sk,c%lSrcSlot(e))
+            call src_samples(c%lOp(e), c%lDir(1,e), c%lTq(1,e), .false., nb1, &
+                di, c%lDstLo(1,e), c%lSrcLo(1,e), b1, c1)
+            call src_samples(c%lOp(e), c%lDir(2,e), c%lTq(2,e), .false., nb2, &
+                dj, c%lDstLo(2,e), c%lSrcLo(2,e), b2, c2)
+            call src_samples(c%lOp(e), c%lDir(3,e), c%lTq(3,e), .false., nb3, &
+                dk, c%lDstLo(3,e), c%lSrcLo(3,e), b3, c3)
+            val = 0.0d0
+            do s3 = 0, c3 - 1
+                do s2 = 0, c2 - 1
+                    do s1 = 0, c1 - 1
+                        val = val + scalar(b1+s1, b2+s2, b3+s3, c%lSrcSlot(e))
+                    end do
+                end do
+            end do
+            scalar(di,dj,dk,c%lDstSlot(e)) = val/real(c1*c2*c3, C_DOUBLE)
         end do
 #ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
@@ -833,7 +1040,9 @@ contains
         type(block_set_type), intent(in) :: blk
 
         integer :: p, gp, v, e, pt, ni, nj
-        integer :: i, j, k, var, peer, pos, nv, totalItems
+        integer :: di, dj, dk, var, peer, pos, nv, totalItems
+        integer :: b1, b2, b3, c1, c2, c3, s1, s2, s3
+        real(C_DOUBLE) :: val
 
         nv = c%nActiveVars
         totalItems = c%peerSendOff(c%nPeers)*nv
@@ -842,9 +1051,10 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
         !$omp& map(to: totalItems, nv, c%nSend, c%sOff, c%sSlot, c%sPeer, &
-        !$omp& c%sLo, c%sExt, c%peerSendOff, c%activeVars, blk%q) &
+        !$omp& c%sLo, c%sDstLo, c%sExt, c%sOp, c%sDir, c%sTq, &
+        !$omp& c%peerSendOff, c%activeVars, blk%q) &
         !$omp& map(tofrom: c%sendbuf) &
-        !$omp& private(p,gp,v,e,pt,ni,nj,i,j,k,var,peer,pos)
+        !$omp& private(p,gp,v,e,pt,ni,nj,di,dj,dk,var,peer,pos,b1,b2,b3,c1,c2,c3,s1,s2,s3,val)
 #endif
         do p = 1, totalItems
             gp = (p - 1)/nv
@@ -853,13 +1063,27 @@ contains
             pt = gp - c%sOff(e-1)
             ni = c%sExt(1,e)
             nj = c%sExt(2,e)
-            i = c%sLo(1,e) + modulo(pt, ni)
-            j = c%sLo(2,e) + modulo(pt/ni, nj)
-            k = c%sLo(3,e) + pt/(ni*nj)
+            di = c%sDstLo(1,e) + modulo(pt, ni)
+            dj = c%sDstLo(2,e) + modulo(pt/ni, nj)
+            dk = c%sDstLo(3,e) + pt/(ni*nj)
             var = int(c%activeVars(v+1))
+            call src_samples(c%sOp(e), c%sDir(1,e), c%sTq(1,e), var == 1, int(blk%nb(1)), &
+                di, c%sDstLo(1,e), c%sLo(1,e), b1, c1)
+            call src_samples(c%sOp(e), c%sDir(2,e), c%sTq(2,e), var == 2, int(blk%nb(2)), &
+                dj, c%sDstLo(2,e), c%sLo(2,e), b2, c2)
+            call src_samples(c%sOp(e), c%sDir(3,e), c%sTq(3,e), var == 3, int(blk%nb(3)), &
+                dk, c%sDstLo(3,e), c%sLo(3,e), b3, c3)
+            val = 0.0d0
+            do s3 = 0, c3 - 1
+                do s2 = 0, c2 - 1
+                    do s1 = 0, c1 - 1
+                        val = val + blk%q(b1+s1, b2+s2, b3+s3, var, c%sSlot(e))
+                    end do
+                end do
+            end do
             peer = c%sPeer(e)
             pos = (gp - c%peerSendOff(peer-1))*nv + v + 1
-            c%sendbuf(pos,peer) = blk%q(i,j,k,var,c%sSlot(e))
+            c%sendbuf(pos,peer) = val/real(c1*c2*c3, C_DOUBLE)
         end do
 #ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
@@ -909,29 +1133,48 @@ contains
         real(C_DOUBLE), intent(in) :: scalar(0:,0:,0:,1:)
 
         integer :: p, e, pt, ni, nj
-        integer :: i, j, k, peer, pos, totalItems
+        integer :: di, dj, dk, peer, pos, totalItems, nb1, nb2, nb3
+        integer :: b1, b2, b3, c1, c2, c3, s1, s2, s3
+        real(C_DOUBLE) :: val
 
         totalItems = c%peerSendOff(c%nPeers)
         if (totalItems == 0) return
+        nb1 = ubound(scalar, 1) - 1
+        nb2 = ubound(scalar, 2) - 1
+        nb3 = ubound(scalar, 3) - 1
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
-        !$omp& map(to: totalItems, c%nSend, c%sOff, c%sSlot, c%sPeer, &
-        !$omp& c%sLo, c%sExt, c%peerSendOff, scalar) &
+        !$omp& map(to: totalItems, nb1, nb2, nb3, c%nSend, c%sOff, c%sSlot, c%sPeer, &
+        !$omp& c%sLo, c%sDstLo, c%sExt, c%sOp, c%sDir, c%sTq, c%peerSendOff, scalar) &
         !$omp& map(tofrom: c%sendbuf) &
-        !$omp& private(p,e,pt,ni,nj,i,j,k,peer,pos)
+        !$omp& private(p,e,pt,ni,nj,di,dj,dk,peer,pos,b1,b2,b3,c1,c2,c3,s1,s2,s3,val)
 #endif
         do p = 1, totalItems
             e = find_entry(c%sOff, c%nSend, p - 1)
             pt = p - 1 - c%sOff(e-1)
             ni = c%sExt(1,e)
             nj = c%sExt(2,e)
-            i = c%sLo(1,e) + modulo(pt, ni)
-            j = c%sLo(2,e) + modulo(pt/ni, nj)
-            k = c%sLo(3,e) + pt/(ni*nj)
+            di = c%sDstLo(1,e) + modulo(pt, ni)
+            dj = c%sDstLo(2,e) + modulo(pt/ni, nj)
+            dk = c%sDstLo(3,e) + pt/(ni*nj)
+            call src_samples(c%sOp(e), c%sDir(1,e), c%sTq(1,e), .false., nb1, &
+                di, c%sDstLo(1,e), c%sLo(1,e), b1, c1)
+            call src_samples(c%sOp(e), c%sDir(2,e), c%sTq(2,e), .false., nb2, &
+                dj, c%sDstLo(2,e), c%sLo(2,e), b2, c2)
+            call src_samples(c%sOp(e), c%sDir(3,e), c%sTq(3,e), .false., nb3, &
+                dk, c%sDstLo(3,e), c%sLo(3,e), b3, c3)
+            val = 0.0d0
+            do s3 = 0, c3 - 1
+                do s2 = 0, c2 - 1
+                    do s1 = 0, c1 - 1
+                        val = val + scalar(b1+s1, b2+s2, b3+s3, c%sSlot(e))
+                    end do
+                end do
+            end do
             peer = c%sPeer(e)
             pos = p - c%peerSendOff(peer-1)
-            c%sendbuf(pos,peer) = scalar(i,j,k,c%sSlot(e))
+            c%sendbuf(pos,peer) = val/real(c1*c2*c3, C_DOUBLE)
         end do
 #ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
@@ -971,6 +1214,39 @@ contains
         !$omp end target teams distribute parallel do
 #endif
     end subroutine unpack_scalar_entries
+
+    ! Per-dimension source sampling for one destination point of an
+    ! exchange entry. COPY: the mirrored index. RESTRICT: the 1 (matching
+    ! staggered face) or 2 (cell-centred) fine samples covering the coarse
+    ! destination. PROLONG: the covering coarse index (injection).
+    pure subroutine src_samples(op, dird, tqd, fs, nbd, dstIdx, dstLod, srcLod, base, cnt)
+!$omp declare target
+        integer, intent(in) :: op, dird, tqd, nbd, dstIdx, dstLod, srcLod
+        logical, intent(in) :: fs
+        integer, intent(out) :: base, cnt
+
+        integer :: jl
+
+        if (op == OP_COPY) then
+            base = srcLod + (dstIdx - dstLod)
+            cnt = 1
+        else if (op == OP_RESTRICT) then
+            if (dird /= 0) then
+                base = srcLod
+            else
+                jl = dstIdx - tqd*nbd/2
+                base = 2*jl - 1
+            end if
+            cnt = merge(1, 2, fs)
+        else
+            cnt = 1
+            if (dird /= 0) then
+                base = srcLod
+            else
+                base = (tqd*nbd + dstIdx - 1)/2 + 1
+            end if
+        end if
+    end subroutine src_samples
 
     ! Largest e in 1..n with off(e-1) <= gp (off is a 0:n point prefix).
     pure integer function find_entry(off, n, gp) result(e)
