@@ -205,7 +205,13 @@ immersed boundary. Phased, each phase verified before the next:
     `MOBY_HALO_AUDIT=1` (hook in main.f90) audits every
     exchange-written halo cell against manufactured linear fields on
     the real layout (1.2M + 7.9M cells, 0 bad) — run it FIRST when an
-    interface case misbehaves.
+    interface case misbehaves. Follow-up refactor (validated
+    2026-06-12, bit-exact on the full case list): the exchange is one
+    weighted gather (per-dim affine maps from `entry_gather_map`, ghost
+    blend = destination-completion weights, no op branches in the
+    kernels), and entries are ordered same-level-copies-first with
+    prefix counts so the per-colour copy-only exchange is a prefix of
+    the full one (shorter messages, no runtime filtering).
 - Phase 4: performance (overlap, see `docs/nonblocking_overlap_strategy.md`).
 
 If the branch `claude/blocks` does not exist yet, create it from the
