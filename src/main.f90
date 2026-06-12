@@ -40,6 +40,7 @@ program main
     type(comm_type) :: c
     integer(C_INT), allocatable :: blockActive(:)
     integer(C_INT), allocatable :: blockTouch(:,:), blockBuried(:,:)
+    integer :: refineLevel, maskCount
     logical :: blockActiveFound
 
     call comm_init_world(c)
@@ -73,8 +74,8 @@ program main
         ! Geometry-driven refinement (analytic IBM): refine to the finest
         ! level at the surface with a one-block buffer, removing buried
         ! blocks at every level.
-        if (.not. dns%ibm_enabled .or. len_trim(dns%ibm_coeff_file) > 0) then
-            error stop "[blocks] refine_body needs the analytic IBM; the STL path comes via mobygeom"
+        if (.not. dns%ibm_enabled) then
+            error stop "[blocks] refine_body needs the IBM enabled"
         end if
         if (any(mod(dns%globalSize, dns%block_nb) /= 0_C_INT)) then
             error stop "[blocks] nb must divide the global grid in every direction"
@@ -82,8 +83,21 @@ program main
         allocate(blockTouch(product(dns%globalSize/dns%block_nb)*8**dns%block_refine_levels, &
             dns%block_refine_levels + 1))
         allocate(blockBuried(size(blockTouch,1), size(blockTouch,2)))
-        call classify_block_geometry(blockTouch, blockBuried, dns, g, ibm, bc%isPeriodic, &
-            int(dns%block_refine_levels) + 1)
+        if (len_trim(dns%ibm_coeff_file) > 0) then
+            ! File-based geometry: masks computed by mobygeom block-table.
+            do refineLevel = 0, int(dns%block_refine_levels)
+                maskCount = int(product(dns%globalSize/dns%block_nb))*(8**refineLevel)
+                call read_block_masks(blockTouch(1:maskCount, refineLevel+1), &
+                    blockBuried(1:maskCount, refineLevel+1), refineLevel, maskCount, &
+                    blockActiveFound, dns, c%has_terminal)
+                if (.not. blockActiveFound) then
+                    error stop "coefficient file has no refinement masks; run mobygeom block-table"
+                end if
+            end do
+        else
+            call classify_block_geometry(blockTouch, blockBuried, dns, g, ibm, bc%isPeriodic, &
+                int(dns%block_refine_levels) + 1)
+        end if
         call init_block_set(blk, dns, g, bc%isPeriodic, int(c%cart_size, C_INT), &
             int(c%cart_rank, C_INT), touch=blockTouch, buried=blockBuried)
         deallocate(blockTouch, blockBuried)
@@ -153,6 +167,7 @@ program main
 
     call apply_bc(blk, bc)
     call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W, VAR_P])
+
     call flow%setup_after_grid(blk, dns, g, bc, c)
     if (les_is_enabled(les)) then
         call update_les_viscosity(les, blk, dns, ibm)
@@ -234,4 +249,5 @@ program main
     call destroy_grid(g)
     call destroy_boundary_faces(bc)
     call comm_finalize(c)
+
 end program main
