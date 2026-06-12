@@ -1,7 +1,7 @@
 module pressure_solver
     use, intrinsic :: iso_c_binding
     use :: init, only: dns_type, VAR_U, VAR_V, VAR_W, VAR_P
-    use :: blocks, only: block_set_type, FACE_OPEN, FACE_COARSE
+    use :: blocks, only: block_set_type, FACE_OPEN, FACE_PHYS, FACE_CLOSED
     use :: ibmm, only: ibm_type
     use :: boundary, only: boundary_type, apply_bc
     use :: comm, only: comm_type, exchange_halos
@@ -133,17 +133,17 @@ contains
                     mu_w_kp = ibm%mu(i,j,kp,VAR_W,b)
 
                     denom = (merge(0.0d0, mu_u_i*blk%d1x(i,VAR_U,b), &
-                                      noflux(blk%physLow(1,b)) .and. i == 1_C_INT) &
+                                      noflux_low(blk%physLow(1,b)) .and. i == 1_C_INT) &
                            + merge(0.0d0, mu_u_ip*blk%d1x(ip,VAR_U,b), &
-                                      noflux(blk%physHigh(1,b)) .and. i == hi(1)))*blk%d1x(i,VAR_P,b) &
+                                      noflux_high(blk%physHigh(1,b)) .and. i == hi(1)))*blk%d1x(i,VAR_P,b) &
                           + (merge(0.0d0, mu_v_j*blk%d1y(j,VAR_V,b), &
-                                      noflux(blk%physLow(2,b)) .and. j == 1_C_INT) &
+                                      noflux_low(blk%physLow(2,b)) .and. j == 1_C_INT) &
                            + merge(0.0d0, mu_v_jp*blk%d1y(jp,VAR_V,b), &
-                                      noflux(blk%physHigh(2,b)) .and. j == hi(2)))*blk%d1y(j,VAR_P,b) &
+                                      noflux_high(blk%physHigh(2,b)) .and. j == hi(2)))*blk%d1y(j,VAR_P,b) &
                           + (merge(0.0d0, mu_w_k*blk%d1z(k,VAR_W,b), &
-                                      noflux(blk%physLow(3,b)) .and. k == 1_C_INT) &
+                                      noflux_low(blk%physLow(3,b)) .and. k == 1_C_INT) &
                            + merge(0.0d0, mu_w_kp*blk%d1z(kp,VAR_W,b), &
-                                      noflux(blk%physHigh(3,b)) .and. k == hi(3)))*blk%d1z(k,VAR_P,b)
+                                      noflux_high(blk%physHigh(3,b)) .and. k == hi(3)))*blk%d1z(k,VAR_P,b)
 
                     div = (blk%q(ip,j,k,VAR_U,b)-blk%q(i,j,k,VAR_U,b))*blk%d1x(i,VAR_P,b) &
                         + (blk%q(i,jp,k,VAR_V,b)-blk%q(i,j,k,VAR_V,b))*blk%d1y(j,VAR_P,b) &
@@ -160,22 +160,22 @@ contains
                     ! interface velocity exactly zero.
                     blk%q(i,j,k,VAR_U,b) = blk%q(i,j,k,VAR_U,b) &
                         - merge(0.0d0, phi*blk%d1x(i,VAR_U,b)*mu_u_i, &
-                                noflux(blk%physLow(1,b)) .and. i == 1_C_INT)
+                                noflux_low(blk%physLow(1,b)) .and. i == 1_C_INT)
                     blk%q(ip,j,k,VAR_U,b) = blk%q(ip,j,k,VAR_U,b) &
                         + merge(0.0d0, phi*blk%d1x(ip,VAR_U,b)*mu_u_ip, &
-                                noflux(blk%physHigh(1,b)) .and. i == hi(1))
+                                noflux_high(blk%physHigh(1,b)) .and. i == hi(1))
                     blk%q(i,j,k,VAR_V,b) = blk%q(i,j,k,VAR_V,b) &
                         - merge(0.0d0, phi*blk%d1y(j,VAR_V,b)*mu_v_j, &
-                                noflux(blk%physLow(2,b)) .and. j == 1_C_INT)
+                                noflux_low(blk%physLow(2,b)) .and. j == 1_C_INT)
                     blk%q(i,jp,k,VAR_V,b) = blk%q(i,jp,k,VAR_V,b) &
                         + merge(0.0d0, phi*blk%d1y(jp,VAR_V,b)*mu_v_jp, &
-                                noflux(blk%physHigh(2,b)) .and. j == hi(2))
+                                noflux_high(blk%physHigh(2,b)) .and. j == hi(2))
                     blk%q(i,j,k,VAR_W,b) = blk%q(i,j,k,VAR_W,b) &
                         - merge(0.0d0, phi*blk%d1z(k,VAR_W,b)*mu_w_k, &
-                                noflux(blk%physLow(3,b)) .and. k == 1_C_INT)
+                                noflux_low(blk%physLow(3,b)) .and. k == 1_C_INT)
                     blk%q(i,j,kp,VAR_W,b) = blk%q(i,j,kp,VAR_W,b) &
                         + merge(0.0d0, phi*blk%d1z(kp,VAR_W,b)*mu_w_kp, &
-                                noflux(blk%physHigh(3,b)) .and. k == hi(3))
+                                noflux_high(blk%physHigh(3,b)) .and. k == hi(3))
                 END DO
             END DO
         END DO
@@ -186,14 +186,24 @@ contains
 
     end subroutine redblack_sweep
 
-    ! Faces excluded from the sweep denominator and corrections: physical
-    ! walls, closed faces, and fine-owned (FACE_FINE) interface faces. A
-    ! FACE_COARSE face is updated normally by the fine side.
-    pure logical function noflux(fk)
+    ! Faces excluded from the sweep denominator and corrections. The
+    ! LOW-side block owns a 2:1 shared face (strategy doc 6): low faces
+    ! are masked only at physical walls and closed faces, while a block's
+    ! HIGH face is masked at any interface too - its halo copy is
+    ! refreshed by the exchange (restriction or injection) and only feeds
+    ! the divergence.
+    pure logical function noflux_low(fk)
 !$omp declare target
         integer(C_INT), intent(in) :: fk
 
-        noflux = fk /= FACE_OPEN .and. fk /= FACE_COARSE
-    end function noflux
+        noflux_low = fk == FACE_PHYS .or. fk == FACE_CLOSED
+    end function noflux_low
+
+    pure logical function noflux_high(fk)
+!$omp declare target
+        integer(C_INT), intent(in) :: fk
+
+        noflux_high = fk /= FACE_OPEN
+    end function noflux_high
 
 end module pressure_solver

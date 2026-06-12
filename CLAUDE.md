@@ -141,7 +141,22 @@ immersed boundary. Phased, each phase verified before the next:
     constants make even diffusion round-off vanish); channel-with-patch
     50 steps stable and bounded; channel nb=4 without refinement still
     bit-exact vs Phase 2.
-  - 3c: staggered flux matching, FACE_COARSE/FACE_FINE sweep masks.
+  - 3c (complete, validated 2026-06-12): staggered interface treatment.
+    DEVIATION from the original doc 6 (doc updated first): the LOW-side
+    block owns the 2:1 shared face — unconditional fine-owns-face is
+    unrealizable for fine-west orientations in this storage convention
+    (fine face DOFs in unpredictable halos; restriction would write the
+    coarse INTERIOR u(1) plane against the prolong reading it). Owner
+    predicts and corrects the face normally; the other side's halo copy
+    comes from the existing exchange (RESTRICT 4-sub-face average /
+    PROLONG injection, both exactly conservative). Sweep masks:
+    noflux_low = {PHYS, CLOSED}; noflux_high = any non-open kind (the
+    high halo face only feeds the divergence).
+    Gates: uniform flow through the patch still EXACT (0.0); global
+    mass residual with the patch −3.5e-20 (velocity scale 7e-2);
+    laminar channel patch vs uniform-fine reference converges at order
+    2.45 (interface band) / 2.70 (away), error mildly localized at the
+    interface; channel nb=4 without refinement bit-exact vs Phase 2.
   - 3d: geometry-driven refinement in mobygrid/mobygeom.
 - Phase 4: performance (overlap, see `docs/nonblocking_overlap_strategy.md`).
 
