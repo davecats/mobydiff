@@ -45,6 +45,10 @@ module init
         real(C_DOUBLE) :: block_refine_box(6) = [1.0d0, 0.0d0, 1.0d0, 0.0d0, 1.0d0, 0.0d0]
         ! [blocks] refine_levels: rounds of box refinement (max level).
         integer(C_INT) :: block_refine_levels = 1_C_INT
+        ! [blocks] refine_body: refine blocks whose dilated region meets the
+        ! immersed surface to the finest level (+1 block buffer), and remove
+        ! buried blocks at every level (analytic IBM).
+        logical(C_BOOL) :: block_refine_body = .false.
         logical(C_BOOL) :: ibm_enabled = .true.
         character(len=256) :: ibm_coeff_file = ""
         character(len=256) :: field_prefix = ""

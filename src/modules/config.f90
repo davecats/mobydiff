@@ -214,6 +214,8 @@ subroutine apply_config_value(section, key, value, dns, g, les, ps, bc, c, seen,
             call read_real6(value, dns%block_refine_box, line_no)
         case ("refine_levels")
             call read_c_int(value, dns%block_refine_levels, line_no)
+        case ("refine_body")
+            call read_bool(value, dns%block_refine_body, line_no)
         end select
     case ("les")
         call apply_les_value(key_l, value, les, line_no)

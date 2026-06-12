@@ -39,6 +39,7 @@ program main
     type(config_seen_type) :: config_seen
     type(comm_type) :: c
     integer(C_INT), allocatable :: blockActive(:)
+    integer(C_INT), allocatable :: blockTouch(:,:), blockBuried(:,:)
     logical :: blockActiveFound
 
     call comm_init_world(c)
@@ -68,12 +69,30 @@ program main
     ! lives in a block set tiling the grid ([blocks] nb per block). With an
     ! immersed boundary, blocks buried inside the body are removed from the
     ! global table before the set is built.
-    if (dns%block_nb > 0_C_INT .and. dns%ibm_enabled .and. dns%block_remove_solid) then
+    if (dns%block_nb > 0_C_INT .and. dns%block_refine_body) then
+        ! Geometry-driven refinement (analytic IBM): refine to the finest
+        ! level at the surface with a one-block buffer, removing buried
+        ! blocks at every level.
+        if (.not. dns%ibm_enabled .or. len_trim(dns%ibm_coeff_file) > 0) then
+            error stop "[blocks] refine_body needs the analytic IBM; the STL path comes via mobygeom"
+        end if
+        if (any(mod(dns%globalSize, dns%block_nb) /= 0_C_INT)) then
+            error stop "[blocks] nb must divide the global grid in every direction"
+        end if
+        allocate(blockTouch(product(dns%globalSize/dns%block_nb)*8**dns%block_refine_levels, &
+            dns%block_refine_levels + 1))
+        allocate(blockBuried(size(blockTouch,1), size(blockTouch,2)))
+        call classify_block_geometry(blockTouch, blockBuried, dns, g, ibm, bc%isPeriodic, &
+            int(dns%block_refine_levels) + 1)
+        call init_block_set(blk, dns, g, bc%isPeriodic, int(c%cart_size, C_INT), &
+            int(c%cart_rank, C_INT), touch=blockTouch, buried=blockBuried)
+        deallocate(blockTouch, blockBuried)
+    else if (dns%block_nb > 0_C_INT .and. dns%ibm_enabled .and. dns%block_remove_solid) then
         if (any(mod(dns%globalSize, dns%block_nb) /= 0_C_INT)) then
             error stop "[blocks] nb must divide the global grid in every direction"
         end if
         if (dns%block_refine_box(1) <= dns%block_refine_box(2)) then
-            error stop "solid-block removal with refinement is Phase 3d; set remove_solid = false"
+            error stop "solid-block removal with box refinement is unsupported; use refine_body"
         end if
         allocate(blockActive(product(dns%globalSize/dns%block_nb)))
         if (len_trim(dns%ibm_coeff_file) > 0) then

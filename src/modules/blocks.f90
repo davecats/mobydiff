@@ -125,7 +125,7 @@ contains
     ! ids); without it every rank owns its Cartesian box as one block.
     ! Coordinates and metrics are sliced from the global node lines via
     ! slice_grid_direction either way.
-    subroutine init_block_set(blk, dns, g, periodic, nranks, myrank, active)
+    subroutine init_block_set(blk, dns, g, periodic, nranks, myrank, active, touch, buried)
         type(block_set_type), intent(inout) :: blk
         type(dns_type), intent(in) :: dns
         type(grid_type), intent(in) :: g
@@ -135,6 +135,10 @@ contains
         ! keep). Blocks buried inside the immersed boundary are dropped from
         ! the global table; only meaningful with [blocks] nb.
         integer(C_INT), intent(in), optional :: active(:)
+        ! Optional per-level geometry masks (raster, level) for
+        ! geometry-driven refinement: touch = dilated block straddles the
+        ! immersed surface, buried = dilated block fully solid.
+        integer(C_INT), intent(in), optional :: touch(:,:), buried(:,:)
 
         integer :: nx, ny, nz, b, d, id, nRemoved
 
@@ -152,9 +156,11 @@ contains
             end do
             blk%gnbt = dns%globalSize(1:3)/blk%nb
             blk%nLevels = 1_C_INT
-            if (refine_box_set(dns)) blk%nLevels = 1_C_INT + max(dns%block_refine_levels, 0_C_INT)
+            if (refine_box_set(dns) .or. dns%block_refine_body) then
+                blk%nLevels = 1_C_INT + max(dns%block_refine_levels, 0_C_INT)
+            end if
             call build_level_lines(blk, dns, g)
-            call build_leaf_table(blk, dns, periodic, active, myrank)
+            call build_leaf_table(blk, dns, periodic, active, myrank, touch, buried)
             nRemoved = int(product(blk%gnbt)) - count_level0_leaves(blk)
             if (nRemoved > 0 .and. myrank == 0_C_INT .and. blk%nLevels == 1_C_INT) then
                 print *, "removed", nRemoved, "of", product(blk%gnbt), &
@@ -393,12 +399,13 @@ contains
     ! refinement rounds, 2:1 smoothing over the 26-neighbourhood, then
     ! leaf ids along the Z-order curve of the finest lattice. Identical on
     ! every rank, so the distribution needs no communication.
-    subroutine build_leaf_table(blk, dns, periodic, active, myrank)
+    subroutine build_leaf_table(blk, dns, periodic, active, myrank, touch, buried)
         type(block_set_type), intent(inout) :: blk
         type(dns_type), intent(in) :: dns
         logical(C_BOOL), intent(in) :: periodic(1:3)
         integer(C_INT), intent(in), optional :: active(:)
         integer(C_INT), intent(in) :: myrank
+        integer(C_INT), intent(in), optional :: touch(:,:), buried(:,:)
 
         ! lidOf markers during construction: -1 none/covered, -2 split,
         ! 0 leaf placeholder (real ids assigned at the end).
@@ -435,8 +442,10 @@ contains
             end do
         end do
 
-        ! Box refinement rounds: split leaves whose physical region
-        ! intersects the [blocks] refine box.
+        ! Refinement rounds: split leaves whose physical region intersects
+        ! the [blocks] refine box, and (refine_body) leaves that straddle
+        ! the immersed surface or 26-neighbour one that does (the >= 1
+        ! block buffer of strategy doc Section 4).
         do round = 1, lmax
             l = round - 1
             do gz = 0, int(blk%gnbt(3))*2**l - 1
@@ -444,15 +453,36 @@ contains
                     do gx = 0, int(blk%gnbt(1))*2**l - 1
                         c = [gx, gy, gz]
                         if (blk%lidOf(lid_index(blk, l, c)) /= int(M_LEAF, C_INT)) cycle
-                        lo(1) = blk%lineX(c(1)*int(blk%nb(1)), l+1)
-                        hi(1) = blk%lineX((c(1)+1)*int(blk%nb(1)), l+1)
-                        lo(2) = blk%lineY(c(2)*int(blk%nb(2)), l+1)
-                        hi(2) = blk%lineY((c(2)+1)*int(blk%nb(2)), l+1)
-                        lo(3) = blk%lineZ(c(3)*int(blk%nb(3)), l+1)
-                        hi(3) = blk%lineZ((c(3)+1)*int(blk%nb(3)), l+1)
-                        hit = lo(1) < dns%block_refine_box(2) .and. hi(1) > dns%block_refine_box(1) &
-                        .and. lo(2) < dns%block_refine_box(4) .and. hi(2) > dns%block_refine_box(3) &
-                        .and. lo(3) < dns%block_refine_box(6) .and. hi(3) > dns%block_refine_box(5)
+                        hit = .false.
+                        if (refine_box_set(dns)) then
+                            lo(1) = blk%lineX(c(1)*int(blk%nb(1)), l+1)
+                            hi(1) = blk%lineX((c(1)+1)*int(blk%nb(1)), l+1)
+                            lo(2) = blk%lineY(c(2)*int(blk%nb(2)), l+1)
+                            hi(2) = blk%lineY((c(2)+1)*int(blk%nb(2)), l+1)
+                            lo(3) = blk%lineZ(c(3)*int(blk%nb(3)), l+1)
+                            hi(3) = blk%lineZ((c(3)+1)*int(blk%nb(3)), l+1)
+                            hit = lo(1) < dns%block_refine_box(2) .and. hi(1) > dns%block_refine_box(1) &
+                            .and. lo(2) < dns%block_refine_box(4) .and. hi(2) > dns%block_refine_box(3) &
+                            .and. lo(3) < dns%block_refine_box(6) .and. hi(3) > dns%block_refine_box(5)
+                        end if
+                        if (.not. hit .and. present(touch)) then
+                            hit = touch(level_raster(blk, l, c), l+1) /= 0_C_INT
+                            if (.not. hit) then
+                                buffer: do oz = -1, 1
+                                do oy = -1, 1
+                                do ox = -1, 1
+                                    if (ox == 0 .and. oy == 0 .and. oz == 0) cycle
+                                    cn = c + [ox, oy, oz]
+                                    if (.not. wrap_lattice(blk, periodic, l, cn)) cycle
+                                    if (touch(level_raster(blk, l, cn), l+1) /= 0_C_INT) then
+                                        hit = .true.
+                                        exit buffer
+                                    end if
+                                end do
+                                end do
+                                end do buffer
+                            end if
+                        end if
                         if (hit) call split_leaf(blk, l, c)
                     end do
                 end do
@@ -511,17 +541,26 @@ contains
             do gz = 0, int(blk%gnbt(3))*2**l - 1
                 do gy = 0, int(blk%gnbt(2))*2**l - 1
                     do gx = 0, int(blk%gnbt(1))*2**l - 1
-                        if (blk%lidOf(lid_index(blk, l, [gx, gy, gz])) /= int(M_LEAF, C_INT)) cycle
+                        c = [gx, gy, gz]
+                        if (blk%lidOf(lid_index(blk, l, c)) /= int(M_LEAF, C_INT)) cycle
+                        if (present(buried)) then
+                            ! Removal at every level (Phase 2 generalized).
+                            if (buried(level_raster(blk, l, c), l+1) /= 0_C_INT) then
+                                blk%lidOf(lid_index(blk, l, c)) = int(M_NONE, C_INT)
+                                cycle
+                            end if
+                        end if
                         i = i + 1
                         tmpLevel(i) = l
-                        tmpCoord(:,i) = [gx, gy, gz]
+                        tmpCoord(:,i) = c
                         keys(i) = morton_key(gx*2**(lmax-l), gy*2**(lmax-l), gz*2**(lmax-l))
                     end do
                 end do
             end do
         end do
-        call heapsort_index(keys, order)
-
+        ! Buried leaves were dropped during collection; sort the survivors.
+        n = i
+        call heapsort_index(keys(1:n), order(1:n))
         blk%nBlocksGlobal = int(n, C_INT)
         allocate(blk%leafLevel(max(1,n)), blk%leafCoord(3,max(1,n)))
         do i = 1, n
@@ -540,6 +579,16 @@ contains
 
         deallocate(tmpLevel, tmpCoord, keys, order)
     end subroutine build_leaf_table
+
+    pure integer function level_raster(blk, l, c) result(r)
+        type(block_set_type), intent(in) :: blk
+        integer, intent(in) :: l, c(3)
+
+        integer :: nl(3)
+
+        nl = int(blk%gnbt)*2**l
+        r = 1 + c(1) + nl(1)*(c(2) + nl(2)*c(3))
+    end function level_raster
 
     subroutine split_leaf(blk, l, c)
         type(block_set_type), intent(inout) :: blk

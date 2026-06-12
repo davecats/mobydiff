@@ -16,7 +16,7 @@ module ibmm
     use, intrinsic :: iso_c_binding
     use :: init, only: dns_type, grid_type, VAR_U, VAR_V, VAR_W, VAR_P, &
         is_face_staggered, face_at, cell_center_at
-    use :: blocks, only: block_set_type
+    use :: blocks, only: block_set_type, subdivide_node_line
     use :: io, only: to_c_string
     implicit none
 
@@ -276,6 +276,97 @@ contains
             x = cell_center_at(node, int(nGlobal), length, idx, periodic)
         end if
     end function location_coord
+
+    ! Per-level geometry masks for geometry-driven refinement (analytic
+    ! IBM). For every level-l lattice cell, in x-fastest raster order:
+    !   touch(c, l+1)  = the one-halo dilated block straddles the surface
+    !                    (mixed solid/fluid over the 4 variable locations)
+    !   buried(c, l+1) = the dilated block is solid everywhere (removable)
+    ! Level lines are built here by midpoint subdivision, identical to the
+    ! solver's per-level metric lines.
+    subroutine classify_block_geometry(touch, buried, dns, g, ibm, periodic, nLevels)
+        integer(C_INT), intent(out) :: touch(:,:), buried(:,:)
+        type(dns_type), intent(in) :: dns
+        type(grid_type), intent(in) :: g
+        type(ibm_type), intent(inout) :: ibm
+        logical(C_BOOL), intent(in) :: periodic(1:3)
+        integer, intent(in) :: nLevels
+
+        integer :: nb, l, gnbt(3), gx, gy, gz, raster, d
+        integer :: i, j, k, var, o(3), nf(3), nl(3)
+        real(C_DOUBLE) :: xA(3)
+        real(C_DOUBLE), allocatable :: lineX(:,:), lineY(:,:), lineZ(:,:)
+        logical :: anySolid, anyFluid, inside
+
+        call set_ibm_geometry_defaults(ibm)
+        nb = int(dns%block_nb)
+
+        nf = int(dns%globalSize)*2**(nLevels - 1)
+        allocate(lineX(0:nf(1), nLevels), lineY(0:nf(2), nLevels), lineZ(0:nf(3), nLevels))
+        lineX(0:int(dns%globalSize(1)),1) = g%xNode
+        lineY(0:int(dns%globalSize(2)),1) = g%yNode
+        lineZ(0:int(dns%globalSize(3)),1) = g%zNode
+        do l = 2, nLevels
+            call subdivide_node_line(lineX(0:int(dns%globalSize(1))*2**(l-2), l-1), &
+                                     lineX(0:int(dns%globalSize(1))*2**(l-1), l))
+            call subdivide_node_line(lineY(0:int(dns%globalSize(2))*2**(l-2), l-1), &
+                                     lineY(0:int(dns%globalSize(2))*2**(l-1), l))
+            call subdivide_node_line(lineZ(0:int(dns%globalSize(3))*2**(l-2), l-1), &
+                                     lineZ(0:int(dns%globalSize(3))*2**(l-1), l))
+        end do
+
+        do l = 1, nLevels
+            nl = int(dns%globalSize)*2**(l-1)
+            gnbt = nl/nb
+            raster = 0
+            do gz = 0, gnbt(3) - 1
+                do gy = 0, gnbt(2) - 1
+                    do gx = 0, gnbt(1) - 1
+                        raster = raster + 1
+                        o = [gx, gy, gz]*nb
+                        anySolid = .false.
+                        anyFluid = .false.
+                        scan: do var = int(VAR_U), int(VAR_P)
+                            do k = o(3), o(3) + nb + 1
+                                do j = o(2), o(2) + nb + 1
+                                    do i = o(1), o(1) + nb + 1
+                                        xA(1) = level_coord(lineX(:,l), nl(1), dns%leng(1), &
+                                            periodic(1), 1, var, i)
+                                        xA(2) = level_coord(lineY(:,l), nl(2), dns%leng(2), &
+                                            periodic(2), 2, var, j)
+                                        xA(3) = level_coord(lineZ(:,l), nl(3), dns%leng(3), &
+                                            periodic(3), 3, var, k)
+                                        inside = isInBody(xA, ibm, dns)
+                                        anySolid = anySolid .or. inside
+                                        anyFluid = anyFluid .or. .not. inside
+                                        if (anySolid .and. anyFluid) exit scan
+                                    end do
+                                end do
+                            end do
+                        end do scan
+                        touch(raster, l) = merge(1_C_INT, 0_C_INT, anySolid .and. anyFluid)
+                        buried(raster, l) = merge(1_C_INT, 0_C_INT, anySolid .and. .not. anyFluid)
+                    end do
+                end do
+            end do
+        end do
+
+        deallocate(lineX, lineY, lineZ)
+    end subroutine classify_block_geometry
+
+    real(C_DOUBLE) function level_coord(node, nl, length, periodic, dir, var, idx) result(x)
+        real(C_DOUBLE), intent(in) :: node(0:)
+        integer, intent(in) :: nl
+        real(C_DOUBLE), intent(in) :: length
+        logical(C_BOOL), intent(in) :: periodic
+        integer, intent(in) :: dir, var, idx
+
+        if (is_face_staggered(dir, var)) then
+            x = face_at(node, nl, length, idx - 1, periodic)
+        else
+            x = cell_center_at(node, nl, length, idx, periodic)
+        end if
+    end function level_coord
 
     subroutine set_ibm_coeff(dns, blk, ibm, var)
         type(dns_type), intent(in) :: dns

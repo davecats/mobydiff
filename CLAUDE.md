@@ -157,7 +157,23 @@ immersed boundary. Phased, each phase verified before the next:
     laminar channel patch vs uniform-fine reference converges at order
     2.45 (interface band) / 2.70 (away), error mildly localized at the
     interface; channel nb=4 without refinement bit-exact vs Phase 2.
-  - 3d: geometry-driven refinement in mobygrid/mobygeom.
+  - 3d (complete for the analytic IBM, validated 2026-06-12):
+    geometry-driven refinement. `[blocks] refine_body = true` classifies
+    per level in ibmm (`classify_block_geometry`: touch = dilated block
+    straddles the surface, buried = fully solid, on lines built by
+    midpoint subdivision), and the leaf builder refines touched blocks
+    plus a one-block 26-neighbour buffer to the finest level, applies
+    2:1 smoothing, and removes buried leaves at every level. STL path:
+    not yet — mobygeom must emit the same per-level touch/buried masks
+    (the natural format mirrors block_active: two per-level raster
+    datasets); `refine_body` with a coefficient file errors out.
+    Gate (64^3 wavy-wall channel, nb=8, GPU): 1408 leaves (1024 fine at
+    the wall+buffer) vs the 4096-leaf uniform-fine reference: mean-u
+    profile in the refined region matches to 0.015% of peak; coarse far
+    field differs by the expected truncation (~1.3% pointwise,
+    coarse-averaged). Savings: 2.9x fewer cells, 2.7x faster GPU
+    time/step (0.042 vs 0.114 s). Channel nb=4 without refinement
+    remains bit-exact vs Phase 2.
 - Phase 4: performance (overlap, see `docs/nonblocking_overlap_strategy.md`).
 
 If the branch `claude/blocks` does not exist yet, create it from the
