@@ -1450,6 +1450,239 @@ def window_all_solid(solid_ext: np.ndarray, nb: int, gnbt: tuple[int, int, int])
     return total == w**3
 
 
+def subdivided_args(args: argparse.Namespace, level: int) -> argparse.Namespace:
+    """Copy of the grid args at refinement level `level`: sizes doubled per
+    level and node lines midpoint-subdivided, matching the solver's
+    subdivide_node_line so coefficients live at identical coordinates."""
+    finalize_grid_args(args)
+    out = argparse.Namespace(**vars(args))
+    f = 2**level
+    out.nx, out.ny, out.nz = int(args.nx)*f, int(args.ny)*f, int(args.nz)*f
+    nodes = {}
+    for d in (1, 2, 3):
+        line = grid_axis_nodes(d, args)
+        for _ in range(level):
+            fine = np.empty(2*(line.size - 1) + 1, dtype=np.float64)
+            fine[0::2] = line
+            fine[1::2] = 0.5*(line[:-1] + line[1:])
+            line = fine
+        nodes[d] = line
+    out._grid_axis_nodes = nodes
+    out._ray_intersector = None
+    return out
+
+
+def window_any_solid(solid_ext: np.ndarray, nb: int, gnbt: tuple[int, int, int]) -> np.ndarray:
+    return ~window_all_solid(~solid_ext, nb, gnbt)
+
+
+def level_masks(mesh, vertices, faces, args: argparse.Namespace, nb: int,
+                levels: int) -> tuple[list[np.ndarray], list[np.ndarray]]:
+    """Per-level touch/buried block masks ((gx,gy,gz) bool arrays), the file
+    counterpart of the solver's classify_block_geometry."""
+    touch, buried = [], []
+    for l in range(levels):
+        la = subdivided_args(args, l)
+        gnbt = (la.nx // nb, la.ny // nb, la.nz // nb)
+        anySolid = np.zeros(gnbt, dtype=bool)
+        allSolid = np.ones(gnbt, dtype=bool)
+        anyFluid = np.zeros(gnbt, dtype=bool)
+        for var in (VAR_U, VAR_V, VAR_W, 0):
+            inside_ext, _, _, _ = classify_stl_extended_grid(mesh, vertices, faces, var, la)
+            solid_ext = ~inside_ext if getattr(la, "inside_is_fluid", False) else inside_ext
+            anySolid |= window_any_solid(solid_ext, nb, gnbt)
+            allSolid &= window_all_solid(solid_ext, nb, gnbt)
+            anyFluid |= window_any_solid(~solid_ext, nb, gnbt)
+        touch.append(anySolid & anyFluid)
+        buried.append(allSolid)
+    return touch, buried
+
+
+def morton_key3(c: np.ndarray) -> np.ndarray:
+    key = np.zeros(c.shape[0], dtype=np.int64)
+    for bit in range(21):
+        key |= ((c[:, 0].astype(np.int64) >> bit) & 1) << (3*bit)
+        key |= ((c[:, 1].astype(np.int64) >> bit) & 1) << (3*bit + 1)
+        key |= ((c[:, 2].astype(np.int64) >> bit) & 1) << (3*bit + 2)
+    return key
+
+
+def build_leaf_table_py(gnbt, levels, periodic, touch, buried, refine_box, lines, nb):
+    """Mirror of the solver's build_leaf_table: root tiling, refinement by
+    body-touch (+ one-block 26-neighbour buffer) and/or physical box, 2:1
+    smoothing, removal of buried leaves at every level, ids along the
+    finest-lattice Morton curve. Must stay rule-for-rule identical to
+    blocks.f90; the solver verifies the resulting table at startup."""
+    M_NONE, M_SPLIT, M_LEAF = -1, -2, 0
+    lmax = levels - 1
+    occ = [np.full(tuple(np.array(gnbt)*2**l), M_NONE, dtype=np.int64) for l in range(levels)]
+    occ[0][:, :, :] = M_LEAF
+
+    def wrap(l, c):
+        nl = np.array(gnbt)*2**l
+        c = np.array(c)
+        for d in range(3):
+            if c[d] < 0 or c[d] >= nl[d]:
+                if not periodic[d]:
+                    return None
+                c[d] = c[d] % nl[d]
+        return tuple(c)
+
+    def split(l, c):
+        occ[l][c] = M_SPLIT
+        cx, cy, cz = c
+        occ[l+1][2*cx:2*cx+2, 2*cy:2*cy+2, 2*cz:2*cz+2] = M_LEAF
+
+    for l in range(lmax):
+        nl = np.array(gnbt)*2**l
+        for cx in range(nl[0]):
+            for cy in range(nl[1]):
+                for cz in range(nl[2]):
+                    if occ[l][cx, cy, cz] != M_LEAF:
+                        continue
+                    hit = False
+                    if refine_box is not None:
+                        lo = [lines[d][l][[cx, cy, cz][d]*nb] for d in range(3)]
+                        hi = [lines[d][l][([cx, cy, cz][d]+1)*nb] for d in range(3)]
+                        hit = all(lo[d] < refine_box[2*d+1] and hi[d] > refine_box[2*d]
+                                  for d in range(3))
+                    if not hit and touch is not None:
+                        hit = bool(touch[l][cx, cy, cz])
+                        if not hit:
+                            for ox in (-1, 0, 1):
+                                for oy in (-1, 0, 1):
+                                    for oz in (-1, 0, 1):
+                                        if ox == oy == oz == 0:
+                                            continue
+                                        cn = wrap(l, (cx+ox, cy+oy, cz+oz))
+                                        if cn is not None and touch[l][cn]:
+                                            hit = True
+                                            break
+                                    if hit: break
+                                if hit: break
+                    if hit:
+                        split(l, (cx, cy, cz))
+
+    changed = True
+    while changed:
+        changed = False
+        for l in range(lmax - 1):
+            nl = np.array(gnbt)*2**l
+            for cx in range(nl[0]):
+                for cy in range(nl[1]):
+                    for cz in range(nl[2]):
+                        if occ[l][cx, cy, cz] != M_LEAF:
+                            continue
+                        must = False
+                        for ox in (-1, 0, 1):
+                            for oy in (-1, 0, 1):
+                                for oz in (-1, 0, 1):
+                                    if ox == oy == oz == 0:
+                                        continue
+                                    cn = wrap(l, (cx+ox, cy+oy, cz+oz))
+                                    if cn is None or occ[l][cn] != M_SPLIT:
+                                        continue
+                                    ch = occ[l+1][2*cn[0]:2*cn[0]+2, 2*cn[1]:2*cn[1]+2,
+                                                  2*cn[2]:2*cn[2]+2]
+                                    if (ch == M_SPLIT).any():
+                                        must = True
+                                        break
+                                if must: break
+                            if must: break
+                        if must:
+                            split(l, (cx, cy, cz))
+                            changed = True
+
+    levels_out, coords_out = [], []
+    for l in range(levels):
+        leaf = np.argwhere(occ[l] == M_LEAF)
+        if buried is not None and leaf.size:
+            keep = ~buried[l][leaf[:, 0], leaf[:, 1], leaf[:, 2]]
+            leaf = leaf[keep]
+        if leaf.size:
+            levels_out.append(np.full(leaf.shape[0], l, dtype=np.int64))
+            coords_out.append(leaf)
+    lev = np.concatenate(levels_out)
+    crd = np.concatenate(coords_out)
+    keys = morton_key3(crd * (2**(lmax - lev))[:, None])
+    order = np.argsort(keys, kind="stable")
+    return lev[order], crd[order]
+
+
+def block_table_from_stl(args: argparse.Namespace) -> None:
+    """Write the block-table IBM coefficient file for refined runs: blocks
+    (id -> origin, level), per-leaf coefficient windows evaluated at each
+    leaf's level-l staggered locations, and the per-level touch/buried
+    rasters the solver rebuilds its leaf table from."""
+    finalize_grid_args(args)
+    nb = int(args.block_nb)
+    levels = int(args.levels)
+    if nb < 4 or nb % 2:
+        raise SystemExit("--block-nb must be even and >= 4")
+    for n, name in ((args.nx, "nx"), (args.ny, "ny"), (args.nz, "nz")):
+        if n % nb:
+            raise SystemExit(f"--block-nb {nb} does not divide {name} = {n}")
+    gnbt = (args.nx // nb, args.ny // nb, args.nz // nb)
+    periodic = [grid_periodic(d, args) for d in (1, 2, 3)]
+    # node lines per direction (0-based) and level for the box-refine rule
+    lines = {d: [grid_axis_nodes(d + 1, subdivided_args(args, l)) for l in range(levels)]
+             for d in range(3)}
+
+    geometry_values = args.geometry if isinstance(args.geometry, list) else [args.geometry]
+    geometries = [Path(value).resolve() for value in geometry_values]
+    output = Path(args.output).resolve()
+    mesh, vertices, faces = load_stl_meshes(geometries, repair=not args.no_repair)
+    mesh, vertices, faces = apply_stl_transform(mesh, args)
+    prepare_fluid_points(args)
+    for name in ("_fluid_ray_checks", "_fluid_ray_ambiguous", "_fluid_ray_disagreements", "_fluid_ray_overrides"):
+        setattr(args, name, 0)
+    args._ray_intersector = None
+
+    refine_box = getattr(args, "refine_box", None)
+    touch = buried = None
+    if refine_box is None:
+        touch, buried = level_masks(mesh, vertices, faces, args, nb, levels)
+
+    lev, crd = build_leaf_table_py(gnbt, levels, periodic, touch, buried, refine_box, lines, nb)
+    n_leaves = lev.shape[0]
+    print(f"block table: {n_leaves} leaves, "
+          f"{int((lev > 0).sum())} refined, levels {np.bincount(lev, minlength=levels)}")
+
+    level_args = [subdivided_args(args, l) for l in range(levels)]
+    with h5py.File(output, "w") as h5:
+        h5.attrs["nx"] = int(args.nx)
+        h5.attrs["ny"] = int(args.ny)
+        h5.attrs["nz"] = int(args.nz)
+        h5.attrs["lx"] = float(args.lx)
+        h5.attrs["ly"] = float(args.ly)
+        h5.attrs["lz"] = float(args.lz)
+        h5.attrs["re"] = float(args.re)
+        h5.attrs["block_nb"] = np.int32(nb)
+        h5.attrs["block_levels"] = np.int32(levels)
+        h5.attrs["convention"] = ("mobyDiff block-table coefficients: coef_blocks row id = "
+                                  "(nb+2)^3 ghost window x 3 staggered vars at the leaf's level")
+        blocks = np.empty((n_leaves, 4), dtype=np.int32)
+        blocks[:, 0:3] = (crd*nb).astype(np.int32)
+        blocks[:, 3] = lev.astype(np.int32)
+        h5.create_dataset("blocks", data=blocks)
+        if touch is not None:
+            for l in range(levels):
+                h5.create_dataset(f"block_touch_l{l}",
+                                  data=touch[l].transpose(2, 1, 0).ravel().astype(np.int32))
+                h5.create_dataset(f"block_buried_l{l}",
+                                  data=buried[l].transpose(2, 1, 0).ravel().astype(np.int32))
+        coef = h5.create_dataset("coef_blocks", shape=(n_leaves, nb+2, nb+2, nb+2, 3),
+                                 dtype=np.float64, chunks=(1, nb+2, nb+2, nb+2, 3))
+        for i in range(n_leaves):
+            la = level_args[lev[i]]
+            o = crd[i]*nb
+            tile = (int(o[0]), int(o[0])+nb+2, int(o[1]), int(o[1])+nb+2,
+                    int(o[2]), int(o[2])+nb+2)
+            coef_tile, _ = stl_coeff_tile_from_mesh(mesh, vertices, faces, la, tile)
+            coef[i] = coef_tile
+    print(f"block-table coefficients written to: {output}")
+
+
 def block_active_from_stl(args: argparse.Namespace) -> None:
     """Write the per-block keep flags used by the solver's solid-block removal.
 
@@ -2455,6 +2688,18 @@ def main(argv: list[str] | None = None) -> int:
     add_common_grid_args(p)
     add_stl_args(p)
     p.set_defaults(func=block_active_from_stl)
+
+    p = sub.add_parser("block-table", help="write block-table IBM coefficients for refined runs")
+    p.add_argument("--geometry", required=True, nargs="+")
+    p.add_argument("--output", required=True)
+    p.add_argument("--block-nb", type=int, required=True)
+    p.add_argument("--levels", type=int, default=2,
+                   help="number of levels (refine_levels + 1)")
+    p.add_argument("--refine-box", type=float, nargs=6, default=None,
+                   help="x0 x1 y0 y1 z0 z1: box refinement instead of body-driven")
+    add_common_grid_args(p)
+    add_stl_args(p)
+    p.set_defaults(func=block_table_from_stl)
 
     p = sub.add_parser("check-stl-geometry", help="run generic STL mesh/probe classification checks")
     p.add_argument("--geometry", required=True, nargs="+")
