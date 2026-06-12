@@ -875,6 +875,192 @@ int fdm_h5_read_block_active(const char *filename, int n_lattice, int block_nb,
     return 0;
 }
 
+/* Per-level refinement masks written by mobygeom block-table. */
+int fdm_h5_read_block_masks(const char *filename, int level, int n_raster,
+                            int block_nb, int *found, int *touch, int *buried)
+{
+    char name[64];
+    hid_t file = -1;
+    int file_nb = 0;
+    int ierr = 0;
+
+    *found = 0;
+    file = H5Fopen(filename, H5F_ACC_RDONLY, H5P_DEFAULT);
+    if (file < 0) return 1;
+
+    snprintf(name, sizeof(name), "block_touch_l%d", level);
+    if (H5Lexists(file, name, H5P_DEFAULT) <= 0) {
+        H5Fclose(file);
+        return 0;
+    }
+    if (read_attr_int(file, "block_nb", &file_nb, 1) != 0 || file_nb != block_nb) {
+        H5Fclose(file);
+        return 1;
+    }
+
+    {
+        hid_t dset = H5Dopen2(file, name, H5P_DEFAULT);
+        hid_t space = dset >= 0 ? H5Dget_space(dset) : -1;
+        hsize_t dims[1] = {0};
+        if (dset < 0 || space < 0 || H5Sget_simple_extent_ndims(space) != 1) ierr = 1;
+        if (!ierr) {
+            H5Sget_simple_extent_dims(space, dims, NULL);
+            if (dims[0] != (hsize_t)n_raster) ierr = 1;
+        }
+        if (!ierr) ierr |= H5Dread(dset, H5T_NATIVE_INT, H5S_ALL, H5S_ALL, H5P_DEFAULT, touch) < 0;
+        if (space >= 0) H5Sclose(space);
+        if (dset >= 0) H5Dclose(dset);
+    }
+    snprintf(name, sizeof(name), "block_buried_l%d", level);
+    if (!ierr) {
+        hid_t dset = H5Dopen2(file, name, H5P_DEFAULT);
+        if (dset < 0) {
+            ierr = 1;
+        } else {
+            ierr |= H5Dread(dset, H5T_NATIVE_INT, H5S_ALL, H5S_ALL, H5P_DEFAULT, buried) < 0;
+            H5Dclose(dset);
+        }
+    }
+
+    H5Fclose(file);
+    if (!ierr) *found = 1;
+    return ierr;
+}
+
+/*
+ * Block-table coefficients (mobygeom block-table): coef_blocks rows are
+ * (nb+2)^3 ghost windows x 3 staggered vars at each leaf's level. The
+ * file's blocks table is checked against the solver's leaf table so a
+ * stale or differently-built file cannot be applied silently.
+ * *found = 0 when the file has no coef_blocks (legacy global layout).
+ */
+int fdm_h5_read_ibm_coeff_blocks(const char *filename, int nbx, int nby, int nbz,
+                                 int n_blocks, int id_start,
+                                 const int *block_origin, const int *block_level,
+                                 double lx, double ly, double lz, double re,
+                                 int *found, double *coef)
+{
+    const size_t ni = (size_t)nbx + 2;
+    const size_t nj = (size_t)nby + 2;
+    const size_t nk = (size_t)nbz + 2;
+    const size_t n = ni*nj*nk*3;
+    hsize_t local_dims[5] = {(hsize_t)n_blocks, ni, nj, nk, 3};
+    hsize_t start[5] = {(hsize_t)id_start, 0, 0, 0, 0};
+    hsize_t file_dims[5] = {0, 0, 0, 0, 0};
+    hid_t file = -1, dset = -1, file_space = -1, mem_space = -1;
+    double *buffer = NULL;
+    int *rows = NULL;
+    double file_lx = 0.0, file_ly = 0.0, file_lz = 0.0, file_re = 0.0;
+    int ierr = 0;
+    herr_t status = -1;
+
+    *found = 0;
+    file = H5Fopen(filename, H5F_ACC_RDONLY, H5P_DEFAULT);
+    if (file < 0) return 1;
+
+    if (H5Lexists(file, "coef_blocks", H5P_DEFAULT) <= 0) {
+        H5Fclose(file);
+        return 0;
+    }
+
+    ierr |= read_attr_double(file, "lx", &file_lx, 1);
+    ierr |= read_attr_double(file, "ly", &file_ly, 1);
+    ierr |= read_attr_double(file, "lz", &file_lz, 1);
+    ierr |= read_attr_double(file, "re", &file_re, 1);
+    ierr |= double_mismatch(file_lx, lx) || double_mismatch(file_ly, ly) ||
+            double_mismatch(file_lz, lz) || double_mismatch(file_re, re);
+
+    /* The file's leaf table must match the solver's. */
+    {
+        hid_t bset = H5Dopen2(file, "blocks", H5P_DEFAULT);
+        hid_t bspace = bset >= 0 ? H5Dget_space(bset) : -1;
+        hsize_t bstart[2] = {(hsize_t)id_start, 0};
+        hsize_t bcount[2] = {(hsize_t)n_blocks, 4};
+        hid_t bmem = H5Screate_simple(2, bcount, NULL);
+
+        rows = (int *)malloc((size_t)n_blocks*4*sizeof(int));
+        if (bset < 0 || bspace < 0 || bmem < 0 || rows == NULL ||
+            H5Sselect_hyperslab(bspace, H5S_SELECT_SET, bstart, NULL, bcount, NULL) < 0 ||
+            H5Dread(bset, H5T_NATIVE_INT, bmem, bspace, H5P_DEFAULT, rows) < 0) {
+            ierr = 1;
+        } else {
+            for (int b = 0; b < n_blocks; ++b) {
+                if (rows[4*b+0] != block_origin[3*b+0] ||
+                    rows[4*b+1] != block_origin[3*b+1] ||
+                    rows[4*b+2] != block_origin[3*b+2] ||
+                    rows[4*b+3] != block_level[b]) {
+                    ierr = 2;
+                    break;
+                }
+            }
+        }
+        if (rows != NULL) free(rows);
+        if (bmem >= 0) H5Sclose(bmem);
+        if (bspace >= 0) H5Sclose(bspace);
+        if (bset >= 0) H5Dclose(bset);
+    }
+    if (ierr) {
+        H5Fclose(file);
+        return ierr;
+    }
+
+    dset = H5Dopen2(file, "coef_blocks", H5P_DEFAULT);
+    file_space = dset >= 0 ? H5Dget_space(dset) : -1;
+    if (dset < 0 || file_space < 0 || H5Sget_simple_extent_ndims(file_space) != 5) {
+        if (file_space >= 0) H5Sclose(file_space);
+        if (dset >= 0) H5Dclose(dset);
+        H5Fclose(file);
+        return 1;
+    }
+    H5Sget_simple_extent_dims(file_space, file_dims, NULL);
+    if (file_dims[1] != ni || file_dims[2] != nj || file_dims[3] != nk || file_dims[4] != 3) {
+        H5Sclose(file_space);
+        H5Dclose(dset);
+        H5Fclose(file);
+        return 1;
+    }
+
+    buffer = (double *)malloc((size_t)n_blocks*n*sizeof(double));
+    mem_space = H5Screate_simple(5, local_dims, NULL);
+    if (buffer == NULL || mem_space < 0 ||
+        H5Sselect_hyperslab(file_space, H5S_SELECT_SET, start, NULL, local_dims, NULL) < 0) {
+        if (buffer != NULL) free(buffer);
+        if (mem_space >= 0) H5Sclose(mem_space);
+        H5Sclose(file_space);
+        H5Dclose(dset);
+        H5Fclose(file);
+        return 1;
+    }
+
+    status = H5Dread(dset, H5T_NATIVE_DOUBLE, mem_space, file_space, H5P_DEFAULT, buffer);
+    if (status >= 0) {
+        for (int b = 0; b < n_blocks; ++b) {
+            double *block_coef = coef + (size_t)b*n;
+            const double *row = buffer + (size_t)b*n;
+            for (size_t v = 0; v < 3; ++v) {
+                for (size_t k = 0; k < nk; ++k) {
+                    for (size_t j = 0; j < nj; ++j) {
+                        for (size_t i = 0; i < ni; ++i) {
+                            size_t h5_idx = (((i*nj) + j)*nk + k)*3 + v;
+                            block_coef[linear_fortran4(i, j, k, v, ni, nj, nk)] = row[h5_idx];
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        ierr = 1;
+    }
+
+    H5Sclose(mem_space);
+    free(buffer);
+    H5Sclose(file_space);
+    H5Dclose(dset);
+    H5Fclose(file);
+    if (!ierr) *found = 1;
+    return ierr;
+}
+
 int fdm_h5_read_ibm_coeff(const char *filename, int nbx, int nby, int nbz,
                           int n_blocks, const int *block_origin,
                           int global_nx, int global_ny, int global_nz,

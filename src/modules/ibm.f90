@@ -38,6 +38,19 @@ module ibmm
     end type ibm_type
 
     interface
+        function fdm_h5_read_ibm_coeff_blocks(file_name, nbx, nby, nbz, n_blocks, id_start, &
+                block_origin, block_level, lx, ly, lz, re, found, coef) &
+                bind(C, name="fdm_h5_read_ibm_coeff_blocks") result(ierr)
+            import :: C_CHAR, C_INT, C_DOUBLE
+            character(kind=C_CHAR), intent(in) :: file_name(*)
+            integer(C_INT), value :: nbx, nby, nbz, n_blocks, id_start
+            integer(C_INT), intent(in) :: block_origin(*), block_level(*)
+            real(C_DOUBLE), value :: lx, ly, lz, re
+            integer(C_INT), intent(out) :: found
+            real(C_DOUBLE), intent(inout) :: coef(*)
+            integer(C_INT) :: ierr
+        end function fdm_h5_read_ibm_coeff_blocks
+
         function fdm_h5_read_ibm_coeff(file_name, nbx, nby, nbz, n_blocks, block_origin, &
                 global_nx, global_ny, global_nz, &
                 lx, ly, lz, re, coef) bind(C, name="fdm_h5_read_ibm_coeff") result(ierr)
@@ -119,10 +132,33 @@ contains
         character(kind=C_CHAR,len=:), allocatable :: c_file_name
         integer(C_INT) :: ierr
 
+        integer(C_INT) :: found
+
         if (len_trim(dns%ibm_coeff_file) == 0) return
         if (has_terminal) print *, "reading IBM coefficients: ", trim(dns%ibm_coeff_file)
 
         c_file_name = to_c_string(dns%ibm_coeff_file)
+        ! Block-table layout first (refined runs); fall back to the legacy
+        ! global ghost-layer layout, which holds level-0 data only.
+        ierr = fdm_h5_read_ibm_coeff_blocks(c_file_name, blk%nb(1), blk%nb(2), blk%nb(3), &
+            blk%nBlocks, blk%idStart, blk%origin, blk%level, &
+            dns%leng(1), dns%leng(2), dns%leng(3), dns%re, found, ibm%coef)
+        if (ierr == 2_C_INT) then
+            if (has_terminal) print *, "error: coefficient file block table does not match", &
+                " the solver's leaf table (stale file?): ", trim(dns%ibm_coeff_file)
+            error stop
+        end if
+        if (ierr /= 0_C_INT) then
+            if (has_terminal) print *, "error: could not read IBM coefficient file: ", trim(dns%ibm_coeff_file)
+            error stop
+        end if
+        if (found /= 0_C_INT) return
+
+        if (any(blk%level(1:blk%nBlocks) /= 0_C_INT)) then
+            if (has_terminal) print *, "error: legacy coefficient file needs single-level blocks;", &
+                " regenerate with mobygeom block-table"
+            error stop
+        end if
         ierr = fdm_h5_read_ibm_coeff(c_file_name, blk%nb(1), blk%nb(2), blk%nb(3), &
             blk%nBlocks, blk%origin, &
             dns%globalSize(1), dns%globalSize(2), dns%globalSize(3), &
