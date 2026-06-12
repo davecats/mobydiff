@@ -168,6 +168,16 @@ program main
     call apply_bc(blk, bc)
     call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W, VAR_P])
 
+    ! Temporary debugging hook: manufactured-field halo coherence audit.
+    block
+        character(len=16) :: auditEnv
+        call get_environment_variable("MOBY_HALO_AUDIT", auditEnv)
+        if (len_trim(auditEnv) > 0) then
+            call halo_audit(blk, dns, bc, c)
+            stop
+        end if
+    end block
+
     call flow%setup_after_grid(blk, dns, g, bc, c)
     if (les_is_enabled(les)) then
         call update_les_viscosity(les, blk, dns, ibm)
@@ -250,4 +260,167 @@ program main
     call destroy_boundary_faces(bc)
     call comm_finalize(c)
 
+contains
+
+    ! Manufactured-field halo audit (temporary debug tool). Fills every
+    ! block interior with a per-variable linear field, sentinels the halos,
+    ! runs one exchange and checks every exchange-written halo cell against
+    ! the value the transfer DESIGN should produce: copies and restrictions
+    ! of a linear field reproduce the field at the halo location; prolonged
+    ! halos reproduce the field at the covering coarse cell/face location
+    ! (pressure faces: blended with the first interior cell, 2:1 uniform
+    ! weight 2/3). Wrapped periodic regions are skipped (linear field is
+    ! discontinuous across the wrap), as are regions with no occupant.
+    subroutine halo_audit(blk, dns, bc, c)
+        use :: blocks, only: leaf_at, level_cells
+        type(block_set_type), intent(inout) :: blk
+        type(dns_type), intent(in) :: dns
+        type(boundary_type), intent(in) :: bc
+        type(comm_type), intent(inout) :: c
+
+        real(C_DOUBLE), parameter :: SENTINEL = 1.0d33
+        real(C_DOUBLE), parameter :: CXV(4) = [1.0d0, 0.3d0, 0.7d0, 1.3d0]
+        real(C_DOUBLE), parameter :: CYV(4) = [2.0d0, 1.1d0, 0.2d0, 0.5d0]
+        real(C_DOUBLE), parameter :: CZV(4) = [0.9d0, 1.7d0, 2.3d0, 0.4d0]
+        integer(C_INT) :: b, var, i, j, k, d, l, nBad, nChecked, nb(3)
+        integer(C_INT) :: off(3), idx(3), to(3), cl(3), cc(3), gnl, gidx, cov
+        integer(C_INT) :: idSame, idParent, sx, sy, sz
+        logical :: skip, anyChild
+        real(C_DOUBLE) :: got, want, posD(3), srcD(3), wBlend
+
+        nb = blk%nb
+
+        do b = 1, int(blk%nBlocks)
+            do var = 1, 4
+                do k = 0, nb(3) + 1
+                    do j = 0, nb(2) + 1
+                        do i = 0, nb(1) + 1
+                            if (i >= 1 .and. i <= nb(1) .and. j >= 1 .and. j <= nb(2) &
+                                .and. k >= 1 .and. k <= nb(3)) then
+                                blk%q(i,j,k,var,b) = CXV(var)*blk%x(i,var,b) &
+                                    + CYV(var)*blk%y(j,var,b) + CZV(var)*blk%z(k,var,b)
+                            else
+                                blk%q(i,j,k,var,b) = SENTINEL
+                            end if
+                        end do
+                    end do
+                end do
+            end do
+        end do
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target update to(blk%q)
+#endif
+        call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W, VAR_P])
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target update from(blk%q)
+#endif
+
+        nBad = 0
+        nChecked = 0
+        do b = 1, int(blk%nBlocks)
+            l = int(blk%level(b))
+            do var = 1, 4
+                do k = 0, nb(3) + 1
+                    do j = 0, nb(2) + 1
+                        do i = 0, nb(1) + 1
+                            idx = [i, j, k]
+                            do d = 1, 3
+                                off(d) = 0
+                                if (idx(d) == 0) off(d) = -1
+                                if (idx(d) == nb(d) + 1) off(d) = 1
+                            end do
+                            if (all(off == 0)) cycle
+
+                            ! Neighbour region; skip wraps and walls.
+                            skip = .false.
+                            do d = 1, 3
+                                gnl = level_cells(dns, d, int(l, C_INT))
+                                to(d) = int(blk%origin(d,b)) + off(d)*nb(d)
+                                if (to(d) < 0 .or. to(d) >= gnl) skip = .true.
+                            end do
+                            if (skip) cycle
+
+                            cl = to/nb
+                            idSame = int(leaf_at(blk, int(l, C_INT), int(cl, C_INT)))
+                            idParent = -1
+                            if (l > 0) idParent = int(leaf_at(blk, int(l - 1, C_INT), &
+                                int(cl/2, C_INT)))
+
+                            posD = [blk%x(i,var,b), blk%y(j,var,b), blk%z(k,var,b)]
+                            if (idSame >= 0) then
+                                want = CXV(var)*posD(1) + CYV(var)*posD(2) + CZV(var)*posD(3)
+                            else if (idParent >= 0) then
+                                ! Injection: field at the covering coarse location.
+                                do d = 1, 3
+                                    gnl = level_cells(dns, d, int(l, C_INT))
+                                    gidx = int(blk%origin(d,b)) + idx(d) - 1
+                                    if (var == d) then
+                                        cov = modulo(gidx, gnl)/2
+                                        srcD(d) = line_at(blk, d, l - 1, cov)
+                                    else
+                                        cov = modulo(gidx, gnl)/2
+                                        srcD(d) = 0.5d0*(line_at(blk, d, l - 1, cov) &
+                                                       + line_at(blk, d, l - 1, cov + 1))
+                                    end if
+                                end do
+                                want = CXV(var)*srcD(1) + CYV(var)*srcD(2) + CZV(var)*srcD(3)
+                                if (var == VAR_P .and. sum(abs(off)) == 1) then
+                                    wBlend = 2.0d0/3.0d0
+                                    want = wBlend*want + (1.0d0 - wBlend) &
+                                        *(CXV(var)*blk%x(i-off(1),var,b) &
+                                        + CYV(var)*blk%y(j-off(2),var,b) &
+                                        + CZV(var)*blk%z(k-off(3),var,b))
+                                end if
+                            else
+                                ! Finer occupants: restriction of a linear field
+                                ! reproduces it at the halo location; skip if the
+                                ! region is empty.
+                                anyChild = .false.
+                                do sz = 0, 1
+                                do sy = 0, 1
+                                do sx = 0, 1
+                                    cc = 2*cl + [sx, sy, sz]
+                                    if (leaf_at(blk, int(l + 1, C_INT), int(cc, C_INT)) >= 0) &
+                                        anyChild = .true.
+                                end do
+                                end do
+                                end do
+                                if (.not. anyChild) cycle
+                                want = CXV(var)*posD(1) + CYV(var)*posD(2) + CZV(var)*posD(3)
+                            end if
+
+                            got = blk%q(i,j,k,var,b)
+                            nChecked = nChecked + 1
+                            if (abs(got - want) > 1.0d-10*max(1.0d0, abs(want))) then
+                                nBad = nBad + 1
+                                if (nBad <= 40) then
+                                    print '(a,i6,a,i2,a,i2,a,3i4,a,3i5,a,2es22.14)', &
+                                        " AUDIT BAD b=", b, " lvl=", l, " var=", var, &
+                                        " ijk=", i, j, k, " orig=", blk%origin(:,b), &
+                                        " got/want=", got, want
+                                end if
+                            end if
+                        end do
+                    end do
+                end do
+            end do
+        end do
+        print *, "HALO AUDIT: checked", nChecked, " bad", nBad
+    end subroutine halo_audit
+
+    function line_at(blk, d, level, idx) result(v)
+        type(block_set_type), intent(in) :: blk
+        integer(C_INT), intent(in) :: d, idx
+        integer, intent(in) :: level
+        real(C_DOUBLE) :: v
+
+        select case (d)
+        case (1)
+            v = blk%lineX(idx, level + 1)
+        case (2)
+            v = blk%lineY(idx, level + 1)
+        case default
+            v = blk%lineZ(idx, level + 1)
+        end select
+    end function line_at
 end program main
