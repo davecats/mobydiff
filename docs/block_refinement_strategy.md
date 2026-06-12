@@ -139,6 +139,19 @@ metrics exactly as today. Inside a block nothing is new.
    space, computable without communication, and restart works on any rank
    count.
 
+As implemented (Phase 3d), the offline tool is `mobygeom.py block-table`:
+it classifies per-level `block_touch_l{l}`/`block_buried_l{l}` rasters
+(dilated block windows sampled at cell centres and the three staggered
+locations, on midpoint-subdivided node lines), mirrors the solver's leaf
+builder in Python to enumerate the surviving leaves, and writes the
+`blocks` table plus per-leaf IBM coefficient tiles (`coef_blocks`,
+ghost-inclusive, evaluated at each leaf's own level) into the
+coefficient file. The solver verifies its independently built leaf table
+row-by-row against the file's and reads its slot range directly; with
+`refine_body` it reads the per-level masks instead of classifying
+analytically. Legacy single-level global-grid coefficient files remain
+readable for unrefined runs.
+
 ## 5. Halo exchange: from rank-boxes to block-pair lists
 
 `comm.f90` already has the right skeleton: precomputed send/recv boxes, flat
@@ -192,27 +205,66 @@ halo), and restricting them back would write the coarse neighbour's
 INTERIOR `u(1)` plane with variable-discriminating entries while the
 prolong of the same DOFs reads it — an intra-kernel cycle.
 
-The low-side-owns rule is orientation-symmetric and needs no new
-machinery:
+Ownership defines the *reconciled* value: after the projection, the full
+exchange overwrites the non-owner's halo copy with the owner's face
+(RESTRICT 4-sub-face average when the high side is coarse, PROLONG
+injection when the high side is fine). Conservation is exact in both
+orientations: the restricted coarse flux is the equal-area average of
+the fine sub-fluxes (midpoint subdivision halves cells exactly), and the
+injected fine sub-fluxes sum to the coarse flux by construction.
 
-- The owner treats the face as a normal interior face (momentum predicts
-  it, the sweep corrects it). The other side's halo copy is refreshed by
-  the existing exchange: RESTRICT (4-sub-face average) when the high side
-  is coarse, PROLONG injection when the high side is fine.
-- In the sweep, a block masks its HIGH face at any 2:1 interface
-  (excluded from `denom` and from the corrections, like walls and closed
-  faces) but keeps the exchanged value in the divergence; LOW interface
-  faces are never masked. This is the `pressureNeumann*` machinery of
-  the rank boundaries, applied per block face.
-- Conservation is exact in both orientations: the restricted coarse flux
-  is the equal-area average of the fine sub-fluxes (midpoint subdivision
-  halves cells exactly), and the injected fine sub-fluxes sum to the
-  coarse flux by construction.
-- Accuracy: a coarse-owned face carries a uniform (coarse-resolution)
-  flux across its four sub-faces until the trilinear prolong upgrade;
-  fine-owned faces carry full fine resolution. With the finest-level
-  wall buffer (Section 4) interfaces sit in smooth flow, where this is a
-  second-order-consistent approximation.
+**Relaxation at interfaces (revised after Phase 3d, the hard-won part).**
+The original draft relaxed interface faces one-sidedly: the owner
+corrected the face, the other side masked it (out of `denom` and the
+corrections, like a wall) and only consumed the exchanged value in its
+divergence. Both this and the variant that keeps the full denominator
+are *unconditionally unstable*: the non-owner cannot push back on a
+live flux that keeps moving, the resulting block iteration is a
+non-contractive splitting, and a pressure-jump mode localized at the
+interface grows exponentially (per-step gain independent of dt,
+viscosity and `sor`; seeded by round-off, so short or symmetric gates
+never see it). The cure is the BCM regime (Nakahashi), made conservative:
+
+- **Symmetric corrections, own copies.** Every non-pinned face of a cell
+  is in the denominator and is corrected by that cell's relaxation -
+  including the block's own copy of a 2:1 interface face (`u(1)` on one
+  side, the `u(nb+1)` halo on the other). Only walls and closed faces
+  (`FACE_PHYS`/`FACE_CLOSED`) are pinned.
+- **Stage-frozen ghosts.** The per-colour exchanges inside the
+  projection apply same-level copies only (`interp=.false.`); the
+  cross-level entries are skipped on the apply side, so each side
+  relaxes against stage-frozen ghosts and its own evolving copy of the
+  interface faces. This is a regular damped block iteration; the
+  one-sided overwrite-every-colour variant is what diverges.
+- **Conservative reconciliation.** The final full exchange of the
+  projection snaps the non-owner copies back to the owner's values, so
+  the state entering the next stage is owner-consistent and mass
+  telescopes exactly.
+- **Consistent pressure ghosts.** Plain injection puts the coarse cell
+  value at the fine halo centre, so the momentum pressure gradient at
+  the interface is evaluated over a gap 1.5x larger than the fine metric
+  assumes - a systematic overdriving of the interface velocity. PROLONG
+  *face* entries for `p` therefore blend: ghost = w*coarse +
+  (1-w)*first-interior with w from the node lines (uniform 2:1:
+  w = 2/3, the classic ghost = (2 p_C + p_f)/3). Edges and corners stay
+  plain injection; only face halos enter the pressure gradient.
+- **Covering-cell prolong sources.** A PROLONG entry's source row in an
+  off-dimension is the *covering* coarse cell of the halo layer, which
+  depends on the fine block's parity tq (an edge/corner's coarse
+  neighbour spans past the shared boundary). The off-based row (1 or
+  `nb`) is correct only for faces, where 2:1 smoothing forces tq to the
+  touching side.
+
+Accuracy: a coarse-owned face carries a uniform (coarse-resolution)
+flux across its four sub-faces until the trilinear prolong upgrade;
+fine-owned faces carry full fine resolution. With the finest-level
+wall buffer (Section 4) interfaces sit in smooth flow, where this is a
+second-order-consistent approximation.
+
+A manufactured-field halo audit (`MOBY_HALO_AUDIT=1`, see `main.f90`)
+checks every exchange-written halo cell against the design semantics
+above on the actual block layout; transfers should be verified with it
+before debugging the physics.
 
 Red-black parity: with `nb` even, define each block's `colorOffset` from the
 parity of its global level-l origin (`modulo(sum(origin),2)`), the direct

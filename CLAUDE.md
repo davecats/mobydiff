@@ -163,10 +163,7 @@ immersed boundary. Phased, each phase verified before the next:
     straddles the surface, buried = fully solid, on lines built by
     midpoint subdivision), and the leaf builder refines touched blocks
     plus a one-block 26-neighbour buffer to the finest level, applies
-    2:1 smoothing, and removes buried leaves at every level. STL path:
-    not yet — mobygeom must emit the same per-level touch/buried masks
-    (the natural format mirrors block_active: two per-level raster
-    datasets); `refine_body` with a coefficient file errors out.
+    2:1 smoothing, and removes buried leaves at every level.
     Gate (64^3 wavy-wall channel, nb=8, GPU): 1408 leaves (1024 fine at
     the wall+buffer) vs the 4096-leaf uniform-fine reference: mean-u
     profile in the refined region matches to 0.015% of peak; coarse far
@@ -174,6 +171,41 @@ immersed boundary. Phased, each phase verified before the next:
     coarse-averaged). Savings: 2.9x fewer cells, 2.7x faster GPU
     time/step (0.042 vs 0.114 s). Channel nb=4 without refinement
     remains bit-exact vs Phase 2.
+  - 3d-file (complete, validated 2026-06-12): file-based IBM path +
+    interface-relaxation rework. `mobygeom.py block-table` writes
+    per-level `block_touch_l{l}`/`block_buried_l{l}` rasters, the
+    `blocks` leaf table (its Python leaf builder mirrors the Fortran
+    one; the solver cross-checks row-by-row at read) and per-leaf
+    ghost-inclusive coefficient tiles `coef_blocks` evaluated at each
+    leaf's level; the solver's `refine_body` accepts coefficient files
+    (reads the masks), and legacy global-grid coefficient files stay
+    readable for single-level runs (bit-exact vs the block-table format
+    on the sailplane). Debugging the sailplane refine_body blow-up
+    exposed that the 3c interface relaxation was unconditionally
+    unstable (round-off-seeded pressure-jump mode at interfaces,
+    per-step gain independent of dt/viscosity/sor — earlier gates were
+    blind: uniform flow is exact under any consistent transfer, and
+    band-refined channels keep pn = 0). Fixes, in docs §6: (1)
+    tq-aware covering-cell source rows for edge/corner PROLONG entries;
+    (2) blended pressure ghosts at PROLONG faces (ghost = (2 p_C +
+    p_f)/3 uniform, weights from node lines, comm `entry_blend`); (3)
+    BCM-style symmetric relaxation — every non-pinned face in the
+    denominator and corrected by both adjacent cells (each side its own
+    copy), per-colour exchanges apply same-level copies only
+    (`exchange_halos(..., interp=.false.)`), the final full exchange
+    reconciles copies conservatively to the owner's value. Gates:
+    channel nb=4 bit-exact vs Phase 2 c87e1b0 (nofma, CPU 8 ranks +
+    GPU); sailplane legacy vs block-table bit-exact; 3D-patch and
+    x-band channels stable 1000 steps (formerly NaN by ~200); chanp 1
+    vs 8 CPU ranks bit-exact (multi-level MPI path); uniform flow
+    through a 3D refined patch exact (spread 0.0); refine_body
+    sailplane stable, impulsive transient decaying, refined-region
+    pressure 7x closer to uniform-fine than the unrefined run
+    (pointwise velocities decohere at Re=1e5 — not a usable gate).
+    `MOBY_HALO_AUDIT=1` (hook in main.f90) audits every
+    exchange-written halo cell against manufactured linear fields on
+    the real layout (1.2M + 7.9M cells, 0 bad) — run it FIRST when an
+    interface case misbehaves.
 - Phase 4: performance (overlap, see `docs/nonblocking_overlap_strategy.md`).
 
 If the branch `claude/blocks` does not exist yet, create it from the
