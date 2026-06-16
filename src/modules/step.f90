@@ -15,7 +15,7 @@ module step
     use, intrinsic :: iso_c_binding
     use :: init, only: dns_type, VAR_U, VAR_V, VAR_W, VAR_P, &
         CFL_COURANT, CFL_PECLET, NCFL
-    use :: blocks, only: block_set_type, FACE_PHYS, FACE_CLOSED
+    use :: blocks, only: block_set_type, FACE_PHYS, FACE_CLOSED, FACE_COARSE, FACE_FINE
     use :: ibmm, only: ibm_type
     use :: comm, only: comm_type, comm_allreduce_max
     use :: les_model, only: les_type, les_is_enabled, les_profile_type, &
@@ -68,6 +68,7 @@ contains
 
         integer :: i,j,k,b,ip,im,kp,km,jp,jm
         integer :: nx, ny, nz, nBlocks, uStartX, vStartY, wStartZ
+        integer :: uEndX, vEndY, wEndZ
 
         real(C_DOUBLE) :: diff_ux,diff_uy,diff_uz
         real(C_DOUBLE) :: diff_vx,diff_vy,diff_vz
@@ -98,33 +99,37 @@ contains
         !$omp target teams distribute parallel do collapse(4) &
         !$omp& map(to: dt_alpha, dt_beta, dt_gamma, &
         !$omp& ire, forcing(1:3), &
-        !$omp& blk%physLow, blk%d1x, blk%d1y, blk%d1z, &
+        !$omp& blk%physLow, blk%physHigh, blk%ifGrad, blk%d1x, blk%d1y, blk%d1z, &
         !$omp& blk%lapXm, blk%lapX0, blk%lapXp, blk%lapYm, blk%lapY0, blk%lapYp, &
         !$omp& blk%lapZm, blk%lapZ0, blk%lapZp, blk%q, ibm%mu) &
         !$omp& map(tofrom: blk%qs, blk%oldrhs) &
-        !$omp& private(i,j,k,b,ip,im,jp,jm,kp,km,uStartX,vStartY,wStartZ, &
+        !$omp& private(i,j,k,b,ip,im,jp,jm,kp,km,uStartX,vStartY,wStartZ,uEndX,vEndY,wEndZ, &
         !$omp& uu_p,uu_m,uv_p,uv_m,uw_p,uw_m, &
         !$omp& vu_p,vu_m,vv_p,vv_m,vw_p,vw_m,wu_p,wu_m,ww_p,ww_m,wv_p,wv_m, &
         !$omp& diff_ux,diff_uy,diff_uz,diff_vx,diff_vy,diff_vz,diff_wx,diff_wy,diff_wz, &
         !$omp& dpx,dpy,dpz,rhsu,rhsv,rhsw,mu_u,mu_v,mu_w)
         do b = 1, nBlocks
-        do k = 1, nz
-            do j = 1, ny
-                do i = 1, nx
+        do k = 1, nz+1
+            do j = 1, ny+1
+                do i = 1, nx+1
                     ip = i+1
                     im = i-1
                     jp = j+1
                     jm = j-1
                     kp = k+1
                     km = k-1
-                    ! Only physical walls and closed faces are pinned. Both
-                    ! sides of a 2:1 interface predict the shared face (the
-                    ! restriction overwrites the coarse copy, Phase 3c).
+                    ! Only physical walls and closed faces are pinned (skipped).
+                    ! The interior low face of a 2:1 interface is the owner's
+                    ! shared face and IS predicted; the high face is a halo
+                    ! supplied by the exchange, so every block ends its loop at nb.
                     uStartX = merge(2, 1, blk%physLow(1,b) == FACE_PHYS .or. blk%physLow(1,b) == FACE_CLOSED)
                     vStartY = merge(2, 1, blk%physLow(2,b) == FACE_PHYS .or. blk%physLow(2,b) == FACE_CLOSED)
                     wStartZ = merge(2, 1, blk%physLow(3,b) == FACE_PHYS .or. blk%physLow(3,b) == FACE_CLOSED)
+                    uEndX = nx
+                    vEndY = ny
+                    wEndZ = nz
 
-                    if (i >= uStartX) then
+                    if (i >= uStartX .and. i <= uEndX .and. j <= ny .and. k <= nz) then
                         uu_p = (blk%q(i,j,k,VAR_U,b) + blk%q(ip,j,k,VAR_U,b))**2
                         uu_m = (blk%q(im,j,k,VAR_U,b) + blk%q(i,j,k,VAR_U,b))**2
 
@@ -148,7 +153,12 @@ contains
                                 + blk%lapZ0(k,VAR_U,b)*blk%q(i,j,k,VAR_U,b) &
                                 + blk%lapZp(k,VAR_U,b)*blk%q(i,j,kp,VAR_U,b)
 
-                        dpx = (blk%q(i,j,k,VAR_P,b)-blk%q(im,j,k,VAR_P,b))*blk%d1x(i,VAR_U,b)
+                        ! At the owner's low interface face the adjoint gradient
+                        ! ifGrad (over the coarse-fine gap) replaces d1, matching
+                        ! the projection so predictor and correction stay consistent.
+                        dpx = (blk%q(i,j,k,VAR_P,b)-blk%q(im,j,k,VAR_P,b)) &
+                            * merge(blk%ifGrad(1,b), blk%d1x(i,VAR_U,b), i == 1 .and. &
+                              (blk%physLow(1,b) == FACE_FINE .or. blk%physLow(1,b) == FACE_COARSE))
 
                         rhsu = ( &
                             -0.25d0*( (uu_p-uu_m)*blk%d1x(i,VAR_U,b) &
@@ -166,7 +176,7 @@ contains
                         blk%oldrhs(i,j,k,VAR_U,b) = rhsu
                     end if
 
-                    if (j >= vStartY) then
+                    if (j >= vStartY .and. j <= vEndY .and. i <= nx .and. k <= nz) then
                         vu_p = (blk%q(i,j,k,VAR_V,b) + blk%q(ip,j,k,VAR_V,b)) &
                              * (blk%q(ip,jm,k,VAR_U,b) + blk%q(ip,j,k,VAR_U,b))
                         vu_m = (blk%q(im,j,k,VAR_V,b) + blk%q(i,j,k,VAR_V,b)) &
@@ -190,7 +200,9 @@ contains
                                 + blk%lapZ0(k,VAR_V,b)*blk%q(i,j,k,VAR_V,b) &
                                 + blk%lapZp(k,VAR_V,b)*blk%q(i,j,kp,VAR_V,b)
 
-                        dpy = (blk%q(i,j,k,VAR_P,b)-blk%q(i,jm,k,VAR_P,b))*blk%d1y(j,VAR_V,b)
+                        dpy = (blk%q(i,j,k,VAR_P,b)-blk%q(i,jm,k,VAR_P,b)) &
+                            * merge(blk%ifGrad(3,b), blk%d1y(j,VAR_V,b), j == 1 .and. &
+                              (blk%physLow(2,b) == FACE_FINE .or. blk%physLow(2,b) == FACE_COARSE))
 
                         rhsv = ( &
                             -0.25d0*((vu_p-vu_m)*blk%d1x(i,VAR_V,b) &
@@ -208,7 +220,7 @@ contains
                         blk%oldrhs(i,j,k,VAR_V,b) = rhsv
                     end if
 
-                    if (k >= wStartZ) then
+                    if (k >= wStartZ .and. k <= wEndZ .and. i <= nx .and. j <= ny) then
                         wu_p = (blk%q(i,j,k,VAR_W,b) + blk%q(ip,j,k,VAR_W,b)) &
                              * (blk%q(ip,j,km,VAR_U,b) + blk%q(ip,j,k,VAR_U,b))
                         wu_m = (blk%q(im,j,k,VAR_W,b) + blk%q(i,j,k,VAR_W,b)) &
@@ -232,7 +244,9 @@ contains
                                 + blk%lapZ0(k,VAR_W,b)*blk%q(i,j,k,VAR_W,b) &
                                 + blk%lapZp(k,VAR_W,b)*blk%q(i,j,kp,VAR_W,b)
 
-                        dpz = (blk%q(i,j,k,VAR_P,b)-blk%q(i,j,km,VAR_P,b))*blk%d1z(k,VAR_W,b)
+                        dpz = (blk%q(i,j,k,VAR_P,b)-blk%q(i,j,km,VAR_P,b)) &
+                            * merge(blk%ifGrad(5,b), blk%d1z(k,VAR_W,b), k == 1 .and. &
+                              (blk%physLow(3,b) == FACE_FINE .or. blk%physLow(3,b) == FACE_COARSE))
 
                         rhsw = ( &
                             -0.25d0*( (wu_p-wu_m)*blk%d1x(i,VAR_W,b) &
@@ -265,6 +279,9 @@ contains
             end if
         end if
 
+        ! Commit the predictor: copy qs -> q on every interior face (1..nb per
+        ! component). Interface high faces (nb+1) are halos refreshed by the
+        ! exchange, so they are not committed here.
         !$omp target teams distribute parallel do collapse(4) &
         !$omp& map(to: blk%qs) &
         !$omp& map(tofrom: blk%q) &

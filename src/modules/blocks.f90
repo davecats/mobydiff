@@ -101,6 +101,11 @@ module blocks
         integer(C_INT), allocatable :: globalId(:)     ! (nBlocks)
         integer(C_INT), allocatable :: physLow(:,:)    ! (3,nBlocks)
         integer(C_INT), allocatable :: physHigh(:,:)   ! (3,nBlocks)
+        ! Composite-projection interface gradient coefficient 1/gap per face
+        ! (6 = low/high x {x,y,z}), gap = hf/2 + hc/2 the coarse-fine cell-centre
+        ! distance across a 2:1 (FACE_FINE/FACE_COARSE) interface; 0 elsewhere.
+        ! The adjoint interface gradient is (p_C - p_F)*ifGrad (strategy s5).
+        real(C_DOUBLE), allocatable :: ifGrad(:,:)     ! (6,nBlocks)
 
         ! Per-block staggered coordinates and finite-difference metrics,
         ! sliced from the (level-specific) global node lines. Shapes mirror
@@ -111,10 +116,16 @@ module blocks
         real(C_DOUBLE), allocatable :: lapYm(:,:,:), lapY0(:,:,:), lapYp(:,:,:)
         real(C_DOUBLE), allocatable :: lapZm(:,:,:), lapZ0(:,:,:), lapZp(:,:,:)
 
-        ! Flow state with one halo cell per side (second-order stencils).
-        real(C_DOUBLE), allocatable :: q(:,:,:,:,:)      ! (0:nb+1,...,NVAR,nBlocks)
-        real(C_DOUBLE), allocatable :: qs(:,:,:,:,:)     ! (0:nb+1,...,NVEL,nBlocks)
-        real(C_DOUBLE), allocatable :: oldrhs(:,:,:,:,:) ! (1:nb,...,NVEL,nBlocks)
+        ! Flow state with one halo cell on the low side and TWO on the
+        ! high side of every direction (0:nb+2). The extra high-side layer
+        ! lets every block momentum-compute its own top normal face
+        ! v(nb+1) (stencil reaches v(nb+2)), redundantly with the block
+        ! above - the uniform-B interface treatment, doc 6a. oldrhs (RK
+        ! history) carries the matching high-side layer (1:nb+1),
+        ! recomputed each substage.
+        real(C_DOUBLE), allocatable :: q(:,:,:,:,:)      ! (0:nb+2,...,NVAR,nBlocks)
+        real(C_DOUBLE), allocatable :: qs(:,:,:,:,:)     ! (0:nb+2,...,NVEL,nBlocks)
+        real(C_DOUBLE), allocatable :: oldrhs(:,:,:,:,:) ! (1:nb+1,...,NVEL,nBlocks)
     end type block_set_type
 
 contains
@@ -140,7 +151,8 @@ contains
         ! immersed surface, buried = dilated block fully solid.
         integer(C_INT), intent(in), optional :: touch(:,:), buried(:,:)
 
-        integer :: nx, ny, nz, b, d, id, nRemoved
+        integer :: nx, ny, nz, b, d, id, nRemoved, lev, og, ogh
+        real(C_DOUBLE) :: hc, hf
 
         call destroy_block_set(blk)
 
@@ -247,9 +259,38 @@ contains
             end if
         end do
 
-        allocate(blk%q(0:nx+1,0:ny+1,0:nz+1,NVAR,blk%nBlocks))
-        allocate(blk%qs(0:nx+1,0:ny+1,0:nz+1,NVEL,blk%nBlocks))
-        allocate(blk%oldrhs(1:nx,1:ny,1:nz,NVEL,blk%nBlocks))
+        ! Composite-projection interface gradient 1/gap per face (low/high x dir),
+        ! gap = half coarse cell + half fine cell across a 2:1 interface. The
+        ! adjoint interface gradient is (p_coarse - p_fine)*ifGrad (strategy s5);
+        ! 0 on non-interface faces. line_cell_width reads the level-l node line.
+        allocate(blk%ifGrad(6, blk%nBlocks))
+        blk%ifGrad = 0.0d0
+        if (blk%distMode == DIST_ZORDER .and. blk%nLevels > 1_C_INT) then
+            do b = 1, int(blk%nBlocks)
+                lev = int(blk%level(b))
+                do d = 1, 3
+                    og = int(blk%origin(d,b)); ogh = og + int(blk%nb(d)) - 1
+                    if (blk%physLow(d,b) == FACE_FINE) then          ! coarse block, fine below
+                        hc = line_cell_width(blk,d,lev,og); hf = line_cell_width(blk,d,lev+1,2*og-1)
+                        blk%ifGrad(2*d-1,b) = 1.0d0/(0.5d0*hc + 0.5d0*hf)
+                    else if (blk%physLow(d,b) == FACE_COARSE) then   ! fine block, coarse below
+                        hf = line_cell_width(blk,d,lev,og);  hc = line_cell_width(blk,d,lev-1,og/2-1)
+                        blk%ifGrad(2*d-1,b) = 1.0d0/(0.5d0*hc + 0.5d0*hf)
+                    end if
+                    if (blk%physHigh(d,b) == FACE_FINE) then         ! coarse block, fine above
+                        hc = line_cell_width(blk,d,lev,ogh); hf = line_cell_width(blk,d,lev+1,2*(ogh+1))
+                        blk%ifGrad(2*d,b) = 1.0d0/(0.5d0*hc + 0.5d0*hf)
+                    else if (blk%physHigh(d,b) == FACE_COARSE) then  ! fine block, coarse above
+                        hf = line_cell_width(blk,d,lev,ogh); hc = line_cell_width(blk,d,lev-1,(ogh+1)/2)
+                        blk%ifGrad(2*d,b) = 1.0d0/(0.5d0*hc + 0.5d0*hf)
+                    end if
+                end do
+            end do
+        end if
+
+        allocate(blk%q(0:nx+2,0:ny+2,0:nz+2,NVAR,blk%nBlocks))
+        allocate(blk%qs(0:nx+2,0:ny+2,0:nz+2,NVEL,blk%nBlocks))
+        allocate(blk%oldrhs(1:nx+1,1:ny+1,1:nz+1,NVEL,blk%nBlocks))
         blk%q = 0.0d0
         blk%qs = 0.0d0
         blk%oldrhs = 0.0d0
@@ -263,6 +304,7 @@ contains
         if (allocated(blk%globalId)) deallocate(blk%globalId)
         if (allocated(blk%physLow)) deallocate(blk%physLow)
         if (allocated(blk%physHigh)) deallocate(blk%physHigh)
+        if (allocated(blk%ifGrad)) deallocate(blk%ifGrad)
         if (allocated(blk%x)) deallocate(blk%x)
         if (allocated(blk%y)) deallocate(blk%y)
         if (allocated(blk%z)) deallocate(blk%z)
@@ -345,6 +387,18 @@ contains
 
         n = dns%globalSize(d)*int(2**int(level), C_INT)
     end function level_cells
+
+    ! Width of level-`lev` cell `g` (0-based) in direction d, from the node line
+    ! (cell g spans nodes g..g+1). Used to size the 2:1 interface gradient gap.
+    pure real(C_DOUBLE) function line_cell_width(blk, d, lev, g) result(w)
+        type(block_set_type), intent(in) :: blk
+        integer, intent(in) :: d, lev, g
+        select case (d)
+        case (1); w = blk%lineX(g+1, lev+1) - blk%lineX(g, lev+1)
+        case (2); w = blk%lineY(g+1, lev+1) - blk%lineY(g, lev+1)
+        case default; w = blk%lineZ(g+1, lev+1) - blk%lineZ(g, lev+1)
+        end select
+    end function line_cell_width
 
     ! Per-level node lines: level 0 is the configured grid, level l+1 the
     ! midpoint subdivision of level l (subdivide_node_line).

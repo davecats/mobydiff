@@ -1,7 +1,7 @@
 module pressure_solver
     use, intrinsic :: iso_c_binding
     use :: init, only: dns_type, VAR_U, VAR_V, VAR_W, VAR_P
-    use :: blocks, only: block_set_type, FACE_PHYS, FACE_CLOSED
+    use :: blocks, only: block_set_type, FACE_PHYS, FACE_CLOSED, FACE_FINE, FACE_COARSE
     use :: ibmm, only: ibm_type
     use :: boundary, only: boundary_type, apply_bc
     use :: comm, only: comm_type, exchange_halos
@@ -16,6 +16,12 @@ module pressure_solver
         real(C_DOUBLE) :: sor=1.5d0
     end type pressure_solver_type
 
+    ! Pressure at the start of the current projection. The interface velocity is
+    ! reconstructed from the in-projection pressure CHANGE (p - pStart): the
+    ! predictor already applied the start-pressure interface gradient, so the
+    ! change completes it to the full new-pressure gradient without double count.
+    real(C_DOUBLE), allocatable :: pStart(:,:,:,:)
+
 contains
 
     subroutine init_pressure_solver(ps, dns, bc, has_terminal)
@@ -29,7 +35,6 @@ contains
         terminal = .true.
         if (present(has_terminal)) terminal = has_terminal
 
-
         do dir = 1, 3
             if (bc%isPeriodic(dir) .and. mod(dns%globalSize(dir), 2_C_INT) /= 0) then
                 if (terminal) then
@@ -39,7 +44,6 @@ contains
                 error stop "red-black pressure solver requires even global sizes in periodic directions"
             end if
         end do
-
     end subroutine init_pressure_solver
 
     subroutine pressure_projection(ps, blk, dns, dt_gamma, ibm, bc, c)
@@ -53,12 +57,29 @@ contains
 
         integer(C_INT) :: iIter, color
 
-        ! Per-colour exchanges refresh only same-level copies (interp =
-        ! false): each side of a 2:1 interface relaxes its own copy of the
-        ! interface faces against stage-frozen cross-level ghosts, which
-        ! keeps the block iteration contractive. The final full exchange
-        ! reconciles the copies conservatively (restriction of the fine
-        ! faces / injection of the coarse face).
+        ! 2:1 refined grids (nLevels > 1) use the composite projection: one
+        ! coupled SPD system whose interface rows are relaxed in situ. The owner
+        ! of each shared face (the block ABOVE it, holding it as its interior low
+        ! face) reconstructs the face from the pressures in the sweep
+        ! (q = qs - (p_above - p_below)*ifGrad); the cross-level coupling is
+        ! carried by the per-colour pressure + velocity exchange. The single-
+        ! level path below is the plain red-black SOR (no interface faces, so the
+        ! sweep's interface reconstruction is inert and the two paths coincide).
+        if (blk%nLevels > 1_C_INT) then
+            call snapshot_start_pressure(blk)
+            call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W])    ! transfer predictor velocity across interfaces
+            call composite_qs_setup(blk)                          ! freeze the slaved interface qs
+            do iIter = 1_C_INT, ps%nIter
+                do color = 1_C_INT, 0_C_INT, -1_C_INT
+                    call redblack_sweep(ps, blk, dt_gamma, ibm, color)
+                    call apply_bc(blk, bc)
+                    call exchange_halos(c, blk, [VAR_P])          ! cross-level pressure (RESTRICT + inject)
+                    call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W])  ! reconcile interface velocity
+                end do
+            end do
+            return
+        end if
+
         do iIter = 1_C_INT, ps%nIter
             do color = 1_C_INT, 0_C_INT, -1_C_INT
                 call redblack_sweep(ps, blk, dt_gamma, ibm, color)
@@ -70,8 +91,76 @@ contains
                 end if
             end do
         end do
-
     end subroutine pressure_projection
+
+    ! Allocate the device-resident start-of-projection pressure store once.
+    subroutine allocate_pstart(blk)
+        type(block_set_type), intent(in) :: blk
+        if (.not. allocated(pStart)) then
+            allocate(pStart, mold=blk%q(:,:,:,VAR_P,:))
+#ifdef USE_OPENMP_OFFLOAD
+            !$omp target enter data map(alloc: pStart)
+#endif
+        end if
+    end subroutine allocate_pstart
+
+    ! Snapshot the start-of-projection pressure into pStart (device kernel, no
+    ! host round-trip). Used by the interface reconstruction in the sweep.
+    subroutine snapshot_start_pressure(blk)
+        type(block_set_type), intent(in) :: blk
+        integer(C_INT) :: i, j, k, b, nx, ny, nz
+        call allocate_pstart(blk)
+        nx = blk%nb(1); ny = blk%nb(2); nz = blk%nb(3)
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target teams distribute parallel do collapse(4) &
+        !$omp& map(to: blk%q) map(tofrom: pStart) private(i,j,k,b)
+#endif
+        do b = 1_C_INT, blk%nBlocks
+            do k = 0_C_INT, nz+2
+                do j = 0_C_INT, ny+2
+                    do i = 0_C_INT, nx+2
+                        pStart(i,j,k,b) = blk%q(i,j,k,VAR_P,b)
+                    end do
+                end do
+            end do
+        end do
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp end target teams distribute parallel do
+#endif
+    end subroutine snapshot_start_pressure
+
+    ! Freeze the slaved interface predictor velocity. The owner of a shared face
+    ! is the block above it (its interior low face); the block below holds the
+    ! face as a high-side halo whose value is the transferred (RESTRICT/PROLONG)
+    ! owner velocity, just written by exchange_halos. Freeze it into qs there so
+    ! the sweep reconstruction q = qs - (p_above - p_below)*ifGrad starts from
+    ! the owner velocity. The owner keeps its own predictor qs at the low face.
+    subroutine composite_qs_setup(blk)
+        type(block_set_type), intent(inout) :: blk
+        integer(C_INT) :: b, i, j, k, nx, ny, nz
+        nx = blk%nb(1); ny = blk%nb(2); nz = blk%nb(3)
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target teams distribute parallel do collapse(4) &
+        !$omp& map(to: blk%physHigh) map(tofrom: blk%qs, blk%q) private(i,j,k,b)
+#endif
+        do b = 1_C_INT, blk%nBlocks
+            do k = 1_C_INT, nz
+                do j = 1_C_INT, ny
+                    do i = 1_C_INT, nx
+                        if (i == nx .and. is_interface(blk%physHigh(1,b))) &
+                            blk%qs(nx+1,j,k,VAR_U,b) = blk%q(nx+1,j,k,VAR_U,b)
+                        if (j == ny .and. is_interface(blk%physHigh(2,b))) &
+                            blk%qs(i,ny+1,k,VAR_V,b) = blk%q(i,ny+1,k,VAR_V,b)
+                        if (k == nz .and. is_interface(blk%physHigh(3,b))) &
+                            blk%qs(i,j,nz+1,VAR_W,b) = blk%q(i,j,nz+1,VAR_W,b)
+                    end do
+                end do
+            end do
+        end do
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp end target teams distribute parallel do
+#endif
+    end subroutine composite_qs_setup
 
     subroutine redblack_sweep(ps, blk, dt_gamma, ibm, color)
         type(pressure_solver_type), intent(in) :: ps
@@ -80,11 +169,12 @@ contains
         type(ibm_type), intent(in) :: ibm
         integer(C_INT), intent(in) :: color
 
-        real(C_DOUBLE) :: phi,denom,idt,sor
-        real(C_DOUBLE) :: div
-        real(C_DOUBLE) :: mu_u_i,mu_u_ip,mu_v_j,mu_v_jp,mu_w_k,mu_w_kp
-        integer(C_INT) :: i,ip,j,jp,k,kp,b,nBlocks,nLowerHaloDirections,iColor,nColorX
-        integer(C_INT) :: iLo,jLo,kLo,colorOffset
+        real(C_DOUBLE) :: phi, denom, div, idt, sor
+        real(C_DOUBLE) :: gradU_i, gradU_ip, gradV_j, gradV_jp, gradW_k, gradW_kp
+        real(C_DOUBLE) :: mu_u_i, mu_u_ip, mu_v_j, mu_v_jp, mu_w_k, mu_w_kp
+        logical :: ifLoX, ifHiX, ifLoY, ifHiY, ifLoZ, ifHiZ
+        integer(C_INT) :: i, ip, j, jp, k, kp, b, nBlocks, nLowerHaloDirections
+        integer(C_INT) :: iColor, nColorX, iLo, jLo, kLo, colorOffset
         integer(C_INT) :: hi(1:3)
 
         ! Each block sweeps from 0 (its halo layer, redundantly with the
@@ -95,23 +185,28 @@ contains
         sor = ps%sor
         nColorX = (hi(1) + 2_C_INT)/2_C_INT
         nBlocks = blk%nBlocks
-
         idt = 1.0_C_DOUBLE/dt_gamma
+        ! pStart is device-resident (enter data, once); the map(to:) below then
+        ! finds it present and does NOT copy it per sweep. It is read only at
+        ! interface faces (none on single-level grids), but must be mapped.
+        call allocate_pstart(blk)
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do collapse(4) &
         !$omp& map(to: color, nColorX, sor, idt, dt_gamma, hi(1:3), &
-        !$omp& blk%origin, blk%physLow, blk%physHigh, &
+        !$omp& blk%origin, blk%physLow, blk%physHigh, blk%ifGrad, blk%qs, pStart, &
         !$omp& blk%d1x, blk%d1y, blk%d1z, ibm%mu) &
         !$omp& map(tofrom: blk%q) &
         !$omp& private(i,ip,j,jp,k,kp,b,iColor,iLo,jLo,kLo,colorOffset, &
         !$omp& phi,denom,div,nLowerHaloDirections, &
+        !$omp& gradU_i,gradU_ip,gradV_j,gradV_jp,gradW_k,gradW_kp, &
+        !$omp& ifLoX,ifHiX,ifLoY,ifHiY,ifLoZ,ifHiZ, &
         !$omp& mu_u_i,mu_u_ip,mu_v_j,mu_v_jp,mu_w_k,mu_w_kp)
 #endif
-        DO b=1_C_INT,nBlocks
-        DO k=0_C_INT,hi(3)
-            DO j=0_C_INT,hi(2)
-                DO iColor=0_C_INT,nColorX-1_C_INT
+        DO b = 1_C_INT, nBlocks
+        DO k = 0_C_INT, hi(3)
+            DO j = 0_C_INT, hi(2)
+                DO iColor = 0_C_INT, nColorX-1_C_INT
                     iLo = merge(1_C_INT, 0_C_INT, blk%physLow(1,b) /= 0_C_INT)
                     jLo = merge(1_C_INT, 0_C_INT, blk%physLow(2,b) /= 0_C_INT)
                     kLo = merge(1_C_INT, 0_C_INT, blk%physLow(3,b) /= 0_C_INT)
@@ -127,9 +222,7 @@ contains
                     if (k == 0_C_INT) nLowerHaloDirections = nLowerHaloDirections + 1_C_INT
                     if (nLowerHaloDirections > 1_C_INT) cycle
 
-                    jp = j + 1
-                    kp = k + 1
-                    ip = i + 1
+                    ip = i + 1; jp = j + 1; kp = k + 1
 
                     mu_u_i  = ibm%mu(i,j,k,VAR_U,b)
                     mu_u_ip = ibm%mu(ip,j,k,VAR_U,b)
@@ -138,26 +231,39 @@ contains
                     mu_w_k  = ibm%mu(i,j,k,VAR_W,b)
                     mu_w_kp = ibm%mu(i,j,kp,VAR_W,b)
 
-                    ! The denominator drops only faces whose flux is pinned
-                    ! to zero forever (walls, closed faces). A 2:1 interface
-                    ! flux is a live unknown relaxed by the owning block, so
-                    ! it stays in the diagonal even where this block must
-                    ! not correct it: removing it would make this cell
-                    ! over-compensate through its remaining faces while the
-                    ! interface flux keeps moving, an irregular splitting
-                    ! that diverges (observed as exponential growth seeded
-                    ! at coarse blocks next to refined regions).
-                    denom = (merge(0.0d0, mu_u_i*blk%d1x(i,VAR_U,b), &
+                    ! A cell face is a 2:1 interface when its block-boundary side
+                    ! carries FACE_FINE/FACE_COARSE. There the cell-centre spacing
+                    ! d1 is replaced by the adjoint interface gradient ifGrad
+                    ! (1/gap over the true coarse-fine cell-centre distance), and
+                    ! the face is reconstructed from the pressures rather than
+                    ! incrementally corrected. Inert on single-level grids.
+                    ifLoX = i == 1_C_INT     .and. is_interface(blk%physLow(1,b))
+                    ifHiX = i == hi(1)       .and. is_interface(blk%physHigh(1,b))
+                    ifLoY = j == 1_C_INT     .and. is_interface(blk%physLow(2,b))
+                    ifHiY = j == hi(2)       .and. is_interface(blk%physHigh(2,b))
+                    ifLoZ = k == 1_C_INT     .and. is_interface(blk%physLow(3,b))
+                    ifHiZ = k == hi(3)       .and. is_interface(blk%physHigh(3,b))
+                    gradU_i  = merge(blk%ifGrad(1,b), blk%d1x(i,VAR_U,b),  ifLoX)
+                    gradU_ip = merge(blk%ifGrad(2,b), blk%d1x(ip,VAR_U,b), ifHiX)
+                    gradV_j  = merge(blk%ifGrad(3,b), blk%d1y(j,VAR_V,b),  ifLoY)
+                    gradV_jp = merge(blk%ifGrad(4,b), blk%d1y(jp,VAR_V,b), ifHiY)
+                    gradW_k  = merge(blk%ifGrad(5,b), blk%d1z(k,VAR_W,b),  ifLoZ)
+                    gradW_kp = merge(blk%ifGrad(6,b), blk%d1z(kp,VAR_W,b), ifHiZ)
+
+                    ! The diagonal drops only faces pinned to zero flux forever
+                    ! (walls, closed faces). A 2:1 interface flux is a live
+                    ! unknown and stays in the diagonal with its ifGrad coefficient.
+                    denom = (merge(0.0d0, mu_u_i*gradU_i, &
                                       face_pinned(blk%physLow(1,b)) .and. i == 1_C_INT) &
-                           + merge(0.0d0, mu_u_ip*blk%d1x(ip,VAR_U,b), &
+                           + merge(0.0d0, mu_u_ip*gradU_ip, &
                                       face_pinned(blk%physHigh(1,b)) .and. i == hi(1)))*blk%d1x(i,VAR_P,b) &
-                          + (merge(0.0d0, mu_v_j*blk%d1y(j,VAR_V,b), &
+                          + (merge(0.0d0, mu_v_j*gradV_j, &
                                       face_pinned(blk%physLow(2,b)) .and. j == 1_C_INT) &
-                           + merge(0.0d0, mu_v_jp*blk%d1y(jp,VAR_V,b), &
+                           + merge(0.0d0, mu_v_jp*gradV_jp, &
                                       face_pinned(blk%physHigh(2,b)) .and. j == hi(2)))*blk%d1y(j,VAR_P,b) &
-                          + (merge(0.0d0, mu_w_k*blk%d1z(k,VAR_W,b), &
+                          + (merge(0.0d0, mu_w_k*gradW_k, &
                                       face_pinned(blk%physLow(3,b)) .and. k == 1_C_INT) &
-                           + merge(0.0d0, mu_w_kp*blk%d1z(kp,VAR_W,b), &
+                           + merge(0.0d0, mu_w_kp*gradW_kp, &
                                       face_pinned(blk%physHigh(3,b)) .and. k == hi(3)))*blk%d1z(k,VAR_P,b)
 
                     div = (blk%q(ip,j,k,VAR_U,b)-blk%q(i,j,k,VAR_U,b))*blk%d1x(i,VAR_P,b) &
@@ -165,37 +271,46 @@ contains
                         + (blk%q(i,j,kp,VAR_W,b)-blk%q(i,j,k,VAR_W,b))*blk%d1z(k,VAR_P,b)
 
                     phi = -sor*div/denom
-
                     blk%q(i,j,k,VAR_P,b) = blk%q(i,j,k,VAR_P,b) + phi*idt
 
-                    ! Face corrections are symmetric, as on a single grid:
-                    ! every non-pinned face of the cell is corrected,
-                    ! including this block's own copy of a 2:1 interface
-                    ! face. During the sweeps the two sides' copies of an
-                    ! interface face evolve independently against their own
-                    ! lagged ghosts (the per-colour exchange does not
-                    ! overwrite them); the final exchange of the projection
-                    ! reconciles the copies conservatively. One-sided
-                    ! corrections are not an option here - they make the
-                    ! block iteration non-contractive and blow up.
+                    ! Reconstruct each interface face this cell owns/holds from
+                    ! the UPDATED pressures: q = qs - dt_gamma*(p_above-p_below)*
+                    ! ifGrad, using the in-projection pressure change p - pStart.
+                    if (ifLoX) blk%q(i,j,k,VAR_U,b) = blk%qs(i,j,k,VAR_U,b) - dt_gamma*mu_u_i*blk%ifGrad(1,b) &
+                        *((blk%q(i,j,k,VAR_P,b)-pStart(i,j,k,b)) - (blk%q(i-1,j,k,VAR_P,b)-pStart(i-1,j,k,b)))
+                    if (ifHiX) blk%q(ip,j,k,VAR_U,b) = blk%qs(ip,j,k,VAR_U,b) - dt_gamma*mu_u_ip*blk%ifGrad(2,b) &
+                        *((blk%q(ip,j,k,VAR_P,b)-pStart(ip,j,k,b)) - (blk%q(i,j,k,VAR_P,b)-pStart(i,j,k,b)))
+                    if (ifLoY) blk%q(i,j,k,VAR_V,b) = blk%qs(i,j,k,VAR_V,b) - dt_gamma*mu_v_j*blk%ifGrad(3,b) &
+                        *((blk%q(i,j,k,VAR_P,b)-pStart(i,j,k,b)) - (blk%q(i,j-1,k,VAR_P,b)-pStart(i,j-1,k,b)))
+                    if (ifHiY) blk%q(i,jp,k,VAR_V,b) = blk%qs(i,jp,k,VAR_V,b) - dt_gamma*mu_v_jp*blk%ifGrad(4,b) &
+                        *((blk%q(i,jp,k,VAR_P,b)-pStart(i,jp,k,b)) - (blk%q(i,j,k,VAR_P,b)-pStart(i,j,k,b)))
+                    if (ifLoZ) blk%q(i,j,k,VAR_W,b) = blk%qs(i,j,k,VAR_W,b) - dt_gamma*mu_w_k*blk%ifGrad(5,b) &
+                        *((blk%q(i,j,k,VAR_P,b)-pStart(i,j,k,b)) - (blk%q(i,j,k-1,VAR_P,b)-pStart(i,j,k-1,b)))
+                    if (ifHiZ) blk%q(i,j,kp,VAR_W,b) = blk%qs(i,j,kp,VAR_W,b) - dt_gamma*mu_w_kp*blk%ifGrad(6,b) &
+                        *((blk%q(i,j,kp,VAR_P,b)-pStart(i,j,kp,b)) - (blk%q(i,j,k,VAR_P,b)-pStart(i,j,k,b)))
+
+                    ! Every other face is corrected to drive div -> 0 (both this
+                    ! block's and the neighbour's copy of a shared face relax;
+                    ! the exchange reconciles them). Pinned and reconstructed
+                    ! interface faces are skipped.
                     blk%q(i,j,k,VAR_U,b) = blk%q(i,j,k,VAR_U,b) &
                         - merge(0.0d0, phi*blk%d1x(i,VAR_U,b)*mu_u_i, &
-                                face_pinned(blk%physLow(1,b)) .and. i == 1_C_INT)
+                                (face_pinned(blk%physLow(1,b)) .and. i == 1_C_INT) .or. ifLoX)
                     blk%q(ip,j,k,VAR_U,b) = blk%q(ip,j,k,VAR_U,b) &
                         + merge(0.0d0, phi*blk%d1x(ip,VAR_U,b)*mu_u_ip, &
-                                face_pinned(blk%physHigh(1,b)) .and. i == hi(1))
+                                (face_pinned(blk%physHigh(1,b)) .and. i == hi(1)) .or. ifHiX)
                     blk%q(i,j,k,VAR_V,b) = blk%q(i,j,k,VAR_V,b) &
                         - merge(0.0d0, phi*blk%d1y(j,VAR_V,b)*mu_v_j, &
-                                face_pinned(blk%physLow(2,b)) .and. j == 1_C_INT)
+                                (face_pinned(blk%physLow(2,b)) .and. j == 1_C_INT) .or. ifLoY)
                     blk%q(i,jp,k,VAR_V,b) = blk%q(i,jp,k,VAR_V,b) &
                         + merge(0.0d0, phi*blk%d1y(jp,VAR_V,b)*mu_v_jp, &
-                                face_pinned(blk%physHigh(2,b)) .and. j == hi(2))
+                                (face_pinned(blk%physHigh(2,b)) .and. j == hi(2)) .or. ifHiY)
                     blk%q(i,j,k,VAR_W,b) = blk%q(i,j,k,VAR_W,b) &
                         - merge(0.0d0, phi*blk%d1z(k,VAR_W,b)*mu_w_k, &
-                                face_pinned(blk%physLow(3,b)) .and. k == 1_C_INT)
+                                (face_pinned(blk%physLow(3,b)) .and. k == 1_C_INT) .or. ifLoZ)
                     blk%q(i,j,kp,VAR_W,b) = blk%q(i,j,kp,VAR_W,b) &
                         + merge(0.0d0, phi*blk%d1z(kp,VAR_W,b)*mu_w_kp, &
-                                face_pinned(blk%physHigh(3,b)) .and. k == hi(3))
+                                (face_pinned(blk%physHigh(3,b)) .and. k == hi(3)) .or. ifHiZ)
                 END DO
             END DO
         END DO
@@ -203,21 +318,20 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
 #endif
-
     end subroutine redblack_sweep
 
-    ! Pinned faces carry zero flux forever (physical walls, closed faces
-    ! against removed blocks): they leave both the denominator and the
-    ! corrections. Every other face, including each side's copy of a 2:1
-    ! interface face, stays in the denominator and is corrected by both
-    ! adjacent relaxations (strategy doc 6).
+    pure logical function is_interface(fk)
+!$omp declare target
+        integer(C_INT), intent(in) :: fk
+        is_interface = fk == FACE_FINE .or. fk == FACE_COARSE
+    end function is_interface
+
+    ! Pinned faces carry zero flux forever (physical walls, closed faces against
+    ! removed blocks): they leave both the diagonal and the corrections.
     pure logical function face_pinned(fk)
 !$omp declare target
         integer(C_INT), intent(in) :: fk
-
         face_pinned = fk == FACE_PHYS .or. fk == FACE_CLOSED
     end function face_pinned
-
-
 
 end module pressure_solver

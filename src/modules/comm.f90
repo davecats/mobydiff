@@ -60,6 +60,7 @@ module comm
         integer, allocatable :: lDstLo(:,:), lExt(:,:)     ! (3,nLocal)
         integer, allocatable :: lGA(:,:), lGB(:,:), lGS(:,:), lGC(:,:) ! gather map (3,nLocal)
         integer, allocatable :: lDir(:,:)                  ! direction (dst-completion adjacency)
+        integer, allocatable :: lFaceNrm(:)                ! 2:1 interface owned-face normal dir (0 = none)
         real(C_DOUBLE), allocatable :: lWp(:), lWpDst(:)   ! pressure dst-completion weights
         integer, allocatable :: lOff(:)                    ! (0:nLocal) point prefix
 
@@ -74,10 +75,12 @@ module comm
         integer, allocatable :: sExt(:,:)                  ! (3,nSend)
         integer, allocatable :: sGA(:,:), sGB(:,:), sGS(:,:), sGC(:,:)
         integer, allocatable :: sDstLo(:,:)                ! dst box lo (gather indexing)
+        integer, allocatable :: sFaceNrm(:)                ! 2:1 interface owned-face normal dir (0 = none)
         integer, allocatable :: sOff(:)                    ! (0:nSend) point prefix, peer-major
         integer, allocatable :: rSlot(:), rPeer(:)
         integer, allocatable :: rLo(:,:), rExt(:,:)
         integer, allocatable :: rDir(:,:)
+        integer, allocatable :: rFaceNrm(:)                ! 2:1 interface owned-face normal dir (0 = none)
         real(C_DOUBLE), allocatable :: rWp(:), rWpDst(:)
         integer, allocatable :: rOff(:)
 
@@ -227,6 +230,7 @@ contains
                                 c%lDstLo(:,nLocal) = dstLo
                                 c%lExt(:,nLocal) = ext
                                 c%lDir(:,nLocal) = off(:,d)
+                                c%lFaceNrm(nLocal) = face_normal(opc(cand), off(:,d))
                                 call entry_gather_map(opc(cand), off(:,d), tqc(:,cand), nb, &
                                     srcLo, dstLo, c%lGA(:,nLocal), c%lGB(:,nLocal), &
                                     c%lGS(:,nLocal), c%lGC(:,nLocal))
@@ -273,6 +277,7 @@ contains
                                     c%rLo(:,nRecv) = dstLo
                                     c%rExt(:,nRecv) = ext
                                     c%rDir(:,nRecv) = off(:,d)
+                                    c%rFaceNrm(nRecv) = face_normal(opc(cand), off(:,d))
                                     c%rWp(nRecv) = entry_blend(blk, dns, int(blk%level(b)), &
                                         int(blk%origin(:,b)), off(:,d), opc(cand))
                                     c%rWpDst(nRecv) = 1.0d0 - c%rWp(nRecv)
@@ -324,6 +329,7 @@ contains
                                     c%sPeer(nSend) = p
                                     c%sDstLo(:,nSend) = dstLo
                                     c%sExt(:,nSend) = ext
+                                    c%sFaceNrm(nSend) = face_normal(opc(cand), off(:,d))
                                     call entry_gather_map(opc(cand), off(:,d), tqc(:,cand), nb, &
                                         srcLo, dstLo, c%sGA(:,nSend), c%sGB(:,nSend), &
                                         c%sGS(:,nSend), c%sGC(:,nSend))
@@ -346,6 +352,7 @@ contains
                 allocate(c%lGA(3,max(1,nLocal)), c%lGB(3,max(1,nLocal)))
                 allocate(c%lGS(3,max(1,nLocal)), c%lGC(3,max(1,nLocal)))
                 allocate(c%lDir(3,max(1,nLocal)))
+                allocate(c%lFaceNrm(max(1,nLocal)))
                 allocate(c%lWp(max(1,nLocal)), c%lWpDst(max(1,nLocal)))
                 allocate(c%lOff(0:max(1,nLocal)))
                 allocate(c%sSlot(max(1,nSend)), c%sPeer(max(1,nSend)))
@@ -353,10 +360,12 @@ contains
                 allocate(c%sGA(3,max(1,nSend)), c%sGB(3,max(1,nSend)))
                 allocate(c%sGS(3,max(1,nSend)), c%sGC(3,max(1,nSend)))
                 allocate(c%sDstLo(3,max(1,nSend)))
+                allocate(c%sFaceNrm(max(1,nSend)))
                 allocate(c%sOff(0:max(1,nSend)))
                 allocate(c%rSlot(max(1,nRecv)), c%rPeer(max(1,nRecv)))
                 allocate(c%rLo(3,max(1,nRecv)), c%rExt(3,max(1,nRecv)))
                 allocate(c%rDir(3,max(1,nRecv)))
+                allocate(c%rFaceNrm(max(1,nRecv)))
                 allocate(c%rWp(max(1,nRecv)), c%rWpDst(max(1,nRecv)))
                 allocate(c%rOff(0:max(1,nRecv)))
                 c%lWp = 1.0d0
@@ -387,11 +396,11 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target enter data map(to: &
         !$omp& c%lSrcSlot, c%lDstSlot, c%lDstLo, c%lExt, c%lOff, &
-        !$omp& c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lWp, c%lWpDst, &
+        !$omp& c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lFaceNrm, c%lWp, c%lWpDst, &
         !$omp& c%sSlot, c%sPeer, c%sExt, c%sOff, &
-        !$omp& c%sGA, c%sGB, c%sGS, c%sGC, c%sDstLo, &
+        !$omp& c%sGA, c%sGB, c%sGS, c%sGC, c%sDstLo, c%sFaceNrm, &
         !$omp& c%peerSendOff, c%peerRecvOff, c%peerSendCopyOff, c%peerRecvCopyOff, &
-        !$omp& c%rSlot, c%rPeer, c%rLo, c%rExt, c%rDir, c%rWp, c%rWpDst, c%rOff)
+        !$omp& c%rSlot, c%rPeer, c%rLo, c%rExt, c%rDir, c%rFaceNrm, c%rWp, c%rWpDst, c%rOff)
         !$omp target enter data map(alloc: c%sendbuf, c%recvbuf)
 #endif
     end subroutine init_block_exchange
@@ -404,18 +413,18 @@ contains
             !$omp target exit data map(delete: c%sendbuf, c%recvbuf)
             !$omp target exit data map(delete: &
             !$omp& c%lSrcSlot, c%lDstSlot, c%lDstLo, c%lExt, c%lOff, &
-            !$omp& c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lWp, c%lWpDst, &
+            !$omp& c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lFaceNrm, c%lWp, c%lWpDst, &
             !$omp& c%sSlot, c%sPeer, c%sExt, c%sOff, &
-            !$omp& c%sGA, c%sGB, c%sGS, c%sGC, c%sDstLo, &
+            !$omp& c%sGA, c%sGB, c%sGS, c%sGC, c%sDstLo, c%sFaceNrm, &
             !$omp& c%peerSendOff, c%peerRecvOff, c%peerSendCopyOff, c%peerRecvCopyOff, &
-            !$omp& c%rSlot, c%rPeer, c%rLo, c%rExt, c%rDir, c%rWp, c%rWpDst, c%rOff)
+            !$omp& c%rSlot, c%rPeer, c%rLo, c%rExt, c%rDir, c%rFaceNrm, c%rWp, c%rWpDst, c%rOff)
 #endif
             deallocate(c%sendbuf, c%recvbuf)
             deallocate(c%lSrcSlot, c%lDstSlot, c%lDstLo, c%lExt, c%lOff)
-            deallocate(c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lWp, c%lWpDst)
+            deallocate(c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lFaceNrm, c%lWp, c%lWpDst)
             deallocate(c%sSlot, c%sPeer, c%sExt, c%sOff)
-            deallocate(c%sGA, c%sGB, c%sGS, c%sGC, c%sDstLo)
-            deallocate(c%rSlot, c%rPeer, c%rLo, c%rExt, c%rDir, c%rWp, c%rWpDst, c%rOff)
+            deallocate(c%sGA, c%sGB, c%sGS, c%sGC, c%sDstLo, c%sFaceNrm)
+            deallocate(c%rSlot, c%rPeer, c%rLo, c%rExt, c%rDir, c%rFaceNrm, c%rWp, c%rWpDst, c%rOff)
             deallocate(c%request)
         end if
         if (allocated(c%peerRank)) deallocate(c%peerRank)
@@ -553,6 +562,27 @@ contains
         end if
     end subroutine candidate_boxes
 
+    ! Normal dimension of a 2:1 interface FACE entry that owns the shared
+    ! face on the destination side (doc 6a, uniform-B). Returns the normal
+    ! direction d (1/2/3) for the two fine-low orientations and 0 otherwise:
+    !   PROLONG off=+d : the fine block computes its own top face v(nb+1),
+    !                    so the prolong fills only the nb+2 stencil halo for
+    !                    the normal component (and nb+1 for tangential/p).
+    !   RESTRICT off=-d: the coarse block's interface face v(1) is the
+    !                    restriction of the four fine v(nb+1) (index-1 write).
+    ! Edges/corners (|off|>1) and the already-correct fine-high orientations
+    ! (PROLONG off=-d, RESTRICT off=+d) return 0 - handled as before.
+    integer function face_normal(op, off)
+        integer, intent(in) :: op, off(3)
+        integer :: d
+        face_normal = 0
+        if (sum(abs(off)) /= 1) return
+        do d = 1, 3
+            if (op == OP_PROLONG .and. off(d) == 1) face_normal = d
+            if (op == OP_RESTRICT .and. off(d) == -1) face_normal = d
+        end do
+    end function face_normal
+
     ! Destination box and per-dim source bases for a 2:1 interface entry.
     ! Tangential source indices follow from tq and the destination index
     ! inside the kernels; the normal-dimension base is stored in srcLo.
@@ -565,12 +595,25 @@ contains
         do d = 1, 3
             select case (off(d))
             case (1)
+                ! A fine block's high face toward a coarser neighbour
+                ! (PROLONG) fills TWO halo layers so its redundant top-face
+                ! momentum reaches the nb+2 stencil cell (doc 6a); both layers
+                ! inject the same covering coarse value (the gather base is
+                ! di-independent for PROLONG). A coarse block restricting from
+                ! finer neighbours above keeps one layer (it never computes its
+                ! own top face).
                 dstLo(d) = nb(d) + 1
-                ext(d) = 1
+                ext(d) = merge(2, 1, op == OP_PROLONG)
                 srcLo(d) = 1
             case (-1)
+                ! A coarse block restricting from finer neighbours below
+                ! (RESTRICT face) writes TWO layers: index 0 (the halo below
+                ! the interface, tangential/pressure) and index 1 (its own
+                ! interface face v(1) = restriction of the four fine v(nb+1),
+                ! normal component). The gather slope ga=2 maps index 0 -> the
+                ! halo rows and index 1 -> the fine top face nb+1.
                 dstLo(d) = 0
-                ext(d) = 1
+                ext(d) = merge(2, 1, op == OP_RESTRICT .and. sum(abs(off)) == 1)
                 srcLo(d) = merge(nb(d) - 1, nb(d), op == OP_RESTRICT)
             case default
                 if (op == OP_RESTRICT) then
@@ -611,6 +654,11 @@ contains
                 if (op == OP_RESTRICT) then
                     gb(d) = srcLo(d)
                     gc(d) = 2
+                    ! Restrict interface FACE (coarse looking down at fine):
+                    ! ga=2 sends dst index 0 to the halo rows (srcLo, +1) and
+                    ! dst index 1 to the fine top face nb+1, so the coarse owns
+                    ! v(1) = average of the four fine v(nb+1) (doc 6a).
+                    if (face_normal(op, off) == d) ga(d) = 2
                 else
                     ! Coarse row covering the halo layer: depends on the
                     ! fine block's parity tq because across edge/corner
@@ -649,33 +697,10 @@ contains
         integer, intent(in) :: level, dorigin(3), off(3), op
         real(C_DOUBLE) :: w
 
-        integer :: d, g, gnl
-        real(C_DOUBLE) :: aHalf, bHalf, cHalf
-
+        ! The composite projection encodes the adjoint interface gradient
+        ! explicitly via ifGrad (over the true coarse-fine gap), so the prolonged
+        ! 2:1 pressure ghost is the raw coarse pressure (injection, w = 1).
         w = 1.0d0
-        if (op /= OP_PROLONG) return
-        if (sum(abs(off)) /= 1) return
-        do d = 1, 3
-            if (off(d) == 0) cycle
-            gnl = int(level_cells(dns, d, int(level, C_INT)))
-            if (off(d) == -1) then
-                g = modulo(dorigin(d) - 1, gnl)
-            else
-                g = modulo(dorigin(d) + int(blk%nb(d)), gnl)
-            end if
-            ! Half-widths from the level node lines: fine halo cell (bHalf),
-            ! its covering coarse cell (aHalf), first interior cell (cHalf).
-            ! All three centres sit on the face normal; the face is a shared
-            ! node of both lines, so distances reduce to half-widths.
-            bHalf = 0.5d0*level_cell_width(blk, d, level, g)
-            aHalf = 0.5d0*level_cell_width(blk, d, level - 1, g/2)
-            if (off(d) == -1) then
-                cHalf = 0.5d0*level_cell_width(blk, d, level, dorigin(d))
-            else
-                cHalf = 0.5d0*level_cell_width(blk, d, level, dorigin(d) + int(blk%nb(d)) - 1)
-            end if
-            w = 1.0d0 - (aHalf - bHalf)/(aHalf + cHalf)
-        end do
     end function entry_blend
 
     ! Width of 0-based cell g of the level-l node line in direction d.
@@ -829,9 +854,14 @@ contains
         do d = 1, 3
             select case (off(d))
             case (1)
+                ! Fill TWO high-side halo layers (nb+1, nb+2) of the normal
+                ! direction: the redundant top-face momentum (doc 6a) reaches
+                ! v(nb+2). The gather (ga=1, gb=srcLo-dstLo=-nb) maps halo
+                ! nb+1,nb+2 to neighbour interior 1,2. The low side stays one
+                ! layer (the top-face stencil never reads below v(0)).
                 srcLo(d) = 1
                 dstLo(d) = nb(d) + 1
-                ext(d) = 1
+                ext(d) = 2
             case (-1)
                 srcLo(d) = nb(d)
                 dstLo(d) = 0
@@ -1116,7 +1146,7 @@ contains
         type(block_set_type), intent(inout) :: blk
 
         integer :: p, gp, v, e, pt, ni, nj
-        integer :: di, dj, dk, var, nv, totalItems
+        integer :: di, dj, dk, var, nv, totalItems, nd, layerN
         integer :: b1, b2, b3, c1, c2, c3, s1, s2, s3
         real(C_DOUBLE) :: val
 
@@ -1127,10 +1157,10 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
         !$omp& map(to: totalItems, nv, c%nLocal, c%lOff, c%lSrcSlot, c%lDstSlot, &
-        !$omp& c%lDstLo, c%lExt, c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lWp, c%lWpDst, &
+        !$omp& c%lDstLo, c%lExt, c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lFaceNrm, c%lWp, c%lWpDst, &
         !$omp& c%activeVars) &
         !$omp& map(tofrom: blk%q) &
-        !$omp& private(p,gp,v,e,pt,ni,nj,di,dj,dk,var,b1,b2,b3,c1,c2,c3,s1,s2,s3,val)
+        !$omp& private(p,gp,v,e,pt,ni,nj,di,dj,dk,var,nd,layerN,b1,b2,b3,c1,c2,c3,s1,s2,s3,val)
 #endif
         do p = 1, totalItems
             gp = (p - 1)/nv
@@ -1143,6 +1173,27 @@ contains
             dj = c%lDstLo(2,e) + modulo(pt/ni, nj)
             dk = c%lDstLo(3,e) + pt/(ni*nj)
             var = int(c%activeVars(v+1))
+            ! 2:1 interface owned face. PROLONG (dstLo=nb+1>0): the fine owns
+            ! its near face, so the normal component is written only to the
+            ! deep stencil layer nb+2 and the others to the nb+1 halo.
+            ! RESTRICT (dstLo=0): the normal component writes BOTH the coarse's
+            ! -side halo (index 0, needed by its own momentum stencil) and its
+            ! interface face (index 1 = average of the fine faces); the others
+            ! write only the index-0 halo.
+            ! Above-block-owns: the block ABOVE a 2:1 shared face owns it at its
+            ! interior v(1); the block below holds v(nb+1) as a slaved halo. The
+            ! normal component is therefore filled like any halo -- PROLONG injects
+            ! the covering coarse v(1) (both halo layers nb+1, nb+2); RESTRICT
+            ! writes ONLY the v(0) halo (layerN 0), never the coarse interior v(1).
+            nd = c%lFaceNrm(e)
+            if (nd /= 0) then
+                layerN = merge(di, merge(dj, dk, nd == 2), nd == 1) - c%lDstLo(nd,e)
+                if (var == nd) then
+                    if (c%lDstLo(nd,e) == 0 .and. layerN /= 0) cycle
+                else if (layerN /= 0) then
+                    cycle
+                end if
+            end if
             b1 = ishft(c%lGA(1,e)*di + c%lGB(1,e), -c%lGS(1,e))
             b2 = ishft(c%lGA(2,e)*dj + c%lGB(2,e), -c%lGS(2,e))
             b3 = ishft(c%lGA(3,e)*dk + c%lGB(3,e), -c%lGS(3,e))
@@ -1177,7 +1228,7 @@ contains
         real(C_DOUBLE), intent(inout) :: scalar(0:,0:,0:,1:)
 
         integer :: p, e, pt, ni, nj
-        integer :: di, dj, dk, totalItems
+        integer :: di, dj, dk, totalItems, nd, layerN
         integer :: b1, b2, b3, c1, c2, c3, s1, s2, s3
         real(C_DOUBLE) :: val
 
@@ -1187,9 +1238,9 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
         !$omp& map(to: totalItems, c%nLocal, c%lOff, c%lSrcSlot, c%lDstSlot, &
-        !$omp& c%lDstLo, c%lExt, c%lGA, c%lGB, c%lGS, c%lGC) &
+        !$omp& c%lDstLo, c%lExt, c%lGA, c%lGB, c%lGS, c%lGC, c%lFaceNrm) &
         !$omp& map(tofrom: scalar) &
-        !$omp& private(p,e,pt,ni,nj,di,dj,dk,b1,b2,b3,c1,c2,c3,s1,s2,s3,val)
+        !$omp& private(p,e,pt,ni,nj,di,dj,dk,nd,layerN,b1,b2,b3,c1,c2,c3,s1,s2,s3,val)
 #endif
         do p = 1, totalItems
             e = find_entry(c%lOff, c%nLocal, p - 1)
@@ -1199,6 +1250,14 @@ contains
             di = c%lDstLo(1,e) + modulo(pt, ni)
             dj = c%lDstLo(2,e) + modulo(pt/ni, nj)
             dk = c%lDstLo(3,e) + pt/(ni*nj)
+            ! A cell-centred scalar (LES nut) at a 2:1 owned face writes only
+            ! the shallow halo layer; the deep layer is the velocity normal
+            ! component's (PROLONG nb+2 / RESTRICT coarse interior v(1)).
+            nd = c%lFaceNrm(e)
+            if (nd /= 0) then
+                layerN = merge(di, merge(dj, dk, nd == 2), nd == 1) - c%lDstLo(nd,e)
+                if (layerN /= 0) cycle
+            end if
             b1 = ishft(c%lGA(1,e)*di + c%lGB(1,e), -c%lGS(1,e))
             b2 = ishft(c%lGA(2,e)*dj + c%lGB(2,e), -c%lGS(2,e))
             b3 = ishft(c%lGA(3,e)*dk + c%lGB(3,e), -c%lGS(3,e))
@@ -1287,7 +1346,7 @@ contains
         type(block_set_type), intent(inout) :: blk
 
         integer :: p, gp, v, e, pt, ni, nj
-        integer :: i, j, k, var, peer, pos, nv, totalItems, copyOnly
+        integer :: i, j, k, var, peer, pos, nv, totalItems, copyOnly, nd, layerN
         real(C_DOUBLE) :: val
 
         nv = c%nActiveVars
@@ -1298,10 +1357,10 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
         !$omp& map(to: totalItems, nv, copyOnly, c%nPeers, c%nRecv, c%rOff, c%rSlot, c%rPeer, &
-        !$omp& c%rLo, c%rExt, c%rDir, c%rWp, c%rWpDst, &
+        !$omp& c%rLo, c%rExt, c%rDir, c%rFaceNrm, c%rWp, c%rWpDst, &
         !$omp& c%peerRecvOff, c%peerRecvCopyOff, c%activeVars, c%recvbuf) &
         !$omp& map(tofrom: blk%q) &
-        !$omp& private(p,gp,v,e,pt,ni,nj,i,j,k,var,peer,pos,val)
+        !$omp& private(p,gp,v,e,pt,ni,nj,i,j,k,var,peer,pos,nd,layerN,val)
 #endif
         do p = 1, totalItems
             gp = (p - 1)/nv
@@ -1318,6 +1377,19 @@ contains
             j = c%rLo(2,e) + modulo(pt/ni, nj)
             k = c%rLo(3,e) + pt/(ni*nj)
             var = int(c%activeVars(v+1))
+            ! Above-block-owns (mirror of copy_local_entries): the normal
+            ! component is a slaved halo on the BELOW block -- PROLONG injects the
+            ! covering coarse v(1) into both halo layers; RESTRICT writes only the
+            ! v(0) halo, never the coarse interior v(1) (it owns it).
+            nd = c%rFaceNrm(e)
+            if (nd /= 0) then
+                layerN = merge(i, merge(j, k, nd == 2), nd == 1) - c%rLo(nd,e)
+                if (var == nd) then
+                    if (c%rLo(nd,e) == 0 .and. layerN /= 0) cycle
+                else if (layerN /= 0) then
+                    cycle
+                end if
+            end if
             peer = c%rPeer(e)
             pos = (gp - c%peerRecvOff(peer-1))*nv + v + 1
             val = c%recvbuf(pos,peer)
@@ -1337,7 +1409,7 @@ contains
         real(C_DOUBLE), intent(in) :: scalar(0:,0:,0:,1:)
 
         integer :: p, e, pt, ni, nj
-        integer :: di, dj, dk, peer, pos, totalItems
+        integer :: di, dj, dk, peer, pos, totalItems, nd, layerN
         integer :: b1, b2, b3, c1, c2, c3, s1, s2, s3
         real(C_DOUBLE) :: val
 
@@ -1347,9 +1419,9 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
         !$omp& map(to: totalItems, c%nSend, c%sOff, c%sSlot, c%sPeer, &
-        !$omp& c%sDstLo, c%sExt, c%sGA, c%sGB, c%sGS, c%sGC, c%peerSendOff, scalar) &
+        !$omp& c%sDstLo, c%sExt, c%sGA, c%sGB, c%sGS, c%sGC, c%sFaceNrm, c%peerSendOff, scalar) &
         !$omp& map(tofrom: c%sendbuf) &
-        !$omp& private(p,e,pt,ni,nj,di,dj,dk,peer,pos,b1,b2,b3,c1,c2,c3,s1,s2,s3,val)
+        !$omp& private(p,e,pt,ni,nj,di,dj,dk,peer,pos,nd,layerN,b1,b2,b3,c1,c2,c3,s1,s2,s3,val)
 #endif
         do p = 1, totalItems
             e = find_entry(c%sOff, c%nSend, p - 1)
@@ -1359,6 +1431,13 @@ contains
             di = c%sDstLo(1,e) + modulo(pt, ni)
             dj = c%sDstLo(2,e) + modulo(pt/ni, nj)
             dk = c%sDstLo(3,e) + pt/(ni*nj)
+            ! Cell-centred scalar packs only the shallow halo layer; the deep
+            ! layer's gather would read nut(nb+2), outside its 0:nb+1 bound.
+            nd = c%sFaceNrm(e)
+            if (nd /= 0) then
+                layerN = merge(di, merge(dj, dk, nd == 2), nd == 1) - c%sDstLo(nd,e)
+                if (layerN /= 0) cycle
+            end if
             b1 = ishft(c%sGA(1,e)*di + c%sGB(1,e), -c%sGS(1,e))
             b2 = ishft(c%sGA(2,e)*dj + c%sGB(2,e), -c%sGS(2,e))
             b3 = ishft(c%sGA(3,e)*dk + c%sGB(3,e), -c%sGS(3,e))
@@ -1387,7 +1466,7 @@ contains
         real(C_DOUBLE), intent(inout) :: scalar(0:,0:,0:,1:)
 
         integer :: p, e, pt, ni, nj
-        integer :: i, j, k, peer, pos, totalItems
+        integer :: i, j, k, peer, pos, totalItems, nd, layerN
 
         totalItems = c%peerRecvOff(c%nPeers)
         if (totalItems == 0) return
@@ -1395,9 +1474,9 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
         !$omp& map(to: totalItems, c%nRecv, c%rOff, c%rSlot, c%rPeer, &
-        !$omp& c%rLo, c%rExt, c%peerRecvOff, c%recvbuf) &
+        !$omp& c%rLo, c%rExt, c%rFaceNrm, c%peerRecvOff, c%recvbuf) &
         !$omp& map(tofrom: scalar) &
-        !$omp& private(p,e,pt,ni,nj,i,j,k,peer,pos)
+        !$omp& private(p,e,pt,ni,nj,i,j,k,peer,pos,nd,layerN)
 #endif
         do p = 1, totalItems
             e = find_entry(c%rOff, c%nRecv, p - 1)
@@ -1407,6 +1486,12 @@ contains
             i = c%rLo(1,e) + modulo(pt, ni)
             j = c%rLo(2,e) + modulo(pt/ni, nj)
             k = c%rLo(3,e) + pt/(ni*nj)
+            ! Cell-centred scalar: shallow halo layer only (see copy_local).
+            nd = c%rFaceNrm(e)
+            if (nd /= 0) then
+                layerN = merge(i, merge(j, k, nd == 2), nd == 1) - c%rLo(nd,e)
+                if (layerN /= 0) cycle
+            end if
             peer = c%rPeer(e)
             pos = p - c%peerRecvOff(peer-1)
             scalar(i,j,k,c%rSlot(e)) = c%recvbuf(pos,peer)

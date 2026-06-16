@@ -278,6 +278,159 @@ fine-owned faces carry full fine resolution. With the finest-level
 wall buffer (Section 4) interfaces sit in smooth flow, where this is a
 second-order-consistent approximation.
 
+### 6a. Planned revision: fine-authoritative normal velocity + momentum reflux
+
+Turbulence validation (`validation/channel_interface`, interfaces at
+y+=55 and y+=112, in the buffer/log layer) shows the "low-side owns"
+rule is not accurate enough when an interface sits in energetic
+turbulence: a spurious Reynolds stress appears localized at the
+interface (the −⟨u'v'⟩ excess is almost entirely a *correlation*
+overshoot, ρ_uv up to +5-6 %, not an rms change), the streamwise
+spectrum piles up at the fine grid-scale just below the interface and is
+deficient just above, the mean shear-stress balance carries a constant
+excess in the fine band with a jump across the interface (an
+un-refluxed momentum flux), and a spurious spanwise mean flow grows in
+time. The error scales with the local turbulence intensity (y+=55 worse
+than y+=112) and is wall-asymmetric, tracking the two opposite-handed
+interface orientations.
+
+Root cause: the interface treatment is conservative for **mass** but not
+for **momentum**, and the interface-normal velocity is handled
+asymmetrically. In this storage convention a block computes the normal
+faces `v(1..nb)` (its low boundary + interior), and its high boundary
+face `v(nb+1)` is a halo. So at a *fine-low* interface (fine band below,
+coarse above — the bottom wall) the shared normal face is the coarse
+block's interior `v(1)` and the fine block's halo `v(nb+1)`: the **coarse
+side computes the interface-normal velocity at coarse resolution and the
+four fine sub-faces are injected copies** (the fine side never carries a
+fine-scale wall-normal velocity at the interface, exactly where the
+turbulent flux lives). At a *fine-high* interface (top wall) it is the
+reverse and the fine side is already authoritative. `interface_boxes`
+encodes the same asymmetry: a high (`off=+1`) restrict writes the
+boundary normal face at index `nb+1`, but a low (`off=-1`) restrict
+writes only the halo at index 0, never the boundary face at index 1.
+
+The fix has two parts.
+
+**Part 1 — fine-authoritative normal velocity via uniform redundant
+top-face computation (uniform Route B).** Rather than special-casing the
+interface, every block momentum-computes *its own* top normal face —
+`u(nb+1)`, `v(nb+1)`, `w(nb+1)` — redundantly with the block above/
+right/in front, exactly as the SOR sweep already recomputes its open
+halo layer redundantly to make results independent of `nb` and rank
+count. With every block holding its own high-side normal face the
+compute/own asymmetry of the "low-side owns" rule simply dissolves: at a
+fine-low interface (bottom wall) the four fine sub-faces are computed by
+the fine block at fine resolution — there is no injected coarse predictor
+— and the coarse interface face is the area-restriction of those four,
+identical to the fine-high (top wall) case. The two walls become
+symmetric and the normal-velocity transfer direction is *not*
+phase-dependent: the normal velocity always reconciles fine→coarse
+(restrict), and coarse→fine prolongation only fills the fine block's
+stencil halo, never overwrites a computed face.
+
+What this requires:
+
+- **Two-cell high-side halo.** The top-face stencil for `v(nb+1)` reaches
+  `v(nb+2)`, so `q`/`qs` carry a two-cell halo on the *high* side of each
+  direction (`0:nb+2`); the low side stays one cell (`0`), because the
+  top-face stencil never reads below `v(0)`. Use `0:nb+2`, not
+  `-1:nb+2` — the low-side ghost would be cosmetic halo for nothing.
+- **`oldrhs` high-side layer, recomputed.** `oldrhs` (RK history) grows
+  to `1:nb+1` on the high side and is recomputed redundantly each
+  substage. It is a pure function of exchanged state, so no extra message
+  and it cannot desync.
+- **Two-deep normal halo fill.** The exchange fills the normal-velocity
+  halo two layers deep: a same-level COPY writes the neighbour's
+  `v(1),v(2)` into `v(nb+1),v(nb+2)`; a coarse-above interface PROLONG
+  fills both fine layers. This is what makes the redundant top-face
+  computation bit-identical to the neighbour's for same-level blocks —
+  the Inc-2 canary (channel nb=4 still bit-exact vs Phase 2).
+- **Metric at the top face.** `lapYp(nb+1)` (the coefficient of `v(nb+2)`)
+  must carry the correct one-sided spacing.
+- **Symmetric, ownership-based sweep masks.** A block corrects a normal
+  interface face iff it owns it (the neighbour across is *coarser*,
+  `FACE_COARSE`) or the face is open; it does not correct `FACE_FINE`
+  (the finer neighbour owns) or pinned faces. Interface faces stay in
+  `denom` on both sides (the Phase-3d stability requirement). The coarse
+  interface face becomes the restriction of the four fine sub-faces — a
+  slave used only in the coarse cell's divergence and tangential-momentum
+  flux, never an independent DOF nor re-injected. Structurally the low
+  (`off=-1`) restrict of the normal component must write the boundary
+  face at index 1, which `interface_boxes` currently omits.
+
+Computing the top face on *every* block (including same-level) is more
+than the interface strictly needs — the asymmetry is only at 2:1 faces —
+but it buys branch-free, uniform inner-loop logic at the price of a wider
+halo and some redundant FLOPs. That overhead (the `0:nb+2` halo and the
+universal redundant top-face computation) is a deliberate, known cost and
+stays on the Phase-4 optimisation list; the simpler version is to compute
+the top normal face only where a block is fine at a `FACE_COARSE`
+interface.
+
+Gated increments (each independently falsifiable). As implemented, the
+momentum change was targeted to `FACE_COARSE` high faces (the fine-low
+case) rather than computed on every block: a same-level top face is
+overwritten by the halo refresh anyway, so computing it everywhere is
+dead work, and targeting keeps the same-level path untouched.
+
+- **Inc 1** (done, validated 2026-06-15) — `q`/`qs` carry a `0:nb+2`
+  high-side halo, `oldrhs` `1:nb+1`; `lap*(nb+1)` filled; the same-level
+  COPY fills two high-side layers. No momentum change. channel nb=4
+  bit-exact (CPU+GPU), uniform-flow exact, `MOBY_HALO_AUDIT` clean.
+- **Inc 2a** (done) — the momentum predictor and the copy-back compute
+  the top normal face `v(nb+1)` at a `FACE_COARSE` high face (the fine
+  block of a fine-low interface). Exchange unchanged ⇒ the face is still
+  overwritten by the existing prolong ⇒ bit-exact vs Inc 1 everywhere.
+- **Inc 2b** (done, validated 2026-06-15) — interface ownership flip,
+  entirely in the exchange (`comm.f90` `faceNrm`): the fine block's
+  PROLONG no longer injects its owned `v(nb+1)` (writes only the `nb+2`
+  stencil and the tangential/pressure halo); the coarse block's RESTRICT
+  writes `v(1) = ¼Σ v^f(nb+1)` to its interior face (index 1) **and** its
+  outward halo `v(0)` (index 0). Two hard-won points:
+  - **Sweep corrections stay SYMMETRIC** (`face_pinned` only). Making the
+    coarse skip its interface face (`no_correct` on `FACE_FINE`) is the
+    one-sided splitting that blows up — re-confirmed here, reverted.
+  - **The RESTRICT must keep writing the coarse's normal *outward halo*
+    `v(0)`**, not only the interface face `v(1)`. The coarse still
+    *predicts* `v(1)` in its own momentum, whose stencil reads `v(0)`;
+    a dropped `v(0)` leaves it stale and breaks the constant-field
+    cancellation, injecting a divergence-free spurious tangential mode at
+    fine-low interfaces (uniform flow no longer exact). With `v(0)`
+    restored: uniform-flow spread **exactly 0** at any SOR count,
+    divergence 0, `interface_decay` contracts (200 steps), channel nb=4
+    bit-exact, halo audit clean — CPU and GPU.
+- **Inc 4** (convective y-reflux done, validated 2026-06-15;
+  `src/modules/reflux.f90`) — tangential-momentum reflux (Part 2). The
+  coarse cell's interface flux is replaced by the area-restriction of the
+  four fine fluxes (Berger-Colella); the correction vanishes identically
+  for uniform flow. Done: the convective flux at y-interfaces (the channel
+  bands), both tangential components, same-rank fine neighbour, CPU+GPU.
+  Gates: uniform-flow spread 0 (CPU+GPU), reflux non-trivially active on
+  the noisy patch with `interface_decay` still contracting, channel nb=4
+  bit-exact (no-op without refinement). Pending (all vanish for uniform,
+  so the exact gates are unaffected): the viscous flux, x/z interfaces
+  (body refinement only), and the cross-rank flux exchange (a y-interface
+  whose fine side is off-rank currently aborts). The turbulent
+  −⟨u'v'⟩ closure is validated on the big machine.
+
+**Part 2 — tangential-momentum reflux.** After the predictor, the
+   convective+viscous flux of the tangential momentum (u, w) through the
+   interface differs between the coarse computation (one face) and the
+   fine computation (sum of four). Accumulate both, restrict the fine
+   flux, and correct the interface-adjacent cells by the mismatch
+   (Berger-Colella reflux). The correction is constructed to vanish
+   identically for uniform/constant flow so the exact-uniform-flow gate
+   and single-level bit-exactness are preserved.
+
+Gates for the revision: the existing exact gates must still hold
+(uniform-flow spread 0, channel nb=4 bit-exact vs Phase 2, mass to
+round-off, `MOBY_HALO_AUDIT` clean, `interface_decay` contraction over
+200 steps — run at every step because this is the instability-prone
+region); then the turbulence validation should show the −⟨u'v'⟩
+correlation overshoot, the spectral pile-up and the wall asymmetry
+collapse.
+
 A manufactured-field halo audit (`MOBY_HALO_AUDIT=1`, see `main.f90`)
 checks every exchange-written halo cell against the design semantics
 above on the actual block layout; transfers should be verified with it

@@ -6,7 +6,7 @@
 program main
     use :: init
     use :: blocks, only: block_set_type, init_block_set, destroy_block_set, &
-        enter_block_data, exit_block_data, zero_closed_halos
+        enter_block_data, exit_block_data, zero_closed_halos, FACE_COARSE
     use :: chron, only: chron_type, start_chron, stop_chron, write_chron
     use :: flow_case, only: case_type, create_flow_case
     use :: config
@@ -168,7 +168,9 @@ program main
     call apply_bc(blk, bc)
     call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W, VAR_P])
 
-    ! Temporary debugging hook: manufactured-field halo coherence audit.
+    ! Halo coherence audit (MOBY_HALO_AUDIT): check every exchange-written halo
+    ! cell against manufactured linear fields on the real block layout. Run this
+    ! first when a 2:1 interface case misbehaves.
     block
         character(len=16) :: auditEnv
         call get_environment_variable("MOBY_HALO_AUDIT", auditEnv)
@@ -204,7 +206,9 @@ program main
             dt_beta  = dns%dt*rk_beta(rkStage)
             dt_gamma = dns%dt*rk_gamma(rkStage)
 
-            ! Predictor: advance tentative staggered velocities, then enforce solid/body constraints.
+            ! Predictor: advance tentative staggered velocities, then enforce
+            ! solid/body constraints and exchange halos (the interface high faces
+            ! are filled with the owner velocity here).
             call update_ibm_mu(ibm, dt_gamma)
             if (les_is_enabled(les)) then
                 les_profile_start = les_wall_seconds()
@@ -220,7 +224,8 @@ program main
             call apply_bc(blk, bc)
             call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W])
 
-            ! Projection: solve for pressure correction and project tentative velocities.
+            ! Projection: solve for the pressure correction and project the
+            ! tentative velocities to a divergence-free field.
             call pressure_projection(ps, blk, dns, dt_gamma, ibm, bc, c)
 
         end do
@@ -272,7 +277,7 @@ contains
     ! weight 2/3). Wrapped periodic regions are skipped (linear field is
     ! discontinuous across the wrap), as are regions with no occupant.
     subroutine halo_audit(blk, dns, bc, c)
-        use :: blocks, only: leaf_at, level_cells
+        use :: blocks, only: leaf_at, level_cells, FACE_COARSE
         type(block_set_type), intent(inout) :: blk
         type(dns_type), intent(in) :: dns
         type(boundary_type), intent(in) :: bc
@@ -284,17 +289,19 @@ contains
         real(C_DOUBLE), parameter :: CZV(4) = [0.9d0, 1.7d0, 2.3d0, 0.4d0]
         integer(C_INT) :: b, var, i, j, k, d, l, nBad, nChecked, nb(3)
         integer(C_INT) :: off(3), idx(3), to(3), cl(3), cc(3), gnl, gidx, cov
-        integer(C_INT) :: idSame, idParent, sx, sy, sz
+        integer(C_INT) :: idSame, idParent, sx, sy, sz, ghalo, gint
         logical :: skip, anyChild
-        real(C_DOUBLE) :: got, want, posD(3), srcD(3), wBlend
+        real(C_DOUBLE) :: got, want, posD(3), srcD(3), wBlend, aHalf, bHalf, cHalf
 
         nb = blk%nb
 
         do b = 1, int(blk%nBlocks)
             do var = 1, 4
-                do k = 0, nb(3) + 1
-                    do j = 0, nb(2) + 1
-                        do i = 0, nb(1) + 1
+                ! High side runs to nb+2 (the redundant top-face momentum
+                ! halo); the low side keeps its single ghost at 0.
+                do k = 0, nb(3) + 2
+                    do j = 0, nb(2) + 2
+                        do i = 0, nb(1) + 2
                             if (i >= 1 .and. i <= nb(1) .and. j >= 1 .and. j <= nb(2) &
                                 .and. k >= 1 .and. k <= nb(3)) then
                                 blk%q(i,j,k,var,b) = CXV(var)*blk%x(i,var,b) &
@@ -320,14 +327,16 @@ contains
         do b = 1, int(blk%nBlocks)
             l = int(blk%level(b))
             do var = 1, 4
-                do k = 0, nb(3) + 1
-                    do j = 0, nb(2) + 1
-                        do i = 0, nb(1) + 1
+                ! High side runs to nb+2 (the redundant top-face momentum
+                ! halo); the low side keeps its single ghost at 0.
+                do k = 0, nb(3) + 2
+                    do j = 0, nb(2) + 2
+                        do i = 0, nb(1) + 2
                             idx = [i, j, k]
                             do d = 1, 3
                                 off(d) = 0
                                 if (idx(d) == 0) off(d) = -1
-                                if (idx(d) == nb(d) + 1) off(d) = 1
+                                if (idx(d) >= nb(d) + 1) off(d) = 1
                             end do
                             if (all(off == 0)) cycle
 
@@ -345,6 +354,22 @@ contains
                             idParent = -1
                             if (l > 0) idParent = int(leaf_at(blk, int(l - 1, C_INT), &
                                 int(cl/2, C_INT)))
+
+                            ! The 2nd high-side halo layer (idx == nb+2) is
+                            ! audited for same-level copies; the interface
+                            ! PROLONG normal stencil there is not.
+                            if (any(idx > nb + 1) .and. idSame < 0) cycle
+
+                            ! Momentum-owned interface faces: a fine block
+                            ! computes its top normal face v(nb+1) (var == d)
+                            ! where the +d neighbour is coarser, so it is NOT
+                            ! exchange-written and keeps the sentinel (doc 6a).
+                            skip = .false.
+                            do d = 1, 3
+                                if (off(d) == 1 .and. var == d .and. &
+                                    blk%physHigh(d,b) == FACE_COARSE) skip = .true.
+                            end do
+                            if (skip) cycle
 
                             posD = [blk%x(i,var,b), blk%y(j,var,b), blk%z(k,var,b)]
                             if (idSame >= 0) then
@@ -365,7 +390,22 @@ contains
                                 end do
                                 want = CXV(var)*srcD(1) + CYV(var)*srcD(2) + CZV(var)*srcD(3)
                                 if (var == VAR_P .and. sum(abs(off)) == 1) then
-                                    wBlend = 2.0d0/3.0d0
+                                    ! Pressure PROLONG ghost = w*p_coarse +
+                                    ! (1-w)*p_fine with the node-line geometric
+                                    ! weight w = (bHalf+cHalf)/(aHalf+cHalf) of
+                                    ! the fine-halo / coarse-cover / fine-interior
+                                    ! half-widths (mirrors comm entry_blend). A
+                                    ! fixed 2/3 is only exact on a uniform grid.
+                                    do d = 1, 3
+                                        if (off(d) == 0) cycle
+                                        ghalo = int(blk%origin(d,b)) + idx(d) - 1
+                                        gint = ghalo - off(d)
+                                        cov = ghalo/2
+                                        bHalf = 0.5d0*(line_at(blk,d,l,ghalo+1) - line_at(blk,d,l,ghalo))
+                                        cHalf = 0.5d0*(line_at(blk,d,l,gint+1) - line_at(blk,d,l,gint))
+                                        aHalf = 0.5d0*(line_at(blk,d,l-1,cov+1) - line_at(blk,d,l-1,cov))
+                                        wBlend = (bHalf + cHalf)/(aHalf + cHalf)
+                                    end do
                                     want = wBlend*want + (1.0d0 - wBlend) &
                                         *(CXV(var)*blk%x(i-off(1),var,b) &
                                         + CYV(var)*blk%y(j-off(2),var,b) &

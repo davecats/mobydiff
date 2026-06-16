@@ -1,7 +1,7 @@
 module generic_flow
     use, intrinsic :: iso_c_binding
     use :: flow_case_base, only: case_type
-    use :: init, only: dns_type, grid_type, GRID_UNIFORM
+    use :: init, only: dns_type, grid_type, GRID_UNIFORM, VAR_U
     use :: blocks, only: block_set_type
     use :: boundary, only: boundary_type, init_bc
     use :: pressure_solver, only: pressure_solver_type
@@ -72,10 +72,53 @@ contains
         integer :: i, j, k, v, b, nSeed
         integer, allocatable :: seed(:)
         real(C_DOUBLE) :: r
+        character(len=32) :: shearEnv
+        real(C_DOUBLE) :: shearAmp, twopi, ly, ycoord
+        integer :: gx, gz, ios
 
         blk%q(:,:,:,1,:) = dns%initial_velocity(1)
         blk%q(:,:,:,2,:) = dns%initial_velocity(2)
         blk%q(:,:,:,3,:) = dns%initial_velocity(3)
+
+        ! Diagnostic shear-mode gate (interface_review §vi): a smooth periodic
+        ! mean shear u(y)=sin(2*pi*y/Ly) across the interface, plus a structured
+        ! checkerboard seed v = a*(-1)^(gx+gz) on the interface-normal velocity
+        ! in the FINE region only -- the zero-coarse-average [+a,-a,+a,-a]
+        ! component the coarse pressure cannot see. MOBY_SHEAR_SEED=<amplitude>.
+        call get_environment_variable("MOBY_SHEAR_SEED", shearEnv)
+        if (len_trim(shearEnv) > 0) then
+            read(shearEnv, *, iostat=ios) shearAmp
+            if (ios /= 0) shearAmp = 1.0d-3
+            twopi = 8.0d0*atan(1.0d0); ly = dns%leng(2)
+            do b = 1, int(blk%nBlocks)
+                do k = 0, int(blk%nb(3))+1
+                    do j = 0, int(blk%nb(2))+1
+                        do i = 0, int(blk%nb(1))+1
+                            ycoord = blk%y(j, VAR_U, b)
+                            ! Periodic y: Kolmogorov-like sin shear (projection-
+                            ! only gate). Walls in y: steady laminar Poiseuille
+                            ! u = 4 y(Ly-y)/Ly^2 (Umax=1), sustained by a uniform
+                            ! forcing_x = 8/Re set in the input - a base that is
+                            ! linearly stable below Re~5772, so any full-step
+                            ! blow-up is attributable to the 2:1 interface.
+                            if (bc%isPeriodic(2)) then
+                                blk%q(i,j,k,1,b) = sin(twopi*ycoord/ly)
+                            else
+                                blk%q(i,j,k,1,b) = 4.0d0*ycoord*(ly-ycoord)/(ly*ly)
+                            end if
+                            blk%q(i,j,k,2,b) = 0.0d0
+                            blk%q(i,j,k,3,b) = 0.0d0
+                            if (blk%level(b) > 0_C_INT) then
+                                gx = int(blk%origin(1,b)) + i - 1
+                                gz = int(blk%origin(3,b)) + k - 1
+                                blk%q(i,j,k,2,b) = shearAmp*real(1 - 2*modulo(gx+gz,2), C_DOUBLE)
+                            end if
+                        end do
+                    end do
+                end do
+            end do
+            return
+        end if
 
         ! Optional white-noise perturbation ([flow] initial_noise), used by
         ! the interface-decay gate. Deterministic per rank.

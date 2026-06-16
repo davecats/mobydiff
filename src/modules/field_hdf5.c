@@ -328,8 +328,10 @@ static int write_block_dataset(hid_t file, const char *name,
                                int n_blocks, int n_blocks_global, int id_start,
                                const double *q, size_t block_stride)
 {
-    const size_t ni = (size_t)nbx + 2;
-    const size_t nj = (size_t)nby + 2;
+    /* q carries a 1-cell low + 2-cell high halo per direction (0:nb+2),
+       so the per-direction Fortran stride is nb+3. */
+    const size_t ni = (size_t)nbx + 3;
+    const size_t nj = (size_t)nby + 3;
     const size_t n = (size_t)nbx*(size_t)nby*(size_t)nbz;
     hsize_t global_dims[4] = {(hsize_t)n_blocks_global, (hsize_t)nbz, (hsize_t)nby, (hsize_t)nbx};
     hsize_t local_dims[4] = {(hsize_t)n_blocks, (hsize_t)nbz, (hsize_t)nby, (hsize_t)nbx};
@@ -394,8 +396,10 @@ static int read_block_dataset(hid_t file, hid_t dset, hid_t file_space,
                               int n_blocks, int n_blocks_global, int id_start,
                               double *q, size_t block_stride)
 {
-    const size_t ni = (size_t)nbx + 2;
-    const size_t nj = (size_t)nby + 2;
+    /* q carries a 1-cell low + 2-cell high halo per direction (0:nb+2),
+       so the per-direction Fortran stride is nb+3. */
+    const size_t ni = (size_t)nbx + 3;
+    const size_t nj = (size_t)nby + 3;
     const size_t n = (size_t)nbx*(size_t)nby*(size_t)nbz;
     hsize_t expected[4] = {(hsize_t)n_blocks_global, (hsize_t)nbz, (hsize_t)nby, (hsize_t)nbx};
     hsize_t file_dims[4] = {0, 0, 0, 0};
@@ -555,8 +559,10 @@ static int read_global_dataset_blocks(hid_t file, hid_t dset, hid_t file_space,
                                       int global_nx, int global_ny, int global_nz,
                                       double *q, size_t block_stride)
 {
-    const size_t ni = (size_t)nbx + 2;
-    const size_t nj = (size_t)nby + 2;
+    /* q carries a 1-cell low + 2-cell high halo per direction (0:nb+2),
+       so the per-direction Fortran stride is nb+3. */
+    const size_t ni = (size_t)nbx + 3;
+    const size_t nj = (size_t)nby + 3;
     const size_t n = (size_t)nbx*(size_t)nby*(size_t)nbz;
     hsize_t expected_dims[3] = {(hsize_t)global_nz, (hsize_t)global_ny, (hsize_t)global_nx};
     hsize_t file_dims[3] = {0, 0, 0};
@@ -639,7 +645,8 @@ int fdm_h5_write_field(const char *filename, int nbx, int nby, int nbz,
                        const double *q)
 {
     /* q is the solver's (0:nb+1,0:nb+1,0:nb+1, 4 vars, n_blocks) array. */
-    const size_t var_stride = (size_t)(nbx + 2)*(size_t)(nby + 2)*(size_t)(nbz + 2);
+    /* q halo is 0:nb+2 (1 low + 2 high), so each direction spans nb+3. */
+    const size_t var_stride = (size_t)(nbx + 3)*(size_t)(nby + 3)*(size_t)(nbz + 3);
     const size_t block_stride = var_stride*4;
     static const char *var_name[4] = {"un", "vn", "wn", "pn"};
     hid_t file;
@@ -765,7 +772,8 @@ int fdm_h5_read_field(const char *filename, int nbx, int nby, int nbz,
                       int global_nx, int global_ny, int global_nz,
                       double *q)
 {
-    const size_t var_stride = (size_t)(nbx + 2)*(size_t)(nby + 2)*(size_t)(nbz + 2);
+    /* q halo is 0:nb+2 (1 low + 2 high), so each direction spans nb+3. */
+    const size_t var_stride = (size_t)(nbx + 3)*(size_t)(nby + 3)*(size_t)(nbz + 3);
     const size_t block_stride = var_stride*4;
     static const char *var_name[4] = {"un", "vn", "wn", "pn"};
     hid_t file;

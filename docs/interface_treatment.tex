@@ -1,0 +1,331 @@
+\documentclass[11pt]{article}
+\usepackage{amsmath,amssymb}
+\usepackage[margin=1in]{geometry}
+\usepackage{bm}
+\usepackage{xcolor}
+\newcommand{\half}{\tfrac12}
+\newcommand{\fine}{\mathrm{f}}
+\newcommand{\coarse}{\mathrm{c}}
+\newcommand{\dd}[2]{\frac{\partial #1}{\partial #2}}
+\title{Momentum and pressure at 2:1 block interfaces\\ \large (mobydiff, branch \texttt{claude/blocks}, current implementation)}
+\author{}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\noindent
+This note describes \emph{exactly what the code currently does} for the
+velocity and the pressure projection across a $2{:}1$ refinement interface,
+so the underlying logic and discretization can be checked independently of
+the implementation. It documents the state after increment ``2b''
+(fine-authoritative normal velocity); the tangential-momentum reflux
+(``Inc 4'') is \emph{not} yet implemented. A growing, divergence-free
+velocity perturbation appears at fine-low interfaces even for uniform flow;
+the relevant pieces are flagged \textcolor{red}{(suspect)}.
+
+\section{Single-grid scheme (reference)}
+
+Incompressible Navier--Stokes on a staggered (MAC) Cartesian grid,
+second-order finite differences, RK3 in time with a coupled
+velocity--pressure red--black SOR projection. Cell $(i,j,k)$ stores the
+pressure $p$ at its centre and the velocity components on its \emph{low}
+faces:
+\begin{equation}
+  u_{i,j,k}=u(x_{i-\half},y_j,z_k),\quad
+  v_{i,j,k}=v(x_i,y_{j-\half},z_k),\quad
+  w_{i,j,k}=w(x_i,y_j,z_{k-\half}).
+\end{equation}
+Thus $v_{i,j}$ is the \emph{south} (low-$y$) face of cell $(i,j)$ and
+$v_{i,j+1}$ its \emph{north} face. A block holding cells $j=1\dots n_b$
+therefore \emph{computes} the faces $v_{1\dots n_b}$ (the south faces of its
+own cells); its top face $v_{n_b+1}$ is the south face of the cell above and
+is a \textbf{halo}.
+
+Each RK substage advances a predictor and projects it:
+\begin{align}
+  q^\ast &= q^n + \Delta t\,\big(\alpha\,\mathrm{rhs}(q^n)+\beta\,\mathrm{rhs}^{n-1}\big)-\Delta t\,\gamma\,\nabla p^n, \label{eq:pred}\\
+  \text{solve}\quad &\nabla\!\cdot\!\Big(\tfrac{1}{\rho}\nabla\phi\Big)=\tfrac{1}{\Delta t\,\gamma}\,\nabla\!\cdot q^\ast, \qquad
+  q^{n+1}=q^\ast-\Delta t\,\gamma\,\nabla\phi . \label{eq:proj}
+\end{align}
+The momentum right-hand side for the $v$ face at $(i,j)$ (convective +
+diffusive, $\mathrm{IBM}$ mask $\mu$, forcing $F$) uses the standard 7-point
+stencil; the only inputs that matter here are
+\begin{equation}
+  \mathrm{rhs}^v_{i,j}\ \ni\ \underbrace{(v_{i,j}{+}v_{i,j+1})^2}_{\text{needs }v_{i,j+1}},\quad
+  \underbrace{\lambda^-_j v_{i,j-1}+\lambda^0_j v_{i,j}+\lambda^+_j v_{i,j+1}}_{\text{diffusion}},\quad
+  \underbrace{(p_{i,j}-p_{i,j-1})\,d^y_j}_{-\,\partial p/\partial y}.
+\end{equation}
+Computing the face at $j$ thus reaches $v_{i,j+1}$ (one face above) and
+$p_{i,j}$ (the pressure on the high side of the face).
+
+The projection is a red--black SOR sweep. For cell $(i,j,k)$ with
+divergence
+\begin{equation}
+  D_{ijk}=(u_{i+1}-u_i)\,d^x_i+(v_{j+1}-v_j)\,d^y_j+(w_{k+1}-w_k)\,d^z_k,
+  \label{eq:div}
+\end{equation}
+one Gauss--Seidel update with relaxation $\omega$ is
+\begin{equation}
+  \phi=-\omega\,D_{ijk}/\Theta_{ijk},\qquad
+  p_{ijk}\mathrel{+}=\phi/(\Delta t\gamma),
+\end{equation}
+followed by the six face corrections that drive $D\to 0$, e.g.
+$v_{i,j}\mathrel{-}=\phi\,d^y_j\,\mu^v_{i,j}$ and
+$v_{i,j+1}\mathrel{+}=\phi\,d^y_{j+1}\,\mu^v_{i,j+1}$, with the diagonal
+$\Theta_{ijk}$ the sum of the corresponding face coefficients. For a
+\emph{constant} pressure and a divergence-free field, $D\equiv0\Rightarrow
+\phi\equiv0$: the scheme leaves a uniform flow exactly unchanged. This is the
+invariant that currently fails at interfaces.
+
+\section{Block decomposition and halos}
+
+The domain is tiled by equal-size blocks of $n_b^3$ cells. A level-$\ell$
+block covers $n_b$ cells of the level-$\ell$ grid, obtained from the base
+grid by $\ell$ midpoint bisections (so a coarse cell is the exact union of
+its $2^3$ children). Neighbours differ by at most one level (the $2{:}1$
+rule). Each block carries a one-cell halo on the low side and a
+\textbf{two-cell halo on the high side}, $q\in[0,n_b{+}2]$ per direction; the
+extra layer $n_b{+}2$ exists only so that a block can compute its own top
+normal face $v_{n_b+1}$ (whose stencil reaches $v_{n_b+2}$).
+
+\section{2:1 interface: geometry and the two orientations}
+
+Consider a $y$-interface (the argument is identical in $x,z$). Two blocks
+meet; one is one level finer. Per direction we distinguish:
+\begin{itemize}
+\item \textbf{Fine-low} (Fig., fine below): the \emph{fine} block sits below,
+  the \emph{coarse} above. The shared face is the fine block's
+  \emph{top halo} $v^\fine_{n_b+1}$ and the coarse block's \emph{interior
+  south face} $v^\coarse_{1}$. Four fine faces tile one coarse face.
+  The coarse block sees \texttt{physLow}$=$\texttt{FACE\_FINE}; the fine sees
+  \texttt{physHigh}$=$\texttt{FACE\_COARSE}.
+\item \textbf{Fine-high} (fine above): the reverse. The shared face is the
+  fine block's \emph{interior south face} $v^\fine_{1}$ and the coarse
+  block's \emph{top halo} $v^\coarse_{n_b+1}$.
+\end{itemize}
+The fine-high case is benign and unchanged from earlier phases: the fine
+block already \emph{computes} the shared face as its interior $v^\fine_1$,
+and the coarse receives it by restriction into its halo. The fine-low case
+is the one redesigned in 2b and the one that misbehaves.
+
+\paragraph{Transfer operators.} With midpoint subdivision the four fine
+sub-faces tile the coarse face exactly, so:
+\begin{align}
+  \text{RESTRICT (fine$\to$coarse):}\quad & v^\coarse=\tfrac14\textstyle\sum_{m=1}^{4} v^\fine_m, \label{eq:restrict}\\
+  \text{PROLONG (coarse$\to$fine):}\quad & v^\fine_m=v^\coarse \quad(\text{injection, $v_1$ accuracy}). \label{eq:prolong}
+\end{align}
+Restriction is the area average; because a coarse face has $4\times$ the area
+of a fine face, the coarse flux $v^\coarse A^\coarse=\tfrac14\sum v^\fine_m\,(4A^\fine)=\sum v^\fine_m A^\fine$
+equals the sum of fine fluxes -- the transfer is \emph{discretely
+conservative for mass}, exactly, in both orientations.
+
+\section{Momentum at the interface (predictor)}
+
+\paragraph{Fine block, fine-low (\texttt{physHigh}=\texttt{FACE\_COARSE}).}
+The fine block now \emph{computes its own top normal face} $v^\fine_{n_b+1}$
+in the predictor \eqref{eq:pred}, by extending its momentum loop to $j=n_b{+}1$
+for the normal component only. The stencil reaches $v^\fine_{n_b+2}$, which is
+supplied by injecting the covering coarse normal velocity into the second
+halo layer (Eq.~\ref{eq:prolong} at $n_b{+}2$). Cross/diffusion terms use the
+already-prolonged tangential velocity and pressure at $n_b{+}1$. The fine
+block thus holds a \emph{fine-resolution} shared face, symmetric with the
+fine-high case.
+
+\paragraph{Coarse block, fine-low (\texttt{physLow}=\texttt{FACE\_FINE}).}
+\textcolor{red}{(suspect)} The coarse block still predicts its interior south
+face $v^\coarse_1$ from its own (coarse-resolution) momentum stencil, exactly
+as an ordinary interior face. After the projection it is overwritten by the
+restriction \eqref{eq:restrict} of the four fine faces. (An attempt to make
+the coarse \emph{skip} predicting $v^\coarse_1$ -- treating it purely as a
+restricted slave -- made the perturbation $\sim\!60\times$ worse and was
+reverted.)
+
+\paragraph{Ownership summary (normal velocity at a shared face).}
+The shared normal face has a single \emph{owner} that holds it at fine
+resolution: the fine block, in both orientations. The coarse block holds a
+restricted copy used only in its own divergence \eqref{eq:div}. Concretely
+the exchange (built once) carries, per shared face $d$:
+\begin{center}
+\begin{tabular}{lll}
+\hline
+quantity & where written (fine side) & where written (coarse side)\\
+\hline
+normal velocity & \emph{not} received (computed) & interior face $v^\coarse_1$ \emph{and} outward halo $v^\coarse_0\leftarrow$ RESTRICT (Eq.~\ref{eq:restrict})\\
+tangential $u,w$ & halo $n_b{+}1\leftarrow$ PROLONG & halo $0\leftarrow$ RESTRICT\\
+pressure & halo $n_b{+}1\leftarrow$ PROLONG+blend & halo $0\leftarrow$ RESTRICT\\
+normal stencil & halo $n_b{+}2\leftarrow$ PROLONG (inj.) & --\\
+\hline
+\end{tabular}
+\end{center}
+
+\section{Pressure projection at the interface}
+
+The projection \eqref{eq:proj} runs the same red--black SOR, with three
+interface-specific choices.
+
+\paragraph{(a) Symmetric face corrections.}
+Every non-pinned face of a cell is corrected, \emph{including each block's own
+copy of a shared interface face}. Only physical walls and closed (removed-
+block) faces leave the diagonal $\Theta$ and the corrections. In particular a
+$2{:}1$ interface face stays in $\Theta$ on \emph{both} sides and is relaxed
+by \emph{both} adjacent cells (each side relaxes its own copy). A one-sided
+treatment -- correcting the face only on its owner side and freezing it on the
+other -- was tried and is \emph{non-contractive}: it blows up (verified twice,
+first in Phase 3d, again here). Symmetry is what makes the block iteration a
+convergent damped scheme.
+
+\paragraph{(b) Stage-frozen ghosts (per-colour copy-only exchange).}
+The per-colour halo exchanges \emph{inside} the SOR run only the same-level
+COPY entries; the interface RESTRICT/PROLONG (and the pressure blend) are
+\emph{not} applied between colours. So during the sweep each side relaxes
+against frozen interface ghosts and against its own evolving copy of the
+shared face.
+
+\paragraph{(c) Conservative reconciliation + pressure ghost.}
+The \emph{final} full exchange of the projection applies RESTRICT/PROLONG:
+the coarse interface face is snapped to the average of the four fine faces
+\eqref{eq:restrict}, the fine halos are re-injected, so the state entering the
+next stage is owner-consistent and mass telescopes. The pressure halo at a
+PROLONG face is not plain injection but a \emph{blend} placing the ghost where
+the fine stencil expects it. For a uniform $2{:}1$ ratio,
+\begin{equation}
+  p^\fine_{n_b+1}=\tfrac{2\,p^\coarse+p^\fine_{n_b}}{3},
+  \label{eq:blend}
+\end{equation}
+\textcolor{red}{(suspect)} which enters the fine block's
+$-\partial p/\partial y$ at the owned face $v^\fine_{n_b+1}$. (Plain injection
+places the coarse value $1.5\times$ too far and overdrives the interface
+velocity; the blend was introduced in Phase 3d to stop a different blow-up.)
+
+\section{Expected invariants and the observed failure}
+
+\paragraph{What should hold.}
+\begin{enumerate}
+\item \emph{Mass}: the restricted coarse flux equals the summed fine fluxes
+  exactly (Eq.~\ref{eq:restrict}); global $\sum D$ telescopes to round-off.
+\item \emph{Uniform flow}: a constant velocity / constant pressure is a fixed
+  point. With $v\equiv\text{const}$ the predictor gives $\mathrm{rhs}^v=0$ at
+  every face including $v^\fine_{n_b+1}$; restriction \eqref{eq:restrict} and
+  injection of a constant reproduce the constant; the blend
+  \eqref{eq:blend} of a constant pressure returns the same constant, so
+  $\partial p/\partial y=0$; hence $D\equiv0$, $\phi\equiv0$, and the field is
+  unchanged. \textbf{This is the property that is failing.}
+\item \emph{Stability}: the interface decay test (white noise on a refined
+  patch, no forcing) contracts $\max|u|,\max|p|$ monotonically. This
+  \emph{passes} (200 steps, $\sim\!7\times$ contraction).
+\end{enumerate}
+
+\paragraph{What was observed, and the resolution (implementation bug).}
+For an exactly uniform $u$-flow through a refined cube a velocity perturbation
+initially appeared at the \emph{fine-low} interfaces and grew roughly linearly
+($\sim 5\times10^{-6}$ per step). Diagnostics showed the cell divergence
+\eqref{eq:div} was \emph{exactly zero}, so it was not a mass leak; the
+perturbation was divergence-free and tangential. The cause was traced to the
+exchange, \emph{not} the discretization:
+\begin{quote}
+The RESTRICT entry on the coarse side writes, per shared face, the coarse
+interface face $v^\coarse_1$ (index 1) \emph{and} the coarse outward halo
+$v^\coarse_0$ (index 0). The implementation initially wrote the normal
+component only to index 1 and dropped index 0. But the coarse block still
+\emph{predicts} $v^\coarse_1$ in its own momentum
+($\propto(v^\coarse_0{+}v^\coarse_1)^2$ and the diffusion stencil), which
+needs the outward halo $v^\coarse_0$. With $v^\coarse_0$ stale ($\ne$ the
+uniform value), the constant-field cancellation of convection and diffusion
+broke, injecting a spurious momentum at the interface each substage.
+\end{quote}
+Restoring the index-0 normal halo write (RESTRICT writes the normal component
+to \emph{both} layers; PROLONG still writes only the deep stencil layer)
+makes the divergence, the velocity perturbation and the pressure deviation
+\textbf{exactly zero} for uniform flow, at any number of SOR iterations. The
+design above (fine-authoritative normal velocity, symmetric relaxation,
+conservative reconciliation) is therefore consistent; the failure was a
+dropped halo cell in the transfer.
+
+\section{Tangential-momentum reflux (Inc 4)}
+
+The treatment above makes the \emph{normal} velocity single-valued and
+mass-conservative at the interface. The remaining inconsistency is in the
+\emph{tangential} momentum: the flux of $u$ (and $w$) through a $y$-interface
+is computed at coarse resolution by the coarse cell and at fine resolution by
+the four fine cells, and the two do not agree because the flux is
+\emph{nonlinear} in the velocity. This is the standard Berger--Colella
+flux-register problem, here on a staggered grid.
+
+\paragraph{The flux.} Write the $u$-momentum equation in conservation form,
+$\partial_t u = -\partial_y \Phi_u + (\text{$x,z$ terms})$, with the
+$y$-directed flux of $u$-momentum
+\begin{equation}
+  \Phi_u(y) = \underbrace{u\,v}_{\text{convective}} \;-\; \underbrace{\nu\,\partial_y u}_{\text{viscous}} .
+  \label{eq:flux}
+\end{equation}
+On the MAC grid the flux through the $y$-face at $j$ (the interface) is, to
+second order,
+\begin{equation}
+  \Phi_u^{\,j} = \tfrac14\big(u_{i,j-1}+u_{i,j}\big)\big(v_{i-1,j}+v_{i,j}\big)
+              - \nu\,(u_{i,j}-u_{i,j-1})\,\hat d^{\,y}_j ,
+  \label{eq:fluxdisc}
+\end{equation}
+which sits at an $x$-face / $y$-face / $z$-cell location (an edge of the
+$u$-cell). The cell update is the flux difference
+$\partial_t u_{i,j}=-(\Phi_u^{\,j+1}-\Phi_u^{\,j})\,d^y_j+\dots$, so the coarse
+cell just above the interface ($j=1$) carries $+\Phi_u^{\,1}\,d^y_1$ and the
+fine cells just below carry $-\Phi_u^{\,n_b+1,\fine}\,d^y_{n_b}$.
+
+\paragraph{The mismatch and the correction.} The fine flux is the accurate
+one. Berger--Colella refluxing replaces the coarse cell's interface flux by
+the area-restriction of the fine fluxes, correcting \emph{only} the coarse
+interface-adjacent cell (the fine cells already used the accurate flux):
+\begin{equation}
+  \delta u^\coarse_{i,1} \;=\; \Delta t\,\alpha\,\mu^u_{i,1}\,d^y_1\,
+   \Big(\;\langle \Phi_u^{\fine}\rangle \;-\; \Phi_u^{\coarse,1}\;\Big),
+  \qquad
+  \langle\Phi_u^{\fine}\rangle=\tfrac{1}{2}\!\!\sum_{\text{2 fine in }z} \Phi_u^{\,n_b+1,\fine},
+  \label{eq:reflux}
+\end{equation}
+where the restriction $\langle\cdot\rangle$ averages the fine fluxes that tile
+the coarse face: for $\Phi_u$ this is one $x$-face (the aligned one), one
+$y$-face (the interface), and two $z$-cells -- a $1{\times}1{\times}2$ average
+(and $2{\times}1{\times}1$ for $\Phi_w$). The coefficient
+$\mu^u$ applies the IBM mask; $d^y_1$ is the coarse metric.
+
+\paragraph{Properties.}
+\begin{itemize}
+\item \emph{Vanishes for uniform/constant flow}: with $u\equiv U$, $v\equiv V$,
+  every $\Phi_u^{\fine}=\Phi_u^{\coarse}=UV$ and the viscous part is zero, so
+  $\langle\Phi_u^{\fine}\rangle-\Phi_u^{\coarse,1}=0$ and
+  $\delta u^\coarse=0$. The exact-uniform-flow gate and single-level
+  bit-exactness are preserved by construction.
+\item \emph{Conservative}: the net $u$-momentum flux across the interface
+  becomes the single value $\langle\Phi_u^{\fine}\rangle$ on both sides.
+\item \emph{What it adds physically}: $\langle uv\rangle^{\fine}\ne
+  \langle u\rangle\langle v\rangle$; the difference is exactly the resolved
+  sub-coarse-grid correlation (a Reynolds-stress-like term) that the coarse
+  cell misses. This is the mechanism expected to remove the
+  $-\langle u'v'\rangle$ defect seen in the turbulent validation.
+\end{itemize}
+
+\paragraph{Implementation outline.} (i) compute $\Phi$ on each block's
+interface faces from the post-predictor velocity; (ii) restrict $\Phi$
+fine$\to$coarse with the flux staggering above (a dedicated transfer -- the
+velocity gather's staggering does not match); (iii) apply \eqref{eq:reflux} to
+the coarse interface-adjacent cells of the predictor $q^\ast$, before the
+projection. Done after the predictor and its halo exchange so the fine flux is
+available to the coarse side.
+
+\paragraph{Implementation status (\texttt{src/modules/reflux.f90}).} The
+\emph{convective} flux at \emph{$y$-interfaces} (the wall-parallel bands of the
+channel validation), both tangential components $u,w$, is implemented and
+verified: the correction vanishes to machine zero for uniform flow (CPU and
+GPU), is non-trivially active on a noisy refined patch while leaving the decay
+gate contracting, and channel nb=4 stays bit-exact (the reflux is a no-op with
+no refinement). The fine neighbour is read directly, so a y-interface whose
+fine side is on another rank currently aborts. Remaining, all of which vanish
+for uniform flow and so do not affect the exact gates: the \emph{viscous} flux
+(Eq.~\ref{eq:flux}, second term -- smaller, $O(1/Re)$, vanishes also for any
+linear shear), \emph{$x$/$z$ interfaces} (needed only for body-adaptive
+refinement, not the channel), and the \emph{cross-rank} flux exchange (a
+dedicated restrict transfer of $\Phi$ with the staggering above). The turbulent
+$-\langle u'v'\rangle$ test is the user's machine.
+
+\end{document}

@@ -220,7 +220,12 @@ subroutine slice_grid_direction(node, coord, d1, lapM, lap0, lapP, nGlobal, firs
         end do
 
         ! Three-point second-derivative stencil on nonuniform spacing.
-        do i = 1, nLocal
+        ! Extends to nLocal+1 (the high-side halo face) so the redundant
+        ! top-face momentum computation has its diffusion coefficient
+        ! lap*(nb+1); coord runs to nb+2, so the stencil closes. Index 0
+        ! and the low side stay unused (the top-face stencil never reaches
+        ! below v(0)).
+        do i = 1, nLocal+1
             hm = coord(i,var) - coord(i-1,var)
             hp = coord(i+1,var) - coord(i,var)
             lapM(i,var) = 2.0d0 / (hm * (hm + hp))
