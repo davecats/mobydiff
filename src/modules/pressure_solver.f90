@@ -73,8 +73,9 @@ contains
                 do color = 1_C_INT, 0_C_INT, -1_C_INT
                     call redblack_sweep(ps, blk, dt_gamma, ibm, color)
                     call apply_bc(blk, bc)
-                    call exchange_halos(c, blk, [VAR_P])          ! cross-level pressure (RESTRICT + inject)
-                    call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W])  ! reconcile interface velocity
+                    ! Refresh the cross-level pressure (RESTRICT + inject) and
+                    ! reconcile the interface velocity in one exchange.
+                    call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W, VAR_P])
                 end do
             end do
             return

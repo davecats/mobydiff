@@ -61,7 +61,6 @@ module comm
         integer, allocatable :: lGA(:,:), lGB(:,:), lGS(:,:), lGC(:,:) ! gather map (3,nLocal)
         integer, allocatable :: lDir(:,:)                  ! direction (dst-completion adjacency)
         integer, allocatable :: lFaceNrm(:)                ! 2:1 interface owned-face normal dir (0 = none)
-        real(C_DOUBLE), allocatable :: lWp(:), lWpDst(:)   ! pressure dst-completion weights
         integer, allocatable :: lOff(:)                    ! (0:nLocal) point prefix
 
         integer :: nPeers = 0
@@ -81,7 +80,6 @@ module comm
         integer, allocatable :: rLo(:,:), rExt(:,:)
         integer, allocatable :: rDir(:,:)
         integer, allocatable :: rFaceNrm(:)                ! 2:1 interface owned-face normal dir (0 = none)
-        real(C_DOUBLE), allocatable :: rWp(:), rWpDst(:)
         integer, allocatable :: rOff(:)
 
         integer :: maxBufferCount = 0
@@ -234,9 +232,6 @@ contains
                                 call entry_gather_map(opc(cand), off(:,d), tqc(:,cand), nb, &
                                     srcLo, dstLo, c%lGA(:,nLocal), c%lGB(:,nLocal), &
                                     c%lGS(:,nLocal), c%lGC(:,nLocal))
-                                c%lWp(nLocal) = entry_blend(blk, dns, int(blk%level(b)), &
-                                    int(blk%origin(:,b)), off(:,d), opc(cand))
-                                c%lWpDst(nLocal) = 1.0d0 - c%lWp(nLocal)
                                 c%lOff(nLocal) = c%lOff(nLocal-1) + pts
                             end if
                             c%nLocalPts = c%nLocalPts + pts
@@ -278,9 +273,6 @@ contains
                                     c%rExt(:,nRecv) = ext
                                     c%rDir(:,nRecv) = off(:,d)
                                     c%rFaceNrm(nRecv) = face_normal(opc(cand), off(:,d))
-                                    c%rWp(nRecv) = entry_blend(blk, dns, int(blk%level(b)), &
-                                        int(blk%origin(:,b)), off(:,d), opc(cand))
-                                    c%rWpDst(nRecv) = 1.0d0 - c%rWp(nRecv)
                                     c%rOff(nRecv) = c%rOff(nRecv-1) + pts
                                 end if
                                 c%peerRecvOff(p) = c%peerRecvOff(p) + pts
@@ -353,7 +345,6 @@ contains
                 allocate(c%lGS(3,max(1,nLocal)), c%lGC(3,max(1,nLocal)))
                 allocate(c%lDir(3,max(1,nLocal)))
                 allocate(c%lFaceNrm(max(1,nLocal)))
-                allocate(c%lWp(max(1,nLocal)), c%lWpDst(max(1,nLocal)))
                 allocate(c%lOff(0:max(1,nLocal)))
                 allocate(c%sSlot(max(1,nSend)), c%sPeer(max(1,nSend)))
                 allocate(c%sExt(3,max(1,nSend)))
@@ -366,12 +357,7 @@ contains
                 allocate(c%rLo(3,max(1,nRecv)), c%rExt(3,max(1,nRecv)))
                 allocate(c%rDir(3,max(1,nRecv)))
                 allocate(c%rFaceNrm(max(1,nRecv)))
-                allocate(c%rWp(max(1,nRecv)), c%rWpDst(max(1,nRecv)))
                 allocate(c%rOff(0:max(1,nRecv)))
-                c%lWp = 1.0d0
-                c%lWpDst = 0.0d0
-                c%rWp = 1.0d0
-                c%rWpDst = 0.0d0
                 c%lOff = 0
                 c%sOff = 0
                 c%rOff = 0
@@ -396,11 +382,11 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target enter data map(to: &
         !$omp& c%lSrcSlot, c%lDstSlot, c%lDstLo, c%lExt, c%lOff, &
-        !$omp& c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lFaceNrm, c%lWp, c%lWpDst, &
+        !$omp& c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lFaceNrm, &
         !$omp& c%sSlot, c%sPeer, c%sExt, c%sOff, &
         !$omp& c%sGA, c%sGB, c%sGS, c%sGC, c%sDstLo, c%sFaceNrm, &
         !$omp& c%peerSendOff, c%peerRecvOff, c%peerSendCopyOff, c%peerRecvCopyOff, &
-        !$omp& c%rSlot, c%rPeer, c%rLo, c%rExt, c%rDir, c%rFaceNrm, c%rWp, c%rWpDst, c%rOff)
+        !$omp& c%rSlot, c%rPeer, c%rLo, c%rExt, c%rDir, c%rFaceNrm, c%rOff)
         !$omp target enter data map(alloc: c%sendbuf, c%recvbuf)
 #endif
     end subroutine init_block_exchange
@@ -413,18 +399,18 @@ contains
             !$omp target exit data map(delete: c%sendbuf, c%recvbuf)
             !$omp target exit data map(delete: &
             !$omp& c%lSrcSlot, c%lDstSlot, c%lDstLo, c%lExt, c%lOff, &
-            !$omp& c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lFaceNrm, c%lWp, c%lWpDst, &
+            !$omp& c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lFaceNrm, &
             !$omp& c%sSlot, c%sPeer, c%sExt, c%sOff, &
             !$omp& c%sGA, c%sGB, c%sGS, c%sGC, c%sDstLo, c%sFaceNrm, &
             !$omp& c%peerSendOff, c%peerRecvOff, c%peerSendCopyOff, c%peerRecvCopyOff, &
-            !$omp& c%rSlot, c%rPeer, c%rLo, c%rExt, c%rDir, c%rFaceNrm, c%rWp, c%rWpDst, c%rOff)
+            !$omp& c%rSlot, c%rPeer, c%rLo, c%rExt, c%rDir, c%rFaceNrm, c%rOff)
 #endif
             deallocate(c%sendbuf, c%recvbuf)
             deallocate(c%lSrcSlot, c%lDstSlot, c%lDstLo, c%lExt, c%lOff)
-            deallocate(c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lFaceNrm, c%lWp, c%lWpDst)
+            deallocate(c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lFaceNrm)
             deallocate(c%sSlot, c%sPeer, c%sExt, c%sOff)
             deallocate(c%sGA, c%sGB, c%sGS, c%sGC, c%sDstLo, c%sFaceNrm)
-            deallocate(c%rSlot, c%rPeer, c%rLo, c%rExt, c%rDir, c%rFaceNrm, c%rWp, c%rWpDst, c%rOff)
+            deallocate(c%rSlot, c%rPeer, c%rLo, c%rExt, c%rDir, c%rFaceNrm, c%rOff)
             deallocate(c%request)
         end if
         if (allocated(c%peerRank)) deallocate(c%peerRank)
@@ -691,34 +677,6 @@ contains
     ! interior fine cell places the ghost where the fine stencil expects
     ! it (uniform 2:1: ghost = (2*coarse + fine)/3). Edges and corners
     ! keep plain injection: only face halos enter the pressure gradient.
-    function entry_blend(blk, dns, level, dorigin, off, op) result(w)
-        type(block_set_type), intent(in) :: blk
-        type(dns_type), intent(in) :: dns
-        integer, intent(in) :: level, dorigin(3), off(3), op
-        real(C_DOUBLE) :: w
-
-        ! The composite projection encodes the adjoint interface gradient
-        ! explicitly via ifGrad (over the true coarse-fine gap), so the prolonged
-        ! 2:1 pressure ghost is the raw coarse pressure (injection, w = 1).
-        w = 1.0d0
-    end function entry_blend
-
-    ! Width of 0-based cell g of the level-l node line in direction d.
-    function level_cell_width(blk, d, level, g) result(width)
-        type(block_set_type), intent(in) :: blk
-        integer, intent(in) :: d, level, g
-        real(C_DOUBLE) :: width
-
-        select case (d)
-        case (1)
-            width = blk%lineX(g + 1, level + 1) - blk%lineX(g, level + 1)
-        case (2)
-            width = blk%lineY(g + 1, level + 1) - blk%lineY(g, level + 1)
-        case default
-            width = blk%lineZ(g + 1, level + 1) - blk%lineZ(g, level + 1)
-        end select
-    end function level_cell_width
-
     ! Level-l cell origin of the neighbour block in direction off, with
     ! periodic wrap; haveNeighbor is false outside non-periodic boundaries.
     subroutine neighbor_origin(c, dns, level, dorigin, off, nb, haveNeighbor, to)
@@ -1157,7 +1115,7 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
         !$omp& map(to: totalItems, nv, c%nLocal, c%lOff, c%lSrcSlot, c%lDstSlot, &
-        !$omp& c%lDstLo, c%lExt, c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lFaceNrm, c%lWp, c%lWpDst, &
+        !$omp& c%lDstLo, c%lExt, c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lFaceNrm, &
         !$omp& c%activeVars) &
         !$omp& map(tofrom: blk%q) &
         !$omp& private(p,gp,v,e,pt,ni,nj,di,dj,dk,var,nd,layerN,b1,b2,b3,c1,c2,c3,s1,s2,s3,val)
@@ -1209,13 +1167,6 @@ contains
                 end do
             end do
             val = val/real(c1*c2*c3, C_DOUBLE)
-            ! Part of the pressure gather weight lives on the destination's
-            ! first interior cell (2:1 face ghosts; entries write only halo
-            ! cells, so the interior cell read here is never a dst).
-            if (var == VAR_P .and. c%lWpDst(e) /= 0.0d0) then
-                val = c%lWp(e)*val + c%lWpDst(e) &
-                    *blk%q(di-c%lDir(1,e), dj-c%lDir(2,e), dk-c%lDir(3,e), var, c%lDstSlot(e))
-            end if
             blk%q(di,dj,dk,var,c%lDstSlot(e)) = val
         end do
 #ifdef USE_OPENMP_OFFLOAD
@@ -1357,7 +1308,7 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
         !$omp& map(to: totalItems, nv, copyOnly, c%nPeers, c%nRecv, c%rOff, c%rSlot, c%rPeer, &
-        !$omp& c%rLo, c%rExt, c%rDir, c%rFaceNrm, c%rWp, c%rWpDst, &
+        !$omp& c%rLo, c%rExt, c%rDir, c%rFaceNrm, &
         !$omp& c%peerRecvOff, c%peerRecvCopyOff, c%activeVars, c%recvbuf) &
         !$omp& map(tofrom: blk%q) &
         !$omp& private(p,gp,v,e,pt,ni,nj,i,j,k,var,peer,pos,nd,layerN,val)
@@ -1393,10 +1344,6 @@ contains
             peer = c%rPeer(e)
             pos = (gp - c%peerRecvOff(peer-1))*nv + v + 1
             val = c%recvbuf(pos,peer)
-            if (var == VAR_P .and. c%rWpDst(e) /= 0.0d0) then
-                val = c%rWp(e)*val + c%rWpDst(e) &
-                    *blk%q(i-c%rDir(1,e), j-c%rDir(2,e), k-c%rDir(3,e), var, c%rSlot(e))
-            end if
             blk%q(i,j,k,var,c%rSlot(e)) = val
         end do
 #ifdef USE_OPENMP_OFFLOAD
