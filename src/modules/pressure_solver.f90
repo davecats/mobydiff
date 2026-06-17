@@ -46,10 +46,9 @@ contains
         end do
     end subroutine init_pressure_solver
 
-    subroutine pressure_projection(ps, blk, dns, dt_gamma, ibm, bc, c)
+    subroutine pressure_projection(ps, blk, dt_gamma, ibm, bc, c)
         type(pressure_solver_type), intent(in) :: ps
         type(block_set_type), intent(inout) :: blk
-        type(dns_type), intent(in) :: dns
         real(C_DOUBLE), intent(in) :: dt_gamma
         type(ibm_type), intent(in) :: ibm
         type(boundary_type), intent(in) :: bc

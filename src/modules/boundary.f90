@@ -1,6 +1,6 @@
 module boundary
     use, intrinsic :: iso_c_binding
-    use :: init, only: dns_type, VAR_U, VAR_V, VAR_W, VAR_P
+    use :: init, only: VAR_U, VAR_P
     use :: blocks, only: block_set_type, FACE_PHYS
     implicit none
 

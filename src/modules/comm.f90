@@ -1,7 +1,7 @@
 module comm
     use, intrinsic :: iso_c_binding
     use :: mpi_f08
-    use :: init, only: dns_type, NVAR, VAR_P
+    use :: init, only: dns_type, NVAR
     use :: blocks, only: block_set_type, DIST_ZORDER, zorder_owner, zorder_start, zorder_count, &
         leaf_at, level_cells
     use :: boundary, only: boundary_type
@@ -191,7 +191,7 @@ contains
         integer :: srcLo(3), dstLo(3), ext(3)
         integer :: peerCoords(3), peerFirst(3), peerLast(3)
         integer :: peerBlocks, peerStart, pb, dorigin(3), dlevel
-        integer :: nLocal, nSend, nRecv, pts, maxCount, ierr, e, round
+        integer :: nLocal, nSend, nRecv, pts, maxCount, ierr, round
 
         call build_direction_table(off)
         nb = int(blk%nb)
@@ -776,20 +776,6 @@ contains
                              all(to <= int(dns%localSize(1:3,1)) - 1)
         end if
     end function origin_is_mine
-
-    integer function my_slot_of(blk, dns, level, to) result(slot)
-        type(block_set_type), intent(in) :: blk
-        type(dns_type), intent(in) :: dns
-        integer, intent(in) :: level, to(3)
-
-        if (blk%distMode == DIST_ZORDER) then
-            slot = int(leaf_at(blk, level, to/int(blk%nb))) - int(blk%idStart) + 1
-        else
-            slot = 1
-        end if
-        associate(unused => dns)
-        end associate
-    end function my_slot_of
 
     ! Source/destination boxes for the entry (dst block B, direction off):
     ! src is in the neighbour block's local frame, dst in B's. The

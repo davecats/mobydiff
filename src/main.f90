@@ -6,7 +6,7 @@
 program main
     use :: init
     use :: blocks, only: block_set_type, init_block_set, destroy_block_set, &
-        enter_block_data, exit_block_data, zero_closed_halos, FACE_COARSE
+        enter_block_data, exit_block_data, zero_closed_halos
     use :: chron, only: chron_type, start_chron, stop_chron, write_chron
     use :: flow_case, only: case_type, create_flow_case
     use :: config
@@ -226,7 +226,7 @@ program main
 
             ! Projection: solve for the pressure correction and project the
             ! tentative velocities to a divergence-free field.
-            call pressure_projection(ps, blk, dns, dt_gamma, ibm, bc, c)
+            call pressure_projection(ps, blk, dt_gamma, ibm, bc, c)
 
         end do
 

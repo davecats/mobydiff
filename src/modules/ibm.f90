@@ -14,7 +14,7 @@
 
 module ibmm
     use, intrinsic :: iso_c_binding
-    use :: init, only: dns_type, grid_type, VAR_U, VAR_V, VAR_W, VAR_P, &
+    use :: init, only: dns_type, grid_type, VAR_U, VAR_W, VAR_P, &
         is_face_staggered, face_at, cell_center_at
     use :: blocks, only: block_set_type, subdivide_node_line
     use :: io, only: to_c_string

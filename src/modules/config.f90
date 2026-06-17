@@ -373,16 +373,6 @@ integer function grid_axis_index(section) result(dir)
     end select
 end function grid_axis_index
 
-subroutine require_config_value(seen, name)
-    logical, intent(in) :: seen
-    character(len=*), intent(in) :: name
-
-    if (.not. seen) then
-        if (terminal_output) print *, "error: missing required input value: ", trim(name)
-        error stop "invalid input file"
-    end if
-end subroutine require_config_value
-
 subroutine apply_boundary_value(key, value, bc, line_no)
     character(len=*), intent(in) :: key, value
     type(boundary_type), intent(inout) :: bc
@@ -689,20 +679,6 @@ subroutine read_c_int(value, target, line_no)
         if (terminal_output) print *, "warning: could not parse integer on input line", line_no
     end if
 end subroutine read_c_int
-
-subroutine read_c_int3(value, target, line_no)
-    character(len=*), intent(in) :: value
-    integer(C_INT), intent(inout) :: target(1:3)
-    integer, intent(in) :: line_no
-    integer :: stat, parsed(3)
-
-    read(value, *, iostat=stat) parsed
-    if (stat == 0) then
-        target = int(parsed, C_INT)
-    else
-        if (terminal_output) print *, "warning: could not parse three integer values on input line", line_no
-    end if
-end subroutine read_c_int3
 
 subroutine read_real(value, target, line_no)
     character(len=*), intent(in) :: value

@@ -150,7 +150,7 @@ subroutine write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor)
     integer(C_INT), intent(in) :: pressure_niter
     real(C_DOUBLE), intent(in) :: pressure_sor
 
-    character(len=256) :: h5_file_name, xdmf_file_name
+    character(len=256) :: h5_file_name
     character(kind=C_CHAR,len=:), allocatable :: c_file_name
     integer(C_INT) :: ierr
     integer(C_INT) :: periodic(1:3)
@@ -160,7 +160,6 @@ subroutine write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor)
     ibm_enabled = merge(1_C_INT, 0_C_INT, dns%ibm_enabled)
 
     call make_output_filename(trim(dns%field_prefix), step, ".h5", h5_file_name)
-    call make_output_filename(trim(dns%field_prefix), step, ".xdmf", xdmf_file_name)
     if (c%has_terminal) then
         print *, "current time step: ", step, "   field filename: ", trim(h5_file_name)
     end if
@@ -360,73 +359,6 @@ subroutine read_field(blk, dns, file_name, c)
     !$omp target update to(blk%q)
 #endif
 end subroutine read_field
-
-subroutine write_xdmf(xdmf_file_name, h5_file_name, dns, g)
-    character(len=*), intent(in) :: xdmf_file_name, h5_file_name
-    type(dns_type), intent(in) :: dns
-    type(grid_type), intent(in) :: g
-
-    character(len=256) :: h5_ref
-    integer :: io, slash
-    integer(C_INT) :: nx, ny, nz
-
-    nx = dns%globalSize(1)
-    ny = dns%globalSize(2)
-    nz = dns%globalSize(3)
-
-    h5_ref = trim(h5_file_name)
-    slash = scan(trim(h5_ref), "/", back=.true.)
-    if (slash > 0) h5_ref = h5_ref(slash+1:)
-    h5_ref = "./"//trim(h5_ref)
-
-    open(newunit=io, file=trim(xdmf_file_name), status="replace", action="write")
-    write(io,'(A)') '<?xml version="1.0" ?>'
-    write(io,'(A)') '<!DOCTYPE Xdmf SYSTEM "Xdmf.dtd" []>'
-    write(io,'(A)') '<Xdmf Version="2.0">'
-    write(io,'(A)') '  <Domain>'
-    write(io,'(A)') '    <Grid Name="mobyDiff" GridType="Uniform">'
-    write(io,'(A,ES20.12,A)') '      <Time Value="', dns%t_current, '"/>'
-    write(io,'(A,I0,1X,I0,1X,I0,A)') &
-        '      <Topology TopologyType="3DRectMesh" Dimensions="', nz+1_C_INT, ny+1_C_INT, nx+1_C_INT, '"/>'
-    write(io,'(A)') '      <Geometry GeometryType="VXVYVZ">'
-    call write_xdmf_coord(io, h5_ref, "/x", nx+1_C_INT)
-    call write_xdmf_coord(io, h5_ref, "/y", ny+1_C_INT)
-    call write_xdmf_coord(io, h5_ref, "/z", nz+1_C_INT)
-    write(io,'(A)') '      </Geometry>'
-    call write_xdmf_scalar(io, "un", h5_ref, "/un", nx, ny, nz)
-    call write_xdmf_scalar(io, "vn", h5_ref, "/vn", nx, ny, nz)
-    call write_xdmf_scalar(io, "wn", h5_ref, "/wn", nx, ny, nz)
-    call write_xdmf_scalar(io, "pn", h5_ref, "/pn", nx, ny, nz)
-    write(io,'(A)') '    </Grid>'
-    write(io,'(A)') '  </Domain>'
-    write(io,'(A)') '</Xdmf>'
-    close(io)
-end subroutine write_xdmf
-
-subroutine write_xdmf_coord(io, h5_ref, dataset, n)
-    integer, intent(in) :: io
-    character(len=*), intent(in) :: h5_ref, dataset
-    integer(C_INT), intent(in) :: n
-
-    write(io,'(A,I0,A,A,A,A,A)') &
-        '        <DataItem Dimensions="', n, &
-        '" NumberType="Float" Precision="8" Format="HDF">', &
-        trim(h5_ref), ':', trim(dataset), '</DataItem>'
-end subroutine write_xdmf_coord
-
-subroutine write_xdmf_scalar(io, name, h5_ref, dataset, nx, ny, nz)
-    integer, intent(in) :: io
-    character(len=*), intent(in) :: name, h5_ref, dataset
-    integer(C_INT), intent(in) :: nx, ny, nz
-
-    write(io,'(A,A,A)') '      <Attribute Name="', trim(name), '" AttributeType="Scalar" Center="Cell">'
-    write(io,'(A,I0,1X,I0,1X,I0,A,A,A,A,A)') &
-        '        <DataItem Dimensions="', nz, ny, nx, &
-        '" NumberType="Float" Precision="8" Format="HDF">', &
-        trim(h5_ref), ':', trim(dataset), '</DataItem>'
-    write(io,'(A)') '      </Attribute>'
-end subroutine write_xdmf_scalar
-
 
 subroutine make_output_filename(prefix, step, extension, file_name)
     character(len=*), intent(in) :: prefix, extension
