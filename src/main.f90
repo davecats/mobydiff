@@ -154,9 +154,12 @@ program main
         call enter_ibm_data(ibm, dns)
     else
         call enter_ibm_data(ibm, dns)
-        call set_ibm_coeff(dns, blk, ibm, VAR_U)
-        call set_ibm_coeff(dns, blk, ibm, VAR_V)
-        call set_ibm_coeff(dns, blk, ibm, VAR_W)
+        ! Analytic geometry only; without an IBM coef stays 0 (set in init_ibm).
+        if (dns%ibm_enabled) then
+            call set_ibm_coeff(dns, blk, ibm, VAR_U)
+            call set_ibm_coeff(dns, blk, ibm, VAR_V)
+            call set_ibm_coeff(dns, blk, ibm, VAR_W)
+        end if
     end if
 
     if (les_is_enabled(les)) then
@@ -209,7 +212,10 @@ program main
             ! Predictor: advance tentative staggered velocities, then enforce
             ! solid/body constraints and exchange halos (the interface high faces
             ! are filled with the owner velocity here).
-            call update_ibm_mu(ibm, dt_gamma)
+            ! Without an immersed boundary the penalization coefficient is zero
+            ! everywhere, so mu = 1/(1+dt_gamma*coef) stays at its init value of 1
+            ! and need not be recomputed each substage.
+            if (dns%ibm_enabled) call update_ibm_mu(ibm, dt_gamma)
             if (les_is_enabled(les)) then
                 les_profile_start = les_wall_seconds()
                 call update_les_viscosity(les, blk, dns, ibm)
