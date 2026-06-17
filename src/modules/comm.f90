@@ -77,11 +77,13 @@ module comm
         integer, allocatable :: sDstLo(:,:)                ! dst box lo (gather indexing)
         integer, allocatable :: sFaceNrm(:)                ! 2:1 interface owned-face normal dir (0 = none)
         integer, allocatable :: sOff(:)                    ! (0:nSend) point prefix, peer-major
+        integer, allocatable :: sEntryOf(:)                ! (0:nSendPts-1) owning send entry per point
         integer, allocatable :: rSlot(:), rPeer(:)
         integer, allocatable :: rLo(:,:), rExt(:,:)
         integer, allocatable :: rDir(:,:)
         integer, allocatable :: rFaceNrm(:)                ! 2:1 interface owned-face normal dir (0 = none)
         integer, allocatable :: rOff(:)
+        integer, allocatable :: rEntryOf(:)                ! (0:nRecvPts-1) owning recv entry per point
 
         integer :: maxBufferCount = 0
         real(C_DOUBLE), allocatable :: sendbuf(:,:)        ! (maxBufferCount, nPeers)
@@ -369,12 +371,24 @@ contains
             end if
         end do
 
-        ! Per-point -> owning-entry lookup: the local copy kernels read it
-        ! directly instead of binary-searching lOff per (point, var).
+        ! Per-point -> owning-entry lookups: the copy/pack kernels read these
+        ! directly instead of binary-searching the *Off prefixes per point.
         allocate(c%lEntryOf(0:max(0, c%nLocalPts-1)))
         do ent = 1, c%nLocal
             do gpt = c%lOff(ent-1), c%lOff(ent)-1
                 c%lEntryOf(gpt) = ent
+            end do
+        end do
+        allocate(c%sEntryOf(0:max(0, c%sOff(c%nSend)-1)))
+        do ent = 1, c%nSend
+            do gpt = c%sOff(ent-1), c%sOff(ent)-1
+                c%sEntryOf(gpt) = ent
+            end do
+        end do
+        allocate(c%rEntryOf(0:max(0, c%rOff(c%nRecv)-1)))
+        do ent = 1, c%nRecv
+            do gpt = c%rOff(ent-1), c%rOff(ent)-1
+                c%rEntryOf(gpt) = ent
             end do
         end do
 
@@ -393,10 +407,10 @@ contains
         !$omp target enter data map(to: &
         !$omp& c%lSrcSlot, c%lDstSlot, c%lDstLo, c%lExt, c%lOff, c%lEntryOf, &
         !$omp& c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lFaceNrm, &
-        !$omp& c%sSlot, c%sPeer, c%sExt, c%sOff, &
+        !$omp& c%sSlot, c%sPeer, c%sExt, c%sOff, c%sEntryOf, &
         !$omp& c%sGA, c%sGB, c%sGS, c%sGC, c%sDstLo, c%sFaceNrm, &
         !$omp& c%peerSendOff, c%peerRecvOff, c%peerSendCopyOff, c%peerRecvCopyOff, &
-        !$omp& c%rSlot, c%rPeer, c%rLo, c%rExt, c%rDir, c%rFaceNrm, c%rOff)
+        !$omp& c%rSlot, c%rPeer, c%rLo, c%rExt, c%rDir, c%rFaceNrm, c%rOff, c%rEntryOf)
         !$omp target enter data map(alloc: c%sendbuf, c%recvbuf)
 #endif
     end subroutine init_block_exchange
@@ -410,17 +424,17 @@ contains
             !$omp target exit data map(delete: &
             !$omp& c%lSrcSlot, c%lDstSlot, c%lDstLo, c%lExt, c%lOff, c%lEntryOf, &
             !$omp& c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lFaceNrm, &
-            !$omp& c%sSlot, c%sPeer, c%sExt, c%sOff, &
+            !$omp& c%sSlot, c%sPeer, c%sExt, c%sOff, c%sEntryOf, &
             !$omp& c%sGA, c%sGB, c%sGS, c%sGC, c%sDstLo, c%sFaceNrm, &
             !$omp& c%peerSendOff, c%peerRecvOff, c%peerSendCopyOff, c%peerRecvCopyOff, &
-            !$omp& c%rSlot, c%rPeer, c%rLo, c%rExt, c%rDir, c%rFaceNrm, c%rOff)
+            !$omp& c%rSlot, c%rPeer, c%rLo, c%rExt, c%rDir, c%rFaceNrm, c%rOff, c%rEntryOf)
 #endif
             deallocate(c%sendbuf, c%recvbuf)
             deallocate(c%lSrcSlot, c%lDstSlot, c%lDstLo, c%lExt, c%lOff, c%lEntryOf)
             deallocate(c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lFaceNrm)
-            deallocate(c%sSlot, c%sPeer, c%sExt, c%sOff)
+            deallocate(c%sSlot, c%sPeer, c%sExt, c%sOff, c%sEntryOf)
             deallocate(c%sGA, c%sGB, c%sGS, c%sGC, c%sDstLo, c%sFaceNrm)
-            deallocate(c%rSlot, c%rPeer, c%rLo, c%rExt, c%rDir, c%rFaceNrm, c%rOff)
+            deallocate(c%rSlot, c%rPeer, c%rLo, c%rExt, c%rDir, c%rFaceNrm, c%rOff, c%rEntryOf)
             deallocate(c%request)
         end if
         if (allocated(c%peerRank)) deallocate(c%peerRank)
@@ -1242,7 +1256,7 @@ contains
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
-        !$omp& map(to: totalItems, nv, copyOnly, c%nPeers, c%nSend, c%sOff, c%sSlot, c%sPeer, &
+        !$omp& map(to: totalItems, nv, copyOnly, c%nPeers, c%nSend, c%sOff, c%sEntryOf, c%sSlot, c%sPeer, &
         !$omp& c%sDstLo, c%sExt, c%sGA, c%sGB, c%sGS, c%sGC, &
         !$omp& c%peerSendOff, c%peerSendCopyOff, c%activeVars, blk%q) &
         !$omp& map(tofrom: c%sendbuf) &
@@ -1257,7 +1271,7 @@ contains
                 peer = find_entry(c%peerSendCopyOff, c%nPeers, gp)
                 gp = c%peerSendOff(peer-1) + (gp - c%peerSendCopyOff(peer-1))
             end if
-            e = find_entry(c%sOff, c%nSend, gp)
+            e = c%sEntryOf(gp)
             pt = gp - c%sOff(e-1)
             ni = c%sExt(1,e)
             nj = c%sExt(2,e)
@@ -1303,7 +1317,7 @@ contains
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
-        !$omp& map(to: totalItems, nv, copyOnly, c%nPeers, c%nRecv, c%rOff, c%rSlot, c%rPeer, &
+        !$omp& map(to: totalItems, nv, copyOnly, c%nPeers, c%nRecv, c%rOff, c%rEntryOf, c%rSlot, c%rPeer, &
         !$omp& c%rLo, c%rExt, c%rDir, c%rFaceNrm, &
         !$omp& c%peerRecvOff, c%peerRecvCopyOff, c%activeVars, c%recvbuf) &
         !$omp& map(tofrom: blk%q) &
@@ -1316,7 +1330,7 @@ contains
                 peer = find_entry(c%peerRecvCopyOff, c%nPeers, gp)
                 gp = c%peerRecvOff(peer-1) + (gp - c%peerRecvCopyOff(peer-1))
             end if
-            e = find_entry(c%rOff, c%nRecv, gp)
+            e = c%rEntryOf(gp)
             pt = gp - c%rOff(e-1)
             ni = c%rExt(1,e)
             nj = c%rExt(2,e)
@@ -1361,13 +1375,13 @@ contains
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
-        !$omp& map(to: totalItems, c%nSend, c%sOff, c%sSlot, c%sPeer, &
+        !$omp& map(to: totalItems, c%nSend, c%sOff, c%sEntryOf, c%sSlot, c%sPeer, &
         !$omp& c%sDstLo, c%sExt, c%sGA, c%sGB, c%sGS, c%sGC, c%sFaceNrm, c%peerSendOff, scalar) &
         !$omp& map(tofrom: c%sendbuf) &
         !$omp& private(p,e,pt,ni,nj,di,dj,dk,peer,pos,nd,layerN,b1,b2,b3,c1,c2,c3,s1,s2,s3,val)
 #endif
         do p = 1, totalItems
-            e = find_entry(c%sOff, c%nSend, p - 1)
+            e = c%sEntryOf(p - 1)
             pt = p - 1 - c%sOff(e-1)
             ni = c%sExt(1,e)
             nj = c%sExt(2,e)
@@ -1416,13 +1430,13 @@ contains
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
-        !$omp& map(to: totalItems, c%nRecv, c%rOff, c%rSlot, c%rPeer, &
+        !$omp& map(to: totalItems, c%nRecv, c%rOff, c%rEntryOf, c%rSlot, c%rPeer, &
         !$omp& c%rLo, c%rExt, c%rFaceNrm, c%peerRecvOff, c%recvbuf) &
         !$omp& map(tofrom: scalar) &
         !$omp& private(p,e,pt,ni,nj,i,j,k,peer,pos,nd,layerN)
 #endif
         do p = 1, totalItems
-            e = find_entry(c%rOff, c%nRecv, p - 1)
+            e = c%rEntryOf(p - 1)
             pt = p - 1 - c%rOff(e-1)
             ni = c%rExt(1,e)
             nj = c%rExt(2,e)
