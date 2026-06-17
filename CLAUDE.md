@@ -230,7 +230,22 @@ immersed boundary. Phased, each phase verified before the next:
     profiles/spectra and reports interface-band vs interior divergence.
     Smoke-validated end to end on 5-step runs; chanp and channel nb=4
     remain bit-exact vs `828e78d` (nofma).
+    Fix (2026-06-17): `pStart` (start-of-projection pressure snapshot)
+    was allocated `mold=blk%q(:,:,:,VAR_P,:)`, but an array section is a
+    1-based temporary, so `pStart` got lower bound 1 in every dim while
+    the snapshot/sweep kernels index it from 0 (the halo layer). The
+    `pStart(0,...)` underflow (a -1 element shift in dim 1) faulted as
+    `CUDA_ERROR_ILLEGAL_ADDRESS` in `snapshot_start_pressure` on some
+    GPUs and silently read shifted addresses on others (corrupting the
+    multi-level interface pressure reconstruction whenever p varied in
+    i). Now allocated with `blk%q`'s real 0-based bounds. Multi-level
+    only: single-level never touches `pStart` (reconstruction gated by
+    `is_interface`), so single-level output is bit-exact vs before.
 - Phase 4: performance (overlap, see `docs/nonblocking_overlap_strategy.md`).
+  Done so far: the halo-exchange kernels precompute a device-resident
+  per-point -> owning-entry lookup (`lEntryOf` local, `sEntryOf`/`rEntryOf`
+  off-rank) instead of binary-searching the `*Off` prefixes per point;
+  bit-exact, ~12.5% faster/step on the refined min_channel (GPU).
 
 If the branch `claude/blocks` does not exist yet, create it from the
 current checkout (`codex/les`) before committing: `git switch -c claude/blocks`.
@@ -252,4 +267,13 @@ current checkout (`codex/les`) before committing: `git switch -c claude/blocks`.
   max|u|,|p| must contract over 200 steps. Run this whenever the
   interface relaxation or transfers change; smooth-flow gates are blind
   to the instability class it catches.
+- GPU `CUDA_ERROR_ILLEGAL_ADDRESS` / out-of-bounds hunting: rebuild a CPU
+  binary with `-Mbounds` (configure a throwaway dir reusing build_cpu's
+  cache values: `CMAKE_Fortran_COMPILER`, `MPI_FORTRAN_MODULE_DIR`,
+  `MPI_WRAPPER_*_FLAGS`, `HDF5_*`, `USE_OPENMP_OFFLOAD=OFF`,
+  `-DCMAKE_Fortran_FLAGS="-Mbounds -g"`) and run the offending case. It
+  pinpoints the file:line and subscript deterministically, including the
+  multi-level path the GPU faults in — far faster than chasing a device
+  illegal address. This is how the `pStart` bug above was located. Watch
+  for `mold=` from an array section: it re-bases bounds to 1.
 - Never declare a phase done with failing builds or unverified results.
