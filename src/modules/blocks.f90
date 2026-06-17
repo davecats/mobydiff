@@ -354,7 +354,7 @@ contains
         !$omp& blk%lapXm, blk%lapX0, blk%lapXp, &
         !$omp& blk%lapYm, blk%lapY0, blk%lapYp, &
         !$omp& blk%lapZm, blk%lapZ0, blk%lapZp, &
-        !$omp& blk%q, blk%qs, blk%oldrhs)
+        !$omp& blk%ifGrad, blk%q, blk%qs, blk%oldrhs)
 #endif
     end subroutine enter_block_data
 
@@ -368,7 +368,7 @@ contains
         !$omp& blk%lapXm, blk%lapX0, blk%lapXp, &
         !$omp& blk%lapYm, blk%lapY0, blk%lapYp, &
         !$omp& blk%lapZm, blk%lapZ0, blk%lapZp, &
-        !$omp& blk%q, blk%qs, blk%oldrhs)
+        !$omp& blk%ifGrad, blk%q, blk%qs, blk%oldrhs)
         !$omp target exit data map(delete: blk)
 #endif
     end subroutine exit_block_data
