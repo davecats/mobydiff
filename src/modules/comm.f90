@@ -58,7 +58,9 @@ module comm
         integer :: nLocalCopyPts = 0
         integer, allocatable :: lSrcSlot(:), lDstSlot(:)   ! (nLocal)
         integer, allocatable :: lDstLo(:,:), lExt(:,:)     ! (3,nLocal)
-        integer, allocatable :: lGA(:,:), lGB(:,:), lGS(:,:), lGC(:,:) ! gather map (3,nLocal)
+        ! Per-dim affine gather map (3,nLocal): destination index d reads source
+        ! (GA*d + GB) >> GS, averaging GC source cells (GC>1 only for RESTRICT).
+        integer, allocatable :: lGA(:,:), lGB(:,:), lGS(:,:), lGC(:,:)
         integer, allocatable :: lFaceNrm(:)                ! 2:1 interface owned-face normal dir (0 = none)
         integer, allocatable :: lOff(:)                    ! (0:nLocal) point prefix
         integer, allocatable :: lEntryOf(:)                ! (0:nLocalPts-1) owning entry per point

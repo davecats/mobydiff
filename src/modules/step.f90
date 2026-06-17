@@ -67,7 +67,10 @@ contains
         type(les_profile_type), intent(inout), optional :: les_prof
 
         integer :: i,j,k,b,ip,im,kp,km,jp,jm
-        integer :: nx, ny, nz, nBlocks, uStartX, vStartY, wStartZ
+        integer :: nx, ny, nz, nBlocks
+        ! First predicted face index per component: 2 if the low face is pinned
+        ! by a wall / physical BC (skip it), else 1 (a halo or interface face).
+        integer :: uStartX, vStartY, wStartZ
 
         real(C_DOUBLE) :: diff_ux,diff_uy,diff_uz
         real(C_DOUBLE) :: diff_vx,diff_vy,diff_vz
@@ -307,7 +310,10 @@ contains
         type(les_profile_type), intent(inout), optional :: les_prof
 
         integer :: i, j, k, b, ip, im, jp, jm, kp, km
-        integer :: nx, ny, nz, nBlocks, uStartX, vStartY, wStartZ
+        integer :: nx, ny, nz, nBlocks
+        ! First predicted face index per component: 2 if the low face is pinned
+        ! by a wall / physical BC (skip it), else 1 (a halo or interface face).
+        integer :: uStartX, vStartY, wStartZ
         real(C_DOUBLE) :: sgs_u, sgs_v, sgs_w
         real(C_DOUBLE) :: tau_xp, tau_xm, tau_yp, tau_ym, tau_zp, tau_zm
         real(C_DOUBLE) :: nut_edge, nut0, nut1, wx, wy, mu_u, mu_v, mu_w

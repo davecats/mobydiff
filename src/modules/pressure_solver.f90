@@ -189,10 +189,12 @@ contains
         real(C_DOUBLE) :: phi, denom, div, idt, sor
         real(C_DOUBLE) :: gradU_i, gradU_ip, gradV_j, gradV_jp, gradW_k, gradW_kp
         real(C_DOUBLE) :: mu_u_i, mu_u_ip, mu_v_j, mu_v_jp, mu_w_k, mu_w_kp
+        ! True when the cell sits on a 2:1 coarse-fine interface at the low/high
+        ! face in x/y/z (enables the pressure-based face reconstruction below).
         logical :: ifLoX, ifHiX, ifLoY, ifHiY, ifLoZ, ifHiZ
         integer(C_INT) :: i, ip, j, jp, k, kp, b, nBlocks, nLowerHaloDirections
         integer(C_INT) :: iColor, nColorX, iLo, jLo, kLo, colorOffset
-        integer(C_INT) :: hi(1:3)
+        integer(C_INT) :: hi(1:3)   ! block interior size (cells per dimension)
 
         ! Each block sweeps from 0 (its halo layer, redundantly with the
         ! neighbour that owns those cells) except on physical boundaries,
