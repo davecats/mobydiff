@@ -190,7 +190,7 @@ subroutine write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor)
 
     ! Companion XDMF (.xmf) so ParaView can read the block-decomposed field
     ! directly: one structured grid per block referencing the HDF5 hyperslabs.
-    call write_xdmf(blk, dns, c, trim(h5_file_name), step)
+    call write_xdmf(blk, dns, g, c, trim(h5_file_name), step)
 end subroutine write_field
 
 ! Write a ParaView-readable XDMF sidecar for the field file just written. The
@@ -200,10 +200,11 @@ end subroutine write_field
 ! referenced as a hyperslab of the shared dataset. Collective: every rank gathers
 ! its block origins/levels to rank 0 (rank order == global-id order), which writes
 ! the file. lineX/Y/Z are replicated on every rank.
-subroutine write_xdmf(blk, dns, c, h5_file_name, step)
+subroutine write_xdmf(blk, dns, g, c, h5_file_name, step)
     use mpi_f08, only: MPI_Comm, MPI_INTEGER, MPI_Gather, MPI_Gatherv
     type(block_set_type), intent(in) :: blk
     type(dns_type), intent(in) :: dns
+    type(grid_type), intent(in) :: g
     type(comm_type), intent(in) :: c
     character(len=*), intent(in) :: h5_file_name
     integer, intent(in) :: step
@@ -260,9 +261,18 @@ subroutine write_xdmf(blk, dns, c, h5_file_name, step)
             write(u,'(a,i0,a,i0,a,i0,a)') &
                 '        <Topology TopologyType="3DRectMesh" Dimensions="', nbz+1, ' ', nby+1, ' ', nbx+1, '"/>'
             write(u,'(a)') '        <Geometry GeometryType="VXVYVZ">'
-            call write_coord_item(u, blk%lineX(ox:ox+nbx, lev+1), nbx+1)
-            call write_coord_item(u, blk%lineY(oy:oy+nby, lev+1), nby+1)
-            call write_coord_item(u, blk%lineZ(oz:oz+nbz, lev+1), nbz+1)
+            ! Block node coordinates: per-level lines for the ZORDER block
+            ! lattice; the plain global grid lines for the RANKBOX path, where
+            ! per-level lines are not built and every block is level 0.
+            if (allocated(blk%lineX)) then
+                call write_coord_item(u, blk%lineX(ox:ox+nbx, lev+1), nbx+1)
+                call write_coord_item(u, blk%lineY(oy:oy+nby, lev+1), nby+1)
+                call write_coord_item(u, blk%lineZ(oz:oz+nbz, lev+1), nbz+1)
+            else
+                call write_coord_item(u, g%xNode(ox:ox+nbx), nbx+1)
+                call write_coord_item(u, g%yNode(oy:oy+nby), nby+1)
+                call write_coord_item(u, g%zNode(oz:oz+nbz), nbz+1)
+            end if
             write(u,'(a)') '        </Geometry>'
             call write_attr_item(u, "un", h5_file_name, gid-1, ng, nbx, nby, nbz)
             call write_attr_item(u, "vn", h5_file_name, gid-1, ng, nbx, nby, nbz)
