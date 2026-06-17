@@ -80,3 +80,8 @@ validation/**/ic/
 validation/**/smoke/
 tutorials/interface_decay/decay_*.h5
 tutorials/interface_decay/run.log
+
+# Profiling / smoke scratch
+profile_*/
+profiling/
+/smoke/
