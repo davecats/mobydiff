@@ -97,7 +97,13 @@ contains
     subroutine allocate_pstart(blk)
         type(block_set_type), intent(in) :: blk
         if (.not. allocated(pStart)) then
-            allocate(pStart, mold=blk%q(:,:,:,VAR_P,:))
+            ! Match blk%q's bounds exactly: a section like blk%q(:,:,:,VAR_P,:)
+            ! would re-base every dimension to 1, but the kernels index pStart
+            ! from 0 (the halo layer), so allocate with the real 0-based bounds.
+            allocate(pStart(lbound(blk%q,1):ubound(blk%q,1), &
+                            lbound(blk%q,2):ubound(blk%q,2), &
+                            lbound(blk%q,3):ubound(blk%q,3), &
+                            lbound(blk%q,5):ubound(blk%q,5)))
 #ifdef USE_OPENMP_OFFLOAD
             !$omp target enter data map(alloc: pStart)
 #endif
