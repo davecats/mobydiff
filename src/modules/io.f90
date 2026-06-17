@@ -188,9 +188,126 @@ subroutine write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor)
         error stop
     end if
 
-    ! No XDMF for the block-table layout; reassemble with
-    ! tools/compare_fields.py --export-global for visualization.
+    ! Companion XDMF (.xmf) so ParaView can read the block-decomposed field
+    ! directly: one structured grid per block referencing the HDF5 hyperslabs.
+    call write_xdmf(blk, dns, c, trim(h5_file_name), step)
 end subroutine write_field
+
+! Write a ParaView-readable XDMF sidecar for the field file just written. The
+! field datasets are stored per block as (nBlocksGlobal, nbz, nby, nbx), so the
+! grid is a spatial collection of one rectilinear block-grid each, with its node
+! coordinates sliced from the block's refinement-level node line and its data
+! referenced as a hyperslab of the shared dataset. Collective: every rank gathers
+! its block origins/levels to rank 0 (rank order == global-id order), which writes
+! the file. lineX/Y/Z are replicated on every rank.
+subroutine write_xdmf(blk, dns, c, h5_file_name, step)
+    use mpi_f08, only: MPI_Comm, MPI_INTEGER, MPI_Gather, MPI_Gatherv
+    type(block_set_type), intent(in) :: blk
+    type(dns_type), intent(in) :: dns
+    type(comm_type), intent(in) :: c
+    character(len=*), intent(in) :: h5_file_name
+    integer, intent(in) :: step
+
+    integer :: nLocal, ng, ierr, r, b, gid, lev, u
+    integer :: nbx, nby, nbz, ox, oy, oz, csize, crank
+    integer, allocatable :: sendbuf(:,:)            ! (4, nLocal): origin(3) + level
+    integer, allocatable :: nper(:), recvcounts(:), displs(:)
+    integer, allocatable :: gtable(:,:)             ! (4, ng) on rank 0
+    character(len=256) :: xmf_file_name
+
+    nbx = int(blk%nb(1)); nby = int(blk%nb(2)); nbz = int(blk%nb(3))
+    nLocal = int(blk%nBlocks)
+    ng = int(blk%nBlocksGlobal)
+    csize = int(c%cart_size); crank = int(c%cart_rank)
+
+    allocate(sendbuf(4, max(1, nLocal)))
+    do b = 1, nLocal
+        sendbuf(1:3, b) = int(blk%origin(1:3, b))
+        sendbuf(4, b)   = int(blk%level(b))
+    end do
+
+    allocate(nper(0:csize-1))
+    call MPI_Gather(nLocal, 1, MPI_INTEGER, nper, 1, MPI_INTEGER, 0, c%cart_comm, ierr)
+
+    if (crank == 0) then
+        allocate(recvcounts(0:csize-1), displs(0:csize-1), gtable(4, max(1, ng)))
+        do r = 0, csize-1
+            recvcounts(r) = 4*nper(r)
+        end do
+        displs(0) = 0
+        do r = 1, csize-1
+            displs(r) = displs(r-1) + recvcounts(r-1)
+        end do
+    else
+        allocate(recvcounts(0), displs(0), gtable(4, 0))
+    end if
+
+    call MPI_Gatherv(sendbuf, 4*nLocal, MPI_INTEGER, gtable, recvcounts, displs, &
+        MPI_INTEGER, 0, c%cart_comm, ierr)
+
+    if (crank == 0) then
+        call make_output_filename(trim(dns%field_prefix), step, ".xmf", xmf_file_name)
+        open(newunit=u, file=trim(xmf_file_name), status='replace', action='write')
+        write(u,'(a)') '<?xml version="1.0" ?>'
+        write(u,'(a)') '<!DOCTYPE Xdmf SYSTEM "Xdmf.dtd" []>'
+        write(u,'(a)') '<Xdmf Version="2.0">'
+        write(u,'(a)') '  <Domain>'
+        write(u,'(a)') '    <Grid Name="mobyDiff" GridType="Collection" CollectionType="Spatial">'
+        write(u,'(a,es23.15,a)') '      <Time Value="', dns%t_current, '"/>'
+        do gid = 1, ng
+            ox = gtable(1, gid); oy = gtable(2, gid); oz = gtable(3, gid); lev = gtable(4, gid)
+            write(u,'(a,i0,a)') '      <Grid Name="b', gid-1, '" GridType="Uniform">'
+            write(u,'(a,i0,a,i0,a,i0,a)') &
+                '        <Topology TopologyType="3DRectMesh" Dimensions="', nbz+1, ' ', nby+1, ' ', nbx+1, '"/>'
+            write(u,'(a)') '        <Geometry GeometryType="VXVYVZ">'
+            call write_coord_item(u, blk%lineX(ox:ox+nbx, lev+1), nbx+1)
+            call write_coord_item(u, blk%lineY(oy:oy+nby, lev+1), nby+1)
+            call write_coord_item(u, blk%lineZ(oz:oz+nbz, lev+1), nbz+1)
+            write(u,'(a)') '        </Geometry>'
+            call write_attr_item(u, "un", h5_file_name, gid-1, ng, nbx, nby, nbz)
+            call write_attr_item(u, "vn", h5_file_name, gid-1, ng, nbx, nby, nbz)
+            call write_attr_item(u, "wn", h5_file_name, gid-1, ng, nbx, nby, nbz)
+            call write_attr_item(u, "pn", h5_file_name, gid-1, ng, nbx, nby, nbz)
+            write(u,'(a)') '      </Grid>'
+        end do
+        write(u,'(a)') '    </Grid>'
+        write(u,'(a)') '  </Domain>'
+        write(u,'(a)') '</Xdmf>'
+        close(u)
+    end if
+end subroutine write_xdmf
+
+! One VXVYVZ coordinate array: the block's nb+1 node positions along one axis.
+subroutine write_coord_item(u, coord, n)
+    integer, intent(in) :: u, n
+    real(C_DOUBLE), intent(in) :: coord(n)
+    write(u,'(a,i0,a)') '          <DataItem Dimensions="', n, '" NumberType="Float" Precision="8" Format="XML">'
+    write(u,'(a)', advance='no') '            '
+    write(u,'(*(es24.16,1x))') coord
+    write(u,'(a)') '          </DataItem>'
+end subroutine write_coord_item
+
+! One cell-centred scalar attribute referencing block gid's hyperslab of the
+! (ng, nbz, nby, nbx) dataset 'name' in the HDF5 field file.
+subroutine write_attr_item(u, name, h5_file_name, gid, ng, nbx, nby, nbz)
+    integer, intent(in) :: u, gid, ng, nbx, nby, nbz
+    character(len=*), intent(in) :: name, h5_file_name
+    write(u,'(a)') '        <Attribute Name="'//name//'" AttributeType="Scalar" Center="Cell">'
+    write(u,'(a,i0,a,i0,a,i0,a)') &
+        '          <DataItem ItemType="HyperSlab" Dimensions="', nbz, ' ', nby, ' ', nbx, '">'
+    write(u,'(a)') '            <DataItem Dimensions="3 4" Format="XML">'
+    write(u,'(a,i0,a)')              '              ', gid, ' 0 0 0'
+    write(u,'(a)')                   '              1 1 1 1'
+    write(u,'(a,i0,a,i0,a,i0)')      '              1 ', nbz, ' ', nby, ' ', nbx
+    write(u,'(a)') '            </DataItem>'
+    write(u,'(a,i0,a,i0,a,i0,a,i0,a)') &
+        '            <DataItem Dimensions="', ng, ' ', nbz, ' ', nby, ' ', nbx, &
+        '" NumberType="Float" Precision="8" Format="HDF">'
+    write(u,'(a)') '              '//trim(h5_file_name)//':/'//name
+    write(u,'(a)') '            </DataItem>'
+    write(u,'(a)') '          </DataItem>'
+    write(u,'(a)') '        </Attribute>'
+end subroutine write_attr_item
 
 subroutine write_grid_export(dns, g, blk, bc, file_name, has_terminal)
     ! Serial preprocessing path (mobygrid): the single block covers the whole
