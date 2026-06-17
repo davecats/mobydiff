@@ -62,6 +62,7 @@ module comm
         integer, allocatable :: lDir(:,:)                  ! direction (dst-completion adjacency)
         integer, allocatable :: lFaceNrm(:)                ! 2:1 interface owned-face normal dir (0 = none)
         integer, allocatable :: lOff(:)                    ! (0:nLocal) point prefix
+        integer, allocatable :: lEntryOf(:)                ! (0:nLocalPts-1) owning entry per point
 
         integer :: nPeers = 0
         integer, allocatable :: peerRank(:)
@@ -191,7 +192,7 @@ contains
         integer :: srcLo(3), dstLo(3), ext(3)
         integer :: peerCoords(3), peerFirst(3), peerLast(3)
         integer :: peerBlocks, peerStart, pb, dorigin(3), dlevel
-        integer :: nLocal, nSend, nRecv, pts, maxCount, ierr, round
+        integer :: nLocal, nSend, nRecv, pts, maxCount, ierr, round, ent, gpt
 
         call build_direction_table(off)
         nb = int(blk%nb)
@@ -368,6 +369,15 @@ contains
             end if
         end do
 
+        ! Per-point -> owning-entry lookup: the local copy kernels read it
+        ! directly instead of binary-searching lOff per (point, var).
+        allocate(c%lEntryOf(0:max(0, c%nLocalPts-1)))
+        do ent = 1, c%nLocal
+            do gpt = c%lOff(ent-1), c%lOff(ent)-1
+                c%lEntryOf(gpt) = ent
+            end do
+        end do
+
         maxCount = 1
         do p = 1, c%nPeers
             maxCount = max(maxCount, (c%peerSendOff(p) - c%peerSendOff(p-1))*int(NVAR))
@@ -381,7 +391,7 @@ contains
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target enter data map(to: &
-        !$omp& c%lSrcSlot, c%lDstSlot, c%lDstLo, c%lExt, c%lOff, &
+        !$omp& c%lSrcSlot, c%lDstSlot, c%lDstLo, c%lExt, c%lOff, c%lEntryOf, &
         !$omp& c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lFaceNrm, &
         !$omp& c%sSlot, c%sPeer, c%sExt, c%sOff, &
         !$omp& c%sGA, c%sGB, c%sGS, c%sGC, c%sDstLo, c%sFaceNrm, &
@@ -398,7 +408,7 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
             !$omp target exit data map(delete: c%sendbuf, c%recvbuf)
             !$omp target exit data map(delete: &
-            !$omp& c%lSrcSlot, c%lDstSlot, c%lDstLo, c%lExt, c%lOff, &
+            !$omp& c%lSrcSlot, c%lDstSlot, c%lDstLo, c%lExt, c%lOff, c%lEntryOf, &
             !$omp& c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lFaceNrm, &
             !$omp& c%sSlot, c%sPeer, c%sExt, c%sOff, &
             !$omp& c%sGA, c%sGB, c%sGS, c%sGC, c%sDstLo, c%sFaceNrm, &
@@ -406,7 +416,7 @@ contains
             !$omp& c%rSlot, c%rPeer, c%rLo, c%rExt, c%rDir, c%rFaceNrm, c%rOff)
 #endif
             deallocate(c%sendbuf, c%recvbuf)
-            deallocate(c%lSrcSlot, c%lDstSlot, c%lDstLo, c%lExt, c%lOff)
+            deallocate(c%lSrcSlot, c%lDstSlot, c%lDstLo, c%lExt, c%lOff, c%lEntryOf)
             deallocate(c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lFaceNrm)
             deallocate(c%sSlot, c%sPeer, c%sExt, c%sOff)
             deallocate(c%sGA, c%sGB, c%sGS, c%sGC, c%sDstLo, c%sFaceNrm)
@@ -1100,7 +1110,7 @@ contains
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
-        !$omp& map(to: totalItems, nv, c%nLocal, c%lOff, c%lSrcSlot, c%lDstSlot, &
+        !$omp& map(to: totalItems, nv, c%nLocal, c%lOff, c%lEntryOf, c%lSrcSlot, c%lDstSlot, &
         !$omp& c%lDstLo, c%lExt, c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lFaceNrm, &
         !$omp& c%activeVars) &
         !$omp& map(tofrom: blk%q) &
@@ -1109,7 +1119,7 @@ contains
         do p = 1, totalItems
             gp = (p - 1)/nv
             v = p - 1 - gp*nv
-            e = find_entry(c%lOff, c%nLocal, gp)
+            e = c%lEntryOf(gp)
             pt = gp - c%lOff(e-1)
             ni = c%lExt(1,e)
             nj = c%lExt(2,e)
@@ -1174,13 +1184,13 @@ contains
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
-        !$omp& map(to: totalItems, c%nLocal, c%lOff, c%lSrcSlot, c%lDstSlot, &
+        !$omp& map(to: totalItems, c%nLocal, c%lOff, c%lEntryOf, c%lSrcSlot, c%lDstSlot, &
         !$omp& c%lDstLo, c%lExt, c%lGA, c%lGB, c%lGS, c%lGC, c%lFaceNrm) &
         !$omp& map(tofrom: scalar) &
         !$omp& private(p,e,pt,ni,nj,di,dj,dk,nd,layerN,b1,b2,b3,c1,c2,c3,s1,s2,s3,val)
 #endif
         do p = 1, totalItems
-            e = find_entry(c%lOff, c%nLocal, p - 1)
+            e = c%lEntryOf(p - 1)
             pt = p - 1 - c%lOff(e-1)
             ni = c%lExt(1,e)
             nj = c%lExt(2,e)
