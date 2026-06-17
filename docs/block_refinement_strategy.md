@@ -194,6 +194,21 @@ momentum cross-fluxes — hence the full 26-direction adjacency, as today).
 
 ## 6. 2:1 level interfaces
 
+**As shipped (default scheme).** For `nLevels > 1` the production path is the
+*composite projection* — see the companion `docs/composite_projection_strategy.md`
+for the full derivation. The block ABOVE each 2:1 shared face owns it at its
+interior low face `v(1)` (the block below holds it as a `v(nb+1)` halo), and the
+red-black sweep reconstructs that owned face from the in-projection pressure
+change `Δp = p − p_start`, `v = v* − dt·mu·ifGrad·(Δp_above − Δp_below)`, so the
+coupled coarse-fine SPD system is relaxed in situ. The cross-level coupling is
+carried by the per-colour `[u,v,w,p]` exchange (RESTRICT/PROLONG); single-level
+grids never enter the interface path and stay bit-exact. The transfer operators
+and the ownership rule described below are unchanged — but the *relaxation* it
+describes ("symmetric BCM relaxation with stage-frozen ghosts") was the
+predecessor scheme, and §6a a revision that was explored but not adopted; the
+composite projection superseded both. The rest of this section is kept for the
+design rationale and the conservation/transfer details that still apply.
+
 Operations (Jansson Fig. 3, adapted to the staggered grid):
 
 - **Fine → coarse (`RESTRICT`)**: coarse halo value = average of the 2^d fine
@@ -278,7 +293,16 @@ fine-owned faces carry full fine resolution. With the finest-level
 wall buffer (Section 4) interfaces sit in smooth flow, where this is a
 second-order-consistent approximation.
 
-### 6a. Planned revision: fine-authoritative normal velocity + momentum reflux
+### 6a. Explored (not adopted): fine-authoritative normal velocity + momentum reflux
+
+**Status: superseded.** This subsection records the turbulence-validation
+diagnosis that motivated revisiting the interface treatment and a candidate
+fix (fine-authoritative normal velocity + Berger-Colella reflux). That
+candidate was *not* implemented; the shipped response was the composite
+projection (above-block-owns, faces reconstructed from the in-projection
+pressure change — see the lead of §6 and `composite_projection_strategy.md`).
+The diagnosis below remains the reference for what an interface scheme must
+get right in energetic turbulence.
 
 Turbulence validation (`validation/channel_interface`, interfaces at
 y+=55 and y+=112, in the buffer/log layer) shows the "low-side owns"
@@ -538,14 +562,35 @@ Each phase leaves the code releasable and is verified before the next.
    with and without removal (removal must be a pure no-op on the physics);
    measure memory/runtime gains.
 4. **Phase 3 — 2:1 refinement.** Per-level lines, RESTRICT/PROLONG in
-   pack/unpack, fine-owns-face rule, finest-level wall buffer in `mobygrid`.
-   Verify: (a) uniform-flow preservation across interfaces to round-off;
-   (b) global mass conservation (sum of divergence) to round-off;
-   (c) Taylor-Green / channel with an artificial refinement patch vs uniform
-   fine reference; (d) IBM case (sailplane tutorial) vs uniform-fine result.
+   pack/unpack, the interface ownership/relaxation rule, finest-level wall
+   buffer in `mobygrid`. Verify: (a) uniform-flow preservation across
+   interfaces to round-off; (b) global mass conservation (sum of divergence)
+   to round-off; (c) Taylor-Green / channel with an artificial refinement
+   patch vs uniform fine reference; (d) IBM case (sailplane tutorial) vs
+   uniform-fine result.
 5. **Phase 4 — performance.** Internal/external block zoning + nonblocking
    overlap (merges with `nonblocking_overlap_strategy.md`); profile pack/unpack
    vs sweep kernels.
+
+**As-built status** (the per-phase log with commit hashes and exact gate
+results lives in `CLAUDE.md`; this is the summary):
+
+- Phases 0–2 completed and bit-exact as planned.
+- Phase 3 shipped the **composite projection with above-block-owns** (§6 lead),
+  not the original fine-owns-face rule; geometry-driven refinement
+  (`refine_body`) works for both analytic and file-based (`mobygeom`) IBM.
+- Phase 4 (performance) so far, all bit-exact: the halo exchange is one
+  weighted gather with a precomputed per-point→entry lookup (no per-point
+  binary search); the redundant projection-entry velocity exchange was
+  removed; the intermediate composite exchanges ship pressure only on the
+  cross-level (interface) entries; and the IBM penalization update is skipped
+  when no immersed boundary is present. Nonblocking compute/comm overlap is
+  still open.
+- I/O: fields are written per block as `(nBlocksGlobal, nb_z, nb_y, nb_x)`
+  datasets plus the `blocks` table; each write also emits a ParaView **XDMF**
+  sidecar (`<prefix>_<step>.xmf`) — one structured grid per block referencing
+  the HDF5 hyperslabs — so block-decomposed and 2:1-refined fields load
+  directly without reassembly.
 
 ## 12. Deferred: dynamic adaptation and load balancing
 
