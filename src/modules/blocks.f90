@@ -463,7 +463,7 @@ contains
         ! 0 leaf placeholder (real ids assigned at the end).
         integer, parameter :: M_NONE = -1, M_SPLIT = -2, M_LEAF = 0
 
-        integer :: nLat, l, c(3), cn(3), cc(3), gx, gy, gz, i, n, id, raster
+        integer :: l, c(3), cn(3), cc(3), gx, gy, gz, i, n, id, raster
         integer :: ox, oy, oz, sx, sy, sz, lmax, round, box
         integer(int64), allocatable :: keys(:)
         integer, allocatable :: order(:), tmpLevel(:), tmpCoord(:,:)

@@ -59,7 +59,6 @@ module comm
         integer, allocatable :: lSrcSlot(:), lDstSlot(:)   ! (nLocal)
         integer, allocatable :: lDstLo(:,:), lExt(:,:)     ! (3,nLocal)
         integer, allocatable :: lGA(:,:), lGB(:,:), lGS(:,:), lGC(:,:) ! gather map (3,nLocal)
-        integer, allocatable :: lDir(:,:)                  ! direction (dst-completion adjacency)
         integer, allocatable :: lFaceNrm(:)                ! 2:1 interface owned-face normal dir (0 = none)
         integer, allocatable :: lOff(:)                    ! (0:nLocal) point prefix
         integer, allocatable :: lEntryOf(:)                ! (0:nLocalPts-1) owning entry per point
@@ -80,7 +79,6 @@ module comm
         integer, allocatable :: sEntryOf(:)                ! (0:nSendPts-1) owning send entry per point
         integer, allocatable :: rSlot(:), rPeer(:)
         integer, allocatable :: rLo(:,:), rExt(:,:)
-        integer, allocatable :: rDir(:,:)
         integer, allocatable :: rFaceNrm(:)                ! 2:1 interface owned-face normal dir (0 = none)
         integer, allocatable :: rOff(:)
         integer, allocatable :: rEntryOf(:)                ! (0:nRecvPts-1) owning recv entry per point
@@ -235,7 +233,6 @@ contains
                                 c%lDstSlot(nLocal) = b
                                 c%lDstLo(:,nLocal) = dstLo
                                 c%lExt(:,nLocal) = ext
-                                c%lDir(:,nLocal) = off(:,d)
                                 c%lFaceNrm(nLocal) = face_normal(opc(cand), off(:,d))
                                 call entry_gather_map(opc(cand), off(:,d), tqc(:,cand), nb, &
                                     srcLo, dstLo, c%lGA(:,nLocal), c%lGB(:,nLocal), &
@@ -279,7 +276,6 @@ contains
                                     c%rPeer(nRecv) = p
                                     c%rLo(:,nRecv) = dstLo
                                     c%rExt(:,nRecv) = ext
-                                    c%rDir(:,nRecv) = off(:,d)
                                     c%rFaceNrm(nRecv) = face_normal(opc(cand), off(:,d))
                                     c%rOff(nRecv) = c%rOff(nRecv-1) + pts
                                 end if
@@ -351,7 +347,6 @@ contains
                 allocate(c%lDstLo(3,max(1,nLocal)), c%lExt(3,max(1,nLocal)))
                 allocate(c%lGA(3,max(1,nLocal)), c%lGB(3,max(1,nLocal)))
                 allocate(c%lGS(3,max(1,nLocal)), c%lGC(3,max(1,nLocal)))
-                allocate(c%lDir(3,max(1,nLocal)))
                 allocate(c%lFaceNrm(max(1,nLocal)))
                 allocate(c%lOff(0:max(1,nLocal)))
                 allocate(c%sSlot(max(1,nSend)), c%sPeer(max(1,nSend)))
@@ -363,7 +358,6 @@ contains
                 allocate(c%sOff(0:max(1,nSend)))
                 allocate(c%rSlot(max(1,nRecv)), c%rPeer(max(1,nRecv)))
                 allocate(c%rLo(3,max(1,nRecv)), c%rExt(3,max(1,nRecv)))
-                allocate(c%rDir(3,max(1,nRecv)))
                 allocate(c%rFaceNrm(max(1,nRecv)))
                 allocate(c%rOff(0:max(1,nRecv)))
                 c%lOff = 0
@@ -411,11 +405,11 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target enter data map(to: &
         !$omp& c%lSrcSlot, c%lDstSlot, c%lDstLo, c%lExt, c%lOff, c%lEntryOf, &
-        !$omp& c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lFaceNrm, &
+        !$omp& c%lGA, c%lGB, c%lGS, c%lGC, c%lFaceNrm, &
         !$omp& c%sSlot, c%sPeer, c%sExt, c%sOff, c%sEntryOf, &
         !$omp& c%sGA, c%sGB, c%sGS, c%sGC, c%sDstLo, c%sFaceNrm, &
         !$omp& c%peerSendOff, c%peerRecvOff, c%peerSendCopyOff, c%peerRecvCopyOff, &
-        !$omp& c%rSlot, c%rPeer, c%rLo, c%rExt, c%rDir, c%rFaceNrm, c%rOff, c%rEntryOf)
+        !$omp& c%rSlot, c%rPeer, c%rLo, c%rExt, c%rFaceNrm, c%rOff, c%rEntryOf)
         !$omp target enter data map(alloc: c%sendbuf, c%recvbuf)
 #endif
     end subroutine init_block_exchange
@@ -428,18 +422,18 @@ contains
             !$omp target exit data map(delete: c%sendbuf, c%recvbuf)
             !$omp target exit data map(delete: &
             !$omp& c%lSrcSlot, c%lDstSlot, c%lDstLo, c%lExt, c%lOff, c%lEntryOf, &
-            !$omp& c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lFaceNrm, &
+            !$omp& c%lGA, c%lGB, c%lGS, c%lGC, c%lFaceNrm, &
             !$omp& c%sSlot, c%sPeer, c%sExt, c%sOff, c%sEntryOf, &
             !$omp& c%sGA, c%sGB, c%sGS, c%sGC, c%sDstLo, c%sFaceNrm, &
             !$omp& c%peerSendOff, c%peerRecvOff, c%peerSendCopyOff, c%peerRecvCopyOff, &
-            !$omp& c%rSlot, c%rPeer, c%rLo, c%rExt, c%rDir, c%rFaceNrm, c%rOff, c%rEntryOf)
+            !$omp& c%rSlot, c%rPeer, c%rLo, c%rExt, c%rFaceNrm, c%rOff, c%rEntryOf)
 #endif
             deallocate(c%sendbuf, c%recvbuf)
             deallocate(c%lSrcSlot, c%lDstSlot, c%lDstLo, c%lExt, c%lOff, c%lEntryOf)
-            deallocate(c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lFaceNrm)
+            deallocate(c%lGA, c%lGB, c%lGS, c%lGC, c%lFaceNrm)
             deallocate(c%sSlot, c%sPeer, c%sExt, c%sOff, c%sEntryOf)
             deallocate(c%sGA, c%sGB, c%sGS, c%sGC, c%sDstLo, c%sFaceNrm)
-            deallocate(c%rSlot, c%rPeer, c%rLo, c%rExt, c%rDir, c%rFaceNrm, c%rOff, c%rEntryOf)
+            deallocate(c%rSlot, c%rPeer, c%rLo, c%rExt, c%rFaceNrm, c%rOff, c%rEntryOf)
             deallocate(c%request)
         end if
         if (allocated(c%peerRank)) deallocate(c%peerRank)
@@ -1135,7 +1129,7 @@ contains
         !$omp target teams distribute parallel do &
         !$omp& map(to: totalItems, nv, c%nLocal, c%nLocalCopyPts, c%pSkipCopy, &
         !$omp& c%lOff, c%lEntryOf, c%lSrcSlot, c%lDstSlot, &
-        !$omp& c%lDstLo, c%lExt, c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lFaceNrm, &
+        !$omp& c%lDstLo, c%lExt, c%lGA, c%lGB, c%lGS, c%lGC, c%lFaceNrm, &
         !$omp& c%activeVars) &
         !$omp& map(tofrom: blk%q) &
         !$omp& private(p,gp,v,e,pt,ni,nj,di,dj,dk,var,nd,layerN,b1,b2,b3,c1,c2,c3,s1,s2,s3,val)
@@ -1338,7 +1332,7 @@ contains
         !$omp target teams distribute parallel do &
         !$omp& map(to: totalItems, nv, copyOnly, c%pSkipCopy, c%nPeers, c%nRecv, &
         !$omp& c%rOff, c%rEntryOf, c%rSlot, c%rPeer, &
-        !$omp& c%rLo, c%rExt, c%rDir, c%rFaceNrm, &
+        !$omp& c%rLo, c%rExt, c%rFaceNrm, &
         !$omp& c%peerRecvOff, c%peerRecvCopyOff, c%activeVars, c%recvbuf) &
         !$omp& map(tofrom: blk%q) &
         !$omp& private(p,gp,v,e,pt,ni,nj,i,j,k,var,peer,pos,nd,layerN,val)

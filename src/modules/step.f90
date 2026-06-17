@@ -68,7 +68,6 @@ contains
 
         integer :: i,j,k,b,ip,im,kp,km,jp,jm
         integer :: nx, ny, nz, nBlocks, uStartX, vStartY, wStartZ
-        integer :: uEndX, vEndY, wEndZ
 
         real(C_DOUBLE) :: diff_ux,diff_uy,diff_uz
         real(C_DOUBLE) :: diff_vx,diff_vy,diff_vz
@@ -103,7 +102,7 @@ contains
         !$omp& blk%lapXm, blk%lapX0, blk%lapXp, blk%lapYm, blk%lapY0, blk%lapYp, &
         !$omp& blk%lapZm, blk%lapZ0, blk%lapZp, blk%q, ibm%mu) &
         !$omp& map(tofrom: blk%qs, blk%oldrhs) &
-        !$omp& private(i,j,k,b,ip,im,jp,jm,kp,km,uStartX,vStartY,wStartZ,uEndX,vEndY,wEndZ, &
+        !$omp& private(i,j,k,b,ip,im,jp,jm,kp,km,uStartX,vStartY,wStartZ, &
         !$omp& uu_p,uu_m,uv_p,uv_m,uw_p,uw_m, &
         !$omp& vu_p,vu_m,vv_p,vv_m,vw_p,vw_m,wu_p,wu_m,ww_p,ww_m,wv_p,wv_m, &
         !$omp& diff_ux,diff_uy,diff_uz,diff_vx,diff_vy,diff_vz,diff_wx,diff_wy,diff_wz, &
@@ -125,11 +124,8 @@ contains
                     uStartX = merge(2, 1, blk%physLow(1,b) == FACE_PHYS .or. blk%physLow(1,b) == FACE_CLOSED)
                     vStartY = merge(2, 1, blk%physLow(2,b) == FACE_PHYS .or. blk%physLow(2,b) == FACE_CLOSED)
                     wStartZ = merge(2, 1, blk%physLow(3,b) == FACE_PHYS .or. blk%physLow(3,b) == FACE_CLOSED)
-                    uEndX = nx
-                    vEndY = ny
-                    wEndZ = nz
 
-                    if (i >= uStartX .and. i <= uEndX .and. j <= ny .and. k <= nz) then
+                    if (i >= uStartX .and. i <= nx .and. j <= ny .and. k <= nz) then
                         uu_p = (blk%q(i,j,k,VAR_U,b) + blk%q(ip,j,k,VAR_U,b))**2
                         uu_m = (blk%q(im,j,k,VAR_U,b) + blk%q(i,j,k,VAR_U,b))**2
 
@@ -176,7 +172,7 @@ contains
                         blk%oldrhs(i,j,k,VAR_U,b) = rhsu
                     end if
 
-                    if (j >= vStartY .and. j <= vEndY .and. i <= nx .and. k <= nz) then
+                    if (j >= vStartY .and. j <= ny .and. i <= nx .and. k <= nz) then
                         vu_p = (blk%q(i,j,k,VAR_V,b) + blk%q(ip,j,k,VAR_V,b)) &
                              * (blk%q(ip,jm,k,VAR_U,b) + blk%q(ip,j,k,VAR_U,b))
                         vu_m = (blk%q(im,j,k,VAR_V,b) + blk%q(i,j,k,VAR_V,b)) &
@@ -220,7 +216,7 @@ contains
                         blk%oldrhs(i,j,k,VAR_V,b) = rhsv
                     end if
 
-                    if (k >= wStartZ .and. k <= wEndZ .and. i <= nx .and. j <= ny) then
+                    if (k >= wStartZ .and. k <= nz .and. i <= nx .and. j <= ny) then
                         wu_p = (blk%q(i,j,k,VAR_W,b) + blk%q(ip,j,k,VAR_W,b)) &
                              * (blk%q(ip,j,km,VAR_U,b) + blk%q(ip,j,k,VAR_U,b))
                         wu_m = (blk%q(im,j,k,VAR_W,b) + blk%q(i,j,k,VAR_W,b)) &
@@ -617,15 +613,15 @@ contains
         end if
         call comm_allreduce_max(c, rates)
 
-        next_dt = dns%dt
+        ! An active limit caps dt at min(dtmax, the limits) -- seed dtmax so dt
+        ! can also grow toward it, not just shrink from the current value.
+        next_dt = dns%dtmax
         have_limit = .false.
         if (dns%cflmax > 0.0d0 .and. rates(CFL_COURANT) > 0.0d0) then
-            if (.not. have_limit) next_dt = dns%dtmax
             next_dt = min(next_dt, dns%cflmax/rates(CFL_COURANT))
             have_limit = .true.
         end if
         if (dns%pecletmax > 0.0d0 .and. rates(CFL_PECLET) > 0.0d0) then
-            if (.not. have_limit) next_dt = dns%dtmax
             next_dt = min(next_dt, dns%pecletmax/rates(CFL_PECLET))
             have_limit = .true.
         end if

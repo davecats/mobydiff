@@ -277,11 +277,11 @@ contains
                         do k = o(3), o(3) + nb + 1
                             do j = o(2), o(2) + nb + 1
                                 do i = o(1), o(1) + nb + 1
-                                    xA(1) = location_coord(g%xNode, dns%globalSize(1), &
+                                    xA(1) = location_coord(g%xNode, int(dns%globalSize(1)), &
                                         dns%leng(1), periodic(1), 1, var, i)
-                                    xA(2) = location_coord(g%yNode, dns%globalSize(2), &
+                                    xA(2) = location_coord(g%yNode, int(dns%globalSize(2)), &
                                         dns%leng(2), periodic(2), 2, var, j)
-                                    xA(3) = location_coord(g%zNode, dns%globalSize(3), &
+                                    xA(3) = location_coord(g%zNode, int(dns%globalSize(3)), &
                                         dns%leng(3), periodic(3), 3, var, k)
                                     if (.not. isInBody(xA, ibm, dns)) then
                                         buried = .false.
@@ -297,19 +297,20 @@ contains
         end do
     end subroutine classify_active_blocks
 
-    ! Coordinate of variable `var` at 1-based global cell index `idx` along
-    ! direction `dir`, matching slice_grid_direction's staggering.
-    real(C_DOUBLE) function location_coord(node, nGlobal, length, periodic, dir, var, idx) result(x)
+    ! Coordinate of variable `var` at 1-based cell index `idx` along direction
+    ! `dir` on a node line of `n` cells (global grid or a refinement level),
+    ! matching slice_grid_direction's staggering.
+    real(C_DOUBLE) function location_coord(node, n, length, periodic, dir, var, idx) result(x)
         real(C_DOUBLE), intent(in) :: node(0:)
-        integer(C_INT), intent(in) :: nGlobal
+        integer, intent(in) :: n
         real(C_DOUBLE), intent(in) :: length
         logical(C_BOOL), intent(in) :: periodic
         integer, intent(in) :: dir, var, idx
 
         if (is_face_staggered(dir, var)) then
-            x = face_at(node, int(nGlobal), length, idx - 1, periodic)
+            x = face_at(node, n, length, idx - 1, periodic)
         else
-            x = cell_center_at(node, int(nGlobal), length, idx, periodic)
+            x = cell_center_at(node, n, length, idx, periodic)
         end if
     end function location_coord
 
@@ -366,11 +367,11 @@ contains
                             do k = o(3), o(3) + nb + 1
                                 do j = o(2), o(2) + nb + 1
                                     do i = o(1), o(1) + nb + 1
-                                        xA(1) = level_coord(lineX(:,l), nl(1), dns%leng(1), &
+                                        xA(1) = location_coord(lineX(:,l), nl(1), dns%leng(1), &
                                             periodic(1), 1, var, i)
-                                        xA(2) = level_coord(lineY(:,l), nl(2), dns%leng(2), &
+                                        xA(2) = location_coord(lineY(:,l), nl(2), dns%leng(2), &
                                             periodic(2), 2, var, j)
-                                        xA(3) = level_coord(lineZ(:,l), nl(3), dns%leng(3), &
+                                        xA(3) = location_coord(lineZ(:,l), nl(3), dns%leng(3), &
                                             periodic(3), 3, var, k)
                                         inside = isInBody(xA, ibm, dns)
                                         anySolid = anySolid .or. inside
@@ -389,20 +390,6 @@ contains
 
         deallocate(lineX, lineY, lineZ)
     end subroutine classify_block_geometry
-
-    real(C_DOUBLE) function level_coord(node, nl, length, periodic, dir, var, idx) result(x)
-        real(C_DOUBLE), intent(in) :: node(0:)
-        integer, intent(in) :: nl
-        real(C_DOUBLE), intent(in) :: length
-        logical(C_BOOL), intent(in) :: periodic
-        integer, intent(in) :: dir, var, idx
-
-        if (is_face_staggered(dir, var)) then
-            x = face_at(node, nl, length, idx - 1, periodic)
-        else
-            x = cell_center_at(node, nl, length, idx, periodic)
-        end if
-    end function level_coord
 
     subroutine set_ibm_coeff(dns, blk, ibm, var)
         type(dns_type), intent(in) :: dns
