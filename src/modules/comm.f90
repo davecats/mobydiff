@@ -1,7 +1,7 @@
 module comm
     use, intrinsic :: iso_c_binding
     use :: mpi_f08
-    use :: init, only: dns_type, NVAR
+    use :: init, only: dns_type, NVAR, VAR_P
     use :: blocks, only: block_set_type, DIST_ZORDER, zorder_owner, zorder_start, zorder_count, &
         leaf_at, level_cells
     use :: boundary, only: boundary_type
@@ -97,6 +97,11 @@ module comm
         ! frozen (the messages shrink to the per-peer copy prefixes).
         ! Used by the per-colour exchanges inside the pressure projection.
         logical :: copyOnly = .false.
+        ! When true, VAR_P is gathered only on the cross-level (interp) entries,
+        ! not on the same-level COPY prefix. The intermediate composite-projection
+        ! exchanges use this: the sweep reads a neighbour pressure only at 2:1
+        ! interfaces, so a same-level halo pressure is never read between sweeps.
+        logical :: pSkipCopy = .false.
     end type comm_type
 
     public :: comm_init_world, comm_init, comm_finalize
@@ -1056,17 +1061,21 @@ contains
         c%exchangeActive = .false.
     end subroutine finish_halo_exchange
 
-    subroutine exchange_halos(c, blk, vars, interp)
+    subroutine exchange_halos(c, blk, vars, interp, p_interface_only)
         type(comm_type), intent(inout) :: c
         type(block_set_type), intent(inout) :: blk
         integer(C_INT), intent(in) :: vars(:)
         logical, intent(in), optional :: interp
+        logical, intent(in), optional :: p_interface_only
 
         c%copyOnly = .false.
         if (present(interp)) c%copyOnly = .not. interp
+        c%pSkipCopy = .false.
+        if (present(p_interface_only)) c%pSkipCopy = p_interface_only
         call start_halo_exchange(c, blk, vars)
         call finish_halo_exchange(c, blk)
         c%copyOnly = .false.
+        c%pSkipCopy = .false.
     end subroutine exchange_halos
 
     ! Per-block scalar halos (e.g. les%nut) on the same exchange entries.
@@ -1124,7 +1133,8 @@ contains
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
-        !$omp& map(to: totalItems, nv, c%nLocal, c%lOff, c%lEntryOf, c%lSrcSlot, c%lDstSlot, &
+        !$omp& map(to: totalItems, nv, c%nLocal, c%nLocalCopyPts, c%pSkipCopy, &
+        !$omp& c%lOff, c%lEntryOf, c%lSrcSlot, c%lDstSlot, &
         !$omp& c%lDstLo, c%lExt, c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lFaceNrm, &
         !$omp& c%activeVars) &
         !$omp& map(tofrom: blk%q) &
@@ -1133,6 +1143,10 @@ contains
         do p = 1, totalItems
             gp = (p - 1)/nv
             v = p - 1 - gp*nv
+            var = int(c%activeVars(v+1))
+            ! Skip pressure on the same-level COPY prefix when requested: its halo
+            ! is never read between projection sweeps (only interface halos are).
+            if (c%pSkipCopy .and. var == VAR_P .and. gp < c%nLocalCopyPts) cycle
             e = c%lEntryOf(gp)
             pt = gp - c%lOff(e-1)
             ni = c%lExt(1,e)
@@ -1140,7 +1154,6 @@ contains
             di = c%lDstLo(1,e) + modulo(pt, ni)
             dj = c%lDstLo(2,e) + modulo(pt/ni, nj)
             dk = c%lDstLo(3,e) + pt/(ni*nj)
-            var = int(c%activeVars(v+1))
             ! 2:1 interface owned face. PROLONG (dstLo=nb+1>0): the fine owns
             ! its near face, so the normal component is written only to the
             ! deep stencil layer nb+2 and the others to the nb+1 halo.
@@ -1256,7 +1269,8 @@ contains
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
-        !$omp& map(to: totalItems, nv, copyOnly, c%nPeers, c%nSend, c%sOff, c%sEntryOf, c%sSlot, c%sPeer, &
+        !$omp& map(to: totalItems, nv, copyOnly, c%pSkipCopy, c%nPeers, c%nSend, &
+        !$omp& c%sOff, c%sEntryOf, c%sSlot, c%sPeer, &
         !$omp& c%sDstLo, c%sExt, c%sGA, c%sGB, c%sGS, c%sGC, &
         !$omp& c%peerSendOff, c%peerSendCopyOff, c%activeVars, blk%q) &
         !$omp& map(tofrom: c%sendbuf) &
@@ -1272,13 +1286,19 @@ contains
                 gp = c%peerSendOff(peer-1) + (gp - c%peerSendCopyOff(peer-1))
             end if
             e = c%sEntryOf(gp)
+            peer = c%sPeer(e)
+            var = int(c%activeVars(v+1))
+            ! Skip pressure on the same-level COPY prefix of this peer (see
+            ! copy_local_entries): leaves the buffer slot stale, which the
+            ! receiver's unpack skips identically.
+            if (c%pSkipCopy .and. var == VAR_P .and. &
+                gp - c%peerSendOff(peer-1) < c%peerSendCopyOff(peer) - c%peerSendCopyOff(peer-1)) cycle
             pt = gp - c%sOff(e-1)
             ni = c%sExt(1,e)
             nj = c%sExt(2,e)
             di = c%sDstLo(1,e) + modulo(pt, ni)
             dj = c%sDstLo(2,e) + modulo(pt/ni, nj)
             dk = c%sDstLo(3,e) + pt/(ni*nj)
-            var = int(c%activeVars(v+1))
             b1 = ishft(c%sGA(1,e)*di + c%sGB(1,e), -c%sGS(1,e))
             b2 = ishft(c%sGA(2,e)*dj + c%sGB(2,e), -c%sGS(2,e))
             b3 = ishft(c%sGA(3,e)*dk + c%sGB(3,e), -c%sGS(3,e))
@@ -1293,7 +1313,6 @@ contains
                     end do
                 end do
             end do
-            peer = c%sPeer(e)
             pos = (gp - c%peerSendOff(peer-1))*nv + v + 1
             c%sendbuf(pos,peer) = val/real(c1*c2*c3, C_DOUBLE)
         end do
@@ -1317,7 +1336,8 @@ contains
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
-        !$omp& map(to: totalItems, nv, copyOnly, c%nPeers, c%nRecv, c%rOff, c%rEntryOf, c%rSlot, c%rPeer, &
+        !$omp& map(to: totalItems, nv, copyOnly, c%pSkipCopy, c%nPeers, c%nRecv, &
+        !$omp& c%rOff, c%rEntryOf, c%rSlot, c%rPeer, &
         !$omp& c%rLo, c%rExt, c%rDir, c%rFaceNrm, &
         !$omp& c%peerRecvOff, c%peerRecvCopyOff, c%activeVars, c%recvbuf) &
         !$omp& map(tofrom: blk%q) &
@@ -1331,13 +1351,18 @@ contains
                 gp = c%peerRecvOff(peer-1) + (gp - c%peerRecvCopyOff(peer-1))
             end if
             e = c%rEntryOf(gp)
+            peer = c%rPeer(e)
+            var = int(c%activeVars(v+1))
+            ! Skip pressure on the same-level COPY prefix (mirror of the sender's
+            ! pack_entries skip): the buffer slot was left stale, never read here.
+            if (c%pSkipCopy .and. var == VAR_P .and. &
+                gp - c%peerRecvOff(peer-1) < c%peerRecvCopyOff(peer) - c%peerRecvCopyOff(peer-1)) cycle
             pt = gp - c%rOff(e-1)
             ni = c%rExt(1,e)
             nj = c%rExt(2,e)
             i = c%rLo(1,e) + modulo(pt, ni)
             j = c%rLo(2,e) + modulo(pt/ni, nj)
             k = c%rLo(3,e) + pt/(ni*nj)
-            var = int(c%activeVars(v+1))
             ! Above-block-owns (mirror of copy_local_entries): the normal
             ! component is a slaved halo on the BELOW block -- PROLONG injects the
             ! covering coarse v(1) into both halo layers; RESTRICT writes only the
@@ -1351,7 +1376,6 @@ contains
                     cycle
                 end if
             end if
-            peer = c%rPeer(e)
             pos = (gp - c%peerRecvOff(peer-1))*nv + v + 1
             val = c%recvbuf(pos,peer)
             blk%q(i,j,k,var,c%rSlot(e)) = val

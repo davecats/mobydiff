@@ -76,8 +76,16 @@ contains
                     call redblack_sweep(ps, blk, dt_gamma, ibm, color)
                     call apply_bc(blk, bc)
                     ! Refresh the cross-level pressure (RESTRICT + inject) and
-                    ! reconcile the interface velocity in one exchange.
-                    call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W, VAR_P])
+                    ! reconcile the interface velocity in one exchange. Between
+                    ! sweeps the sweep reads a neighbour pressure only across a 2:1
+                    ! interface, so pressure is transferred on the interface entries
+                    ! only; the final exchange ships it everywhere so the next
+                    ! substage's momentum sees current same-level halo pressures.
+                    if (iIter == ps%nIter .and. color == 0_C_INT) then
+                        call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W, VAR_P])
+                    else
+                        call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W, VAR_P], p_interface_only=.true.)
+                    end if
                 end do
             end do
             return
