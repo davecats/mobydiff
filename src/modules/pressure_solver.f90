@@ -65,8 +65,11 @@ contains
         ! level path below is the plain red-black SOR (no interface faces, so the
         ! sweep's interface reconstruction is inert and the two paths coincide).
         if (blk%nLevels > 1_C_INT) then
+            ! The predictor velocity halos (including the cross-interface transfer)
+            ! are already current from the main-loop exchange right before this
+            ! call; no velocity has changed since, so composite_qs_setup can read
+            ! the slaved interface faces directly.
             call snapshot_start_pressure(blk)
-            call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W])    ! transfer predictor velocity across interfaces
             call composite_qs_setup(blk)                          ! freeze the slaved interface qs
             do iIter = 1_C_INT, ps%nIter
                 do color = 1_C_INT, 0_C_INT, -1_C_INT
