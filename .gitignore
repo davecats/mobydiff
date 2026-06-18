@@ -90,3 +90,6 @@ profiling/
 # Python
 __pycache__/
 *.pyc
+
+# Validation plot outputs
+validation/**/plots*/

@@ -1,7 +1,7 @@
 module generic_flow
     use, intrinsic :: iso_c_binding
     use :: flow_case_base, only: case_type
-    use :: init, only: dns_type, grid_type, GRID_UNIFORM, VAR_U
+    use :: init, only: dns_type, grid_type, GRID_UNIFORM, VAR_U, VAR_V, VAR_W, VAR_P
     use :: blocks, only: block_set_type
     use :: boundary, only: boundary_type, init_bc
     use :: pressure_solver, only: pressure_solver_type
@@ -72,13 +72,41 @@ contains
         integer :: i, j, k, v, b, nSeed
         integer, allocatable :: seed(:)
         real(C_DOUBLE) :: r
-        character(len=32) :: shearEnv
-        real(C_DOUBLE) :: shearAmp, twopi, ly, ycoord
+        character(len=32) :: shearEnv, tgvEnv
+        real(C_DOUBLE) :: shearAmp, twopi, ly, ycoord, k0
         integer :: gx, gz, ios
 
         blk%q(:,:,:,1,:) = dns%initial_velocity(1)
         blk%q(:,:,:,2,:) = dns%initial_velocity(2)
         blk%q(:,:,:,3,:) = dns%initial_velocity(3)
+
+        ! Decaying 2D Taylor-Green vortex (exact NS solution), thin in z. An
+        ! analytic, smooth test for convergence order and 2:1-interface artifacts
+        ! (no turbulence, no statistics). MOBY_TGV=1. Domain must be square and
+        ! 2*pi-periodic in x,y; w = 0 and no z-dependence, so z may be thin.
+        !   u = -cos(k x) sin(k y),  v = sin(k x) cos(k y),  k = 2*pi/Lx,
+        !   p = -1/4 (cos 2kx + cos 2ky);  velocity decays as exp(-2 nu k^2 t).
+        ! Evaluated at each variable's own staggered coordinate, so single-block
+        ! and refined grids are initialised consistently by construction.
+        call get_environment_variable("MOBY_TGV", tgvEnv)
+        if (len_trim(tgvEnv) > 0) then
+            twopi = 8.0d0*atan(1.0d0)
+            k0 = twopi/dns%leng(1)
+            do b = 1, int(blk%nBlocks)
+                do k = 0, int(blk%nb(3))+1
+                    do j = 0, int(blk%nb(2))+1
+                        do i = 0, int(blk%nb(1))+1
+                            blk%q(i,j,k,VAR_U,b) = -cos(k0*blk%x(i,VAR_U,b))*sin(k0*blk%y(j,VAR_U,b))
+                            blk%q(i,j,k,VAR_V,b) =  sin(k0*blk%x(i,VAR_V,b))*cos(k0*blk%y(j,VAR_V,b))
+                            blk%q(i,j,k,VAR_W,b) =  0.0d0
+                            blk%q(i,j,k,VAR_P,b) = -0.25d0*(cos(2.0d0*k0*blk%x(i,VAR_P,b)) &
+                                                          + cos(2.0d0*k0*blk%y(j,VAR_P,b)))
+                        end do
+                    end do
+                end do
+            end do
+            return
+        end if
 
         ! Diagnostic shear-mode gate (interface_review §vi): a smooth periodic
         ! mean shear u(y)=sin(2*pi*y/Ly) across the interface, plus a structured
