@@ -85,3 +85,7 @@ tutorials/interface_decay/run.log
 profile_*/
 profiling/
 /smoke/
+
+# Python
+__pycache__/
+*.pyc

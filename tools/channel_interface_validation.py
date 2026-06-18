@@ -57,25 +57,22 @@ def utau_of(coord, prof, re):
     return np.sqrt(0.5*(du0 + du1)/re)
 
 
-def half_channel(coord, prof):
-    """Fold the two halves onto y in (0, 1] (average)."""
-    y = np.where(coord <= 1.0, coord, 2.0 - coord)
-    order = np.argsort(y)
-    y = y[order]
-    p = prof[order]
-    # average symmetric pairs by binning on y (pairs coincide on these grids)
-    yu, inv = np.unique(np.round(y, 12), return_inverse=True)
-    pm = np.zeros((yu.size, p.shape[1]))
-    cnt = np.zeros(yu.size)
-    sign = np.ones(p.shape[1])
-    sign[STAT_UV] = 0.0  # uv is antisymmetric: fold with sign
-    for i, j in enumerate(inv):
-        w = 1.0 if coord[order][i] <= 1.0 else -1.0
-        row = p[i].copy()
-        row[STAT_UV] *= w
-        pm[j] += row
-        cnt[j] += 1
-    return yu, pm/cnt[:, None]
+def wall_halves(coord, prof):
+    """Split into the lower (y in (0, 1]) and upper ([1, 2)) halves, each mapped
+    to wall distance, WITHOUT averaging the two together: the two interface
+    orientations differ, so they are kept as separate curves. <uv> is negated in
+    the upper half so -<u'v'> reads positive against wall distance in both halves.
+
+    Returns [(y_lower, prof_lower), (y_upper, prof_upper)]."""
+    halves = []
+    for mask, ywall, uv_sign in ((coord <= 1.0, coord, +1.0),
+                                 (coord > 1.0, 2.0 - coord, -1.0)):
+        y = ywall[mask]
+        p = prof[mask].copy()
+        p[:, STAT_UV] *= uv_sign
+        order = np.argsort(y)
+        halves.append((y[order], p[order]))
+    return halves
 
 
 def plot_profiles(ref, refined, label, outdir, iface_y):
@@ -89,47 +86,76 @@ def plot_profiles(ref, refined, label, outdir, iface_y):
     print(f"u_tau: reference {ut_r:.5f}, {label} {ut_f:.5f} "
           f"(dev {100*(ut_f/ut_r-1):+.2f}%)")
 
-    hr_y, hr = half_channel(yr, pr)
-    hf_y, hf = half_channel(yf, pf)
+    # Keep the two channel halves as separate curves so the bottom- and
+    # top-wall interfaces can be compared (the interface error is wall-asymmetric).
+    ref_h = wall_halves(yr, pr)
+    fin_h = wall_halves(yf, pf)
+    HALVES = ("lower", "upper")
+    REF_LS = {"lower": "-", "upper": "--"}   # reference line style per half
+    FIN_MK = {"lower": ".", "upper": "x"}    # refined marker per half
 
     def yplus(y, ut, re): return y*ut*re
 
     fig, axes = plt.subplots(2, 2, figsize=(11, 8))
+
     ax = axes[0, 0]
-    ax.semilogx(yplus(hr_y, ut_r, re_r), hr[:, STAT_U]/ut_r, "k-", label="reference")
-    ax.semilogx(yplus(hf_y, ut_f, re_f), hf[:, STAT_U]/ut_f, "r.", ms=3, label=label)
+    for hi, hn in enumerate(HALVES):
+        yrh, prh = ref_h[hi]
+        yfh, pfh = fin_h[hi]
+        ax.semilogx(yplus(yrh, ut_r, re_r), prh[:, STAT_U]/ut_r, "k"+REF_LS[hn],
+                    label=f"reference {hn}")
+        ax.semilogx(yplus(yfh, ut_f, re_f), pfh[:, STAT_U]/ut_f, "r"+FIN_MK[hn],
+                    ms=3, label=f"{label} {hn}")
     ax.axvline(iface_y*ut_f*re_f, color="b", ls=":", lw=1, label="interface")
-    ax.set_xlabel("y+"); ax.set_ylabel("U+"); ax.legend(); ax.set_title("mean velocity")
+    ax.set_xlabel("y+"); ax.set_ylabel("U+"); ax.legend(fontsize=8); ax.set_title("mean velocity")
 
     ax = axes[0, 1]
-    for s, name, c in ((STAT_UU, "u", "C0"), (STAT_VV, "v", "C1"), (STAT_WW, "w", "C2")):
-        rms_r = np.sqrt(np.maximum(hr[:, s] - hr[:, s-3]**2, 0))/ut_r
-        rms_f = np.sqrt(np.maximum(hf[:, s] - hf[:, s-3]**2, 0))/ut_f
-        ax.plot(yplus(hr_y, ut_r, re_r), rms_r, c+"-", label=f"{name}rms ref")
-        ax.plot(yplus(hf_y, ut_f, re_f), rms_f, c+".", ms=3)
+    for hi, hn in enumerate(HALVES):
+        yrh, prh = ref_h[hi]
+        yfh, pfh = fin_h[hi]
+        for s, name, c in ((STAT_UU, "u", "C0"), (STAT_VV, "v", "C1"), (STAT_WW, "w", "C2")):
+            rms_r = np.sqrt(np.maximum(prh[:, s] - prh[:, s-3]**2, 0))/ut_r
+            rms_f = np.sqrt(np.maximum(pfh[:, s] - pfh[:, s-3]**2, 0))/ut_f
+            ax.plot(yplus(yrh, ut_r, re_r), rms_r, c+REF_LS[hn],
+                    label=(f"{name}rms" if hi == 0 else None))
+            ax.plot(yplus(yfh, ut_f, re_f), rms_f, c+FIN_MK[hn], ms=3)
     ax.axvline(iface_y*ut_f*re_f, color="b", ls=":", lw=1)
-    ax.set_xlabel("y+"); ax.set_ylabel("rms+"); ax.legend(fontsize=8); ax.set_title("rms (dots: refined)")
+    ax.set_xlabel("y+"); ax.set_ylabel("rms+"); ax.legend(fontsize=8)
+    ax.set_title("rms (line/dot: lower, dash/x: upper)")
 
     ax = axes[1, 0]
-    uv_r = -(hr[:, STAT_UV] - hr[:, STAT_U]*hr[:, STAT_V])/ut_r**2
-    uv_f = -(hf[:, STAT_UV] - hf[:, STAT_U]*hf[:, STAT_V])/ut_f**2
-    ax.plot(yplus(hr_y, ut_r, re_r), uv_r, "k-", label="reference")
-    ax.plot(yplus(hf_y, ut_f, re_f), uv_f, "r.", ms=3, label=label)
+    for hi, hn in enumerate(HALVES):
+        yrh, prh = ref_h[hi]
+        yfh, pfh = fin_h[hi]
+        uv_r = -(prh[:, STAT_UV] - prh[:, STAT_U]*prh[:, STAT_V])/ut_r**2
+        uv_f = -(pfh[:, STAT_UV] - pfh[:, STAT_U]*pfh[:, STAT_V])/ut_f**2
+        ax.plot(yplus(yrh, ut_r, re_r), uv_r, "k"+REF_LS[hn], label=f"reference {hn}")
+        ax.plot(yplus(yfh, ut_f, re_f), uv_f, "r"+FIN_MK[hn], ms=3, label=f"{label} {hn}")
     ax.axvline(iface_y*ut_f*re_f, color="b", ls=":", lw=1)
-    ax.set_xlabel("y+"); ax.set_ylabel("-<u'v'>+"); ax.legend(); ax.set_title("Reynolds stress")
+    ax.set_xlabel("y+"); ax.set_ylabel("-<u'v'>+"); ax.legend(fontsize=8); ax.set_title("Reynolds stress")
 
     ax = axes[1, 1]
-    Ui = np.interp(hf_y, hr_y, hr[:, STAT_U])
-    ax.plot(yplus(hf_y, ut_f, re_f), 100*(hf[:, STAT_U] - Ui)/max(abs(hr[:, STAT_U]).max(), 1e-30), "r-")
+    Umax = max(abs(pr[:, STAT_U]).max(), 1e-30)
+    dev_summary = []
+    for hi, hn in enumerate(HALVES):
+        yrh, prh = ref_h[hi]
+        yfh, pfh = fin_h[hi]
+        Ui = np.interp(yfh, yrh, prh[:, STAT_U])      # reference of the SAME half
+        dev = 100*(pfh[:, STAT_U] - Ui)/Umax
+        ax.plot(yplus(yfh, ut_f, re_f), dev, "r"+REF_LS[hn], label=hn)
+        k = np.abs(dev).argmax()
+        dev_summary.append((hn, np.abs(dev[k]), yplus(yfh, ut_f, re_f)[k]))
+    ax.axhline(0.0, color="k", lw=0.5)
     ax.axvline(iface_y*ut_f*re_f, color="b", ls=":", lw=1)
-    ax.set_xlabel("y+"); ax.set_ylabel("dU / max(U) [%]"); ax.set_title("mean velocity deviation")
+    ax.set_xlabel("y+"); ax.set_ylabel("dU / max(U) [%]")
+    ax.legend(fontsize=8); ax.set_title("mean velocity deviation (per half)")
 
     fig.tight_layout()
     fig.savefig(os.path.join(outdir, "profiles.png"), dpi=150)
     print(f"wrote {outdir}/profiles.png")
-    dev = 100*np.abs(hf[:, STAT_U] - Ui)/abs(hr[:, STAT_U]).max()
-    print(f"mean-U deviation: max {dev.max():.3f}% of centreline, "
-          f"at y+ = {yplus(hf_y, ut_f, re_f)[dev.argmax()]:.1f}")
+    for hn, dmax, yloc in dev_summary:
+        print(f"mean-U deviation ({hn} wall): max {dmax:.3f}% of centreline, "
+              f"at y+ = {yloc:.1f}")
     return ut_r, ut_f
 
 
