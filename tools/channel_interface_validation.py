@@ -176,7 +176,12 @@ class Snapshot:
         self.block = self.h5["un"].ndim == 4
         if self.block:
             self.blocks = self.h5["blocks"][...]
+            # Cubic for the refined block lattice; the whole rank box for a
+            # single-block RANKBOX/uniform file (then non-cubic, e.g. 48x128x80).
             self.nb = int(self.h5.attrs["block_nb_x"])
+            self.nbx = int(self.h5.attrs["block_nb_x"])
+            self.nby = int(self.h5.attrs["block_nb_y"])
+            self.nbz = int(self.h5.attrs["block_nb_z"])
             self.index = {}
             for bid, (ox, oy, oz, lev) in enumerate(self.blocks):
                 self.index[(int(lev), ox//self.nb, oy//self.nb, oz//self.nb)] = bid
@@ -186,20 +191,20 @@ class Snapshot:
     def uplane(self, var, level, jrow):
         """Global (z, x) plane of `var` at level-l y-cell row jrow (1-based),
         levels as stored (reference: level irrelevant)."""
-        if not self.block:
-            return self.h5[var][:, jrow-1, :]
-        nb = self.nb
-        attrs = self.h5.attrs
-        nxl = int(attrs["nx"])*2**level
-        nzl = int(attrs["nz"])*2**level
-        plane = np.full((nzl, nxl), np.nan)
-        cy, j = (jrow-1)//nb, (jrow-1) % nb
         data = self.h5[var]
-        for (lev, bx, by, bz), bid in self.index.items():
-            if lev != level or by != cy:
+        if not self.block:
+            return data[:, jrow-1, :]
+        # Use per-direction block sizes and the block-table origins, so this
+        # works for both the cubic refined lattice and a single non-cubic block.
+        nbx, nby, nbz = self.nbx, self.nby, self.nbz
+        nxl = int(self.h5.attrs["nx"])*2**level
+        nzl = int(self.h5.attrs["nz"])*2**level
+        plane = np.full((nzl, nxl), np.nan)
+        jc = jrow - 1
+        for bid, (ox, oy, oz, lev) in enumerate(self.blocks):
+            if lev != level or not (oy <= jc < oy + nby):
                 continue
-            row = data[bid][:, j, :]
-            plane[bz*nb:(bz+1)*nb, bx*nb:(bx+1)*nb] = row
+            plane[oz:oz+nbz, ox:ox+nbx] = data[bid][:, jc - oy, :]
         return plane
 
     def close(self):
