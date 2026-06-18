@@ -42,13 +42,17 @@ python3 ../../tools/check_interface_decay.py ../../tutorials/interface_decay
 
 echo "== generating MFU initial conditions from channel_kmm180_restart.h5"
 mkdir -p ic
-python3 ../../tools/make_channel_restart.py --mode reference --ref-coarse $BOX \
+# Reference: the subdivided fine level of the 24x64x40 native anchor -> 48x128x80.
+# Refined: --base-subdivided makes the coarse level that same 48x128x80 (centre =
+# reference) and the walls one level finer (96x256x160). Bands are in the 128
+# base: 48 cells -> y+112, 32 cells -> y+55.
+python3 ../../tools/make_channel_restart.py --mode reference $BOX \
     --source ../../tutorials/channel_kmm180/channel_kmm180_restart.h5 \
     --out ic/reference_ic.h5
-python3 ../../tools/make_channel_restart.py --mode refined --band-cells 24 $BOX \
+python3 ../../tools/make_channel_restart.py --mode refined --base-subdivided --band-cells 48 $BOX \
     --source ../../tutorials/channel_kmm180/channel_kmm180_restart.h5 \
     --out ic/refined_y110_ic.h5
-python3 ../../tools/make_channel_restart.py --mode refined --band-cells 16 $BOX \
+python3 ../../tools/make_channel_restart.py --mode refined --base-subdivided --band-cells 32 $BOX \
     --source ../../tutorials/channel_kmm180/channel_kmm180_restart.h5 \
     --out ic/refined_y55_ic.h5
 

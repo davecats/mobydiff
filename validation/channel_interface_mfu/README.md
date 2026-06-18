@@ -1,31 +1,29 @@
 # Minimal-flow-unit 2:1-interface channel validation
 
-A fast variant of `../channel_interface`. Same Re_tau = 180 turbulent channel
+A faster variant of `../channel_interface`. Same Re_tau = 180 turbulent channel
 and the same 2:1-interface treatment, but in a **minimal flow unit**: a small
-2 x 2 x 2 box instead of the full 4π x 2 x 2π domain. ~17x fewer cells, so it
-runs much faster and is convenient for quick stability / qualitative checks and
-iteration.
+2 x 2 x 2 box instead of the full 4π x 2 x 2π domain. Roughly half the cells of
+the full case (and a much smaller homogeneous footprint), so it runs faster and
+is convenient for quick stability / qualitative checks and iteration.
 
 | case          | grid           | resolution vs reference | interface |
 |---------------|----------------|-------------------------|-----------|
-| reference     | 24 x 64 x 40 (uniform, coarse) | — (baseline) | none |
-| refined_y110  | 24 x 64 x 40 base, both wall bands -> level 1 (48 x 128 x 80) | = in interior, 2x finer at walls | y+ = 112 |
-| refined_y55   | 24 x 64 x 40 base, both wall bands -> level 1 (48 x 128 x 80) | = in interior, 2x finer at walls | y+ = 55  |
+| reference     | 48 x 128 x 80 (uniform) | — (baseline) | none |
+| refined_y110  | 48 x 128 x 80 centre, both wall bands -> level 1 (96 x 256 x 160) | = in centre, 2x finer at walls | y+ = 112 |
+| refined_y55   | 48 x 128 x 80 centre, both wall bands -> level 1 (96 x 256 x 160) | = in centre, 2x finer at walls | y+ = 55  |
 
-The reference is uniform at the refined cases' **base (coarse) resolution**, so
-the block-refined case is **never coarser than the reference**: equal in the
-coarse interior, 2x finer in the wall bands. The coarse side of each interface
-therefore carries the same spectral content as the reference, so an interface
-artifact is not confused with under-resolution aliasing (which would appear if
-the refined coarse zone truncated more of the spectrum than the reference). The
-reference grid is the refined cases' base lines bitwise (native, not
-subdivided); the refined fine level is the subdivision of that grid.
+The block-refined case has the **same resolution as the reference in the
+centre** and is **2x finer at the walls** -- so it is **never coarser than the
+reference**. The coarse side of each 2:1 interface therefore carries the same
+spectral content as the reference, so an interface artifact is not confused
+with under-resolution aliasing (which would appear if the refined coarse zone
+truncated more of the spectrum than the reference).
 
-The wall-normal (`y`) line is **identical** to the full `channel_interface`
-case (natural stretching, blend 16, dyw+ = 0.5), so the interfaces sit at the
-same y+. The streamwise/spanwise counts (24, 40) are the multiples of the block
-size nb = 8 closest to the full channel's base spacing (dx = 0.083, dz = 0.050
-vs the full 0.098 / 0.049).
+Grids are anchored on the full `channel_interface` case's native 24x64x40
+lines: the reference and the refined **centre** are both the midpoint
+subdivision of those lines (48x128x80, `[grid.*] subdivided = true`), bitwise
+identical; the refined **walls** subdivide once more (96x256x160). The y-line
+matches the full case's fine level, so the interfaces sit at the same y+.
 
 Initial conditions are interpolated from the full channel restart
 (`tutorials/channel_kmm180/channel_kmm180_restart.h5`) by sampling its 2 x 2

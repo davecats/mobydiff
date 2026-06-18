@@ -196,11 +196,12 @@ def main():
                         help="target box length in x (default: source lx); smaller -> "
                              "interpolate a sub-window, e.g. a minimal flow unit")
     parser.add_argument("--lz", type=float, default=None, help="target box length in z")
-    parser.add_argument("--ref-coarse", action="store_true",
-                        help="reference mode: write the base (coarse) resolution uniformly "
-                             "instead of the subdivided fine level, so a band-refined case is "
-                             "never coarser than the reference (equal in the interior, finer in "
-                             "the refined bands) -- avoids under-resolution aliasing at interfaces")
+    parser.add_argument("--base-subdivided", action="store_true",
+                        help="refined mode: build the block base (coarse) level as the "
+                             "subdivision of the native grid (matches [grid.*] subdivided = "
+                             "true) and the fine level as one further subdivision. The refined "
+                             "coarse level then equals a subdivided reference (same resolution "
+                             "in the centre) and the refined case is finer only at the walls.")
     args = parser.parse_args()
 
     src = load_source(args.source)
@@ -213,46 +214,48 @@ def main():
                args.lz if args.lz else src_lengths[2])
     periodic = (True, False, True)
 
-    base = (args.nx, args.ny, args.nz)
-    base_nodes = (uniform_line(base[0], lengths[0]),
-                  natural_line(base[1], ly, 16.0, args.dyw_plus),
-                  uniform_line(base[2], lengths[2]))
+    native = (args.nx, args.ny, args.nz)
+    native_nodes = (uniform_line(native[0], lengths[0]),
+                    natural_line(native[1], ly, 16.0, args.dyw_plus),
+                    uniform_line(native[2], lengths[2]))
+    if args.base_subdivided:
+        # Block base level is the subdivision of the native grid (matches the
+        # solver's [grid.*] subdivided = true); the fine level subdivides again.
+        base_nodes = tuple(subdivide(n) for n in native_nodes)
+        base = tuple(2*n for n in native)
+    else:
+        base_nodes = native_nodes
+        base = native
     fine_nodes = tuple(subdivide(n) for n in base_nodes)
 
     # Interpolate each staggered field onto base and fine lattices. The source
     # is periodic over src_lengths, so a smaller target box samples its corner.
     src_nodes = src["nodes"]
     names = ["un", "vn", "wn", "pn"]
-    need_coarse = args.mode == "refined" or args.ref_coarse
-    need_fine = args.mode == "refined" or (args.mode == "reference" and not args.ref_coarse)
     fine = {}
     coarse = {}
     for var, name in enumerate(names):
         spos = staggered_positions(src_nodes, var)
         f = src["fields"][name]
-        if need_fine:
-            fine[name] = interp_field(f, spos, staggered_positions(fine_nodes, var),
-                                      periodic, src_lengths)
-        if need_coarse:
+        fine[name] = interp_field(f, spos, staggered_positions(fine_nodes, var),
+                                  periodic, src_lengths)
+        if args.mode == "refined":
             coarse[name] = interp_field(f, spos, staggered_positions(base_nodes, var),
                                         periodic, src_lengths)
 
     if args.mode == "reference":
-        # Default reference is the subdivided fine level (uniformly resolved).
-        # --ref-coarse writes the base level instead, so a band-refined case is
-        # never coarser than the reference.
-        rfields, rnodes, rn = ((coarse, base_nodes, base) if args.ref_coarse else
-                               (fine, fine_nodes, tuple(2*b for b in base)))
-        attrs = common_attrs(src["attrs"], rn[0], rn[1], rn[2], args.dyw_plus, lengths)
+        # Uniformly-resolved reference: the subdivided fine level of the base.
+        attrs = common_attrs(src["attrs"], 2*base[0], 2*base[1], 2*base[2], args.dyw_plus,
+                             lengths)
         with h5py.File(args.out, "w") as h5:
             write_attrs(h5, attrs)
             for name in names:
-                h5.create_dataset(name, data=rfields[name])
-            h5.create_dataset("x", data=rnodes[0])
-            h5.create_dataset("y", data=rnodes[1])
-            h5.create_dataset("z", data=rnodes[2])
+                h5.create_dataset(name, data=fine[name])
+            h5.create_dataset("x", data=fine_nodes[0])
+            h5.create_dataset("y", data=fine_nodes[1])
+            h5.create_dataset("z", data=fine_nodes[2])
             h5.create_dataset("rank_local_range", data=np.array(
-                [[1, rn[0], 1, rn[1], 1, rn[2]]], dtype=np.int32))
+                [[1, 2*base[0], 1, 2*base[1], 1, 2*base[2]]], dtype=np.int32))
         iface = None
     else:
         gnbt = tuple(n//NB for n in base)
@@ -286,11 +289,11 @@ def main():
 
     y = base_nodes[1]
     print(f"wrote {args.out}")
-    print(f"base y-line: dy_wall+ = {y[1]*180:.3f} (fine {y[1]/2*180:.3f}), "
-          f"interface candidates: node16 y+={y[16]*180:.1f}, node24 y+={y[24]*180:.1f}")
+    print(f"base y-line ({base[1]} cells): dy_wall+ = {y[1]*180:.3f}, "
+          f"fine-level dy_wall+ = {y[1]/2*180:.3f}")
     if iface is not None:
-        print(f"refine box edge for band={args.band_cells}: y1 = {iface:.16e} "
-              f"(y+ = {y[args.band_cells]*180:.1f})")
+        print(f"refine band = {args.band_cells} base y-cells: interface y1 = "
+              f"{y[args.band_cells]:.16e} (y+ = {y[args.band_cells]*180:.1f})")
 
 
 if __name__ == "__main__":
