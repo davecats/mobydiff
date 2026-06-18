@@ -161,10 +161,11 @@ def load_source(path):
     return src
 
 
-def common_attrs(src_attrs, nx, ny, nz, dyw_plus):
+def common_attrs(src_attrs, nx, ny, nz, dyw_plus, lengths):
     a = dict(src_attrs)
     a.update({
         "nx": np.int32(nx), "ny": np.int32(ny), "nz": np.int32(nz),
+        "lx": float(lengths[0]), "ly": float(lengths[1]), "lz": float(lengths[2]),
         "grid_distribution": np.array([1, 4, 1], dtype=np.int32),
         "grid_stretch": np.array([0.0, 16.0, 0.0]),
         "grid_natural_dyw_plus": np.array([0.05, dyw_plus, 0.05]),
@@ -188,20 +189,33 @@ def main():
     parser.add_argument("--band-cells", type=int, default=24,
                         help="refined band height in base y-cells per wall (refined mode)")
     parser.add_argument("--dyw-plus", type=float, default=0.5)
+    parser.add_argument("--nx", type=int, default=128, help="base x cells (multiple of nb)")
+    parser.add_argument("--ny", type=int, default=64, help="base y cells (multiple of nb)")
+    parser.add_argument("--nz", type=int, default=128, help="base z cells (multiple of nb)")
+    parser.add_argument("--lx", type=float, default=None,
+                        help="target box length in x (default: source lx); smaller -> "
+                             "interpolate a sub-window, e.g. a minimal flow unit")
+    parser.add_argument("--lz", type=float, default=None, help="target box length in z")
     args = parser.parse_args()
 
     src = load_source(args.source)
-    lx = float(src["attrs"]["lx"]); ly = float(src["attrs"]["ly"]); lz = float(src["attrs"]["lz"])
-    lengths = (lx, ly, lz)
+    # Source box (for periodic extension of the source field) vs target box (the
+    # grid we build). A smaller target box samples a sub-window of the source.
+    src_lengths = (float(src["attrs"]["lx"]), float(src["attrs"]["ly"]),
+                   float(src["attrs"]["lz"]))
+    ly = src_lengths[1]
+    lengths = (args.lx if args.lx else src_lengths[0], ly,
+               args.lz if args.lz else src_lengths[2])
     periodic = (True, False, True)
 
-    base = (128, 64, 128)
-    base_nodes = (uniform_line(base[0], lx),
+    base = (args.nx, args.ny, args.nz)
+    base_nodes = (uniform_line(base[0], lengths[0]),
                   natural_line(base[1], ly, 16.0, args.dyw_plus),
-                  uniform_line(base[2], lz))
+                  uniform_line(base[2], lengths[2]))
     fine_nodes = tuple(subdivide(n) for n in base_nodes)
 
-    # Interpolate each staggered field onto base and fine lattices.
+    # Interpolate each staggered field onto base and fine lattices. The source
+    # is periodic over src_lengths, so a smaller target box samples its corner.
     src_nodes = src["nodes"]
     names = ["un", "vn", "wn", "pn"]
     fine = {}
@@ -210,13 +224,14 @@ def main():
         spos = staggered_positions(src_nodes, var)
         f = src["fields"][name]
         fine[name] = interp_field(f, spos, staggered_positions(fine_nodes, var),
-                                  periodic, lengths)
+                                  periodic, src_lengths)
         if args.mode == "refined":
             coarse[name] = interp_field(f, spos, staggered_positions(base_nodes, var),
-                                        periodic, lengths)
+                                        periodic, src_lengths)
 
     if args.mode == "reference":
-        attrs = common_attrs(src["attrs"], 2*base[0], 2*base[1], 2*base[2], args.dyw_plus)
+        attrs = common_attrs(src["attrs"], 2*base[0], 2*base[1], 2*base[2], args.dyw_plus,
+                             lengths)
         with h5py.File(args.out, "w") as h5:
             write_attrs(h5, attrs)
             for name in names:
@@ -242,7 +257,7 @@ def main():
             ox, oy, oz = cx*NB, cy*NB, cz*NB
             for name in names:
                 rows[name][bid] = g[name][oz:oz+NB, oy:oy+NB, ox:ox+NB]
-        attrs = common_attrs(src["attrs"], base[0], base[1], base[2], args.dyw_plus)
+        attrs = common_attrs(src["attrs"], base[0], base[1], base[2], args.dyw_plus, lengths)
         attrs.update({"block_nb_x": np.int32(NB), "block_nb_y": np.int32(NB),
                       "block_nb_z": np.int32(NB), "n_blocks": np.int32(nleaf)})
         with h5py.File(args.out, "w") as h5:
