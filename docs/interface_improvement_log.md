@@ -74,6 +74,22 @@ over-correction — even 12.5%-toward-adjacent destabilises.
 Result: **NaN** (refined and slab). So it is not specific to the face-staggered
 prolong: *any* linear velocity prolong (cell or face) destabilises.
 
+### E2 — pressure-ghost blend (point 3): ghost = (2*coarse + fine_interior)/3
+Re-add the blended pressure ghost (removed in the above-owns refactor) at the
+fine side's FACE_COARSE faces, as a localized post-exchange kernel
+(blend_prolong_pressure), applied after each projection pressure exchange.
+
+| state | uniform-64 | refined | slab_x |
+|-------|-----------|---------|--------|
+| baseline | 2.18e-5 | 8.10e-3 | 7.50e-3 |
+| E2 (pressure blend) | 2.18e-5 (bit-exact ✓) | 1.07e-2 (+32%) | 9.71e-3 (+29%) |
+
+Result: **STABLE but WORSE.** No NaN (pressure-only changes do not trigger the
+velocity instability), but the blend increases the error ~30%. The above-owns
+reconstruction handles the interface pressure differently from the old scheme,
+so re-adding the old blend is inconsistent — this retroactively justifies its
+removal. Reverted.
+
 ## Conclusion on point 1 (and implications)
 
 **Linear velocity prolong is unconditionally unstable with the current
@@ -119,3 +135,32 @@ interface** rather than a transfer-order patch:
 Bottom line: the obvious increment (linear prolong) is a dead end on stability
 grounds; the path to the target is a conservative reflux interface, developed
 against the new TGV gate.
+
+## Overall summary (experiments tried)
+
+| experiment | point | stable? | refined L2 vs 8.10e-3 | verdict |
+|------------|-------|---------|-----------------------|---------|
+| E1 linear prolong (full) | 1 (magnitude) | no (NaN) | — | revert |
+| E1b linear prolong (alpha=0.5) | 1 | no (NaN) | — | revert |
+| E1c cell-linear only | 1 | no (NaN) | — | revert |
+| E2 pressure-ghost blend | 3 (pressure) | yes | 1.07e-2 (worse) | revert |
+
+Two of the three points tried empirically; both fail. Point 2 (normal-velocity
+ownership asymmetry) is the same velocity/projection-coupled class as point 1
+(so the same instability risk) and is structurally the hardest — its principled
+fix IS the momentum reflux below, so it was not attempted as a separate
+ad-hoc increment.
+
+**Net: simple incremental transfer/ghost changes to the current composite
+scheme do not improve the interface error** — they either destabilise (any
+velocity-transfer interpolation) or worsen it (pressure-ghost blend). The
+current scheme is a local optimum among these increments. Single-level stays
+bit-exact throughout (all changes were interface-only), and the code is left at
+baseline `4f0d5c2`.
+
+**Recommended next step (directed work): momentum-conservative reflux.** Keep
+injection halos (stability), add a Berger-Colella flux correction so the
+interface momentum flux telescopes; develop it against the TGV gate
+(refined-patch L2 -> 2e-5 baseline, slab_x/slab_y orientation split for the
+asymmetry). This is a coordinated reformulation, not an ad-hoc patch, and is
+the route consistent with both the diagnosis and the stability evidence.
