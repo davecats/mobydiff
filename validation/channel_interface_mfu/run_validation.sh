@@ -42,7 +42,7 @@ python3 ../../tools/check_interface_decay.py ../../tutorials/interface_decay
 
 echo "== generating MFU initial conditions from channel_kmm180_restart.h5"
 mkdir -p ic
-python3 ../../tools/make_channel_restart.py --mode reference $BOX \
+python3 ../../tools/make_channel_restart.py --mode reference --ref-coarse $BOX \
     --source ../../tutorials/channel_kmm180/channel_kmm180_restart.h5 \
     --out ic/reference_ic.h5
 python3 ../../tools/make_channel_restart.py --mode refined --band-cells 24 $BOX \

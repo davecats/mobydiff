@@ -79,6 +79,7 @@ validation/**/runs/
 validation/**/ic/
 validation/**/smoke/
 tutorials/interface_decay/decay_*.h5
+tutorials/interface_decay/decay_*.xmf
 tutorials/interface_decay/run.log
 
 # Profiling / smoke scratch

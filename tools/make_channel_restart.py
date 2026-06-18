@@ -196,6 +196,11 @@ def main():
                         help="target box length in x (default: source lx); smaller -> "
                              "interpolate a sub-window, e.g. a minimal flow unit")
     parser.add_argument("--lz", type=float, default=None, help="target box length in z")
+    parser.add_argument("--ref-coarse", action="store_true",
+                        help="reference mode: write the base (coarse) resolution uniformly "
+                             "instead of the subdivided fine level, so a band-refined case is "
+                             "never coarser than the reference (equal in the interior, finer in "
+                             "the refined bands) -- avoids under-resolution aliasing at interfaces")
     args = parser.parse_args()
 
     src = load_source(args.source)
@@ -218,29 +223,36 @@ def main():
     # is periodic over src_lengths, so a smaller target box samples its corner.
     src_nodes = src["nodes"]
     names = ["un", "vn", "wn", "pn"]
+    need_coarse = args.mode == "refined" or args.ref_coarse
+    need_fine = args.mode == "refined" or (args.mode == "reference" and not args.ref_coarse)
     fine = {}
     coarse = {}
     for var, name in enumerate(names):
         spos = staggered_positions(src_nodes, var)
         f = src["fields"][name]
-        fine[name] = interp_field(f, spos, staggered_positions(fine_nodes, var),
-                                  periodic, src_lengths)
-        if args.mode == "refined":
+        if need_fine:
+            fine[name] = interp_field(f, spos, staggered_positions(fine_nodes, var),
+                                      periodic, src_lengths)
+        if need_coarse:
             coarse[name] = interp_field(f, spos, staggered_positions(base_nodes, var),
                                         periodic, src_lengths)
 
     if args.mode == "reference":
-        attrs = common_attrs(src["attrs"], 2*base[0], 2*base[1], 2*base[2], args.dyw_plus,
-                             lengths)
+        # Default reference is the subdivided fine level (uniformly resolved).
+        # --ref-coarse writes the base level instead, so a band-refined case is
+        # never coarser than the reference.
+        rfields, rnodes, rn = ((coarse, base_nodes, base) if args.ref_coarse else
+                               (fine, fine_nodes, tuple(2*b for b in base)))
+        attrs = common_attrs(src["attrs"], rn[0], rn[1], rn[2], args.dyw_plus, lengths)
         with h5py.File(args.out, "w") as h5:
             write_attrs(h5, attrs)
             for name in names:
-                h5.create_dataset(name, data=fine[name])
-            h5.create_dataset("x", data=fine_nodes[0])
-            h5.create_dataset("y", data=fine_nodes[1])
-            h5.create_dataset("z", data=fine_nodes[2])
+                h5.create_dataset(name, data=rfields[name])
+            h5.create_dataset("x", data=rnodes[0])
+            h5.create_dataset("y", data=rnodes[1])
+            h5.create_dataset("z", data=rnodes[2])
             h5.create_dataset("rank_local_range", data=np.array(
-                [[1, 2*base[0], 1, 2*base[1], 1, 2*base[2]]], dtype=np.int32))
+                [[1, rn[0], 1, rn[1], 1, rn[2]]], dtype=np.int32))
         iface = None
     else:
         gnbt = tuple(n//NB for n in base)

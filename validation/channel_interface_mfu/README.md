@@ -6,19 +6,26 @@ and the same 2:1-interface treatment, but in a **minimal flow unit**: a small
 runs much faster and is convenient for quick stability / qualitative checks and
 iteration.
 
-| case          | grid (base)   | fine level   | interface |
-|---------------|---------------|--------------|-----------|
-| reference     | 48 x 128 x 80 (uniform) | —  | none      |
-| refined_y110  | 24 x 64 x 40, both wall bands -> level 1 | 48 x 128 x 80 | y+ = 112 |
-| refined_y55   | 24 x 64 x 40, both wall bands -> level 1 | 48 x 128 x 80 | y+ = 55  |
+| case          | grid           | resolution vs reference | interface |
+|---------------|----------------|-------------------------|-----------|
+| reference     | 24 x 64 x 40 (uniform, coarse) | — (baseline) | none |
+| refined_y110  | 24 x 64 x 40 base, both wall bands -> level 1 (48 x 128 x 80) | = in interior, 2x finer at walls | y+ = 112 |
+| refined_y55   | 24 x 64 x 40 base, both wall bands -> level 1 (48 x 128 x 80) | = in interior, 2x finer at walls | y+ = 55  |
+
+The reference is uniform at the refined cases' **base (coarse) resolution**, so
+the block-refined case is **never coarser than the reference**: equal in the
+coarse interior, 2x finer in the wall bands. The coarse side of each interface
+therefore carries the same spectral content as the reference, so an interface
+artifact is not confused with under-resolution aliasing (which would appear if
+the refined coarse zone truncated more of the spectrum than the reference). The
+reference grid is the refined cases' base lines bitwise (native, not
+subdivided); the refined fine level is the subdivision of that grid.
 
 The wall-normal (`y`) line is **identical** to the full `channel_interface`
 case (natural stretching, blend 16, dyw+ = 0.5), so the interfaces sit at the
-same y+ and the near-wall resolution matches. The streamwise/spanwise counts
-(24, 40) are the multiples of the block size nb = 8 closest to the full
-channel's base spacing (dx = 0.083, dz = 0.050 vs the full 0.098 / 0.049). The
-reference uses `[grid.*] subdivided = true`, so its grid is bitwise the refined
-cases' level-1 lines.
+same y+. The streamwise/spanwise counts (24, 40) are the multiples of the block
+size nb = 8 closest to the full channel's base spacing (dx = 0.083, dz = 0.050
+vs the full 0.098 / 0.049).
 
 Initial conditions are interpolated from the full channel restart
 (`tutorials/channel_kmm180/channel_kmm180_restart.h5`) by sampling its 2 x 2
