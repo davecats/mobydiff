@@ -247,6 +247,27 @@ complementary directions, neither yet built:
    hierarchy: the only halo-consumer is PROLONG, everything else reads interiors,
    so the dependency graph is acyclic and two phases suffice.
 
+### Diagnosis of the fine-owns error (Reynolds sweep, slab_x)
+
+| Re | fine-owns u | coarse-owns u | ratio |
+|----|------------|---------------|-------|
+| 30 | 2.69 | 1.27 | 2.1 |
+| 100 | 0.47 | 0.037 | 12.5 |
+| 300 | 0.61 | 0.012 | 50.6 |
+
+- Coarse-owns error ~ 1/Re (vanishes at high Re): pure **diffusion**, and it is fine.
+- Fine-owns error drops then RISES (0.47 -> 0.61, Re 100->300) while diffusion
+  vanishes: a Re-INDEPENDENT component (~0.4-0.6) dominates at the relevant Re.
+  Subtracting the diffusion part (≈ coarse-owns), the residual is ~constant ->
+  **convection**. It is fine-owns-specific (coarse-owns uses accurate RESTRICT).
+- Conclusion: the fine-owns asymmetry is the **convective momentum flux** reading
+  the mass-locked injected normal halo u(0). It is a MOMENTUM error
+  (Re-independent, convective), not a mass error -> correctable conservatively
+  WITHOUT changing the stored (mass-critical) halo. The fix is a momentum-side
+  correction: either a convective-flux reflux, or a reconstructed normal halo
+  used ONLY in the momentum RHS (convection/diffusion) while the divergence keeps
+  the injection halo. Both keep mass exact; both are real implementations.
+
 Both/all develop against the TGV gate (refined L2 + slab_x/slab_y orientation split).
 
 ## Original recommendation (superseded by E3 for the magnitude)
