@@ -183,6 +183,20 @@ program main
         end if
     end block
 
+    ! Truncation-error probe (MOBY_TRUNC): with the exact TGV IC, set the
+    ! interface velocity halos to the scheme's two-phase state (Pass A injection
+    ! at line 172 above + Pass B linear here) and print the u-momentum operator
+    ! term balance along a fine-owns interface (see step.f90:truncation_probe).
+    block
+        character(len=16) :: truncEnv
+        call get_environment_variable("MOBY_TRUNC", truncEnv)
+        if (len_trim(truncEnv) > 0) then
+            call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W], linear_prolong=.true.)
+            call truncation_probe(blk, dns)
+            stop
+        end if
+    end block
+
     call flow%setup_after_grid(blk, dns, g, bc, c)
     if (les_is_enabled(les)) then
         call update_les_viscosity(les, blk, dns, ibm)

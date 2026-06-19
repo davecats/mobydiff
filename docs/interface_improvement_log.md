@@ -312,6 +312,41 @@ import coarse-grid data through the owned-face reconstruction) is worth pursuing
 not a fundamental limit. The convective reflux removed the conservation part; the
 consistency part remains for a future directed effort.
 
+### Truncation-error probe — DEFECT FOUND: tangential pressure injection
+
+`MOBY_TRUNC` (step.f90:truncation_probe + main.f90 hook): with the exact TGV
+field + scheme halos, prints the u-momentum operator terms RMS'd over y-z at each
+x of a fine-owns and a coarse-owns interface; the inviscid balance conv+pres
+should -> 0 in a consistent scheme. At the owned face (i=1):
+
+| | \|conv\| | \|pres\| | \|conv+pres\| |
+|---|---------|----------|---------------|
+| fine-owns | ~0 | 7.24e-2 | 7.24e-2 |
+| coarse-owns | 4.4e-3 | 1.9e-3 | 6.27e-3 |
+
+The owned-face momentum imbalance is **12x larger on the fine-owns side**
+(matching the 0.45/0.05 solution asymmetry) and is **entirely the pressure
+term**. Mechanism: the projection reconstructs the owned face as
+u(1) = qs - dt*ifGrad*(p_new(1) - p_new(0)); the fine owner's p_new(0) is the
+**tangentially injected** (y-staircase) coarse pressure, which does not match the
+fine p_new(1)'s y-variation -> a spurious O(h) gradient. The coarse owner reads
+RESTRICT'd (accurate) pressure -> clean. CONFIRMED: giving the pressure the
+tangential linear prolong dropped the fine-owns imbalance 7.24e-2 -> 1.67e-3
+(43x), cleaner than coarse-owns.
+
+CAVEAT (why the simple fix did not move the solution): doing this only in the
+final exchange (the momentum predictor) is inert -- the predictor's start-of-
+projection pressure gradient CANCELS in the reconstruction (the pStart terms
+telescope, leaving u(1) = q + dt*rhs - dt*ifGrad*(p_new(1)-p_new(0))). The fix
+must put the tangentially-smoothed coarse pressure into p_new(0) **inside the
+projection** (the per-colour pressure exchange that feeds the sweep
+reconstruction), not the predictor. Concerns to handle there: (1) stability --
+it is in the relaxation (E1 showed velocity-linear there is unconditionally
+unstable; pressure may differ but must be checked); (2) rank independence -- the
+per-colour exchange is single-phase, so the linear adjacent tap needs the
+two-phase (producers-then-prolong) treatment. This is the precise, minimal target
+for the asymmetry fix.
+
 ## Original recommendation (superseded by E3 for the magnitude)
 
 **Momentum-conservative reflux.** Keep

@@ -313,6 +313,83 @@ contains
 
     end subroutine momentum
 
+    ! Truncation-error probe (MOBY_TRUNC). With blk%q set to the EXACT TGV field
+    ! plus the scheme's interface halos, print the discrete u-momentum operator
+    ! terms along a y-z RMS at each x-index of the first fine-owns block
+    ! (physLow(1)==FACE_COARSE): convection C, pressure P=-dp/dx, viscous D, and
+    ! the inviscid balance C+P. For the TGV the exact convection cancels the exact
+    ! pressure gradient, so C+P -> 0 with the grid in a consistent scheme; an O(1)
+    ! C+P at the interface (i=1) that does not shrink with h is the order-0 defect,
+    ! and the C-vs-P split says whether it is convective or pressure.
+    subroutine truncation_probe(blk, dns)
+        type(block_set_type), intent(inout) :: blk
+        type(dns_type), intent(in) :: dns
+        integer :: i,j,k,b,ip,im,jp,jm,kp,km, nx,ny,nz, bsel, npl, kk, kind
+        real(C_DOUBLE) :: ire, uu_p,uu_m,uv_p,uv_m,uw_p,uw_m, conv, pterm, dterm
+        real(C_DOUBLE) :: dux,duy,duz, sC,sP,sCP,sD, grad
+        logical :: iface
+
+        ire = 1.0d0/dns%re
+        nx = int(blk%nb(1)); ny = int(blk%nb(2)); nz = int(blk%nb(3))
+        npl = ny*nz
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target update from(blk%q)
+#endif
+      do kk = 1, 2
+        kind = merge(FACE_COARSE, FACE_FINE, kk == 1)   ! fine-owns, then coarse-owns
+        bsel = -1
+        do b = 1, int(blk%nBlocks)
+            if (blk%physLow(1,b) == kind) then; bsel = b; exit; end if
+        end do
+        if (bsel < 0) cycle
+        b = bsel
+        print '(a,a,3i5,a,es12.4)', merge("TRUNC FINE-OWNS  ", "TRUNC COARSE-OWNS", kk == 1), &
+            " block origin", int(blk%origin(:,b)), "  x_interface=", blk%x(1,VAR_U,b)
+        print '(a)', "   i        x        |conv|        |pres|       |conv+pres|     |visc|"
+        do i = 1, min(nx, 8)
+            ip=i+1; im=i-1
+            iface = (i == 1)
+            grad = merge(blk%ifGrad(1,b), blk%d1x(i,VAR_U,b), iface)
+            sC=0; sP=0; sCP=0; sD=0
+            do k = 1, nz
+                kp=k+1; km=k-1
+                do j = 1, ny
+                    jp=j+1; jm=j-1
+                    uu_p = (blk%q(i,j,k,VAR_U,b)+blk%q(ip,j,k,VAR_U,b))**2
+                    uu_m = (blk%q(im,j,k,VAR_U,b)+blk%q(i,j,k,VAR_U,b))**2
+                    if (iface) uu_m = (0.5d0*blk%q(im,j,k,VAR_U,b)+1.5d0*blk%q(i,j,k,VAR_U,b))**2
+                    uv_p = (blk%q(i,j,k,VAR_U,b)+blk%q(i,jp,k,VAR_U,b)) &
+                         * (blk%q(im,jp,k,VAR_V,b)+blk%q(i,jp,k,VAR_V,b))
+                    uv_m = (blk%q(i,jm,k,VAR_U,b)+blk%q(i,j,k,VAR_U,b)) &
+                         * (blk%q(im,j,k,VAR_V,b)+blk%q(i,j,k,VAR_V,b))
+                    uw_p = (blk%q(i,j,k,VAR_U,b)+blk%q(i,j,kp,VAR_U,b)) &
+                         * (blk%q(im,j,kp,VAR_W,b)+blk%q(i,j,kp,VAR_W,b))
+                    uw_m = (blk%q(i,j,km,VAR_U,b)+blk%q(i,j,k,VAR_U,b)) &
+                         * (blk%q(im,j,k,VAR_W,b)+blk%q(i,j,k,VAR_W,b))
+                    conv = -0.25d0*((uu_p-uu_m)*blk%d1x(i,VAR_U,b) &
+                                   +(uv_p-uv_m)*blk%d1y(j,VAR_U,b) &
+                                   +(uw_p-uw_m)*blk%d1z(k,VAR_U,b))
+                    pterm = -(blk%q(i,j,k,VAR_P,b)-blk%q(im,j,k,VAR_P,b))*grad
+                    dux = blk%lapXm(i,VAR_U,b)*blk%q(im,j,k,VAR_U,b) &
+                        + blk%lapX0(i,VAR_U,b)*blk%q(i,j,k,VAR_U,b) &
+                        + blk%lapXp(i,VAR_U,b)*blk%q(ip,j,k,VAR_U,b)
+                    duy = blk%lapYm(j,VAR_U,b)*blk%q(i,jm,k,VAR_U,b) &
+                        + blk%lapY0(j,VAR_U,b)*blk%q(i,j,k,VAR_U,b) &
+                        + blk%lapYp(j,VAR_U,b)*blk%q(i,jp,k,VAR_U,b)
+                    duz = blk%lapZm(k,VAR_U,b)*blk%q(i,j,km,VAR_U,b) &
+                        + blk%lapZ0(k,VAR_U,b)*blk%q(i,j,k,VAR_U,b) &
+                        + blk%lapZp(k,VAR_U,b)*blk%q(i,j,kp,VAR_U,b)
+                    dterm = ire*(dux+duy+duz)
+                    sC = sC + conv*conv; sP = sP + pterm*pterm
+                    sCP = sCP + (conv+pterm)**2; sD = sD + dterm*dterm
+                end do
+            end do
+            print '(i5,f10.4,4es14.4)', i, blk%x(i,VAR_U,b), &
+                sqrt(sC/npl), sqrt(sP/npl), sqrt(sCP/npl), sqrt(sD/npl)
+        end do
+      end do
+    end subroutine truncation_probe
+
 
     subroutine add_les_momentum_correction(blk, dns, dt_alpha, ibm, les, les_prof)
         type(block_set_type), intent(inout) :: blk
