@@ -131,6 +131,15 @@ contains
                     if (i >= uStartX .and. i <= nx .and. j <= ny .and. k <= nz) then
                         uu_p = (blk%q(i,j,k,VAR_U,b) + blk%q(ip,j,k,VAR_U,b))**2
                         uu_m = (blk%q(im,j,k,VAR_U,b) + blk%q(i,j,k,VAR_U,b))**2
+                        ! Convective-flux reflux at a fine-owns 2:1 interface (i=1,
+                        ! coarse below): the stored coarse-side normal velocity u(0)
+                        ! is injected at the wrong position (the coarse face one fine
+                        ! cell deeper). Its correct value at the fine halo position is
+                        ! 0.5*(u(0)+u(1)); use it in the interface convective flux so
+                        ! the owned-face momentum matches the coarse side. The stored
+                        ! halo (read by the divergence) is untouched -> mass exact.
+                        if (i == 1 .and. blk%physLow(1,b) == FACE_COARSE) &
+                            uu_m = (0.5d0*blk%q(im,j,k,VAR_U,b) + 1.5d0*blk%q(i,j,k,VAR_U,b))**2
 
                         uv_p = (blk%q(i,j,k,VAR_U,b) + blk%q(i,jp,k,VAR_U,b)) &
                              * (blk%q(im,jp,k,VAR_V,b) + blk%q(i,jp,k,VAR_V,b))
@@ -183,6 +192,8 @@ contains
 
                         vv_p = (blk%q(i,j,k,VAR_V,b) + blk%q(i,jp,k,VAR_V,b))**2
                         vv_m = (blk%q(i,jm,k,VAR_V,b) + blk%q(i,j,k,VAR_V,b))**2
+                        if (j == 1 .and. blk%physLow(2,b) == FACE_COARSE) &   ! fine-owns reflux (see uu_m)
+                            vv_m = (0.5d0*blk%q(i,jm,k,VAR_V,b) + 1.5d0*blk%q(i,j,k,VAR_V,b))**2
 
                         vw_p = (blk%q(i,j,k,VAR_V,b) + blk%q(i,j,kp,VAR_V,b)) &
                              * (blk%q(i,jm,kp,VAR_W,b) + blk%q(i,j,kp,VAR_W,b))
@@ -227,6 +238,8 @@ contains
 
                         ww_p = (blk%q(i,j,k,VAR_W,b) + blk%q(i,j,kp,VAR_W,b))**2
                         ww_m = (blk%q(i,j,km,VAR_W,b) + blk%q(i,j,k,VAR_W,b))**2
+                        if (k == 1 .and. blk%physLow(3,b) == FACE_COARSE) &   ! fine-owns reflux (see uu_m)
+                            ww_m = (0.5d0*blk%q(i,j,km,VAR_W,b) + 1.5d0*blk%q(i,j,k,VAR_W,b))**2
 
                         wv_p = (blk%q(i,j,k,VAR_W,b) + blk%q(i,jp,k,VAR_W,b)) &
                              * (blk%q(i,jp,km,VAR_V,b) + blk%q(i,jp,k,VAR_V,b))

@@ -270,6 +270,32 @@ complementary directions, neither yet built:
 
 Both/all develop against the TGV gate (refined L2 + slab_x/slab_y orientation split).
 
+### Convective-flux reflux (fine-owns interface) — KEPT
+
+The fine owner's interface convective flux uu_m=(u(0)+u(1))^2 reads the stored
+coarse-side normal velocity u(0), which is injected one fine cell deeper than the
+fine halo position. Its correct value at the halo position is 0.5*(u(0)+u(1)),
+computable on the fly from data the fine cell already has (no extra exchange, no
+dual halo). Use it ONLY in the interface convective flux (momentum RHS); the
+stored halo, read by the divergence/projection, is untouched -> mass stays exact.
+Applied at i/j/k=1 when physLow(d)==FACE_COARSE (the fine-owns - edges), for the
+normal velocity (uu_m/vv_m/ww_m).
+
+Results (GPU): refined 6.32e-3 -> 5.85e-3 (-7.5%; cumulative -28% from the 8.10e-3
+baseline), slab_x 5.53e-3 -> 5.22e-3; mass residual 2.5e-4 -> 1.3e-5 (**18x
+better** -- the corrected flux makes the interface genuinely more conservative);
+uniform-64 bit-exact; rank-independent (1v2 = 0); interface-decay stable.
+
+Honest assessment: this captures the **conservation** part of the fine-owns error
+(hence the large mass gain) but only modestly moves the **asymmetry** peak
+(fine-owns u 0.465 -> 0.453; ratio 12.5 -> 8.9). For smooth flow u(0) ~ u(1), so
+the position correction is small exactly where the two faces are close. The
+residual peak is dominated by the fine owner reading inherently coarse-resolution
+data (injection) while the coarse owner reads accurate RESTRICT'd fine data --
+an asymmetry rooted in the coarse grid's resolution, only partly reachable by a
+flux correction. Diffusion at the interface is metric-consistent (no position
+error there), so it is not the residual.
+
 ## Original recommendation (superseded by E3 for the magnitude)
 
 **Momentum-conservative reflux.** Keep
