@@ -149,7 +149,7 @@ halo. Velocity components only (pressure stays injected). Gated by
 | state | uniform-64 | refined | slab_x | tangential v @ interfaces | normal u @ interfaces |
 |-------|-----------|---------|--------|---------------------------|-----------------------|
 | baseline | 2.18e-5 | 8.10e-3 | 7.50e-3 | 0.82 / 0.82 | 0.47 / 0.04 |
-| **E3** | 2.18e-5 (bit-exact ✓) | **6.40e-3 (−21%)** | **5.57e-3 (−26%)** | **0.10 / 0.05 (−87%)** | 0.47 / 0.04 (unchanged) |
+| **E3 + two-phase** | 2.18e-5 (bit-exact ✓) | **6.32e-3 (−22%)** | **5.53e-3 (−26%)** | **0.10 / 0.05 (−87%)** | 0.47 / 0.04 (unchanged) |
 
 - **Stable**: interface-decay gate contracts over 200 steps (un/vn/wn/pn all
   decrease); TGV refined stable to t=2.
@@ -159,14 +159,27 @@ halo. Velocity components only (pressure stays injected). Gated by
   face), so it is now the dominant remaining error → the reflux/ownership target.
 - Mass proxy improves (slab_x 2.3e-4 → 4e-6).
 - **Exact rank independence** (refined TGV 1-vs-2 ranks bit-identical, FMA and
-  nofma). Two subtleties had to be fixed: (a) the per-point weighted gather is a
-  single shared `declare target` function (`gather_point`) called by both the
-  local-copy and off-rank-pack kernels, so the weighted sum is compiled once and
-  cannot reassociate differently between them; (b) the linear adjacent tap is
-  clamped to the source block's **interior** cells 1..nb — the staggered face
-  nb+1 is a halo that injection never reads, so it can be rank-dependently stale
-  during the exchange; reading it broke bit-exactness. Clamping there falls back
-  to injection at the prolong region's edges (≈1% of the error, negligible).
+  nofma). The per-point weighted gather is a single shared `declare target`
+  function (`gather_point`) called by both the local-copy and off-rank-pack
+  kernels, so the weighted sum is compiled once and cannot reassociate
+  differently between them.
+- **Two-phase final exchange (exact second order, no clamp).** The linear
+  stencil's adjacent tap `base±1` can land in the source block's halo (e.g. the
+  staggered face nb+1, or the coarse cell across a block boundary). The final
+  exchange runs in two passes so that halo is current: Pass A is a plain
+  injection exchange (refreshes every coarse halo from the post-sweep interiors
+  via same-level copies + restricts), Pass B does the linear PROLONG on the
+  velocity, whose 2-point stencil reads those now-current halos. This is exact
+  O(h²) to the patch edges — generic across orientations AND "wedged" coarse
+  blocks (a coarse block bordering fine patches on two perpendicular sides: its
+  halo-from-restrict is set in Pass A before the Pass-B prolong reads it; no
+  special-casing). Verified: refined 6.32e-3 (the earlier edge clamp's ~1% loss
+  recovered), 1-vs-2 ranks bit-identical, interface-decay stable, and an
+  L-shaped two-patch wedged case bit-identical across ranks. Cost: one extra
+  exchange pass on the final exchange (~13% s/step on a small refined channel,
+  the second pass's fixed launch/MPI overhead). The earlier interim solution
+  clamped the adjacent tap to the interior 1..nb (injection at edges); the
+  two-phase supersedes it.
 - Single-level path untouched (linProlong only set in the multi-level branch).
 - Verified bit-identical 1-vs-2 ranks under both FMA (GPU) and nofma (CPU);
   interface-decay gate passes; committed `b3d10a0`.
@@ -220,21 +233,13 @@ complementary directions, neither yet built:
    the coarse face, correct the coarse cell by the mismatch. Guarantees momentum
    conservation but corrects the coarse side, so it likely does NOT directly
    reduce the fine-side 0.47; pursue for conservation, measure its asymmetry effect.
-3. **Two-phase exchange to drop the linear-prolong edge clamp** (full O(h²) at
-   the patch edges). Today the linear stencil's adjacent coarse cell `base±1`
-   can land in the source block's halo; that halo is filled by the *same*
-   exchange, so reading it races (rank-dependent) and we clamp to injection
-   there (~1% of the error). Instead, split the final exchange into an ordered
-   pair: Phase 1 runs only the same-level COPY entries (local + MPI) so every
-   coarse block's halo is current, then Phase 2 runs the cross-level linear
-   PROLONG reading the now-correct halos — full second order to the edges,
-   still bit-exact (Phase 1 is the proven rank-independent same-level exchange).
-   Cost: one extra kernel launch + MPI round on the final exchange (3x/step, so
-   modest). Caveat: a coarse block bordering fine patches on two sides has a halo
-   filled by RESTRICT (cross-level, Phase 2) rather than a same-level copy, so it
-   needs the restrict ordered before the prolong too (a small phase hierarchy);
-   a patch in coarse surroundings needs only the two phases. Natural to fold in
-   when the normal-velocity reconstruction (option 1) touches exchange ordering.
+3. ~~Two-phase exchange to drop the linear-prolong edge clamp~~ **DONE** (see
+   the two-phase bullet under E3 above). Implemented as Pass A injection (which
+   already refreshes the post-sweep coarse halos via copies AND restricts) +
+   Pass B linear prolong. Putting restricts in Pass A (the injection pass), not
+   alongside the prolong, is what makes the wedged case work with no phase
+   hierarchy: the only halo-consumer is PROLONG, everything else reads interiors,
+   so the dependency graph is acyclic and two phases suffice.
 
 Both/all develop against the TGV gate (refined L2 + slab_x/slab_y orientation split).
 

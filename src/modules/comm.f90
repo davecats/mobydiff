@@ -1504,7 +1504,7 @@ contains
         integer, intent(in) :: ga, gb, gs, gc, lin, dst, var, dim, nbDim
         integer, intent(out) :: idx(0:1), n
         real(C_DOUBLE), intent(out) :: w(0:1)
-        integer :: raw, base, par, cd, hi
+        integer :: raw, base, par, cd
 
         raw = ga*dst + gb
         base = ishft(raw, -gs)
@@ -1518,13 +1518,15 @@ contains
             else
                 idx(1) = base + (2*par - 1); w(0) = 0.75d0; w(1) = 0.25d0; n = 2
             end if
-            ! Keep the adjacent tap inside the source block's interior cells
-            ! 1..nb. A halo there (e.g. the staggered face nb+1) is never read by
-            ! injection, so it can be rank-dependently stale during the exchange;
-            ! reading it would break exact rank independence. Fall back to
-            ! injection at the prolong region's edges instead.
-            hi = nbDim
-            if (idx(1) < 1 .or. idx(1) > hi) idx(1) = idx(0)
+            ! The adjacent tap may fall in the source block's halo (e.g. the
+            ! staggered face nb+1, or the coarse cell across a block boundary).
+            ! That is correct and full second order PROVIDED the halo is already
+            ! current: the linear PROLONG runs as a SECOND exchange pass, after a
+            ! first injection pass has filled every coarse halo from interiors
+            ! (see pressure_solver: Phase A injection, Phase B linear). A bare
+            ! bounds guard keeps the read in the allocated array.
+            if (idx(1) < 0) idx(1) = idx(0)
+            if (idx(1) > nbDim + 2) idx(1) = idx(0)
         else
             cd = merge(1, gc, var == dim)
             n = cd; w(0) = 1.0d0/real(cd, C_DOUBLE)

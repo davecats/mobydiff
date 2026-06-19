@@ -82,11 +82,20 @@ contains
                     ! only; the final exchange ships it everywhere so the next
                     ! substage's momentum sees current same-level halo pressures.
                     if (iIter == ps%nIter .and. color == 0_C_INT) then
-                        ! Final exchange: fill the velocity halos by linear PROLONG
-                        ! (O(h^2)) so the next substage's momentum predictor sees an
-                        ! accurate coarse->fine tangential velocity. The relaxation
-                        ! above used injection, so its contraction is unaffected. E3.
-                        call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W, VAR_P], linear_prolong=.true.)
+                        ! Final exchange, two passes (E3 + two-phase). The momentum
+                        ! predictor of the next substage reads these halos, so the
+                        ! coarse->fine velocity is prolonged by linear interpolation
+                        ! (O(h^2)). The relaxation above used injection, so its
+                        ! contraction is unaffected. Pass A is a plain injection
+                        ! exchange that refreshes every coarse halo from the
+                        ! post-sweep interiors (same-level copies + restricts);
+                        ! pass B then does the linear PROLONG, whose 2-point stencil
+                        ! reads those now-current coarse halos (exact second order to
+                        ! the patch edges, no clamp, generic across orientations and
+                        ! wedged coarse blocks). Pass B re-runs copies/restricts
+                        ! idempotently, so the order within it is immaterial.
+                        call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W, VAR_P])
+                        call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W], linear_prolong=.true.)
                     else
                         call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W, VAR_P], p_interface_only=.true.)
                     end if
