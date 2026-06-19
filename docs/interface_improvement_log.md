@@ -417,9 +417,36 @@ Results (TGV, nofma GPU):
 - L2(v) order 1.95 then 1.51: the TANGENTIAL v/w diffusion is the remaining
   floor (its x-halo sits at the right position but carries an O(hc^2)
   interpolation error the uniform stencil amplifies). Next.
-- net-mass metric on the refined patch moved 1.3e-5 -> -1.9e-4; this is the crude
-  per-block post-hoc divergence sum at a 3D 2:1 patch, not the solver's
-  projection (niter=200, div->0 per cell); to confirm via a global divergence.
+- net-mass metric on the refined patch moved 1.3e-5 -> -1.9e-4; CONFIRMED a
+  metric artifact, not a conservation break: the crude per-block divergence on the
+  2:1 OUTPUT shows max|div|~0.15 in the reflux build TOO (0.151 vs 0.167 with the
+  fix) -- the composite interface faces in the output do not satisfy a naive
+  per-block divergence. The solver's projection enforces div=0 (Phase 3: 1e-20)
+  and the viscous fix does not touch the divergence operator. Mass is intact.
+
+### Tangential velocity diffusion at the interface: one-sided is UNSTABLE
+
+The normal-velocity fix leaves the TANGENTIAL velocity diffusion (e.g. d2v/dx2 at
+an x-interface) as the residual floor: that x-halo sits at the RIGHT position but
+carries an O(hc^2) prolongation error the centred uniform stencil amplifies to
+O(1). A coefficient change cannot fix it (positions are uniform; the VALUE is
+wrong).
+
+Attempt 1 -- one-sided 4-point fine-interior second derivative (no halo,
+O(hf^2)): got slab_x AND slab_y to full ORDER 2 (u 2.25, v 2.08; L2 7.6e-4, clean
+mass) -- proving the diagnosis. BUT it BLOWS UP the 3D refined patch (L2 0.29,
+gradual growth to step 125, not NaN). Root: the one-sided stencil (2,-5,4,-1)/h^2
+has a POSITIVE diagonal (+2/h^2) -> anti-diffusive. A slab (one such direction)
+tolerates it; a patch CORNER (two one-sided directions) exceeds the explicit
+stability limit. The one-sided is structurally non-viable (any consistent
+one-sided 2nd derivative has a positive boundary coefficient). REVERTED.
+
+The stable consistent fix keeps the CENTRED stencil (negative diagonal) and makes
+the HALO accurate: a CUBIC tangential prolong (O(hc^4) -> O(hf^2) second
+derivative) instead of the current 2-tap linear (gather_taps). That is a 2-tap ->
+4-tap change in the gather machinery with two-phase halo implications (the extra
+taps reach deeper into coarse halos) -- substantial, deferred. The committed
+normal-velocity fix stands (u order 2, v order ~1.5, stable, refined 8.2e-4).
 
 ## Original recommendation (superseded by E3 for the magnitude)
 
