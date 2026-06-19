@@ -341,60 +341,47 @@ telescope, leaving u(1) = q + dt*rhs - dt*ifGrad*(p_new(1)-p_new(0))). The fix
 must put the tangentially-smoothed coarse pressure into p_new(0) inside the
 projection (the per-colour pressure exchange that feeds the sweep reconstruction).
 
-### In-projection pressure smoothing (pLinProlong) — KEPT, but only a minor factor
+### In-projection pressure smoothing (pLinProlong) — TRIED, then REVERTED (harmful)
 
 Implemented `comm%pLinProlong` (tangential linear prolong of the PRESSURE halo
-only; velocity stays injection so the relaxation contraction is untouched) and
-enabled it on the per-colour projection exchange. Stable (interface-decay
-passes), rank-independent (refined TGV 1v2 = 0), single-level bit-exact, mass
-clean. Result: refined 5.846e-3 -> 5.754e-3, fine-owns u 0.453 -> 0.416
-(ratio 8.9 -> 8.3). So it helps, but only ~8% -- much less than the probe's 43x.
+only) on the per-colour projection exchange, on the theory that the staircase
+coarse pressure in the owned-face reconstruction was the defect. It moved the
+solution only ~8% (refined 5.846e-3 -> 5.754e-3), and the projection-consistency
+probe below then showed WHY: it actively BREAKS the projection's consistency.
+**Reverted.** The truncation probe that motivated it was misleading -- it
+measures the predictor pressure, which CANCELS via pStart and does not drive the
+solution.
 
-Why the probe over-promised: it measures the PREDICTOR's pressure term, which
-CANCELS via pStart and so does not drive the solution. The real lever is the
-CONVERGED reconstruction's p_new(0), and smoothing it captures only ~8%. So the
-tangential pressure staircase is a genuine but MINOR contributor; the dominant
-fine-owns error lives in the converged projection (the SPD interface coupling /
-the converged p_new itself), which the predictor probe cannot see. A different
-probe (converged-solution residual, or the pressure-Poisson interface stencil)
-is needed to pin the dominant residual. Cumulative interface error so far:
-baseline 8.10e-3 -> 5.75e-3 (-29%): E3+two-phase (magnitude) + reflux
-(conservation) + pressure smoothing (a slice of the asymmetry).
-
-### Projection-consistency probe — DOMINANT residual = the pressure solve is inconsistent
+### Projection-consistency probe — the projection is CONSISTENT; the residual is in the predictor
 
 `MOBY_PROJPROBE` (step.f90:proj_consistency_probe + main.f90 hook): feed the
-projection the EXACT divergence-free TGV field as its predictor (qs=q) and
-measure how much one projection spuriously CHANGES it (a consistent projection
-leaves a div-free field untouched). At the owned face:
+projection the EXACT divergence-free TGV field as its predictor (qs=q) and measure
+how much one projection spuriously CHANGES it (a consistent projection leaves a
+div-free field untouched). At the owned face (i=1):
 
-| | \|u_proj - u_exact\| (i=1) |
-|---|---------------------------|
-| fine-owns | 8.1e-4 |
-| coarse-owns | 7.9e-8 |
+| build | fine-owns \|Δu\| | coarse-owns \|Δu\| |
+|-------|-----------------|--------------------|
+| **baseline / reflux** | **1.9e-16** | 1.0e-16 |
+| + pLinProlong (reverted) | 8.1e-4 | 7.9e-8 |
 
-A **10,000x asymmetry**: the projection introduces a spurious O(8e-4) velocity at
-the fine-owns interface (decaying into the patch) but essentially nothing
-(round-off) at coarse-owns. Accumulated over ~240 projections (80 steps x 3
-substages) this is the ~0.4 fine-owns u error -> **this is the dominant residual**.
-Since the owned face is u(1)=qs(1)-ifGrad*(p_new(1)-p_new(0)) with qs=exact, the
-8e-4 deviation IS the spurious pressure gradient: the **pressure Poisson solve is
-inconsistent at the fine-owns interface** -- it converges to a wrong p_new even
-for a divergence-free input. Root: the composite projection's fine-owns interface
-coupling (the fine cell reconstructs its owned face and couples to the coarse
-pressure via ifGrad*d1x_P_fine; the coarse cell holds a RESTRICT'd, frozen
-interface velocity and couples back via ifGrad*d1x_P_coarse on the RESTRICT) is
-NOT a symmetric/consistent discrete operator -- the fine->coarse and coarse->fine
-couplings carry mismatched metric/area weights, so the SPD interface row is wrong
-at leading order. The coarse-owns side is clean because the coarse owner relaxes
-its face against accurate (fine-RESTRICT'd) neighbours.
+So the **baseline projection is CONSISTENT** -- it preserves a divergence-free
+field to round-off on BOTH sides. The 8e-4 "defect" seen earlier was *caused by*
+the pLinProlong pressure smoothing, not the baseline; smoothing the coarse
+pressure makes the reconstruction read a value that differs from the exact, so
+the projection no longer preserves div-free fields. Hence the revert.
 
-FIX (the real one): re-derive the composite-projection interface coupling so the
-2:1 pressure operator is symmetric/consistent (a conservative, flux-matched
-coarse-fine Poisson stencil -- the AMR composite-operator standard). This is a
-substantial reformulation of redblack_sweep's interface rows (denom + owned-face
-reconstruction + the RESTRICT coupling), not a halo tweak. It is THE fix for the
-asymmetry; the reflux and pressure-smoothing addressed smaller, separable slices.
+Consequence: the dominant fine-owns residual is NOT the projection (it is
+consistent) -- it is in the **predictor** (the momentum interface stencils that
+make qs spurious before the projection). But the predictor probe gives tangled
+signals at this interface: at x=pi/2 the exact u=0 so the convection is correctly
+~0, the pStart pressure cancels, and the only large non-cancelling term is the
+diffusion (~4.5e-2, but that is Re-dependent while the dominant fine-owns error is
+Re-INDEPENDENT). So the order-0 mechanism is NOT cleanly isolated by these probes,
+and two attempted fixes (pressure smoothing; the reflux beyond its conservation
+role) did not crack it. The reflux (conservation) and E3/two-phase (magnitude)
+remain solid; the residual fine-owns asymmetry is genuinely hard and is left as
+documented future work (#30) -- likely needs a from-scratch consistency analysis
+of the momentum interface stencils, or a different ownership/coupling formulation.
 
 ## Original recommendation (superseded by E3 for the magnitude)
 

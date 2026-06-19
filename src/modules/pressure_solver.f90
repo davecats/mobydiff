@@ -97,13 +97,7 @@ contains
                         call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W, VAR_P])
                         call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W], linear_prolong=.true.)
                     else
-                        ! Per-colour: velocity injection (the relaxation contracts
-                        ! only with injection halos), but the PROLONG pressure halo
-                        ! is smoothed tangentially so the owned-face reconstruction
-                        ! reads a non-staircase coarse pressure (fixes the fine-owns
-                        ! consistency defect; see comm%pLinProlong).
-                        call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W, VAR_P], &
-                            p_interface_only=.true., p_linear_prolong=.true.)
+                        call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W, VAR_P], p_interface_only=.true.)
                     end if
                 end do
             end do
