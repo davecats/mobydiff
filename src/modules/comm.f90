@@ -110,6 +110,15 @@ module comm
         ! substage's momentum predictor): injection inside the relaxation keeps
         ! it contracting, while the momentum sees an O(h^2)-accurate halo. E3.
         logical :: linProlong = .false.
+        ! When true, the PROLONG pressure halo is filled by tangential linear
+        ! interpolation instead of injection (velocity stays injection). Used by
+        ! the per-colour projection exchange: the sweep reconstructs the owned
+        ! interface face from p_new(1)-p_new(0), and a tangentially-injected
+        ! (staircase) coarse pressure p_new(0) gives a spurious gradient on the
+        ! fine-owns side (the dominant interface asymmetry). Smoothing it
+        ! tangentially fixes the consistency without touching the velocity
+        ! relaxation. The normal pressure prolong (the ifGrad gap) is unchanged.
+        logical :: pLinProlong = .false.
     end type comm_type
 
     public :: comm_init_world, comm_init, comm_finalize
@@ -1071,13 +1080,14 @@ contains
         c%exchangeActive = .false.
     end subroutine finish_halo_exchange
 
-    subroutine exchange_halos(c, blk, vars, interp, p_interface_only, linear_prolong)
+    subroutine exchange_halos(c, blk, vars, interp, p_interface_only, linear_prolong, p_linear_prolong)
         type(comm_type), intent(inout) :: c
         type(block_set_type), intent(inout) :: blk
         integer(C_INT), intent(in) :: vars(:)
         logical, intent(in), optional :: interp
         logical, intent(in), optional :: p_interface_only
         logical, intent(in), optional :: linear_prolong
+        logical, intent(in), optional :: p_linear_prolong
 
         c%copyOnly = .false.
         if (present(interp)) c%copyOnly = .not. interp
@@ -1085,11 +1095,14 @@ contains
         if (present(p_interface_only)) c%pSkipCopy = p_interface_only
         c%linProlong = .false.
         if (present(linear_prolong)) c%linProlong = linear_prolong
+        c%pLinProlong = .false.
+        if (present(p_linear_prolong)) c%pLinProlong = p_linear_prolong
         call start_halo_exchange(c, blk, vars)
         call finish_halo_exchange(c, blk)
         c%copyOnly = .false.
         c%pSkipCopy = .false.
         c%linProlong = .false.
+        c%pLinProlong = .false.
     end subroutine exchange_halos
 
     ! Per-block scalar halos (e.g. les%nut) on the same exchange entries.
@@ -1145,7 +1158,7 @@ contains
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
-        !$omp& map(to: totalItems, nv, c%nLocal, c%nLocalCopyPts, c%pSkipCopy, c%linProlong, &
+        !$omp& map(to: totalItems, nv, c%nLocal, c%nLocalCopyPts, c%pSkipCopy, c%linProlong, c%pLinProlong, &
         !$omp& c%lOff, c%lEntryOf, c%lSrcSlot, c%lDstSlot, &
         !$omp& c%lDstLo, c%lExt, c%lGA, c%lGB, c%lGS, c%lGC, c%lLin, c%lFaceNrm, &
         !$omp& c%activeVars, blk%nb) &
@@ -1187,9 +1200,11 @@ contains
                     cycle
                 end if
             end if
-            ! Linear PROLONG only when enabled (final exchange) and only for the
-            ! velocity components; pressure and all non-final exchanges inject.
-            lin = merge(1, 0, c%linProlong .and. var /= VAR_P)
+            ! Tangential-linear PROLONG: velocity when linProlong (final exchange),
+            ! pressure when pLinProlong (per-colour projection exchange); injection
+            ! otherwise. The two flags are independent so the velocity relaxation
+            ! stays on injection while the reconstruction sees a smoothed pressure.
+            lin = merge(merge(1, 0, c%pLinProlong), merge(1, 0, c%linProlong), var == VAR_P)
             blk%q(di,dj,dk,var,c%lDstSlot(e)) = gather_point(blk%q, c%lSrcSlot(e), &
                 c%lGA(:,e), c%lGB(:,e), c%lGS(:,e), c%lGC(:,e), c%lLin(:,e), &
                 lin, di, dj, dk, var, blk%nb)
@@ -1270,7 +1285,7 @@ contains
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
-        !$omp& map(to: totalItems, nv, copyOnly, c%pSkipCopy, c%linProlong, c%nPeers, c%nSend, &
+        !$omp& map(to: totalItems, nv, copyOnly, c%pSkipCopy, c%linProlong, c%pLinProlong, c%nPeers, c%nSend, &
         !$omp& c%sOff, c%sEntryOf, c%sSlot, c%sPeer, &
         !$omp& c%sDstLo, c%sExt, c%sGA, c%sGB, c%sGS, c%sGC, c%sLin, &
         !$omp& c%peerSendOff, c%peerSendCopyOff, c%activeVars, blk%q, blk%nb) &
@@ -1300,7 +1315,7 @@ contains
             di = c%sDstLo(1,e) + modulo(pt, ni)
             dj = c%sDstLo(2,e) + modulo(pt/ni, nj)
             dk = c%sDstLo(3,e) + pt/(ni*nj)
-            lin = merge(1, 0, c%linProlong .and. var /= VAR_P)
+            lin = merge(merge(1, 0, c%pLinProlong), merge(1, 0, c%linProlong), var == VAR_P)
             val = gather_point(blk%q, c%sSlot(e), c%sGA(:,e), c%sGB(:,e), c%sGS(:,e), &
                 c%sGC(:,e), c%sLin(:,e), lin, di, dj, dk, var, blk%nb)
             pos = (gp - c%peerSendOff(peer-1))*nv + v + 1

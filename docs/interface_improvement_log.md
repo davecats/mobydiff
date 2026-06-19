@@ -338,14 +338,28 @@ CAVEAT (why the simple fix did not move the solution): doing this only in the
 final exchange (the momentum predictor) is inert -- the predictor's start-of-
 projection pressure gradient CANCELS in the reconstruction (the pStart terms
 telescope, leaving u(1) = q + dt*rhs - dt*ifGrad*(p_new(1)-p_new(0))). The fix
-must put the tangentially-smoothed coarse pressure into p_new(0) **inside the
-projection** (the per-colour pressure exchange that feeds the sweep
-reconstruction), not the predictor. Concerns to handle there: (1) stability --
-it is in the relaxation (E1 showed velocity-linear there is unconditionally
-unstable; pressure may differ but must be checked); (2) rank independence -- the
-per-colour exchange is single-phase, so the linear adjacent tap needs the
-two-phase (producers-then-prolong) treatment. This is the precise, minimal target
-for the asymmetry fix.
+must put the tangentially-smoothed coarse pressure into p_new(0) inside the
+projection (the per-colour pressure exchange that feeds the sweep reconstruction).
+
+### In-projection pressure smoothing (pLinProlong) — KEPT, but only a minor factor
+
+Implemented `comm%pLinProlong` (tangential linear prolong of the PRESSURE halo
+only; velocity stays injection so the relaxation contraction is untouched) and
+enabled it on the per-colour projection exchange. Stable (interface-decay
+passes), rank-independent (refined TGV 1v2 = 0), single-level bit-exact, mass
+clean. Result: refined 5.846e-3 -> 5.754e-3, fine-owns u 0.453 -> 0.416
+(ratio 8.9 -> 8.3). So it helps, but only ~8% -- much less than the probe's 43x.
+
+Why the probe over-promised: it measures the PREDICTOR's pressure term, which
+CANCELS via pStart and so does not drive the solution. The real lever is the
+CONVERGED reconstruction's p_new(0), and smoothing it captures only ~8%. So the
+tangential pressure staircase is a genuine but MINOR contributor; the dominant
+fine-owns error lives in the converged projection (the SPD interface coupling /
+the converged p_new itself), which the predictor probe cannot see. A different
+probe (converged-solution residual, or the pressure-Poisson interface stencil)
+is needed to pin the dominant residual. Cumulative interface error so far:
+baseline 8.10e-3 -> 5.75e-3 (-29%): E3+two-phase (magnitude) + reflux
+(conservation) + pressure smoothing (a slice of the asymmetry).
 
 ## Original recommendation (superseded by E3 for the magnitude)
 
