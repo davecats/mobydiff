@@ -220,8 +220,23 @@ complementary directions, neither yet built:
    the coarse face, correct the coarse cell by the mismatch. Guarantees momentum
    conservation but corrects the coarse side, so it likely does NOT directly
    reduce the fine-side 0.47; pursue for conservation, measure its asymmetry effect.
+3. **Two-phase exchange to drop the linear-prolong edge clamp** (full O(h²) at
+   the patch edges). Today the linear stencil's adjacent coarse cell `base±1`
+   can land in the source block's halo; that halo is filled by the *same*
+   exchange, so reading it races (rank-dependent) and we clamp to injection
+   there (~1% of the error). Instead, split the final exchange into an ordered
+   pair: Phase 1 runs only the same-level COPY entries (local + MPI) so every
+   coarse block's halo is current, then Phase 2 runs the cross-level linear
+   PROLONG reading the now-correct halos — full second order to the edges,
+   still bit-exact (Phase 1 is the proven rank-independent same-level exchange).
+   Cost: one extra kernel launch + MPI round on the final exchange (3x/step, so
+   modest). Caveat: a coarse block bordering fine patches on two sides has a halo
+   filled by RESTRICT (cross-level, Phase 2) rather than a same-level copy, so it
+   needs the restrict ordered before the prolong too (a small phase hierarchy);
+   a patch in coarse surroundings needs only the two phases. Natural to fold in
+   when the normal-velocity reconstruction (option 1) touches exchange ordering.
 
-Both develop against the TGV gate (refined L2 + slab_x/slab_y orientation split).
+Both/all develop against the TGV gate (refined L2 + slab_x/slab_y orientation split).
 
 ## Original recommendation (superseded by E3 for the magnitude)
 
