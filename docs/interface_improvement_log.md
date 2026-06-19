@@ -200,7 +200,32 @@ current scheme is a local optimum among these increments. Single-level stays
 bit-exact throughout (all changes were interface-only), and the code is left at
 baseline `4f0d5c2`.
 
-**Recommended next step (directed work): momentum-conservative reflux.** Keep
+## Deferred work (after E3 — for a later session)
+
+E3 fixed the tangential magnitude. The dominant residual is the **normal-velocity
+ownership asymmetry** (fine-owns interfaces u≈0.47 vs coarse-owns 0.04). Two
+complementary directions, neither yet built:
+
+1. **Bespoke normal-velocity interface reconstruction** (targets the asymmetry
+   directly). The fine-owns face reads *injected* coarse normal-velocity halos;
+   coarse-owns gets accurate RESTRICT halos — that is the asymmetry. E3's linear
+   prolong does NOT extend here for free: the normal velocity is staggered in the
+   normal dimension, its prolong map is a constant injection (ga=0, no
+   interpolation gradient), and the staggered-merge rule (c=1 for var==dim)
+   forbids the 2-cell average. Needs a dedicated normal reconstruction at the
+   owned face (the analogue of E3 for the normal direction), applied in the final
+   exchange so the relaxation stays on injection.
+2. **Momentum-conservative reflux** (targets conservation, the hard constraint).
+   Flux register at the interface, restrict the fine convective+viscous fluxes to
+   the coarse face, correct the coarse cell by the mismatch. Guarantees momentum
+   conservation but corrects the coarse side, so it likely does NOT directly
+   reduce the fine-side 0.47; pursue for conservation, measure its asymmetry effect.
+
+Both develop against the TGV gate (refined L2 + slab_x/slab_y orientation split).
+
+## Original recommendation (superseded by E3 for the magnitude)
+
+**Momentum-conservative reflux.** Keep
 injection halos (stability), add a Berger-Colella flux correction so the
 interface momentum flux telescopes; develop it against the TGV gate
 (refined-patch L2 -> 2e-5 baseline, slab_x/slab_y orientation split for the
