@@ -387,6 +387,32 @@ contains
             print '(i5,f10.4,4es14.4)', i, blk%x(i,VAR_U,b), &
                 sqrt(sC/npl), sqrt(sP/npl), sqrt(sCP/npl), sqrt(sD/npl)
         end do
+        ! Stencil dump at one interface point (j,k mid) to expose the diffusion
+        ! Laplacian inconsistency: stored u vs analytic u at each stored position.
+        block
+            integer :: jm2, km2, ii
+            real(C_DOUBLE) :: k0, xu, yu, ua
+            jm2 = ny/2; km2 = nz/2; k0 = 8.0d0*atan(1.0d0)/dns%leng(1)
+            yu = blk%y(jm2,VAR_U,b)
+            print '(a)', "   stencil dump (j,k mid):  ii   x(ii)      u_stored     u_exact(x)   diff"
+            do ii = 0, 3
+                xu = blk%x(ii,VAR_U,b); ua = -cos(k0*xu)*sin(k0*yu)
+                print '(a,i5,f11.5,3es13.4)', "     ", ii, xu, blk%q(ii,jm2,km2,VAR_U,b), ua, &
+                    blk%q(ii,jm2,km2,VAR_U,b)-ua
+            end do
+            print '(a,3es13.4)', "     lapXm/0/p(1) =", blk%lapXm(1,VAR_U,b), &
+                blk%lapX0(1,VAR_U,b), blk%lapXp(1,VAR_U,b)
+            ! Tangential velocity v across the same x-interface (diff_vx).
+            yu = blk%y(jm2,VAR_V,b)
+            print '(a)', "   v (tangential) dump:     ii   x(ii)      v_stored     v_exact(x)   diff"
+            do ii = 0, 3
+                xu = blk%x(ii,VAR_V,b); ua = sin(k0*xu)*cos(k0*yu)
+                print '(a,i5,f11.5,3es13.4)', "     ", ii, xu, blk%q(ii,jm2,km2,VAR_V,b), ua, &
+                    blk%q(ii,jm2,km2,VAR_V,b)-ua
+            end do
+            print '(a,3es13.4)', "     lapX(VAR_V) m/0/p(1) =", blk%lapXm(1,VAR_V,b), &
+                blk%lapX0(1,VAR_V,b), blk%lapXp(1,VAR_V,b)
+        end block
       end do
     end subroutine truncation_probe
 

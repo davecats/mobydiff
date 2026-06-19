@@ -276,6 +276,30 @@ contains
                     else if (blk%physLow(d,b) == FACE_COARSE) then   ! fine block, coarse below
                         hf = line_cell_width(blk,d,lev,og);  hc = line_cell_width(blk,d,lev-1,og/2-1)
                         blk%ifGrad(2*d-1,b) = 1.0d0/(0.5d0*hc + 0.5d0*hf)
+                        ! Velocity-Laplacian interface fix. The fine block owns its
+                        ! low interface face; its normal-velocity halo there holds
+                        ! the coarse face value one COARSE cell (hc) below, but the
+                        ! per-block second-derivative stencil assumes the fine
+                        ! spacing hf, so the viscous term is O(1) inconsistent (the
+                        ! dominant 2:1 interface error). Replace that one face's
+                        ! stencil with the exact non-uniform 3-point second
+                        ! derivative for spacings a=hc (coarse halo side), b=hf. The
+                        ! coarse side needs no fix: its RESTRICT'd halo already sits
+                        ! at the correct coarse position on a uniform stencil.
+                        select case (d)
+                        case (1)
+                            blk%lapXm(1,VAR_U,b) = 2.0d0/(hc*(hc+hf))
+                            blk%lapX0(1,VAR_U,b) = -2.0d0/(hc*hf)
+                            blk%lapXp(1,VAR_U,b) = 2.0d0/(hf*(hc+hf))
+                        case (2)
+                            blk%lapYm(1,VAR_V,b) = 2.0d0/(hc*(hc+hf))
+                            blk%lapY0(1,VAR_V,b) = -2.0d0/(hc*hf)
+                            blk%lapYp(1,VAR_V,b) = 2.0d0/(hf*(hc+hf))
+                        case (3)
+                            blk%lapZm(1,VAR_W,b) = 2.0d0/(hc*(hc+hf))
+                            blk%lapZ0(1,VAR_W,b) = -2.0d0/(hc*hf)
+                            blk%lapZp(1,VAR_W,b) = 2.0d0/(hf*(hc+hf))
+                        end select
                     end if
                     if (blk%physHigh(d,b) == FACE_FINE) then         ! coarse block, fine above
                         hc = line_cell_width(blk,d,lev,ogh); hf = line_cell_width(blk,d,lev+1,2*(ogh+1))

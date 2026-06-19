@@ -383,6 +383,44 @@ remain solid; the residual fine-owns asymmetry is genuinely hard and is left as
 documented future work (#30) -- likely needs a from-scratch consistency analysis
 of the momentum interface stencils, or a different ownership/coupling formulation.
 
+### THE FIX: velocity-Laplacian inconsistency at 2:1 interfaces (normal velocity)
+
+The order-0 defect was the VELOCITY (diffusion) Laplacian at the interface, not
+the pressure solve. Truncation probe across resolutions at the fine-owns
+interface (i=1): convection vanishes (high order), the pressure term is O(h) and
+CANCELS via pStart, but the viscous term is DEAD FLAT (order 0): 4.26e-2 ->
+4.52e-2 -> 4.59e-2 at nx=32/64/128.
+
+Stencil dump (the asymmetry made concrete): on the FINE side the normal-velocity
+halo u(0), stored in the slot at x1-hf, actually holds the COARSE face value from
+x1-2hf (one coarse cell), but lapX uses the uniform-fine second-derivative
+coefficients (1/hf^2, -2/hf^2, 1/hf^2) -> it treats a value sampled 2hf away as if
+it were hf away, so the second derivative is O(1) wrong. The COARSE side is clean:
+its RESTRICT'd halo sits at the correct coarse position on a uniform-coarse
+stencil. THAT is why one interface works and the other does not.
+
+Fix (blocks.f90, at physLow(d)==FACE_COARSE faces only): replace that one face's
+stencil with the exact non-uniform 3-point second derivative for spacings a=hc
+(coarse halo side), b=hf: lapXm=2/(hc(hc+hf)), lapX0=-2/(hc*hf),
+lapXp=2/(hf(hc+hf)). For hc=2hf this is (1/3hf^2, -1/hf^2, 2/3hf^2) and gives the
+viscous term ~0 (correct) where the uniform stencil gave -3.47.
+
+Results (TGV, nofma GPU):
+- viscous truncation at the interface: order 0 -> order 2 (2.43e-4 -> 6.40e-5 ->
+  1.62e-5 at nx=32/64/128).
+- SOLUTION L2(u) convergence: order 0.09 -> ORDER 2 (3.96e-3 -> 8.18e-4 ->
+  1.97e-4, orders 2.28 / 2.06).
+- gate single-resolution: refined 5.846e-3 -> 8.21e-4 (7x), slab_x 5.22e-3 ->
+  8.01e-4 (6.5x).
+- uniform single-level BIT-EXACT (2.182e-5, fix is inert without FACE_COARSE
+  blocks); interface-decay stable.
+- L2(v) order 1.95 then 1.51: the TANGENTIAL v/w diffusion is the remaining
+  floor (its x-halo sits at the right position but carries an O(hc^2)
+  interpolation error the uniform stencil amplifies). Next.
+- net-mass metric on the refined patch moved 1.3e-5 -> -1.9e-4; this is the crude
+  per-block post-hoc divergence sum at a 3D 2:1 patch, not the solver's
+  projection (niter=200, div->0 per cell); to confirm via a global divergence.
+
 ## Original recommendation (superseded by E3 for the magnitude)
 
 **Momentum-conservative reflux.** Keep
