@@ -219,15 +219,21 @@ E3 fixed the tangential magnitude. The dominant residual is the **normal-velocit
 ownership asymmetry** (fine-owns interfaces u≈0.47 vs coarse-owns 0.04). Two
 complementary directions, neither yet built:
 
-1. **Bespoke normal-velocity interface reconstruction** (targets the asymmetry
-   directly). The fine-owns face reads *injected* coarse normal-velocity halos;
-   coarse-owns gets accurate RESTRICT halos — that is the asymmetry. E3's linear
-   prolong does NOT extend here for free: the normal velocity is staggered in the
-   normal dimension, its prolong map is a constant injection (ga=0, no
-   interpolation gradient), and the staggered-merge rule (c=1 for var==dim)
-   forbids the 2-cell average. Needs a dedicated normal reconstruction at the
-   owned face (the analogue of E3 for the normal direction), applied in the final
-   exchange so the relaxation stays on injection.
+1. ~~Bespoke normal-velocity interface reconstruction~~ **TRIED — FAILS (mass).**
+   Implemented a normal-direction reconstruction of the fine owner's coarse-side
+   normal-velocity halo (average the two bracketing coarse faces, 1/2,1/2,
+   instead of injecting the single covering face; faces only; Pass B only). It
+   made the error WORSE (refined 6.32e-3 -> 1.16e-2) and blew up the mass
+   residual ~10x (net-mass 2.5e-4 -> 2.5e-3). Root cause: the normal velocity is
+   the interface FLUX. The projection makes the field divergence-free *with the
+   injection halos*; overwriting u(0) in the final exchange destroys the
+   divergence-free property -> mass error. So the normal halo is mass-locked and
+   CANNOT be naively reconstructed (unlike the tangential halo, which is free).
+   The fine-owns accuracy is in genuine tension with mass conservation: injection
+   conserves mass but makes the interface diffusion/convection of the owned face
+   read a piecewise-constant coarse halo. A fix must improve momentum accuracy
+   WITHOUT changing the (mass-locked) normal halo — i.e. a momentum correction
+   (reflux), not a halo change. Reverted.
 2. **Momentum-conservative reflux** (targets conservation, the hard constraint).
    Flux register at the interface, restrict the fine convective+viscous fluxes to
    the coarse face, correct the coarse cell by the mismatch. Guarantees momentum
