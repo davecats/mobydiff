@@ -288,13 +288,29 @@ uniform-64 bit-exact; rank-independent (1v2 = 0); interface-decay stable.
 
 Honest assessment: this captures the **conservation** part of the fine-owns error
 (hence the large mass gain) but only modestly moves the **asymmetry** peak
-(fine-owns u 0.465 -> 0.453; ratio 12.5 -> 8.9). For smooth flow u(0) ~ u(1), so
-the position correction is small exactly where the two faces are close. The
-residual peak is dominated by the fine owner reading inherently coarse-resolution
-data (injection) while the coarse owner reads accurate RESTRICT'd fine data --
-an asymmetry rooted in the coarse grid's resolution, only partly reachable by a
-flux correction. Diffusion at the interface is metric-consistent (no position
-error there), so it is not the residual.
+(fine-owns u 0.465 -> 0.453; ratio 12.5 -> 8.9).
+
+### Convergence study (resolution sweep) — the residual is a SCHEME DEFECT, not inherent
+
+Ran uniform + slab_x at nx = 32 / 64 / 128 (with the reflux):
+
+| nx | uniform L2 | slab_x L2 |
+|----|-----------|-----------|
+| 32 | 8.72e-5 | 5.36e-3 |
+| 64 | 2.18e-5 | 5.22e-3 |
+| 128| 5.61e-6 | 5.38e-3 |
+
+uniform converges at **order 2.0**; the slab_x interface error is **flat
+(order ~0)** -- resolution-INDEPENDENT. So the residual interface error does NOT
+converge: it is a **consistency defect (an O(1)-in-a-finite-region scheme error),
+NOT inherent coarse-grid truncation** (this corrects the earlier "inherent"
+guess). A consistent interface treatment would converge with the grid; order 0
+means a term in the fine-owns interface treatment is simply wrong at leading
+order and survives refinement. This is fixable in principle -> a reformulation
+(deferred option 2: change the ownership/coupling so the fine owner does not
+import coarse-grid data through the owned-face reconstruction) is worth pursuing,
+not a fundamental limit. The convective reflux removed the conservation part; the
+consistency part remains for a future directed effort.
 
 ## Original recommendation (superseded by E3 for the magnitude)
 
