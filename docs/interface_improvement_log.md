@@ -168,6 +168,8 @@ halo. Velocity components only (pressure stays injected). Gated by
   during the exchange; reading it broke bit-exactness. Clamping there falls back
   to injection at the prolong region's edges (≈1% of the error, negligible).
 - Single-level path untouched (linProlong only set in the multi-level branch).
+- Verified bit-identical 1-vs-2 ranks under both FMA (GPU) and nofma (CPU);
+  interface-decay gate passes; committed `b3d10a0`.
 
 ## Overall summary (experiments tried)
 
