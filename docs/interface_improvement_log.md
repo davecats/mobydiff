@@ -136,14 +136,54 @@ Bottom line: the obvious increment (linear prolong) is a dead end on stability
 grounds; the path to the target is a conservative reflux interface, developed
 against the new TGV gate.
 
+### E3 — linear PROLONG in the FINAL exchange only (the stable magnitude fix) ✓ KEPT
+
+Key realization from E1: linear prolong breaks the projection's *relaxation*, but
+the momentum predictor reads halos from the **previous substage's final
+exchange**. So apply linear prolong ONLY in that final exchange (injection
+everywhere inside the relaxation): the relaxation still contracts (injection),
+while the momentum predictor sees an O(h^2)-accurate coarse->fine tangential
+halo. Velocity components only (pressure stays injected). Gated by
+`comm%linProlong`, set solely on the multi-level projection's final exchange.
+
+| state | uniform-64 | refined | slab_x | tangential v @ interfaces | normal u @ interfaces |
+|-------|-----------|---------|--------|---------------------------|-----------------------|
+| baseline | 2.18e-5 | 8.10e-3 | 7.50e-3 | 0.82 / 0.82 | 0.47 / 0.04 |
+| **E3** | 2.18e-5 (bit-exact ✓) | **6.40e-3 (−21%)** | **5.57e-3 (−26%)** | **0.10 / 0.05 (−87%)** | 0.47 / 0.04 (unchanged) |
+
+- **Stable**: interface-decay gate contracts over 200 steps (un/vn/wn/pn all
+  decrease); TGV refined stable to t=2.
+- **The dominant tangential (magnitude) error drops ~8-16×** — exactly the
+  injection-smearing the diagnosis identified.
+- **The normal-velocity asymmetry is untouched** (E3 doesn't change the owned
+  face), so it is now the dominant remaining error → the reflux/ownership target.
+- Mass proxy improves (slab_x 2.3e-4 → 4e-6).
+- **Exact rank independence** (refined TGV 1-vs-2 ranks bit-identical, FMA and
+  nofma). Two subtleties had to be fixed: (a) the per-point weighted gather is a
+  single shared `declare target` function (`gather_point`) called by both the
+  local-copy and off-rank-pack kernels, so the weighted sum is compiled once and
+  cannot reassociate differently between them; (b) the linear adjacent tap is
+  clamped to the source block's **interior** cells 1..nb — the staggered face
+  nb+1 is a halo that injection never reads, so it can be rank-dependently stale
+  during the exchange; reading it broke bit-exactness. Clamping there falls back
+  to injection at the prolong region's edges (≈1% of the error, negligible).
+- Single-level path untouched (linProlong only set in the multi-level branch).
+
 ## Overall summary (experiments tried)
 
 | experiment | point | stable? | refined L2 vs 8.10e-3 | verdict |
 |------------|-------|---------|-----------------------|---------|
-| E1 linear prolong (full) | 1 (magnitude) | no (NaN) | — | revert |
+| E1 linear prolong (full, all exchanges) | 1 (magnitude) | no (NaN) | — | revert |
 | E1b linear prolong (alpha=0.5) | 1 | no (NaN) | — | revert |
 | E1c cell-linear only | 1 | no (NaN) | — | revert |
 | E2 pressure-ghost blend | 3 (pressure) | yes | 1.07e-2 (worse) | revert |
+| **E3 linear prolong, final exchange only** | 1 (magnitude) | **yes** | **6.32e-3 (−22%)** | **KEEP** |
+
+E3 is the breakthrough: decoupling the accuracy-improving linear prolong (final
+exchange, feeds the momentum predictor) from the stability-critical relaxation
+(stays on injection) makes the magnitude fix stable. The tangential error drops
+~8-16×. The **normal-velocity ownership asymmetry** (u 0.47 vs 0.04) is now the
+dominant residual — next target (reflux / symmetric owned-face treatment).
 
 Two of the three points tried empirically; both fail. Point 2 (normal-velocity
 ownership asymmetry) is the same velocity/projection-coupled class as point 1

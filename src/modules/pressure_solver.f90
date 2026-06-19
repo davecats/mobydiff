@@ -82,7 +82,11 @@ contains
                     ! only; the final exchange ships it everywhere so the next
                     ! substage's momentum sees current same-level halo pressures.
                     if (iIter == ps%nIter .and. color == 0_C_INT) then
-                        call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W, VAR_P])
+                        ! Final exchange: fill the velocity halos by linear PROLONG
+                        ! (O(h^2)) so the next substage's momentum predictor sees an
+                        ! accurate coarse->fine tangential velocity. The relaxation
+                        ! above used injection, so its contraction is unaffected. E3.
+                        call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W, VAR_P], linear_prolong=.true.)
                     else
                         call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W, VAR_P], p_interface_only=.true.)
                     end if

@@ -61,6 +61,7 @@ module comm
         ! Per-dim affine gather map (3,nLocal): destination index d reads source
         ! (GA*d + GB) >> GS, averaging GC source cells (GC>1 only for RESTRICT).
         integer, allocatable :: lGA(:,:), lGB(:,:), lGS(:,:), lGC(:,:)
+        integer, allocatable :: lLin(:,:)                  ! (3,nLocal) 1 = PROLONG tangential dim (linear when linProlong)
         integer, allocatable :: lFaceNrm(:)                ! 2:1 interface owned-face normal dir (0 = none)
         integer, allocatable :: lOff(:)                    ! (0:nLocal) point prefix
         integer, allocatable :: lEntryOf(:)                ! (0:nLocalPts-1) owning entry per point
@@ -75,6 +76,7 @@ module comm
         integer, allocatable :: sSlot(:), sPeer(:)         ! (nSend)
         integer, allocatable :: sExt(:,:)                  ! (3,nSend)
         integer, allocatable :: sGA(:,:), sGB(:,:), sGS(:,:), sGC(:,:)
+        integer, allocatable :: sLin(:,:)                  ! (3,nSend) 1 = PROLONG tangential dim
         integer, allocatable :: sDstLo(:,:)                ! dst box lo (gather indexing)
         integer, allocatable :: sFaceNrm(:)                ! 2:1 interface owned-face normal dir (0 = none)
         integer, allocatable :: sOff(:)                    ! (0:nSend) point prefix, peer-major
@@ -102,6 +104,12 @@ module comm
         ! exchanges use this: the sweep reads a neighbour pressure only at 2:1
         ! interfaces, so a same-level halo pressure is never read between sweeps.
         logical :: pSkipCopy = .false.
+        ! When true, the coarse->fine (PROLONG) velocity halos are filled by
+        ! linear interpolation instead of piecewise-constant injection. Used
+        ! ONLY for the projection's final exchange (which feeds the next
+        ! substage's momentum predictor): injection inside the relaxation keeps
+        ! it contracting, while the momentum sees an O(h^2)-accurate halo. E3.
+        logical :: linProlong = .false.
     end type comm_type
 
     public :: comm_init_world, comm_init, comm_finalize
@@ -238,7 +246,7 @@ contains
                                 c%lFaceNrm(nLocal) = face_normal(opc(cand), off(:,d))
                                 call entry_gather_map(opc(cand), off(:,d), tqc(:,cand), nb, &
                                     srcLo, dstLo, c%lGA(:,nLocal), c%lGB(:,nLocal), &
-                                    c%lGS(:,nLocal), c%lGC(:,nLocal))
+                                    c%lGS(:,nLocal), c%lGC(:,nLocal), c%lLin(:,nLocal))
                                 c%lOff(nLocal) = c%lOff(nLocal-1) + pts
                             end if
                             c%nLocalPts = c%nLocalPts + pts
@@ -330,7 +338,7 @@ contains
                                     c%sFaceNrm(nSend) = face_normal(opc(cand), off(:,d))
                                     call entry_gather_map(opc(cand), off(:,d), tqc(:,cand), nb, &
                                         srcLo, dstLo, c%sGA(:,nSend), c%sGB(:,nSend), &
-                                        c%sGS(:,nSend), c%sGC(:,nSend))
+                                        c%sGS(:,nSend), c%sGC(:,nSend), c%sLin(:,nSend))
                                     c%sOff(nSend) = c%sOff(nSend-1) + pts
                                 end if
                                 c%peerSendOff(p) = c%peerSendOff(p) + pts
@@ -349,12 +357,14 @@ contains
                 allocate(c%lDstLo(3,max(1,nLocal)), c%lExt(3,max(1,nLocal)))
                 allocate(c%lGA(3,max(1,nLocal)), c%lGB(3,max(1,nLocal)))
                 allocate(c%lGS(3,max(1,nLocal)), c%lGC(3,max(1,nLocal)))
+                allocate(c%lLin(3,max(1,nLocal)))
                 allocate(c%lFaceNrm(max(1,nLocal)))
                 allocate(c%lOff(0:max(1,nLocal)))
                 allocate(c%sSlot(max(1,nSend)), c%sPeer(max(1,nSend)))
                 allocate(c%sExt(3,max(1,nSend)))
                 allocate(c%sGA(3,max(1,nSend)), c%sGB(3,max(1,nSend)))
                 allocate(c%sGS(3,max(1,nSend)), c%sGC(3,max(1,nSend)))
+                allocate(c%sLin(3,max(1,nSend)))
                 allocate(c%sDstLo(3,max(1,nSend)))
                 allocate(c%sFaceNrm(max(1,nSend)))
                 allocate(c%sOff(0:max(1,nSend)))
@@ -407,9 +417,9 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target enter data map(to: &
         !$omp& c%lSrcSlot, c%lDstSlot, c%lDstLo, c%lExt, c%lOff, c%lEntryOf, &
-        !$omp& c%lGA, c%lGB, c%lGS, c%lGC, c%lFaceNrm, &
+        !$omp& c%lGA, c%lGB, c%lGS, c%lGC, c%lLin, c%lFaceNrm, &
         !$omp& c%sSlot, c%sPeer, c%sExt, c%sOff, c%sEntryOf, &
-        !$omp& c%sGA, c%sGB, c%sGS, c%sGC, c%sDstLo, c%sFaceNrm, &
+        !$omp& c%sGA, c%sGB, c%sGS, c%sGC, c%sLin, c%sDstLo, c%sFaceNrm, &
         !$omp& c%peerSendOff, c%peerRecvOff, c%peerSendCopyOff, c%peerRecvCopyOff, &
         !$omp& c%rSlot, c%rPeer, c%rLo, c%rExt, c%rFaceNrm, c%rOff, c%rEntryOf)
         !$omp target enter data map(alloc: c%sendbuf, c%recvbuf)
@@ -424,17 +434,17 @@ contains
             !$omp target exit data map(delete: c%sendbuf, c%recvbuf)
             !$omp target exit data map(delete: &
             !$omp& c%lSrcSlot, c%lDstSlot, c%lDstLo, c%lExt, c%lOff, c%lEntryOf, &
-            !$omp& c%lGA, c%lGB, c%lGS, c%lGC, c%lFaceNrm, &
+            !$omp& c%lGA, c%lGB, c%lGS, c%lGC, c%lLin, c%lFaceNrm, &
             !$omp& c%sSlot, c%sPeer, c%sExt, c%sOff, c%sEntryOf, &
-            !$omp& c%sGA, c%sGB, c%sGS, c%sGC, c%sDstLo, c%sFaceNrm, &
+            !$omp& c%sGA, c%sGB, c%sGS, c%sGC, c%sLin, c%sDstLo, c%sFaceNrm, &
             !$omp& c%peerSendOff, c%peerRecvOff, c%peerSendCopyOff, c%peerRecvCopyOff, &
             !$omp& c%rSlot, c%rPeer, c%rLo, c%rExt, c%rFaceNrm, c%rOff, c%rEntryOf)
 #endif
             deallocate(c%sendbuf, c%recvbuf)
             deallocate(c%lSrcSlot, c%lDstSlot, c%lDstLo, c%lExt, c%lOff, c%lEntryOf)
-            deallocate(c%lGA, c%lGB, c%lGS, c%lGC, c%lFaceNrm)
+            deallocate(c%lGA, c%lGB, c%lGS, c%lGC, c%lLin, c%lFaceNrm)
             deallocate(c%sSlot, c%sPeer, c%sExt, c%sOff, c%sEntryOf)
-            deallocate(c%sGA, c%sGB, c%sGS, c%sGC, c%sDstLo, c%sFaceNrm)
+            deallocate(c%sGA, c%sGB, c%sGS, c%sGC, c%sLin, c%sDstLo, c%sFaceNrm)
             deallocate(c%rSlot, c%rPeer, c%rLo, c%rExt, c%rFaceNrm, c%rOff, c%rEntryOf)
             deallocate(c%request)
         end if
@@ -648,15 +658,19 @@ contains
     ! tangentially, the srcLo row pair across the face), prolongations
     ! read the covering coarse row (halving shift tangentially, the
     ! tq-dependent covering row across the face).
-    subroutine entry_gather_map(op, off, tq, nb, srcLo, dstLo, ga, gb, gs, gc)
+    subroutine entry_gather_map(op, off, tq, nb, srcLo, dstLo, ga, gb, gs, gc, lin)
         integer, intent(in) :: op, off(3), tq(3), nb(3), srcLo(3), dstLo(3)
         integer, intent(out) :: ga(3), gb(3), gs(3), gc(3)
+        integer, intent(out) :: lin(3)
 
         integer :: d
 
         do d = 1, 3
             gs(d) = 0
             gc(d) = 1
+            ! Tangential dims of a PROLONG transfer can use linear interpolation
+            ! (gated at runtime by comm%linProlong; injection otherwise). E3.
+            lin(d) = merge(1, 0, op == OP_PROLONG .and. off(d) == 0)
             if (op == OP_COPY) then
                 ga(d) = 1
                 gb(d) = srcLo(d) - dstLo(d)
@@ -1057,21 +1071,25 @@ contains
         c%exchangeActive = .false.
     end subroutine finish_halo_exchange
 
-    subroutine exchange_halos(c, blk, vars, interp, p_interface_only)
+    subroutine exchange_halos(c, blk, vars, interp, p_interface_only, linear_prolong)
         type(comm_type), intent(inout) :: c
         type(block_set_type), intent(inout) :: blk
         integer(C_INT), intent(in) :: vars(:)
         logical, intent(in), optional :: interp
         logical, intent(in), optional :: p_interface_only
+        logical, intent(in), optional :: linear_prolong
 
         c%copyOnly = .false.
         if (present(interp)) c%copyOnly = .not. interp
         c%pSkipCopy = .false.
         if (present(p_interface_only)) c%pSkipCopy = p_interface_only
+        c%linProlong = .false.
+        if (present(linear_prolong)) c%linProlong = linear_prolong
         call start_halo_exchange(c, blk, vars)
         call finish_halo_exchange(c, blk)
         c%copyOnly = .false.
         c%pSkipCopy = .false.
+        c%linProlong = .false.
     end subroutine exchange_halos
 
     ! Per-block scalar halos (e.g. les%nut) on the same exchange entries.
@@ -1119,9 +1137,7 @@ contains
         type(block_set_type), intent(inout) :: blk
 
         integer :: p, gp, v, e, pt, ni, nj
-        integer :: di, dj, dk, var, nv, totalItems, nd, layerN
-        integer :: b1, b2, b3, c1, c2, c3, s1, s2, s3
-        real(C_DOUBLE) :: val
+        integer :: di, dj, dk, var, nv, totalItems, nd, layerN, lin
 
         nv = c%nActiveVars
         totalItems = merge(c%nLocalCopyPts, c%nLocalPts, c%copyOnly)*nv
@@ -1129,12 +1145,12 @@ contains
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
-        !$omp& map(to: totalItems, nv, c%nLocal, c%nLocalCopyPts, c%pSkipCopy, &
+        !$omp& map(to: totalItems, nv, c%nLocal, c%nLocalCopyPts, c%pSkipCopy, c%linProlong, &
         !$omp& c%lOff, c%lEntryOf, c%lSrcSlot, c%lDstSlot, &
-        !$omp& c%lDstLo, c%lExt, c%lGA, c%lGB, c%lGS, c%lGC, c%lFaceNrm, &
-        !$omp& c%activeVars) &
+        !$omp& c%lDstLo, c%lExt, c%lGA, c%lGB, c%lGS, c%lGC, c%lLin, c%lFaceNrm, &
+        !$omp& c%activeVars, blk%nb) &
         !$omp& map(tofrom: blk%q) &
-        !$omp& private(p,gp,v,e,pt,ni,nj,di,dj,dk,var,nd,layerN,b1,b2,b3,c1,c2,c3,s1,s2,s3,val)
+        !$omp& private(p,gp,v,e,pt,ni,nj,di,dj,dk,var,nd,layerN,lin)
 #endif
         do p = 1, totalItems
             gp = (p - 1)/nv
@@ -1171,22 +1187,12 @@ contains
                     cycle
                 end if
             end if
-            b1 = ishft(c%lGA(1,e)*di + c%lGB(1,e), -c%lGS(1,e))
-            b2 = ishft(c%lGA(2,e)*dj + c%lGB(2,e), -c%lGS(2,e))
-            b3 = ishft(c%lGA(3,e)*dk + c%lGB(3,e), -c%lGS(3,e))
-            c1 = merge(1, c%lGC(1,e), var == 1)
-            c2 = merge(1, c%lGC(2,e), var == 2)
-            c3 = merge(1, c%lGC(3,e), var == 3)
-            val = 0.0d0
-            do s3 = 0, c3 - 1
-                do s2 = 0, c2 - 1
-                    do s1 = 0, c1 - 1
-                        val = val + blk%q(b1+s1, b2+s2, b3+s3, var, c%lSrcSlot(e))
-                    end do
-                end do
-            end do
-            val = val/real(c1*c2*c3, C_DOUBLE)
-            blk%q(di,dj,dk,var,c%lDstSlot(e)) = val
+            ! Linear PROLONG only when enabled (final exchange) and only for the
+            ! velocity components; pressure and all non-final exchanges inject.
+            lin = merge(1, 0, c%linProlong .and. var /= VAR_P)
+            blk%q(di,dj,dk,var,c%lDstSlot(e)) = gather_point(blk%q, c%lSrcSlot(e), &
+                c%lGA(:,e), c%lGB(:,e), c%lGS(:,e), c%lGC(:,e), c%lLin(:,e), &
+                lin, di, dj, dk, var, blk%nb)
         end do
 #ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
@@ -1254,8 +1260,7 @@ contains
         type(block_set_type), intent(in) :: blk
 
         integer :: p, gp, v, e, pt, ni, nj
-        integer :: di, dj, dk, var, peer, pos, nv, totalItems, copyOnly
-        integer :: b1, b2, b3, c1, c2, c3, s1, s2, s3
+        integer :: di, dj, dk, var, peer, pos, nv, totalItems, copyOnly, lin
         real(C_DOUBLE) :: val
 
         nv = c%nActiveVars
@@ -1265,12 +1270,12 @@ contains
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
-        !$omp& map(to: totalItems, nv, copyOnly, c%pSkipCopy, c%nPeers, c%nSend, &
+        !$omp& map(to: totalItems, nv, copyOnly, c%pSkipCopy, c%linProlong, c%nPeers, c%nSend, &
         !$omp& c%sOff, c%sEntryOf, c%sSlot, c%sPeer, &
-        !$omp& c%sDstLo, c%sExt, c%sGA, c%sGB, c%sGS, c%sGC, &
-        !$omp& c%peerSendOff, c%peerSendCopyOff, c%activeVars, blk%q) &
+        !$omp& c%sDstLo, c%sExt, c%sGA, c%sGB, c%sGS, c%sGC, c%sLin, &
+        !$omp& c%peerSendOff, c%peerSendCopyOff, c%activeVars, blk%q, blk%nb) &
         !$omp& map(tofrom: c%sendbuf) &
-        !$omp& private(p,gp,v,e,pt,ni,nj,di,dj,dk,var,peer,pos,b1,b2,b3,c1,c2,c3,s1,s2,s3,val)
+        !$omp& private(p,gp,v,e,pt,ni,nj,di,dj,dk,var,peer,pos,lin,val)
 #endif
         do p = 1, totalItems
             gp = (p - 1)/nv
@@ -1295,22 +1300,11 @@ contains
             di = c%sDstLo(1,e) + modulo(pt, ni)
             dj = c%sDstLo(2,e) + modulo(pt/ni, nj)
             dk = c%sDstLo(3,e) + pt/(ni*nj)
-            b1 = ishft(c%sGA(1,e)*di + c%sGB(1,e), -c%sGS(1,e))
-            b2 = ishft(c%sGA(2,e)*dj + c%sGB(2,e), -c%sGS(2,e))
-            b3 = ishft(c%sGA(3,e)*dk + c%sGB(3,e), -c%sGS(3,e))
-            c1 = merge(1, c%sGC(1,e), var == 1)
-            c2 = merge(1, c%sGC(2,e), var == 2)
-            c3 = merge(1, c%sGC(3,e), var == 3)
-            val = 0.0d0
-            do s3 = 0, c3 - 1
-                do s2 = 0, c2 - 1
-                    do s1 = 0, c1 - 1
-                        val = val + blk%q(b1+s1, b2+s2, b3+s3, var, c%sSlot(e))
-                    end do
-                end do
-            end do
+            lin = merge(1, 0, c%linProlong .and. var /= VAR_P)
+            val = gather_point(blk%q, c%sSlot(e), c%sGA(:,e), c%sGB(:,e), c%sGS(:,e), &
+                c%sGC(:,e), c%sLin(:,e), lin, di, dj, dk, var, blk%nb)
             pos = (gp - c%peerSendOff(peer-1))*nv + v + 1
-            c%sendbuf(pos,peer) = val/real(c1*c2*c3, C_DOUBLE)
+            c%sendbuf(pos,peer) = val
         end do
 #ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
@@ -1497,6 +1491,74 @@ contains
         end do
         e = lo
     end function find_entry
+
+    ! Source taps (up to 2) for one dimension of the weighted gather. lin=0
+    ! reproduces the plain affine map (inject / gc-cell equal average, with the
+    ! face-staggered c=1 override) bit-exactly. lin=1 (PROLONG tangential dim,
+    ! only when linProlong is set) uses linear interpolation of the coarse
+    ! field: face-linear for the variable's own staggered dim (fine face
+    ! coincident -> 1 tap; midpoint -> 1/2,1/2), cell-linear otherwise (3/4
+    ! covering + 1/4 adjacent coarse cell). E3.
+    pure subroutine gather_taps(ga, gb, gs, gc, lin, dst, var, dim, nbDim, idx, w, n)
+!$omp declare target
+        integer, intent(in) :: ga, gb, gs, gc, lin, dst, var, dim, nbDim
+        integer, intent(out) :: idx(0:1), n
+        real(C_DOUBLE), intent(out) :: w(0:1)
+        integer :: raw, base, par, cd, hi
+
+        raw = ga*dst + gb
+        base = ishft(raw, -gs)
+        idx(0) = base; idx(1) = base; w(0) = 1.0d0; w(1) = 0.0d0; n = 1
+        if (lin == 1) then
+            par = raw - 2*ishft(raw, -1)
+            if (var == dim) then
+                if (par /= 0) then
+                    idx(1) = base + 1; w(0) = 0.5d0; w(1) = 0.5d0; n = 2
+                end if
+            else
+                idx(1) = base + (2*par - 1); w(0) = 0.75d0; w(1) = 0.25d0; n = 2
+            end if
+            ! Keep the adjacent tap inside the source block's interior cells
+            ! 1..nb. A halo there (e.g. the staggered face nb+1) is never read by
+            ! injection, so it can be rank-dependently stale during the exchange;
+            ! reading it would break exact rank independence. Fall back to
+            ! injection at the prolong region's edges instead.
+            hi = nbDim
+            if (idx(1) < 1 .or. idx(1) > hi) idx(1) = idx(0)
+        else
+            cd = merge(1, gc, var == dim)
+            n = cd; w(0) = 1.0d0/real(cd, C_DOUBLE)
+            if (cd == 2) then; idx(1) = base + 1; w(1) = 0.5d0; end if
+        end if
+    end subroutine gather_taps
+
+    ! Weighted gather of one destination point (di,dj,dk) of variable var from
+    ! source slot. Shared by the local-copy and off-rank-pack kernels so the
+    ! arithmetic is compiled once and both produce bit-identical results (the
+    ! same source inlined into two kernels can otherwise reassociate the
+    ! weighted sum differently, breaking exact rank independence). linFlag=1
+    ! enables linear PROLONG on the tangential dims flagged by lin(:).
+    pure real(C_DOUBLE) function gather_point(q, slot, ga, gb, gs, gc, lin, &
+            linFlag, di, dj, dk, var, nb) result(val)
+!$omp declare target
+        real(C_DOUBLE), intent(in) :: q(0:,0:,0:,1:,1:)
+        integer, intent(in) :: slot, ga(3), gb(3), gs(3), gc(3), lin(3)
+        integer, intent(in) :: linFlag, di, dj, dk, var, nb(3)
+        integer :: i1(0:1), i2(0:1), i3(0:1), n1, n2, n3, a1, a2, a3
+        real(C_DOUBLE) :: w1(0:1), w2(0:1), w3(0:1)
+
+        call gather_taps(ga(1), gb(1), gs(1), gc(1), linFlag*lin(1), di, var, 1, nb(1), i1, w1, n1)
+        call gather_taps(ga(2), gb(2), gs(2), gc(2), linFlag*lin(2), dj, var, 2, nb(2), i2, w2, n2)
+        call gather_taps(ga(3), gb(3), gs(3), gc(3), linFlag*lin(3), dk, var, 3, nb(3), i3, w3, n3)
+        val = 0.0d0
+        do a3 = 0, n3 - 1
+            do a2 = 0, n2 - 1
+                do a1 = 0, n1 - 1
+                    val = val + w1(a1)*w2(a2)*w3(a3)*q(i1(a1), i2(a2), i3(a3), var, slot)
+                end do
+            end do
+        end do
+    end function gather_point
 
     subroutine set_active_vars(c, vars)
         type(comm_type), intent(inout) :: c
