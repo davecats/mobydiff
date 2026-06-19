@@ -361,6 +361,41 @@ is needed to pin the dominant residual. Cumulative interface error so far:
 baseline 8.10e-3 -> 5.75e-3 (-29%): E3+two-phase (magnitude) + reflux
 (conservation) + pressure smoothing (a slice of the asymmetry).
 
+### Projection-consistency probe — DOMINANT residual = the pressure solve is inconsistent
+
+`MOBY_PROJPROBE` (step.f90:proj_consistency_probe + main.f90 hook): feed the
+projection the EXACT divergence-free TGV field as its predictor (qs=q) and
+measure how much one projection spuriously CHANGES it (a consistent projection
+leaves a div-free field untouched). At the owned face:
+
+| | \|u_proj - u_exact\| (i=1) |
+|---|---------------------------|
+| fine-owns | 8.1e-4 |
+| coarse-owns | 7.9e-8 |
+
+A **10,000x asymmetry**: the projection introduces a spurious O(8e-4) velocity at
+the fine-owns interface (decaying into the patch) but essentially nothing
+(round-off) at coarse-owns. Accumulated over ~240 projections (80 steps x 3
+substages) this is the ~0.4 fine-owns u error -> **this is the dominant residual**.
+Since the owned face is u(1)=qs(1)-ifGrad*(p_new(1)-p_new(0)) with qs=exact, the
+8e-4 deviation IS the spurious pressure gradient: the **pressure Poisson solve is
+inconsistent at the fine-owns interface** -- it converges to a wrong p_new even
+for a divergence-free input. Root: the composite projection's fine-owns interface
+coupling (the fine cell reconstructs its owned face and couples to the coarse
+pressure via ifGrad*d1x_P_fine; the coarse cell holds a RESTRICT'd, frozen
+interface velocity and couples back via ifGrad*d1x_P_coarse on the RESTRICT) is
+NOT a symmetric/consistent discrete operator -- the fine->coarse and coarse->fine
+couplings carry mismatched metric/area weights, so the SPD interface row is wrong
+at leading order. The coarse-owns side is clean because the coarse owner relaxes
+its face against accurate (fine-RESTRICT'd) neighbours.
+
+FIX (the real one): re-derive the composite-projection interface coupling so the
+2:1 pressure operator is symmetric/consistent (a conservative, flux-matched
+coarse-fine Poisson stencil -- the AMR composite-operator standard). This is a
+substantial reformulation of redblack_sweep's interface rows (denom + owned-face
+reconstruction + the RESTRICT coupling), not a halo tweak. It is THE fix for the
+asymmetry; the reflux and pressure-smoothing addressed smaller, separable slices.
+
 ## Original recommendation (superseded by E3 for the magnitude)
 
 **Momentum-conservative reflux.** Keep

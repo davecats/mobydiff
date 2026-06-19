@@ -206,6 +206,20 @@ program main
         call update_timestep_limits(blk, dns, c)
     end if
 
+    ! Projection-consistency probe (MOBY_PROJPROBE): feed the projection the exact
+    ! (divergence-free) TGV field as its predictor and print how much it spuriously
+    ! changes it at the interface (step.f90:proj_consistency_probe).
+    block
+        character(len=16) :: projEnv
+        call get_environment_variable("MOBY_PROJPROBE", projEnv)
+        if (len_trim(projEnv) > 0) then
+            call copy_q_to_qs(blk)
+            call pressure_projection(ps, blk, dns%dt*rk_gamma(1), ibm, bc, c)
+            call proj_consistency_probe(blk, dns)
+            stop
+        end if
+    end block
+
     if (c%has_terminal) print *, "main loop starting..."
     loop_steps = 0_C_INT
     call reset_les_profile(les_prof)

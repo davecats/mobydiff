@@ -390,6 +390,68 @@ contains
       end do
     end subroutine truncation_probe
 
+    ! Copy the velocity into the predictor store (qs = q). Used by the projection
+    ! consistency probe to feed the projection the exact field as its predictor.
+    subroutine copy_q_to_qs(blk)
+        type(block_set_type), intent(inout) :: blk
+        integer :: i,j,k,b,v, nx,ny,nz
+        nx = int(blk%nb(1)); ny = int(blk%nb(2)); nz = int(blk%nb(3))
+        !$omp target teams distribute parallel do collapse(5) &
+        !$omp& map(to: blk%q) map(tofrom: blk%qs) private(i,j,k,b,v)
+        do b = 1, int(blk%nBlocks)
+            do v = 1, 3
+                do k = 0, nz+2
+                    do j = 0, ny+2
+                        do i = 0, nx+2
+                            blk%qs(i,j,k,v,b) = blk%q(i,j,k,v,b)
+                        end do
+                    end do
+                end do
+            end do
+        end do
+    end subroutine copy_q_to_qs
+
+    ! Projection-consistency probe (MOBY_PROJPROBE). After projecting the EXACT
+    ! (divergence-free) TGV field, a consistent projection leaves it unchanged.
+    ! Print the deviation u_projected - u_exact RMS'd over y-z at each x of a
+    ! fine-owns and a coarse-owns interface; a spike at the interface is the
+    ! converged-projection (SPD interface coupling) defect that the predictor
+    ! truncation probe cannot see (the predictor pressure cancels via pStart).
+    subroutine proj_consistency_probe(blk, dns)
+        type(block_set_type), intent(inout) :: blk
+        type(dns_type), intent(in) :: dns
+        integer :: i,j,k,b, nx,ny,nz, bsel, npl, kk, kind
+        real(C_DOUBLE) :: k0, ue, du, sU
+        nx = int(blk%nb(1)); ny = int(blk%nb(2)); nz = int(blk%nb(3)); npl = ny*nz
+        k0 = 8.0d0*atan(1.0d0)/dns%leng(1)
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target update from(blk%q)
+#endif
+      do kk = 1, 2
+        kind = merge(FACE_COARSE, FACE_FINE, kk == 1)
+        bsel = -1
+        do b = 1, int(blk%nBlocks)
+            if (blk%physLow(1,b) == kind) then; bsel = b; exit; end if
+        end do
+        if (bsel < 0) cycle
+        b = bsel
+        print '(a,a,3i5)', merge("PROJ FINE-OWNS  ", "PROJ COARSE-OWNS", kk == 1), &
+            " block origin", int(blk%origin(:,b))
+        print '(a)', "   i        x        |u_proj - u_exact|"
+        do i = 1, min(nx, 8)
+            sU = 0
+            do k = 1, nz
+                do j = 1, ny
+                    ue = -cos(k0*blk%x(i,VAR_U,b))*sin(k0*blk%y(j,VAR_U,b))
+                    du = blk%q(i,j,k,VAR_U,b) - ue
+                    sU = sU + du*du
+                end do
+            end do
+            print '(i5,f10.4,es20.4)', i, blk%x(i,VAR_U,b), sqrt(sU/npl)
+        end do
+      end do
+    end subroutine proj_consistency_probe
+
 
     subroutine add_les_momentum_correction(blk, dns, dt_alpha, ibm, les, les_prof)
         type(block_set_type), intent(inout) :: blk
