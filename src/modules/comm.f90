@@ -1136,29 +1136,27 @@ contains
         type(comm_type), intent(inout) :: c
         type(block_set_type), intent(inout) :: blk
 
-        integer :: p, gp, v, e, pt, ni, nj
-        integer :: di, dj, dk, var, nv, totalItems, nd, layerN, lin
+        integer :: gp, v, e, pt, ni, nj, nPts
+        integer :: di, dj, dk, var, nv, nd, layerN, lin
 
         nv = c%nActiveVars
-        totalItems = merge(c%nLocalCopyPts, c%nLocalPts, c%copyOnly)*nv
-        if (totalItems == 0) return
+        nPts = merge(c%nLocalCopyPts, c%nLocalPts, c%copyOnly)
+        if (nPts == 0 .or. nv == 0) return
 
+        ! One thread per destination point; the destination index (entry lookup,
+        ! the three modulo decompositions, the face-normal layer) is identical for
+        ! every variable, so it is computed once here and the variables loop
+        ! inside -- only the gather and the write depend on var.
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
-        !$omp& map(to: totalItems, nv, c%nLocal, c%nLocalCopyPts, c%pSkipCopy, c%linProlong, &
+        !$omp& map(to: nPts, nv, c%nLocal, c%nLocalCopyPts, c%pSkipCopy, c%linProlong, &
         !$omp& c%lOff, c%lEntryOf, c%lSrcSlot, c%lDstSlot, &
         !$omp& c%lDstLo, c%lExt, c%lGA, c%lGB, c%lGS, c%lGC, c%lLin, c%lFaceNrm, &
         !$omp& c%activeVars, blk%nb) &
         !$omp& map(tofrom: blk%q) &
-        !$omp& private(p,gp,v,e,pt,ni,nj,di,dj,dk,var,nd,layerN,lin)
+        !$omp& private(gp,v,e,pt,ni,nj,di,dj,dk,var,nd,layerN,lin)
 #endif
-        do p = 1, totalItems
-            gp = (p - 1)/nv
-            v = p - 1 - gp*nv
-            var = int(c%activeVars(v+1))
-            ! Skip pressure on the same-level COPY prefix when requested: its halo
-            ! is never read between projection sweeps (only interface halos are).
-            if (c%pSkipCopy .and. var == VAR_P .and. gp < c%nLocalCopyPts) cycle
+        do gp = 0, nPts - 1
             e = c%lEntryOf(gp)
             pt = gp - c%lOff(e-1)
             ni = c%lExt(1,e)
@@ -1179,20 +1177,27 @@ contains
             ! the covering coarse v(1) (both halo layers nb+1, nb+2); RESTRICT
             ! writes ONLY the v(0) halo (layerN 0), never the coarse interior v(1).
             nd = c%lFaceNrm(e)
-            if (nd /= 0) then
-                layerN = merge(di, merge(dj, dk, nd == 2), nd == 1) - c%lDstLo(nd,e)
-                if (var == nd) then
-                    if (c%lDstLo(nd,e) == 0 .and. layerN /= 0) cycle
-                else if (layerN /= 0) then
-                    cycle
+            layerN = 0
+            if (nd /= 0) layerN = merge(di, merge(dj, dk, nd == 2), nd == 1) - c%lDstLo(nd,e)
+            do v = 0, nv - 1
+                var = int(c%activeVars(v+1))
+                ! Skip pressure on the same-level COPY prefix when requested: its
+                ! halo is never read between projection sweeps (only interface).
+                if (c%pSkipCopy .and. var == VAR_P .and. gp < c%nLocalCopyPts) cycle
+                if (nd /= 0) then
+                    if (var == nd) then
+                        if (c%lDstLo(nd,e) == 0 .and. layerN /= 0) cycle
+                    else if (layerN /= 0) then
+                        cycle
+                    end if
                 end if
-            end if
-            ! Linear PROLONG only when enabled (final exchange) and only for the
-            ! velocity components; pressure and all non-final exchanges inject.
-            lin = merge(1, 0, c%linProlong .and. var /= VAR_P)
-            blk%q(di,dj,dk,var,c%lDstSlot(e)) = gather_point(blk%q, c%lSrcSlot(e), &
-                c%lGA(:,e), c%lGB(:,e), c%lGS(:,e), c%lGC(:,e), c%lLin(:,e), &
-                lin, di, dj, dk, var, blk%nb)
+                ! Linear PROLONG only when enabled (final exchange) and only for the
+                ! velocity components; pressure and all non-final exchanges inject.
+                lin = merge(1, 0, c%linProlong .and. var /= VAR_P)
+                blk%q(di,dj,dk,var,c%lDstSlot(e)) = gather_point(blk%q, c%lSrcSlot(e), &
+                    c%lGA(:,e), c%lGB(:,e), c%lGS(:,e), c%lGC(:,e), c%lLin(:,e), &
+                    lin, di, dj, dk, var, blk%nb)
+            end do
         end do
 #ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
@@ -1259,52 +1264,56 @@ contains
         type(comm_type), intent(inout) :: c
         type(block_set_type), intent(in) :: blk
 
-        integer :: p, gp, v, e, pt, ni, nj
-        integer :: di, dj, dk, var, peer, pos, nv, totalItems, copyOnly, lin
+        integer :: pidx, gp, v, e, pt, ni, nj, nPts, base
+        integer :: di, dj, dk, var, peer, nv, copyOnly, lin
+        logical :: inCopy
         real(C_DOUBLE) :: val
 
         nv = c%nActiveVars
-        totalItems = merge(c%peerSendCopyOff(c%nPeers), c%peerSendOff(c%nPeers), c%copyOnly)*nv
-        if (totalItems == 0) return
+        nPts = merge(c%peerSendCopyOff(c%nPeers), c%peerSendOff(c%nPeers), c%copyOnly)
+        if (nPts == 0 .or. nv == 0) return
         copyOnly = merge(1, 0, c%copyOnly)
 
+        ! One thread per send point; the entry/peer/destination index is shared by
+        ! every variable, so compute it once and loop the variables inside.
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
-        !$omp& map(to: totalItems, nv, copyOnly, c%pSkipCopy, c%linProlong, c%nPeers, c%nSend, &
+        !$omp& map(to: nPts, nv, copyOnly, c%pSkipCopy, c%linProlong, c%nPeers, c%nSend, &
         !$omp& c%sOff, c%sEntryOf, c%sSlot, c%sPeer, &
         !$omp& c%sDstLo, c%sExt, c%sGA, c%sGB, c%sGS, c%sGC, c%sLin, &
         !$omp& c%peerSendOff, c%peerSendCopyOff, c%activeVars, blk%q, blk%nb) &
         !$omp& map(tofrom: c%sendbuf) &
-        !$omp& private(p,gp,v,e,pt,ni,nj,di,dj,dk,var,peer,pos,lin,val)
+        !$omp& private(pidx,gp,v,e,pt,ni,nj,base,di,dj,dk,var,peer,lin,inCopy,val)
 #endif
-        do p = 1, totalItems
-            gp = (p - 1)/nv
-            v = p - 1 - gp*nv
+        do pidx = 0, nPts - 1
+            gp = pidx
             ! A copy-only point index maps into the full enumeration via
             ! the per-peer copy prefixes.
             if (copyOnly == 1) then
-                peer = find_entry(c%peerSendCopyOff, c%nPeers, gp)
-                gp = c%peerSendOff(peer-1) + (gp - c%peerSendCopyOff(peer-1))
+                peer = find_entry(c%peerSendCopyOff, c%nPeers, pidx)
+                gp = c%peerSendOff(peer-1) + (pidx - c%peerSendCopyOff(peer-1))
             end if
             e = c%sEntryOf(gp)
             peer = c%sPeer(e)
-            var = int(c%activeVars(v+1))
-            ! Skip pressure on the same-level COPY prefix of this peer (see
-            ! copy_local_entries): leaves the buffer slot stale, which the
-            ! receiver's unpack skips identically.
-            if (c%pSkipCopy .and. var == VAR_P .and. &
-                gp - c%peerSendOff(peer-1) < c%peerSendCopyOff(peer) - c%peerSendCopyOff(peer-1)) cycle
             pt = gp - c%sOff(e-1)
             ni = c%sExt(1,e)
             nj = c%sExt(2,e)
             di = c%sDstLo(1,e) + modulo(pt, ni)
             dj = c%sDstLo(2,e) + modulo(pt/ni, nj)
             dk = c%sDstLo(3,e) + pt/(ni*nj)
-            lin = merge(1, 0, c%linProlong .and. var /= VAR_P)
-            val = gather_point(blk%q, c%sSlot(e), c%sGA(:,e), c%sGB(:,e), c%sGS(:,e), &
-                c%sGC(:,e), c%sLin(:,e), lin, di, dj, dk, var, blk%nb)
-            pos = (gp - c%peerSendOff(peer-1))*nv + v + 1
-            c%sendbuf(pos,peer) = val
+            base = (gp - c%peerSendOff(peer-1))*nv
+            ! Same-level COPY prefix of this peer (pressure skipped there).
+            inCopy = gp - c%peerSendOff(peer-1) < c%peerSendCopyOff(peer) - c%peerSendCopyOff(peer-1)
+            do v = 0, nv - 1
+                var = int(c%activeVars(v+1))
+                ! Skip pressure on the COPY prefix (see copy_local_entries): leaves
+                ! the buffer slot stale, which the receiver's unpack skips identically.
+                if (c%pSkipCopy .and. var == VAR_P .and. inCopy) cycle
+                lin = merge(1, 0, c%linProlong .and. var /= VAR_P)
+                val = gather_point(blk%q, c%sSlot(e), c%sGA(:,e), c%sGB(:,e), c%sGS(:,e), &
+                    c%sGC(:,e), c%sLin(:,e), lin, di, dj, dk, var, blk%nb)
+                c%sendbuf(base + v + 1, peer) = val
+            end do
         end do
 #ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
@@ -1315,60 +1324,65 @@ contains
         type(comm_type), intent(in) :: c
         type(block_set_type), intent(inout) :: blk
 
-        integer :: p, gp, v, e, pt, ni, nj
-        integer :: i, j, k, var, peer, pos, nv, totalItems, copyOnly, nd, layerN
+        integer :: pidx, gp, v, e, pt, ni, nj, nPts, base
+        integer :: i, j, k, var, peer, nv, copyOnly, nd, layerN
+        logical :: inCopy
         real(C_DOUBLE) :: val
 
         nv = c%nActiveVars
-        totalItems = merge(c%peerRecvCopyOff(c%nPeers), c%peerRecvOff(c%nPeers), c%copyOnly)*nv
-        if (totalItems == 0) return
+        nPts = merge(c%peerRecvCopyOff(c%nPeers), c%peerRecvOff(c%nPeers), c%copyOnly)
+        if (nPts == 0 .or. nv == 0) return
         copyOnly = merge(1, 0, c%copyOnly)
 
+        ! One thread per receive point; the entry/destination index is shared by
+        ! every variable, so compute it once and loop the variables inside.
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
-        !$omp& map(to: totalItems, nv, copyOnly, c%pSkipCopy, c%nPeers, c%nRecv, &
+        !$omp& map(to: nPts, nv, copyOnly, c%pSkipCopy, c%nPeers, c%nRecv, &
         !$omp& c%rOff, c%rEntryOf, c%rSlot, c%rPeer, &
         !$omp& c%rLo, c%rExt, c%rFaceNrm, &
         !$omp& c%peerRecvOff, c%peerRecvCopyOff, c%activeVars, c%recvbuf) &
         !$omp& map(tofrom: blk%q) &
-        !$omp& private(p,gp,v,e,pt,ni,nj,i,j,k,var,peer,pos,nd,layerN,val)
+        !$omp& private(pidx,gp,v,e,pt,ni,nj,base,i,j,k,var,peer,nd,layerN,inCopy,val)
 #endif
-        do p = 1, totalItems
-            gp = (p - 1)/nv
-            v = p - 1 - gp*nv
+        do pidx = 0, nPts - 1
+            gp = pidx
             if (copyOnly == 1) then
-                peer = find_entry(c%peerRecvCopyOff, c%nPeers, gp)
-                gp = c%peerRecvOff(peer-1) + (gp - c%peerRecvCopyOff(peer-1))
+                peer = find_entry(c%peerRecvCopyOff, c%nPeers, pidx)
+                gp = c%peerRecvOff(peer-1) + (pidx - c%peerRecvCopyOff(peer-1))
             end if
             e = c%rEntryOf(gp)
             peer = c%rPeer(e)
-            var = int(c%activeVars(v+1))
-            ! Skip pressure on the same-level COPY prefix (mirror of the sender's
-            ! pack_entries skip): the buffer slot was left stale, never read here.
-            if (c%pSkipCopy .and. var == VAR_P .and. &
-                gp - c%peerRecvOff(peer-1) < c%peerRecvCopyOff(peer) - c%peerRecvCopyOff(peer-1)) cycle
             pt = gp - c%rOff(e-1)
             ni = c%rExt(1,e)
             nj = c%rExt(2,e)
             i = c%rLo(1,e) + modulo(pt, ni)
             j = c%rLo(2,e) + modulo(pt/ni, nj)
             k = c%rLo(3,e) + pt/(ni*nj)
+            base = (gp - c%peerRecvOff(peer-1))*nv
+            inCopy = gp - c%peerRecvOff(peer-1) < c%peerRecvCopyOff(peer) - c%peerRecvCopyOff(peer-1)
             ! Above-block-owns (mirror of copy_local_entries): the normal
             ! component is a slaved halo on the BELOW block -- PROLONG injects the
             ! covering coarse v(1) into both halo layers; RESTRICT writes only the
             ! v(0) halo, never the coarse interior v(1) (it owns it).
             nd = c%rFaceNrm(e)
-            if (nd /= 0) then
-                layerN = merge(i, merge(j, k, nd == 2), nd == 1) - c%rLo(nd,e)
-                if (var == nd) then
-                    if (c%rLo(nd,e) == 0 .and. layerN /= 0) cycle
-                else if (layerN /= 0) then
-                    cycle
+            layerN = 0
+            if (nd /= 0) layerN = merge(i, merge(j, k, nd == 2), nd == 1) - c%rLo(nd,e)
+            do v = 0, nv - 1
+                var = int(c%activeVars(v+1))
+                ! Skip pressure on the same-level COPY prefix (mirror of the sender's
+                ! pack_entries skip): the buffer slot was left stale, never read here.
+                if (c%pSkipCopy .and. var == VAR_P .and. inCopy) cycle
+                if (nd /= 0) then
+                    if (var == nd) then
+                        if (c%rLo(nd,e) == 0 .and. layerN /= 0) cycle
+                    else if (layerN /= 0) then
+                        cycle
+                    end if
                 end if
-            end if
-            pos = (gp - c%peerRecvOff(peer-1))*nv + v + 1
-            val = c%recvbuf(pos,peer)
-            blk%q(i,j,k,var,c%rSlot(e)) = val
+                val = c%recvbuf(base + v + 1, peer)
+                blk%q(i,j,k,var,c%rSlot(e)) = val
+            end do
         end do
 #ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
