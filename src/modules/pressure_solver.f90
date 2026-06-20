@@ -1,7 +1,8 @@
 module pressure_solver
     use, intrinsic :: iso_c_binding
     use :: init, only: dns_type, VAR_U, VAR_V, VAR_W, VAR_P
-    use :: blocks, only: block_set_type, FACE_PHYS, FACE_CLOSED, FACE_FINE, FACE_COARSE
+    use :: blocks, only: block_set_type, FACE_PHYS, FACE_CLOSED, FACE_FINE, FACE_COARSE, &
+        is_interface, face_pinned
     use :: ibmm, only: ibm_type
     use :: boundary, only: boundary_type, apply_bc
     use :: comm, only: comm_type, exchange_halos
@@ -351,19 +352,5 @@ contains
         !$omp end target teams distribute parallel do
 #endif
     end subroutine redblack_sweep
-
-    pure logical function is_interface(fk)
-!$omp declare target
-        integer(C_INT), intent(in) :: fk
-        is_interface = fk == FACE_FINE .or. fk == FACE_COARSE
-    end function is_interface
-
-    ! Pinned faces carry zero flux forever (physical walls, closed faces against
-    ! removed blocks): they leave both the diagonal and the corrections.
-    pure logical function face_pinned(fk)
-!$omp declare target
-        integer(C_INT), intent(in) :: fk
-        face_pinned = fk == FACE_PHYS .or. fk == FACE_CLOSED
-    end function face_pinned
 
 end module pressure_solver

@@ -183,20 +183,6 @@ program main
         end if
     end block
 
-    ! Truncation-error probe (MOBY_TRUNC): with the exact TGV IC, set the
-    ! interface velocity halos to the scheme's two-phase state (Pass A injection
-    ! at line 172 above + Pass B linear here) and print the u-momentum operator
-    ! term balance along a fine-owns interface (see step.f90:truncation_probe).
-    block
-        character(len=16) :: truncEnv
-        call get_environment_variable("MOBY_TRUNC", truncEnv)
-        if (len_trim(truncEnv) > 0) then
-            call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W], linear_prolong=.true.)
-            call truncation_probe(blk, dns)
-            stop
-        end if
-    end block
-
     call flow%setup_after_grid(blk, dns, g, bc, c)
     if (les_is_enabled(les)) then
         call update_les_viscosity(les, blk, dns, ibm)
@@ -205,20 +191,6 @@ program main
     else
         call update_timestep_limits(blk, dns, c)
     end if
-
-    ! Projection-consistency probe (MOBY_PROJPROBE): feed the projection the exact
-    ! (divergence-free) TGV field as its predictor and print how much it spuriously
-    ! changes it at the interface (step.f90:proj_consistency_probe).
-    block
-        character(len=16) :: projEnv
-        call get_environment_variable("MOBY_PROJPROBE", projEnv)
-        if (len_trim(projEnv) > 0) then
-            call copy_q_to_qs(blk)
-            call pressure_projection(ps, blk, dns%dt*rk_gamma(1), ibm, bc, c)
-            call proj_consistency_probe(blk, dns)
-            stop
-        end if
-    end block
 
     if (c%has_terminal) print *, "main loop starting..."
     loop_steps = 0_C_INT

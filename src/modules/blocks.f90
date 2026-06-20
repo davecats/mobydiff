@@ -37,6 +37,7 @@ module blocks
     public :: zero_closed_halos, face_kind, leaf_at, level_cells
     public :: DIST_RANKBOX, DIST_ZORDER
     public :: FACE_OPEN, FACE_PHYS, FACE_CLOSED, FACE_COARSE, FACE_FINE
+    public :: is_interface, face_pinned
 
     ! Block ownership: one block per rank box (default), or the global
     ! Z-order lattice split linearly over the ranks ([blocks] nb).
@@ -423,6 +424,22 @@ contains
         case default; w = blk%lineZ(g+1, lev+1) - blk%lineZ(g, lev+1)
         end select
     end function line_cell_width
+
+    ! Face-kind predicates (live with the FACE_* constants they test). Both are
+    ! declare-target so the momentum and SOR-sweep device kernels can call them.
+    pure logical function is_interface(fk)
+!$omp declare target
+        integer(C_INT), intent(in) :: fk
+        is_interface = fk == FACE_FINE .or. fk == FACE_COARSE
+    end function is_interface
+
+    ! Pinned faces carry zero flux forever (physical walls, closed faces against
+    ! removed blocks): they leave both the diagonal and the corrections.
+    pure logical function face_pinned(fk)
+!$omp declare target
+        integer(C_INT), intent(in) :: fk
+        face_pinned = fk == FACE_PHYS .or. fk == FACE_CLOSED
+    end function face_pinned
 
     ! Per-level node lines: level 0 is the configured grid, level l+1 the
     ! midpoint subdivision of level l (subdivide_node_line).
