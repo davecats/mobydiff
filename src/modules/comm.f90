@@ -1137,7 +1137,7 @@ contains
         type(block_set_type), intent(inout) :: blk
 
         integer :: gp, v, e, pt, ni, nj, nPts
-        integer :: di, dj, dk, var, nv, nd, layerN, lin
+        integer :: di, dj, dk, var, nv, nd, layerN, lin, si, sj, sk
 
         nv = c%nActiveVars
         nPts = merge(c%nLocalCopyPts, c%nLocalPts, c%copyOnly)
@@ -1154,7 +1154,7 @@ contains
         !$omp& c%lDstLo, c%lExt, c%lGA, c%lGB, c%lGS, c%lGC, c%lLin, c%lFaceNrm, &
         !$omp& c%activeVars, blk%nb) &
         !$omp& map(tofrom: blk%q) &
-        !$omp& private(gp,v,e,pt,ni,nj,di,dj,dk,var,nd,layerN,lin)
+        !$omp& private(gp,v,e,pt,ni,nj,di,dj,dk,var,nd,layerN,lin,si,sj,sk)
 #endif
         do gp = 0, nPts - 1
             e = c%lEntryOf(gp)
@@ -1164,6 +1164,21 @@ contains
             di = c%lDstLo(1,e) + modulo(pt, ni)
             dj = c%lDstLo(2,e) + modulo(pt/ni, nj)
             dk = c%lDstLo(3,e) + pt/(ni*nj)
+            if (gp < c%nLocalCopyPts) then
+                ! Same-level COPY prefix (the bulk of points): gather_point degrades
+                ! to a single weight-1 read of the affine source point, so skip the
+                ! call (no weighted sum -> no reassociation to worry about).
+                si = ishft(c%lGA(1,e)*di + c%lGB(1,e), -c%lGS(1,e))
+                sj = ishft(c%lGA(2,e)*dj + c%lGB(2,e), -c%lGS(2,e))
+                sk = ishft(c%lGA(3,e)*dk + c%lGB(3,e), -c%lGS(3,e))
+                do v = 0, nv - 1
+                    var = int(c%activeVars(v+1))
+                    ! Pressure halo is never read between projection sweeps.
+                    if (c%pSkipCopy .and. var == VAR_P) cycle
+                    blk%q(di,dj,dk,var,c%lDstSlot(e)) = blk%q(si,sj,sk,var,c%lSrcSlot(e))
+                end do
+                cycle
+            end if
             ! 2:1 interface owned face. PROLONG (dstLo=nb+1>0): the fine owns
             ! its near face, so the normal component is written only to the
             ! deep stencil layer nb+2 and the others to the nb+1 halo.
@@ -1181,9 +1196,6 @@ contains
             if (nd /= 0) layerN = merge(di, merge(dj, dk, nd == 2), nd == 1) - c%lDstLo(nd,e)
             do v = 0, nv - 1
                 var = int(c%activeVars(v+1))
-                ! Skip pressure on the same-level COPY prefix when requested: its
-                ! halo is never read between projection sweeps (only interface).
-                if (c%pSkipCopy .and. var == VAR_P .and. gp < c%nLocalCopyPts) cycle
                 if (nd /= 0) then
                     if (var == nd) then
                         if (c%lDstLo(nd,e) == 0 .and. layerN /= 0) cycle
@@ -1265,7 +1277,7 @@ contains
         type(block_set_type), intent(in) :: blk
 
         integer :: pidx, gp, v, e, pt, ni, nj, nPts, base
-        integer :: di, dj, dk, var, peer, nv, copyOnly, lin
+        integer :: di, dj, dk, var, peer, nv, copyOnly, lin, si, sj, sk
         logical :: inCopy
         real(C_DOUBLE) :: val
 
@@ -1283,7 +1295,7 @@ contains
         !$omp& c%sDstLo, c%sExt, c%sGA, c%sGB, c%sGS, c%sGC, c%sLin, &
         !$omp& c%peerSendOff, c%peerSendCopyOff, c%activeVars, blk%q, blk%nb) &
         !$omp& map(tofrom: c%sendbuf) &
-        !$omp& private(pidx,gp,v,e,pt,ni,nj,base,di,dj,dk,var,peer,lin,inCopy,val)
+        !$omp& private(pidx,gp,v,e,pt,ni,nj,base,di,dj,dk,var,peer,lin,inCopy,val,si,sj,sk)
 #endif
         do pidx = 0, nPts - 1
             gp = pidx
@@ -1304,11 +1316,22 @@ contains
             base = (gp - c%peerSendOff(peer-1))*nv
             ! Same-level COPY prefix of this peer (pressure skipped there).
             inCopy = gp - c%peerSendOff(peer-1) < c%peerSendCopyOff(peer) - c%peerSendCopyOff(peer-1)
+            if (inCopy) then
+                ! Same-level copy: a single weight-1 read (see copy_local_entries).
+                si = ishft(c%sGA(1,e)*di + c%sGB(1,e), -c%sGS(1,e))
+                sj = ishft(c%sGA(2,e)*dj + c%sGB(2,e), -c%sGS(2,e))
+                sk = ishft(c%sGA(3,e)*dk + c%sGB(3,e), -c%sGS(3,e))
+                do v = 0, nv - 1
+                    var = int(c%activeVars(v+1))
+                    ! Skip pressure on the COPY prefix: leaves the buffer slot stale,
+                    ! which the receiver's unpack skips identically.
+                    if (c%pSkipCopy .and. var == VAR_P) cycle
+                    c%sendbuf(base + v + 1, peer) = blk%q(si,sj,sk,var,c%sSlot(e))
+                end do
+                cycle
+            end if
             do v = 0, nv - 1
                 var = int(c%activeVars(v+1))
-                ! Skip pressure on the COPY prefix (see copy_local_entries): leaves
-                ! the buffer slot stale, which the receiver's unpack skips identically.
-                if (c%pSkipCopy .and. var == VAR_P .and. inCopy) cycle
                 lin = merge(1, 0, c%linProlong .and. var /= VAR_P)
                 val = gather_point(blk%q, c%sSlot(e), c%sGA(:,e), c%sGB(:,e), c%sGS(:,e), &
                     c%sGC(:,e), c%sLin(:,e), lin, di, dj, dk, var, blk%nb)
