@@ -42,6 +42,8 @@ program main
     integer(C_INT), allocatable :: blockTouch(:,:), blockBuried(:,:)
     integer :: refineLevel, maskCount
     logical :: blockActiveFound
+    logical :: rkdump, rkexact, rkdiv
+    character(len=16) :: rkdumpEnv, rkexactEnv, rkdivEnv, rklinEnv
 
     call comm_init_world(c)
     call splash(c%has_terminal)
@@ -183,6 +185,25 @@ program main
         end if
     end block
 
+    ! Single-substep diagnostic dump (MOBY_RKDUMP): at the first RK substep of the
+    ! first step, write the field before the predictor, after the predictor and
+    ! after the corrector, into <prefix>_90000{1,2,3}.h5. Localises where the 2:1
+    ! interface procedure injects error within one substep (tools/plot_rkdump.py).
+    call get_environment_variable("MOBY_RKDUMP", rkdumpEnv)
+    rkdump = len_trim(rkdumpEnv) > 0
+    ! MOBY_RKEXACT: in that same first substep, replace the predictor velocity
+    ! with the exact (divergence-free) Beltrami field before the corrector. If the
+    ! corrector then STILL injects interface error, the projection's interface
+    ! coupling is broken on its own, not merely amplifying the predictor's seed.
+    call get_environment_variable("MOBY_RKEXACT", rkexactEnv)
+    rkexact = len_trim(rkexactEnv) > 0
+    ! MOBY_RKDIV (with MOBY_RKEXACT): write the discrete divergence of the exact
+    ! field -- the actual Poisson RHS the corrector sees -- into the pressure slot
+    ! and stop. Maps exactly which interface faces/cells carry spurious divergence.
+    call get_environment_variable("MOBY_RKDIV", rkdivEnv)
+    rkdiv = len_trim(rkdivEnv) > 0
+    call get_environment_variable("MOBY_RKLINPROLONG", rklinEnv)
+
     call flow%setup_after_grid(blk, dns, g, bc, c)
     if (les_is_enabled(les)) then
         call update_les_viscosity(les, blk, dns, ibm)
@@ -209,6 +230,9 @@ program main
             dt_beta  = dns%dt*rk_beta(rkStage)
             dt_gamma = dns%dt*rk_gamma(rkStage)
 
+            if (rkdump .and. dns%step_current == 1 .and. rkStage == 1) &
+                call write_field(blk, dns, g, 900001, c, bc, ps%nIter, ps%sor)  ! before predictor
+
             ! Predictor: advance tentative staggered velocities, then enforce
             ! solid/body constraints and exchange halos (the interface high faces
             ! are filled with the owner velocity here).
@@ -230,9 +254,32 @@ program main
             call apply_bc(blk, bc)
             call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W])
 
+            if (rkexact .and. dns%step_current == 1 .and. rkStage == 1) then
+                call overwrite_velocity_beltrami(blk, dns)
+                call apply_bc(blk, bc)
+                call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W])
+                ! Experiment (MOBY_RKLINPROLONG): mean-preserving tangential prolong
+                ! of the slaved interface velocity, to check it removes the spurious
+                ! interface divergence (validated via MOBY_RKDIV).
+                if (len_trim(rklinEnv) > 0) then
+                    call apply_mp_interface_velocity(blk)
+                end if
+                if (rkdiv) then
+                    call dump_divergence(blk)   ! divergence of the exact field -> VAR_P
+                    call write_field(blk, dns, g, 900004, c, bc, ps%nIter, ps%sor)
+                    stop
+                end if
+            end if
+
+            if (rkdump .and. dns%step_current == 1 .and. rkStage == 1) &
+                call write_field(blk, dns, g, 900002, c, bc, ps%nIter, ps%sor)  ! after predictor
+
             ! Projection: solve for the pressure correction and project the
             ! tentative velocities to a divergence-free field.
             call pressure_projection(ps, blk, dt_gamma, ibm, bc, c)
+
+            if (rkdump .and. dns%step_current == 1 .and. rkStage == 1) &
+                call write_field(blk, dns, g, 900003, c, bc, ps%nIter, ps%sor)  ! after corrector
 
         end do
 
@@ -282,6 +329,114 @@ contains
     ! (pressure faces: blended with the first interior cell, 2:1 uniform
     ! weight 2/3). Wrapped periodic regions are skipped (linear field is
     ! discontinuous across the wrap), as are regions with no occupant.
+    ! Diagnostic (MOBY_RKEXACT): overwrite every velocity cell with the exact
+    ! Beltrami field (analytically divergence-free), keeping the pressure. Lets us
+    ! feed the corrector a perfect divergence-free input and see whether the 2:1
+    ! projection still creates interface error on its own.
+    subroutine overwrite_velocity_beltrami(blk, dns)
+        type(block_set_type), intent(inout) :: blk
+        type(dns_type), intent(in) :: dns
+        integer :: b, i, j, k
+        real(C_DOUBLE) :: kk
+        !$omp target update from(blk%q)
+        kk = (8.0d0*atan(1.0d0))/dns%leng(1)
+        do b = 1, int(blk%nBlocks)
+            do k = 0, int(blk%nb(3))+1
+                do j = 0, int(blk%nb(2))+1
+                    do i = 0, int(blk%nb(1))+1
+                        blk%q(i,j,k,VAR_U,b) = sin(kk*blk%z(k,VAR_U,b)) + cos(kk*blk%y(j,VAR_U,b))
+                        blk%q(i,j,k,VAR_V,b) = sin(kk*blk%x(i,VAR_V,b)) + cos(kk*blk%z(k,VAR_V,b))
+                        blk%q(i,j,k,VAR_W,b) = sin(kk*blk%y(j,VAR_W,b)) + cos(kk*blk%x(i,VAR_W,b))
+                    end do
+                end do
+            end do
+        end do
+        !$omp target update to(blk%q)
+    end subroutine overwrite_velocity_beltrami
+
+    ! Diagnostic (MOBY_RKDIV): the discrete divergence the pressure solve sees as
+    ! its Poisson RHS, written into the pressure slot. Mirrors redblack_sweep's
+    ! div EXACTLY: raw staggered (u_E - u_W) d1x(P) + ..., using the live halos.
+    subroutine dump_divergence(blk)
+        type(block_set_type), intent(inout) :: blk
+        integer :: b, i, j, k
+        !$omp target update from(blk%q)
+        do b = 1, int(blk%nBlocks)
+            do k = 1, int(blk%nb(3))
+                do j = 1, int(blk%nb(2))
+                    do i = 1, int(blk%nb(1))
+                        blk%q(i,j,k,VAR_P,b) = &
+                            (blk%q(i+1,j,k,VAR_U,b)-blk%q(i,j,k,VAR_U,b))*blk%d1x(i,VAR_P,b) &
+                          + (blk%q(i,j+1,k,VAR_V,b)-blk%q(i,j,k,VAR_V,b))*blk%d1y(j,VAR_P,b) &
+                          + (blk%q(i,j,k+1,VAR_W,b)-blk%q(i,j,k,VAR_W,b))*blk%d1z(k,VAR_P,b)
+                    end do
+                end do
+            end do
+        end do
+        !$omp target update to(blk%q)
+    end subroutine dump_divergence
+
+    ! Diagnostic/prototype: mean-preserving tangential prolong of the slaved
+    ! high-side interface NORMAL velocity. Injection sets all fine sub-faces to
+    ! the covering coarse value c0; this adds the conservative slope correction
+    ! f_m = c0 + delta_m*(c_+ - c_-)/2 (delta_m = +-1/4 by tangential parity,
+    ! c_+/c_- the adjacent coarse cells two fine cells away in the injected halo).
+    ! Mean over the 4 fine sub-faces stays c0 (conservation). Flat-face interior
+    ! only (tangential edges/corners deferred). Host-side prototype to validate
+    ! the formula via MOBY_RKDIV before wiring it into the projection.
+    subroutine apply_mp_interface_velocity(blk)
+        use :: blocks, only: FACE_COARSE
+        type(block_set_type), intent(inout) :: blk
+        integer :: b, i, j, k, nx, ny, nz
+        real(C_DOUBLE), allocatable :: q0(:,:,:)
+        real(C_DOUBLE) :: dj, dk, di
+        ! Explicit bounds: a section like blk%q(:,:,:,VAR_U,b) re-bases to 1, but we
+        ! index q0 on the block's real (0-based halo) indices.
+        allocate(q0(lbound(blk%q,1):ubound(blk%q,1), lbound(blk%q,2):ubound(blk%q,2), &
+                    lbound(blk%q,3):ubound(blk%q,3)))
+        !$omp target update from(blk%q)
+        do b = 1, int(blk%nBlocks)
+            nx = int(blk%nb(1)); ny = int(blk%nb(2)); nz = int(blk%nb(3))
+            if (blk%physHigh(1,b) == FACE_COARSE) then        ! x high face, u(nx+1,*,*)
+                q0(:,:,:) = blk%q(:,:,:,VAR_U,b)
+                do k = 1, nz
+                    dk = merge(-0.25d0, 0.25d0, modulo(int(blk%origin(3,b))+k-1, 2) == 0)
+                    do j = 1, ny
+                        dj = merge(-0.25d0, 0.25d0, modulo(int(blk%origin(2,b))+j-1, 2) == 0)
+                        blk%q(nx+1,j,k,VAR_U,b) = q0(nx+1,j,k) &
+                            + dj*(q0(nx+1,min(j+2,ny+1),k) - q0(nx+1,max(j-2,0),k))*0.5d0 &
+                            + dk*(q0(nx+1,j,min(k+2,nz+1)) - q0(nx+1,j,max(k-2,0)))*0.5d0
+                    end do
+                end do
+            end if
+            if (blk%physHigh(2,b) == FACE_COARSE) then        ! y high face, v(*,ny+1,*)
+                q0(:,:,:) = blk%q(:,:,:,VAR_V,b)
+                do k = 1, nz
+                    dk = merge(-0.25d0, 0.25d0, modulo(int(blk%origin(3,b))+k-1, 2) == 0)
+                    do i = 1, nx
+                        di = merge(-0.25d0, 0.25d0, modulo(int(blk%origin(1,b))+i-1, 2) == 0)
+                        blk%q(i,ny+1,k,VAR_V,b) = q0(i,ny+1,k) &
+                            + di*(q0(min(i+2,nx+1),ny+1,k) - q0(max(i-2,0),ny+1,k))*0.5d0 &
+                            + dk*(q0(i,ny+1,min(k+2,nz+1)) - q0(i,ny+1,max(k-2,0)))*0.5d0
+                    end do
+                end do
+            end if
+            if (blk%physHigh(3,b) == FACE_COARSE) then        ! z high face, w(*,*,nz+1)
+                q0(:,:,:) = blk%q(:,:,:,VAR_W,b)
+                do j = 1, ny
+                    dj = merge(-0.25d0, 0.25d0, modulo(int(blk%origin(2,b))+j-1, 2) == 0)
+                    do i = 1, nx
+                        di = merge(-0.25d0, 0.25d0, modulo(int(blk%origin(1,b))+i-1, 2) == 0)
+                        blk%q(i,j,nz+1,VAR_W,b) = q0(i,j,nz+1) &
+                            + di*(q0(min(i+2,nx+1),j,nz+1) - q0(max(i-2,0),j,nz+1))*0.5d0 &
+                            + dj*(q0(i,min(j+2,ny+1),nz+1) - q0(i,max(j-2,0),nz+1))*0.5d0
+                    end do
+                end do
+            end if
+        end do
+        !$omp target update to(blk%q)
+    end subroutine apply_mp_interface_velocity
+
     subroutine halo_audit(blk, dns, bc, c)
         use :: blocks, only: leaf_at, level_cells, FACE_COARSE
         type(block_set_type), intent(inout) :: blk
