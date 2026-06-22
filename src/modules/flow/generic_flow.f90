@@ -75,6 +75,8 @@ contains
         character(len=32) :: shearEnv, tgvEnv
         real(C_DOUBLE) :: shearAmp, twopi, ly, ycoord, k0
         integer :: gx, gz, ios
+        integer :: d, dwall, dflow, var
+        real(C_DOUBLE) :: nu, Lw, Gf, Vc, expVL, yw
 
         blk%q(:,:,:,1,:) = dns%initial_velocity(1)
         blk%q(:,:,:,2,:) = dns%initial_velocity(2)
@@ -130,6 +132,56 @@ contains
                                   (sin(k0*blk%z(k,VAR_P,b)) + cos(k0*blk%y(j,VAR_P,b)))**2 &
                                 + (sin(k0*blk%x(i,VAR_P,b)) + cos(k0*blk%z(k,VAR_P,b)))**2 &
                                 + (sin(k0*blk%y(j,VAR_P,b)) + cos(k0*blk%x(i,VAR_P,b)))**2)
+                        end do
+                    end do
+                end do
+            end do
+            return
+        end if
+
+        ! Plane Poiseuille flow with uniform wall blowing/suction -- an exact
+        ! STEADY NS solution that stresses momentum convection AND diffusion AND
+        ! the pressure projection. One direction has walls (non-periodic); a
+        ! uniform crossflow V is blown in at the min wall and sucked out at the
+        ! max wall (wall-normal velocity = V at BOTH walls -> global mass
+        ! conserved), and a body force G in the flow direction sustains the
+        ! profile. With  nu u'' - V u' = -G  and no-slip walls:
+        !   u(y) = (G/V)[ y - L (e^{V y/nu}-1)/(e^{V L/nu}-1) ],  y = wall-normal.
+        ! MOBY_POISEUILLE=1; V = the wall-normal-velocity BC value, G = forcing in
+        ! the flow direction. Works for walls in any direction (the wall is the
+        ! non-periodic one, the flow the forced one). tools/check_poiseuille.py.
+        call get_environment_variable("MOBY_POISEUILLE", tgvEnv)
+        if (len_trim(tgvEnv) > 0) then
+            dwall = 0; dflow = 0
+            do d = 1, 3
+                if (.not. bc%isPeriodic(d)) dwall = d
+                if (abs(dns%forcing(d)) > tiny(1.0d0)) dflow = d
+            end do
+            nu = 1.0d0/dns%re
+            Lw = dns%leng(dwall)
+            Gf = dns%forcing(dflow)
+            Vc = bc%faceBcDefaultValue(dwall, 2*dwall-1)   ! wall-normal vel at the min wall
+            expVL = exp(Vc*Lw/nu)
+            do b = 1, int(blk%nBlocks)
+                do k = 0, int(blk%nb(3))+1
+                    do j = 0, int(blk%nb(2))+1
+                        do i = 0, int(blk%nb(1))+1
+                            blk%q(i,j,k,VAR_P,b) = 0.0d0
+                            do var = VAR_U, VAR_W
+                                if (var == dflow) then
+                                    select case (dwall)
+                                    case (1);      yw = blk%x(i,var,b)
+                                    case (2);      yw = blk%y(j,var,b)
+                                    case default;  yw = blk%z(k,var,b)
+                                    end select
+                                    blk%q(i,j,k,var,b) = (Gf/Vc)*(yw &
+                                        - Lw*(exp(Vc*yw/nu)-1.0d0)/(expVL-1.0d0))
+                                else if (var == dwall) then
+                                    blk%q(i,j,k,var,b) = Vc
+                                else
+                                    blk%q(i,j,k,var,b) = 0.0d0
+                                end if
+                            end do
                         end do
                     end do
                 end do
