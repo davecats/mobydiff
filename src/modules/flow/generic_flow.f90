@@ -108,6 +108,35 @@ contains
             return
         end if
 
+        ! Fully 3D decaying Beltrami / ABC flow (exact NS solution). Unlike the
+        ! TGV (z-homogeneous, w=0), every component depends on two coordinates and
+        ! all three are non-trivial, so it exercises the third direction. With
+        ! curl(u) = k u (Beltrami) the nonlinear term is a pure gradient and the
+        ! viscous term is -nu k^2 u, so the field decays self-similarly:
+        !   u = sin(k z) + cos(k y),  v = sin(k x) + cos(k z),  w = sin(k y) + cos(k x),
+        !   p = -1/2 |u|^2;   u(t) = u(0) exp(-nu k^2 t),  k = 2*pi/Lx.
+        ! Domain must be a cube, 2*pi-periodic in every direction (tools/check_beltrami.py).
+        call get_environment_variable("MOBY_BELTRAMI", tgvEnv)
+        if (len_trim(tgvEnv) > 0) then
+            k0 = (8.0d0*atan(1.0d0))/dns%leng(1)
+            do b = 1, int(blk%nBlocks)
+                do k = 0, int(blk%nb(3))+1
+                    do j = 0, int(blk%nb(2))+1
+                        do i = 0, int(blk%nb(1))+1
+                            blk%q(i,j,k,VAR_U,b) = sin(k0*blk%z(k,VAR_U,b)) + cos(k0*blk%y(j,VAR_U,b))
+                            blk%q(i,j,k,VAR_V,b) = sin(k0*blk%x(i,VAR_V,b)) + cos(k0*blk%z(k,VAR_V,b))
+                            blk%q(i,j,k,VAR_W,b) = sin(k0*blk%y(j,VAR_W,b)) + cos(k0*blk%x(i,VAR_W,b))
+                            blk%q(i,j,k,VAR_P,b) = -0.5d0*( &
+                                  (sin(k0*blk%z(k,VAR_P,b)) + cos(k0*blk%y(j,VAR_P,b)))**2 &
+                                + (sin(k0*blk%x(i,VAR_P,b)) + cos(k0*blk%z(k,VAR_P,b)))**2 &
+                                + (sin(k0*blk%y(j,VAR_P,b)) + cos(k0*blk%x(i,VAR_P,b)))**2)
+                        end do
+                    end do
+                end do
+            end do
+            return
+        end if
+
         ! Diagnostic shear-mode gate (interface_review §vi): a smooth periodic
         ! mean shear u(y)=sin(2*pi*y/Ly) across the interface, plus a structured
         ! checkerboard seed v = a*(-1)^(gx+gz) on the interface-normal velocity
