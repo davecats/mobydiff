@@ -47,8 +47,16 @@ program main
     ! field -- any change it makes IS the correction/interface defect. MOBY_PREDONLY:
     ! skip the projection so the field is the pure predictor. Either dumps the
     ! initial field (900000) so the change can be diffed.
-    logical :: projOnly, predOnly
+    logical :: projOnly, predOnly, divdump
     character(len=16) :: diagEnv
+    ! MOBY_DIVDUMP: write the discrete (raw staggered) divergence the solver sees,
+    ! BEFORE the last projection (div_pre = D u*, e.g. of the exact field under
+    ! MOBY_PROJONLY) and AFTER (div_post = D u_after), as companion field files.
+    ! div_post tests operator CONSISTENCY directly: a consistent projection leaves
+    ! ~0 residual divergence; an O(h) interface residual means D and G are not
+    ! consistent. Off by default; the normal path is bit-exact.
+    real(C_DOUBLE), allocatable :: divPre(:,:,:,:), divPost(:,:,:,:)
+    character(len=256) :: divBasePrefix
 
     call comm_init_world(c)
     call splash(c%has_terminal)
@@ -200,6 +208,8 @@ program main
     projOnly = len_trim(diagEnv) > 0
     call get_environment_variable("MOBY_PREDONLY", diagEnv)
     predOnly = len_trim(diagEnv) > 0
+    call get_environment_variable("MOBY_DIVDUMP", diagEnv)
+    divdump = len_trim(diagEnv) > 0
     if (projOnly .or. predOnly) &
         call write_field(blk, dns, g, 900000, c, bc, ps%nIter, ps%sor)
 
@@ -241,8 +251,16 @@ program main
 
             ! Projection: solve for pressure correction and project tentative velocities.
             ! Skipped under MOBY_PREDONLY (the field is then the pure predictor).
+            ! On the last substage capture the divergence the solver sees before
+            ! (D u*) and after (D u_after) the projection for MOBY_DIVDUMP.
+            ! Capture at the FIRST substage: divPre = D of the field entering the
+            ! first projection (the exact field under MOBY_PROJONLY), divPost = D
+            ! after that one projection. (Capturing later would measure D of an
+            ! already multiply-projected field.)
+            if (divdump .and. rkStage == 1) call capture_divergence(blk, divPre)
             if (.not. predOnly) &
                 call pressure_projection(ps, blk, dns, dt_gamma, ibm, bc, c)
+            if (divdump .and. rkStage == 1) call capture_divergence(blk, divPost)
 
         end do
 
@@ -267,6 +285,19 @@ program main
     end if
 
     call write_field(blk, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%sor)
+
+    ! MOBY_DIVDUMP companions: park the divergence in the pressure slot and write
+    ! it as separate field files (blk%q is not reused after the final dump).
+    if (divdump .and. allocated(divPost)) then
+        divBasePrefix = dns%field_prefix
+        call overwrite_var_p(blk, divPre)
+        dns%field_prefix = trim(divBasePrefix)//"_divpre"
+        call write_field(blk, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%sor)
+        call overwrite_var_p(blk, divPost)
+        dns%field_prefix = trim(divBasePrefix)//"_divpost"
+        call write_field(blk, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%sor)
+        dns%field_prefix = divBasePrefix
+    end if
 
     ! Release device-side data before the host allocatables go out of scope.
     call flow%finalize(dns, g, c)
@@ -428,6 +459,72 @@ contains
         end do
         print *, "HALO AUDIT: checked", nChecked, " bad", nBad
     end subroutine halo_audit
+
+    ! MOBY_DIVDUMP: raw staggered divergence of the current velocity (the exact D
+    ! the Jacobi sweep minimises) into a separate buffer; interior cells, halos
+    ! zeroed. Allocates + maps on first use; leaves blk%q untouched.
+    subroutine capture_divergence(blk, arr)
+        type(block_set_type), intent(in) :: blk
+        real(C_DOUBLE), allocatable, intent(inout) :: arr(:,:,:,:)
+        integer(C_INT) :: i, j, k, b, nx, ny, nz
+        nx = blk%nb(1); ny = blk%nb(2); nz = blk%nb(3)
+        if (.not. allocated(arr)) then
+            allocate(arr(lbound(blk%q,1):ubound(blk%q,1), &
+                         lbound(blk%q,2):ubound(blk%q,2), &
+                         lbound(blk%q,3):ubound(blk%q,3), blk%nBlocks))
+#ifdef USE_OPENMP_OFFLOAD
+            !$omp target enter data map(alloc: arr)
+#endif
+        end if
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target teams distribute parallel do collapse(4) &
+        !$omp& map(to: blk%q, blk%d1x, blk%d1y, blk%d1z) map(tofrom: arr) private(i,j,k,b)
+#endif
+        do b = 1_C_INT, blk%nBlocks
+            do k = lbound(arr,3), ubound(arr,3)
+                do j = lbound(arr,2), ubound(arr,2)
+                    do i = lbound(arr,1), ubound(arr,1)
+                        if (i >= 1 .and. i <= nx .and. j >= 1 .and. j <= ny &
+                            .and. k >= 1 .and. k <= nz) then
+                            arr(i,j,k,b) = &
+                                (blk%q(i+1,j,k,VAR_U,b)-blk%q(i,j,k,VAR_U,b))*blk%d1x(i,VAR_P,b) &
+                              + (blk%q(i,j+1,k,VAR_V,b)-blk%q(i,j,k,VAR_V,b))*blk%d1y(j,VAR_P,b) &
+                              + (blk%q(i,j,k+1,VAR_W,b)-blk%q(i,j,k,VAR_W,b))*blk%d1z(k,VAR_P,b)
+                        else
+                            arr(i,j,k,b) = 0.0d0
+                        end if
+                    end do
+                end do
+            end do
+        end do
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp end target teams distribute parallel do
+#endif
+    end subroutine capture_divergence
+
+    ! MOBY_DIVDUMP: park a scalar buffer in the pressure slot so write_field emits
+    ! it as "pn" (its target update from(blk%q) then pulls these values).
+    subroutine overwrite_var_p(blk, arr)
+        type(block_set_type), intent(inout) :: blk
+        real(C_DOUBLE), allocatable, intent(in) :: arr(:,:,:,:)
+        integer(C_INT) :: i, j, k, b
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target teams distribute parallel do collapse(4) &
+        !$omp& map(to: arr) map(tofrom: blk%q) private(i,j,k,b)
+#endif
+        do b = 1_C_INT, blk%nBlocks
+            do k = lbound(arr,3), ubound(arr,3)
+                do j = lbound(arr,2), ubound(arr,2)
+                    do i = lbound(arr,1), ubound(arr,1)
+                        blk%q(i,j,k,VAR_P,b) = arr(i,j,k,b)
+                    end do
+                end do
+            end do
+        end do
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp end target teams distribute parallel do
+#endif
+    end subroutine overwrite_var_p
 
     function line_at(blk, d, level, idx) result(v)
         type(block_set_type), intent(in) :: blk
