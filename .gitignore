@@ -80,3 +80,9 @@ validation/**/ic/
 validation/**/smoke/
 tutorials/interface_decay/decay_*.h5
 tutorials/interface_decay/run.log
+
+# run outputs / scratch
+validation/beltrami/suite/
+validation/*/runs/
+__pycache__/
+*.pyc

@@ -152,6 +152,8 @@ subroutine apply_config_value(section, key, value, dns, g, les, ps, bc, c, seen,
             call read_real(value, dns%initial_velocity(3), line_no)
         case ("initial_noise")
             call read_real(value, dns%initial_noise, line_no)
+        case ("initial")
+            dns%initial = clean_string(value)
         end select
     case ("time")
         select case (key_l)

@@ -37,6 +37,10 @@ module init
         ! [flow] initial_u/v/w: uniform initial velocity (generic case).
         real(C_DOUBLE) :: initial_velocity(1:3) = 0.0d0
         real(C_DOUBLE) :: initial_noise = 0.0d0
+        ! [flow] initial: analytic initial condition for the generic case --
+        ! "uniform" (default), "beltrami" (3D ABC flow) or "tgv" (Taylor-Green).
+        ! These are exact incompressible-NS solutions used as projection gates.
+        character(len=32) :: initial = "uniform"
         ! [blocks] nb: cubic block edge in cells; 0 = one block per rank box.
         integer(C_INT) :: block_nb = 0_C_INT
         ! [blocks] remove_solid: drop blocks buried inside the immersed body.

@@ -71,7 +71,37 @@ contains
 
         integer :: i, j, k, v, b, nSeed
         integer, allocatable :: seed(:)
-        real(C_DOUBLE) :: r
+        real(C_DOUBLE) :: r, kk
+
+        if (trim(dns%initial) == "beltrami" .or. trim(dns%initial) == "tgv") then
+            ! Exact incompressible-NS solutions on a 2*pi-periodic cube, k=2*pi/Lx,
+            ! each velocity component set at its own staggered coordinate. Beltrami
+            ! / ABC (curl u = k u, fully 3D, decays exp(-nu k^2 t)):
+            !   u = sin(kz)+cos(ky)  v = sin(kx)+cos(kz)  w = sin(ky)+cos(kx)
+            ! Taylor-Green (2D in x-y, decays exp(-2 nu k^2 t)):
+            !   u =  sin(kx)cos(ky)  v = -cos(kx)sin(ky)  w = 0
+            ! Set interior + the single halo layer; use blk%q's real bounds
+            ! (0:nb+1 here) since blk%x/y/z extend further (-1:nb+2) than q.
+            kk = 8.0d0*atan(1.0d0)/dns%leng(1)
+            do b = 1, int(blk%nBlocks)
+                do k = lbound(blk%q,3), ubound(blk%q,3)
+                    do j = lbound(blk%q,2), ubound(blk%q,2)
+                        do i = lbound(blk%q,1), ubound(blk%q,1)
+                            if (trim(dns%initial) == "beltrami") then
+                                blk%q(i,j,k,1,b) = sin(kk*blk%z(k,1,b)) + cos(kk*blk%y(j,1,b))
+                                blk%q(i,j,k,2,b) = sin(kk*blk%x(i,2,b)) + cos(kk*blk%z(k,2,b))
+                                blk%q(i,j,k,3,b) = sin(kk*blk%y(j,3,b)) + cos(kk*blk%x(i,3,b))
+                            else
+                                blk%q(i,j,k,1,b) =  sin(kk*blk%x(i,1,b))*cos(kk*blk%y(j,1,b))
+                                blk%q(i,j,k,2,b) = -cos(kk*blk%x(i,2,b))*sin(kk*blk%y(j,2,b))
+                                blk%q(i,j,k,3,b) = 0.0d0
+                            end if
+                        end do
+                    end do
+                end do
+            end do
+            return
+        end if
 
         blk%q(:,:,:,1,:) = dns%initial_velocity(1)
         blk%q(:,:,:,2,:) = dns%initial_velocity(2)
