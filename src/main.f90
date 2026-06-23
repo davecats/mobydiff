@@ -210,6 +210,23 @@ program main
     predOnly = len_trim(diagEnv) > 0
     call get_environment_variable("MOBY_DIVDUMP", diagEnv)
     divdump = len_trim(diagEnv) > 0
+    ! MOBY_MANUF=<amp>: add a pure-gradient perturbation amp*grad(phi),
+    ! phi = cos(kx)cos(ky)cos(kz), to the (exact, div-free) initial field.
+    ! The result is globally mass-conserving (a periodic gradient integrates
+    ! to zero) but NOT locally divergence-free. A consistent, conservative
+    ! projection must remove grad(phi) exactly -- recovering u_exact -- while
+    ! keeping the global mass error at round-off, INCLUDING at the 2:1
+    ! interface. Combine with MOBY_PROJONLY (project the manufactured field)
+    ! and MOBY_DIVDUMP (Sum vol*div before/after); diff the final field vs
+    ! the 900000 dump's exact part with tools/check_beltrami.py.
+    call get_environment_variable("MOBY_MANUF", diagEnv)
+    if (len_trim(diagEnv) > 0) then
+        block
+            real(C_DOUBLE) :: amp
+            read(diagEnv, *) amp
+            call manufacture_gradient_perturbation(blk, dns, amp)
+        end block
+    end if
     if (projOnly .or. predOnly) &
         call write_field(blk, dns, g, 900000, c, bc, ps%nIter, ps%sor)
 
@@ -525,6 +542,37 @@ contains
         !$omp end target teams distribute parallel do
 #endif
     end subroutine overwrite_var_p
+
+    ! MOBY_MANUF: add amp*grad(phi) to the velocity, phi = cos(kx)cos(ky)cos(kz),
+    ! at each component's staggered coordinate (full q bounds, halos included so
+    ! the fine-owned interface face carries the analytic value). A pure gradient
+    ! is irrotational: a consistent projection removes it entirely and recovers
+    ! the exact div-free field; a periodic gradient is globally mass-conserving.
+    subroutine manufacture_gradient_perturbation(blk, dns, amp)
+        type(block_set_type), intent(inout) :: blk
+        type(dns_type), intent(in) :: dns
+        real(C_DOUBLE), intent(in) :: amp
+        integer(C_INT) :: i, j, k, b
+        real(C_DOUBLE) :: kk
+        kk = 8.0d0*atan(1.0d0)/dns%leng(1)
+        do b = 1, int(blk%nBlocks)
+            do k = lbound(blk%q,3), ubound(blk%q,3)
+                do j = lbound(blk%q,2), ubound(blk%q,2)
+                    do i = lbound(blk%q,1), ubound(blk%q,1)
+                        blk%q(i,j,k,1,b) = blk%q(i,j,k,1,b) - amp*kk &
+                            *sin(kk*blk%x(i,1,b))*cos(kk*blk%y(j,1,b))*cos(kk*blk%z(k,1,b))
+                        blk%q(i,j,k,2,b) = blk%q(i,j,k,2,b) - amp*kk &
+                            *cos(kk*blk%x(i,2,b))*sin(kk*blk%y(j,2,b))*cos(kk*blk%z(k,2,b))
+                        blk%q(i,j,k,3,b) = blk%q(i,j,k,3,b) - amp*kk &
+                            *cos(kk*blk%x(i,3,b))*cos(kk*blk%y(j,3,b))*sin(kk*blk%z(k,3,b))
+                    end do
+                end do
+            end do
+        end do
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target update to(blk%q)
+#endif
+    end subroutine manufacture_gradient_perturbation
 
     function line_at(blk, d, level, idx) result(v)
         type(block_set_type), intent(in) :: blk

@@ -62,6 +62,13 @@ module comm
         integer, allocatable :: lDir(:,:)                  ! direction (dst-completion adjacency)
         real(C_DOUBLE), allocatable :: lWp(:), lWpDst(:)   ! pressure dst-completion weights
         integer, allocatable :: lOff(:)                    ! (0:nLocal) point prefix
+        ! Fine-owned interface normal velocity: dimension d of the normal
+        ! velocity component this entry must NOT overwrite (a PROLONG onto a
+        ! fine block's high interface face, off(d)==+1), else 0. The fine
+        ! block owns that face (predictor + jacobi reconstruction); letting
+        ! the coarse value prolong over it differences a coarse-resolution
+        ! flux into the fine divergence (an O(1) interface inconsistency).
+        integer, allocatable :: lNrm(:)                    ! (nLocal)
 
         integer :: nPeers = 0
         integer, allocatable :: peerRank(:)
@@ -80,6 +87,7 @@ module comm
         integer, allocatable :: rDir(:,:)
         real(C_DOUBLE), allocatable :: rWp(:), rWpDst(:)
         integer, allocatable :: rOff(:)
+        integer, allocatable :: rNrm(:)                    ! (nRecv) see lNrm
 
         integer :: maxBufferCount = 0
         real(C_DOUBLE), allocatable :: sendbuf(:,:)        ! (maxBufferCount, nPeers)
@@ -233,6 +241,7 @@ contains
                                 c%lWp(nLocal) = entry_blend(blk, dns, int(blk%level(b)), &
                                     int(blk%origin(:,b)), off(:,d), opc(cand))
                                 c%lWpDst(nLocal) = 1.0d0 - c%lWp(nLocal)
+                                c%lNrm(nLocal) = prolong_normal_dim(opc(cand), off(:,d))
                                 c%lOff(nLocal) = c%lOff(nLocal-1) + pts
                             end if
                             c%nLocalPts = c%nLocalPts + pts
@@ -276,6 +285,7 @@ contains
                                     c%rWp(nRecv) = entry_blend(blk, dns, int(blk%level(b)), &
                                         int(blk%origin(:,b)), off(:,d), opc(cand))
                                     c%rWpDst(nRecv) = 1.0d0 - c%rWp(nRecv)
+                                    c%rNrm(nRecv) = prolong_normal_dim(opc(cand), off(:,d))
                                     c%rOff(nRecv) = c%rOff(nRecv-1) + pts
                                 end if
                                 c%peerRecvOff(p) = c%peerRecvOff(p) + pts
@@ -347,6 +357,7 @@ contains
                 allocate(c%lGS(3,max(1,nLocal)), c%lGC(3,max(1,nLocal)))
                 allocate(c%lDir(3,max(1,nLocal)))
                 allocate(c%lWp(max(1,nLocal)), c%lWpDst(max(1,nLocal)))
+                allocate(c%lNrm(max(1,nLocal)))
                 allocate(c%lOff(0:max(1,nLocal)))
                 allocate(c%sSlot(max(1,nSend)), c%sPeer(max(1,nSend)))
                 allocate(c%sExt(3,max(1,nSend)))
@@ -358,11 +369,14 @@ contains
                 allocate(c%rLo(3,max(1,nRecv)), c%rExt(3,max(1,nRecv)))
                 allocate(c%rDir(3,max(1,nRecv)))
                 allocate(c%rWp(max(1,nRecv)), c%rWpDst(max(1,nRecv)))
+                allocate(c%rNrm(max(1,nRecv)))
                 allocate(c%rOff(0:max(1,nRecv)))
                 c%lWp = 1.0d0
                 c%lWpDst = 0.0d0
                 c%rWp = 1.0d0
                 c%rWpDst = 0.0d0
+                c%lNrm = 0
+                c%rNrm = 0
                 c%lOff = 0
                 c%sOff = 0
                 c%rOff = 0
@@ -387,11 +401,11 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target enter data map(to: &
         !$omp& c%lSrcSlot, c%lDstSlot, c%lDstLo, c%lExt, c%lOff, &
-        !$omp& c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lWp, c%lWpDst, &
+        !$omp& c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lWp, c%lWpDst, c%lNrm, &
         !$omp& c%sSlot, c%sPeer, c%sExt, c%sOff, &
         !$omp& c%sGA, c%sGB, c%sGS, c%sGC, c%sDstLo, &
         !$omp& c%peerSendOff, c%peerRecvOff, c%peerSendCopyOff, c%peerRecvCopyOff, &
-        !$omp& c%rSlot, c%rPeer, c%rLo, c%rExt, c%rDir, c%rWp, c%rWpDst, c%rOff)
+        !$omp& c%rSlot, c%rPeer, c%rLo, c%rExt, c%rDir, c%rWp, c%rWpDst, c%rOff, c%rNrm)
         !$omp target enter data map(alloc: c%sendbuf, c%recvbuf)
 #endif
     end subroutine init_block_exchange
@@ -404,18 +418,18 @@ contains
             !$omp target exit data map(delete: c%sendbuf, c%recvbuf)
             !$omp target exit data map(delete: &
             !$omp& c%lSrcSlot, c%lDstSlot, c%lDstLo, c%lExt, c%lOff, &
-            !$omp& c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lWp, c%lWpDst, &
+            !$omp& c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lWp, c%lWpDst, c%lNrm, &
             !$omp& c%sSlot, c%sPeer, c%sExt, c%sOff, &
             !$omp& c%sGA, c%sGB, c%sGS, c%sGC, c%sDstLo, &
             !$omp& c%peerSendOff, c%peerRecvOff, c%peerSendCopyOff, c%peerRecvCopyOff, &
-            !$omp& c%rSlot, c%rPeer, c%rLo, c%rExt, c%rDir, c%rWp, c%rWpDst, c%rOff)
+            !$omp& c%rSlot, c%rPeer, c%rLo, c%rExt, c%rDir, c%rWp, c%rWpDst, c%rOff, c%rNrm)
 #endif
             deallocate(c%sendbuf, c%recvbuf)
             deallocate(c%lSrcSlot, c%lDstSlot, c%lDstLo, c%lExt, c%lOff)
-            deallocate(c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lWp, c%lWpDst)
+            deallocate(c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lWp, c%lWpDst, c%lNrm)
             deallocate(c%sSlot, c%sPeer, c%sExt, c%sOff)
             deallocate(c%sGA, c%sGB, c%sGS, c%sGC, c%sDstLo)
-            deallocate(c%rSlot, c%rPeer, c%rLo, c%rExt, c%rDir, c%rWp, c%rWpDst, c%rOff)
+            deallocate(c%rSlot, c%rPeer, c%rLo, c%rExt, c%rDir, c%rWp, c%rWpDst, c%rOff, c%rNrm)
             deallocate(c%request)
         end if
         if (allocated(c%peerRank)) deallocate(c%peerRank)
@@ -633,6 +647,25 @@ contains
             end if
         end do
     end subroutine entry_gather_map
+
+    ! Normal-velocity dimension a PROLONG face entry must leave fine-owned,
+    ! or 0. A PROLONG across a pure face (off(d)==+1) writes the fine block's
+    ! HIGH interface face q(nb+1) in dim d -- that face is the fine cell's
+    ! interface normal velocity (read by its divergence), reconstructed at
+    ! fine resolution inside the projection; prolonging the coarse value over
+    ! it is the O(1) inconsistency. off(d)==-1 PROLONG writes the LOW halo
+    ! q(0), which sits BELOW the fine-owned interface face q(1) and is a
+    ! genuine momentum halo, so it is kept.
+    pure integer function prolong_normal_dim(op, off) result(dnorm)
+        integer, intent(in) :: op, off(3)
+        integer :: d
+        dnorm = 0
+        if (op /= OP_PROLONG) return
+        if (sum(abs(off)) /= 1) return
+        do d = 1, 3
+            if (off(d) == 1) dnorm = d
+        end do
+    end function prolong_normal_dim
 
     ! Ghost-interpolation weight for the pressure on a PROLONG face entry.
     ! Plain injection puts the coarse cell value at the fine halo centre,
@@ -1128,7 +1161,7 @@ contains
         !$omp target teams distribute parallel do &
         !$omp& map(to: totalItems, nv, c%nLocal, c%lOff, c%lSrcSlot, c%lDstSlot, &
         !$omp& c%lDstLo, c%lExt, c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lWp, c%lWpDst, &
-        !$omp& c%activeVars) &
+        !$omp& c%lNrm, c%activeVars) &
         !$omp& map(tofrom: blk%q) &
         !$omp& private(p,gp,v,e,pt,ni,nj,di,dj,dk,var,b1,b2,b3,c1,c2,c3,s1,s2,s3,val)
 #endif
@@ -1165,7 +1198,8 @@ contains
                 val = c%lWp(e)*val + c%lWpDst(e) &
                     *blk%q(di-c%lDir(1,e), dj-c%lDir(2,e), dk-c%lDir(3,e), var, c%lDstSlot(e))
             end if
-            blk%q(di,dj,dk,var,c%lDstSlot(e)) = val
+            ! Leave the fine-owned interface normal velocity face untouched.
+            if (var /= c%lNrm(e)) blk%q(di,dj,dk,var,c%lDstSlot(e)) = val
         end do
 #ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
@@ -1298,7 +1332,7 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
         !$omp& map(to: totalItems, nv, copyOnly, c%nPeers, c%nRecv, c%rOff, c%rSlot, c%rPeer, &
-        !$omp& c%rLo, c%rExt, c%rDir, c%rWp, c%rWpDst, &
+        !$omp& c%rLo, c%rExt, c%rDir, c%rWp, c%rWpDst, c%rNrm, &
         !$omp& c%peerRecvOff, c%peerRecvCopyOff, c%activeVars, c%recvbuf) &
         !$omp& map(tofrom: blk%q) &
         !$omp& private(p,gp,v,e,pt,ni,nj,i,j,k,var,peer,pos,val)
@@ -1325,7 +1359,8 @@ contains
                 val = c%rWp(e)*val + c%rWpDst(e) &
                     *blk%q(i-c%rDir(1,e), j-c%rDir(2,e), k-c%rDir(3,e), var, c%rSlot(e))
             end if
-            blk%q(i,j,k,var,c%rSlot(e)) = val
+            ! Leave the fine-owned interface normal velocity face untouched.
+            if (var /= c%rNrm(e)) blk%q(i,j,k,var,c%rSlot(e)) = val
         end do
 #ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
