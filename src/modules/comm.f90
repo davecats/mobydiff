@@ -69,6 +69,15 @@ module comm
         ! the coarse value prolong over it differences a coarse-resolution
         ! flux into the fine divergence (an O(1) interface inconsistency).
         integer, allocatable :: lNrm(:)                    ! (nLocal)
+        ! Signed normal dim (+d/-d) of an interface RESTRICT pure-face entry,
+        ! else 0. Used only by the projection's phi scalar exchange
+        ! (phiIfaceRow): the coarse interface-correction ghost must be the
+        ! restrict of the FINE INTERFACE ROW (the single fine row touching the
+        ! face), not the cell-centred 2-normal-row restrict -- otherwise the
+        ! coarse and fine interface corrections are not exactly mean-equal and
+        ! the projection leaks a little mass. The averaging happens on the
+        ! source side, so only the local-copy and send (pack) paths apply it.
+        integer, allocatable :: lPhiN(:)                   ! (nLocal)
 
         integer :: nPeers = 0
         integer, allocatable :: peerRank(:)
@@ -82,6 +91,7 @@ module comm
         integer, allocatable :: sGA(:,:), sGB(:,:), sGS(:,:), sGC(:,:)
         integer, allocatable :: sDstLo(:,:)                ! dst box lo (gather indexing)
         integer, allocatable :: sOff(:)                    ! (0:nSend) point prefix, peer-major
+        integer, allocatable :: sPhiN(:)                   ! (nSend) see lPhiN
         integer, allocatable :: rSlot(:), rPeer(:)
         integer, allocatable :: rLo(:,:), rExt(:,:)
         integer, allocatable :: rDir(:,:)
@@ -110,6 +120,10 @@ module comm
         ! skip) and the composite stencil's mean-equal corrections keep it
         ! conservative throughout.
         logical :: syncFace = .false.
+        ! When true, the scalar (phi) exchange restricts the FINE INTERFACE
+        ! ROW into the coarse interface-correction ghost (see lPhiN). Off for
+        ! cell-centred scalars (e.g. les%nut).
+        logical :: phiIfaceRow = .false.
     end type comm_type
 
     public :: comm_init_world, comm_init, comm_finalize
@@ -251,6 +265,7 @@ contains
                                     int(blk%origin(:,b)), off(:,d), opc(cand))
                                 c%lWpDst(nLocal) = 1.0d0 - c%lWp(nLocal)
                                 c%lNrm(nLocal) = interface_normal_dim(opc(cand), off(:,d))
+                                c%lPhiN(nLocal) = iface_restrict_normal(opc(cand), off(:,d))
                                 c%lOff(nLocal) = c%lOff(nLocal-1) + pts
                             end if
                             c%nLocalPts = c%nLocalPts + pts
@@ -346,6 +361,7 @@ contains
                                     call entry_gather_map(opc(cand), off(:,d), tqc(:,cand), nb, &
                                         srcLo, dstLo, c%sGA(:,nSend), c%sGB(:,nSend), &
                                         c%sGS(:,nSend), c%sGC(:,nSend))
+                                    c%sPhiN(nSend) = iface_restrict_normal(opc(cand), off(:,d))
                                     c%sOff(nSend) = c%sOff(nSend-1) + pts
                                 end if
                                 c%peerSendOff(p) = c%peerSendOff(p) + pts
@@ -367,12 +383,14 @@ contains
                 allocate(c%lDir(3,max(1,nLocal)))
                 allocate(c%lWp(max(1,nLocal)), c%lWpDst(max(1,nLocal)))
                 allocate(c%lNrm(max(1,nLocal)))
+                allocate(c%lPhiN(max(1,nLocal)))
                 allocate(c%lOff(0:max(1,nLocal)))
                 allocate(c%sSlot(max(1,nSend)), c%sPeer(max(1,nSend)))
                 allocate(c%sExt(3,max(1,nSend)))
                 allocate(c%sGA(3,max(1,nSend)), c%sGB(3,max(1,nSend)))
                 allocate(c%sGS(3,max(1,nSend)), c%sGC(3,max(1,nSend)))
                 allocate(c%sDstLo(3,max(1,nSend)))
+                allocate(c%sPhiN(max(1,nSend)))
                 allocate(c%sOff(0:max(1,nSend)))
                 allocate(c%rSlot(max(1,nRecv)), c%rPeer(max(1,nRecv)))
                 allocate(c%rLo(3,max(1,nRecv)), c%rExt(3,max(1,nRecv)))
@@ -386,6 +404,8 @@ contains
                 c%rWpDst = 0.0d0
                 c%lNrm = 0
                 c%rNrm = 0
+                c%lPhiN = 0
+                c%sPhiN = 0
                 c%lOff = 0
                 c%sOff = 0
                 c%rOff = 0
@@ -410,9 +430,9 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target enter data map(to: &
         !$omp& c%lSrcSlot, c%lDstSlot, c%lDstLo, c%lExt, c%lOff, &
-        !$omp& c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lWp, c%lWpDst, c%lNrm, &
+        !$omp& c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lWp, c%lWpDst, c%lNrm, c%lPhiN, &
         !$omp& c%sSlot, c%sPeer, c%sExt, c%sOff, &
-        !$omp& c%sGA, c%sGB, c%sGS, c%sGC, c%sDstLo, &
+        !$omp& c%sGA, c%sGB, c%sGS, c%sGC, c%sDstLo, c%sPhiN, &
         !$omp& c%peerSendOff, c%peerRecvOff, c%peerSendCopyOff, c%peerRecvCopyOff, &
         !$omp& c%rSlot, c%rPeer, c%rLo, c%rExt, c%rDir, c%rWp, c%rWpDst, c%rOff, c%rNrm)
         !$omp target enter data map(alloc: c%sendbuf, c%recvbuf)
@@ -427,17 +447,17 @@ contains
             !$omp target exit data map(delete: c%sendbuf, c%recvbuf)
             !$omp target exit data map(delete: &
             !$omp& c%lSrcSlot, c%lDstSlot, c%lDstLo, c%lExt, c%lOff, &
-            !$omp& c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lWp, c%lWpDst, c%lNrm, &
+            !$omp& c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lWp, c%lWpDst, c%lNrm, c%lPhiN, &
             !$omp& c%sSlot, c%sPeer, c%sExt, c%sOff, &
-            !$omp& c%sGA, c%sGB, c%sGS, c%sGC, c%sDstLo, &
+            !$omp& c%sGA, c%sGB, c%sGS, c%sGC, c%sDstLo, c%sPhiN, &
             !$omp& c%peerSendOff, c%peerRecvOff, c%peerSendCopyOff, c%peerRecvCopyOff, &
             !$omp& c%rSlot, c%rPeer, c%rLo, c%rExt, c%rDir, c%rWp, c%rWpDst, c%rOff, c%rNrm)
 #endif
             deallocate(c%sendbuf, c%recvbuf)
             deallocate(c%lSrcSlot, c%lDstSlot, c%lDstLo, c%lExt, c%lOff)
-            deallocate(c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lWp, c%lWpDst, c%lNrm)
+            deallocate(c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lWp, c%lWpDst, c%lNrm, c%lPhiN)
             deallocate(c%sSlot, c%sPeer, c%sExt, c%sOff)
-            deallocate(c%sGA, c%sGB, c%sGS, c%sGC, c%sDstLo)
+            deallocate(c%sGA, c%sGB, c%sGS, c%sGC, c%sDstLo, c%sPhiN)
             deallocate(c%rSlot, c%rPeer, c%rLo, c%rExt, c%rDir, c%rWp, c%rWpDst, c%rOff, c%rNrm)
             deallocate(c%request)
         end if
@@ -684,6 +704,21 @@ contains
             if (off(d) == 1) dnorm = d
         end do
     end function interface_normal_dim
+
+    ! Signed normal dim (off(d)*d) of an interface RESTRICT pure-face entry,
+    ! else 0. The sign tells the phi exchange which of the two cell-centred
+    ! source rows is the one touching the interface: for off=+1 the lower row
+    ! (base, no shift), for off=-1 the upper row (base + 1).
+    pure integer function iface_restrict_normal(op, off) result(sd)
+        integer, intent(in) :: op, off(3)
+        integer :: d
+        sd = 0
+        if (op /= OP_RESTRICT) return
+        if (sum(abs(off)) /= 1) return
+        do d = 1, 3
+            if (off(d) /= 0) sd = off(d)*d
+        end do
+    end function iface_restrict_normal
 
     ! Ghost-interpolation weight for the pressure on a PROLONG face entry.
     ! Plain injection puts the coarse cell value at the fine halo centre,
@@ -1125,15 +1160,23 @@ contains
         c%syncFace = .false.
     end subroutine exchange_halos
 
-    ! Per-block scalar halos (e.g. les%nut) on the same exchange entries.
-    subroutine exchange_scalar_halos(c, scalar)
+    ! Per-block scalar halos (e.g. les%nut, the projection's phi) on the same
+    ! exchange entries. ifaceRow restricts the fine INTERFACE ROW (not the
+    ! cell-centred 2-row average) into the coarse interface-correction ghost --
+    ! used for phi so the interface corrections are conservative; off for
+    ! cell-centred scalars like les%nut.
+    subroutine exchange_scalar_halos(c, scalar, ifaceRow)
         type(comm_type), intent(inout) :: c
         real(C_DOUBLE), intent(inout) :: scalar(0:,0:,0:,1:)
+        logical, intent(in), optional :: ifaceRow
 
         integer :: ierr, p, nRequest
 
         call require_ready(c)
         if (c%exchangeActive) error stop "halo exchange already active"
+
+        c%phiIfaceRow = .false.
+        if (present(ifaceRow)) c%phiIfaceRow = ifaceRow
 
         if (c%nPeers > 0) then
             call pack_scalar_entries(c, scalar)
@@ -1163,6 +1206,7 @@ contains
             call unpack_scalar_entries(c, scalar)
             c%request = MPI_REQUEST_NULL
         end if
+        c%phiIfaceRow = .false.
     end subroutine exchange_scalar_halos
 
     subroutine copy_local_entries(c, blk)
@@ -1234,19 +1278,20 @@ contains
         real(C_DOUBLE), intent(inout) :: scalar(0:,0:,0:,1:)
 
         integer :: p, e, pt, ni, nj
-        integer :: di, dj, dk, totalItems
+        integer :: di, dj, dk, totalItems, sfr, pn
         integer :: b1, b2, b3, c1, c2, c3, s1, s2, s3
         real(C_DOUBLE) :: val
 
         totalItems = c%nLocalPts
         if (totalItems == 0) return
+        sfr = merge(1, 0, c%phiIfaceRow)
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
-        !$omp& map(to: totalItems, c%nLocal, c%lOff, c%lSrcSlot, c%lDstSlot, &
-        !$omp& c%lDstLo, c%lExt, c%lGA, c%lGB, c%lGS, c%lGC) &
+        !$omp& map(to: totalItems, sfr, c%nLocal, c%lOff, c%lSrcSlot, c%lDstSlot, &
+        !$omp& c%lDstLo, c%lExt, c%lGA, c%lGB, c%lGS, c%lGC, c%lPhiN) &
         !$omp& map(tofrom: scalar) &
-        !$omp& private(p,e,pt,ni,nj,di,dj,dk,b1,b2,b3,c1,c2,c3,s1,s2,s3,val)
+        !$omp& private(p,e,pt,ni,nj,di,dj,dk,b1,b2,b3,c1,c2,c3,s1,s2,s3,val,pn)
 #endif
         do p = 1, totalItems
             e = find_entry(c%lOff, c%nLocal, p - 1)
@@ -1262,6 +1307,16 @@ contains
             c1 = c%lGC(1,e)
             c2 = c%lGC(2,e)
             c3 = c%lGC(3,e)
+            ! phi interface-row restrict: read only the fine row touching the
+            ! face along the normal dim (base + 1 for off=-1, base for off=+1).
+            pn = c%lPhiN(e)
+            if (sfr == 1 .and. pn /= 0) then
+                select case (abs(pn))
+                case (1); b1 = b1 + merge(1, 0, pn < 0); c1 = 1
+                case (2); b2 = b2 + merge(1, 0, pn < 0); c2 = 1
+                case (3); b3 = b3 + merge(1, 0, pn < 0); c3 = 1
+                end select
+            end if
             val = 0.0d0
             do s3 = 0, c3 - 1
                 do s2 = 0, c2 - 1
@@ -1397,19 +1452,20 @@ contains
         real(C_DOUBLE), intent(in) :: scalar(0:,0:,0:,1:)
 
         integer :: p, e, pt, ni, nj
-        integer :: di, dj, dk, peer, pos, totalItems
+        integer :: di, dj, dk, peer, pos, totalItems, sfr, pn
         integer :: b1, b2, b3, c1, c2, c3, s1, s2, s3
         real(C_DOUBLE) :: val
 
         totalItems = c%peerSendOff(c%nPeers)
         if (totalItems == 0) return
+        sfr = merge(1, 0, c%phiIfaceRow)
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
-        !$omp& map(to: totalItems, c%nSend, c%sOff, c%sSlot, c%sPeer, &
-        !$omp& c%sDstLo, c%sExt, c%sGA, c%sGB, c%sGS, c%sGC, c%peerSendOff, scalar) &
+        !$omp& map(to: totalItems, sfr, c%nSend, c%sOff, c%sSlot, c%sPeer, &
+        !$omp& c%sDstLo, c%sExt, c%sGA, c%sGB, c%sGS, c%sGC, c%sPhiN, c%peerSendOff, scalar) &
         !$omp& map(tofrom: c%sendbuf) &
-        !$omp& private(p,e,pt,ni,nj,di,dj,dk,peer,pos,b1,b2,b3,c1,c2,c3,s1,s2,s3,val)
+        !$omp& private(p,e,pt,ni,nj,di,dj,dk,peer,pos,b1,b2,b3,c1,c2,c3,s1,s2,s3,val,pn)
 #endif
         do p = 1, totalItems
             e = find_entry(c%sOff, c%nSend, p - 1)
@@ -1425,6 +1481,14 @@ contains
             c1 = c%sGC(1,e)
             c2 = c%sGC(2,e)
             c3 = c%sGC(3,e)
+            pn = c%sPhiN(e)
+            if (sfr == 1 .and. pn /= 0) then
+                select case (abs(pn))
+                case (1); b1 = b1 + merge(1, 0, pn < 0); c1 = 1
+                case (2); b2 = b2 + merge(1, 0, pn < 0); c2 = 1
+                case (3); b3 = b3 + merge(1, 0, pn < 0); c3 = 1
+                end select
+            end if
             val = 0.0d0
             do s3 = 0, c3 - 1
                 do s2 = 0, c2 - 1

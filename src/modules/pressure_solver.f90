@@ -62,7 +62,10 @@ contains
         ! (RESTRICT/PROLONG) and reconciled by the final full exchange.
         do iIter = 1_C_INT, ps%nIter
             call jacobi_compute_phi(ps, blk, dt_gamma, ibm)
-            call exchange_scalar_halos(c, phi)
+            ! ifaceRow: the coarse interface-correction ghost is the restrict of
+            ! the fine INTERFACE ROW, so the coarse and fine interface velocity
+            ! corrections are exactly mean-equal (conservation to round-off).
+            call exchange_scalar_halos(c, phi, ifaceRow=.true.)
             call jacobi_apply(ps, blk, dt_gamma, ibm)
             call apply_bc(blk, bc)
             if (iIter == ps%nIter) then
