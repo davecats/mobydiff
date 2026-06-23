@@ -42,6 +42,13 @@ program main
     integer(C_INT), allocatable :: blockTouch(:,:), blockBuried(:,:)
     integer :: refineLevel, maskCount
     logical :: blockActiveFound
+    ! Interface-diagnosis toggles (off by default). MOBY_PROJONLY: skip the
+    ! momentum predictor so the projection acts on the exact div-free initial
+    ! field -- any change it makes IS the correction/interface defect. MOBY_PREDONLY:
+    ! skip the projection so the field is the pure predictor. Either dumps the
+    ! initial field (900000) so the change can be diffed.
+    logical :: projOnly, predOnly
+    character(len=16) :: diagEnv
 
     call comm_init_world(c)
     call splash(c%has_terminal)
@@ -187,6 +194,15 @@ program main
         call update_timestep_limits(blk, dns, c)
     end if
 
+    ! Interface-diagnosis toggles. Dump the (exact) initial field as 900000 so a
+    ! projection-only / predictor-only run can be diffed against it.
+    call get_environment_variable("MOBY_PROJONLY", diagEnv)
+    projOnly = len_trim(diagEnv) > 0
+    call get_environment_variable("MOBY_PREDONLY", diagEnv)
+    predOnly = len_trim(diagEnv) > 0
+    if (projOnly .or. predOnly) &
+        call write_field(blk, dns, g, 900000, c, bc, ps%nIter, ps%sor)
+
     if (c%has_terminal) print *, "main loop starting..."
     loop_steps = 0_C_INT
     call reset_les_profile(les_prof)
@@ -205,23 +221,28 @@ program main
             dt_gamma = dns%dt*rk_gamma(rkStage)
 
             ! Predictor: advance tentative staggered velocities, then enforce solid/body constraints.
-            call update_ibm_mu(ibm, dt_gamma)
-            if (les_is_enabled(les)) then
-                les_profile_start = les_wall_seconds()
-                call update_les_viscosity(les, blk, dns, ibm)
-                call add_les_profile(les_prof, LES_PROF_NUT, les_wall_seconds() - les_profile_start)
-                les_profile_start = les_wall_seconds()
-                call exchange_scalar_halos(c, les%nut)
-                call add_les_profile(les_prof, LES_PROF_EXCHANGE, les_wall_seconds() - les_profile_start)
-                call momentum(blk, dns, dt_alpha, dt_beta, dt_gamma, ibm, les, les_prof)
-            else
-                call momentum(blk, dns, dt_alpha, dt_beta, dt_gamma, ibm)
+            ! Skipped under MOBY_PROJONLY (the projection then acts on the exact field).
+            if (.not. projOnly) then
+                call update_ibm_mu(ibm, dt_gamma)
+                if (les_is_enabled(les)) then
+                    les_profile_start = les_wall_seconds()
+                    call update_les_viscosity(les, blk, dns, ibm)
+                    call add_les_profile(les_prof, LES_PROF_NUT, les_wall_seconds() - les_profile_start)
+                    les_profile_start = les_wall_seconds()
+                    call exchange_scalar_halos(c, les%nut)
+                    call add_les_profile(les_prof, LES_PROF_EXCHANGE, les_wall_seconds() - les_profile_start)
+                    call momentum(blk, dns, dt_alpha, dt_beta, dt_gamma, ibm, les, les_prof)
+                else
+                    call momentum(blk, dns, dt_alpha, dt_beta, dt_gamma, ibm)
+                end if
+                call apply_bc(blk, bc)
+                call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W])
             end if
-            call apply_bc(blk, bc)
-            call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W])
 
             ! Projection: solve for pressure correction and project tentative velocities.
-            call pressure_projection(ps, blk, dns, dt_gamma, ibm, bc, c)
+            ! Skipped under MOBY_PREDONLY (the field is then the pure predictor).
+            if (.not. predOnly) &
+                call pressure_projection(ps, blk, dns, dt_gamma, ibm, bc, c)
 
         end do
 
