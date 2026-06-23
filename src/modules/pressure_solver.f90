@@ -4,7 +4,7 @@ module pressure_solver
     use :: blocks, only: block_set_type, FACE_PHYS, FACE_CLOSED
     use :: ibmm, only: ibm_type
     use :: boundary, only: boundary_type, apply_bc
-    use :: comm, only: comm_type, exchange_halos
+    use :: comm, only: comm_type, exchange_halos, exchange_scalar_halos
 
     implicit none
 
@@ -13,8 +13,20 @@ module pressure_solver
 
     type :: pressure_solver_type
         integer(C_INT) :: nIter=3
-        real(C_DOUBLE) :: sor=1.5d0
+        ! Damped-Jacobi relaxation factor. The pressure projection is now a
+        ! simple (un-coloured) damped Jacobi iteration; for the Poisson-like
+        ! projection operator the high-frequency (checkerboard) mode forces
+        ! the factor strictly below 1 (omega=1 is marginally unstable). 0.8 is
+        ! a safe default; the config key is still "sor".
+        real(C_DOUBLE) :: sor=0.8d0
     end type pressure_solver_type
+
+    ! Pressure-increment buffer for the Jacobi sweep. Unlike the in-place
+    ! red-black SOR, Jacobi computes every cell's increment from the SAME frozen
+    ! divergence, then applies pressure and the velocity-face corrections in
+    ! separate race-free passes. phi shares blk%q's spatial bounds (0:nb+1) so
+    ! exchange_scalar_halos can fill the halo layer the face corrections read.
+    real(C_DOUBLE), allocatable :: phi(:,:,:,:)
 
 contains
 
@@ -23,23 +35,9 @@ contains
         type(dns_type), intent(in) :: dns
         type(boundary_type), intent(in) :: bc
         logical, intent(in), optional :: has_terminal
-        integer :: dir
-        logical :: terminal
 
-        terminal = .true.
-        if (present(has_terminal)) terminal = has_terminal
-
-
-        do dir = 1, 3
-            if (bc%isPeriodic(dir) .and. mod(dns%globalSize(dir), 2_C_INT) /= 0) then
-                if (terminal) then
-                    print *, "invalid red-black grid: periodic direction", dir, &
-                             "has odd global size", dns%globalSize(dir)
-                end if
-                error stop "red-black pressure solver requires even global sizes in periodic directions"
-            end if
-        end do
-
+        ! Damped Jacobi needs no red-black colouring, so the even-global-size
+        ! restriction of the red-black scheme no longer applies.
     end subroutine init_pressure_solver
 
     subroutine pressure_projection(ps, blk, dns, dt_gamma, ibm, bc, c)
@@ -51,173 +49,182 @@ contains
         type(boundary_type), intent(in) :: bc
         type(comm_type), intent(inout) :: c
 
-        integer(C_INT) :: iIter, color
+        integer(C_INT) :: iIter
 
-        ! Per-colour exchanges refresh only same-level copies (interp =
-        ! false): each side of a 2:1 interface relaxes its own copy of the
-        ! interface faces against stage-frozen cross-level ghosts, which
-        ! keeps the block iteration contractive. The final full exchange
-        ! reconciles the copies conservatively (restriction of the fine
-        ! faces / injection of the coarse face).
+        call allocate_phi(blk)
+
+        ! Damped-Jacobi projection. Each iteration: (1) compute the pressure
+        ! increment phi = -omega*div/denom from the frozen velocity, (2) exchange
+        ! phi's halos so the face corrections see the neighbour increment, (3)
+        ! apply phi to the pressure and the velocity faces, (4) refresh the
+        ! velocity (and, on the last iteration, pressure) halos for the next
+        ! divergence. The 2:1 interface is still handled by the exchange transfer
+        ! (RESTRICT/PROLONG) and reconciled by the final full exchange.
         do iIter = 1_C_INT, ps%nIter
-            do color = 1_C_INT, 0_C_INT, -1_C_INT
-                call redblack_sweep(ps, blk, dt_gamma, ibm, color)
-                call apply_bc(blk, bc)
-                if (iIter == ps%nIter .and. color == 0_C_INT) then
-                    call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W, VAR_P])
-                else
-                    call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W], interp=.false.)
-                end if
-            end do
+            call jacobi_compute_phi(ps, blk, dt_gamma, ibm)
+            call exchange_scalar_halos(c, phi)
+            call jacobi_apply(ps, blk, dt_gamma, ibm)
+            call apply_bc(blk, bc)
+            if (iIter == ps%nIter) then
+                call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W, VAR_P])
+            else
+                call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W], interp=.false.)
+            end if
         end do
-
     end subroutine pressure_projection
 
-    subroutine redblack_sweep(ps, blk, dt_gamma, ibm, color)
+    ! Allocate the device-resident phi buffer once (same 0:nb+1 spatial bounds
+    ! as blk%q so the scalar halo exchange and the face corrections line up).
+    subroutine allocate_phi(blk)
+        type(block_set_type), intent(in) :: blk
+        if (.not. allocated(phi)) then
+            allocate(phi(lbound(blk%q,1):ubound(blk%q,1), &
+                         lbound(blk%q,2):ubound(blk%q,2), &
+                         lbound(blk%q,3):ubound(blk%q,3), blk%nBlocks))
+            phi = 0.0d0
+#ifdef USE_OPENMP_OFFLOAD
+            !$omp target enter data map(to: phi)
+#endif
+        end if
+    end subroutine allocate_phi
+
+    ! Jacobi step 1: phi(i,j,k) = -omega * div / denom for every interior cell,
+    ! from the frozen velocity. denom is the projection diagonal (sum of the
+    ! cell's non-pinned face metrics); pinned faces (walls, closed faces) leave
+    ! the diagonal exactly as in the red-black scheme.
+    subroutine jacobi_compute_phi(ps, blk, dt_gamma, ibm)
         type(pressure_solver_type), intent(in) :: ps
         type(block_set_type), intent(inout) :: blk
         real(C_DOUBLE), intent(in) :: dt_gamma
         type(ibm_type), intent(in) :: ibm
-        integer(C_INT), intent(in) :: color
 
-        real(C_DOUBLE) :: phi,denom,idt,sor
-        real(C_DOUBLE) :: div
-        real(C_DOUBLE) :: mu_u_i,mu_u_ip,mu_v_j,mu_v_jp,mu_w_k,mu_w_kp
-        integer(C_INT) :: i,ip,j,jp,k,kp,b,nBlocks,nLowerHaloDirections,iColor,nColorX
-        integer(C_INT) :: iLo,jLo,kLo,colorOffset
-        integer(C_INT) :: hi(1:3)
+        real(C_DOUBLE) :: denom, div, omega
+        real(C_DOUBLE) :: mu_u_i, mu_u_ip, mu_v_j, mu_v_jp, mu_w_k, mu_w_kp
+        integer(C_INT) :: i, ip, j, jp, k, kp, b, nBlocks, nx, ny, nz
 
-        ! Each block sweeps from 0 (its halo layer, redundantly with the
-        ! neighbour that owns those cells) except on physical boundaries,
-        ! exactly the rank-level scheme one level down. Red-black parity is
-        ! anchored to the global index space through the block origin.
-        hi = blk%nb(1:3)
-        sor = ps%sor
-        nColorX = (hi(1) + 2_C_INT)/2_C_INT
+        nx = blk%nb(1); ny = blk%nb(2); nz = blk%nb(3)
+        omega = ps%sor
         nBlocks = blk%nBlocks
-
-        idt = 1.0_C_DOUBLE/dt_gamma
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do collapse(4) &
-        !$omp& map(to: color, nColorX, sor, idt, dt_gamma, hi(1:3), &
-        !$omp& blk%origin, blk%physLow, blk%physHigh, &
-        !$omp& blk%d1x, blk%d1y, blk%d1z, ibm%mu) &
-        !$omp& map(tofrom: blk%q) &
-        !$omp& private(i,ip,j,jp,k,kp,b,iColor,iLo,jLo,kLo,colorOffset, &
-        !$omp& phi,denom,div,nLowerHaloDirections, &
+        !$omp& map(to: omega, nx, ny, nz, blk%physLow, blk%physHigh, &
+        !$omp& blk%d1x, blk%d1y, blk%d1z, ibm%mu) map(tofrom: phi, blk%q) &
+        !$omp& private(i,ip,j,jp,k,kp,b,denom,div, &
         !$omp& mu_u_i,mu_u_ip,mu_v_j,mu_v_jp,mu_w_k,mu_w_kp)
 #endif
-        DO b=1_C_INT,nBlocks
-        DO k=0_C_INT,hi(3)
-            DO j=0_C_INT,hi(2)
-                DO iColor=0_C_INT,nColorX-1_C_INT
-                    iLo = merge(1_C_INT, 0_C_INT, blk%physLow(1,b) /= 0_C_INT)
-                    jLo = merge(1_C_INT, 0_C_INT, blk%physLow(2,b) /= 0_C_INT)
-                    kLo = merge(1_C_INT, 0_C_INT, blk%physLow(3,b) /= 0_C_INT)
-                    if (j < jLo .or. k < kLo) cycle
-                    colorOffset = modulo(blk%origin(1,b) + blk%origin(2,b) + blk%origin(3,b), 2_C_INT)
-                    i = iLo + modulo(color - modulo(iLo+j+k+colorOffset, 2_C_INT), 2_C_INT) &
-                        + 2_C_INT*iColor
-                    if (i > hi(1)) cycle
+        do b = 1_C_INT, nBlocks
+        do k = 1_C_INT, nz
+            do j = 1_C_INT, ny
+                do i = 1_C_INT, nx
+                    ip = i + 1; jp = j + 1; kp = k + 1
 
-                    nLowerHaloDirections = 0_C_INT
-                    if (i == 0_C_INT) nLowerHaloDirections = nLowerHaloDirections + 1_C_INT
-                    if (j == 0_C_INT) nLowerHaloDirections = nLowerHaloDirections + 1_C_INT
-                    if (k == 0_C_INT) nLowerHaloDirections = nLowerHaloDirections + 1_C_INT
-                    if (nLowerHaloDirections > 1_C_INT) cycle
+                    mu_u_i  = ibm%mu(i,j,k,VAR_U,b);  mu_u_ip = ibm%mu(ip,j,k,VAR_U,b)
+                    mu_v_j  = ibm%mu(i,j,k,VAR_V,b);  mu_v_jp = ibm%mu(i,jp,k,VAR_V,b)
+                    mu_w_k  = ibm%mu(i,j,k,VAR_W,b);  mu_w_kp = ibm%mu(i,j,kp,VAR_W,b)
 
-                    jp = j + 1
-                    kp = k + 1
-                    ip = i + 1
-
-                    mu_u_i  = ibm%mu(i,j,k,VAR_U,b)
-                    mu_u_ip = ibm%mu(ip,j,k,VAR_U,b)
-                    mu_v_j  = ibm%mu(i,j,k,VAR_V,b)
-                    mu_v_jp = ibm%mu(i,jp,k,VAR_V,b)
-                    mu_w_k  = ibm%mu(i,j,k,VAR_W,b)
-                    mu_w_kp = ibm%mu(i,j,kp,VAR_W,b)
-
-                    ! The denominator drops only faces whose flux is pinned
-                    ! to zero forever (walls, closed faces). A 2:1 interface
-                    ! flux is a live unknown relaxed by the owning block, so
-                    ! it stays in the diagonal even where this block must
-                    ! not correct it: removing it would make this cell
-                    ! over-compensate through its remaining faces while the
-                    ! interface flux keeps moving, an irregular splitting
-                    ! that diverges (observed as exponential growth seeded
-                    ! at coarse blocks next to refined regions).
                     denom = (merge(0.0d0, mu_u_i*blk%d1x(i,VAR_U,b), &
                                       face_pinned(blk%physLow(1,b)) .and. i == 1_C_INT) &
                            + merge(0.0d0, mu_u_ip*blk%d1x(ip,VAR_U,b), &
-                                      face_pinned(blk%physHigh(1,b)) .and. i == hi(1)))*blk%d1x(i,VAR_P,b) &
+                                      face_pinned(blk%physHigh(1,b)) .and. i == nx))*blk%d1x(i,VAR_P,b) &
                           + (merge(0.0d0, mu_v_j*blk%d1y(j,VAR_V,b), &
                                       face_pinned(blk%physLow(2,b)) .and. j == 1_C_INT) &
                            + merge(0.0d0, mu_v_jp*blk%d1y(jp,VAR_V,b), &
-                                      face_pinned(blk%physHigh(2,b)) .and. j == hi(2)))*blk%d1y(j,VAR_P,b) &
+                                      face_pinned(blk%physHigh(2,b)) .and. j == ny))*blk%d1y(j,VAR_P,b) &
                           + (merge(0.0d0, mu_w_k*blk%d1z(k,VAR_W,b), &
                                       face_pinned(blk%physLow(3,b)) .and. k == 1_C_INT) &
                            + merge(0.0d0, mu_w_kp*blk%d1z(kp,VAR_W,b), &
-                                      face_pinned(blk%physHigh(3,b)) .and. k == hi(3)))*blk%d1z(k,VAR_P,b)
+                                      face_pinned(blk%physHigh(3,b)) .and. k == nz))*blk%d1z(k,VAR_P,b)
 
                     div = (blk%q(ip,j,k,VAR_U,b)-blk%q(i,j,k,VAR_U,b))*blk%d1x(i,VAR_P,b) &
                         + (blk%q(i,jp,k,VAR_V,b)-blk%q(i,j,k,VAR_V,b))*blk%d1y(j,VAR_P,b) &
                         + (blk%q(i,j,kp,VAR_W,b)-blk%q(i,j,k,VAR_W,b))*blk%d1z(k,VAR_P,b)
 
-                    phi = -sor*div/denom
+                    phi(i,j,k,b) = -omega*div/denom
+                end do
+            end do
+        end do
+        end do
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp end target teams distribute parallel do
+#endif
+    end subroutine jacobi_compute_phi
 
-                    blk%q(i,j,k,VAR_P,b) = blk%q(i,j,k,VAR_P,b) + phi*idt
+    ! Jacobi step 3: apply the frozen increment. Pressure gets p += phi/dt_gamma;
+    ! each velocity face is corrected once from the two cells it separates,
+    !   q_face += (phi_below - phi_above) * d1(face) * mu(face),
+    ! the exact sum of the two adjacent red-black corrections, but read from the
+    ! frozen phi (with the halo layer filled by the scalar exchange) so there is
+    ! no in-place race and no colouring. Only the cell's own LOW faces (1..nb)
+    ! are written here; each block's high halo face is the neighbour's low face,
+    ! filled by the velocity exchange. Pinned faces are left untouched.
+    subroutine jacobi_apply(ps, blk, dt_gamma, ibm)
+        type(pressure_solver_type), intent(in) :: ps
+        type(block_set_type), intent(inout) :: blk
+        real(C_DOUBLE), intent(in) :: dt_gamma
+        type(ibm_type), intent(in) :: ibm
 
-                    ! Face corrections are symmetric, as on a single grid:
-                    ! every non-pinned face of the cell is corrected,
-                    ! including this block's own copy of a 2:1 interface
-                    ! face. During the sweeps the two sides' copies of an
-                    ! interface face evolve independently against their own
-                    ! lagged ghosts (the per-colour exchange does not
-                    ! overwrite them); the final exchange of the projection
-                    ! reconciles the copies conservatively. One-sided
-                    ! corrections are not an option here - they make the
-                    ! block iteration non-contractive and blow up.
-                    blk%q(i,j,k,VAR_U,b) = blk%q(i,j,k,VAR_U,b) &
-                        - merge(0.0d0, phi*blk%d1x(i,VAR_U,b)*mu_u_i, &
-                                face_pinned(blk%physLow(1,b)) .and. i == 1_C_INT)
-                    blk%q(ip,j,k,VAR_U,b) = blk%q(ip,j,k,VAR_U,b) &
-                        + merge(0.0d0, phi*blk%d1x(ip,VAR_U,b)*mu_u_ip, &
-                                face_pinned(blk%physHigh(1,b)) .and. i == hi(1))
-                    blk%q(i,j,k,VAR_V,b) = blk%q(i,j,k,VAR_V,b) &
-                        - merge(0.0d0, phi*blk%d1y(j,VAR_V,b)*mu_v_j, &
-                                face_pinned(blk%physLow(2,b)) .and. j == 1_C_INT)
-                    blk%q(i,jp,k,VAR_V,b) = blk%q(i,jp,k,VAR_V,b) &
-                        + merge(0.0d0, phi*blk%d1y(jp,VAR_V,b)*mu_v_jp, &
-                                face_pinned(blk%physHigh(2,b)) .and. j == hi(2))
-                    blk%q(i,j,k,VAR_W,b) = blk%q(i,j,k,VAR_W,b) &
-                        - merge(0.0d0, phi*blk%d1z(k,VAR_W,b)*mu_w_k, &
-                                face_pinned(blk%physLow(3,b)) .and. k == 1_C_INT)
-                    blk%q(i,j,kp,VAR_W,b) = blk%q(i,j,kp,VAR_W,b) &
-                        + merge(0.0d0, phi*blk%d1z(kp,VAR_W,b)*mu_w_kp, &
-                                face_pinned(blk%physHigh(3,b)) .and. k == hi(3))
-                END DO
-            END DO
-        END DO
-        END DO
+        real(C_DOUBLE) :: idt
+        integer(C_INT) :: i, j, k, b, nBlocks, nx, ny, nz
+
+        nx = blk%nb(1); ny = blk%nb(2); nz = blk%nb(3)
+        nBlocks = blk%nBlocks
+        idt = 1.0_C_DOUBLE/dt_gamma
+
+        ! Pressure update (interior cells).
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target teams distribute parallel do collapse(4) &
+        !$omp& map(to: idt, nx, ny, nz) map(tofrom: blk%q, phi) private(i,j,k,b)
+#endif
+        do b = 1_C_INT, nBlocks
+        do k = 1_C_INT, nz
+            do j = 1_C_INT, ny
+                do i = 1_C_INT, nx
+                    blk%q(i,j,k,VAR_P,b) = blk%q(i,j,k,VAR_P,b) + phi(i,j,k,b)*idt
+                end do
+            end do
+        end do
+        end do
 #ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
 #endif
 
-    end subroutine redblack_sweep
+        ! Velocity-face corrections (each block's low faces 1..nb; the high halo
+        ! face is the neighbour's low face, supplied by the exchange).
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target teams distribute parallel do collapse(4) &
+        !$omp& map(to: nx, ny, nz, blk%physLow, blk%d1x, blk%d1y, blk%d1z, ibm%mu) &
+        !$omp& map(tofrom: blk%q, phi) private(i,j,k,b)
+#endif
+        do b = 1_C_INT, nBlocks
+        do k = 1_C_INT, nz
+            do j = 1_C_INT, ny
+                do i = 1_C_INT, nx
+                    if (.not. (i == 1_C_INT .and. face_pinned(blk%physLow(1,b)))) &
+                        blk%q(i,j,k,VAR_U,b) = blk%q(i,j,k,VAR_U,b) &
+                            + (phi(i-1,j,k,b) - phi(i,j,k,b))*blk%d1x(i,VAR_U,b)*ibm%mu(i,j,k,VAR_U,b)
+                    if (.not. (j == 1_C_INT .and. face_pinned(blk%physLow(2,b)))) &
+                        blk%q(i,j,k,VAR_V,b) = blk%q(i,j,k,VAR_V,b) &
+                            + (phi(i,j-1,k,b) - phi(i,j,k,b))*blk%d1y(j,VAR_V,b)*ibm%mu(i,j,k,VAR_V,b)
+                    if (.not. (k == 1_C_INT .and. face_pinned(blk%physLow(3,b)))) &
+                        blk%q(i,j,k,VAR_W,b) = blk%q(i,j,k,VAR_W,b) &
+                            + (phi(i,j,k-1,b) - phi(i,j,k,b))*blk%d1z(k,VAR_W,b)*ibm%mu(i,j,k,VAR_W,b)
+                end do
+            end do
+        end do
+        end do
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp end target teams distribute parallel do
+#endif
+    end subroutine jacobi_apply
 
-    ! Pinned faces carry zero flux forever (physical walls, closed faces
-    ! against removed blocks): they leave both the denominator and the
-    ! corrections. Every other face, including each side's copy of a 2:1
-    ! interface face, stays in the denominator and is corrected by both
-    ! adjacent relaxations (strategy doc 6).
+    ! Pinned faces carry zero flux forever (physical walls, closed faces against
+    ! removed blocks): they leave both the diagonal and the corrections.
     pure logical function face_pinned(fk)
 !$omp declare target
         integer(C_INT), intent(in) :: fk
 
         face_pinned = fk == FACE_PHYS .or. fk == FACE_CLOSED
     end function face_pinned
-
-
 
 end module pressure_solver
