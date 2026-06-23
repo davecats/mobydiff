@@ -263,7 +263,12 @@ program main
                     call momentum(blk, dns, dt_alpha, dt_beta, dt_gamma, ibm)
                 end if
                 call apply_bc(blk, bc)
-                call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W])
+                ! Post-predictor exchange with the conservation SYNC: the
+                ! cross-level PROLONG/RESTRICT write the shared 2:1 face so the
+                ! two stored copies start the projection mean-consistent
+                ! (avg(fine)=coarse). The projection then owns the face and the
+                ! composite stencil keeps it conservative.
+                call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W], syncface=.true.)
             end if
 
             ! Projection: solve for pressure correction and project tentative velocities.

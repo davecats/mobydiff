@@ -101,6 +101,15 @@ module comm
         ! frozen (the messages shrink to the per-peer copy prefixes).
         ! Used by the per-colour exchanges inside the pressure projection.
         logical :: copyOnly = .false.
+        ! When true, the interface normal-velocity skip (lNrm/rNrm) is
+        ! DISABLED, so the cross-level PROLONG (orientation A) and RESTRICT
+        ! (orientation B) write the shared face again -- the conservation
+        ! SYNC. The post-predictor exchange sets it so the two stored copies
+        ! of each 2:1 face start the projection mean-consistent
+        ! (avg(fine)=coarse); the projection then OWNS the face (default,
+        ! skip) and the composite stencil's mean-equal corrections keep it
+        ! conservative throughout.
+        logical :: syncFace = .false.
     end type comm_type
 
     public :: comm_init_world, comm_init, comm_finalize
@@ -241,7 +250,7 @@ contains
                                 c%lWp(nLocal) = entry_blend(blk, dns, int(blk%level(b)), &
                                     int(blk%origin(:,b)), off(:,d), opc(cand))
                                 c%lWpDst(nLocal) = 1.0d0 - c%lWp(nLocal)
-                                c%lNrm(nLocal) = prolong_normal_dim(opc(cand), off(:,d))
+                                c%lNrm(nLocal) = interface_normal_dim(opc(cand), off(:,d))
                                 c%lOff(nLocal) = c%lOff(nLocal-1) + pts
                             end if
                             c%nLocalPts = c%nLocalPts + pts
@@ -285,7 +294,7 @@ contains
                                     c%rWp(nRecv) = entry_blend(blk, dns, int(blk%level(b)), &
                                         int(blk%origin(:,b)), off(:,d), opc(cand))
                                     c%rWpDst(nRecv) = 1.0d0 - c%rWp(nRecv)
-                                    c%rNrm(nRecv) = prolong_normal_dim(opc(cand), off(:,d))
+                                    c%rNrm(nRecv) = interface_normal_dim(opc(cand), off(:,d))
                                     c%rOff(nRecv) = c%rOff(nRecv-1) + pts
                                 end if
                                 c%peerRecvOff(p) = c%peerRecvOff(p) + pts
@@ -648,24 +657,33 @@ contains
         end do
     end subroutine entry_gather_map
 
-    ! Normal-velocity dimension a PROLONG face entry must leave fine-owned,
-    ! or 0. A PROLONG across a pure face (off(d)==+1) writes the fine block's
-    ! HIGH interface face q(nb+1) in dim d -- that face is the fine cell's
-    ! interface normal velocity (read by its divergence), reconstructed at
-    ! fine resolution inside the projection; prolonging the coarse value over
-    ! it is the O(1) inconsistency. off(d)==-1 PROLONG writes the LOW halo
-    ! q(0), which sits BELOW the fine-owned interface face q(1) and is a
-    ! genuine momentum halo, so it is kept.
-    pure integer function prolong_normal_dim(op, off) result(dnorm)
+    ! Normal-velocity dimension a cross-level face entry must leave to its own
+    ! block (owned), or 0. At a 2:1 face the block on the LOW-coordinate side
+    ! holds the shared normal face as its HIGH halo q(nb+1) in dim d; that face
+    ! is its own cell's interface normal velocity (read by its divergence) and
+    ! is reconstructed inside the projection from its pressure plus the
+    ! cross-level ghost pressure (ifGrad). Letting the neighbour clobber it
+    ! differences a foreign-resolution flux into the divergence -- the O(1)
+    ! interface inconsistency. This happens for BOTH orientations of a pure
+    ! face (off(d)==+1): the FINE block's halo is fed by PROLONG (orientation
+    ! A, fine below a coarse -- the fine cell would read a coarse-resolution
+    ! flux), the COARSE block's halo by RESTRICT (orientation B, coarse below a
+    ! fine -- the coarse cell would read the averaged fine flux, slaved, so its
+    ! pressure cannot drive it divergence-free). Both are skipped; the
+    ! interface corrections stay mean-equal (avg(prolong)=coarse, avg(fine)=
+    ! restrict), so conservation is preserved if the two stored copies start
+    ! consistent. off(d)==-1 entries write the LOW halo q(0), below the owned
+    ! interface face q(1), a genuine momentum halo, so they are kept.
+    pure integer function interface_normal_dim(op, off) result(dnorm)
         integer, intent(in) :: op, off(3)
         integer :: d
         dnorm = 0
-        if (op /= OP_PROLONG) return
+        if (op /= OP_PROLONG .and. op /= OP_RESTRICT) return
         if (sum(abs(off)) /= 1) return
         do d = 1, 3
             if (off(d) == 1) dnorm = d
         end do
-    end function prolong_normal_dim
+    end function interface_normal_dim
 
     ! Ghost-interpolation weight for the pressure on a PROLONG face entry.
     ! Plain injection puts the coarse cell value at the fine halo centre,
@@ -1091,17 +1109,20 @@ contains
         c%exchangeActive = .false.
     end subroutine finish_halo_exchange
 
-    subroutine exchange_halos(c, blk, vars, interp)
+    subroutine exchange_halos(c, blk, vars, interp, syncface)
         type(comm_type), intent(inout) :: c
         type(block_set_type), intent(inout) :: blk
         integer(C_INT), intent(in) :: vars(:)
-        logical, intent(in), optional :: interp
+        logical, intent(in), optional :: interp, syncface
 
         c%copyOnly = .false.
         if (present(interp)) c%copyOnly = .not. interp
+        c%syncFace = .false.
+        if (present(syncface)) c%syncFace = syncface
         call start_halo_exchange(c, blk, vars)
         call finish_halo_exchange(c, blk)
         c%copyOnly = .false.
+        c%syncFace = .false.
     end subroutine exchange_halos
 
     ! Per-block scalar halos (e.g. les%nut) on the same exchange entries.
@@ -1149,17 +1170,18 @@ contains
         type(block_set_type), intent(inout) :: blk
 
         integer :: p, gp, v, e, pt, ni, nj
-        integer :: di, dj, dk, var, nv, totalItems
+        integer :: di, dj, dk, var, nv, totalItems, sf
         integer :: b1, b2, b3, c1, c2, c3, s1, s2, s3
         real(C_DOUBLE) :: val
 
         nv = c%nActiveVars
         totalItems = merge(c%nLocalCopyPts, c%nLocalPts, c%copyOnly)*nv
         if (totalItems == 0) return
+        sf = merge(1, 0, c%syncFace)
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
-        !$omp& map(to: totalItems, nv, c%nLocal, c%lOff, c%lSrcSlot, c%lDstSlot, &
+        !$omp& map(to: totalItems, nv, sf, c%nLocal, c%lOff, c%lSrcSlot, c%lDstSlot, &
         !$omp& c%lDstLo, c%lExt, c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lWp, c%lWpDst, &
         !$omp& c%lNrm, c%activeVars) &
         !$omp& map(tofrom: blk%q) &
@@ -1198,8 +1220,9 @@ contains
                 val = c%lWp(e)*val + c%lWpDst(e) &
                     *blk%q(di-c%lDir(1,e), dj-c%lDir(2,e), dk-c%lDir(3,e), var, c%lDstSlot(e))
             end if
-            ! Leave the fine-owned interface normal velocity face untouched.
-            if (var /= c%lNrm(e)) blk%q(di,dj,dk,var,c%lDstSlot(e)) = val
+            ! Leave the owned interface normal velocity face untouched, unless
+            ! this is the conservation SYNC (sf), which writes it.
+            if (sf == 1 .or. var /= c%lNrm(e)) blk%q(di,dj,dk,var,c%lDstSlot(e)) = val
         end do
 #ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
@@ -1321,17 +1344,18 @@ contains
         type(block_set_type), intent(inout) :: blk
 
         integer :: p, gp, v, e, pt, ni, nj
-        integer :: i, j, k, var, peer, pos, nv, totalItems, copyOnly
+        integer :: i, j, k, var, peer, pos, nv, totalItems, copyOnly, sf
         real(C_DOUBLE) :: val
 
         nv = c%nActiveVars
         totalItems = merge(c%peerRecvCopyOff(c%nPeers), c%peerRecvOff(c%nPeers), c%copyOnly)*nv
         if (totalItems == 0) return
         copyOnly = merge(1, 0, c%copyOnly)
+        sf = merge(1, 0, c%syncFace)
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
-        !$omp& map(to: totalItems, nv, copyOnly, c%nPeers, c%nRecv, c%rOff, c%rSlot, c%rPeer, &
+        !$omp& map(to: totalItems, nv, copyOnly, sf, c%nPeers, c%nRecv, c%rOff, c%rSlot, c%rPeer, &
         !$omp& c%rLo, c%rExt, c%rDir, c%rWp, c%rWpDst, c%rNrm, &
         !$omp& c%peerRecvOff, c%peerRecvCopyOff, c%activeVars, c%recvbuf) &
         !$omp& map(tofrom: blk%q) &
@@ -1359,8 +1383,9 @@ contains
                 val = c%rWp(e)*val + c%rWpDst(e) &
                     *blk%q(i-c%rDir(1,e), j-c%rDir(2,e), k-c%rDir(3,e), var, c%rSlot(e))
             end if
-            ! Leave the fine-owned interface normal velocity face untouched.
-            if (var /= c%rNrm(e)) blk%q(i,j,k,var,c%rSlot(e)) = val
+            ! Leave the owned interface normal velocity face untouched, unless
+            ! this is the conservation SYNC (sf), which writes it.
+            if (sf == 1 .or. var /= c%rNrm(e)) blk%q(i,j,k,var,c%rSlot(e)) = val
         end do
 #ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
