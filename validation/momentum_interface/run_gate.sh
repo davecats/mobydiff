@@ -77,3 +77,18 @@ for kind in slab patch; do
   echo "-- $kind nx=64 --"
   python3 "$ROOT/tools/divsum.py" "$WORK/${kind}_64_div/tgv3d_divpre_1.h5"
 done
+
+run_term() {  # kind nx var
+  local kind=$1 n=$2 var=$3 d="$WORK/${kind}_${n}_term${var}"
+  rm -rf "$d"; mkdir -p "$d"; ( cd "$d"
+    MOBY_TERMDUMP=$var mpirun -x MOBY_TERMDUMP -n 1 "$MAIN" "$WORK/${kind}_${n}.ini" > log 2>&1 )
+}
+echo "================ Axis 3 (momentum conservation) ================"
+echo "Sum(vol*adv) per component must be ~round-off (uniform = zero reference)."
+for kind in uniform slab patch; do
+  echo "-- $kind nx=64 --"
+  for var in 1 2 3; do
+    run_term "$kind" 64 "$var"
+    python3 "$ROOT/tools/momsum.py" "$WORK/${kind}_64_term${var}/tgv3d_adv_0.h5" | sed -n '2p'
+  done
+done

@@ -23,6 +23,46 @@ other):
   interface flux mismatch) is the one continuity error it can never remove. A
   real one-step run with `MOBY_DIVDUMP` + `tools/divsum.py` must keep it at
   round-off.
+- **Axis 3 — momentum conservation** (`MOBY_TERMDUMP` → `tools/momsum.py`). The
+  divergence-form advection and the viscous flux conserve total momentum: over a
+  periodic domain every interior face flux telescopes, so `Sum(vol*term_i)` is
+  round-off on a single-level grid. The only faces that do not cancel are the
+  2:1 interface faces (coarse flux ≠ summed fine sub-face fluxes), so this global
+  sum IS the momentum-conservation error — the momentum analogue of the mass gate.
+  Run `MOBY_TERMDUMP=1/2/3` (u/v/w), feed the `_adv` (and `_dif`) dump to
+  `momsum.py`. (Conservation is an integral property; per-cell `vol*term` is the
+  physical flux divergence, nonzero everywhere — so the metric is the global sum,
+  with the `uniform` case as the zero reference and a single-interface case to
+  isolate one interface's local imbalance.)
+
+### Momentum-conservation baseline (inc 5, no reflux)
+
+`Sum(vol*adv)` per component, tgv3d, nx=64 (rel = vs `Sum(vol*|adv|)`):
+
+| case | u | v | w |
+| --- | --- | --- | --- |
+| uniform | -1.5e-16 | -7.1e-17 | -2.9e-15 | (round-off — tool valid, operator conserves) |
+| slab (y-iface) | +8.9e-7 (1.2e-8) | **+4.9e-4 (6.8e-6)** | +8.9e-7 (1.2e-8) |
+| patch (x,y,z) | +1.2e-4 (1.7e-6) | +1.2e-4 | +1.2e-4 |
+
+`Sum(vol*dif)` is round-off (~1e-17) for every component/case — **the viscous
+momentum flux is already conserved across the interface**; only advection leaks.
+
+Decomposition of the advective leak (key for any reflux):
+- **Tangential momentum** (e.g. `uv`/`wv` through a y-interface, the component
+  *parallel* to the interface): a CLEAN flux register — the flux lives ON the
+  interface y-face — but small for this manufactured field (slab u,w ~9e-7). In
+  real turbulence this is the Reynolds-stress flux and is the physically decisive
+  one (interface_review §iii: the un-refluxed tangential flux is the −⟨u'v'⟩
+  defect).
+- **Normal momentum** (`vv` through a y-interface): DOMINATES here (slab v
+  4.9e-4) but is the *hard* case — the v-momentum control volume is centred ON
+  the interface and its `vv` flux is evaluated at cell centres that do **not**
+  align across the 2:1 interface (coarse `y_int−h_c/2` vs fine `y_int−h_f/2`), so
+  there is no single interface flux to register. This is the staggered
+  normal-velocity-on-the-interface difficulty (interface_review §A, §vii) and
+  needs a momentum-consistent interface treatment (the composite/approximate
+  projection route), not a plain flux register.
 
 The field is `initial = tgv3d` (added to the generic case):
 `u=sin(kx)cos(ky)cos(kz)`, `v=cos(kx)sin(ky)cos(kz)`, `w=cos(kx)cos(ky)sin(kz)`.
