@@ -117,14 +117,18 @@ python3 tools/divsum.py <prefix>_divpre_1.h5     # must be ~1e-14
 
 ## What is left (the next session's work)
 
-BOTH layers are **DONE** (inc 4 + inc 5 below); the momentum predictor is 2nd
-order at the interface in both bands, both orientations, all components, with
-mass conservation at round-off. The operator-accuracy work on the 2:1 interface
-is complete. What is NOT addressed (and not gated here): flux-register MOMENTUM
-conservation (exact coarse=Σfine equality, vs the 2nd-order accuracy inc 5
-delivers); the patch corner residual (~1.4–1.8 fine band from corner
-double-extrapolation); and turbulence-grade validation (a real refined-body or
-channel-interface run — see `docs/interface_review.md` §vii on scope).
+BOTH accuracy layers are **DONE** (inc 4 + inc 5 below); the momentum predictor
+is 2nd order at the interface in both bands, both orientations, all components,
+with mass conservation at round-off. Momentum conservation is now *measured*
+(Axis 3, `tools/momsum.py`); whether to additionally **reflux** it is an open
+scope decision (see the Axis-3 README decomposition: viscous already conserved;
+tangential and normal are BOTH restrict-based flux registers — one unified
+reflux, no projection rewrite; and the smooth-field leak is ~4th order, so it
+matters only for turbulence-grade interfaces, not the wall-buffer design).
+
+Also not addressed: the patch corner residual (~1.4–1.8 fine band, from corner
+double-extrapolation); turbulence-grade validation (a real refined-body or
+channel-interface run).
 
 1. **Tangential reconstruction of the tangential velocity halos** — **DONE**
    (increment 4, `reconstruct_interface_halos` in `step.f90`). Generalised inc
