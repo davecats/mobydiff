@@ -15,7 +15,7 @@ module step
     use, intrinsic :: iso_c_binding
     use :: init, only: dns_type, VAR_U, VAR_V, VAR_W, VAR_P, &
         CFL_COURANT, CFL_PECLET, NCFL
-    use :: blocks, only: block_set_type, FACE_PHYS, FACE_CLOSED
+    use :: blocks, only: block_set_type, FACE_PHYS, FACE_CLOSED, FACE_COARSE
     use :: ibmm, only: ibm_type
     use :: comm, only: comm_type, comm_allreduce_max
     use :: les_model, only: les_type, les_is_enabled, les_profile_type, &
@@ -57,6 +57,61 @@ contains
         call comm_allreduce_max(c, local_rate)
         dns%peclet_rate = local_rate(1)
     end subroutine precompute_peclet_rate
+
+    ! Reconstruct the wall-normal velocity DEEP halo q(0) that sits below a fine
+    ! block's OWNED interface normal face q(1) (orientation B, physLow(d) ==
+    ! FACE_COARSE: the fine block predicts its own low interface face). The
+    ! velocity prolong fills that halo with a single coarse face value -- O(h)
+    ! inaccurate TANGENTIALLY, which the wall-normal advection d(vv)/dy and
+    ! diffusion d2v/dy2 at the interface face amplify to O(1) and O(1/h)
+    ! (verified term-by-term, MOBY_TERMDUMP). A quadratic extrapolation from the
+    ! fine side, q(0) = 3 q(1) - 3 q(2) + q(3), is tangentially accurate and
+    ! purely local (no cross-block coarse reads, no exchange-ordering race) and
+    ! restores 2nd order in both terms. The deep halo never enters the divergence
+    ! operator, so global conservation is untouched. Inert without a 2:1
+    ! interface (no FACE_COARSE low face), hence bit-exact for single-level runs.
+    ! Call right before the predictor, after the velocity halo exchange.
+    subroutine reconstruct_normal_halo(blk)
+        type(block_set_type), intent(inout) :: blk
+        integer :: b, i, j, k, nx, ny, nz, nBlocks
+
+        nx = int(blk%nb(1)); ny = int(blk%nb(2)); nz = int(blk%nb(3))
+        nBlocks = int(blk%nBlocks)
+
+        !$omp target teams distribute parallel do collapse(2) &
+        !$omp& map(to: blk%physLow) map(tofrom: blk%q) private(i,j,k,b)
+        do b = 1, nBlocks
+            do k = 1, nz
+                if (blk%physLow(1,b) == FACE_COARSE) then
+                    do j = 1, ny
+                        blk%q(0,j,k,VAR_U,b) = 3.0d0*blk%q(1,j,k,VAR_U,b) &
+                            - 3.0d0*blk%q(2,j,k,VAR_U,b) + blk%q(3,j,k,VAR_U,b)
+                    end do
+                end if
+                if (blk%physLow(2,b) == FACE_COARSE) then
+                    do i = 1, nx
+                        blk%q(i,0,k,VAR_V,b) = 3.0d0*blk%q(i,1,k,VAR_V,b) &
+                            - 3.0d0*blk%q(i,2,k,VAR_V,b) + blk%q(i,3,k,VAR_V,b)
+                    end do
+                end if
+            end do
+        end do
+        !$omp end target teams distribute parallel do
+
+        !$omp target teams distribute parallel do collapse(2) &
+        !$omp& map(to: blk%physLow) map(tofrom: blk%q) private(i,j,b)
+        do b = 1, nBlocks
+            do j = 1, ny
+                if (blk%physLow(3,b) == FACE_COARSE) then
+                    do i = 1, nx
+                        blk%q(i,j,0,VAR_W,b) = 3.0d0*blk%q(i,j,1,VAR_W,b) &
+                            - 3.0d0*blk%q(i,j,2,VAR_W,b) + blk%q(i,j,3,VAR_W,b)
+                    end do
+                end if
+            end do
+        end do
+        !$omp end target teams distribute parallel do
+    end subroutine reconstruct_normal_halo
 
     subroutine momentum(blk, dns, dt_alpha, dt_beta, dt_gamma, ibm, les, les_prof)
         type(block_set_type), intent(inout) :: blk

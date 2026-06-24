@@ -93,7 +93,35 @@ cross-terms). Regressions all pass: non-interface bit-exact, coarse band
 unchanged, Axis-2 round-off (2.8e-14), real-Beltrami conservation round-off,
 projection div-free PROJONLY gate still 0.0, CPU==GPU bit-identical.
 
-**Still open:** the wall-**normal** velocity (its interface face is fine-owned and
-its deep halo is face-staggered — needs a face-staggered-aware blend / the fine
-predicting its own face, and tangential interpolation to reach a clean 2nd order
-rather than the current ~1st-order injection residual).
+## Increment 3 — wall-normal deep-halo reconstruction (`reconstruct_normal_halo`)
+
+The blend (inc 2) excluded the wall-**normal** velocity. Term-by-term
+(`MOBY_TERMDUMP`) pinned its defect to exactly the wall-normal terms across the
+interface — `adv_y = ∂(vv)/∂y` (0th order) and `dif_y = ∂²v/∂y²` (diverging
+O(1/h)) — at an orientation-B fine block's **owned** interface face (j=1), which
+reads the deep halo `v(0)` below it. Every tangential term (incl. the tangential
+Laplacian) is already 2nd order. An exact-`v(0)` test confirmed an accurate ghost
+restores both to 2nd order.
+
+The velocity prolong fills `v(0)` with one coarse face value — O(h) inaccurate
+*tangentially*, which the wall-normal stencils amplify (`/h`, `/h²`). Fix:
+`step.f90` reconstructs `v(0)` by **quadratic extrapolation from the fine side**,
+`v(0) = 3v(1) − 3v(2) + v(3)` (per direction, at `physLow == FACE_COARSE` faces),
+called right before the predictor. It is tangentially accurate, **purely local**
+(no cross-block coarse reads / exchange-ordering race), and the deep halo never
+enters the divergence, so conservation is untouched.
+
+Result: `adv_y` 0→**2.0**, `dif_y` diverging→**2.0** (term-by-term); the full
+wall-normal `v` fine band goes from ~0/diverging to **~0.6**, at **parity with
+u,w** — all three components consistent. Slab and 3D patch (corners/edges, all
+orientations) symmetric. Regressions all pass: non-interface bit-exact (inert
+without an interface), Axis-2 round-off (2.8e-14 slab, 1.1e-14 patch),
+real-Beltrami conservation round-off, projection PROJONLY gate unaffected (the
+reconstruction runs only in the predictor path), CPU==GPU bit-identical.
+
+**Still open (a clean 2nd order):** the tangential cross-advection terms
+(`adv_x/adv_z`, ~1st) carry the tangential-injection residual of the *tangential*
+velocity halos (inc 2's blend is normal-placement only) — a tangential
+interpolation of those halos would lift the whole fine band to 2nd order; and the
+**coarse-band** normal velocity (~1.5 order) is the un-refluxed Berger–Colella
+flux mismatch.
