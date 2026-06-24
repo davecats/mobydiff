@@ -47,7 +47,7 @@ program main
     ! field -- any change it makes IS the correction/interface defect. MOBY_PREDONLY:
     ! skip the projection so the field is the pure predictor. Either dumps the
     ! initial field (900000) so the change can be diffed.
-    logical :: projOnly, predOnly, divdump, rhsdump
+    logical :: projOnly, predOnly, divdump, rhsdump, noRecon
     character(len=16) :: diagEnv
     ! MOBY_DIVDUMP: write the discrete (raw staggered) divergence the solver sees,
     ! BEFORE the last projection (div_pre = D u*, e.g. of the exact field under
@@ -255,6 +255,8 @@ program main
     divdump = len_trim(diagEnv) > 0
     call get_environment_variable("MOBY_RHSDUMP", diagEnv)
     rhsdump = len_trim(diagEnv) > 0
+    call get_environment_variable("MOBY_NORECON", diagEnv)
+    noRecon = len_trim(diagEnv) > 0   ! debug: skip reconstruct_interface_halos
     ! MOBY_MANUF=<amp>: add a pure-gradient perturbation amp*grad(phi),
     ! phi = cos(kx)cos(ky)cos(kz), to the (exact, div-free) initial field.
     ! The result is globally mass-conserving (a periodic gradient integrates
@@ -298,7 +300,7 @@ program main
                 ! Reconstruct the velocity deep halos across each 2:1 interface so
                 ! the predictor's advection/diffusion reaching into them (normal
                 ! and tangential) are 2nd order (inert without an interface).
-                call reconstruct_interface_halos(blk)
+                if (.not. noRecon) call reconstruct_interface_halos(blk)
                 ! Momentum reflux: from the start-of-substage velocity, capture
                 ! each interface direction's normal advective flux, restrict the
                 ! fine flux into the coarse across-interface halo, and accumulate
