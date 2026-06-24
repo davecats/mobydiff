@@ -61,6 +61,14 @@ module init
         ! immersed surface to the finest level (+1 block buffer), and remove
         ! buried blocks at every level (analytic IBM).
         logical(C_BOOL) :: block_refine_body = .false.
+        ! [blocks] momentum_reflux: Berger-Colella momentum reflux at 2:1
+        ! interfaces -- replace the coarse cell's interface advective flux with
+        ! the restricted fine flux so total momentum is conserved across the
+        ! interface (mass is already conserved by the projection). Default off:
+        ! bit-exact with the un-refluxed predictor. Costs an extra interface-area
+        ! flux restriction per substage; only needed for turbulence-grade
+        ! interfaces (the smooth-flow leak is ~4th order).
+        logical(C_BOOL) :: block_momentum_reflux = .false.
         logical(C_BOOL) :: ibm_enabled = .true.
         character(len=256) :: ibm_coeff_file = ""
         character(len=256) :: field_prefix = ""

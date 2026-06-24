@@ -21,7 +21,7 @@ program main
         init_block_exchange, exchange_halos, exchange_scalar_halos
     implicit none
 
-    integer :: arg_status, rkStage
+    integer :: arg_status, rkStage, refluxDir
     integer(C_INT) :: loop_steps
     real(C_DOUBLE) :: dt_alpha, dt_beta, dt_gamma
     real(C_DOUBLE) :: les_profile_start
@@ -299,6 +299,18 @@ program main
                 ! the predictor's advection/diffusion reaching into them (normal
                 ! and tangential) are 2nd order (inert without an interface).
                 call reconstruct_interface_halos(blk)
+                ! Momentum reflux: from the start-of-substage velocity, capture
+                ! each interface direction's normal advective flux, restrict the
+                ! fine flux into the coarse across-interface halo, and accumulate
+                ! the coarse RHS correction; applied to the predicted field below.
+                if (dns%block_momentum_reflux) then
+                    call reflux_zero(blk)
+                    do refluxDir = 1, 3
+                        call reflux_compute_flux(blk, refluxDir)
+                        call exchange_scalar_halos(c, blk%refluxF, ifaceRow=.true.)
+                        call reflux_accumulate(blk, refluxDir)
+                    end do
+                end if
                 call update_ibm_mu(ibm, dt_gamma)
                 if (les_is_enabled(les)) then
                     les_profile_start = les_wall_seconds()
@@ -311,6 +323,7 @@ program main
                 else
                     call momentum(blk, dns, dt_alpha, dt_beta, dt_gamma, ibm)
                 end if
+                if (dns%block_momentum_reflux) call reflux_apply(blk, dt_alpha)
                 call apply_bc(blk, bc)
                 ! Post-predictor exchange with the conservation SYNC: the
                 ! cross-level PROLONG/RESTRICT write the shared 2:1 face so the

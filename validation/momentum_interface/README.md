@@ -65,7 +65,44 @@ Decomposition of the advective leak (key for any reflux):
   So ONE restrict-based flux register (all three components) suffices; no
   composite-projection rewrite is needed for conservation.
 
-**Leak convergence (smooth field).** `Sum(vol*adv)` for v converges ~4th order —
+## Reflux (`[blocks] momentum_reflux`)
+
+`momentum_reflux = true` adds the Berger-Colella reflux that conserves momentum
+across the interface: per interface direction, the coarse cell's **normal**
+advective flux `q_d^2` is replaced by the restricted fine flux (the fine flux is
+authoritative), so the net interface momentum source telescopes to zero. The fine
+flux is captured before the predictor, restricted fine→coarse with the scalar
+interface-row exchange (`reflux_*` in `step.f90`), and added to the predicted
+field. Default off ⇒ bit-exact with the un-refluxed predictor.
+
+Validated (`MOBY_PREDONLY` + `MOBY_RHSDUMP`, per-component `Sum(vol*rhs)`):
+- **slab** v (normal to the y-interface): `+4.85e-4 → −2.05e-15` (round-off,
+  exactly conserved); converges to round-off at every nx (32/64/128).
+- **patch** advection: → round-off (the reflux works at edges/corners too; the
+  per-component RHS sum is left at the separate viscous-corner residual below).
+- bit-exact with the flag off; mass (Axis 2) stays round-off (slab +2.6e-14,
+  patch +1.6e-14); CPU==GPU bit-identical (slab + patch).
+- **Accuracy/conservation tradeoff (expected):** with the reflux on, the
+  coarse-band normal-v order drops `2.98 → 0.92` — the coarse cell now uses the
+  fine-height flux (conservative) instead of inc-5's accurate-height ghost. This
+  is the standard Berger-Colella tradeoff; conservation is the goal for
+  turbulence-grade interfaces, and the wall-buffer design keeps interfaces out of
+  energetic flow regardless.
+
+**Scope of the current reflux (honest):** it refluxes the **normal** advective
+flux only. Two pieces remain for *total* momentum conservation:
+- **Tangential advective flux** (`uv`/`wv`, parallel to the interface) — the
+  Reynolds-stress flux, the physically decisive one for turbulence. Small for the
+  smooth gate (slab u,w `+8.9e-7`, ~5th order) so the gate barely sees it; needs
+  the velocity-staggered restriction (not the cell-centered one used here).
+- **Viscous flux at corners** — the 2:1 viscous flux conserves on a flat
+  interface (slab dif ≈ 1e-17) but leaks ~1st order at edges/corners (patch dif
+  `1.2e-2 → 5.9e-3 → 2.9e-3`), independent of the reflux. A viscous reflux (same
+  machinery on the diffusive flux) would close it.
+
+## Leak convergence (smooth field, no reflux)
+
+`Sum(vol*adv)` for v converges ~4th order —
 slab `7.7e-3 → 4.9e-4 → 3.0e-5` (nx 32/64/128), patch `1.9e-3 → 1.2e-4 → 7.6e-6`
 — so for SMOOTH-flow interfaces (the finest-level wall buffer) the
 momentum-conservation error is negligible and falls fast, reinforcing §vii's

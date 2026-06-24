@@ -13,7 +13,7 @@
 
 module step
     use, intrinsic :: iso_c_binding
-    use :: init, only: dns_type, VAR_U, VAR_V, VAR_W, VAR_P, &
+    use :: init, only: dns_type, VAR_U, VAR_V, VAR_W, VAR_P, NVEL, &
         CFL_COURANT, CFL_PECLET, NCFL
     use :: blocks, only: block_set_type, FACE_PHYS, FACE_CLOSED, FACE_COARSE, FACE_FINE
     use :: ibmm, only: ibm_type
@@ -221,6 +221,217 @@ contains
         end do
         !$omp end target teams distribute parallel do
     end subroutine reconstruct_interface_halos
+
+    ! ===== Berger-Colella momentum reflux at 2:1 interfaces =====
+    ! Conserve total momentum across the interface. In divergence form the coarse
+    ! cell adjacent to a 2:1 face advects its interface-normal velocity with its
+    ! OWN coarse flux F_coarse, while the four covering fine cells use their fine
+    ! fluxes; the mismatch F_coarse - avg(F_fine) is a spurious momentum source
+    ! (tools/momsum.py). Working the volume*d1y weights, the net interface source
+    ! telescopes to zero iff F_coarse = avg(F_fine), so the reflux replaces the
+    ! coarse cell's interface flux by the restricted fine flux. The interface
+    ! NORMAL flux for direction d is the d-momentum's d-flux q_d^2 (the un-cancelled
+    ! vv_p / vv_m at the interface-adjacent cell). Per direction: fill refluxF with
+    ! that flux at every interface-adjacent cell (fine = restriction source, coarse
+    ! = its own value), restrict fine->coarse with the scalar interface-row
+    ! exchange (the coarse reads avg(F_fine) in its across-interface halo), then
+    ! accumulate the coarse RHS correction. Computed from the start-of-substage
+    ! velocity (after reconstruct_interface_halos, before the predictor) and added
+    ! to the predicted field afterwards. Vanishes for uniform flow; gated by
+    ! [blocks] momentum_reflux (inert / bit-exact otherwise).
+    subroutine reflux_zero(blk)
+        type(block_set_type), intent(inout) :: blk
+        integer :: b, i, j, k, c, nx, ny, nz, nBlocks
+        nx = int(blk%nb(1)); ny = int(blk%nb(2)); nz = int(blk%nb(3))
+        nBlocks = int(blk%nBlocks)
+        !$omp target teams distribute parallel do collapse(5) &
+        !$omp& map(tofrom: blk%refluxCorr) private(i,j,k,c,b)
+        do b = 1, nBlocks
+            do c = 1, NVEL
+                do k = 1, nz
+                    do j = 1, ny
+                        do i = 1, nx
+                            blk%refluxCorr(i,j,k,c,b) = 0.0d0
+                        end do
+                    end do
+                end do
+            end do
+        end do
+        !$omp end target teams distribute parallel do
+    end subroutine reflux_zero
+
+    ! Fill refluxF with the direction-dir interface-normal advective flux q_dir^2
+    ! at every interface-adjacent cell (low face -> dir-index 1, high -> dir-index
+    ! nb). A face is an interface when its kind is FACE_COARSE or FACE_FINE.
+    subroutine reflux_compute_flux(blk, dir)
+        type(block_set_type), intent(inout) :: blk
+        integer, intent(in) :: dir
+        integer :: b, i, j, k, nx, ny, nz, nBlocks
+        integer(C_INT) :: lo, hi
+        nx = int(blk%nb(1)); ny = int(blk%nb(2)); nz = int(blk%nb(3))
+        nBlocks = int(blk%nBlocks)
+
+        ! Clear first: the geometry-driven exchange restricts ALL interface faces,
+        ! so leftover flux from another direction's cells would be restricted into
+        ! coarse halos and corrupt edges/corners.
+        !$omp target teams distribute parallel do collapse(4) &
+        !$omp& map(tofrom: blk%refluxF) private(i,j,k,b)
+        do b = 1, nBlocks
+            do k = 0, nz+1
+                do j = 0, ny+1
+                    do i = 0, nx+1
+                        blk%refluxF(i,j,k,b) = 0.0d0
+                    end do
+                end do
+            end do
+        end do
+        !$omp end target teams distribute parallel do
+
+        if (dir == 1) then
+            !$omp target teams distribute parallel do collapse(3) &
+            !$omp& map(to: blk%physLow, blk%physHigh) map(tofrom: blk%q, blk%refluxF) &
+            !$omp& private(i,j,k,b,lo,hi)
+            do b = 1, nBlocks
+                do k = 1, nz
+                    do j = 1, ny
+                        lo = blk%physLow(1,b); hi = blk%physHigh(1,b)
+                        if (lo == FACE_COARSE .or. lo == FACE_FINE) &
+                            blk%refluxF(1,j,k,b) = (blk%q(0,j,k,VAR_U,b) + blk%q(1,j,k,VAR_U,b))**2
+                        if (hi == FACE_COARSE .or. hi == FACE_FINE) &
+                            blk%refluxF(nx,j,k,b) = (blk%q(nx,j,k,VAR_U,b) + blk%q(nx+1,j,k,VAR_U,b))**2
+                    end do
+                end do
+            end do
+            !$omp end target teams distribute parallel do
+        else if (dir == 2) then
+            !$omp target teams distribute parallel do collapse(3) &
+            !$omp& map(to: blk%physLow, blk%physHigh) map(tofrom: blk%q, blk%refluxF) &
+            !$omp& private(i,j,k,b,lo,hi)
+            do b = 1, nBlocks
+                do k = 1, nz
+                    do i = 1, nx
+                        lo = blk%physLow(2,b); hi = blk%physHigh(2,b)
+                        if (lo == FACE_COARSE .or. lo == FACE_FINE) &
+                            blk%refluxF(i,1,k,b) = (blk%q(i,0,k,VAR_V,b) + blk%q(i,1,k,VAR_V,b))**2
+                        if (hi == FACE_COARSE .or. hi == FACE_FINE) &
+                            blk%refluxF(i,ny,k,b) = (blk%q(i,ny,k,VAR_V,b) + blk%q(i,ny+1,k,VAR_V,b))**2
+                    end do
+                end do
+            end do
+            !$omp end target teams distribute parallel do
+        else
+            !$omp target teams distribute parallel do collapse(3) &
+            !$omp& map(to: blk%physLow, blk%physHigh) map(tofrom: blk%q, blk%refluxF) &
+            !$omp& private(i,j,k,b,lo,hi)
+            do b = 1, nBlocks
+                do j = 1, ny
+                    do i = 1, nx
+                        lo = blk%physLow(3,b); hi = blk%physHigh(3,b)
+                        if (lo == FACE_COARSE .or. lo == FACE_FINE) &
+                            blk%refluxF(i,j,1,b) = (blk%q(i,j,0,VAR_W,b) + blk%q(i,j,1,VAR_W,b))**2
+                        if (hi == FACE_COARSE .or. hi == FACE_FINE) &
+                            blk%refluxF(i,j,nz,b) = (blk%q(i,j,nz,VAR_W,b) + blk%q(i,j,nz+1,VAR_W,b))**2
+                    end do
+                end do
+            end do
+            !$omp end target teams distribute parallel do
+        end if
+    end subroutine reflux_compute_flux
+
+    ! After the interface-row restriction has placed avg(F_fine) in the coarse
+    ! across-interface halo, accumulate the coarse cell's RHS reflux correction
+    ! (replace F_coarse by avg(F_fine)). Only coarse cells (physLow/High==FACE_FINE)
+    ! are corrected; the fine side is authoritative. The sign follows from the
+    ! advection sign of the un-cancelled flux: vv_m at the low face (enters with
+    ! -), vv_p at the high face (enters with +).
+    subroutine reflux_accumulate(blk, dir)
+        type(block_set_type), intent(inout) :: blk
+        integer, intent(in) :: dir
+        integer :: b, i, j, k, nx, ny, nz, nBlocks
+        nx = int(blk%nb(1)); ny = int(blk%nb(2)); nz = int(blk%nb(3))
+        nBlocks = int(blk%nBlocks)
+
+        if (dir == 1) then
+            !$omp target teams distribute parallel do collapse(3) &
+            !$omp& map(to: blk%physLow, blk%physHigh, blk%d1x, blk%refluxF) &
+            !$omp& map(tofrom: blk%refluxCorr) private(i,j,k,b)
+            do b = 1, nBlocks
+                do k = 1, nz
+                    do j = 1, ny
+                        if (blk%physLow(1,b) == FACE_FINE) &
+                            blk%refluxCorr(1,j,k,VAR_U,b) = 0.25d0 &
+                                *(blk%refluxF(0,j,k,b) - blk%refluxF(1,j,k,b))*blk%d1x(1,VAR_U,b)
+                        if (blk%physHigh(1,b) == FACE_FINE) &
+                            blk%refluxCorr(nx,j,k,VAR_U,b) = 0.25d0 &
+                                *(blk%refluxF(nx,j,k,b) - blk%refluxF(nx+1,j,k,b))*blk%d1x(nx,VAR_U,b)
+                    end do
+                end do
+            end do
+            !$omp end target teams distribute parallel do
+        else if (dir == 2) then
+            !$omp target teams distribute parallel do collapse(3) &
+            !$omp& map(to: blk%physLow, blk%physHigh, blk%d1y, blk%refluxF) &
+            !$omp& map(tofrom: blk%refluxCorr) private(i,j,k,b)
+            do b = 1, nBlocks
+                do k = 1, nz
+                    do i = 1, nx
+                        if (blk%physLow(2,b) == FACE_FINE) &
+                            blk%refluxCorr(i,1,k,VAR_V,b) = 0.25d0 &
+                                *(blk%refluxF(i,0,k,b) - blk%refluxF(i,1,k,b))*blk%d1y(1,VAR_V,b)
+                        if (blk%physHigh(2,b) == FACE_FINE) &
+                            blk%refluxCorr(i,ny,k,VAR_V,b) = 0.25d0 &
+                                *(blk%refluxF(i,ny,k,b) - blk%refluxF(i,ny+1,k,b))*blk%d1y(ny,VAR_V,b)
+                    end do
+                end do
+            end do
+            !$omp end target teams distribute parallel do
+        else
+            !$omp target teams distribute parallel do collapse(3) &
+            !$omp& map(to: blk%physLow, blk%physHigh, blk%d1z, blk%refluxF) &
+            !$omp& map(tofrom: blk%refluxCorr) private(i,j,k,b)
+            do b = 1, nBlocks
+                do j = 1, ny
+                    do i = 1, nx
+                        if (blk%physLow(3,b) == FACE_FINE) &
+                            blk%refluxCorr(i,j,1,VAR_W,b) = 0.25d0 &
+                                *(blk%refluxF(i,j,0,b) - blk%refluxF(i,j,1,b))*blk%d1z(1,VAR_W,b)
+                        if (blk%physHigh(3,b) == FACE_FINE) &
+                            blk%refluxCorr(i,j,nz,VAR_W,b) = 0.25d0 &
+                                *(blk%refluxF(i,j,nz,b) - blk%refluxF(i,j,nz+1,b))*blk%d1z(nz,VAR_W,b)
+                    end do
+                end do
+            end do
+            !$omp end target teams distribute parallel do
+        end if
+    end subroutine reflux_accumulate
+
+    ! Add the accumulated reflux correction to the predicted field: qs (now in q)
+    ! gains dt_alpha*Corr, and oldrhs (the stored RHS for the next AB2 step) gains
+    ! Corr -- exactly as if the predictor had used the refluxed RHS. Inert away
+    ! from interfaces (Corr == 0 there).
+    subroutine reflux_apply(blk, dt_alpha)
+        type(block_set_type), intent(inout) :: blk
+        real(C_DOUBLE), intent(in) :: dt_alpha
+        integer :: b, i, j, k, c, nx, ny, nz, nBlocks
+        nx = int(blk%nb(1)); ny = int(blk%nb(2)); nz = int(blk%nb(3))
+        nBlocks = int(blk%nBlocks)
+        !$omp target teams distribute parallel do collapse(5) &
+        !$omp& map(to: dt_alpha, blk%refluxCorr) map(tofrom: blk%q, blk%oldrhs) &
+        !$omp& private(i,j,k,c,b)
+        do b = 1, nBlocks
+            do c = 1, NVEL
+                do k = 1, nz
+                    do j = 1, ny
+                        do i = 1, nx
+                            blk%q(i,j,k,c,b) = blk%q(i,j,k,c,b) + dt_alpha*blk%refluxCorr(i,j,k,c,b)
+                            blk%oldrhs(i,j,k,c,b) = blk%oldrhs(i,j,k,c,b) + blk%refluxCorr(i,j,k,c,b)
+                        end do
+                    end do
+                end do
+            end do
+        end do
+        !$omp end target teams distribute parallel do
+    end subroutine reflux_apply
 
     subroutine momentum(blk, dns, dt_alpha, dt_beta, dt_gamma, ibm, les, les_prof)
         type(block_set_type), intent(inout) :: blk
