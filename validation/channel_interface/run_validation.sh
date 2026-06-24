@@ -12,7 +12,8 @@
 #
 # Solver config (set in the inis): damped-Jacobi projection at omega (sor) = 0.8
 # -- near-optimal, jacobi NEEDS omega<1 (the old red-black sor=1.5 diverges) --
-# with niter = 30 (jacobi ~10x slower-converging than SOR), and the refined cases
+# with niter = 6 (= 3 old red-black iterations x 2 colours; under-converged, a
+# multi-level Schwarz is the planned fix), and the refined cases
 # run with [blocks] momentum_reflux = true (Berger-Colella momentum reflux that
 # conserves the 2:1 interface momentum flux -- the -<u'v'> / mean-shear defect).
 #

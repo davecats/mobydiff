@@ -6,7 +6,9 @@ Three cases:
 > **Solver + reflux (defaults set in the inis).** The projection is damped Jacobi
 > at `sor` (omega) `= 0.8` -- near-optimal, and `< 1` is REQUIRED (this branch
 > replaced red-black SOR; `omega >= 1.1` diverges, so the old `sor = 1.5` NaNs).
-> Jacobi is ~10x slower-converging than SOR, so `niter = 30` (was 3). The refined
+> `niter = 6` = the old 3 red-black iterations x 2 colours (same sweep count);
+> Jacobi per-sweep is weaker so this is under-converged (it plateaus on the large
+> scales) -- acceptable for now, a multi-level Schwarz is the planned fix. The refined
 > cases run with `[blocks] momentum_reflux = true` -- the Berger-Colella reflux of
 > the interface advective momentum (conserves the 2:1 interface momentum flux, the
 > localized `-<u'v'>` / mean-shear defect; see `docs/interface_review.md` ii-iii
