@@ -10,30 +10,33 @@
 #
 #   ./run_validation.sh [gpu|cpu] [nranks]
 #
-# Set REFLUX=1 to enable [blocks] momentum_reflux on the refined cases (the
-# Berger-Colella momentum reflux that conserves momentum across the 2:1
-# interface -- the fix for the localized -<u'v'> / mean-shear defect there).
-# The refined runs then land in runs/<name>_reflux/ for a reflux-on vs
-# reflux-off vs reference comparison:
-#   REFLUX=1 ./run_validation.sh gpu 2
+# Solver config (set in the inis): damped-Jacobi projection at omega (sor) = 0.8
+# -- near-optimal, jacobi NEEDS omega<1 (the old red-black sor=1.5 diverges) --
+# with niter = 30 (jacobi ~10x slower-converging than SOR), and the refined cases
+# run with [blocks] momentum_reflux = true (Berger-Colella momentum reflux that
+# conserves the 2:1 interface momentum flux -- the -<u'v'> / mean-shear defect).
+#
+# Set NOREFLUX=1 to DISABLE the reflux on the refined cases (override the ini) for
+# a reflux-on vs reflux-off comparison; those runs land in runs/<name>_noreflux/:
+#   NOREFLUX=1 ./run_validation.sh gpu 2
 #
 # Post-process with:
 #   python3 ../../tools/channel_interface_validation.py \
 #       --reference runs/reference/stats --refined runs/refined_y110/stats --out plots_y110
-#   (and the same with refined_y55; use runs/refined_y110_reflux/stats for REFLUX=1)
+#   (and refined_y55; use runs/<name>_noreflux/stats for the NOREFLUX=1 runs)
 
 set -euo pipefail
 cd "$(dirname "$0")"
 
 ARCH="${1:-gpu}"
 NRANKS="${2:-1}"
-REFLUX="${REFLUX:-0}"
+NOREFLUX="${NOREFLUX:-0}"
 REFLUX_SED=""
 RSUFFIX=""
-if [ "$REFLUX" = "1" ]; then
-    REFLUX_SED='s|^refine_levels = .*|&\nmomentum_reflux = true|'
-    RSUFFIX="_reflux"
-    echo "== momentum_reflux ENABLED on refined cases (runs/<name>_reflux/)"
+if [ "$NOREFLUX" = "1" ]; then
+    REFLUX_SED='s|^momentum_reflux = .*|momentum_reflux = false|'
+    RSUFFIX="_noreflux"
+    echo "== momentum_reflux DISABLED on refined cases (runs/<name>_noreflux/)"
 fi
 BIN="../../build_${ARCH}/main"
 TRANSIENT_T=5.0
