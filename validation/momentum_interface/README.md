@@ -92,17 +92,20 @@ Validated (`MOBY_PREDONLY` + `MOBY_RHSDUMP`, per-component `Sum(vol*rhs)`):
   standard Berger-Colella tradeoff; conservation is the goal for turbulence-grade
   interfaces.
 
-**Corner/edge stability (inc 6).** The cubic deep-halo reconstruction amplifies a
-high-k mode ~7x; on a single (planar) interface this is harmless, but a block at a
-2:1 EDGE/CORNER reconstructs in 2-3 directions that feed the same corner cell's
-cross-advection and the combined amplification BLOWS UP (the 3D-patch
-`interface_decay` gate; dt-scaled → predictor, not projection). So reconstruction
-is now done ONLY on single-interface (`nIf < 2`) blocks; edge/corner blocks keep
-their exchanged (blend) halos. The **planar slab keeps its 2nd-order fine band**
-(and `interface_decay` passes), but the **patch fine band regresses to ~O(1) at
-the corner/edge cells**. This is a STABILITY-for-accuracy trade at corners only;
-planar bands (the channel) are unaffected. A consistent (≥ O(h)) non-amplifying
-corner reconstruction is OPEN work (memory `corner-reconstruction-todo`).
+**Corner/edge stability (inc 6).** The cubic deep-halo reconstruction `3q1-3q2+q3`
+amplifies a high-k mode ~7x; on a single (planar) interface this is harmless, but
+a block at a 2:1 EDGE/CORNER reconstructs in 2-3 directions that feed the same
+corner cell's cross-advection and the combined amplification BLOWS UP (the
+3D-patch `interface_decay` gate; dt-scaled → predictor, not projection). Fix: the
+extrapolation ORDER is lowered at edge/corner blocks — `nIf` (interface-face
+count) < 2 keeps the 2nd-order cubic `(3,-3,1)`; `nIf ≥ 2` uses the **linear ghost
+`2q1-q2` `(2,-1,0)`** (L1 norm 3, bounded under the corner coupling). Result:
+`interface_decay` PASSES, the **planar slab keeps its 2nd-order fine band**, and
+the **patch corner operator is now CONSISTENT** (fine-band rms 1.4e-3→5.3e-4,
+converging, ~14x smaller than the un-reconstructed O(1)/diverging case). The
+order is still sub-O(h) (~0.5–0.86) because linear's `dif_y=0` leaves the corner
+NORMAL diffusion at O(1); a composite-stencil corner diffusion for clean O(h)+ is
+OPEN (memory `corner-reconstruction-todo`, `docs/corner_reconstruction_strategy.md`).
 
 **The one piece NOT refluxed — viscous corners.** The 2:1 viscous flux conserves
 on a FLAT interface (slab dif ≈ 1e-17) but leaks ~1st order at edges/corners

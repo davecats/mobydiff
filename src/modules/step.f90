@@ -106,6 +106,7 @@ contains
     subroutine reconstruct_interface_halos(blk)
         type(block_set_type), intent(inout) :: blk
         integer :: b, i, j, k, d, nx, ny, nz, nBlocks, nIf
+        real(C_DOUBLE) :: c1, c2, c3
 
         nx = int(blk%nb(1)); ny = int(blk%nb(2)); nz = int(blk%nb(3))
         nBlocks = int(blk%nBlocks)
@@ -117,24 +118,25 @@ contains
         ! u(nx+1,0,k) reconstructed too). Components NORMAL to a HIGH face are the
         ! owned interface face, not a deep halo, and are left untouched.
         !
-        ! STABILITY: the cubic extrapolation amplifies a high-k mode ~7x. On a
-        ! single (planar) interface this is harmless (the planar interface_decay
-        ! gate is stable), but a block at a 2:1 EDGE/CORNER reconstructs in 2-3
-        ! directions whose halos feed the same corner cell's cross-advection, and
-        ! the combined amplification BLOWS UP (the 3D-patch decay gate, dt-scaled
-        ! so it is the predictor, not the projection). So reconstruction is done
-        ! ONLY on blocks with a SINGLE interface face (nIf < 2); edge/corner blocks
-        ! keep their exchanged (blend) halos -- a local accuracy loss (their
-        ! interface accuracy was already poor) for stability. Planar refinement
-        ! bands (the channel) are all single-interface, so they are unaffected.
+        ! STABILITY: the cubic extrapolation q(0)=3q1-3q2+q3 amplifies a high-k
+        ! mode ~7x. On a SINGLE (planar) interface this is harmless, but a block at
+        ! a 2:1 EDGE/CORNER reconstructs in 2-3 directions whose halos feed the
+        ! same corner cell's cross-advection and the combined amplification BLOWS
+        ! UP (the 3D-patch interface_decay gate; dt-scaled -> the predictor, not a
+        ! projection null mode). So the extrapolation ORDER is lowered at
+        ! edge/corner blocks: nIf (number of interface faces) < 2 -> the 2nd-order
+        ! cubic (c=3,-3,1); nIf >= 2 -> the LINEAR ghost q(0)=2q1-q2 (c=2,-1,0),
+        ! whose L1 norm 3 is small enough to stay bounded under the corner
+        ! coupling. The planar slab keeps its 2nd-order fine band; the corner cells
+        ! drop to ~O(h) (vs O(1) for no reconstruction). Linear loses the normal
+        ! diffusion curvature (the corner normal dif is then ~O(1)); a
+        ! composite-stencil corner diffusion for clean O(h)+ is open work
+        ! (memory corner-reconstruction-todo).
 
-        ! x-interface deep halos: normal = u, tangential = v,w.
-        ! nIf = number of interface faces of this block; blocks with >=2 (2:1
-        ! EDGES/CORNERS) are SKIPPED -- the multi-direction reconstruction there
-        ! amplifies and blows up (interface_decay patch), and corner accuracy is
-        ! already poor. Single-interface (planar) blocks reconstruct as before.
+        ! x-interface deep halos: normal = u, tangential = v,w. (nIf and the
+        ! coefficients c1..c3 are recomputed per block in each region.)
         !$omp target teams distribute parallel do collapse(2) &
-        !$omp& map(to: blk%physLow, blk%physHigh) map(tofrom: blk%q) private(i,j,k,d,b,nIf)
+        !$omp& map(to: blk%physLow, blk%physHigh) map(tofrom: blk%q) private(i,j,k,d,b,nIf,c1,c2,c3)
         do b = 1, nBlocks
             do k = 0, nz+1
                 nIf = 0
@@ -142,33 +144,34 @@ contains
                     if (blk%physLow(d,b) == FACE_COARSE .or. blk%physLow(d,b) == FACE_FINE) nIf = nIf + 1
                     if (blk%physHigh(d,b) == FACE_COARSE .or. blk%physHigh(d,b) == FACE_FINE) nIf = nIf + 1
                 end do
-                if (nIf < 2) then
+                c1 = merge(2.0d0, 3.0d0, nIf >= 2)
+                c2 = merge(-1.0d0, -3.0d0, nIf >= 2)
+                c3 = merge(0.0d0, 1.0d0, nIf >= 2)
                 if (blk%physLow(1,b) == FACE_COARSE) then
                     do j = 0, ny+1
-                        blk%q(0,j,k,VAR_U,b) = 3.0d0*blk%q(1,j,k,VAR_U,b) &
-                            - 3.0d0*blk%q(2,j,k,VAR_U,b) + blk%q(3,j,k,VAR_U,b)
-                        blk%q(0,j,k,VAR_V,b) = 3.0d0*blk%q(1,j,k,VAR_V,b) &
-                            - 3.0d0*blk%q(2,j,k,VAR_V,b) + blk%q(3,j,k,VAR_V,b)
-                        blk%q(0,j,k,VAR_W,b) = 3.0d0*blk%q(1,j,k,VAR_W,b) &
-                            - 3.0d0*blk%q(2,j,k,VAR_W,b) + blk%q(3,j,k,VAR_W,b)
+                        blk%q(0,j,k,VAR_U,b) = c1*blk%q(1,j,k,VAR_U,b) &
+                            + c2*blk%q(2,j,k,VAR_U,b) + c3*blk%q(3,j,k,VAR_U,b)
+                        blk%q(0,j,k,VAR_V,b) = c1*blk%q(1,j,k,VAR_V,b) &
+                            + c2*blk%q(2,j,k,VAR_V,b) + c3*blk%q(3,j,k,VAR_V,b)
+                        blk%q(0,j,k,VAR_W,b) = c1*blk%q(1,j,k,VAR_W,b) &
+                            + c2*blk%q(2,j,k,VAR_W,b) + c3*blk%q(3,j,k,VAR_W,b)
                     end do
                 end if
                 if (blk%physHigh(1,b) == FACE_COARSE) then
                     do j = 0, ny+1
-                        blk%q(nx+1,j,k,VAR_V,b) = 3.0d0*blk%q(nx,j,k,VAR_V,b) &
-                            - 3.0d0*blk%q(nx-1,j,k,VAR_V,b) + blk%q(nx-2,j,k,VAR_V,b)
-                        blk%q(nx+1,j,k,VAR_W,b) = 3.0d0*blk%q(nx,j,k,VAR_W,b) &
-                            - 3.0d0*blk%q(nx-1,j,k,VAR_W,b) + blk%q(nx-2,j,k,VAR_W,b)
+                        blk%q(nx+1,j,k,VAR_V,b) = c1*blk%q(nx,j,k,VAR_V,b) &
+                            + c2*blk%q(nx-1,j,k,VAR_V,b) + c3*blk%q(nx-2,j,k,VAR_V,b)
+                        blk%q(nx+1,j,k,VAR_W,b) = c1*blk%q(nx,j,k,VAR_W,b) &
+                            + c2*blk%q(nx-1,j,k,VAR_W,b) + c3*blk%q(nx-2,j,k,VAR_W,b)
                     end do
                 end if
                 ! Coarse side (coarse-above-fine): point-accurate normal ghost.
                 if (blk%physLow(1,b) == FACE_FINE) then
                     do j = 0, ny+1
-                        blk%q(0,j,k,VAR_U,b) = 3.0d0*blk%q(1,j,k,VAR_U,b) &
-                            - 3.0d0*blk%q(2,j,k,VAR_U,b) + blk%q(3,j,k,VAR_U,b)
+                        blk%q(0,j,k,VAR_U,b) = c1*blk%q(1,j,k,VAR_U,b) &
+                            + c2*blk%q(2,j,k,VAR_U,b) + c3*blk%q(3,j,k,VAR_U,b)
                     end do
                 end if
-                end if   ! nIf < 2
             end do
         end do
         !$omp end target teams distribute parallel do
@@ -176,7 +179,7 @@ contains
         ! y-interface deep halos: normal = v, tangential = u,w. Clip the i-ring so
         ! it does not reach into an x-interface halo (already reconstructed above).
         !$omp target teams distribute parallel do collapse(2) &
-        !$omp& map(to: blk%physLow, blk%physHigh) map(tofrom: blk%q) private(i,j,k,d,b,nIf)
+        !$omp& map(to: blk%physLow, blk%physHigh) map(tofrom: blk%q) private(i,j,k,d,b,nIf,c1,c2,c3)
         do b = 1, nBlocks
             do k = 0, nz+1
                 nIf = 0
@@ -184,33 +187,34 @@ contains
                     if (blk%physLow(d,b) == FACE_COARSE .or. blk%physLow(d,b) == FACE_FINE) nIf = nIf + 1
                     if (blk%physHigh(d,b) == FACE_COARSE .or. blk%physHigh(d,b) == FACE_FINE) nIf = nIf + 1
                 end do
-                if (nIf < 2) then
+                c1 = merge(2.0d0, 3.0d0, nIf >= 2)
+                c2 = merge(-1.0d0, -3.0d0, nIf >= 2)
+                c3 = merge(0.0d0, 1.0d0, nIf >= 2)
                 if (blk%physLow(2,b) == FACE_COARSE) then
                     do i = 0, nx+1
-                        blk%q(i,0,k,VAR_U,b) = 3.0d0*blk%q(i,1,k,VAR_U,b) &
-                            - 3.0d0*blk%q(i,2,k,VAR_U,b) + blk%q(i,3,k,VAR_U,b)
-                        blk%q(i,0,k,VAR_V,b) = 3.0d0*blk%q(i,1,k,VAR_V,b) &
-                            - 3.0d0*blk%q(i,2,k,VAR_V,b) + blk%q(i,3,k,VAR_V,b)
-                        blk%q(i,0,k,VAR_W,b) = 3.0d0*blk%q(i,1,k,VAR_W,b) &
-                            - 3.0d0*blk%q(i,2,k,VAR_W,b) + blk%q(i,3,k,VAR_W,b)
+                        blk%q(i,0,k,VAR_U,b) = c1*blk%q(i,1,k,VAR_U,b) &
+                            + c2*blk%q(i,2,k,VAR_U,b) + c3*blk%q(i,3,k,VAR_U,b)
+                        blk%q(i,0,k,VAR_V,b) = c1*blk%q(i,1,k,VAR_V,b) &
+                            + c2*blk%q(i,2,k,VAR_V,b) + c3*blk%q(i,3,k,VAR_V,b)
+                        blk%q(i,0,k,VAR_W,b) = c1*blk%q(i,1,k,VAR_W,b) &
+                            + c2*blk%q(i,2,k,VAR_W,b) + c3*blk%q(i,3,k,VAR_W,b)
                     end do
                 end if
                 if (blk%physHigh(2,b) == FACE_COARSE) then
                     do i = 0, nx+1
-                        blk%q(i,ny+1,k,VAR_U,b) = 3.0d0*blk%q(i,ny,k,VAR_U,b) &
-                            - 3.0d0*blk%q(i,ny-1,k,VAR_U,b) + blk%q(i,ny-2,k,VAR_U,b)
-                        blk%q(i,ny+1,k,VAR_W,b) = 3.0d0*blk%q(i,ny,k,VAR_W,b) &
-                            - 3.0d0*blk%q(i,ny-1,k,VAR_W,b) + blk%q(i,ny-2,k,VAR_W,b)
+                        blk%q(i,ny+1,k,VAR_U,b) = c1*blk%q(i,ny,k,VAR_U,b) &
+                            + c2*blk%q(i,ny-1,k,VAR_U,b) + c3*blk%q(i,ny-2,k,VAR_U,b)
+                        blk%q(i,ny+1,k,VAR_W,b) = c1*blk%q(i,ny,k,VAR_W,b) &
+                            + c2*blk%q(i,ny-1,k,VAR_W,b) + c3*blk%q(i,ny-2,k,VAR_W,b)
                     end do
                 end if
                 ! Coarse side (coarse-above-fine): point-accurate normal ghost.
                 if (blk%physLow(2,b) == FACE_FINE) then
                     do i = 0, nx+1
-                        blk%q(i,0,k,VAR_V,b) = 3.0d0*blk%q(i,1,k,VAR_V,b) &
-                            - 3.0d0*blk%q(i,2,k,VAR_V,b) + blk%q(i,3,k,VAR_V,b)
+                        blk%q(i,0,k,VAR_V,b) = c1*blk%q(i,1,k,VAR_V,b) &
+                            + c2*blk%q(i,2,k,VAR_V,b) + c3*blk%q(i,3,k,VAR_V,b)
                     end do
                 end if
-                end if   ! nIf < 2
             end do
         end do
         !$omp end target teams distribute parallel do
@@ -218,7 +222,7 @@ contains
         ! z-interface deep halos: normal = w, tangential = u,v. Clip the i-ring
         ! (x-interface) AND the j-ring (y-interface) -- both already reconstructed.
         !$omp target teams distribute parallel do collapse(2) &
-        !$omp& map(to: blk%physLow, blk%physHigh) map(tofrom: blk%q) private(i,j,k,d,b,nIf)
+        !$omp& map(to: blk%physLow, blk%physHigh) map(tofrom: blk%q) private(i,j,k,d,b,nIf,c1,c2,c3)
         do b = 1, nBlocks
             do j = 0, ny+1
                 nIf = 0
@@ -226,32 +230,33 @@ contains
                     if (blk%physLow(d,b) == FACE_COARSE .or. blk%physLow(d,b) == FACE_FINE) nIf = nIf + 1
                     if (blk%physHigh(d,b) == FACE_COARSE .or. blk%physHigh(d,b) == FACE_FINE) nIf = nIf + 1
                 end do
-                if (nIf < 2) then
+                c1 = merge(2.0d0, 3.0d0, nIf >= 2)
+                c2 = merge(-1.0d0, -3.0d0, nIf >= 2)
+                c3 = merge(0.0d0, 1.0d0, nIf >= 2)
                 if (blk%physLow(3,b) == FACE_COARSE) then
                     do i = 0, nx+1
-                        blk%q(i,j,0,VAR_U,b) = 3.0d0*blk%q(i,j,1,VAR_U,b) &
-                            - 3.0d0*blk%q(i,j,2,VAR_U,b) + blk%q(i,j,3,VAR_U,b)
-                        blk%q(i,j,0,VAR_V,b) = 3.0d0*blk%q(i,j,1,VAR_V,b) &
-                            - 3.0d0*blk%q(i,j,2,VAR_V,b) + blk%q(i,j,3,VAR_V,b)
-                        blk%q(i,j,0,VAR_W,b) = 3.0d0*blk%q(i,j,1,VAR_W,b) &
-                            - 3.0d0*blk%q(i,j,2,VAR_W,b) + blk%q(i,j,3,VAR_W,b)
+                        blk%q(i,j,0,VAR_U,b) = c1*blk%q(i,j,1,VAR_U,b) &
+                            + c2*blk%q(i,j,2,VAR_U,b) + c3*blk%q(i,j,3,VAR_U,b)
+                        blk%q(i,j,0,VAR_V,b) = c1*blk%q(i,j,1,VAR_V,b) &
+                            + c2*blk%q(i,j,2,VAR_V,b) + c3*blk%q(i,j,3,VAR_V,b)
+                        blk%q(i,j,0,VAR_W,b) = c1*blk%q(i,j,1,VAR_W,b) &
+                            + c2*blk%q(i,j,2,VAR_W,b) + c3*blk%q(i,j,3,VAR_W,b)
                     end do
                 end if
                 if (blk%physHigh(3,b) == FACE_COARSE) then
                     do i = 0, nx+1
-                        blk%q(i,j,nz+1,VAR_U,b) = 3.0d0*blk%q(i,j,nz,VAR_U,b) &
-                            - 3.0d0*blk%q(i,j,nz-1,VAR_U,b) + blk%q(i,j,nz-2,VAR_U,b)
-                        blk%q(i,j,nz+1,VAR_V,b) = 3.0d0*blk%q(i,j,nz,VAR_V,b) &
-                            - 3.0d0*blk%q(i,j,nz-1,VAR_V,b) + blk%q(i,j,nz-2,VAR_V,b)
+                        blk%q(i,j,nz+1,VAR_U,b) = c1*blk%q(i,j,nz,VAR_U,b) &
+                            + c2*blk%q(i,j,nz-1,VAR_U,b) + c3*blk%q(i,j,nz-2,VAR_U,b)
+                        blk%q(i,j,nz+1,VAR_V,b) = c1*blk%q(i,j,nz,VAR_V,b) &
+                            + c2*blk%q(i,j,nz-1,VAR_V,b) + c3*blk%q(i,j,nz-2,VAR_V,b)
                     end do
                 end if
                 ! Coarse side (coarse-above-fine): point-accurate normal ghost.
                 if (blk%physLow(3,b) == FACE_FINE) then
                     do i = 0, nx+1
-                        blk%q(i,j,0,VAR_W,b) = 3.0d0*blk%q(i,j,1,VAR_W,b) &
-                            - 3.0d0*blk%q(i,j,2,VAR_W,b) + blk%q(i,j,3,VAR_W,b)
+                        blk%q(i,j,0,VAR_W,b) = c1*blk%q(i,j,1,VAR_W,b) &
+                            + c2*blk%q(i,j,2,VAR_W,b) + c3*blk%q(i,j,3,VAR_W,b)
                     end do
-                end if
                 end if
             end do
         end do
