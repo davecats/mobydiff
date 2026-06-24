@@ -202,6 +202,37 @@ program main
         end if
     end block
 
+    ! MOBY_TERMDUMP=<var>: dump each momentum term of component <var> (1=u,2=v,
+    ! 3=w) SEPARATELY, computed from the post-IC-exchanged field exactly as the
+    ! predictor would -- the three advection flux-divergence terms (x/y/z) as
+    ! un/vn/wn of "<prefix>_adv", the three Laplacian terms (d2/dx2, d2/dy2,
+    ! d2/dz2, times 1/Re) as un/vn/wn of "<prefix>_dif". tools/rhsterms.py
+    ! compares each term to its analytic value at the staggered point and splits
+    ! by interface band/row, so a broken interface stencil is attributed to the
+    ! exact term (e.g. the wall-normal d(vv)/dy across a 2:1 face).
+    block
+        character(len=16) :: termEnv
+        integer :: termVar
+        real(C_DOUBLE), allocatable :: advT(:,:,:,:,:), difT(:,:,:,:,:)
+        character(len=256) :: termBase
+        call get_environment_variable("MOBY_TERMDUMP", termEnv)
+        if (len_trim(termEnv) > 0) then
+            read(termEnv, *) termVar
+            allocate(advT(1:blk%nb(1),1:blk%nb(2),1:blk%nb(3),NVEL,blk%nBlocks))
+            allocate(difT(1:blk%nb(1),1:blk%nb(2),1:blk%nb(3),NVEL,blk%nBlocks))
+            call compute_momentum_terms(blk, dns, termVar, advT, difT)
+            termBase = dns%field_prefix
+            call overwrite_velocity(blk, advT)
+            dns%field_prefix = trim(termBase)//"_adv"
+            call write_field(blk, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%sor)
+            call overwrite_velocity(blk, difT)
+            dns%field_prefix = trim(termBase)//"_dif"
+            call write_field(blk, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%sor)
+            dns%field_prefix = termBase
+            stop
+        end if
+    end block
+
     call flow%setup_after_grid(blk, dns, g, bc, c)
     if (les_is_enabled(les)) then
         call update_les_viscosity(les, blk, dns, ibm)
@@ -633,6 +664,69 @@ contains
         !$omp end target teams distribute parallel do
 #endif
     end subroutine overwrite_velocity
+
+    ! MOBY_TERMDUMP: recompute the individual momentum terms of component `var`
+    ! from the (exchanged) field, exactly as the predictor kernel does, but keep
+    ! the three advection flux-divergence terms (x/y/z) and the three Laplacian
+    ! terms (x/y/z, times 1/Re) SEPARATE -> adv(:,:,:,1:3), dif(:,:,:,1:3). A
+    ! diagnostic; run on build_cpu (host). The leading device pull keeps a GPU
+    ! build's host copy current for the read.
+    subroutine compute_momentum_terms(blk, dns, var, adv, dif)
+        type(block_set_type), intent(inout) :: blk
+        type(dns_type), intent(in) :: dns
+        integer, intent(in) :: var
+        real(C_DOUBLE), intent(out) :: adv(:,:,:,:,:), dif(:,:,:,:,:)
+        integer(C_INT) :: i, j, k, b, ip, im, jp, jm, kp, km, nx, ny, nz
+        real(C_DOUBLE) :: ire, fxp, fxm, fyp, fym, fzp, fzm
+        associate(q => blk%q)
+        nx = blk%nb(1); ny = blk%nb(2); nz = blk%nb(3)
+        ire = 1.0d0/dns%re
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target update from(blk%q)
+#endif
+        do b = 1, int(blk%nBlocks)
+            do k = 1, nz
+                do j = 1, ny
+                    do i = 1, nx
+                        ip=i+1; im=i-1; jp=j+1; jm=j-1; kp=k+1; km=k-1
+                        select case (var)
+                        case (VAR_U)
+                            fxp = (q(i,j,k,VAR_U,b)+q(ip,j,k,VAR_U,b))**2
+                            fxm = (q(im,j,k,VAR_U,b)+q(i,j,k,VAR_U,b))**2
+                            fyp = (q(i,j,k,VAR_U,b)+q(i,jp,k,VAR_U,b))*(q(im,jp,k,VAR_V,b)+q(i,jp,k,VAR_V,b))
+                            fym = (q(i,jm,k,VAR_U,b)+q(i,j,k,VAR_U,b))*(q(im,j,k,VAR_V,b)+q(i,j,k,VAR_V,b))
+                            fzp = (q(i,j,k,VAR_U,b)+q(i,j,kp,VAR_U,b))*(q(im,j,kp,VAR_W,b)+q(i,j,kp,VAR_W,b))
+                            fzm = (q(i,j,km,VAR_U,b)+q(i,j,k,VAR_U,b))*(q(im,j,k,VAR_W,b)+q(i,j,k,VAR_W,b))
+                        case (VAR_V)
+                            fxp = (q(i,j,k,VAR_V,b)+q(ip,j,k,VAR_V,b))*(q(ip,jm,k,VAR_U,b)+q(ip,j,k,VAR_U,b))
+                            fxm = (q(im,j,k,VAR_V,b)+q(i,j,k,VAR_V,b))*(q(i,jm,k,VAR_U,b)+q(i,j,k,VAR_U,b))
+                            fyp = (q(i,j,k,VAR_V,b)+q(i,jp,k,VAR_V,b))**2
+                            fym = (q(i,jm,k,VAR_V,b)+q(i,j,k,VAR_V,b))**2
+                            fzp = (q(i,j,k,VAR_V,b)+q(i,j,kp,VAR_V,b))*(q(i,jm,kp,VAR_W,b)+q(i,j,kp,VAR_W,b))
+                            fzm = (q(i,j,km,VAR_V,b)+q(i,j,k,VAR_V,b))*(q(i,jm,k,VAR_W,b)+q(i,j,k,VAR_W,b))
+                        case default
+                            fxp = (q(i,j,k,VAR_W,b)+q(ip,j,k,VAR_W,b))*(q(ip,j,km,VAR_U,b)+q(ip,j,k,VAR_U,b))
+                            fxm = (q(im,j,k,VAR_W,b)+q(i,j,k,VAR_W,b))*(q(i,j,km,VAR_U,b)+q(i,j,k,VAR_U,b))
+                            fyp = (q(i,j,k,VAR_W,b)+q(i,jp,k,VAR_W,b))*(q(i,jp,km,VAR_V,b)+q(i,jp,k,VAR_V,b))
+                            fym = (q(i,jm,k,VAR_W,b)+q(i,j,k,VAR_W,b))*(q(i,j,km,VAR_V,b)+q(i,j,k,VAR_V,b))
+                            fzp = (q(i,j,k,VAR_W,b)+q(i,j,kp,VAR_W,b))**2
+                            fzm = (q(i,j,km,VAR_W,b)+q(i,j,k,VAR_W,b))**2
+                        end select
+                        adv(i,j,k,1,b) = -0.25d0*(fxp-fxm)*blk%d1x(i,var,b)
+                        adv(i,j,k,2,b) = -0.25d0*(fyp-fym)*blk%d1y(j,var,b)
+                        adv(i,j,k,3,b) = -0.25d0*(fzp-fzm)*blk%d1z(k,var,b)
+                        dif(i,j,k,1,b) = ire*(blk%lapXm(i,var,b)*q(im,j,k,var,b) &
+                            + blk%lapX0(i,var,b)*q(i,j,k,var,b) + blk%lapXp(i,var,b)*q(ip,j,k,var,b))
+                        dif(i,j,k,2,b) = ire*(blk%lapYm(j,var,b)*q(i,jm,k,var,b) &
+                            + blk%lapY0(j,var,b)*q(i,j,k,var,b) + blk%lapYp(j,var,b)*q(i,jp,k,var,b))
+                        dif(i,j,k,3,b) = ire*(blk%lapZm(k,var,b)*q(i,j,km,var,b) &
+                            + blk%lapZ0(k,var,b)*q(i,j,k,var,b) + blk%lapZp(k,var,b)*q(i,j,kp,var,b))
+                    end do
+                end do
+            end do
+        end do
+        end associate
+    end subroutine compute_momentum_terms
 
     ! MOBY_MANUF: add amp*grad(phi) to the velocity, phi = cos(kx)cos(ky)cos(kz),
     ! at each component's staggered coordinate (full q bounds, halos included so
