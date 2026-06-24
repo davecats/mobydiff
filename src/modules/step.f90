@@ -15,7 +15,7 @@ module step
     use, intrinsic :: iso_c_binding
     use :: init, only: dns_type, VAR_U, VAR_V, VAR_W, VAR_P, &
         CFL_COURANT, CFL_PECLET, NCFL
-    use :: blocks, only: block_set_type, FACE_PHYS, FACE_CLOSED, FACE_COARSE
+    use :: blocks, only: block_set_type, FACE_PHYS, FACE_CLOSED, FACE_COARSE, FACE_FINE
     use :: ibmm, only: ibm_type
     use :: comm, only: comm_type, comm_allreduce_max
     use :: les_model, only: les_type, les_is_enabled, les_profile_type, &
@@ -81,11 +81,27 @@ contains
     !    order (increment 4). The cubic extrapolation reads the fine column above
     !    (same i,k), so it is tangentially accurate.
     !
+    !  * NORMAL component on the COARSE side of an interface (increment 5), at a
+    !    physLow(d)==FACE_FINE face (coarse block whose LOW face is finer, i.e.
+    !    coarse-above-fine). The coarse cell adjacent to the interface advects /
+    !    diffuses its interface face by reading the deep halo q(i,0,k) one coarse
+    !    cell INTO the fine region, which the exchange fills with the RESTRICTION
+    !    (4-point average) of the covering fine faces. A face-average differs from
+    !    the point value the coarse stencil wants by O(h^2) (the tangential
+    !    curvature), so the pointwise d(vv)/dy is O(h) (~1st) and d2v/dy2 is O(1)
+    !    (~0th) -- the un-refluxed coarse-fine flux mismatch (Berger-Colella). The
+    !    SAME cubic extrapolation from the coarse interior gives a point-accurate,
+    !    tangentially-accurate ghost. The face-average stays in the OWNED interface
+    !    face (q(1), in the divergence) for mass conservation; only the deep halo
+    !    q(0) -- never in the divergence -- is reconstructed for the momentum
+    !    stencil. (The other orientation's coarse cell reads the face directly and
+    !    is already 2nd order, so only the FACE_FINE low face is treated.)
+    !
     ! All reconstructed cells are DEEP halos that never enter the divergence
     ! operator, so global conservation is untouched (the OWNED interface normal
     ! face -- q(1) low / q(ny+1) high for the normal component -- is left alone).
-    ! Purely local (no cross-block coarse reads, no exchange-ordering race). Inert
-    ! without a 2:1 interface (no FACE_COARSE face), hence bit-exact for
+    ! Purely local (no cross-block reads, no exchange-ordering race). Inert without
+    ! a 2:1 interface (no FACE_COARSE/FACE_FINE face), hence bit-exact for
     ! single-level runs. Call right before the predictor, after the halo exchange.
     subroutine reconstruct_interface_halos(blk)
         type(block_set_type), intent(inout) :: blk
@@ -126,6 +142,13 @@ contains
                             - 3.0d0*blk%q(nx-1,j,k,VAR_W,b) + blk%q(nx-2,j,k,VAR_W,b)
                     end do
                 end if
+                ! Coarse side (coarse-above-fine): point-accurate normal ghost.
+                if (blk%physLow(1,b) == FACE_FINE) then
+                    do j = 0, ny+1
+                        blk%q(0,j,k,VAR_U,b) = 3.0d0*blk%q(1,j,k,VAR_U,b) &
+                            - 3.0d0*blk%q(2,j,k,VAR_U,b) + blk%q(3,j,k,VAR_U,b)
+                    end do
+                end if
             end do
         end do
         !$omp end target teams distribute parallel do
@@ -153,6 +176,13 @@ contains
                             - 3.0d0*blk%q(i,ny-1,k,VAR_W,b) + blk%q(i,ny-2,k,VAR_W,b)
                     end do
                 end if
+                ! Coarse side (coarse-above-fine): point-accurate normal ghost.
+                if (blk%physLow(2,b) == FACE_FINE) then
+                    do i = 0, nx+1
+                        blk%q(i,0,k,VAR_V,b) = 3.0d0*blk%q(i,1,k,VAR_V,b) &
+                            - 3.0d0*blk%q(i,2,k,VAR_V,b) + blk%q(i,3,k,VAR_V,b)
+                    end do
+                end if
             end do
         end do
         !$omp end target teams distribute parallel do
@@ -178,6 +208,13 @@ contains
                             - 3.0d0*blk%q(i,j,nz-1,VAR_U,b) + blk%q(i,j,nz-2,VAR_U,b)
                         blk%q(i,j,nz+1,VAR_V,b) = 3.0d0*blk%q(i,j,nz,VAR_V,b) &
                             - 3.0d0*blk%q(i,j,nz-1,VAR_V,b) + blk%q(i,j,nz-2,VAR_V,b)
+                    end do
+                end if
+                ! Coarse side (coarse-above-fine): point-accurate normal ghost.
+                if (blk%physLow(3,b) == FACE_FINE) then
+                    do i = 0, nx+1
+                        blk%q(i,j,0,VAR_W,b) = 3.0d0*blk%q(i,j,1,VAR_W,b) &
+                            - 3.0d0*blk%q(i,j,2,VAR_W,b) + blk%q(i,j,3,VAR_W,b)
                     end do
                 end if
             end do

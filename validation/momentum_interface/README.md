@@ -152,6 +152,42 @@ only ~1.5). Regressions all pass: non-interface bit-exact (0.0), Axis-2 round-of
 real-Beltrami conservation round-off (divpre +5.3e-17), coarse band unchanged,
 CPU==GPU bit-identical (slab + patch).
 
-**Still open (a clean 2nd order):** the **coarse-band** normal velocity
-(~1st–1.5 order) is the un-refluxed Berger–Colella tangential-momentum flux
-mismatch (Layer 2). The fine band is now 2nd order.
+## Increment 5 — coarse-side normal deep-halo reconstruction (`reconstruct_interface_halos`)
+
+Layer 2: lift the coarse band from ~1st to 2nd order. The defect (pinned
+term-by-term to the coarse cell adjacent to a `physLow==FACE_FINE` interface,
+i.e. coarse-above-fine) is `adv_y` (order 0.99) and `dif_y` (order ~0, constant
+error): the coarse cell advects / diffuses its interface face by reading the deep
+halo `q(i,0,k)` one coarse cell INTO the fine region, which the exchange fills
+with the RESTRICTION — a 4-point average of the covering fine faces. A
+face-average differs from the point value the coarse stencil wants by O(h²) (the
+tangential curvature), so the pointwise `∂(vv)/∂y` is O(h) (~1st) and `∂²v/∂y²`
+is O(1) (~0th). This is the un-refluxed coarse-fine flux mismatch (Berger–Colella
+"the fine flux is the accurate one").
+
+Fix: the SAME local cubic extrapolation from the coarse interior
+(`q(0)=3q(1)-3q(2)+q(3)`), applied to the normal component's deep halo at
+`physLow(d)==FACE_FINE` faces. It gives a point-accurate, tangentially-accurate
+ghost for the momentum stencil; the face-average stays in the OWNED interface
+face `q(1)` (in the divergence) for mass conservation, and only the deep halo
+`q(0)` — never in the divergence — is reconstructed. It is the Berger–Colella
+fine-authoritative idea realized as a LOCAL reconstruction (codebase principle:
+prefer local reconstructions over the racing gather), conservation-neutral and
+vanishing for uniform/linear flow. The other orientation's coarse cell reads the
+interface face directly and is already 2nd order, so only the FACE_FINE low face
+is treated.
+
+Result (per-term, v-momentum, coarse cell adjacent to interface): `adv_y`
+0.99 → **3.00**, `dif_y` -0.02 → **2.00**; all coarse-band terms 2nd–3rd order.
+**Slab coarse-band v order 0.98 → 2.98**; patch coarse band `1.47 → 2.04` (all
+components). Fine band unchanged (slab ~2.0, patch 1.76→1.36). Regressions all
+pass: non-interface bit-exact (0.0); Axis-2 round-off (slab +2.5e-14, patch
++1.2e-14); PROJONLY div-free Beltrami 0.0 everywhere; real-Beltrami conservation
+round-off (divpre +5.5e-17); fine band + interior unchanged; CPU==GPU
+bit-identical (slab + patch).
+
+**Status:** the 2:1 momentum predictor is now **2nd order at the interface** for
+all components, both bands, both orientations (clean on the slab; ~1.4–2.0 on the
+patch, the residual being corner double-extrapolation). Mass conservation stays
+round-off. The remaining momentum-CONSERVATION (flux-register equality, vs the
+accuracy this increment delivers) is not gated here and is a separate property.

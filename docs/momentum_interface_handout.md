@@ -14,9 +14,10 @@ interface-row phi restrict — see the projection handout). This work fixed the
 **momentum predictor** (advection + diffusion, `src/modules/step.f90`) at the
 interface, which was both unfixed and untested.
 
-**The momentum interface operator is now CONSISTENT (converging) everywhere** —
-no 0th-order or diverging terms remain. Two accuracy layers are left (both push
-a residual from ~1st to 2nd order); they are NOT consistency defects.
+**The momentum interface operator is now 2nd ORDER everywhere** — both bands
+(fine + coarse), both orientations, all components, with mass conservation at
+round-off. The two accuracy layers that were open (fine-band tangential interp =
+inc 4; coarse-band normal reconstruction = inc 5) are both DONE.
 
 ### Commits (oldest → newest)
 - `05182d2` **operator-truncation gate**: `initial = tgv3d` manufactured field +
@@ -29,15 +30,16 @@ a residual from ~1st to 2nd order); they are NOT consistency defects.
 - `c83c3c3` **per-term operator dump** `MOBY_TERMDUMP` + `tools/rhsterms.py`.
 - `a5fc325` inc 3 **wall-normal deep-halo reconstruction** (step.f90). Fixes v.
 
-### Current order (slab, 32/64/128, with all increments incl. inc 4)
+### Current order (slab, 32/64/128, with all increments incl. inc 4 + 5)
 ```
 interior     2.0   (all components)            <- 2nd order
-coarse_band  u,w 2.0   v 1.0                    <- v NOT 2nd (reflux = Layer 2)
+coarse_band  u,v,w ~2.0                         <- 2nd order (inc 5 done)
 fine_band    u,v,w ~2.0                         <- 2nd order (inc 4 done)
 ```
-Per-term (v-momentum, fine band): ALL terms (`adv_x/y/z`, `dif_x/y/z`) = 2.0.
-(Inc 4 lifted `adv_x`/`adv_z` from ~0.6 to 2.00.) Patch (corners/edges) fine
-band is ~1.4–1.8 — the residual is the corner double-extrapolation, expected.
+BOTH bands 2nd order. Per-term (v-momentum): all six terms 2nd order in BOTH
+bands. Inc 4 lifted the fine-band `adv_x`/`adv_z` 0.6 → 2.00; inc 5 lifted the
+coarse-band `adv_y` 0.99 → 3.00 / `dif_y` 0 → 2.00. Patch (corners/edges): coarse
+band 2.04, fine band ~1.4–1.8 (the residual is the corner double-extrapolation).
 
 ## The gate suite (how to validate)
 
@@ -115,9 +117,14 @@ python3 tools/divsum.py <prefix>_divpre_1.h5     # must be ~1e-14
 
 ## What is left (the next session's work)
 
-Layer 1 (tangential interp) is **DONE** (inc 4 below); the fine band is 2nd
-order. Only Layer 2 (reflux) remains. The operator is consistent everywhere.
-Detailed scoping is in `docs/next_session_tangential_reflux.md`.
+BOTH layers are **DONE** (inc 4 + inc 5 below); the momentum predictor is 2nd
+order at the interface in both bands, both orientations, all components, with
+mass conservation at round-off. The operator-accuracy work on the 2:1 interface
+is complete. What is NOT addressed (and not gated here): flux-register MOMENTUM
+conservation (exact coarse=Σfine equality, vs the 2nd-order accuracy inc 5
+delivers); the patch corner residual (~1.4–1.8 fine band from corner
+double-extrapolation); and turbulence-grade validation (a real refined-body or
+channel-interface run — see `docs/interface_review.md` §vii on scope).
 
 1. **Tangential reconstruction of the tangential velocity halos** — **DONE**
    (increment 4, `reconstruct_interface_halos` in `step.f90`). Generalised inc
@@ -132,14 +139,21 @@ Detailed scoping is in `docs/next_session_tangential_reflux.md`.
    all components (`adv_x`/`adv_z` 0.6 → 2.00 per-term); patch 0.6 → 1.4–1.8
    (corner residual). All regressions pass (see README inc 4).
 
-2. **Berger–Colella tangential-momentum reflux** → lifts the coarse band to 2nd
-   order. The coarse cell adjacent to the interface advects its NORMAL velocity
-   using the restricted fine flux; the coarse-minus-summed-fine flux mismatch is
-   un-refluxed (coarse-band normal v ~1st order; tangential u,w already 2nd).
-   This is the only piece that restores MOMENTUM conservation across the
-   interface (mass is already conserved). "Constructed to vanish for uniform
-   flow" is the constraint to keep the exact gates. See `docs/interface_review.md`
-   §v (Berger & Colella 1989; Almgren et al. 1998).
+2. **Coarse-side normal deep-halo reconstruction** — **DONE** (increment 5).
+   The coarse-band defect was pinned term-by-term to the coarse cell adjacent to
+   a `physLow==FACE_FINE` interface (coarse-above-fine): `adv_y` order 0.99,
+   `dif_y` order ~0. The coarse cell reads its interface face's deep halo
+   `q(i,0,k)` one coarse cell into the fine region, filled by the RESTRICTION (a
+   4-point fine-face average); a face-average is O(h²) off the point value the
+   coarse stencil wants, giving `∂(vv)/∂y` O(h) and `∂²v/∂y²` O(1). Fixed by the
+   SAME local cubic extrapolation from the coarse interior, applied to the normal
+   component's `q(0)` deep halo only — the face-average stays in the owned
+   interface face `q(1)` (in the divergence) for mass conservation. This is the
+   Berger–Colella fine-authoritative idea realized as a LOCAL reconstruction
+   (conservation-neutral, vanishes for uniform flow), NOT a flux register.
+   RESULT: slab coarse-band v order 0.98 → 2.98 (`adv_y` 0.99→3.00, `dif_y`
+   0→2.00 per-term); patch coarse band 1.47 → 2.04. All regressions pass
+   (see README inc 5). See `docs/interface_review.md` §v (Berger & Colella 1989).
 
 ## Gotchas (carried over)
 - CPU `build_cpu` (`-Mnofma`) is the reference; GPU `build_gpu`
