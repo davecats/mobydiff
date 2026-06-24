@@ -73,13 +73,24 @@ contains
         integer, allocatable :: seed(:)
         real(C_DOUBLE) :: r, kk
 
-        if (trim(dns%initial) == "beltrami" .or. trim(dns%initial) == "tgv") then
-            ! Exact incompressible-NS solutions on a 2*pi-periodic cube, k=2*pi/Lx,
-            ! each velocity component set at its own staggered coordinate. Beltrami
-            ! / ABC (curl u = k u, fully 3D, decays exp(-nu k^2 t)):
+        if (trim(dns%initial) == "beltrami" .or. trim(dns%initial) == "tgv" &
+            .or. trim(dns%initial) == "tgv3d") then
+            ! Analytic fields on a 2*pi-periodic cube, k=2*pi/Lx, each velocity
+            ! component set at its own staggered coordinate. Beltrami / ABC
+            ! (curl u = k u, fully 3D, decays exp(-nu k^2 t)):
             !   u = sin(kz)+cos(ky)  v = sin(kx)+cos(kz)  w = sin(ky)+cos(kx)
             ! Taylor-Green (2D in x-y, decays exp(-2 nu k^2 t)):
             !   u =  sin(kx)cos(ky)  v = -cos(kx)sin(ky)  w = 0
+            ! tgv3d (manufactured momentum-operator test, NOT an NS solution):
+            !   u = sin(kx)cos(ky)cos(kz)
+            !   v = cos(kx)sin(ky)cos(kz)
+            !   w = cos(kx)cos(ky)sin(kz)
+            ! Every component varies in every direction, so the wall-normal
+            ! velocity varies in the normal direction at all three interface
+            ! orientations (Beltrami's dv/dy=0 makes that term vanish). The
+            ! Laplacian of each component is -3k^2 times the component, so the
+            ! analytic diffusion is trivial; the advection is closed-form (see
+            ! tools/rhsband.py). Used by the MOBY_RHSDUMP operator gate.
             ! Set interior + the single halo layer; use blk%q's real bounds
             ! (0:nb+1 here) since blk%x/y/z extend further (-1:nb+2) than q.
             kk = 8.0d0*atan(1.0d0)/dns%leng(1)
@@ -91,6 +102,10 @@ contains
                                 blk%q(i,j,k,1,b) = sin(kk*blk%z(k,1,b)) + cos(kk*blk%y(j,1,b))
                                 blk%q(i,j,k,2,b) = sin(kk*blk%x(i,2,b)) + cos(kk*blk%z(k,2,b))
                                 blk%q(i,j,k,3,b) = sin(kk*blk%y(j,3,b)) + cos(kk*blk%x(i,3,b))
+                            else if (trim(dns%initial) == "tgv3d") then
+                                blk%q(i,j,k,1,b) = sin(kk*blk%x(i,1,b))*cos(kk*blk%y(j,1,b))*cos(kk*blk%z(k,1,b))
+                                blk%q(i,j,k,2,b) = cos(kk*blk%x(i,2,b))*sin(kk*blk%y(j,2,b))*cos(kk*blk%z(k,2,b))
+                                blk%q(i,j,k,3,b) = cos(kk*blk%x(i,3,b))*cos(kk*blk%y(j,3,b))*sin(kk*blk%z(k,3,b))
                             else
                                 blk%q(i,j,k,1,b) =  sin(kk*blk%x(i,1,b))*cos(kk*blk%y(j,1,b))
                                 blk%q(i,j,k,2,b) = -cos(kk*blk%x(i,2,b))*sin(kk*blk%y(j,2,b))

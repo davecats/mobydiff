@@ -38,7 +38,12 @@ module init
         real(C_DOUBLE) :: initial_velocity(1:3) = 0.0d0
         real(C_DOUBLE) :: initial_noise = 0.0d0
         ! [flow] initial: analytic initial condition for the generic case --
-        ! "uniform" (default), "beltrami" (3D ABC flow) or "tgv" (Taylor-Green).
+        ! "uniform" (default), "beltrami" (3D ABC flow), "tgv" (2D Taylor-Green)
+        ! or "tgv3d" (fully-3D product field, a manufactured momentum-operator
+        ! test: every component varies in every direction, so the wall-normal
+        ! velocity varies in the normal direction at all three interface
+        ! orientations -- the property Beltrami lacks). tgv3d is NOT an exact
+        ! NS solution; it is only used by the MOBY_RHSDUMP operator gate.
         ! These are exact incompressible-NS solutions used as projection gates.
         character(len=32) :: initial = "uniform"
         ! [blocks] nb: cubic block edge in cells; 0 = one block per rank box.

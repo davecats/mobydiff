@@ -47,7 +47,7 @@ program main
     ! field -- any change it makes IS the correction/interface defect. MOBY_PREDONLY:
     ! skip the projection so the field is the pure predictor. Either dumps the
     ! initial field (900000) so the change can be diffed.
-    logical :: projOnly, predOnly, divdump
+    logical :: projOnly, predOnly, divdump, rhsdump
     character(len=16) :: diagEnv
     ! MOBY_DIVDUMP: write the discrete (raw staggered) divergence the solver sees,
     ! BEFORE the last projection (div_pre = D u*, e.g. of the exact field under
@@ -57,6 +57,15 @@ program main
     ! consistent. Off by default; the normal path is bit-exact.
     real(C_DOUBLE), allocatable :: divPre(:,:,:,:), divPost(:,:,:,:)
     character(len=256) :: divBasePrefix
+    ! MOBY_RHSDUMP: dump the discrete momentum RHS L_h(u) = -div(uu) + (1/Re)lap(u)
+    ! (the predictor's blk%oldrhs, captured at the first RK substage so it acts
+    ! on the pristine manufactured field) as un/vn/wn of a "<prefix>_rhs" field.
+    ! tools/rhsband.py compares it to the analytic L(u) of the tgv3d field at the
+    ! staggered points and reports the interface-band convergence order -- the
+    ! momentum-operator-truncation gate. Run with MOBY_PREDONLY (no projection)
+    ! and initial=tgv3d; the Re attr lets the script split advection vs diffusion.
+    real(C_DOUBLE), allocatable :: rhsBuf(:,:,:,:,:)
+    character(len=256) :: rhsBasePrefix
 
     call comm_init_world(c)
     call splash(c%has_terminal)
@@ -210,6 +219,8 @@ program main
     predOnly = len_trim(diagEnv) > 0
     call get_environment_variable("MOBY_DIVDUMP", diagEnv)
     divdump = len_trim(diagEnv) > 0
+    call get_environment_variable("MOBY_RHSDUMP", diagEnv)
+    rhsdump = len_trim(diagEnv) > 0
     ! MOBY_MANUF=<amp>: add a pure-gradient perturbation amp*grad(phi),
     ! phi = cos(kx)cos(ky)cos(kz), to the (exact, div-free) initial field.
     ! The result is globally mass-conserving (a periodic gradient integrates
@@ -279,6 +290,9 @@ program main
             ! first projection (the exact field under MOBY_PROJONLY), divPost = D
             ! after that one projection. (Capturing later would measure D of an
             ! already multiply-projected field.)
+            ! MOBY_RHSDUMP: capture L_h(u) of the pristine field (first substage,
+            ! before dt_beta couples a previous RHS or a later substage mutates q).
+            if (rhsdump .and. rkStage == 1) call capture_rhs(blk, rhsBuf)
             if (divdump .and. rkStage == 1) call capture_divergence(blk, divPre)
             if (.not. predOnly) &
                 call pressure_projection(ps, blk, dns, dt_gamma, ibm, bc, c)
@@ -319,6 +333,16 @@ program main
         dns%field_prefix = trim(divBasePrefix)//"_divpost"
         call write_field(blk, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%sor)
         dns%field_prefix = divBasePrefix
+    end if
+
+    ! MOBY_RHSDUMP companion: park the captured momentum RHS in the velocity
+    ! slots and write it as "<prefix>_rhs" (un/vn/wn = rhsu/rhsv/rhsw).
+    if (rhsdump .and. allocated(rhsBuf)) then
+        rhsBasePrefix = dns%field_prefix
+        call overwrite_velocity(blk, rhsBuf)
+        dns%field_prefix = trim(rhsBasePrefix)//"_rhs"
+        call write_field(blk, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%sor)
+        dns%field_prefix = rhsBasePrefix
     end if
 
     ! Release device-side data before the host allocatables go out of scope.
@@ -547,6 +571,68 @@ contains
         !$omp end target teams distribute parallel do
 #endif
     end subroutine overwrite_var_p
+
+    ! MOBY_RHSDUMP: copy the predictor's discrete momentum RHS (blk%oldrhs, the
+    ! interior-only L_h(u) the time integrator stores) into a separate buffer.
+    ! Allocates + maps on first use; leaves blk%oldrhs untouched.
+    subroutine capture_rhs(blk, arr)
+        type(block_set_type), intent(in) :: blk
+        real(C_DOUBLE), allocatable, intent(inout) :: arr(:,:,:,:,:)
+        integer(C_INT) :: i, j, k, v, b, nx, ny, nz
+        nx = blk%nb(1); ny = blk%nb(2); nz = blk%nb(3)
+        if (.not. allocated(arr)) then
+            allocate(arr(1:nx, 1:ny, 1:nz, NVEL, blk%nBlocks))
+#ifdef USE_OPENMP_OFFLOAD
+            !$omp target enter data map(alloc: arr)
+#endif
+        end if
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target teams distribute parallel do collapse(5) &
+        !$omp& map(to: blk%oldrhs) map(tofrom: arr) private(i,j,k,v,b)
+#endif
+        do b = 1_C_INT, blk%nBlocks
+            do v = 1, NVEL
+                do k = 1, nz
+                    do j = 1, ny
+                        do i = 1, nx
+                            arr(i,j,k,v,b) = blk%oldrhs(i,j,k,v,b)
+                        end do
+                    end do
+                end do
+            end do
+        end do
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp end target teams distribute parallel do
+#endif
+    end subroutine capture_rhs
+
+    ! MOBY_RHSDUMP: park a 3-component interior buffer into the velocity slots of
+    ! blk%q so write_field emits it as un/vn/wn (its target update from(blk%q)
+    ! then pulls these values). blk%q is not reused after the final dump.
+    subroutine overwrite_velocity(blk, arr)
+        type(block_set_type), intent(inout) :: blk
+        real(C_DOUBLE), allocatable, intent(in) :: arr(:,:,:,:,:)
+        integer(C_INT) :: i, j, k, b, nx, ny, nz
+        nx = blk%nb(1); ny = blk%nb(2); nz = blk%nb(3)
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target teams distribute parallel do collapse(4) &
+        !$omp& map(to: arr) map(tofrom: blk%q) private(i,j,k,b)
+#endif
+        do b = 1_C_INT, blk%nBlocks
+            do k = 1, nz
+                do j = 1, ny
+                    do i = 1, nx
+                        blk%q(i,j,k,VAR_U,b) = arr(i,j,k,VAR_U,b)
+                        blk%q(i,j,k,VAR_V,b) = arr(i,j,k,VAR_V,b)
+                        blk%q(i,j,k,VAR_W,b) = arr(i,j,k,VAR_W,b)
+                    end do
+                end do
+            end do
+        end do
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp end target teams distribute parallel do
+#endif
+    end subroutine overwrite_velocity
 
     ! MOBY_MANUF: add amp*grad(phi) to the velocity, phi = cos(kx)cos(ky)cos(kz),
     ! at each component's staggered coordinate (full q bounds, halos included so
