@@ -66,3 +66,23 @@ cmake --build build_cpu -j            # -Mnofma reference
 So: the predictor is **0th-order at the fine interface band, 1st-order on the
 coarse-band normal velocity**, while global continuity is already clean. The fix
 (step.f90) targets the fine-band advection/diffusion stencil first.
+
+## Increment 1 — cell-centred interface diffusion (`correct_interface_diffusion`)
+
+A fine cell touching the interface applies its own fine-metric Laplacian across a
+halo holding an injected **coarse** value, sitting 3/2 fine cells away (not 1) —
+an O(1/h)-diverging diffusion truncation (fine-band diffusion rms grew 1.33 →
+2.6 → 5.1 over 32/64/128). `blocks.f90` now rebuilds the interface-row Laplacian
+coefficients with the true 3/2-cell spacing, for the components **cell-centred**
+in the interface-normal direction (the tangential velocities, plain coarse
+injection) and only on the FINE side (FACE_COARSE; the restricted coarse-side
+halo already lands at the coarse centre). Init-time coefficients only — exchange
+and projection untouched.
+
+Result (diffusion isolated via the huge-Re run): tangential u,w fine-band
+diffusion **0th-order divergence removed** (1.33 → 5.1 collapses to ~0.12 flat;
+residual is the tangential-injection error, a later increment). Regressions:
+non-interface bit-exact, coarse band unchanged, Axis-2 round-off (2.6e-14),
+CPU==GPU bit-identical. **Still open:** the wall-NORMAL velocity diffusion (its
+deep halo is set by the velocity prolong, not a plain injection — not a pure
+metric mismatch) and the dominant fine-band **advection** stencil.
