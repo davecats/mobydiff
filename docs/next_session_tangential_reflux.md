@@ -1,7 +1,8 @@
 # Next session — finish the 2:1 momentum interface to clean 2nd order
 
 Branch **`claude/jacobi-interface`**, tag **`jacobi-momentum-interface`** (HEAD
-`a5fc325`, pushed). The momentum predictor interface is now **consistent
+`e261df2`; the code milestone is `a5fc325`, inc 3 — either checkout works,
+pushed). The momentum predictor interface is now **consistent
 (converging) everywhere** — no 0th-order or diverging terms. Two accuracy layers
 remain, each lifting a residual from ~1st to 2nd order. They are independent;
 do them in either order, gating each.

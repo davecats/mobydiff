@@ -1,7 +1,8 @@
 # Momentum predictor at the 2:1 interface — handout
 
 Branch **`claude/jacobi-interface`**, tag **`jacobi-momentum-interface`** (HEAD
-`a5fc325`). Read this first, then the memory `momentum-interface-todo`, then
+`e261df2`; the code milestone is `a5fc325`, inc 3). Read this first, then the
+memory `momentum-interface-todo`, then
 `docs/jacobi_interface_handout.md` (the projection work this builds on) and
 `docs/interface_review.md` §iii (the uniform-B / reflux analysis).
 
