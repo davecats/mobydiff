@@ -119,9 +119,39 @@ without an interface), Axis-2 round-off (2.8e-14 slab, 1.1e-14 patch),
 real-Beltrami conservation round-off, projection PROJONLY gate unaffected (the
 reconstruction runs only in the predictor path), CPU==GPU bit-identical.
 
-**Still open (a clean 2nd order):** the tangential cross-advection terms
-(`adv_x/adv_z`, ~1st) carry the tangential-injection residual of the *tangential*
-velocity halos (inc 2's blend is normal-placement only) — a tangential
-interpolation of those halos would lift the whole fine band to 2nd order; and the
-**coarse-band** normal velocity (~1.5 order) is the un-refluxed Berger–Colella
-flux mismatch.
+## Increment 4 — tangential deep-halo reconstruction (`reconstruct_interface_halos`)
+
+Inc 3 left the tangential cross-advection terms (`adv_x = ∂(vu)/∂x`,
+`adv_z = ∂(vw)/∂z`, ~1st order) carrying the *tangential*-velocity halos'
+tangential-injection residual: the blend (inc 2) places them correctly NORMAL to
+the face but piecewise-constant TANGENTIALLY (one coarse value across the covered
+fine cells = O(h)), so a tangential derivative of that ghost converges only ~0.6.
+
+Fix: generalise inc 3's local cubic fine-side extrapolation
+(`q(0)=3q(1)-3q(2)+q(3)`) from the wall-normal component to ALL THREE velocity
+components in every 2:1 interface deep-halo row, at BOTH orientations, over the
+full halo PLANE including the in-plane halo ring (`0..n+1`). The ring matters: the
+interface-face cross-advection reaches the neighbouring tangential halo column
+(`v`'s `∂(vu)/∂x` at `i` reads `u(i+1,0,k)`, so the edge cell `i=nx` needs
+`u(nx+1,0,k)` reconstructed — without the ring, slab `v` stuck at ~0.5 from that
+single edge cell per row). The three orientations run in order x,y,z so an
+edge/corner reads the already-reconstructed column of the earlier plane. The
+reconstruction reads the fine column at the same in-plane index, so it is
+tangentially accurate; all reconstructed cells are deep halos that never enter
+the divergence, so conservation is untouched (the OWNED interface normal face is
+left alone). It supersedes the tangential ghost blend's role at these halos
+(the blend still fills cells the reconstruction's per-orientation loops skip).
+
+Result (per-term, v-momentum, slab fine band): `adv_x`/`adv_z`
+`6.9e-3 → 1.7e-4`, order **0.6 → 2.00**; every term (`adv_x/y/z`, `dif_x/y/z`)
+now 2nd order. **Slab fine-band order 0.6 → ~2.0 for all three components**
+(u,w 1.97→1.86; v 1.99→2.00). Patch (corners/edges) fine band `0.6 → 1.76→1.36`
+(the residual is the corner double-extrapolation; the coarse band there is also
+only ~1.5). Regressions all pass: non-interface bit-exact (0.0), Axis-2 round-off
+(slab +2.7e-14, patch +1.1e-14), PROJONLY div-free Beltrami 0.0 everywhere,
+real-Beltrami conservation round-off (divpre +5.3e-17), coarse band unchanged,
+CPU==GPU bit-identical (slab + patch).
+
+**Still open (a clean 2nd order):** the **coarse-band** normal velocity
+(~1st–1.5 order) is the un-refluxed Berger–Colella tangential-momentum flux
+mismatch (Layer 2). The fine band is now 2nd order.

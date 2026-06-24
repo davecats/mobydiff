@@ -218,9 +218,9 @@ program main
         call get_environment_variable("MOBY_TERMDUMP", termEnv)
         if (len_trim(termEnv) > 0) then
             read(termEnv, *) termVar
-            ! Match the predictor: reconstruct the wall-normal deep halo so the
+            ! Match the predictor: reconstruct the interface deep halos so the
             ! dumped terms reflect what momentum actually evaluates.
-            call reconstruct_normal_halo(blk)
+            call reconstruct_interface_halos(blk)
             allocate(advT(1:blk%nb(1),1:blk%nb(2),1:blk%nb(3),NVEL,blk%nBlocks))
             allocate(difT(1:blk%nb(1),1:blk%nb(2),1:blk%nb(3),NVEL,blk%nBlocks))
             call compute_momentum_terms(blk, dns, termVar, advT, difT)
@@ -295,10 +295,10 @@ program main
             ! Predictor: advance tentative staggered velocities, then enforce solid/body constraints.
             ! Skipped under MOBY_PROJONLY (the projection then acts on the exact field).
             if (.not. projOnly) then
-                ! Reconstruct the wall-normal velocity deep halo below each owned
-                ! 2:1 interface face so the predictor's normal advection/diffusion
-                ! there are 2nd order (inert without an interface).
-                call reconstruct_normal_halo(blk)
+                ! Reconstruct the velocity deep halos across each 2:1 interface so
+                ! the predictor's advection/diffusion reaching into them (normal
+                ! and tangential) are 2nd order (inert without an interface).
+                call reconstruct_interface_halos(blk)
                 call update_ibm_mu(ibm, dt_gamma)
                 if (les_is_enabled(les)) then
                     les_profile_start = les_wall_seconds()

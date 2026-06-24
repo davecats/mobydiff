@@ -58,60 +58,132 @@ contains
         dns%peclet_rate = local_rate(1)
     end subroutine precompute_peclet_rate
 
-    ! Reconstruct the wall-normal velocity DEEP halo q(0) that sits below a fine
-    ! block's OWNED interface normal face q(1) (orientation B, physLow(d) ==
-    ! FACE_COARSE: the fine block predicts its own low interface face). The
-    ! velocity prolong fills that halo with a single coarse face value -- O(h)
-    ! inaccurate TANGENTIALLY, which the wall-normal advection d(vv)/dy and
-    ! diffusion d2v/dy2 at the interface face amplify to O(1) and O(1/h)
-    ! (verified term-by-term, MOBY_TERMDUMP). A quadratic extrapolation from the
-    ! fine side, q(0) = 3 q(1) - 3 q(2) + q(3), is tangentially accurate and
-    ! purely local (no cross-block coarse reads, no exchange-ordering race) and
-    ! restores 2nd order in both terms. The deep halo never enters the divergence
-    ! operator, so global conservation is untouched. Inert without a 2:1
-    ! interface (no FACE_COARSE low face), hence bit-exact for single-level runs.
-    ! Call right before the predictor, after the velocity halo exchange.
-    subroutine reconstruct_normal_halo(blk)
+    ! Reconstruct the velocity DEEP halo rows that sit just across a fine block's
+    ! 2:1 interface (a FACE_COARSE face), so the predictor's advection / diffusion
+    ! that reach into them are 2nd order. Two distinct defects, both fixed here by
+    ! the same purely-local cubic fine-side extrapolation q(0)=3q(1)-3q(2)+q(3):
+    !
+    !  * NORMAL component (e.g. v at a y-interface), LOW face only (orientation B,
+    !    physLow(d)==FACE_COARSE: the fine block OWNS its low interface face q(1)).
+    !    Its deep halo q(i,0,k) sits below that owned face; the velocity prolong
+    !    fills it with one coarse face value -- O(h) inaccurate TANGENTIALLY --
+    !    which the wall-normal d(vv)/dy and d2v/dy2 at the face amplify to O(1) and
+    !    O(1/h) (increment 3, verified term-by-term with MOBY_TERMDUMP). The high
+    !    face (orientation A) needs nothing: there the interface face is the
+    !    prolonged coarse face AT the face location y_int, already 2nd order.
+    !
+    !  * TANGENTIAL components (e.g. u,w at a y-interface), BOTH faces. Their deep
+    !    halo (q(i,0,k) low, q(i,ny+1,k) high) is the coarse-side cell-centred
+    !    value placed by the blend correctly NORMAL to the face but left
+    !    piecewise-constant TANGENTIALLY (one coarse value across the covered fine
+    !    cells = O(h)). The cross-advection d(vu)/dx, d(vw)/dz and the cross
+    !    diffusion d2u/dy2 differencing that constant ghost converge only ~1st
+    !    order (increment 4). The cubic extrapolation reads the fine column above
+    !    (same i,k), so it is tangentially accurate.
+    !
+    ! All reconstructed cells are DEEP halos that never enter the divergence
+    ! operator, so global conservation is untouched (the OWNED interface normal
+    ! face -- q(1) low / q(ny+1) high for the normal component -- is left alone).
+    ! Purely local (no cross-block coarse reads, no exchange-ordering race). Inert
+    ! without a 2:1 interface (no FACE_COARSE face), hence bit-exact for
+    ! single-level runs. Call right before the predictor, after the halo exchange.
+    subroutine reconstruct_interface_halos(blk)
         type(block_set_type), intent(inout) :: blk
         integer :: b, i, j, k, nx, ny, nz, nBlocks
 
         nx = int(blk%nb(1)); ny = int(blk%nb(2)); nz = int(blk%nb(3))
         nBlocks = int(blk%nBlocks)
 
+        ! Each orientation reconstructs its whole deep-halo PLANE, including the
+        ! in-plane halo ring (0..n+1): the tangential cross-advection at the
+        ! interface face reaches the neighbouring tangential halo column (e.g.
+        ! v's d(vu)/dx at i reads u(i+1,0,k), so the edge cell i=nx needs
+        ! u(nx+1,0,k) reconstructed too). The three regions run in order x,y,z so
+        ! that at an edge/corner the later plane reads the already-reconstructed
+        ! column of the earlier one. Components NORMAL to a HIGH face are the
+        ! owned interface face, not a deep halo, and are left untouched.
+
+        ! x-interface deep halos: normal = u, tangential = v,w.
         !$omp target teams distribute parallel do collapse(2) &
-        !$omp& map(to: blk%physLow) map(tofrom: blk%q) private(i,j,k,b)
+        !$omp& map(to: blk%physLow, blk%physHigh) map(tofrom: blk%q) private(i,j,k,b)
         do b = 1, nBlocks
-            do k = 1, nz
+            do k = 0, nz+1
                 if (blk%physLow(1,b) == FACE_COARSE) then
-                    do j = 1, ny
+                    do j = 0, ny+1
                         blk%q(0,j,k,VAR_U,b) = 3.0d0*blk%q(1,j,k,VAR_U,b) &
                             - 3.0d0*blk%q(2,j,k,VAR_U,b) + blk%q(3,j,k,VAR_U,b)
+                        blk%q(0,j,k,VAR_V,b) = 3.0d0*blk%q(1,j,k,VAR_V,b) &
+                            - 3.0d0*blk%q(2,j,k,VAR_V,b) + blk%q(3,j,k,VAR_V,b)
+                        blk%q(0,j,k,VAR_W,b) = 3.0d0*blk%q(1,j,k,VAR_W,b) &
+                            - 3.0d0*blk%q(2,j,k,VAR_W,b) + blk%q(3,j,k,VAR_W,b)
                     end do
                 end if
-                if (blk%physLow(2,b) == FACE_COARSE) then
-                    do i = 1, nx
-                        blk%q(i,0,k,VAR_V,b) = 3.0d0*blk%q(i,1,k,VAR_V,b) &
-                            - 3.0d0*blk%q(i,2,k,VAR_V,b) + blk%q(i,3,k,VAR_V,b)
+                if (blk%physHigh(1,b) == FACE_COARSE) then
+                    do j = 0, ny+1
+                        blk%q(nx+1,j,k,VAR_V,b) = 3.0d0*blk%q(nx,j,k,VAR_V,b) &
+                            - 3.0d0*blk%q(nx-1,j,k,VAR_V,b) + blk%q(nx-2,j,k,VAR_V,b)
+                        blk%q(nx+1,j,k,VAR_W,b) = 3.0d0*blk%q(nx,j,k,VAR_W,b) &
+                            - 3.0d0*blk%q(nx-1,j,k,VAR_W,b) + blk%q(nx-2,j,k,VAR_W,b)
                     end do
                 end if
             end do
         end do
         !$omp end target teams distribute parallel do
 
+        ! y-interface deep halos: normal = v, tangential = u,w.
         !$omp target teams distribute parallel do collapse(2) &
-        !$omp& map(to: blk%physLow) map(tofrom: blk%q) private(i,j,b)
+        !$omp& map(to: blk%physLow, blk%physHigh) map(tofrom: blk%q) private(i,j,k,b)
         do b = 1, nBlocks
-            do j = 1, ny
-                if (blk%physLow(3,b) == FACE_COARSE) then
-                    do i = 1, nx
-                        blk%q(i,j,0,VAR_W,b) = 3.0d0*blk%q(i,j,1,VAR_W,b) &
-                            - 3.0d0*blk%q(i,j,2,VAR_W,b) + blk%q(i,j,3,VAR_W,b)
+            do k = 0, nz+1
+                if (blk%physLow(2,b) == FACE_COARSE) then
+                    do i = 0, nx+1
+                        blk%q(i,0,k,VAR_U,b) = 3.0d0*blk%q(i,1,k,VAR_U,b) &
+                            - 3.0d0*blk%q(i,2,k,VAR_U,b) + blk%q(i,3,k,VAR_U,b)
+                        blk%q(i,0,k,VAR_V,b) = 3.0d0*blk%q(i,1,k,VAR_V,b) &
+                            - 3.0d0*blk%q(i,2,k,VAR_V,b) + blk%q(i,3,k,VAR_V,b)
+                        blk%q(i,0,k,VAR_W,b) = 3.0d0*blk%q(i,1,k,VAR_W,b) &
+                            - 3.0d0*blk%q(i,2,k,VAR_W,b) + blk%q(i,3,k,VAR_W,b)
+                    end do
+                end if
+                if (blk%physHigh(2,b) == FACE_COARSE) then
+                    do i = 0, nx+1
+                        blk%q(i,ny+1,k,VAR_U,b) = 3.0d0*blk%q(i,ny,k,VAR_U,b) &
+                            - 3.0d0*blk%q(i,ny-1,k,VAR_U,b) + blk%q(i,ny-2,k,VAR_U,b)
+                        blk%q(i,ny+1,k,VAR_W,b) = 3.0d0*blk%q(i,ny,k,VAR_W,b) &
+                            - 3.0d0*blk%q(i,ny-1,k,VAR_W,b) + blk%q(i,ny-2,k,VAR_W,b)
                     end do
                 end if
             end do
         end do
         !$omp end target teams distribute parallel do
-    end subroutine reconstruct_normal_halo
+
+        ! z-interface deep halos: normal = w, tangential = u,v.
+        !$omp target teams distribute parallel do collapse(2) &
+        !$omp& map(to: blk%physLow, blk%physHigh) map(tofrom: blk%q) private(i,j,k,b)
+        do b = 1, nBlocks
+            do j = 0, ny+1
+                if (blk%physLow(3,b) == FACE_COARSE) then
+                    do i = 0, nx+1
+                        blk%q(i,j,0,VAR_U,b) = 3.0d0*blk%q(i,j,1,VAR_U,b) &
+                            - 3.0d0*blk%q(i,j,2,VAR_U,b) + blk%q(i,j,3,VAR_U,b)
+                        blk%q(i,j,0,VAR_V,b) = 3.0d0*blk%q(i,j,1,VAR_V,b) &
+                            - 3.0d0*blk%q(i,j,2,VAR_V,b) + blk%q(i,j,3,VAR_V,b)
+                        blk%q(i,j,0,VAR_W,b) = 3.0d0*blk%q(i,j,1,VAR_W,b) &
+                            - 3.0d0*blk%q(i,j,2,VAR_W,b) + blk%q(i,j,3,VAR_W,b)
+                    end do
+                end if
+                if (blk%physHigh(3,b) == FACE_COARSE) then
+                    do i = 0, nx+1
+                        blk%q(i,j,nz+1,VAR_U,b) = 3.0d0*blk%q(i,j,nz,VAR_U,b) &
+                            - 3.0d0*blk%q(i,j,nz-1,VAR_U,b) + blk%q(i,j,nz-2,VAR_U,b)
+                        blk%q(i,j,nz+1,VAR_V,b) = 3.0d0*blk%q(i,j,nz,VAR_V,b) &
+                            - 3.0d0*blk%q(i,j,nz-1,VAR_V,b) + blk%q(i,j,nz-2,VAR_V,b)
+                    end do
+                end if
+            end do
+        end do
+        !$omp end target teams distribute parallel do
+    end subroutine reconstruct_interface_halos
 
     subroutine momentum(blk, dns, dt_alpha, dt_beta, dt_gamma, ibm, les, les_prof)
         type(block_set_type), intent(inout) :: blk

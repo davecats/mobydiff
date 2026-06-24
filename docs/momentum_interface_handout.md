@@ -29,14 +29,15 @@ a residual from ~1st to 2nd order); they are NOT consistency defects.
 - `c83c3c3` **per-term operator dump** `MOBY_TERMDUMP` + `tools/rhsterms.py`.
 - `a5fc325` inc 3 **wall-normal deep-halo reconstruction** (step.f90). Fixes v.
 
-### Current order (slab, 32/64/128, with all increments)
+### Current order (slab, 32/64/128, with all increments incl. inc 4)
 ```
 interior     2.0   (all components)            <- 2nd order
-coarse_band  u,w 2.0   v 1.0                    <- v NOT 2nd (reflux)
-fine_band    u,w ~0.6-0.9   v ~0.6              <- NOT 2nd (tangential interp)
+coarse_band  u,w 2.0   v 1.0                    <- v NOT 2nd (reflux = Layer 2)
+fine_band    u,v,w ~2.0                         <- 2nd order (inc 4 done)
 ```
-Per-term (v-momentum, fine band): `adv_y`=2.0, `dif_x/dif_y/dif_z`=2.0,
-**`adv_x`/`adv_z`=~0.6** (the only sub-2nd terms within a component).
+Per-term (v-momentum, fine band): ALL terms (`adv_x/y/z`, `dif_x/y/z`) = 2.0.
+(Inc 4 lifted `adv_x`/`adv_z` from ~0.6 to 2.00.) Patch (corners/edges) fine
+band is ~1.4–1.8 — the residual is the corner double-extrapolation, expected.
 
 ## The gate suite (how to validate)
 
@@ -114,21 +115,22 @@ python3 tools/divsum.py <prefix>_divpre_1.h5     # must be ~1e-14
 
 ## What is left (the next session's work)
 
-Both are accuracy layers; the operator is already consistent. Detailed scoping
-and the term-by-term targets are in `docs/next_session_tangential_reflux.md`.
+Layer 1 (tangential interp) is **DONE** (inc 4 below); the fine band is 2nd
+order. Only Layer 2 (reflux) remains. The operator is consistent everywhere.
+Detailed scoping is in `docs/next_session_tangential_reflux.md`.
 
-1. **Tangential interpolation of the tangential velocity halos** → lifts the
-   fine band to 2nd order. The tangential cross-advection terms `adv_x`/`adv_z`
-   (~0.6) read the tangential velocity deep halos, which inc 2's blend places
-   correctly NORMAL-to-the-face but leaves piecewise-constant TANGENTIALLY (O(h)
-   injection). A tangential (bilinear) interpolation of those halos removes it.
-   CAUTION: doing this in the shared gather has a cross-block / exchange-ordering
-   race (the bilinear neighbour can be in an adjacent coarse block whose halo is
-   being written by the same exchange) — this is exactly why the wall-normal v
-   fix used a LOCAL fine-side reconstruction instead. Consider the same trick:
-   a local post-exchange reconstruction of the tangential halos from fine data,
-   or a carefully-ordered two-pass gather. Verify with `rhsterms.py` that
-   `adv_x`/`adv_z` climb to 2nd WITHOUT regressing Axis-2.
+1. **Tangential reconstruction of the tangential velocity halos** — **DONE**
+   (increment 4, `reconstruct_interface_halos` in `step.f90`). Generalised inc
+   3's local cubic fine-side extrapolation `q(0)=3q(1)-3q(2)+q(3)` from the
+   wall-normal component to ALL THREE velocity components in every interface
+   deep-halo row, BOTH orientations, over the full halo PLANE incl. the in-plane
+   ring `0..n+1` (the ring is load-bearing: `v`'s `∂(vu)/∂x` at the interface
+   face reaches `u(nx+1,0,k)`; without it slab `v` stuck at ~0.5 from one edge
+   cell per row). Three orientations run x,y,z so an edge/corner reads the
+   earlier plane's reconstructed column. Purely local (no gather race), deep
+   halos only (conservation-neutral). RESULT: slab fine-band order 0.6 → ~2.0
+   all components (`adv_x`/`adv_z` 0.6 → 2.00 per-term); patch 0.6 → 1.4–1.8
+   (corner residual). All regressions pass (see README inc 4).
 
 2. **Berger–Colella tangential-momentum reflux** → lifts the coarse band to 2nd
    order. The coarse cell adjacent to the interface advects its NORMAL velocity
