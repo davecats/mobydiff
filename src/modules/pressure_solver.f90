@@ -25,6 +25,13 @@ module pressure_solver
         ! (iterations to tolerance) for Jacobi vs an accelerator. Off by
         ! default; read once at init.
         logical :: resLog=.false.
+        ! Chebyshev-Jacobi acceleration (MOBY_CHEB): a Chebyshev semi-iteration
+        ! over the diagonal(Jacobi)-preconditioned projection operator, whose
+        ! spectrum is bounded in [chebLmin, chebLmax] (lmax~2 by Gershgorin
+        ! regardless of grid stretching / 2:1 interface; lmin is the
+        ! condition-number knob). Off by default (plain damped Jacobi).
+        logical :: cheb=.false.
+        real(C_DOUBLE) :: chebLmin=0.02d0, chebLmax=2.0d0
     end type pressure_solver_type
 
     ! Pressure-increment buffer for the Jacobi sweep. Unlike the in-place
@@ -34,6 +41,12 @@ module pressure_solver
     ! exchange_scalar_halos can fill the halo layer the face corrections read.
     real(C_DOUBLE), allocatable :: phi(:,:,:,:)
 
+    ! Chebyshev search increment delta_k = alpha_k z_k + gamma_k delta_{k-1}
+    ! (the actual per-iteration update applied to p and the velocity faces, so
+    ! the apply step is identical to Jacobi's -- it just adds delta instead of
+    ! phi). Allocated only when Chebyshev is enabled.
+    real(C_DOUBLE), allocatable :: delta(:,:,:,:)
+
 contains
 
     subroutine init_pressure_solver(ps, dns, bc, has_terminal)
@@ -42,12 +55,22 @@ contains
         type(boundary_type), intent(in) :: bc
         logical, intent(in), optional :: has_terminal
 
-        character(len=16) :: env
+        character(len=32) :: env
 
         ! Damped Jacobi needs no red-black colouring, so the even-global-size
         ! restriction of the red-black scheme no longer applies.
         call get_environment_variable("MOBY_RESLOG", env)
         ps%resLog = len_trim(env) > 0
+        call get_environment_variable("MOBY_CHEB", env)
+        ps%cheb = len_trim(env) > 0
+        call get_environment_variable("MOBY_CHEB_LMIN", env)
+        if (len_trim(env) > 0) read(env, *) ps%chebLmin
+        call get_environment_variable("MOBY_CHEB_LMAX", env)
+        if (len_trim(env) > 0) read(env, *) ps%chebLmax
+        if (ps%cheb .and. present(has_terminal)) then
+            if (has_terminal) print '(a,es12.4,a,es12.4)', &
+                " Chebyshev-Jacobi projection: lmin=", ps%chebLmin, " lmax=", ps%chebLmax
+        end if
     end subroutine init_pressure_solver
 
     subroutine pressure_projection(ps, blk, dns, dt_gamma, ibm, bc, c)
@@ -60,9 +83,11 @@ contains
         type(comm_type), intent(inout) :: c
 
         integer(C_INT) :: iIter
-        real(C_DOUBLE) :: rmax, rl2
+        real(C_DOUBLE) :: rmax, rl2, omega
+        real(C_DOUBLE) :: dd, cc, alpha, alphaPrev, beta, gamma
 
         call allocate_phi(blk)
+        if (ps%cheb) call allocate_delta(blk)
 
         if (ps%resLog) then
             call residual_norm(blk, c, rmax, rl2)
@@ -70,18 +95,35 @@ contains
                 "RESLOG iter ", 0_C_INT, " max ", rmax, " l2 ", rl2
         end if
 
-        ! Damped-Jacobi projection. Each iteration: (1) compute the pressure
-        ! increment phi = -omega*div/denom from the frozen velocity, (2) exchange
-        ! phi's halos so the face corrections see the neighbour increment, (3)
-        ! apply phi to the pressure and the velocity faces, (4) refresh the
-        ! velocity (and, on the last iteration, pressure) halos for the next
-        ! divergence. The 2:1 interface is still handled by the exchange transfer
-        ! (RESTRICT/PROLONG) and reconciled by the final full exchange.
+        ! Chebyshev semi-iteration coefficients over [lmin, lmax].
+        dd = 0.5d0*(ps%chebLmax + ps%chebLmin)
+        cc = 0.5d0*(ps%chebLmax - ps%chebLmin)
+        omega = merge(1.0d0, ps%sor, ps%cheb)
+        alpha = 0.0d0
+
+        ! Projection. Each iteration: (1) preconditioned residual into phi
+        ! (omega*(-div/denom); Jacobi omega=sor folds the damping in, Chebyshev
+        ! omega=1 leaves z and the Chebyshev coefficients do the damping), (2)
+        ! for Chebyshev combine into the increment delta_k = alpha z + gamma
+        ! delta_{k-1} (phi := delta_k), (3) exchange phi's halos (the 2:1
+        ! interface-row restrict keeps the interface corrections conservative),
+        ! (4) apply phi to the pressure and velocity faces, (5) refresh the
+        ! velocity (+ pressure on the last iteration) halos for the next
+        ! divergence.
         do iIter = 1_C_INT, ps%nIter
-            call jacobi_compute_phi(ps, blk, dt_gamma, ibm)
-            ! ifaceRow: the coarse interface-correction ghost is the restrict of
-            ! the fine INTERFACE ROW, so the coarse and fine interface velocity
-            ! corrections are exactly mean-equal (conservation to round-off).
+            call jacobi_compute_phi(blk, ibm, omega)
+            if (ps%cheb) then
+                if (iIter == 1_C_INT) then
+                    alpha = 1.0d0/dd
+                    gamma = 0.0d0
+                else
+                    alphaPrev = alpha
+                    beta = (cc*alphaPrev*0.5d0)**2
+                    alpha = 1.0d0/(dd - beta/alphaPrev)
+                    gamma = alpha*beta/alphaPrev
+                end if
+                call cheb_combine(blk, alpha, gamma)
+            end if
             call exchange_scalar_halos(c, phi, ifaceRow=.true.)
             call jacobi_apply(ps, blk, dt_gamma, ibm)
             call apply_bc(blk, bc)
@@ -157,22 +199,67 @@ contains
         end if
     end subroutine allocate_phi
 
+    ! Chebyshev increment buffer (same bounds as phi), allocated on first use.
+    subroutine allocate_delta(blk)
+        type(block_set_type), intent(in) :: blk
+        if (.not. allocated(delta)) then
+            allocate(delta(lbound(phi,1):ubound(phi,1), lbound(phi,2):ubound(phi,2), &
+                           lbound(phi,3):ubound(phi,3), blk%nBlocks))
+            delta = 0.0d0
+#ifdef USE_OPENMP_OFFLOAD
+            !$omp target enter data map(to: delta)
+#endif
+        end if
+    end subroutine allocate_delta
+
+    ! Chebyshev combine: phi := alpha*phi + gamma*delta (phi currently holds the
+    ! preconditioned residual z), then delta := phi (the new increment delta_k),
+    ! over interior cells. After this phi == delta_k and jacobi_apply adds it
+    ! exactly as it would the Jacobi increment.
+    subroutine cheb_combine(blk, alpha, gamma)
+        type(block_set_type), intent(in) :: blk
+        real(C_DOUBLE), intent(in) :: alpha, gamma
+        integer(C_INT) :: i, j, k, b, nx, ny, nz
+        real(C_DOUBLE) :: s
+        nx = blk%nb(1); ny = blk%nb(2); nz = blk%nb(3)
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target teams distribute parallel do collapse(4) &
+        !$omp& map(to: alpha, gamma, nx, ny, nz) map(tofrom: phi, delta) private(i,j,k,b,s)
+#endif
+        do b = 1_C_INT, blk%nBlocks
+        do k = 1_C_INT, nz
+            do j = 1_C_INT, ny
+                do i = 1_C_INT, nx
+                    s = alpha*phi(i,j,k,b) + gamma*delta(i,j,k,b)
+                    phi(i,j,k,b) = s
+                    delta(i,j,k,b) = s
+                end do
+            end do
+        end do
+        end do
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp end target teams distribute parallel do
+#endif
+    end subroutine cheb_combine
+
     ! Jacobi step 1: phi(i,j,k) = -omega * div / denom for every interior cell,
     ! from the frozen velocity. denom is the projection diagonal (sum of the
     ! cell's non-pinned face metrics); pinned faces (walls, closed faces) leave
     ! the diagonal exactly as in the red-black scheme.
-    subroutine jacobi_compute_phi(ps, blk, dt_gamma, ibm)
-        type(pressure_solver_type), intent(in) :: ps
+    ! omega: the damping factor. Plain Jacobi passes ps%sor (the increment IS
+    ! phi = -omega*div/denom); Chebyshev passes 1.0 so phi holds the pure
+    ! diagonal-preconditioned residual z = -div/denom (the damping then comes
+    ! from the Chebyshev coefficients).
+    subroutine jacobi_compute_phi(blk, ibm, omega)
         type(block_set_type), intent(inout) :: blk
-        real(C_DOUBLE), intent(in) :: dt_gamma
         type(ibm_type), intent(in) :: ibm
+        real(C_DOUBLE), intent(in) :: omega
 
-        real(C_DOUBLE) :: denom, div, omega
+        real(C_DOUBLE) :: denom, div
         real(C_DOUBLE) :: mu_u_i, mu_u_ip, mu_v_j, mu_v_jp, mu_w_k, mu_w_kp
         integer(C_INT) :: i, ip, j, jp, k, kp, b, nBlocks, nx, ny, nz
 
         nx = blk%nb(1); ny = blk%nb(2); nz = blk%nb(3)
-        omega = ps%sor
         nBlocks = blk%nBlocks
 
 #ifdef USE_OPENMP_OFFLOAD
