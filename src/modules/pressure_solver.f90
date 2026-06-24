@@ -25,13 +25,16 @@ module pressure_solver
         ! (iterations to tolerance) for Jacobi vs an accelerator. Off by
         ! default; read once at init.
         logical :: resLog=.false.
-        ! Chebyshev-Jacobi acceleration (MOBY_CHEB): a Chebyshev semi-iteration
-        ! over the diagonal(Jacobi)-preconditioned projection operator, whose
-        ! spectrum is bounded in [chebLmin, chebLmax] (lmax~2 by Gershgorin
-        ! regardless of grid stretching / 2:1 interface; lmin is the
-        ! condition-number knob). Off by default (plain damped Jacobi).
+        ! Chebyshev-Jacobi acceleration ([pressure] accel = chebyshev, or
+        ! MOBY_CHEB): a Chebyshev semi-iteration over the diagonal(Jacobi)-
+        ! preconditioned projection operator, whose spectrum is bounded in
+        ! [chebLmin, chebLmax]. lmax~2 by Gershgorin regardless of grid
+        ! stretching / 2:1 interface; lmin is the condition-number knob,
+        ! auto-set to the lowest-mode eigenvalue (2/3)sin^2(pi/N) of the
+        ! Jacobi-Poisson on the base grid. A non-positive bound means "auto".
+        ! Off by default (plain damped Jacobi).
         logical :: cheb=.false.
-        real(C_DOUBLE) :: chebLmin=0.02d0, chebLmax=2.0d0
+        real(C_DOUBLE) :: chebLmin=-1.0d0, chebLmax=-1.0d0
     end type pressure_solver_type
 
     ! Pressure-increment buffer for the Jacobi sweep. Unlike the in-place
@@ -56,20 +59,39 @@ contains
         logical, intent(in), optional :: has_terminal
 
         character(len=32) :: env
+        real(C_DOUBLE) :: pi
+        integer(C_INT) :: nMax
 
         ! Damped Jacobi needs no red-black colouring, so the even-global-size
         ! restriction of the red-black scheme no longer applies.
         call get_environment_variable("MOBY_RESLOG", env)
         ps%resLog = len_trim(env) > 0
+        ! [pressure] accel = chebyshev sets ps%cheb in config; MOBY_CHEB* env
+        ! vars override (handy for sweeping the bounds without editing configs).
         call get_environment_variable("MOBY_CHEB", env)
-        ps%cheb = len_trim(env) > 0
+        if (len_trim(env) > 0) ps%cheb = .true.
         call get_environment_variable("MOBY_CHEB_LMIN", env)
         if (len_trim(env) > 0) read(env, *) ps%chebLmin
         call get_environment_variable("MOBY_CHEB_LMAX", env)
         if (len_trim(env) > 0) read(env, *) ps%chebLmax
-        if (ps%cheb .and. present(has_terminal)) then
-            if (has_terminal) print '(a,es12.4,a,es12.4)', &
-                " Chebyshev-Jacobi projection: lmin=", ps%chebLmin, " lmax=", ps%chebLmax
+
+        ! Auto eigenvalue bounds (non-positive => auto): lmax = 2 (Gershgorin,
+        ! holds for any Jacobi-preconditioned Poisson with zero interior row
+        ! sum -- stretched grids and the 2:1 interface included). lmin = the
+        ! Jacobi-Poisson lowest-mode eigenvalue (2/3) sin^2(pi/N_max) on the
+        ! base global grid; the lowest mode is domain-scale so refinement does
+        ! not change it.
+        if (ps%cheb) then
+            if (ps%chebLmax <= 0.0d0) ps%chebLmax = 2.0d0
+            if (ps%chebLmin <= 0.0d0) then
+                pi = 4.0d0*atan(1.0d0)
+                nMax = maxval(dns%globalSize)
+                ps%chebLmin = (2.0d0/3.0d0)*sin(pi/real(nMax, C_DOUBLE))**2
+            end if
+            if (present(has_terminal)) then
+                if (has_terminal) print '(a,es12.4,a,es12.4)', &
+                    " Chebyshev-Jacobi projection: lmin=", ps%chebLmin, " lmax=", ps%chebLmax
+            end if
         end if
     end subroutine init_pressure_solver
 

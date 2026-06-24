@@ -200,6 +200,21 @@ subroutine apply_config_value(section, key, value, dns, g, les, ps, bc, c, seen,
             end if
         case ("sor")
             call read_real(value, ps%sor, line_no)
+        case ("accel")
+            ! none | jacobi (default) or chebyshev (Chebyshev-Jacobi).
+            select case (trim(lower(clean_string(value))))
+            case ("chebyshev", "cheb")
+                ps%cheb = .true.
+            case ("none", "jacobi", "")
+                ps%cheb = .false.
+            case default
+                if (terminal_output) print *, &
+                    "warning: unknown pressure accel on input line", line_no, ": ", trim(value)
+            end select
+        case ("cheb_lmin")
+            call read_real(value, ps%chebLmin, line_no)
+        case ("cheb_lmax")
+            call read_real(value, ps%chebLmax, line_no)
         end select
     case ("ibm")
         select case (key_l)
