@@ -49,20 +49,30 @@ other):
 momentum flux is already conserved across the interface**; only advection leaks.
 
 Decomposition of the advective leak (key for any reflux):
-- **Tangential momentum** (e.g. `uv`/`wv` through a y-interface, the component
-  *parallel* to the interface): a CLEAN flux register — the flux lives ON the
-  interface y-face — but small for this manufactured field (slab u,w ~9e-7). In
-  real turbulence this is the Reynolds-stress flux and is the physically decisive
-  one (interface_review §iii: the un-refluxed tangential flux is the −⟨u'v'⟩
-  defect).
-- **Normal momentum** (`vv` through a y-interface): DOMINATES here (slab v
-  4.9e-4) but is the *hard* case — the v-momentum control volume is centred ON
-  the interface and its `vv` flux is evaluated at cell centres that do **not**
-  align across the 2:1 interface (coarse `y_int−h_c/2` vs fine `y_int−h_f/2`), so
-  there is no single interface flux to register. This is the staggered
-  normal-velocity-on-the-interface difficulty (interface_review §A, §vii) and
-  needs a momentum-consistent interface treatment (the composite/approximate
-  projection route), not a plain flux register.
+- **Tangential momentum** (`uv`/`wv`, the component *parallel* to the interface):
+  a clean flux register — the flux lives ON the interface y-face — and small for
+  this manufactured field (slab u,w ~9e-7). In real turbulence it is the
+  Reynolds-stress flux, the physically decisive one (interface_review §iii: the
+  un-refluxed tangential flux is the −⟨u'v'⟩ defect).
+- **Normal momentum** (`vv`): dominates here (slab v 4.9e-4) but **also a
+  restrict-based flux register** (investigation 2026-06-24, correcting an earlier
+  note). Working through the volume·`d1y` weights, the un-cancelled coarse flux
+  `A` (at `y_int−h_c/2`) and the four fine fluxes `B_k` (at `y_int−h_f/2`) leave a
+  net interface source `h_c²·(−0.25·A + 0.0625·Σ B_k)`, which is **zero iff
+  `A = avg(B_k)`**. The incommensurate staggered heights do NOT block
+  conservation (they only affect accuracy) — replacing the coarse cell's
+  interface-adjacent `vv` flux with the averaged fine `vv` flux conserves exactly.
+  So ONE restrict-based flux register (all three components) suffices; no
+  composite-projection rewrite is needed for conservation.
+
+**Leak convergence (smooth field).** `Sum(vol*adv)` for v converges ~4th order —
+slab `7.7e-3 → 4.9e-4 → 3.0e-5` (nx 32/64/128), patch `1.9e-3 → 1.2e-4 → 7.6e-6`
+— so for SMOOTH-flow interfaces (the finest-level wall buffer) the
+momentum-conservation error is negligible and falls fast, reinforcing §vii's
+wall-buffer recommendation. The reflux matters only for turbulence-grade
+interfaces, where the field is rough and the cancellation breaks; that regime is
+not measurable with this smooth manufactured gate and needs a turbulent test
+(plus the untested question of reflux stability in a real run, §vi).
 
 The field is `initial = tgv3d` (added to the generic case):
 `u=sin(kx)cos(ky)cos(kz)`, `v=cos(kx)sin(ky)cos(kz)`, `w=cos(kx)cos(ky)sin(kz)`.
