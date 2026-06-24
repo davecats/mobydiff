@@ -92,6 +92,18 @@ Validated (`MOBY_PREDONLY` + `MOBY_RHSDUMP`, per-component `Sum(vol*rhs)`):
   standard Berger-Colella tradeoff; conservation is the goal for turbulence-grade
   interfaces.
 
+**Corner/edge stability (inc 6).** The cubic deep-halo reconstruction amplifies a
+high-k mode ~7x; on a single (planar) interface this is harmless, but a block at a
+2:1 EDGE/CORNER reconstructs in 2-3 directions that feed the same corner cell's
+cross-advection and the combined amplification BLOWS UP (the 3D-patch
+`interface_decay` gate; dt-scaled → predictor, not projection). So reconstruction
+is now done ONLY on single-interface (`nIf < 2`) blocks; edge/corner blocks keep
+their exchanged (blend) halos. The **planar slab keeps its 2nd-order fine band**
+(and `interface_decay` passes), but the **patch fine band regresses to ~O(1) at
+the corner/edge cells**. This is a STABILITY-for-accuracy trade at corners only;
+planar bands (the channel) are unaffected. A consistent (≥ O(h)) non-amplifying
+corner reconstruction is OPEN work (memory `corner-reconstruction-todo`).
+
 **The one piece NOT refluxed — viscous corners.** The 2:1 viscous flux conserves
 on a FLAT interface (slab dif ≈ 1e-17) but leaks ~1st order at edges/corners
 (patch dif `1.2e-2 → 5.9e-3 → 2.9e-3`), independent of the reflux. This matters

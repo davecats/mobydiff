@@ -105,7 +105,7 @@ contains
     ! single-level runs. Call right before the predictor, after the halo exchange.
     subroutine reconstruct_interface_halos(blk)
         type(block_set_type), intent(inout) :: blk
-        integer :: b, i, j, k, nx, ny, nz, nBlocks
+        integer :: b, i, j, k, d, nx, ny, nz, nBlocks, nIf
 
         nx = int(blk%nb(1)); ny = int(blk%nb(2)); nz = int(blk%nb(3))
         nBlocks = int(blk%nBlocks)
@@ -114,16 +114,35 @@ contains
         ! in-plane halo ring (0..n+1): the tangential cross-advection at the
         ! interface face reaches the neighbouring tangential halo column (e.g.
         ! v's d(vu)/dx at i reads u(i+1,0,k), so the edge cell i=nx needs
-        ! u(nx+1,0,k) reconstructed too). The three regions run in order x,y,z so
-        ! that at an edge/corner the later plane reads the already-reconstructed
-        ! column of the earlier one. Components NORMAL to a HIGH face are the
+        ! u(nx+1,0,k) reconstructed too). Components NORMAL to a HIGH face are the
         ! owned interface face, not a deep halo, and are left untouched.
+        !
+        ! STABILITY: the cubic extrapolation amplifies a high-k mode ~7x. On a
+        ! single (planar) interface this is harmless (the planar interface_decay
+        ! gate is stable), but a block at a 2:1 EDGE/CORNER reconstructs in 2-3
+        ! directions whose halos feed the same corner cell's cross-advection, and
+        ! the combined amplification BLOWS UP (the 3D-patch decay gate, dt-scaled
+        ! so it is the predictor, not the projection). So reconstruction is done
+        ! ONLY on blocks with a SINGLE interface face (nIf < 2); edge/corner blocks
+        ! keep their exchanged (blend) halos -- a local accuracy loss (their
+        ! interface accuracy was already poor) for stability. Planar refinement
+        ! bands (the channel) are all single-interface, so they are unaffected.
 
         ! x-interface deep halos: normal = u, tangential = v,w.
+        ! nIf = number of interface faces of this block; blocks with >=2 (2:1
+        ! EDGES/CORNERS) are SKIPPED -- the multi-direction reconstruction there
+        ! amplifies and blows up (interface_decay patch), and corner accuracy is
+        ! already poor. Single-interface (planar) blocks reconstruct as before.
         !$omp target teams distribute parallel do collapse(2) &
-        !$omp& map(to: blk%physLow, blk%physHigh) map(tofrom: blk%q) private(i,j,k,b)
+        !$omp& map(to: blk%physLow, blk%physHigh) map(tofrom: blk%q) private(i,j,k,d,b,nIf)
         do b = 1, nBlocks
             do k = 0, nz+1
+                nIf = 0
+                do d = 1, 3
+                    if (blk%physLow(d,b) == FACE_COARSE .or. blk%physLow(d,b) == FACE_FINE) nIf = nIf + 1
+                    if (blk%physHigh(d,b) == FACE_COARSE .or. blk%physHigh(d,b) == FACE_FINE) nIf = nIf + 1
+                end do
+                if (nIf < 2) then
                 if (blk%physLow(1,b) == FACE_COARSE) then
                     do j = 0, ny+1
                         blk%q(0,j,k,VAR_U,b) = 3.0d0*blk%q(1,j,k,VAR_U,b) &
@@ -149,15 +168,23 @@ contains
                             - 3.0d0*blk%q(2,j,k,VAR_U,b) + blk%q(3,j,k,VAR_U,b)
                     end do
                 end if
+                end if   ! nIf < 2
             end do
         end do
         !$omp end target teams distribute parallel do
 
-        ! y-interface deep halos: normal = v, tangential = u,w.
+        ! y-interface deep halos: normal = v, tangential = u,w. Clip the i-ring so
+        ! it does not reach into an x-interface halo (already reconstructed above).
         !$omp target teams distribute parallel do collapse(2) &
-        !$omp& map(to: blk%physLow, blk%physHigh) map(tofrom: blk%q) private(i,j,k,b)
+        !$omp& map(to: blk%physLow, blk%physHigh) map(tofrom: blk%q) private(i,j,k,d,b,nIf)
         do b = 1, nBlocks
             do k = 0, nz+1
+                nIf = 0
+                do d = 1, 3
+                    if (blk%physLow(d,b) == FACE_COARSE .or. blk%physLow(d,b) == FACE_FINE) nIf = nIf + 1
+                    if (blk%physHigh(d,b) == FACE_COARSE .or. blk%physHigh(d,b) == FACE_FINE) nIf = nIf + 1
+                end do
+                if (nIf < 2) then
                 if (blk%physLow(2,b) == FACE_COARSE) then
                     do i = 0, nx+1
                         blk%q(i,0,k,VAR_U,b) = 3.0d0*blk%q(i,1,k,VAR_U,b) &
@@ -183,15 +210,23 @@ contains
                             - 3.0d0*blk%q(i,2,k,VAR_V,b) + blk%q(i,3,k,VAR_V,b)
                     end do
                 end if
+                end if   ! nIf < 2
             end do
         end do
         !$omp end target teams distribute parallel do
 
-        ! z-interface deep halos: normal = w, tangential = u,v.
+        ! z-interface deep halos: normal = w, tangential = u,v. Clip the i-ring
+        ! (x-interface) AND the j-ring (y-interface) -- both already reconstructed.
         !$omp target teams distribute parallel do collapse(2) &
-        !$omp& map(to: blk%physLow, blk%physHigh) map(tofrom: blk%q) private(i,j,k,b)
+        !$omp& map(to: blk%physLow, blk%physHigh) map(tofrom: blk%q) private(i,j,k,d,b,nIf)
         do b = 1, nBlocks
             do j = 0, ny+1
+                nIf = 0
+                do d = 1, 3
+                    if (blk%physLow(d,b) == FACE_COARSE .or. blk%physLow(d,b) == FACE_FINE) nIf = nIf + 1
+                    if (blk%physHigh(d,b) == FACE_COARSE .or. blk%physHigh(d,b) == FACE_FINE) nIf = nIf + 1
+                end do
+                if (nIf < 2) then
                 if (blk%physLow(3,b) == FACE_COARSE) then
                     do i = 0, nx+1
                         blk%q(i,j,0,VAR_U,b) = 3.0d0*blk%q(i,j,1,VAR_U,b) &
@@ -216,6 +251,7 @@ contains
                         blk%q(i,j,0,VAR_W,b) = 3.0d0*blk%q(i,j,1,VAR_W,b) &
                             - 3.0d0*blk%q(i,j,2,VAR_W,b) + blk%q(i,j,3,VAR_W,b)
                     end do
+                end if
                 end if
             end do
         end do
