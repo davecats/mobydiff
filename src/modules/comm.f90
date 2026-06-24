@@ -1,7 +1,7 @@
 module comm
     use, intrinsic :: iso_c_binding
     use :: mpi_f08
-    use :: init, only: dns_type, NVAR, VAR_P
+    use :: init, only: dns_type, NVAR
     use :: blocks, only: block_set_type, DIST_ZORDER, zorder_owner, zorder_start, zorder_count, &
         leaf_at, level_cells
     use :: boundary, only: boundary_type
@@ -1217,6 +1217,7 @@ contains
         integer :: di, dj, dk, var, nv, totalItems, sf
         integer :: b1, b2, b3, c1, c2, c3, s1, s2, s3
         real(C_DOUBLE) :: val
+        logical :: doBlend
 
         nv = c%nActiveVars
         totalItems = merge(c%nLocalCopyPts, c%nLocalPts, c%copyOnly)*nv
@@ -1229,7 +1230,7 @@ contains
         !$omp& c%lDstLo, c%lExt, c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lWp, c%lWpDst, &
         !$omp& c%lNrm, c%activeVars) &
         !$omp& map(tofrom: blk%q) &
-        !$omp& private(p,gp,v,e,pt,ni,nj,di,dj,dk,var,b1,b2,b3,c1,c2,c3,s1,s2,s3,val)
+        !$omp& private(p,gp,v,e,pt,ni,nj,di,dj,dk,var,b1,b2,b3,c1,c2,c3,s1,s2,s3,val,doBlend)
 #endif
         do p = 1, totalItems
             gp = (p - 1)/nv
@@ -1257,10 +1258,23 @@ contains
                 end do
             end do
             val = val/real(c1*c2*c3, C_DOUBLE)
-            ! Part of the pressure gather weight lives on the destination's
-            ! first interior cell (2:1 face ghosts; entries write only halo
-            ! cells, so the interior cell read here is never a dst).
-            if (var == VAR_P .and. c%lWpDst(e) /= 0.0d0) then
+            ! 2:1 face ghost blend: place the prolonged value where the fine
+            ! stencil expects it (ghost = (2*coarse + fine)/3 for uniform 2:1).
+            ! Plain injection puts the coarse value at the fine halo centre, so
+            ! BOTH the pressure gradient (projection) and the momentum predictor's
+            ! advection / diffusion read it at the wrong location -> an O(1)
+            ! interface truncation. Applies to the pressure AND the velocity
+            ! components TANGENTIAL to this face (lDir(var)==0): a cell-centred
+            ! halo whose blend geometry matches the pressure's. These halos feed
+            ! only the momentum stencil, never the divergence, so conservation is
+            ! untouched. The component NORMAL to the face (lDir(var)/=0) is
+            ! face-staggered with a different geometry and is left to the
+            ! face-staggered increment (its interface face is also fine-owned).
+            ! The blend weight lives partly on the destination's first interior
+            ! cell (entries write only halo cells, so that read is never a dst).
+            doBlend = c%lWpDst(e) /= 0.0d0
+            if (doBlend .and. var <= 3) doBlend = c%lDir(var,e) == 0
+            if (doBlend) then
                 val = c%lWp(e)*val + c%lWpDst(e) &
                     *blk%q(di-c%lDir(1,e), dj-c%lDir(2,e), dk-c%lDir(3,e), var, c%lDstSlot(e))
             end if
@@ -1401,6 +1415,7 @@ contains
         integer :: p, gp, v, e, pt, ni, nj
         integer :: i, j, k, var, peer, pos, nv, totalItems, copyOnly, sf
         real(C_DOUBLE) :: val
+        logical :: doBlend
 
         nv = c%nActiveVars
         totalItems = merge(c%peerRecvCopyOff(c%nPeers), c%peerRecvOff(c%nPeers), c%copyOnly)*nv
@@ -1414,7 +1429,7 @@ contains
         !$omp& c%rLo, c%rExt, c%rDir, c%rWp, c%rWpDst, c%rNrm, &
         !$omp& c%peerRecvOff, c%peerRecvCopyOff, c%activeVars, c%recvbuf) &
         !$omp& map(tofrom: blk%q) &
-        !$omp& private(p,gp,v,e,pt,ni,nj,i,j,k,var,peer,pos,val)
+        !$omp& private(p,gp,v,e,pt,ni,nj,i,j,k,var,peer,pos,val,doBlend)
 #endif
         do p = 1, totalItems
             gp = (p - 1)/nv
@@ -1434,7 +1449,13 @@ contains
             peer = c%rPeer(e)
             pos = (gp - c%peerRecvOff(peer-1))*nv + v + 1
             val = c%recvbuf(pos,peer)
-            if (var == VAR_P .and. c%rWpDst(e) /= 0.0d0) then
+            ! 2:1 face ghost blend (see copy_local_entries): pressure + the
+            ! velocity components TANGENTIAL to this face (rDir(var)==0) placed at
+            ! the fine halo centre; the normal component is left to the
+            ! face-staggered increment.
+            doBlend = c%rWpDst(e) /= 0.0d0
+            if (doBlend .and. var <= 3) doBlend = c%rDir(var,e) == 0
+            if (doBlend) then
                 val = c%rWp(e)*val + c%rWpDst(e) &
                     *blk%q(i-c%rDir(1,e), j-c%rDir(2,e), k-c%rDir(3,e), var, c%rSlot(e))
             end if

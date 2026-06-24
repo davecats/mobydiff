@@ -67,22 +67,33 @@ So: the predictor is **0th-order at the fine interface band, 1st-order on the
 coarse-band normal velocity**, while global continuity is already clean. The fix
 (step.f90) targets the fine-band advection/diffusion stencil first.
 
-## Increment 1 — cell-centred interface diffusion (`correct_interface_diffusion`)
+## Increment — tangential ghost blend (exchange, `comm.f90`)
 
-A fine cell touching the interface applies its own fine-metric Laplacian across a
-halo holding an injected **coarse** value, sitting 3/2 fine cells away (not 1) —
-an O(1/h)-diverging diffusion truncation (fine-band diffusion rms grew 1.33 →
-2.6 → 5.1 over 32/64/128). `blocks.f90` now rebuilds the interface-row Laplacian
-coefficients with the true 3/2-cell spacing, for the components **cell-centred**
-in the interface-normal direction (the tangential velocities, plain coarse
-injection) and only on the FINE side (FACE_COARSE; the restricted coarse-side
-halo already lands at the coarse centre). Init-time coefficients only — exchange
-and projection untouched.
+A fine cell touching the interface reads its tangential-velocity halo from a
+plain coarse **injection** placed at the coarse cell centre — 3/2 fine cells from
+where the fine advection/diffusion stencil expects it — an O(1) interface
+truncation (fine-band advection order ~0; diffusion rms diverged 1.33→2.6→5.1).
+The pressure already solved the identical problem with a ghost **blend**
+(`entry_blend`, ghost = (2·coarse + fine)/3 placed at the fine halo centre). This
+increment extends that blend, in the exchange gather, to the velocity components
+**tangential** to the face (`lDir(var)==0`): one elegant condition change, no
+kernel edits, fixing advection AND diffusion together. The tangential halos feed
+only the momentum stencil (never the divergence), so conservation is untouched;
+the wall-**normal** component is left to the face-staggered increment.
 
-Result (diffusion isolated via the huge-Re run): tangential u,w fine-band
-diffusion **0th-order divergence removed** (1.33 → 5.1 collapses to ~0.12 flat;
-residual is the tangential-injection error, a later increment). Regressions:
-non-interface bit-exact, coarse band unchanged, Axis-2 round-off (2.6e-14),
-CPU==GPU bit-identical. **Still open:** the wall-NORMAL velocity diffusion (its
-deep halo is set by the velocity prolong, not a plain injection — not a pure
-metric mismatch) and the dominant fine-band **advection** stencil.
+(An earlier attempt, increment 1, corrected only the cell-centred *diffusion* via
+interface-row Laplacian coefficients in `blocks.f90`; it was reverted in favour
+of this blend, which subsumes it and also fixes advection. A wrong turn caught
+along the way: correcting the FACE_FINE/coarse side regressed the coarse band —
+the restricted halo already lands at the coarse centre.)
+
+Result: tangential **u,w fine-band order 0 → ~0.9→0.6** (advection + diffusion;
+held below a clean 1 by the still-broken wall-normal `v` contaminating the `uv`
+cross-terms). Regressions all pass: non-interface bit-exact, coarse band
+unchanged, Axis-2 round-off (2.8e-14), real-Beltrami conservation round-off,
+projection div-free PROJONLY gate still 0.0, CPU==GPU bit-identical.
+
+**Still open:** the wall-**normal** velocity (its interface face is fine-owned and
+its deep halo is face-staggered — needs a face-staggered-aware blend / the fine
+predicting its own face, and tangential interpolation to reach a clean 2nd order
+rather than the current ~1st-order injection residual).

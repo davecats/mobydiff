@@ -25,8 +25,7 @@
 module blocks
     use, intrinsic :: iso_c_binding
     use, intrinsic :: iso_fortran_env, only: int64
-    use :: init, only: dns_type, grid_type, NVAR, NVEL, VAR_U, VAR_V, VAR_W, slice_grid_direction, &
-        is_face_staggered
+    use :: init, only: dns_type, grid_type, NVAR, NVEL, VAR_U, VAR_V, VAR_W, slice_grid_direction
     implicit none
 
     private
@@ -248,15 +247,6 @@ contains
             end if
         end do
 
-        ! At a 2:1 interface the diffusion stencil reads a halo holding a
-        ! neighbour-level value (injected coarse / restricted fine), but the
-        ! Laplacian coefficients were sliced from this block's own (fine-
-        ! extended) node line, so the spacing to that value is wrong by an O(1)
-        ! factor -> an O(1), grid-diverging truncation error at interface cells
-        ! (the momentum analog of the projection's face_grad fix). Rebuild the
-        ! interface-row coefficients with the true coarse-fine spacing.
-        call correct_interface_diffusion(blk)
-
         allocate(blk%q(0:nx+1,0:ny+1,0:nz+1,NVAR,blk%nBlocks))
         allocate(blk%qs(0:nx+1,0:ny+1,0:nz+1,NVEL,blk%nBlocks))
         allocate(blk%oldrhs(1:nx,1:ny,1:nz,NVEL,blk%nBlocks))
@@ -264,74 +254,6 @@ contains
         blk%qs = 0.0d0
         blk%oldrhs = 0.0d0
     end subroutine init_block_set
-
-    ! Rebuild the diffusion (Laplacian) coefficients at the rows adjacent to a
-    ! 2:1 interface using the true coarse-fine spacing to the across-interface
-    ! halo value. Only the FINE side (FACE_COARSE: this block fine, neighbour
-    ! coarser) is wrong: its halo holds the injected/prolonged COARSE value at
-    ! the coarse cell centre, a distance 3/2 local cells across the interface,
-    ! but the coefficients were sliced from this block's own fine line (1 local
-    ! cell). The COARSE side (FACE_FINE) needs nothing -- the restricted fine
-    ! halo is mean-preserving and lands exactly at the coarse cell centre, which
-    ! is where this block's own coordinate already puts it.
-    ! Scope: variables CELL-CENTRED in this direction (the tangential-to-the-
-    ! interface velocity components), whose halo is a plain coarse injection.
-    ! The component face-staggered IN this direction is the wall-NORMAL velocity;
-    ! its interface-face DOF is fine-owned and its deep halo is set by the
-    ! velocity prolong (not a simple injection), so its stencil is not a pure
-    ! metric mismatch and is left to the exchange-aware increment.
-    ! Init-time only; nothing on the device or in the exchange/projection
-    ! changes, so conservation (the global divergence) is untouched.
-    subroutine correct_interface_diffusion(blk)
-        type(block_set_type), intent(inout) :: blk
-        integer(C_INT) :: b, var, nb(3)
-
-        nb = blk%nb
-        do b = 1, int(blk%nBlocks)
-            do var = VAR_U, VAR_W
-                call fix_lap_interface(blk%x(:,var,b), blk%lapXm(:,var,b), &
-                    blk%lapX0(:,var,b), blk%lapXp(:,var,b), nb(1), &
-                    is_face_staggered(1, var), blk%physLow(1,b), blk%physHigh(1,b))
-                call fix_lap_interface(blk%y(:,var,b), blk%lapYm(:,var,b), &
-                    blk%lapY0(:,var,b), blk%lapYp(:,var,b), nb(2), &
-                    is_face_staggered(2, var), blk%physLow(2,b), blk%physHigh(2,b))
-                call fix_lap_interface(blk%z(:,var,b), blk%lapZm(:,var,b), &
-                    blk%lapZ0(:,var,b), blk%lapZp(:,var,b), nb(3), &
-                    is_face_staggered(3, var), blk%physLow(3,b), blk%physHigh(3,b))
-            end do
-        end do
-    end subroutine correct_interface_diffusion
-
-    subroutine fix_lap_interface(coord, lapM, lap0, lapP, n, staggered, fkLow, fkHigh)
-        real(C_DOUBLE), intent(in) :: coord(-1:)
-        real(C_DOUBLE), intent(inout) :: lapM(0:), lap0(0:), lapP(0:)
-        integer(C_INT), intent(in) :: n, fkLow, fkHigh
-        logical, intent(in) :: staggered
-        real(C_DOUBLE) :: hm, hp
-
-        ! Only cell-centred (tangential) components, plain coarse injection.
-        if (staggered) return
-
-        ! Low interface: the across-interface neighbour is the coarse cell centre
-        ! below row 1, 3/2 local cells away.
-        if (fkLow == FACE_COARSE) then
-            hp = coord(2) - coord(1)
-            hm = (coord(1) - coord(0)) * 1.5d0
-            lapM(1) = 2.0d0/(hm*(hm + hp))
-            lapP(1) = 2.0d0/(hp*(hm + hp))
-            lap0(1) = -(lapM(1) + lapP(1))
-        end if
-
-        ! High interface: the across-interface neighbour is the coarse cell
-        ! centre above row n, 3/2 local cells away.
-        if (fkHigh == FACE_COARSE) then
-            hm = coord(n) - coord(n-1)
-            hp = (coord(n+1) - coord(n)) * 1.5d0
-            lapM(n) = 2.0d0/(hm*(hm + hp))
-            lapP(n) = 2.0d0/(hp*(hm + hp))
-            lap0(n) = -(lapM(n) + lapP(n))
-        end if
-    end subroutine fix_lap_interface
 
     subroutine destroy_block_set(blk)
         type(block_set_type), intent(inout) :: blk
