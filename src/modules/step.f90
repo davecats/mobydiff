@@ -260,19 +260,23 @@ contains
         !$omp end target teams distribute parallel do
     end subroutine reflux_zero
 
-    ! Fill refluxF with the direction-dir interface-normal advective flux q_dir^2
-    ! at every interface-adjacent cell (low face -> dir-index 1, high -> dir-index
-    ! nb). A face is an interface when its kind is FACE_COARSE or FACE_FINE.
-    subroutine reflux_compute_flux(blk, dir)
+    ! Fill refluxF with the comp-momentum's dir-direction advective flux at every
+    ! interface-adjacent cell (low face -> dir-index 1, high -> dir-index nb). For
+    ! comp==dir this is the normal flux q_dir^2; for comp/=dir the tangential flux
+    ! q_comp*q_dir (the Reynolds-stress flux). The expressions match the momentum
+    ! predictor's interface-adjacent flux term-for-term. A face is an interface
+    ! when its kind is FACE_COARSE or FACE_FINE.
+    subroutine reflux_compute_flux(blk, dir, comp)
         type(block_set_type), intent(inout) :: blk
-        integer, intent(in) :: dir
+        integer, intent(in) :: dir, comp
         integer :: b, i, j, k, nx, ny, nz, nBlocks
         integer(C_INT) :: lo, hi
+        real(C_DOUBLE) :: fl, fh
         nx = int(blk%nb(1)); ny = int(blk%nb(2)); nz = int(blk%nb(3))
         nBlocks = int(blk%nBlocks)
 
         ! Clear first: the geometry-driven exchange restricts ALL interface faces,
-        ! so leftover flux from another direction's cells would be restricted into
+        ! so leftover flux from another (dir,comp) pass would be restricted into
         ! coarse halos and corrupt edges/corners.
         !$omp target teams distribute parallel do collapse(4) &
         !$omp& map(tofrom: blk%refluxF) private(i,j,k,b)
@@ -289,48 +293,108 @@ contains
 
         if (dir == 1) then
             !$omp target teams distribute parallel do collapse(3) &
-            !$omp& map(to: blk%physLow, blk%physHigh) map(tofrom: blk%q, blk%refluxF) &
-            !$omp& private(i,j,k,b,lo,hi)
+            !$omp& map(to: comp, blk%physLow, blk%physHigh) map(tofrom: blk%q, blk%refluxF) &
+            !$omp& private(i,j,k,b,lo,hi,fl,fh)
             do b = 1, nBlocks
                 do k = 1, nz
                     do j = 1, ny
                         lo = blk%physLow(1,b); hi = blk%physHigh(1,b)
-                        if (lo == FACE_COARSE .or. lo == FACE_FINE) &
-                            blk%refluxF(1,j,k,b) = (blk%q(0,j,k,VAR_U,b) + blk%q(1,j,k,VAR_U,b))**2
-                        if (hi == FACE_COARSE .or. hi == FACE_FINE) &
-                            blk%refluxF(nx,j,k,b) = (blk%q(nx,j,k,VAR_U,b) + blk%q(nx+1,j,k,VAR_U,b))**2
+                        if (lo == FACE_COARSE .or. lo == FACE_FINE) then
+                            if (comp == 1) then
+                                fl = (blk%q(0,j,k,VAR_U,b) + blk%q(1,j,k,VAR_U,b))**2
+                            else if (comp == 2) then
+                                fl = (blk%q(0,j,k,VAR_V,b) + blk%q(1,j,k,VAR_V,b)) &
+                                   * (blk%q(1,j-1,k,VAR_U,b) + blk%q(1,j,k,VAR_U,b))
+                            else
+                                fl = (blk%q(0,j,k,VAR_W,b) + blk%q(1,j,k,VAR_W,b)) &
+                                   * (blk%q(1,j,k-1,VAR_U,b) + blk%q(1,j,k,VAR_U,b))
+                            end if
+                            blk%refluxF(1,j,k,b) = fl
+                        end if
+                        if (hi == FACE_COARSE .or. hi == FACE_FINE) then
+                            if (comp == 1) then
+                                fh = (blk%q(nx,j,k,VAR_U,b) + blk%q(nx+1,j,k,VAR_U,b))**2
+                            else if (comp == 2) then
+                                fh = (blk%q(nx,j,k,VAR_V,b) + blk%q(nx+1,j,k,VAR_V,b)) &
+                                   * (blk%q(nx+1,j-1,k,VAR_U,b) + blk%q(nx+1,j,k,VAR_U,b))
+                            else
+                                fh = (blk%q(nx,j,k,VAR_W,b) + blk%q(nx+1,j,k,VAR_W,b)) &
+                                   * (blk%q(nx+1,j,k-1,VAR_U,b) + blk%q(nx+1,j,k,VAR_U,b))
+                            end if
+                            blk%refluxF(nx,j,k,b) = fh
+                        end if
                     end do
                 end do
             end do
             !$omp end target teams distribute parallel do
         else if (dir == 2) then
             !$omp target teams distribute parallel do collapse(3) &
-            !$omp& map(to: blk%physLow, blk%physHigh) map(tofrom: blk%q, blk%refluxF) &
-            !$omp& private(i,j,k,b,lo,hi)
+            !$omp& map(to: comp, blk%physLow, blk%physHigh) map(tofrom: blk%q, blk%refluxF) &
+            !$omp& private(i,j,k,b,lo,hi,fl,fh)
             do b = 1, nBlocks
                 do k = 1, nz
                     do i = 1, nx
                         lo = blk%physLow(2,b); hi = blk%physHigh(2,b)
-                        if (lo == FACE_COARSE .or. lo == FACE_FINE) &
-                            blk%refluxF(i,1,k,b) = (blk%q(i,0,k,VAR_V,b) + blk%q(i,1,k,VAR_V,b))**2
-                        if (hi == FACE_COARSE .or. hi == FACE_FINE) &
-                            blk%refluxF(i,ny,k,b) = (blk%q(i,ny,k,VAR_V,b) + blk%q(i,ny+1,k,VAR_V,b))**2
+                        if (lo == FACE_COARSE .or. lo == FACE_FINE) then
+                            if (comp == 1) then
+                                fl = (blk%q(i,0,k,VAR_U,b) + blk%q(i,1,k,VAR_U,b)) &
+                                   * (blk%q(i-1,1,k,VAR_V,b) + blk%q(i,1,k,VAR_V,b))
+                            else if (comp == 2) then
+                                fl = (blk%q(i,0,k,VAR_V,b) + blk%q(i,1,k,VAR_V,b))**2
+                            else
+                                fl = (blk%q(i,0,k,VAR_W,b) + blk%q(i,1,k,VAR_W,b)) &
+                                   * (blk%q(i,1,k-1,VAR_V,b) + blk%q(i,1,k,VAR_V,b))
+                            end if
+                            blk%refluxF(i,1,k,b) = fl
+                        end if
+                        if (hi == FACE_COARSE .or. hi == FACE_FINE) then
+                            if (comp == 1) then
+                                fh = (blk%q(i,ny,k,VAR_U,b) + blk%q(i,ny+1,k,VAR_U,b)) &
+                                   * (blk%q(i-1,ny+1,k,VAR_V,b) + blk%q(i,ny+1,k,VAR_V,b))
+                            else if (comp == 2) then
+                                fh = (blk%q(i,ny,k,VAR_V,b) + blk%q(i,ny+1,k,VAR_V,b))**2
+                            else
+                                fh = (blk%q(i,ny,k,VAR_W,b) + blk%q(i,ny+1,k,VAR_W,b)) &
+                                   * (blk%q(i,ny+1,k-1,VAR_V,b) + blk%q(i,ny+1,k,VAR_V,b))
+                            end if
+                            blk%refluxF(i,ny,k,b) = fh
+                        end if
                     end do
                 end do
             end do
             !$omp end target teams distribute parallel do
         else
             !$omp target teams distribute parallel do collapse(3) &
-            !$omp& map(to: blk%physLow, blk%physHigh) map(tofrom: blk%q, blk%refluxF) &
-            !$omp& private(i,j,k,b,lo,hi)
+            !$omp& map(to: comp, blk%physLow, blk%physHigh) map(tofrom: blk%q, blk%refluxF) &
+            !$omp& private(i,j,k,b,lo,hi,fl,fh)
             do b = 1, nBlocks
                 do j = 1, ny
                     do i = 1, nx
                         lo = blk%physLow(3,b); hi = blk%physHigh(3,b)
-                        if (lo == FACE_COARSE .or. lo == FACE_FINE) &
-                            blk%refluxF(i,j,1,b) = (blk%q(i,j,0,VAR_W,b) + blk%q(i,j,1,VAR_W,b))**2
-                        if (hi == FACE_COARSE .or. hi == FACE_FINE) &
-                            blk%refluxF(i,j,nz,b) = (blk%q(i,j,nz,VAR_W,b) + blk%q(i,j,nz+1,VAR_W,b))**2
+                        if (lo == FACE_COARSE .or. lo == FACE_FINE) then
+                            if (comp == 1) then
+                                fl = (blk%q(i,j,0,VAR_U,b) + blk%q(i,j,1,VAR_U,b)) &
+                                   * (blk%q(i-1,j,1,VAR_W,b) + blk%q(i,j,1,VAR_W,b))
+                            else if (comp == 2) then
+                                fl = (blk%q(i,j,0,VAR_V,b) + blk%q(i,j,1,VAR_V,b)) &
+                                   * (blk%q(i,j-1,1,VAR_W,b) + blk%q(i,j,1,VAR_W,b))
+                            else
+                                fl = (blk%q(i,j,0,VAR_W,b) + blk%q(i,j,1,VAR_W,b))**2
+                            end if
+                            blk%refluxF(i,j,1,b) = fl
+                        end if
+                        if (hi == FACE_COARSE .or. hi == FACE_FINE) then
+                            if (comp == 1) then
+                                fh = (blk%q(i,j,nz,VAR_U,b) + blk%q(i,j,nz+1,VAR_U,b)) &
+                                   * (blk%q(i-1,j,nz+1,VAR_W,b) + blk%q(i,j,nz+1,VAR_W,b))
+                            else if (comp == 2) then
+                                fh = (blk%q(i,j,nz,VAR_V,b) + blk%q(i,j,nz+1,VAR_V,b)) &
+                                   * (blk%q(i,j-1,nz+1,VAR_W,b) + blk%q(i,j,nz+1,VAR_W,b))
+                            else
+                                fh = (blk%q(i,j,nz,VAR_W,b) + blk%q(i,j,nz+1,VAR_W,b))**2
+                            end if
+                            blk%refluxF(i,j,nz,b) = fh
+                        end if
                     end do
                 end do
             end do
@@ -339,65 +403,65 @@ contains
     end subroutine reflux_compute_flux
 
     ! After the interface-row restriction has placed avg(F_fine) in the coarse
-    ! across-interface halo, accumulate the coarse cell's RHS reflux correction
-    ! (replace F_coarse by avg(F_fine)). Only coarse cells (physLow/High==FACE_FINE)
-    ! are corrected; the fine side is authoritative. The sign follows from the
-    ! advection sign of the un-cancelled flux: vv_m at the low face (enters with
-    ! -), vv_p at the high face (enters with +).
-    subroutine reflux_accumulate(blk, dir)
+    ! across-interface halo, accumulate the coarse comp-momentum cell's RHS reflux
+    ! correction (replace F_coarse by avg(F_fine)). Only coarse cells
+    ! (physLow/High(dir)==FACE_FINE) are corrected; the fine side is authoritative.
+    ! The sign follows from the advection sign of the un-cancelled flux: flux_m at
+    ! the low face enters with -, flux_p at the high face with +.
+    subroutine reflux_accumulate(blk, dir, comp)
         type(block_set_type), intent(inout) :: blk
-        integer, intent(in) :: dir
+        integer, intent(in) :: dir, comp
         integer :: b, i, j, k, nx, ny, nz, nBlocks
         nx = int(blk%nb(1)); ny = int(blk%nb(2)); nz = int(blk%nb(3))
         nBlocks = int(blk%nBlocks)
 
         if (dir == 1) then
             !$omp target teams distribute parallel do collapse(3) &
-            !$omp& map(to: blk%physLow, blk%physHigh, blk%d1x, blk%refluxF) &
+            !$omp& map(to: comp, blk%physLow, blk%physHigh, blk%d1x, blk%refluxF) &
             !$omp& map(tofrom: blk%refluxCorr) private(i,j,k,b)
             do b = 1, nBlocks
                 do k = 1, nz
                     do j = 1, ny
                         if (blk%physLow(1,b) == FACE_FINE) &
-                            blk%refluxCorr(1,j,k,VAR_U,b) = 0.25d0 &
-                                *(blk%refluxF(0,j,k,b) - blk%refluxF(1,j,k,b))*blk%d1x(1,VAR_U,b)
+                            blk%refluxCorr(1,j,k,comp,b) = 0.25d0 &
+                                *(blk%refluxF(0,j,k,b) - blk%refluxF(1,j,k,b))*blk%d1x(1,comp,b)
                         if (blk%physHigh(1,b) == FACE_FINE) &
-                            blk%refluxCorr(nx,j,k,VAR_U,b) = 0.25d0 &
-                                *(blk%refluxF(nx,j,k,b) - blk%refluxF(nx+1,j,k,b))*blk%d1x(nx,VAR_U,b)
+                            blk%refluxCorr(nx,j,k,comp,b) = 0.25d0 &
+                                *(blk%refluxF(nx,j,k,b) - blk%refluxF(nx+1,j,k,b))*blk%d1x(nx,comp,b)
                     end do
                 end do
             end do
             !$omp end target teams distribute parallel do
         else if (dir == 2) then
             !$omp target teams distribute parallel do collapse(3) &
-            !$omp& map(to: blk%physLow, blk%physHigh, blk%d1y, blk%refluxF) &
+            !$omp& map(to: comp, blk%physLow, blk%physHigh, blk%d1y, blk%refluxF) &
             !$omp& map(tofrom: blk%refluxCorr) private(i,j,k,b)
             do b = 1, nBlocks
                 do k = 1, nz
                     do i = 1, nx
                         if (blk%physLow(2,b) == FACE_FINE) &
-                            blk%refluxCorr(i,1,k,VAR_V,b) = 0.25d0 &
-                                *(blk%refluxF(i,0,k,b) - blk%refluxF(i,1,k,b))*blk%d1y(1,VAR_V,b)
+                            blk%refluxCorr(i,1,k,comp,b) = 0.25d0 &
+                                *(blk%refluxF(i,0,k,b) - blk%refluxF(i,1,k,b))*blk%d1y(1,comp,b)
                         if (blk%physHigh(2,b) == FACE_FINE) &
-                            blk%refluxCorr(i,ny,k,VAR_V,b) = 0.25d0 &
-                                *(blk%refluxF(i,ny,k,b) - blk%refluxF(i,ny+1,k,b))*blk%d1y(ny,VAR_V,b)
+                            blk%refluxCorr(i,ny,k,comp,b) = 0.25d0 &
+                                *(blk%refluxF(i,ny,k,b) - blk%refluxF(i,ny+1,k,b))*blk%d1y(ny,comp,b)
                     end do
                 end do
             end do
             !$omp end target teams distribute parallel do
         else
             !$omp target teams distribute parallel do collapse(3) &
-            !$omp& map(to: blk%physLow, blk%physHigh, blk%d1z, blk%refluxF) &
+            !$omp& map(to: comp, blk%physLow, blk%physHigh, blk%d1z, blk%refluxF) &
             !$omp& map(tofrom: blk%refluxCorr) private(i,j,k,b)
             do b = 1, nBlocks
                 do j = 1, ny
                     do i = 1, nx
                         if (blk%physLow(3,b) == FACE_FINE) &
-                            blk%refluxCorr(i,j,1,VAR_W,b) = 0.25d0 &
-                                *(blk%refluxF(i,j,0,b) - blk%refluxF(i,j,1,b))*blk%d1z(1,VAR_W,b)
+                            blk%refluxCorr(i,j,1,comp,b) = 0.25d0 &
+                                *(blk%refluxF(i,j,0,b) - blk%refluxF(i,j,1,b))*blk%d1z(1,comp,b)
                         if (blk%physHigh(3,b) == FACE_FINE) &
-                            blk%refluxCorr(i,j,nz,VAR_W,b) = 0.25d0 &
-                                *(blk%refluxF(i,j,nz,b) - blk%refluxF(i,j,nz+1,b))*blk%d1z(nz,VAR_W,b)
+                            blk%refluxCorr(i,j,nz,comp,b) = 0.25d0 &
+                                *(blk%refluxF(i,j,nz,b) - blk%refluxF(i,j,nz+1,b))*blk%d1z(nz,comp,b)
                     end do
                 end do
             end do

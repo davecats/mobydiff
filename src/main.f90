@@ -21,7 +21,7 @@ program main
         init_block_exchange, exchange_halos, exchange_scalar_halos
     implicit none
 
-    integer :: arg_status, rkStage, refluxDir
+    integer :: arg_status, rkStage, refluxDir, refluxComp
     integer(C_INT) :: loop_steps
     real(C_DOUBLE) :: dt_alpha, dt_beta, dt_gamma
     real(C_DOUBLE) :: les_profile_start
@@ -306,9 +306,11 @@ program main
                 if (dns%block_momentum_reflux) then
                     call reflux_zero(blk)
                     do refluxDir = 1, 3
-                        call reflux_compute_flux(blk, refluxDir)
-                        call exchange_scalar_halos(c, blk%refluxF, ifaceRow=.true.)
-                        call reflux_accumulate(blk, refluxDir)
+                        do refluxComp = 1, 3
+                            call reflux_compute_flux(blk, refluxDir, refluxComp)
+                            call exchange_scalar_halos(c, blk%refluxF, ifaceRow=.true.)
+                            call reflux_accumulate(blk, refluxDir, refluxComp)
+                        end do
                     end do
                 end if
                 call update_ibm_mu(ibm, dt_gamma)
