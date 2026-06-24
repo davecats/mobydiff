@@ -10,16 +10,31 @@
 #
 #   ./run_validation.sh [gpu|cpu] [nranks]
 #
+# Set REFLUX=1 to enable [blocks] momentum_reflux on the refined cases (the
+# Berger-Colella momentum reflux that conserves momentum across the 2:1
+# interface -- the fix for the localized -<u'v'> / mean-shear defect there).
+# The refined runs then land in runs/<name>_reflux/ for a reflux-on vs
+# reflux-off vs reference comparison:
+#   REFLUX=1 ./run_validation.sh gpu 2
+#
 # Post-process with:
 #   python3 ../../tools/channel_interface_validation.py \
 #       --reference runs/reference/stats --refined runs/refined_y110/stats --out plots_y110
-#   (and the same with refined_y55)
+#   (and the same with refined_y55; use runs/refined_y110_reflux/stats for REFLUX=1)
 
 set -euo pipefail
 cd "$(dirname "$0")"
 
 ARCH="${1:-gpu}"
 NRANKS="${2:-1}"
+REFLUX="${REFLUX:-0}"
+REFLUX_SED=""
+RSUFFIX=""
+if [ "$REFLUX" = "1" ]; then
+    REFLUX_SED='s|^refine_levels = .*|&\nmomentum_reflux = true|'
+    RSUFFIX="_reflux"
+    echo "== momentum_reflux ENABLED on refined cases (runs/<name>_reflux/)"
+fi
 BIN="../../build_${ARCH}/main"
 TRANSIENT_T=5.0
 AVERAGE_T=20.0
@@ -45,10 +60,12 @@ python3 ../../tools/make_channel_restart.py --mode refined --band-cells 16 \
     --source ../../tutorials/channel_kmm180/channel_kmm180_restart.h5 \
     --out ic/refined_y55_ic.h5
 
+# $3 = run-name suffix ("" for reference, "$RSUFFIX" for refined cases). The
+# reflux flag injection (REFLUX_SED) is a no-op on the reference (no [blocks]).
 run_case () {
-    local name="$1" ic="$2"
-    local dirA="runs/$name/transient" dirB="runs/$name/stats"
-    echo "== $name: transient leg (t = 0 .. $TRANSIENT_T)"
+    local name="$1" ic="$2" sfx="${3:-}"
+    local dirA="runs/$name$sfx/transient" dirB="runs/$name$sfx/stats"
+    echo "== $name$sfx: transient leg (t = 0 .. $TRANSIENT_T)"
     mkdir -p "$dirA" "$dirB"
     sed -e "s|^t_final = .*|t_final = $TRANSIENT_T|" \
         -e "s|^file = RESTART_PLACEHOLDER|file = ../../../ic/$ic|" \
@@ -56,21 +73,25 @@ run_case () {
         -e "s|^stats_write_interval = .*|stats_write_interval = 0|" \
         -e "s|^field_interval = .*|field_interval = 0|" \
         "$name.ini" > "$dirA/input.ini"
+    [ -n "$REFLUX_SED" ] && sed -i "$REFLUX_SED" "$dirA/input.ini"
     ( cd "$dirA" && mpirun -n "$NRANKS" "$BIN" input.ini > run.log 2>&1 )
     local final
     final=$(ls -1 "$dirA"/channel_field_*.h5 | sort -t_ -k3 -n | tail -1)
     echo "   transient final field: $final"
 
-    echo "== $name: statistics leg (t = $TRANSIENT_T .. $(python3 -c "print($TRANSIENT_T+$AVERAGE_T)"))"
+    echo "== $name$sfx: statistics leg (t = $TRANSIENT_T .. $(python3 -c "print($TRANSIENT_T+$AVERAGE_T)"))"
     sed -e "s|^t_final = .*|t_final = $(python3 -c "print($TRANSIENT_T+$AVERAGE_T)")|" \
         -e "s|^file = RESTART_PLACEHOLDER|file = ../../../$final|" \
         "$name.ini" > "$dirB/input.ini"
+    [ -n "$REFLUX_SED" ] && sed -i "$REFLUX_SED" "$dirB/input.ini"
     ( cd "$dirB" && mpirun -n "$NRANKS" "$BIN" input.ini > run.log 2>&1 )
     echo "   done: stats in $dirB"
 }
 
+# Reference has no interface, so it is identical with/without reflux -- always
+# runs/reference (no suffix); the refined cases carry $RSUFFIX under REFLUX=1.
 run_case reference reference_ic.h5
-run_case refined_y110 refined_y110_ic.h5
-run_case refined_y55 refined_y55_ic.h5
+run_case refined_y110 refined_y110_ic.h5 "$RSUFFIX"
+run_case refined_y55 refined_y55_ic.h5 "$RSUFFIX"
 
 echo "== all runs complete; post-process with tools/channel_interface_validation.py"

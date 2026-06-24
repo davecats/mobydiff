@@ -3,6 +3,19 @@
 Re_tau = 180 channel (u_tau = 1: one time unit = one eddy turnover).
 Three cases:
 
+> **Momentum reflux.** The refined cases plant interfaces in energetic near-wall
+> turbulence, where the un-refluxed interface momentum flux gives a localized
+> `-<u'v'>` / mean-shear defect (see `docs/interface_review.md` ii-iii). Run
+> `REFLUX=1 ./run_validation.sh gpu <n>` to enable `[blocks] momentum_reflux`
+> (Berger-Colella reflux of the interface advective momentum, validated to
+> round-off conservation in `validation/momentum_interface`); the refined runs
+> then land in `runs/<name>_reflux/` for a reflux-on vs reflux-off vs reference
+> comparison. The refine bands are full-extent planes (no corners), so the reflux
+> conserves the interface momentum exactly there. (`tools/divsum.py` and
+> `momsum.py` assume uniform cell volumes, so they are not meaningful on this
+> stretched grid; conservation is gated on the uniform `momentum_interface`
+> cases.)
+
 | case          | grid                          | interfaces            |
 |---------------|-------------------------------|-----------------------|
 | reference     | uniform 256 x 128 x 256       | none                  |
