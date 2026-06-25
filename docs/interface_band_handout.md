@@ -463,8 +463,8 @@ restrict = transpose of prolong -- the remaining unbuilt piece).
 | run | result |
 |---|---|
 | BASELINE (cubic recon + metric prolong) | **blows up ~step 200** (div_l2 -> 2.3e8; div_max climbs 0.09->0.24 from step ~180) |
-| NORECON+VELINJECT (constant-1/2, no skew) | **STABLE to 250**, div_l2 <= 0.062, div_max ~0.09 flat |
-| + KESKEW (local skew) | **STABLE to 250**, identical (div_l2 <= 0.062) |
+| NORECON+VELINJECT (constant-1/2, no skew) | **STABLE to 500** (2.5x past blow-up); div_max DECREASES 0.09->0.056, div_l2 <= 6.4e-3 -- the channel SETTLES, not just bounded |
+| + KESKEW (local skew) | **STABLE to 250**, identical to NORECON+VELINJECT (div_l2 <= 0.062) |
 
 => the truncation-optimal **cubic/metric weights break interface energy
 conservation and DESTABILIZE**; **constant-1/2** (V&V's explicit order-for-energy
@@ -486,8 +486,9 @@ constant-1/2. This changes the no-flag refined behaviour (NOT bit-exact vs curre
 so it is a deliberate choice -- single-level runs stay bit-exact (no interface).
 `MOBY_KESKEW` can stay an optional energy-accuracy refinement. NOT yet done:
 (a) the adjoint (volume-weighted transpose) transfer for the residual 0.036 band
-energy; (b) longer-than-250 channel confirmation; (c) turbulence-statistics
-validation that the bounded band does not corrupt the mean profile.
+energy; (b) turbulence-statistics validation (t=5..25 stats leg) that the bounded
+band does not corrupt the mean profile. (Longer-run stability is settled:
+NORECON+VELINJECT runs 500 steps with div_max DECREASING to 0.056.)
 
 ## Memory
 `interface-validation-suite` (the gates + this state), `corner-reconstruction-todo`,
