@@ -128,6 +128,75 @@ Concrete plan:
    round-off, and `roughness(band) ~ interior`; validate with the channel (band gone,
    stable) and gates 3/4/6.
 
+## Session 2026-06-25b: localized (not yet fixed). What is now KNOWN.
+
+Reproduced the band end-to-end and ran the plan above. Tools built this session
+(committed): `tools/channel_band_profile.py` (per-y-row fluctuation rms of a
+block-table channel field, reassembled per level; FLAGS the band) and
+`tools/interface_coarse_gate.py` (per-coarse-row tangential-Laplacian roughness on
+the Beltrami slab). Fast inputs: `validation/beltrami/slab_y_diag.ini` (32^3 1-step
+y-band, ~5 s CPU), `uniform32.ini` (no-refine reference), `slab_y_diag500.ini`.
+
+**GROUND TRUTH (GPU, refined_y110 IC from make_channel_restart, 150 steps, stable):**
+the band sits on the COARSE interior cell touching each 2:1 interface, BOTH
+orientations, **strongest in streamwise u and in p**:
+- bottom interface (coarse-ABOVE-fine, `physLow(2)==FACE_FINE`), y=0.643, gj=24:
+  u_rms 1.06 (fine) -> **1.38** (coarse) -> 0.93. p likewise elevated.
+- top interface (coarse-BELOW-fine, `physHigh(2)==FACE_FINE`), y=1.357, gj=39:
+  u_rms 1.14 -> **1.55** -> 1.23 (this is the handout's "1.14->1.55->1.23").
+v,w bands are minor. The RAW interpolated IC is SMOOTH across the interface
+(u_rms 0.955->0.925->0.891, monotone) -> **the band is SOLVER-CREATED, not an IC /
+make_channel_restart interpolation artifact.** It develops over the run (u-band
+~+16% by step 80, ~+40% by step 150).
+
+**ATTRIBUTION (clean, on the real signal):** restart from the developed step-150
+field and run ONE step. u_rms at gj=24 is IDENTICAL after PREDONLY (1.3875) and
+after FULL (1.3875) -- **the projection does not touch the streamwise band**; the
+predictor sets it (it even nudges it up, 1.3778->1.3875/step). The projection DOES
+set p (full lowers p(gj=24) 1.111->1.021 in one step, but it re-equilibrates
+banded). So: **u-band = predictor; p-band = projection (p is only ever written by
+the projection)**, and the standing u-band is consistent with being driven by the
+banded pressure gradient that the predictor reads each step.
+
+**RULED OUT this session (do NOT re-try):**
+- *Projection under-convergence.* niter 6 vs 50 give a BIT-IDENTICAL band at step 80
+  (u 1.1178 vs 1.1176; channel) and the Beltrami coarse-cell roughness is
+  niter-independent 50 vs 500. The band is STRUCTURAL (the consistent discrete
+  interface operators), not an unconverged residual. (Matches the handout's
+  Jacobi==Chebyshev stability finding.)
+- *Projection of a smooth divergent field.* `MOBY_PROJONLY MOBY_MANUF=0.3` niter=500
+  on the slab leaves NO coarse-cell roughness (flat profile). The projection's 2:1
+  divergence/pressure operators are consistent for smooth input; they do not
+  manufacture the band. (The channel p-band comes from projecting the TURBULENT
+  predictor divergence, which k=1 Beltrami/MANUF does not excite.)
+- *Coarse-side TANGENTIAL deep-halo reconstruction (the obvious predictor fix).*
+  Extending inc-5 to reconstruct the coarse cell's tangential u,w deep halos (cubic
+  `q(0)=3q(1)-3q(2)+q(3)`) **BLOWS THE CHANNEL UP** -- unlimited at ~step 150,
+  slope-LIMITED at ~step 150 too (stable to ~100 then diverges). Seed is the FINE
+  cell across the interface (gj=47): perturbing the coarse cell feeds back through
+  the prolong->fine-halo->restrict loop. This confirms the repo's prior choice
+  (inc 5 = normal-only). **The band is NOT an order defect** (coarse tangential is
+  already ~2nd order on smooth fields) and raising the halo order is the wrong,
+  destabilizing lever. Reverted; baseline restored & rebuilt.
+- *reconstruct_interface_halos overall (`MOBY_NORECON`).* Does not change the
+  coarse-above-fine band (it only adds the normal-v ghost there).
+
+**WORKING HYPOTHESIS for the fix (next session).** The band is the classic AMR
+coarse-fine ENERGY-PILEUP / reflection: the fine band carries more resolved high-k
+tangential energy; the coarse cell adjacent to it cannot dissipate the high-k
+content fed across the interface (advectively + via the injected/restricted phi),
+so it piles up as a localized streamwise+pressure band that is 2nd-order-consistent
+(vanishes as h->0) but unphysical at finite h. Since RAISING order destabilizes,
+the productive direction is a BOUNDED, targeted high-k TANGENTIAL filter/dissipation
+applied ONLY at the coarse interface band (stable, unlike extrapolation; vanishes
+for smooth flow; tune to bring roughness(band)~interior). Secondary lead: the
+pressure side -- the phi/pressure PROLONG is still pure injection (a tangential step
+into the fine pressure halo; the VELOCITY prolong got the two-pass tangential interp
+in fdfd477 but the SCALAR phi prolong did not) -- check whether a tangential-interp
+phi prolong reduces the p-band (and thus the predictor-read pressure-gradient that
+sustains u). Validate any fix with `channel_band_profile.py` (band gone, 200+ steps
+stable), bit-exact no-interface, CPU==GPU.
+
 ## Memory
 `interface-validation-suite` (the gates + this state), `corner-reconstruction-todo`,
 `restart-overrides-config-sor`, `refinement-perf-profile`, `chebyshev-jacobi-plan`.
