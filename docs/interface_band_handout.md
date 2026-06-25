@@ -437,6 +437,58 @@ projection converges -- weigh against the reflux). Scratchpad files (regenerable
 RUN GPU CASES ONE AT A TIME and pkill stray `build_*/main` between runs (they
 accumulate and starve everything).
 
+## Session 2026-06-26: skew-symmetric interface convection + STABILITY achieved
+
+Implemented the V&V energy-conserving interface correction and ran the channel
+stability test. **Key result: the 2:1 interface no longer limits stability** --
+Davide's actual requirement is met -- and it is the **constant-1/2 condition**
+(dropping the cubic deep-halo reconstruction + the metric velocity prolong), not
+the skew-form term, that does it.
+
+**`MOBY_KESKEW` (commit 4c43741)** -- `skew_interface_correction` in step.f90 adds
+`1/2 u (div u)` at the interface-band cells (both sides) into `refluxCorr` so the
+existing `reflux_apply` lands it on the predictor RHS, making the band cells'
+convection skew-symmetric (`C_skew = C_div + 1/2 u (div u)`) while the interior
+keeps the bit-exact divergence form. Gated (requires `momentum_reflux`); inert
+without a 2:1 interface => bit-exact.
+
+**Slab band-SKEW sweep (MOBY_KEBAL, the energy each lever removes):**
+`baseline 0.127 | reflux+NORECON 0.054 | +VELINJECT 0.045 | +KESKEW 0.036`. Each
+V&V lever chips the band energy; the residual **0.036 is the cross-interface
+area-mismatch** term the LOCAL skew correction cannot remove (it restores the
+within-block telescoping; the 2:1 face needs the volume-weighted ADJOINT transfer,
+restrict = transpose of prolong -- the remaining unbuilt piece).
+
+**Channel stability (refined_y110, GPU, 250 steps, MOBY_STEPDIV):**
+| run | result |
+|---|---|
+| BASELINE (cubic recon + metric prolong) | **blows up ~step 200** (div_l2 -> 2.3e8; div_max climbs 0.09->0.24 from step ~180) |
+| NORECON+VELINJECT (constant-1/2, no skew) | **STABLE to 250**, div_l2 <= 0.062, div_max ~0.09 flat |
+| + KESKEW (local skew) | **STABLE to 250**, identical (div_l2 <= 0.062) |
+
+=> the truncation-optimal **cubic/metric weights break interface energy
+conservation and DESTABILIZE**; **constant-1/2** (V&V's explicit order-for-energy
+trade) cures it. KESKEW adds energy accuracy (-20% more band energy) but no extra
+stability here. The coarse-side **amplitude band PERSISTS** (u_rms ~1.5, intrinsic
+to the resolution jump -- the coarse side genuinely cannot resolve the fine side's
+content) but is now **bounded/stable instead of growing to blow-up**: "band gone"
+was the wrong target; "band does not limit stability" is the achievable + correct
+one (matches V&V -- energy conservation bounds the resolved fluctuations, it does
+not erase the resolution jump).
+
+**Production path for Davide (decision needed).** The stabilizing levers are
+currently env-var DIAGNOSTICS (`MOBY_NORECON` = drop the cubic increment-5
+reconstruction; `MOBY_VELINJECT` = inject vs metric-interp the velocity prolong).
+To ship: make constant-1/2 the DEFAULT on refined runs -- either disable the cubic
+reconstruction or, better, REPLACE it with a constant-1/2 (linear-average) ghost so
+some interface accuracy survives while satisfying V&V; and make the velocity prolong
+constant-1/2. This changes the no-flag refined behaviour (NOT bit-exact vs current),
+so it is a deliberate choice -- single-level runs stay bit-exact (no interface).
+`MOBY_KESKEW` can stay an optional energy-accuracy refinement. NOT yet done:
+(a) the adjoint (volume-weighted transpose) transfer for the residual 0.036 band
+energy; (b) longer-than-250 channel confirmation; (c) turbulence-statistics
+validation that the bounded band does not corrupt the mean profile.
+
 ## Memory
 `interface-validation-suite` (the gates + this state), `corner-reconstruction-todo`,
 `restart-overrides-config-sor`, `refinement-perf-profile`, `chebyshev-jacobi-plan`.
