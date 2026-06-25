@@ -573,8 +573,13 @@ contains
                             posD = [blk%x(i,var,b), blk%y(j,var,b), blk%z(k,var,b)]
                             if (idSame >= 0) then
                                 want = CXV(var)*posD(1) + CYV(var)*posD(2) + CZV(var)*posD(3)
+                            else if (idParent >= 0 .and. sum(abs(off)) == 1) then
+                                ! FACE prolong: tangential interpolation + normal
+                                ! (2C+F)/3 blend reproduces a linear field at the
+                                ! fine halo location EXACTLY (the new correct design).
+                                want = CXV(var)*posD(1) + CYV(var)*posD(2) + CZV(var)*posD(3)
                             else if (idParent >= 0) then
-                                ! Injection: field at the covering coarse location.
+                                ! EDGE/CORNER prolong (no blend): still injection.
                                 do d = 1, 3
                                     gnl = level_cells(dns, d, int(l, C_INT))
                                     gidx = int(blk%origin(d,b)) + idx(d) - 1
@@ -588,13 +593,6 @@ contains
                                     end if
                                 end do
                                 want = CXV(var)*srcD(1) + CYV(var)*srcD(2) + CZV(var)*srcD(3)
-                                if (var == VAR_P .and. sum(abs(off)) == 1) then
-                                    wBlend = 2.0d0/3.0d0
-                                    want = wBlend*want + (1.0d0 - wBlend) &
-                                        *(CXV(var)*blk%x(i-off(1),var,b) &
-                                        + CYV(var)*blk%y(j-off(2),var,b) &
-                                        + CZV(var)*blk%z(k-off(3),var,b))
-                                end if
                             else
                                 ! Finer occupants: restriction of a linear field
                                 ! reproduces it at the halo location; skip if the

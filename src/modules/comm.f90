@@ -1149,8 +1149,17 @@ contains
 #endif
         end if
 
-        ! Same-rank block-pair copies overlap with the messages in flight.
-        call copy_local_entries(c, blk)
+        ! Same-rank block-pair copies overlap with the messages in flight. Two
+        ! passes for a full exchange: same-level copies first fill the coarse-block
+        ! halos, THEN the cross-level prolong/restrict run so the prolong tangential
+        ! interpolation can read the (now valid) coarse tangential neighbour. A
+        ! copy-only exchange (the projection's per-colour sweep) is same-level only.
+        if (c%copyOnly) then
+            call copy_local_entries(c, blk, 1)
+        else
+            call copy_local_entries(c, blk, 1)
+            call copy_local_entries(c, blk, 2)
+        end if
 
         c%exchangeActive = .true.
     end subroutine start_halo_exchange
@@ -1240,30 +1249,42 @@ contains
         c%phiIfaceRow = .false.
     end subroutine exchange_scalar_halos
 
-    subroutine copy_local_entries(c, blk)
+    ! phase = 1 same-level copies only (the prefix), 2 cross-level prolong/restrict
+    ! only (the suffix), 0 all. The full exchange runs phase 1 THEN phase 2 so the
+    ! coarse-block halos are filled before the prolong tangential interpolation
+    ! reads the coarse tangential neighbour (else it races the same-level fill).
+    subroutine copy_local_entries(c, blk, phase)
         type(comm_type), intent(inout) :: c
         type(block_set_type), intent(inout) :: blk
+        integer, intent(in) :: phase
 
-        integer :: p, gp, v, e, pt, ni, nj
-        integer :: di, dj, dk, var, nv, totalItems, sf
-        integer :: b1, b2, b3, c1, c2, c3, s1, s2, s3
-        real(C_DOUBLE) :: val
+        integer :: p, gp, v, e, pt, ni, nj, pLo, pHi
+        integer :: di, dj, dk, var, nv, sf
+        integer :: b1, b2, b3, s1, s2, s3, og1, og2, og3, np1, np2, np3
+        real(C_DOUBLE) :: val, wa1, wb1, wa2, wb2, wa3, wb3
         logical :: doBlend
 
         nv = c%nActiveVars
-        totalItems = merge(c%nLocalCopyPts, c%nLocalPts, c%copyOnly)*nv
-        if (totalItems == 0) return
+        if (phase == 1) then
+            pLo = 0;                pHi = c%nLocalCopyPts*nv
+        else if (phase == 2) then
+            pLo = c%nLocalCopyPts*nv; pHi = c%nLocalPts*nv
+        else
+            pLo = 0;                pHi = c%nLocalPts*nv
+        end if
+        if (pHi <= pLo) return
         sf = merge(1, 0, c%syncFace)
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
-        !$omp& map(to: totalItems, nv, sf, c%nLocal, c%lOff, c%lPointEntry, c%lSrcSlot, c%lDstSlot, &
+        !$omp& map(to: pLo, pHi, nv, sf, c%nLocal, c%lOff, c%lPointEntry, c%lSrcSlot, c%lDstSlot, &
         !$omp& c%lDstLo, c%lExt, c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lWp, c%lWpDst, &
-        !$omp& c%lNrm, c%activeVars) &
+        !$omp& c%lNrm, c%activeVars, blk%x, blk%y, blk%z) &
         !$omp& map(tofrom: blk%q) &
-        !$omp& private(p,gp,v,e,pt,ni,nj,di,dj,dk,var,b1,b2,b3,c1,c2,c3,s1,s2,s3,val,doBlend)
+        !$omp& private(p,gp,v,e,pt,ni,nj,di,dj,dk,var,b1,b2,b3,s1,s2,s3,val,doBlend, &
+        !$omp& og1,og2,og3,np1,np2,np3,wa1,wb1,wa2,wb2,wa3,wb3)
 #endif
-        do p = 1, totalItems
+        do p = pLo + 1, pHi
             gp = (p - 1)/nv
             v = p - 1 - gp*nv
             e = c%lPointEntry(gp)
@@ -1274,21 +1295,55 @@ contains
             dj = c%lDstLo(2,e) + modulo(pt/ni, nj)
             dk = c%lDstLo(3,e) + pt/(ni*nj)
             var = int(c%activeVars(v+1))
+            ! Per-dim 2-point weighted gather. lGS(d)==1 marks a prolong tangential
+            ! dim: linear-interpolate the coarse value to the fine cell's location
+            ! using the var-staggered node line (covering coarse cell + parity-side
+            ! neighbour), instead of injecting it -- this kills the tangential
+            ! checkerboard. lGC==2 (non-normal component) averages 2 cells
+            ! (restriction); everything else is a single source.
             b1 = ishft(c%lGA(1,e)*di + c%lGB(1,e), -c%lGS(1,e))
             b2 = ishft(c%lGA(2,e)*dj + c%lGB(2,e), -c%lGS(2,e))
             b3 = ishft(c%lGA(3,e)*dk + c%lGB(3,e), -c%lGS(3,e))
-            c1 = merge(1, c%lGC(1,e), var == 1)
-            c2 = merge(1, c%lGC(2,e), var == 2)
-            c3 = merge(1, c%lGC(3,e), var == 3)
+            if (c%lGS(1,e) == 1) then
+                og1 = 2*iand(c%lGA(1,e)*di + c%lGB(1,e), 1) - 1; np1 = 2
+                wa1 = (blk%x(di,var,c%lDstSlot(e)) - blk%x(b1+og1,var,c%lSrcSlot(e))) &
+                    / (blk%x(b1,var,c%lSrcSlot(e)) - blk%x(b1+og1,var,c%lSrcSlot(e)))
+                wb1 = 1.0d0 - wa1
+            else if (c%lGC(1,e) == 2 .and. var /= 1) then
+                og1 = 1; np1 = 2; wa1 = 0.5d0; wb1 = 0.5d0
+            else
+                og1 = 0; np1 = 1; wa1 = 1.0d0; wb1 = 0.0d0
+            end if
+            if (c%lGS(2,e) == 1) then
+                og2 = 2*iand(c%lGA(2,e)*dj + c%lGB(2,e), 1) - 1; np2 = 2
+                wa2 = (blk%y(dj,var,c%lDstSlot(e)) - blk%y(b2+og2,var,c%lSrcSlot(e))) &
+                    / (blk%y(b2,var,c%lSrcSlot(e)) - blk%y(b2+og2,var,c%lSrcSlot(e)))
+                wb2 = 1.0d0 - wa2
+            else if (c%lGC(2,e) == 2 .and. var /= 2) then
+                og2 = 1; np2 = 2; wa2 = 0.5d0; wb2 = 0.5d0
+            else
+                og2 = 0; np2 = 1; wa2 = 1.0d0; wb2 = 0.0d0
+            end if
+            if (c%lGS(3,e) == 1) then
+                og3 = 2*iand(c%lGA(3,e)*dk + c%lGB(3,e), 1) - 1; np3 = 2
+                wa3 = (blk%z(dk,var,c%lDstSlot(e)) - blk%z(b3+og3,var,c%lSrcSlot(e))) &
+                    / (blk%z(b3,var,c%lSrcSlot(e)) - blk%z(b3+og3,var,c%lSrcSlot(e)))
+                wb3 = 1.0d0 - wa3
+            else if (c%lGC(3,e) == 2 .and. var /= 3) then
+                og3 = 1; np3 = 2; wa3 = 0.5d0; wb3 = 0.5d0
+            else
+                og3 = 0; np3 = 1; wa3 = 1.0d0; wb3 = 0.0d0
+            end if
             val = 0.0d0
-            do s3 = 0, c3 - 1
-                do s2 = 0, c2 - 1
-                    do s1 = 0, c1 - 1
-                        val = val + blk%q(b1+s1, b2+s2, b3+s3, var, c%lSrcSlot(e))
+            do s3 = 0, np3 - 1
+                do s2 = 0, np2 - 1
+                    do s1 = 0, np1 - 1
+                        val = val + merge(wb1,wa1,s1==1)*merge(wb2,wa2,s2==1) &
+                            *merge(wb3,wa3,s3==1) &
+                            *blk%q(b1+s1*og1, b2+s2*og2, b3+s3*og3, var, c%lSrcSlot(e))
                     end do
                 end do
             end do
-            val = val/real(c1*c2*c3, C_DOUBLE)
             ! 2:1 face ghost blend: place the prolonged value where the fine
             ! stencil expects it (ghost = (2*coarse + fine)/3 for uniform 2:1).
             ! Plain injection puts the coarse value at the fine halo centre, so
