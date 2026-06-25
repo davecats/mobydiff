@@ -492,9 +492,16 @@ contains
         real(C_DOUBLE), parameter :: CZV(4) = [0.9d0, 1.7d0, 2.3d0, 0.4d0]
         integer(C_INT) :: b, var, i, j, k, d, l, nBad, nChecked, nb(3)
         integer(C_INT) :: off(3), idx(3), to(3), cl(3), cc(3), gnl, gidx, cov
-        integer(C_INT) :: idSame, idParent, sx, sy, sz
+        integer(C_INT) :: idSame, idParent, sx, sy, sz, op
         logical :: skip, anyChild
         real(C_DOUBLE) :: got, want, posD(3), srcD(3), wBlend
+        ! breakdown: bad count per variable and per transfer op (1=copy 2=prolong
+        ! 3=restrict), max abs error per op, total checked per op.
+        integer(C_INT) :: badVar(4), badOp(3), chkOp(3)
+        integer(C_INT) :: nSentinel, sentByOff(3), nSentPrint
+        real(C_DOUBLE) :: maxErrOp(3)
+        badVar = 0; badOp = 0; chkOp = 0; maxErrOp = 0.0d0; nSentinel = 0
+        sentByOff = 0; nSentPrint = 0
 
         nb = blk%nb
 
@@ -554,6 +561,15 @@ contains
                             if (l > 0) idParent = int(leaf_at(blk, int(l - 1, C_INT), &
                                 int(cl/2, C_INT)))
 
+                            ! The fine block OWNS its 2:1 interface normal-velocity
+                            ! face: the momentum predictor writes it, not the
+                            ! exchange (comm.f90 lNrm / interface_normal_dim skips
+                            ! var == the +1 face-normal dim on an interface face).
+                            ! So the audit must not expect it written either.
+                            if (idSame < 0 .and. sum(abs(off)) == 1 .and. var <= 3) then
+                                if (off(var) == 1) cycle
+                            end if
+
                             posD = [blk%x(i,var,b), blk%y(j,var,b), blk%z(k,var,b)]
                             if (idSame >= 0) then
                                 want = CXV(var)*posD(1) + CYV(var)*posD(2) + CZV(var)*posD(3)
@@ -599,8 +615,25 @@ contains
 
                             got = blk%q(i,j,k,var,b)
                             nChecked = nChecked + 1
+                            op = 1
+                            if (idSame < 0) op = merge(2, 3, idParent >= 0)
+                            chkOp(op) = chkOp(op) + 1
                             if (abs(got - want) > 1.0d-10*max(1.0d0, abs(want))) then
                                 nBad = nBad + 1
+                                badVar(var) = badVar(var) + 1
+                                badOp(op) = badOp(op) + 1
+                                if (abs(got) > 1.0d30) then
+                                    nSentinel = nSentinel + 1   ! halo never written
+                                    sentByOff(sum(abs(off))) = sentByOff(sum(abs(off))) + 1
+                                    if (nSentPrint < 16) then
+                                        nSentPrint = nSentPrint + 1
+                                        print '(a,i6,a,i2,a,i2,a,3i3,a,3i4,a,i2)', &
+                                            " UNWRITTEN b=", b, " lvl=", l, " var=", var, &
+                                            " off=", off, " ijk=", i, j, k, " op=", op
+                                    end if
+                                else
+                                    maxErrOp(op) = max(maxErrOp(op), abs(got - want))
+                                end if
                                 if (nBad <= 40) then
                                     print '(a,i6,a,i2,a,i2,a,3i4,a,3i5,a,2es22.14)', &
                                         " AUDIT BAD b=", b, " lvl=", l, " var=", var, &
@@ -614,6 +647,12 @@ contains
             end do
         end do
         print *, "HALO AUDIT: checked", nChecked, " bad", nBad
+        print '(a,4i9)', " HALO AUDIT bad per var (u,v,w,p): ", badVar
+        print '(a,3i9)', " HALO AUDIT checked per op (copy,prolong,restrict): ", chkOp
+        print '(a,3i9)', " HALO AUDIT bad     per op (copy,prolong,restrict): ", badOp
+        print '(a,3es12.4)', " HALO AUDIT maxErr  per op (copy,prolong,restrict): ", maxErrOp
+        print '(a,i9)', " HALO AUDIT of which UN-WRITTEN (sentinel): ", nSentinel
+        print '(a,3i9)', " HALO AUDIT un-written by off-type (face,edge,corner): ", sentByOff
     end subroutine halo_audit
 
     ! MOBY_DIVDUMP: raw staggered divergence of the current velocity (the exact D
