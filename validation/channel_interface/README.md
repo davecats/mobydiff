@@ -3,12 +3,14 @@
 Re_tau = 180 channel (u_tau = 1: one time unit = one eddy turnover).
 Three cases:
 
-> **Solver + reflux (defaults set in the inis).** The projection is damped Jacobi
-> at `sor` (omega) `= 0.8` -- near-optimal, and `< 1` is REQUIRED (this branch
-> replaced red-black SOR; `omega >= 1.1` diverges, so the old `sor = 1.5` NaNs).
-> `niter = 6` = the old 3 red-black iterations x 2 colours (same sweep count);
-> Jacobi per-sweep is weaker so this is under-converged (it plateaus on the large
-> scales) -- acceptable for now, a multi-level Schwarz is the planned fix. The refined
+> **Solver + reflux (defaults set in the inis).** The projection is
+> Chebyshev-accelerated damped Jacobi (`accel = chebyshev`) at `sor` (omega)
+> `= 0.8`, `niter = 6`. `sor < 1` is REQUIRED -- simple Jacobi DIVERGES for
+> `sor > 0.8` (the old red-black SOR used 1.5). At this niter the projection is
+> under-converged for both accelerators (it plateaus on the large scales; a
+> multi-level Schwarz is the planned fix), but on the uniform reference (1000
+> steps) Chebyshev holds ~3.4x lower divergence than plain Jacobi at the same
+> niter=6 for ~1.6% more cost -- see `divergence_comparison.png`. The refined
 > cases run with `[blocks] momentum_reflux = true` -- the Berger-Colella reflux of
 > the interface advective momentum (conserves the 2:1 interface momentum flux, the
 > localized `-<u'v'>` / mean-shear defect; see `docs/interface_review.md` ii-iii
@@ -20,8 +22,8 @@ Three cases:
 > reflux-off comparison add `NOREFLUX=1` -- those runs land in
 > `runs/<name>_noreflux/`. (`tools/divsum.py` / `momsum.py` assume uniform cell
 > volumes, so they are not meaningful on this stretched grid; conservation is
-> gated on the uniform `momentum_interface` cases. Chebyshev acceleration is NOT
-> recommended at this niter -- it under-performs plain Jacobi below ~70 iters.)
+> gated on the uniform `momentum_interface` cases. Set `[pressure] accel = jacobi`
+> to compare against plain damped Jacobi.)
 
 | case          | grid                          | interfaces            |
 |---------------|-------------------------------|-----------------------|
