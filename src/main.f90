@@ -6,7 +6,8 @@
 program main
     use :: init
     use :: blocks, only: block_set_type, init_block_set, destroy_block_set, &
-        enter_block_data, exit_block_data, zero_closed_halos
+        enter_block_data, exit_block_data, zero_closed_halos, &
+        FACE_FINE, FACE_PHYS, FACE_CLOSED
     use :: chron, only: chron_type, start_chron, stop_chron, write_chron
     use :: flow_case, only: case_type, create_flow_case
     use :: config
@@ -49,7 +50,7 @@ program main
     ! field -- any change it makes IS the correction/interface defect. MOBY_PREDONLY:
     ! skip the projection so the field is the pure predictor. Either dumps the
     ! initial field (900000) so the change can be diffed.
-    logical :: projOnly, predOnly, divdump, rhsdump, noRecon, stepDiv, phaseTime
+    logical :: projOnly, predOnly, divdump, rhsdump, noRecon, stepDiv, phaseTime, keBal
     ! MOBY_PHASETIME: accumulate wall time per major loop phase (target regions are
     ! synchronous, so host timers capture GPU time) and print the breakdown at the
     ! end -- to see where the refinement cost goes. Off by default.
@@ -278,6 +279,8 @@ program main
     stepDiv = len_trim(diagEnv) > 0   ! per-step divergence L2/max + global mass monitor
     call get_environment_variable("MOBY_PHASETIME", diagEnv)
     phaseTime = len_trim(diagEnv) > 0
+    call get_environment_variable("MOBY_KEBAL", diagEnv)
+    keBal = len_trim(diagEnv) > 0   ! per-step convective KE-balance: band vs interior
     call get_environment_variable("MOBY_IFFILT", diagEnv)
     ifFiltAlpha = 0.0d0
     if (len_trim(diagEnv) > 0) read(diagEnv, *) ifFiltAlpha
@@ -407,6 +410,7 @@ program main
         end do
 
         if (stepDiv) call print_step_divergence(blk, c, dns, divStepBuf)
+        if (keBal) call print_step_ke_balance(blk, c, dns, noRecon)
 
         if (phaseTime) pt0 = les_wall_seconds()
         if (les_is_enabled(les)) then
@@ -760,6 +764,203 @@ contains
                 "  div_l2=", red(1), "  div_max=", redmax(1), "  mass=", red(2)
         end if
     end subroutine print_step_divergence
+
+    ! Per-timestep discrete kinetic-energy balance from CONVECTION (MOBY_KEBAL).
+    ! The convective operator is energy-conserving (V&V 2003) iff it is
+    ! skew-symmetric, in which case the convective KE production Sum_DOF vol*u*C(u)
+    ! is identically zero for ANY field. This monitor forms the convective RHS (no
+    ! pressure/diffusion/forcing) exactly as `momentum` does and reports its KE
+    ! production split COARSE interface band (cells in a FACE_FINE row) vs interior,
+    ! in TWO forms:
+    !
+    !  * DIV  = vol*u*C_div, the divergence-form production the scheme actually uses.
+    !    For the div form the production telescopes to -Sum KE*(div u), so it is
+    !    contaminated by the projection's residual divergence (large when niter is
+    !    small or the interface projection is under-converged) -- NOT a clean
+    !    interface signal.
+    !  * SKEW = vol*( u*C_div + 1/2 u^2 * Div_cv ), where Div_cv is the discrete
+    !    velocity divergence on the component's own control volume (same face
+    !    neighbours as the convective fluxes). This is the energy production of the
+    !    skew-symmetric form C_skew = C_div + 1/2 u (div u); it is identically zero
+    !    in the interior for ANY field (constant-1/2 telescoping, divergence-state
+    !    INDEPENDENT), so the band SKEW value is the pure interface energy defect.
+    !    This is the pass/fail: the energy-conserving interface fix must drive the
+    !    band SKEW production to round-off.
+    !
+    ! Halos are refreshed (exchange + interface reconstruction, matching the
+    ! predictor's view) before the stencil; this mutates only halo cells, which the
+    ! next substage re-fills. cell volume = 1/(d1*d1*d1) on each component's metric.
+    subroutine print_step_ke_balance(blk, c, dns, noRecon)
+        type(block_set_type), intent(inout) :: blk
+        type(comm_type), intent(inout) :: c
+        type(dns_type), intent(in) :: dns
+        logical, intent(in) :: noRecon
+        integer(C_INT) :: i, j, k, b, ip, im, jp, jm, kp, km, nx, ny, nz
+        integer(C_INT) :: uStartX, vStartY, wStartZ
+        real(C_DOUBLE) :: uu_p,uu_m,uv_p,uv_m,uw_p,uw_m
+        real(C_DOUBLE) :: vu_p,vu_m,vv_p,vv_m,vw_p,vw_m
+        real(C_DOUBLE) :: wu_p,wu_m,ww_p,ww_m,wv_p,wv_m
+        real(C_DOUBLE) :: convU, convV, convW, prodD, prodS, divcv, vol, qd
+        real(C_DOUBLE) :: keBandD, keIntD, keBandS, keIntS, absBandS, absIntS, red(6)
+        logical :: bandU, bandV, bandW
+
+        ! Match the predictor's halo state so the interface stencil reads the same
+        ! restricted/reconstructed neighbours the momentum predictor reads.
+        call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W])
+        if (.not. noRecon) call reconstruct_interface_halos(blk)
+
+        nx = blk%nb(1); ny = blk%nb(2); nz = blk%nb(3)
+        keBandD = 0.0d0; keIntD = 0.0d0; keBandS = 0.0d0
+        keIntS = 0.0d0; absBandS = 0.0d0; absIntS = 0.0d0
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target teams distribute parallel do collapse(4) &
+        !$omp& map(to: blk%q, blk%d1x, blk%d1y, blk%d1z, blk%physLow, blk%physHigh) &
+        !$omp& reduction(+:keBandD,keIntD,keBandS,keIntS,absBandS,absIntS) &
+        !$omp& private(i,j,k,b,ip,im,jp,jm,kp,km,uStartX,vStartY,wStartZ, &
+        !$omp& uu_p,uu_m,uv_p,uv_m,uw_p,uw_m,vu_p,vu_m,vv_p,vv_m,vw_p,vw_m, &
+        !$omp& wu_p,wu_m,ww_p,ww_m,wv_p,wv_m,convU,convV,convW,prodD,prodS,divcv,vol,qd, &
+        !$omp& bandU,bandV,bandW)
+#endif
+        do b = 1, blk%nBlocks
+        do k = 1, nz
+            do j = 1, ny
+                do i = 1, nx
+                    ip = i+1; im = i-1; jp = j+1; jm = j-1; kp = k+1; km = k-1
+                    uStartX = merge(2, 1, blk%physLow(1,b) == FACE_PHYS .or. blk%physLow(1,b) == FACE_CLOSED)
+                    vStartY = merge(2, 1, blk%physLow(2,b) == FACE_PHYS .or. blk%physLow(2,b) == FACE_CLOSED)
+                    wStartZ = merge(2, 1, blk%physLow(3,b) == FACE_PHYS .or. blk%physLow(3,b) == FACE_CLOSED)
+                    ! "interface band" = a cell in the interface row of any 2:1 face,
+                    ! BOTH sides (coarse FACE_FINE and fine FACE_COARSE): the energy
+                    ! defect lives on both, and only excluding both leaves a truly
+                    ! interface-free interior (SKEW -> round-off). The handout's
+                    ! coarse-cell band is the FACE_FINE subset.
+                    bandU = ((blk%physLow(1,b) == FACE_FINE .or. blk%physLow(1,b) == FACE_COARSE) .and. i == 1) .or. &
+                            ((blk%physHigh(1,b) == FACE_FINE .or. blk%physHigh(1,b) == FACE_COARSE) .and. i == nx) .or. &
+                            ((blk%physLow(2,b) == FACE_FINE .or. blk%physLow(2,b) == FACE_COARSE) .and. j == 1) .or. &
+                            ((blk%physHigh(2,b) == FACE_FINE .or. blk%physHigh(2,b) == FACE_COARSE) .and. j == ny) .or. &
+                            ((blk%physLow(3,b) == FACE_FINE .or. blk%physLow(3,b) == FACE_COARSE) .and. k == 1) .or. &
+                            ((blk%physHigh(3,b) == FACE_FINE .or. blk%physHigh(3,b) == FACE_COARSE) .and. k == nz)
+                    bandV = bandU; bandW = bandU
+
+                    if (i >= uStartX) then
+                        uu_p = (blk%q(i,j,k,VAR_U,b) + blk%q(ip,j,k,VAR_U,b))**2
+                        uu_m = (blk%q(im,j,k,VAR_U,b) + blk%q(i,j,k,VAR_U,b))**2
+                        uv_p = (blk%q(i,j,k,VAR_U,b) + blk%q(i,jp,k,VAR_U,b)) &
+                             * (blk%q(im,jp,k,VAR_V,b) + blk%q(i,jp,k,VAR_V,b))
+                        uv_m = (blk%q(i,jm,k,VAR_U,b) + blk%q(i,j,k,VAR_U,b)) &
+                             * (blk%q(im,j,k,VAR_V,b) + blk%q(i,j,k,VAR_V,b))
+                        uw_p = (blk%q(i,j,k,VAR_U,b) + blk%q(i,j,kp,VAR_U,b)) &
+                             * (blk%q(im,j,kp,VAR_W,b) + blk%q(i,j,kp,VAR_W,b))
+                        uw_m = (blk%q(i,j,km,VAR_U,b) + blk%q(i,j,k,VAR_U,b)) &
+                             * (blk%q(im,j,k,VAR_W,b) + blk%q(i,j,k,VAR_W,b))
+                        convU = -0.25d0*( (uu_p-uu_m)*blk%d1x(i,VAR_U,b) &
+                                         +(uv_p-uv_m)*blk%d1y(j,VAR_U,b) &
+                                         +(uw_p-uw_m)*blk%d1z(k,VAR_U,b))
+                        ! Velocity divergence on the u-control-volume (same face
+                        ! averages as the convective fluxes above): the skew-form
+                        ! correction term that telescopes the interior to round-off.
+                        divcv = 0.5d0*( (blk%q(ip,j,k,VAR_U,b)-blk%q(im,j,k,VAR_U,b))*blk%d1x(i,VAR_U,b) &
+                            + ((blk%q(im,jp,k,VAR_V,b)+blk%q(i,jp,k,VAR_V,b)) &
+                              -(blk%q(im,j,k,VAR_V,b)+blk%q(i,j,k,VAR_V,b)))*blk%d1y(j,VAR_U,b) &
+                            + ((blk%q(im,j,kp,VAR_W,b)+blk%q(i,j,kp,VAR_W,b)) &
+                              -(blk%q(im,j,k,VAR_W,b)+blk%q(i,j,k,VAR_W,b)))*blk%d1z(k,VAR_U,b))
+                        vol = 1.0d0/(blk%d1x(i,VAR_U,b)*blk%d1y(j,VAR_U,b)*blk%d1z(k,VAR_U,b))
+                        qd = blk%q(i,j,k,VAR_U,b)
+                        prodD = vol*qd*convU
+                        prodS = prodD + 0.5d0*vol*qd*qd*divcv
+                        if (bandU) then
+                            keBandD = keBandD + prodD
+                            keBandS = keBandS + prodS; absBandS = absBandS + abs(prodS)
+                        else
+                            keIntD = keIntD + prodD
+                            keIntS = keIntS + prodS; absIntS = absIntS + abs(prodS)
+                        end if
+                    end if
+
+                    if (j >= vStartY) then
+                        vu_p = (blk%q(i,j,k,VAR_V,b) + blk%q(ip,j,k,VAR_V,b)) &
+                             * (blk%q(ip,jm,k,VAR_U,b) + blk%q(ip,j,k,VAR_U,b))
+                        vu_m = (blk%q(im,j,k,VAR_V,b) + blk%q(i,j,k,VAR_V,b)) &
+                             * (blk%q(i,jm,k,VAR_U,b) + blk%q(i,j,k,VAR_U,b))
+                        vv_p = (blk%q(i,j,k,VAR_V,b) + blk%q(i,jp,k,VAR_V,b))**2
+                        vv_m = (blk%q(i,jm,k,VAR_V,b) + blk%q(i,j,k,VAR_V,b))**2
+                        vw_p = (blk%q(i,j,k,VAR_V,b) + blk%q(i,j,kp,VAR_V,b)) &
+                             * (blk%q(i,jm,kp,VAR_W,b) + blk%q(i,j,kp,VAR_W,b))
+                        vw_m = (blk%q(i,j,km,VAR_V,b) + blk%q(i,j,k,VAR_V,b)) &
+                             * (blk%q(i,jm,k,VAR_W,b) + blk%q(i,j,k,VAR_W,b))
+                        convV = -0.25d0*( (vu_p-vu_m)*blk%d1x(i,VAR_V,b) &
+                                         +(vv_p-vv_m)*blk%d1y(j,VAR_V,b) &
+                                         +(vw_p-vw_m)*blk%d1z(k,VAR_V,b))
+                        divcv = 0.5d0*( ((blk%q(ip,jm,k,VAR_U,b)+blk%q(ip,j,k,VAR_U,b)) &
+                              -(blk%q(i,jm,k,VAR_U,b)+blk%q(i,j,k,VAR_U,b)))*blk%d1x(i,VAR_V,b) &
+                            + (blk%q(i,jp,k,VAR_V,b)-blk%q(i,jm,k,VAR_V,b))*blk%d1y(j,VAR_V,b) &
+                            + ((blk%q(i,jm,kp,VAR_W,b)+blk%q(i,j,kp,VAR_W,b)) &
+                              -(blk%q(i,jm,k,VAR_W,b)+blk%q(i,j,k,VAR_W,b)))*blk%d1z(k,VAR_V,b))
+                        vol = 1.0d0/(blk%d1x(i,VAR_V,b)*blk%d1y(j,VAR_V,b)*blk%d1z(k,VAR_V,b))
+                        qd = blk%q(i,j,k,VAR_V,b)
+                        prodD = vol*qd*convV
+                        prodS = prodD + 0.5d0*vol*qd*qd*divcv
+                        if (bandV) then
+                            keBandD = keBandD + prodD
+                            keBandS = keBandS + prodS; absBandS = absBandS + abs(prodS)
+                        else
+                            keIntD = keIntD + prodD
+                            keIntS = keIntS + prodS; absIntS = absIntS + abs(prodS)
+                        end if
+                    end if
+
+                    if (k >= wStartZ) then
+                        wu_p = (blk%q(i,j,k,VAR_W,b) + blk%q(ip,j,k,VAR_W,b)) &
+                             * (blk%q(ip,j,km,VAR_U,b) + blk%q(ip,j,k,VAR_U,b))
+                        wu_m = (blk%q(im,j,k,VAR_W,b) + blk%q(i,j,k,VAR_W,b)) &
+                             * (blk%q(i,j,km,VAR_U,b) + blk%q(i,j,k,VAR_U,b))
+                        ww_p = (blk%q(i,j,k,VAR_W,b) + blk%q(i,j,kp,VAR_W,b))**2
+                        ww_m = (blk%q(i,j,km,VAR_W,b) + blk%q(i,j,k,VAR_W,b))**2
+                        wv_p = (blk%q(i,j,k,VAR_W,b) + blk%q(i,jp,k,VAR_W,b)) &
+                             * (blk%q(i,jp,km,VAR_V,b) + blk%q(i,jp,k,VAR_V,b))
+                        wv_m = (blk%q(i,jm,k,VAR_W,b) + blk%q(i,j,k,VAR_W,b)) &
+                             * (blk%q(i,j,km,VAR_V,b) + blk%q(i,j,k,VAR_V,b))
+                        convW = -0.25d0*( (wu_p-wu_m)*blk%d1x(i,VAR_W,b) &
+                                         +(wv_p-wv_m)*blk%d1y(j,VAR_W,b) &
+                                         +(ww_p-ww_m)*blk%d1z(k,VAR_W,b))
+                        divcv = 0.5d0*( ((blk%q(ip,j,km,VAR_U,b)+blk%q(ip,j,k,VAR_U,b)) &
+                              -(blk%q(i,j,km,VAR_U,b)+blk%q(i,j,k,VAR_U,b)))*blk%d1x(i,VAR_W,b) &
+                            + ((blk%q(i,jp,km,VAR_V,b)+blk%q(i,jp,k,VAR_V,b)) &
+                              -(blk%q(i,j,km,VAR_V,b)+blk%q(i,j,k,VAR_V,b)))*blk%d1y(j,VAR_W,b) &
+                            + (blk%q(i,j,kp,VAR_W,b)-blk%q(i,j,km,VAR_W,b))*blk%d1z(k,VAR_W,b))
+                        vol = 1.0d0/(blk%d1x(i,VAR_W,b)*blk%d1y(j,VAR_W,b)*blk%d1z(k,VAR_W,b))
+                        qd = blk%q(i,j,k,VAR_W,b)
+                        prodD = vol*qd*convW
+                        prodS = prodD + 0.5d0*vol*qd*qd*divcv
+                        if (bandW) then
+                            keBandD = keBandD + prodD
+                            keBandS = keBandS + prodS; absBandS = absBandS + abs(prodS)
+                        else
+                            keIntD = keIntD + prodD
+                            keIntS = keIntS + prodS; absIntS = absIntS + abs(prodS)
+                        end if
+                    end if
+                end do
+            end do
+        end do
+        end do
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp end target teams distribute parallel do
+#endif
+        red = [keBandD, keIntD, keBandS, keIntS, absBandS, absIntS]
+        call comm_allreduce_sum(c, red)
+        if (c%has_terminal) then
+            ! SKEW band_net is the pass/fail (pure interface energy defect, should
+            ! go to round-off); DIV is the actual divergence-form budget.
+            print '(a,i7,a,es12.5,a,es10.3,a,a,es12.5,a,es10.3,a)', &
+                "KEBAL step", int(dns%step_current), &
+                "  SKEW band=", red(3), " (|.|=", red(5), ")", &
+                "  int=", red(4), " (|.|=", red(6), ")"
+            print '(a,es12.5,a,es12.5,a,es12.5)', &
+                "           DIV  band=", red(1), "  int=", red(2), &
+                "  total=", red(1)+red(2)
+        end if
+    end subroutine print_step_ke_balance
 
     ! MOBY_DIVDUMP: park a scalar buffer in the pressure slot so write_field emits
     ! it as "pn" (its target update from(blk%q) then pulls these values).
