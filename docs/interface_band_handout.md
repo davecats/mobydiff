@@ -323,6 +323,56 @@ advective coupling to the fine-side resolved streaks neither produces nor reflec
 kinetic energy. (Diagnostic kept: MOBY_VELINJECT in comm.f90 = injection vs interp
 velocity prolong, the adjoint-pair toggle.)
 
+## Session 2026-06-25f: literature check -- the approach is sound AND sharpened
+
+Confirmed against the literature before implementing (Davide's request). The band
+is a KNOWN phenomenon and the energy-conserving fix is canonical:
+
+- **Cevheri & Stoesser, Int. J. Numer. Methods Fluids 82 (2016)** (local mesh
+  refinement for LES): explicitly reports "significant energy accumulation when the
+  grid is suddenly coarsened" in turbulent flow -- exactly our coarse-side band.
+- **Verstappen & Veldman, J. Comput. Phys. 187 (2003) 343-368** (symmetry-
+  preserving discretization): the convective operator is a SKEW-SYMMETRIC matrix,
+  the diffusive a symmetric pos-def one => the scheme conserves mass, momentum and
+  (inviscid) kinetic energy and is STABLE ON ANY GRID. It explicitly covers LOCAL
+  GRID REFINEMENT. On coarse grids it "behaves nicely" where truncation-minimizing
+  schemes make the resolved fluctuations "too high" (their §6) -- our band.
+- **Morinishi et al., JCP 143 (1998)**: fully-conservative finite-difference
+  convection (divergence/advective/skew-symmetric forms), uniform grids.
+
+PRECISE CONDITION (V&V §2.1.2, decisive): the discrete convective operator is
+skew-symmetric (energy-conserving) IFF (a) the velocity-to-face interpolation uses
+CONSTANT 1/2 weights -- NOT mesh-size/metric-dependent weights -- and (b) the
+convective flux through a shared face is SINGLE-VALUED ("computed independent of
+the control volume in which it is considered"). Minimizing local truncation error
+with metric weights gives nonzero diagonal entries on nonuniform grids => breaks
+skew-symmetry => energy not conserved. V&V deliberately choose constant weights
+(energy conservation + stability) over truncation order on nonuniform grids.
+
+This is GLOBAL (Davide's point): the WHOLE convective operator is skew-symmetric;
+the refinement interface must simply not violate it. The cross-grid transfer fits
+the same frame -- the discrete gradient = transpose of the divergence (their
+§2.1.3), i.e. restriction = volume-weighted transpose of prolongation (the adjoint/
+Galerkin condition), AND constant-1/2 interpolation.
+
+TENSION THIS EXPOSES IN OUR CODE (key for next session): our accuracy-motivated
+interface fixes use GRID-DEPENDENT weights that VIOLATE V&V's constant-1/2
+condition -- the fdfd477 velocity prolong (node-line/metric tangential interp) and
+the cubic deep-halo reconstruction (3q1-3q2+q3). They were chosen for truncation
+order; V&V say that is exactly what destroys interface energy conservation. The
+energy path likely wants constant-1/2, single-valued interface convective fluxes
+(lower formal order at the interface, but stable + no energy pileup -- V&V's
+explicit trade). The MOBY_VELINJECT proxy moved the band only ~4% because adjoint
+transfer ALONE is insufficient: V&V need BOTH constant-1/2 interpolation AND a
+skew-symmetric convective FORM at the interface, not just an adjoint transfer pair.
+
+VERDICT: the skew-symmetric / symmetry-preserving direction is well-founded and is
+the literature-standard cure for this exact band. Implement it as a GLOBAL
+symmetry-preserving convective discretization (the interior central scheme is
+already 1/2-weighted = skew-symmetric for div-free; the work is the interface:
+single-valued constant-1/2 convective flux + adjoint transfer), per V&V 2003.
+Next-session prompt: docs/next_session_skew_symmetric.md.
+
 ## Memory
 `interface-validation-suite` (the gates + this state), `corner-reconstruction-todo`,
 `restart-overrides-config-sor`, `refinement-perf-profile`, `chebyshev-jacobi-plan`.
