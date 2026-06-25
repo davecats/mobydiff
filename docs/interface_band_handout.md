@@ -197,6 +197,56 @@ phi prolong reduces the p-band (and thus the predictor-read pressure-gradient th
 sustains u). Validate any fix with `channel_band_profile.py` (band gone, 200+ steps
 stable), bit-exact no-interface, CPU==GPU.
 
+## Session 2026-06-25c: the band is LOW-k; two fixes tried separately (gated, off by default)
+
+**Spectral character (decisive).** FFT of the per-coarse-row fluctuation at the
+interface (channel_band_profile reassembly): the band is **low-wavenumber** in
+ALL variables. High-k energy fraction (top quarter of tangential wavenumbers) at
+the coarse interface cell is ~0.000-0.002 (= interior), 2dx mode ~0; only p has a
+small high-k-in-x component (0.014-0.025). The dominant band (u +58%) is a
+LARGE-SCALE amplitude amplification, NOT a tangential checkerboard. (The
+"checkerboard" in this doc's earlier sections was the velocity-PROLONG fine-halo
+artifact fixed in fdfd477, a different thing.) This explains why both fixes below,
+which target high-k / the pressure coupling, do not clean the band.
+
+Both fixes are committed but GATED OFF by default (baseline bit-exact; verified
+the channel baseline still gives u(gj=24)=1.3778, div=2.46147e-3 exactly):
+
+**(i) Targeted tangential filter at the coarse interface band** (`MOBY_IFFILT=<alpha>`,
+`step.f90 filter_interface_band`): a mean-zero tangential discrete-Laplacian
+smoothing of the TANGENTIAL velocity components on the coarse FACE_FINE cell-rows
+(normal component left alone for conservation; race-free via a frozen buffer;
+re-exchange after). STABLE (div ~3.3e-3, mass round-off) -- unlike the cubic
+reconstruction. But it OVER-DAMPS: u(gj=24) 1.378 -> 0.514 (alpha=0.05) / 0.341
+(alpha=0.15), BELOW the neighbours (~0.85-1.1). Because the band is low-k (same
+scales as the physical streaks), a filter cannot separate the band from the real
+turbulent energy -- any alpha that reduces the band also smears the streaks. Not a
+clean fix (and tuning-/position-sensitive, against Davide's requirement).
+
+**(ii) Tangential-interp phi/pressure prolong** (`MOBY_PHIINTERP`, comm.f90
+`copy_local_scalar_entries` now two-pass + weighted gather on the VAR_P node line,
+mirroring the velocity prolong fix fdfd477; threads `blk` through
+`exchange_scalar_halos`). STABLE (div 2.459e-3 == baseline). A genuine correctness
+improvement (interp > injection for the fine pressure halos) but **negligible on
+the band**: u(gj=24) 1.3778 -> 1.3770 (-0.06%), p(gj=24) 1.1108 -> 1.1075 (-0.3%).
+The low-k coarse u-band barely couples to the pressure-prolong defect. (NOTE: the
+MPI pack/unpack scalar path was NOT updated for interp -- multi-rank with an
+interface coinciding with a rank boundary would inject there; single-rank tested.)
+
+**Where this leaves the fix.** The band is a low-k, predictor-momentum-driven
+energy amplification at the coarse cell next to the better-resolved fine band
+(an AMR resolution-jump / energy-reflection effect at the RESOLVED scales). It is
+neither high-k (so filtering/hyperviscosity over-damps) nor pressure-prolong-driven
+(so (ii) is inert on it) nor an order defect (so cubic reconstruction is wrong and
+unstable). Remaining ideas for next session: (a) an ENERGY-CONSERVATIVE (Galerkin)
+restrict/prolong pair so the coarse-fine transfer neither creates nor reflects
+resolved-scale energy at the interface (the current restrict=simple-average /
+prolong=inject pair is not energy-consistent); (b) a skew-symmetric / energy-
+conserving advection discretization for the coarse interface cell so its advective
+coupling to the fine streaks does not pump energy; (c) accept the band as intrinsic
+and instead gate STABILITY (Davide's actual requirement) -- find what tips the
+~step-180 blow-up and bound only that. (a)/(b) are the principled directions.
+
 ## Memory
 `interface-validation-suite` (the gates + this state), `corner-reconstruction-todo`,
 `restart-overrides-config-sor`, `refinement-perf-profile`, `chebyshev-jacobi-plan`.

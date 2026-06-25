@@ -26,7 +26,157 @@ module step
     real(C_DOUBLE), parameter :: rk_beta(3)  = [ 0.0d0,         -34.0d0/120.0d0, -50.0d0/120.0d0]
     real(C_DOUBLE), parameter :: rk_gamma(3) = [64.0d0/120.0d0,  16.0d0/120.0d0,  40.0d0/120.0d0]
 
+    ! Frozen-velocity buffer for the (race-free) interface-band tangential filter.
+    real(C_DOUBLE), allocatable :: filtBuf(:,:,:,:,:)
+
 contains
+
+    ! FIX (i): targeted tangential filter at the COARSE interface band. The coarse
+    ! cell adjacent to a 2:1 face carries a spurious amplification of the
+    ! tangential velocity (the streamwise band; an AMR coarse-fine energy pileup
+    ! fed from the better-resolved fine side). This applies a tangential discrete-
+    ! Laplacian smoothing q += alpha*lap_tang(q) to ONLY the tangential velocity
+    ! components on the coarse cell-row touching each FACE_FINE face (the normal
+    ! component is the shared interface flux -> left alone for conservation; the
+    ! Laplacian is mean-zero over the periodic tangential plane so no net momentum
+    ! is added). Reads a frozen copy (filtBuf) so it is race-free / order-
+    ! independent (CPU==GPU). Gated by alpha (MOBY_IFFILT); inert (returns) at
+    ! alpha=0 and bit-exact without a 2:1 interface (no FACE_FINE face). Deep-halo
+    ! tangential neighbours (i +/- 1) are the exchange-filled halo ring; call after
+    ! the post-predictor exchange, then re-exchange so the projection sees
+    ! consistent halos.
+    subroutine filter_interface_band(blk, alpha)
+        type(block_set_type), intent(inout) :: blk
+        real(C_DOUBLE), intent(in) :: alpha
+        integer :: b, i, j, k, nx, ny, nz, nBlocks
+
+        if (alpha == 0.0d0) return
+        nx = int(blk%nb(1)); ny = int(blk%nb(2)); nz = int(blk%nb(3))
+        nBlocks = int(blk%nBlocks)
+
+        if (.not. allocated(filtBuf)) then
+            allocate(filtBuf(0:nx+1,0:ny+1,0:nz+1,NVEL,nBlocks))
+#ifdef USE_OPENMP_OFFLOAD
+            !$omp target enter data map(alloc: filtBuf)
+#endif
+        end if
+
+        ! Freeze the current velocity (with halos) so the in-place filter is race-free.
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target teams distribute parallel do collapse(4) &
+        !$omp& map(to: nx, ny, nz) map(tofrom: blk%q, filtBuf) private(i,j,k,b)
+#endif
+        do b = 1, nBlocks
+            do k = 0, nz+1
+                do j = 0, ny+1
+                    do i = 0, nx+1
+                        filtBuf(i,j,k,VAR_U,b) = blk%q(i,j,k,VAR_U,b)
+                        filtBuf(i,j,k,VAR_V,b) = blk%q(i,j,k,VAR_V,b)
+                        filtBuf(i,j,k,VAR_W,b) = blk%q(i,j,k,VAR_W,b)
+                    end do
+                end do
+            end do
+        end do
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp end target teams distribute parallel do
+#endif
+
+        ! x-interfaces: tangential = v,w (filter over y,z at the interface i-row).
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target teams distribute parallel do collapse(3) &
+        !$omp& map(to: alpha, nx, ny, nz, blk%physLow, blk%physHigh) &
+        !$omp& map(tofrom: blk%q, filtBuf) private(i,j,k,b)
+#endif
+        do b = 1, nBlocks
+            do k = 1, nz
+                do j = 1, ny
+                    if (blk%physLow(1,b) == FACE_FINE) then
+                        blk%q(1,j,k,VAR_V,b) = blk%q(1,j,k,VAR_V,b) + alpha*( &
+                            filtBuf(1,j-1,k,VAR_V,b)+filtBuf(1,j+1,k,VAR_V,b) &
+                          + filtBuf(1,j,k-1,VAR_V,b)+filtBuf(1,j,k+1,VAR_V,b)-4.0d0*filtBuf(1,j,k,VAR_V,b))
+                        blk%q(1,j,k,VAR_W,b) = blk%q(1,j,k,VAR_W,b) + alpha*( &
+                            filtBuf(1,j-1,k,VAR_W,b)+filtBuf(1,j+1,k,VAR_W,b) &
+                          + filtBuf(1,j,k-1,VAR_W,b)+filtBuf(1,j,k+1,VAR_W,b)-4.0d0*filtBuf(1,j,k,VAR_W,b))
+                    end if
+                    if (blk%physHigh(1,b) == FACE_FINE) then
+                        blk%q(nx,j,k,VAR_V,b) = blk%q(nx,j,k,VAR_V,b) + alpha*( &
+                            filtBuf(nx,j-1,k,VAR_V,b)+filtBuf(nx,j+1,k,VAR_V,b) &
+                          + filtBuf(nx,j,k-1,VAR_V,b)+filtBuf(nx,j,k+1,VAR_V,b)-4.0d0*filtBuf(nx,j,k,VAR_V,b))
+                        blk%q(nx,j,k,VAR_W,b) = blk%q(nx,j,k,VAR_W,b) + alpha*( &
+                            filtBuf(nx,j-1,k,VAR_W,b)+filtBuf(nx,j+1,k,VAR_W,b) &
+                          + filtBuf(nx,j,k-1,VAR_W,b)+filtBuf(nx,j,k+1,VAR_W,b)-4.0d0*filtBuf(nx,j,k,VAR_W,b))
+                    end if
+                end do
+            end do
+        end do
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp end target teams distribute parallel do
+#endif
+
+        ! y-interfaces: tangential = u,w (filter over x,z at the interface j-row).
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target teams distribute parallel do collapse(3) &
+        !$omp& map(to: alpha, nx, ny, nz, blk%physLow, blk%physHigh) &
+        !$omp& map(tofrom: blk%q, filtBuf) private(i,j,k,b)
+#endif
+        do b = 1, nBlocks
+            do k = 1, nz
+                do i = 1, nx
+                    if (blk%physLow(2,b) == FACE_FINE) then
+                        blk%q(i,1,k,VAR_U,b) = blk%q(i,1,k,VAR_U,b) + alpha*( &
+                            filtBuf(i-1,1,k,VAR_U,b)+filtBuf(i+1,1,k,VAR_U,b) &
+                          + filtBuf(i,1,k-1,VAR_U,b)+filtBuf(i,1,k+1,VAR_U,b)-4.0d0*filtBuf(i,1,k,VAR_U,b))
+                        blk%q(i,1,k,VAR_W,b) = blk%q(i,1,k,VAR_W,b) + alpha*( &
+                            filtBuf(i-1,1,k,VAR_W,b)+filtBuf(i+1,1,k,VAR_W,b) &
+                          + filtBuf(i,1,k-1,VAR_W,b)+filtBuf(i,1,k+1,VAR_W,b)-4.0d0*filtBuf(i,1,k,VAR_W,b))
+                    end if
+                    if (blk%physHigh(2,b) == FACE_FINE) then
+                        blk%q(i,ny,k,VAR_U,b) = blk%q(i,ny,k,VAR_U,b) + alpha*( &
+                            filtBuf(i-1,ny,k,VAR_U,b)+filtBuf(i+1,ny,k,VAR_U,b) &
+                          + filtBuf(i,ny,k-1,VAR_U,b)+filtBuf(i,ny,k+1,VAR_U,b)-4.0d0*filtBuf(i,ny,k,VAR_U,b))
+                        blk%q(i,ny,k,VAR_W,b) = blk%q(i,ny,k,VAR_W,b) + alpha*( &
+                            filtBuf(i-1,ny,k,VAR_W,b)+filtBuf(i+1,ny,k,VAR_W,b) &
+                          + filtBuf(i,ny,k-1,VAR_W,b)+filtBuf(i,ny,k+1,VAR_W,b)-4.0d0*filtBuf(i,ny,k,VAR_W,b))
+                    end if
+                end do
+            end do
+        end do
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp end target teams distribute parallel do
+#endif
+
+        ! z-interfaces: tangential = u,v (filter over x,y at the interface k-row).
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target teams distribute parallel do collapse(3) &
+        !$omp& map(to: alpha, nx, ny, nz, blk%physLow, blk%physHigh) &
+        !$omp& map(tofrom: blk%q, filtBuf) private(i,j,k,b)
+#endif
+        do b = 1, nBlocks
+            do j = 1, ny
+                do i = 1, nx
+                    if (blk%physLow(3,b) == FACE_FINE) then
+                        blk%q(i,j,1,VAR_U,b) = blk%q(i,j,1,VAR_U,b) + alpha*( &
+                            filtBuf(i-1,j,1,VAR_U,b)+filtBuf(i+1,j,1,VAR_U,b) &
+                          + filtBuf(i,j-1,1,VAR_U,b)+filtBuf(i,j+1,1,VAR_U,b)-4.0d0*filtBuf(i,j,1,VAR_U,b))
+                        blk%q(i,j,1,VAR_V,b) = blk%q(i,j,1,VAR_V,b) + alpha*( &
+                            filtBuf(i-1,j,1,VAR_V,b)+filtBuf(i+1,j,1,VAR_V,b) &
+                          + filtBuf(i,j-1,1,VAR_V,b)+filtBuf(i,j+1,1,VAR_V,b)-4.0d0*filtBuf(i,j,1,VAR_V,b))
+                    end if
+                    if (blk%physHigh(3,b) == FACE_FINE) then
+                        blk%q(i,j,nz,VAR_U,b) = blk%q(i,j,nz,VAR_U,b) + alpha*( &
+                            filtBuf(i-1,j,nz,VAR_U,b)+filtBuf(i+1,j,nz,VAR_U,b) &
+                          + filtBuf(i,j-1,nz,VAR_U,b)+filtBuf(i,j+1,nz,VAR_U,b)-4.0d0*filtBuf(i,j,nz,VAR_U,b))
+                        blk%q(i,j,nz,VAR_V,b) = blk%q(i,j,nz,VAR_V,b) + alpha*( &
+                            filtBuf(i-1,j,nz,VAR_V,b)+filtBuf(i+1,j,nz,VAR_V,b) &
+                          + filtBuf(i,j-1,nz,VAR_V,b)+filtBuf(i,j+1,nz,VAR_V,b)-4.0d0*filtBuf(i,j,nz,VAR_V,b))
+                    end if
+                end do
+            end do
+        end do
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp end target teams distribute parallel do
+#endif
+    end subroutine filter_interface_band
 
     subroutine precompute_peclet_rate(dns, blk, c)
         type(dns_type), intent(inout) :: dns

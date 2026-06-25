@@ -39,6 +39,10 @@ module pressure_solver
         ! Off by default (plain damped Jacobi).
         logical :: cheb=.false.
         real(C_DOUBLE) :: chebLmin=-1.0d0, chebLmax=-1.0d0
+        ! FIX (ii), MOBY_PHIINTERP: tangentially interpolate (vs inject) the
+        ! cross-level prolong of phi in the projection exchange. Off by default
+        ! (injection = the pre-fix baseline, bit-exact without an interface).
+        logical :: phiInterp=.false.
     end type pressure_solver_type
 
     ! Pressure-increment buffer for the Jacobi sweep. Unlike the in-place
@@ -70,6 +74,8 @@ contains
         ! restriction of the red-black scheme no longer applies.
         call get_environment_variable("MOBY_RESLOG", env)
         ps%resLog = len_trim(env) > 0
+        call get_environment_variable("MOBY_PHIINTERP", env)
+        if (len_trim(env) > 0) ps%phiInterp = .true.
         ! [pressure] accel = chebyshev sets ps%cheb in config; MOBY_CHEB* env
         ! vars override (handy for sweeping the bounds without editing configs).
         call get_environment_variable("MOBY_CHEB", env)
@@ -153,7 +159,7 @@ contains
             end if
             proj_t_ker = proj_t_ker + les_wall_seconds() - tpc
             tpc = les_wall_seconds()
-            call exchange_scalar_halos(c, phi, ifaceRow=.true.)
+            call exchange_scalar_halos(c, phi, blk, ifaceRow=.true., interpProlong=ps%phiInterp)
             proj_t_exch = proj_t_exch + les_wall_seconds() - tpc
             tpc = les_wall_seconds()
             call jacobi_apply(ps, blk, dt_gamma, ibm)

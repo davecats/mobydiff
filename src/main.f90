@@ -55,6 +55,9 @@ program main
     ! end -- to see where the refinement cost goes. Off by default.
     real(C_DOUBLE) :: pt0, pt1, tRecon, tReflux, tMom, tExch, tProj, tTstep
     real(C_DOUBLE) :: tRfC, tRfE, tRfA
+    ! MOBY_IFFILT=<alpha>: coefficient of the coarse-interface-band tangential
+    ! filter (fix i). 0 (default) = off / bit-exact.
+    real(C_DOUBLE) :: ifFiltAlpha
     character(len=16) :: diagEnv
     ! MOBY_STEPDIV: per-timestep divergence monitor -- after the full RK step, print
     ! the final field's divergence L2 (rms) and max, and the global mass residual
@@ -253,7 +256,7 @@ program main
     call flow%setup_after_grid(blk, dns, g, bc, c)
     if (les_is_enabled(les)) then
         call update_les_viscosity(les, blk, dns, ibm)
-        call exchange_scalar_halos(c, les%nut)
+        call exchange_scalar_halos(c, les%nut, blk)
         call update_timestep_limits(blk, dns, c, les)
     else
         call update_timestep_limits(blk, dns, c)
@@ -275,6 +278,9 @@ program main
     stepDiv = len_trim(diagEnv) > 0   ! per-step divergence L2/max + global mass monitor
     call get_environment_variable("MOBY_PHASETIME", diagEnv)
     phaseTime = len_trim(diagEnv) > 0
+    call get_environment_variable("MOBY_IFFILT", diagEnv)
+    ifFiltAlpha = 0.0d0
+    if (len_trim(diagEnv) > 0) read(diagEnv, *) ifFiltAlpha
     tRecon = 0.0d0; tReflux = 0.0d0; tMom = 0.0d0; tExch = 0.0d0; tProj = 0.0d0; tTstep = 0.0d0
     tRfC = 0.0d0; tRfE = 0.0d0; tRfA = 0.0d0
     ! MOBY_MANUF=<amp>: add a pure-gradient perturbation amp*grad(phi),
@@ -336,7 +342,7 @@ program main
                             call reflux_compute_flux(blk, refluxDir, refluxComp)
                             if (phaseTime) tRfC = tRfC + les_wall_seconds() - pt1
                             if (phaseTime) pt1 = les_wall_seconds()
-                            call exchange_scalar_halos(c, blk%refluxF, ifaceRow=.true.)
+                            call exchange_scalar_halos(c, blk%refluxF, blk, ifaceRow=.true.)
                             if (phaseTime) tRfE = tRfE + les_wall_seconds() - pt1
                             if (phaseTime) pt1 = les_wall_seconds()
                             call reflux_accumulate(blk, refluxDir, refluxComp)
@@ -351,7 +357,7 @@ program main
                     call update_les_viscosity(les, blk, dns, ibm)
                     call add_les_profile(les_prof, LES_PROF_NUT, les_wall_seconds() - les_profile_start)
                     les_profile_start = les_wall_seconds()
-                    call exchange_scalar_halos(c, les%nut)
+                    call exchange_scalar_halos(c, les%nut, blk)
                     call add_les_profile(les_prof, LES_PROF_EXCHANGE, les_wall_seconds() - les_profile_start)
                     call momentum(blk, dns, dt_alpha, dt_beta, dt_gamma, ibm, les, les_prof)
                 else
@@ -371,6 +377,13 @@ program main
                 if (phaseTime) pt0 = les_wall_seconds()
                 call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W], syncface=.true.)
                 if (phaseTime) tExch = tExch + les_wall_seconds() - pt0
+                ! FIX (i): damp the coarse-interface-band tangential velocity, then
+                ! refresh halos so the projection sees the filtered field. Inert at
+                ! alpha=0.
+                if (ifFiltAlpha /= 0.0d0) then
+                    call filter_interface_band(blk, ifFiltAlpha)
+                    call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W])
+                end if
             end if
 
             ! Projection: solve for pressure correction and project tentative velocities.

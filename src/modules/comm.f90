@@ -1205,18 +1205,25 @@ contains
     ! cell-centred 2-row average) into the coarse interface-correction ghost --
     ! used for phi so the interface corrections are conservative; off for
     ! cell-centred scalars like les%nut.
-    subroutine exchange_scalar_halos(c, scalar, ifaceRow)
+    subroutine exchange_scalar_halos(c, scalar, blk, ifaceRow, interpProlong)
         type(comm_type), intent(inout) :: c
         real(C_DOUBLE), intent(inout) :: scalar(0:,0:,0:,1:)
-        logical, intent(in), optional :: ifaceRow
+        type(block_set_type), intent(in) :: blk
+        logical, intent(in), optional :: ifaceRow, interpProlong
 
         integer :: ierr, p, nRequest
+        logical :: doInterp
 
         call require_ready(c)
         if (c%exchangeActive) error stop "halo exchange already active"
 
         c%phiIfaceRow = .false.
         if (present(ifaceRow)) c%phiIfaceRow = ifaceRow
+        ! FIX (ii): tangentially interpolate the cross-level prolong of the scalar
+        ! (phi) instead of injecting it. Needs the two-pass ordering so phase 1's
+        ! same-level copies fill the coarse halo the phase-2 interp reads.
+        doInterp = .false.
+        if (present(interpProlong)) doInterp = interpProlong
 
         if (c%nPeers > 0) then
             call pack_scalar_entries(c, scalar)
@@ -1238,7 +1245,12 @@ contains
 #endif
         end if
 
-        call copy_local_scalar_entries(c, scalar)
+        if (doInterp) then
+            call copy_local_scalar_entries(c, scalar, blk, 1, .false.)
+            call copy_local_scalar_entries(c, scalar, blk, 2, .true.)
+        else
+            call copy_local_scalar_entries(c, scalar, blk, 0, .false.)
+        end if
 
         if (c%nPeers > 0) then
             nRequest = 2*c%nPeers
@@ -1373,27 +1385,47 @@ contains
 #endif
     end subroutine copy_local_entries
 
-    subroutine copy_local_scalar_entries(c, scalar)
+    ! phase: 0 = all local points, 1 = same-level-copy prefix, 2 = cross-level
+    ! suffix (mirrors copy_local_entries). doInterp (FIX ii): for a PROLONG
+    ! tangential dim (lGS(d)==1) linearly INTERPOLATE the coarse scalar to the fine
+    ! cell's location on the cell-centred (VAR_P=NVAR) node line -- instead of
+    ! injecting the coarse value (a tangential step). Mirrors the velocity prolong
+    ! tangential interp (commit fdfd477) for the phi/pressure scalar; needs the
+    ! two-pass ordering (phase 1 fills the coarse halo the interp reads). doInterp
+    ! requires `blk` (node lines); injection (doInterp=.false.) is bit-exact with
+    ! the old behaviour and needs no node lines.
+    subroutine copy_local_scalar_entries(c, scalar, blk, phase, doInterp)
         type(comm_type), intent(inout) :: c
         real(C_DOUBLE), intent(inout) :: scalar(0:,0:,0:,1:)
+        type(block_set_type), intent(in) :: blk
+        integer, intent(in) :: phase
+        logical, intent(in) :: doInterp
 
-        integer :: p, e, pt, ni, nj
-        integer :: di, dj, dk, totalItems, sfr, pn
-        integer :: b1, b2, b3, c1, c2, c3, s1, s2, s3
-        real(C_DOUBLE) :: val
+        integer :: p, e, pt, ni, nj, pLo, pHi, doI
+        integer :: di, dj, dk, sfr, pn, ss, ds
+        integer :: b1, b2, b3, og1, og2, og3, np1, np2, np3, s1, s2, s3
+        real(C_DOUBLE) :: val, wa1, wb1, wa2, wb2, wa3, wb3
 
-        totalItems = c%nLocalPts
-        if (totalItems == 0) return
+        if (phase == 1) then
+            pLo = 0;                pHi = c%nLocalCopyPts
+        else if (phase == 2) then
+            pLo = c%nLocalCopyPts;  pHi = c%nLocalPts
+        else
+            pLo = 0;                pHi = c%nLocalPts
+        end if
+        if (pHi <= pLo) return
         sfr = merge(1, 0, c%phiIfaceRow)
+        doI = merge(1, 0, doInterp)
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
-        !$omp& map(to: totalItems, sfr, c%nLocal, c%lOff, c%lPointEntry, c%lSrcSlot, c%lDstSlot, &
-        !$omp& c%lDstLo, c%lExt, c%lGA, c%lGB, c%lGS, c%lGC, c%lPhiN) &
+        !$omp& map(to: pLo, pHi, sfr, doI, c%nLocal, c%lOff, c%lPointEntry, c%lSrcSlot, c%lDstSlot, &
+        !$omp& c%lDstLo, c%lExt, c%lGA, c%lGB, c%lGS, c%lGC, c%lPhiN, blk%x, blk%y, blk%z) &
         !$omp& map(tofrom: scalar) &
-        !$omp& private(p,e,pt,ni,nj,di,dj,dk,b1,b2,b3,c1,c2,c3,s1,s2,s3,val,pn)
+        !$omp& private(p,e,pt,ni,nj,di,dj,dk,b1,b2,b3,og1,og2,og3,np1,np2,np3,s1,s2,s3, &
+        !$omp& val,wa1,wb1,wa2,wb2,wa3,wb3,pn,ss,ds)
 #endif
-        do p = 1, totalItems
+        do p = pLo + 1, pHi
             e = c%lPointEntry(p - 1)
             pt = p - 1 - c%lOff(e-1)
             ni = c%lExt(1,e)
@@ -1401,31 +1433,61 @@ contains
             di = c%lDstLo(1,e) + modulo(pt, ni)
             dj = c%lDstLo(2,e) + modulo(pt/ni, nj)
             dk = c%lDstLo(3,e) + pt/(ni*nj)
+            ss = c%lSrcSlot(e); ds = c%lDstSlot(e)
             b1 = ishft(c%lGA(1,e)*di + c%lGB(1,e), -c%lGS(1,e))
             b2 = ishft(c%lGA(2,e)*dj + c%lGB(2,e), -c%lGS(2,e))
             b3 = ishft(c%lGA(3,e)*dk + c%lGB(3,e), -c%lGS(3,e))
-            c1 = c%lGC(1,e)
-            c2 = c%lGC(2,e)
-            c3 = c%lGC(3,e)
-            ! phi interface-row restrict: read only the fine row touching the
-            ! face along the normal dim (base + 1 for off=-1, base for off=+1).
+            ! Per-dim 2-point weighted gather. lGS(d)==1 = prolong tangential:
+            ! interpolate (doInterp) on the cell-centred node line, else inject.
+            ! lGC(d)==2 = restrict average (0.5/0.5). Otherwise a single source.
+            if (c%lGS(1,e) == 1 .and. doI == 1) then
+                og1 = 2*iand(c%lGA(1,e)*di + c%lGB(1,e), 1) - 1; np1 = 2
+                wa1 = (blk%x(di,NVAR,ds) - blk%x(b1+og1,NVAR,ss)) &
+                    / (blk%x(b1,NVAR,ss) - blk%x(b1+og1,NVAR,ss)); wb1 = 1.0d0 - wa1
+            else if (c%lGC(1,e) == 2) then
+                og1 = 1; np1 = 2; wa1 = 0.5d0; wb1 = 0.5d0
+            else
+                og1 = 0; np1 = 1; wa1 = 1.0d0; wb1 = 0.0d0
+            end if
+            if (c%lGS(2,e) == 1 .and. doI == 1) then
+                og2 = 2*iand(c%lGA(2,e)*dj + c%lGB(2,e), 1) - 1; np2 = 2
+                wa2 = (blk%y(dj,NVAR,ds) - blk%y(b2+og2,NVAR,ss)) &
+                    / (blk%y(b2,NVAR,ss) - blk%y(b2+og2,NVAR,ss)); wb2 = 1.0d0 - wa2
+            else if (c%lGC(2,e) == 2) then
+                og2 = 1; np2 = 2; wa2 = 0.5d0; wb2 = 0.5d0
+            else
+                og2 = 0; np2 = 1; wa2 = 1.0d0; wb2 = 0.0d0
+            end if
+            if (c%lGS(3,e) == 1 .and. doI == 1) then
+                og3 = 2*iand(c%lGA(3,e)*dk + c%lGB(3,e), 1) - 1; np3 = 2
+                wa3 = (blk%z(dk,NVAR,ds) - blk%z(b3+og3,NVAR,ss)) &
+                    / (blk%z(b3,NVAR,ss) - blk%z(b3+og3,NVAR,ss)); wb3 = 1.0d0 - wa3
+            else if (c%lGC(3,e) == 2) then
+                og3 = 1; np3 = 2; wa3 = 0.5d0; wb3 = 0.5d0
+            else
+                og3 = 0; np3 = 1; wa3 = 1.0d0; wb3 = 0.0d0
+            end if
+            ! phi interface-row restrict: read only the fine row touching the face
+            ! along the normal dim (collapses that dim to a single source).
             pn = c%lPhiN(e)
             if (sfr == 1 .and. pn /= 0) then
                 select case (abs(pn))
-                case (1); b1 = b1 + merge(1, 0, pn < 0); c1 = 1
-                case (2); b2 = b2 + merge(1, 0, pn < 0); c2 = 1
-                case (3); b3 = b3 + merge(1, 0, pn < 0); c3 = 1
+                case (1); b1 = b1 + merge(1, 0, pn < 0); og1 = 0; np1 = 1; wa1 = 1.0d0; wb1 = 0.0d0
+                case (2); b2 = b2 + merge(1, 0, pn < 0); og2 = 0; np2 = 1; wa2 = 1.0d0; wb2 = 0.0d0
+                case (3); b3 = b3 + merge(1, 0, pn < 0); og3 = 0; np3 = 1; wa3 = 1.0d0; wb3 = 0.0d0
                 end select
             end if
             val = 0.0d0
-            do s3 = 0, c3 - 1
-                do s2 = 0, c2 - 1
-                    do s1 = 0, c1 - 1
-                        val = val + scalar(b1+s1, b2+s2, b3+s3, c%lSrcSlot(e))
+            do s3 = 0, np3 - 1
+                do s2 = 0, np2 - 1
+                    do s1 = 0, np1 - 1
+                        val = val + merge(wb1,wa1,s1==1)*merge(wb2,wa2,s2==1) &
+                            *merge(wb3,wa3,s3==1) &
+                            *scalar(b1+s1*og1, b2+s2*og2, b3+s3*og3, ss)
                     end do
                 end do
             end do
-            scalar(di,dj,dk,c%lDstSlot(e)) = val/real(c1*c2*c3, C_DOUBLE)
+            scalar(di,dj,dk,ds) = val
         end do
 #ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
