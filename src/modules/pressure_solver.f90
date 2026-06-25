@@ -4,6 +4,7 @@ module pressure_solver
     use :: blocks, only: block_set_type, FACE_PHYS, FACE_CLOSED, FACE_COARSE, FACE_FINE
     use :: ibmm, only: ibm_type
     use :: boundary, only: boundary_type, apply_bc
+    use :: les_model, only: les_wall_seconds
     use :: comm, only: comm_type, exchange_halos, exchange_scalar_halos, &
         comm_allreduce_max, comm_allreduce_sum
 
@@ -11,6 +12,9 @@ module pressure_solver
 
     private
     public :: pressure_solver_type, init_pressure_solver, pressure_projection
+    ! MOBY_PHASETIME split of pressure_projection: time in halo exchanges vs solve
+    ! kernels (jacobi compute/apply + cheb). Accumulated across the run, read by main.
+    real(C_DOUBLE), public :: proj_t_exch = 0.0d0, proj_t_ker = 0.0d0
 
     type :: pressure_solver_type
         integer(C_INT) :: nIter=3
@@ -105,7 +109,7 @@ contains
         type(comm_type), intent(inout) :: c
 
         integer(C_INT) :: iIter
-        real(C_DOUBLE) :: rmax, rl2, omega
+        real(C_DOUBLE) :: rmax, rl2, omega, tpc
         real(C_DOUBLE) :: dd, cc, alpha, alphaPrev, beta, gamma
 
         call allocate_phi(blk)
@@ -133,6 +137,7 @@ contains
         ! velocity (+ pressure on the last iteration) halos for the next
         ! divergence.
         do iIter = 1_C_INT, ps%nIter
+            tpc = les_wall_seconds()
             call jacobi_compute_phi(blk, ibm, omega)
             if (ps%cheb) then
                 if (iIter == 1_C_INT) then
@@ -146,14 +151,21 @@ contains
                 end if
                 call cheb_combine(blk, alpha, gamma)
             end if
+            proj_t_ker = proj_t_ker + les_wall_seconds() - tpc
+            tpc = les_wall_seconds()
             call exchange_scalar_halos(c, phi, ifaceRow=.true.)
+            proj_t_exch = proj_t_exch + les_wall_seconds() - tpc
+            tpc = les_wall_seconds()
             call jacobi_apply(ps, blk, dt_gamma, ibm)
             call apply_bc(blk, bc)
+            proj_t_ker = proj_t_ker + les_wall_seconds() - tpc
+            tpc = les_wall_seconds()
             if (iIter == ps%nIter) then
                 call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W, VAR_P])
             else
                 call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W], interp=.false.)
             end if
+            proj_t_exch = proj_t_exch + les_wall_seconds() - tpc
             if (ps%resLog) then
                 call residual_norm(blk, c, rmax, rl2)
                 if (c%has_terminal) print '(a,i6,a,es14.6,a,es14.6)', &

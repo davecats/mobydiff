@@ -14,6 +14,7 @@ program main
     use :: io
     use :: step
     use :: pressure_solver
+    use :: pressure_solver, only: proj_t_exch, proj_t_ker
     use :: gpu_runtime
     use :: ibmm
     use :: les_model
@@ -48,7 +49,11 @@ program main
     ! field -- any change it makes IS the correction/interface defect. MOBY_PREDONLY:
     ! skip the projection so the field is the pure predictor. Either dumps the
     ! initial field (900000) so the change can be diffed.
-    logical :: projOnly, predOnly, divdump, rhsdump, noRecon, stepDiv
+    logical :: projOnly, predOnly, divdump, rhsdump, noRecon, stepDiv, phaseTime
+    ! MOBY_PHASETIME: accumulate wall time per major loop phase (target regions are
+    ! synchronous, so host timers capture GPU time) and print the breakdown at the
+    ! end -- to see where the refinement cost goes. Off by default.
+    real(C_DOUBLE) :: pt0, tRecon, tReflux, tMom, tExch, tProj, tTstep
     character(len=16) :: diagEnv
     ! MOBY_STEPDIV: per-timestep divergence monitor -- after the full RK step, print
     ! the final field's divergence L2 (rms) and max, and the global mass residual
@@ -267,6 +272,9 @@ program main
     noRecon = len_trim(diagEnv) > 0   ! debug: skip reconstruct_interface_halos
     call get_environment_variable("MOBY_STEPDIV", diagEnv)
     stepDiv = len_trim(diagEnv) > 0   ! per-step divergence L2/max + global mass monitor
+    call get_environment_variable("MOBY_PHASETIME", diagEnv)
+    phaseTime = len_trim(diagEnv) > 0
+    tRecon = 0.0d0; tReflux = 0.0d0; tMom = 0.0d0; tExch = 0.0d0; tProj = 0.0d0; tTstep = 0.0d0
     ! MOBY_MANUF=<amp>: add a pure-gradient perturbation amp*grad(phi),
     ! phi = cos(kx)cos(ky)cos(kz), to the (exact, div-free) initial field.
     ! The result is globally mass-conserving (a periodic gradient integrates
@@ -310,11 +318,14 @@ program main
                 ! Reconstruct the velocity deep halos across each 2:1 interface so
                 ! the predictor's advection/diffusion reaching into them (normal
                 ! and tangential) are 2nd order (inert without an interface).
+                if (phaseTime) pt0 = les_wall_seconds()
                 if (.not. noRecon) call reconstruct_interface_halos(blk)
+                if (phaseTime) tRecon = tRecon + les_wall_seconds() - pt0
                 ! Momentum reflux: from the start-of-substage velocity, capture
                 ! each interface direction's normal advective flux, restrict the
                 ! fine flux into the coarse across-interface halo, and accumulate
                 ! the coarse RHS correction; applied to the predicted field below.
+                if (phaseTime) pt0 = les_wall_seconds()
                 if (dns%block_momentum_reflux) then
                     call reflux_zero(blk)
                     do refluxDir = 1, 3
@@ -325,6 +336,7 @@ program main
                         end do
                     end do
                 end if
+                if (phaseTime) tReflux = tReflux + les_wall_seconds() - pt0
                 call update_ibm_mu(ibm, dt_gamma)
                 if (les_is_enabled(les)) then
                     les_profile_start = les_wall_seconds()
@@ -335,16 +347,22 @@ program main
                     call add_les_profile(les_prof, LES_PROF_EXCHANGE, les_wall_seconds() - les_profile_start)
                     call momentum(blk, dns, dt_alpha, dt_beta, dt_gamma, ibm, les, les_prof)
                 else
+                    if (phaseTime) pt0 = les_wall_seconds()
                     call momentum(blk, dns, dt_alpha, dt_beta, dt_gamma, ibm)
+                    if (phaseTime) tMom = tMom + les_wall_seconds() - pt0
                 end if
+                if (phaseTime) pt0 = les_wall_seconds()
                 if (dns%block_momentum_reflux) call reflux_apply(blk, dt_alpha)
+                if (phaseTime) tReflux = tReflux + les_wall_seconds() - pt0
                 call apply_bc(blk, bc)
                 ! Post-predictor exchange with the conservation SYNC: the
                 ! cross-level PROLONG/RESTRICT write the shared 2:1 face so the
                 ! two stored copies start the projection mean-consistent
                 ! (avg(fine)=coarse). The projection then owns the face and the
                 ! composite stencil keeps it conservative.
+                if (phaseTime) pt0 = les_wall_seconds()
                 call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W], syncface=.true.)
+                if (phaseTime) tExch = tExch + les_wall_seconds() - pt0
             end if
 
             ! Projection: solve for pressure correction and project tentative velocities.
@@ -359,19 +377,23 @@ program main
             ! before dt_beta couples a previous RHS or a later substage mutates q).
             if (rhsdump .and. rkStage == 1) call capture_rhs(blk, rhsBuf)
             if (divdump .and. rkStage == 1) call capture_divergence(blk, divPre)
+            if (phaseTime) pt0 = les_wall_seconds()
             if (.not. predOnly) &
                 call pressure_projection(ps, blk, dns, dt_gamma, ibm, bc, c)
+            if (phaseTime) tProj = tProj + les_wall_seconds() - pt0
             if (divdump .and. rkStage == 1) call capture_divergence(blk, divPost)
 
         end do
 
         if (stepDiv) call print_step_divergence(blk, c, dns, divStepBuf)
 
+        if (phaseTime) pt0 = les_wall_seconds()
         if (les_is_enabled(les)) then
             call update_timestep_limits(blk, dns, c, les)
         else
             call update_timestep_limits(blk, dns, c)
         end if
+        if (phaseTime) tTstep = tTstep + les_wall_seconds() - pt0
 
         if (dns%field_interval > 0) then
             call maybe_write_field(blk, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%sor)
@@ -385,6 +407,18 @@ program main
         print *, "main loop ended..."
         call write_chron(loop_timer)
         if (les_is_enabled(les)) call write_les_profile(les_prof, loop_steps)
+        if (phaseTime .and. loop_steps > 0) then
+            pt0 = tRecon + tReflux + tMom + tExch + tProj + tTstep
+            print '(a,i0,a)', "PHASETIME (", int(loop_steps), " steps, ms/step | % of timed):"
+            print '(a,f9.3,a,f5.1,a)', "  reconstruct  ", 1.0d3*tRecon /loop_steps, " | ", 100*tRecon /max(pt0,1d-30), "%"
+            print '(a,f9.3,a,f5.1,a)', "  reflux       ", 1.0d3*tReflux/loop_steps, " | ", 100*tReflux/max(pt0,1d-30), "%"
+            print '(a,f9.3,a,f5.1,a)', "  momentum     ", 1.0d3*tMom   /loop_steps, " | ", 100*tMom   /max(pt0,1d-30), "%"
+            print '(a,f9.3,a,f5.1,a)', "  exchange(vel)", 1.0d3*tExch  /loop_steps, " | ", 100*tExch  /max(pt0,1d-30), "%"
+            print '(a,f9.3,a,f5.1,a)', "  projection   ", 1.0d3*tProj  /loop_steps, " | ", 100*tProj  /max(pt0,1d-30), "%"
+            print '(a,f9.3,a,f9.3,a)', "    proj.exch  ", 1.0d3*proj_t_exch/loop_steps, "    proj.kernels ", 1.0d3*proj_t_ker/loop_steps, " (ms/step)"
+            print '(a,f9.3,a,f5.1,a)', "  timestep_lim ", 1.0d3*tTstep /loop_steps, " | ", 100*tTstep /max(pt0,1d-30), "%"
+            print '(a,f9.3)',          "  timed total  ", 1.0d3*pt0/loop_steps
+        end if
     end if
 
     call write_field(blk, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%sor)
