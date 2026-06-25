@@ -706,6 +706,88 @@ contains
         !$omp end target teams distribute parallel do
     end subroutine reflux_apply
 
+    ! Energy-conserving (skew-symmetric) interface convection correction
+    ! (Verstappen & Veldman 2003). The divergence-form convection is
+    ! skew-symmetric (conserves kinetic energy) ONLY for a discretely div-free
+    ! field; at a 2:1 interface the constant-1/2 telescoping breaks and the
+    ! coarse-fine cells pump energy (the spurious band, MOBY_KEBAL). The skew form
+    ! C_skew = C_div + 1/2 u (div u) is energy-conserving for ANY field. This adds
+    ! the correction 1/2 u * Div_cv -- Div_cv = the velocity divergence on the
+    ! component's own control volume (same face averages as the convective fluxes)
+    ! -- to the predictor RHS at the interface-band cells ONLY (both sides of every
+    ! 2:1 face), turning their convection skew-symmetric while the interior keeps
+    ! the bit-exact divergence form. The correction vanishes as the projection
+    ! drives div->0, so it does not change the converged solution; it removes the
+    ! predictor's interface energy production. Added INTO refluxCorr so the existing
+    ! reflux_apply lands it on q and oldrhs (needs [blocks] momentum_reflux on --
+    ! V&V also require the single-valued flux the reflux provides). Reads the
+    ! start-of-substage q (call after reflux_accumulate, before reflux_apply, like
+    ! the reflux). Inert without a 2:1 interface (no band cell) -> bit-exact. For
+    ! the energy path also gate off the metric prolong / cubic reconstruction
+    ! (MOBY_VELINJECT / MOBY_NORECON), which break the constant-1/2 condition.
+    subroutine skew_interface_correction(blk)
+        type(block_set_type), intent(inout) :: blk
+        integer :: b, i, j, k, nx, ny, nz, nBlocks
+        integer(C_INT) :: ip, im, jp, jm, kp, km, uStartX, vStartY, wStartZ
+        real(C_DOUBLE) :: divU, divV, divW
+        logical :: band
+        nx = int(blk%nb(1)); ny = int(blk%nb(2)); nz = int(blk%nb(3))
+        nBlocks = int(blk%nBlocks)
+
+        !$omp target teams distribute parallel do collapse(4) &
+        !$omp& map(to: blk%q, blk%d1x, blk%d1y, blk%d1z, blk%physLow, blk%physHigh) &
+        !$omp& map(tofrom: blk%refluxCorr) &
+        !$omp& private(i,j,k,b,ip,im,jp,jm,kp,km,uStartX,vStartY,wStartZ,divU,divV,divW,band)
+        do b = 1, nBlocks
+        do k = 1, nz
+            do j = 1, ny
+                do i = 1, nx
+                    band = ((blk%physLow(1,b) == FACE_FINE .or. blk%physLow(1,b) == FACE_COARSE) .and. i == 1) .or. &
+                           ((blk%physHigh(1,b) == FACE_FINE .or. blk%physHigh(1,b) == FACE_COARSE) .and. i == nx) .or. &
+                           ((blk%physLow(2,b) == FACE_FINE .or. blk%physLow(2,b) == FACE_COARSE) .and. j == 1) .or. &
+                           ((blk%physHigh(2,b) == FACE_FINE .or. blk%physHigh(2,b) == FACE_COARSE) .and. j == ny) .or. &
+                           ((blk%physLow(3,b) == FACE_FINE .or. blk%physLow(3,b) == FACE_COARSE) .and. k == 1) .or. &
+                           ((blk%physHigh(3,b) == FACE_FINE .or. blk%physHigh(3,b) == FACE_COARSE) .and. k == nz)
+                    if (.not. band) cycle
+                    ip = i+1; im = i-1; jp = j+1; jm = j-1; kp = k+1; km = k-1
+                    uStartX = merge(2, 1, blk%physLow(1,b) == FACE_PHYS .or. blk%physLow(1,b) == FACE_CLOSED)
+                    vStartY = merge(2, 1, blk%physLow(2,b) == FACE_PHYS .or. blk%physLow(2,b) == FACE_CLOSED)
+                    wStartZ = merge(2, 1, blk%physLow(3,b) == FACE_PHYS .or. blk%physLow(3,b) == FACE_CLOSED)
+
+                    if (i >= uStartX) then
+                        divU = 0.5d0*( (blk%q(ip,j,k,VAR_U,b)-blk%q(im,j,k,VAR_U,b))*blk%d1x(i,VAR_U,b) &
+                            + ((blk%q(im,jp,k,VAR_V,b)+blk%q(i,jp,k,VAR_V,b)) &
+                              -(blk%q(im,j,k,VAR_V,b)+blk%q(i,j,k,VAR_V,b)))*blk%d1y(j,VAR_U,b) &
+                            + ((blk%q(im,j,kp,VAR_W,b)+blk%q(i,j,kp,VAR_W,b)) &
+                              -(blk%q(im,j,k,VAR_W,b)+blk%q(i,j,k,VAR_W,b)))*blk%d1z(k,VAR_U,b))
+                        blk%refluxCorr(i,j,k,VAR_U,b) = blk%refluxCorr(i,j,k,VAR_U,b) &
+                            + 0.5d0*blk%q(i,j,k,VAR_U,b)*divU
+                    end if
+                    if (j >= vStartY) then
+                        divV = 0.5d0*( ((blk%q(ip,jm,k,VAR_U,b)+blk%q(ip,j,k,VAR_U,b)) &
+                              -(blk%q(i,jm,k,VAR_U,b)+blk%q(i,j,k,VAR_U,b)))*blk%d1x(i,VAR_V,b) &
+                            + (blk%q(i,jp,k,VAR_V,b)-blk%q(i,jm,k,VAR_V,b))*blk%d1y(j,VAR_V,b) &
+                            + ((blk%q(i,jm,kp,VAR_W,b)+blk%q(i,j,kp,VAR_W,b)) &
+                              -(blk%q(i,jm,k,VAR_W,b)+blk%q(i,j,k,VAR_W,b)))*blk%d1z(k,VAR_V,b))
+                        blk%refluxCorr(i,j,k,VAR_V,b) = blk%refluxCorr(i,j,k,VAR_V,b) &
+                            + 0.5d0*blk%q(i,j,k,VAR_V,b)*divV
+                    end if
+                    if (k >= wStartZ) then
+                        divW = 0.5d0*( ((blk%q(ip,j,km,VAR_U,b)+blk%q(ip,j,k,VAR_U,b)) &
+                              -(blk%q(i,j,km,VAR_U,b)+blk%q(i,j,k,VAR_U,b)))*blk%d1x(i,VAR_W,b) &
+                            + ((blk%q(i,jp,km,VAR_V,b)+blk%q(i,jp,k,VAR_V,b)) &
+                              -(blk%q(i,j,km,VAR_V,b)+blk%q(i,j,k,VAR_V,b)))*blk%d1y(j,VAR_W,b) &
+                            + (blk%q(i,j,kp,VAR_W,b)-blk%q(i,j,km,VAR_W,b))*blk%d1z(k,VAR_W,b))
+                        blk%refluxCorr(i,j,k,VAR_W,b) = blk%refluxCorr(i,j,k,VAR_W,b) &
+                            + 0.5d0*blk%q(i,j,k,VAR_W,b)*divW
+                    end if
+                end do
+            end do
+        end do
+        end do
+        !$omp end target teams distribute parallel do
+    end subroutine skew_interface_correction
+
     subroutine momentum(blk, dns, dt_alpha, dt_beta, dt_gamma, ibm, les, les_prof)
         type(block_set_type), intent(inout) :: blk
         type(dns_type),   intent(in)    :: dns

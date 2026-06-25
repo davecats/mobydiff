@@ -50,7 +50,7 @@ program main
     ! field -- any change it makes IS the correction/interface defect. MOBY_PREDONLY:
     ! skip the projection so the field is the pure predictor. Either dumps the
     ! initial field (900000) so the change can be diffed.
-    logical :: projOnly, predOnly, divdump, rhsdump, noRecon, stepDiv, phaseTime, keBal
+    logical :: projOnly, predOnly, divdump, rhsdump, noRecon, stepDiv, phaseTime, keBal, skewIface
     ! MOBY_PHASETIME: accumulate wall time per major loop phase (target regions are
     ! synchronous, so host timers capture GPU time) and print the breakdown at the
     ! end -- to see where the refinement cost goes. Off by default.
@@ -281,6 +281,8 @@ program main
     phaseTime = len_trim(diagEnv) > 0
     call get_environment_variable("MOBY_KEBAL", diagEnv)
     keBal = len_trim(diagEnv) > 0   ! per-step convective KE-balance: band vs interior
+    call get_environment_variable("MOBY_KESKEW", diagEnv)
+    skewIface = len_trim(diagEnv) > 0   ! skew-symmetric (energy-conserving) interface convection
     call get_environment_variable("MOBY_IFFILT", diagEnv)
     ifFiltAlpha = 0.0d0
     if (len_trim(diagEnv) > 0) read(diagEnv, *) ifFiltAlpha
@@ -352,6 +354,11 @@ program main
                             if (phaseTime) tRfA = tRfA + les_wall_seconds() - pt1
                         end do
                     end do
+                    ! Energy-conserving (V&V) skew-symmetric interface convection:
+                    ! add 1/2 u (div u) at the interface-band cells INTO refluxCorr
+                    ! so reflux_apply lands it with the reflux correction. Gated by
+                    ! MOBY_KESKEW; inert without a 2:1 interface.
+                    if (skewIface) call skew_interface_correction(blk)
                 end if
                 if (phaseTime) tReflux = tReflux + les_wall_seconds() - pt0
                 call update_ibm_mu(ibm, dt_gamma)
