@@ -62,6 +62,13 @@ module comm
         integer, allocatable :: lDir(:,:)                  ! direction (dst-completion adjacency)
         real(C_DOUBLE), allocatable :: lWp(:), lWpDst(:)   ! pressure dst-completion weights
         integer, allocatable :: lOff(:)                    ! (0:nLocal) point prefix
+        ! Per-point -> entry index, precomputed once so the exchange kernels do an
+        ! O(1) lookup instead of a per-point binary search over lOff/sOff/rOff
+        ! (find_entry). The exchange is the dominant refined-grid cost and runs many
+        ! times per step; the search was ~half the per-point work.
+        integer, allocatable :: lPointEntry(:)             ! (0:nLocalPts-1)
+        integer, allocatable :: sPointEntry(:)             ! (0:totalSendPts-1)
+        integer, allocatable :: rPointEntry(:)             ! (0:totalRecvPts-1)
         ! Fine-owned interface normal velocity: dimension d of the normal
         ! velocity component this entry must NOT overwrite (a PROLONG onto a
         ! fine block's high interface face, off(d)==+1), else 0. The fine
@@ -416,6 +423,27 @@ contains
             end if
         end do
 
+        ! Precompute the per-point -> entry maps (one-time; replaces the per-point
+        ! find_entry binary search inside the exchange kernels).
+        allocate(c%lPointEntry(0:max(0, c%nLocalPts - 1)))
+        allocate(c%sPointEntry(0:max(0, c%peerSendOff(c%nPeers) - 1)))
+        allocate(c%rPointEntry(0:max(0, c%peerRecvOff(c%nPeers) - 1)))
+        do e = 1, c%nLocal
+            do p = c%lOff(e-1), c%lOff(e) - 1
+                c%lPointEntry(p) = e
+            end do
+        end do
+        do e = 1, c%nSend
+            do p = c%sOff(e-1), c%sOff(e) - 1
+                c%sPointEntry(p) = e
+            end do
+        end do
+        do e = 1, c%nRecv
+            do p = c%rOff(e-1), c%rOff(e) - 1
+                c%rPointEntry(p) = e
+            end do
+        end do
+
         maxCount = 1
         do p = 1, c%nPeers
             maxCount = max(maxCount, (c%peerSendOff(p) - c%peerSendOff(p-1))*int(NVAR))
@@ -429,6 +457,7 @@ contains
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target enter data map(to: &
+        !$omp& c%lPointEntry, c%sPointEntry, c%rPointEntry, &
         !$omp& c%lSrcSlot, c%lDstSlot, c%lDstLo, c%lExt, c%lOff, &
         !$omp& c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lWp, c%lWpDst, c%lNrm, c%lPhiN, &
         !$omp& c%sSlot, c%sPeer, c%sExt, c%sOff, &
@@ -446,6 +475,7 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
             !$omp target exit data map(delete: c%sendbuf, c%recvbuf)
             !$omp target exit data map(delete: &
+            !$omp& c%lPointEntry, c%sPointEntry, c%rPointEntry, &
             !$omp& c%lSrcSlot, c%lDstSlot, c%lDstLo, c%lExt, c%lOff, &
             !$omp& c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lWp, c%lWpDst, c%lNrm, c%lPhiN, &
             !$omp& c%sSlot, c%sPeer, c%sExt, c%sOff, &
@@ -454,6 +484,7 @@ contains
             !$omp& c%rSlot, c%rPeer, c%rLo, c%rExt, c%rDir, c%rWp, c%rWpDst, c%rOff, c%rNrm)
 #endif
             deallocate(c%sendbuf, c%recvbuf)
+            deallocate(c%lPointEntry, c%sPointEntry, c%rPointEntry)
             deallocate(c%lSrcSlot, c%lDstSlot, c%lDstLo, c%lExt, c%lOff)
             deallocate(c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lWp, c%lWpDst, c%lNrm, c%lPhiN)
             deallocate(c%sSlot, c%sPeer, c%sExt, c%sOff)
@@ -1226,7 +1257,7 @@ contains
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
-        !$omp& map(to: totalItems, nv, sf, c%nLocal, c%lOff, c%lSrcSlot, c%lDstSlot, &
+        !$omp& map(to: totalItems, nv, sf, c%nLocal, c%lOff, c%lPointEntry, c%lSrcSlot, c%lDstSlot, &
         !$omp& c%lDstLo, c%lExt, c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lWp, c%lWpDst, &
         !$omp& c%lNrm, c%activeVars) &
         !$omp& map(tofrom: blk%q) &
@@ -1235,7 +1266,7 @@ contains
         do p = 1, totalItems
             gp = (p - 1)/nv
             v = p - 1 - gp*nv
-            e = find_entry(c%lOff, c%nLocal, gp)
+            e = c%lPointEntry(gp)
             pt = gp - c%lOff(e-1)
             ni = c%lExt(1,e)
             nj = c%lExt(2,e)
@@ -1302,13 +1333,13 @@ contains
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
-        !$omp& map(to: totalItems, sfr, c%nLocal, c%lOff, c%lSrcSlot, c%lDstSlot, &
+        !$omp& map(to: totalItems, sfr, c%nLocal, c%lOff, c%lPointEntry, c%lSrcSlot, c%lDstSlot, &
         !$omp& c%lDstLo, c%lExt, c%lGA, c%lGB, c%lGS, c%lGC, c%lPhiN) &
         !$omp& map(tofrom: scalar) &
         !$omp& private(p,e,pt,ni,nj,di,dj,dk,b1,b2,b3,c1,c2,c3,s1,s2,s3,val,pn)
 #endif
         do p = 1, totalItems
-            e = find_entry(c%lOff, c%nLocal, p - 1)
+            e = c%lPointEntry(p - 1)
             pt = p - 1 - c%lOff(e-1)
             ni = c%lExt(1,e)
             nj = c%lExt(2,e)
@@ -1362,7 +1393,7 @@ contains
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
-        !$omp& map(to: totalItems, nv, copyOnly, c%nPeers, c%nSend, c%sOff, c%sSlot, c%sPeer, &
+        !$omp& map(to: totalItems, nv, copyOnly, c%nPeers, c%nSend, c%sOff, c%sPointEntry, c%sSlot, c%sPeer, &
         !$omp& c%sDstLo, c%sExt, c%sGA, c%sGB, c%sGS, c%sGC, &
         !$omp& c%peerSendOff, c%peerSendCopyOff, c%activeVars, blk%q) &
         !$omp& map(tofrom: c%sendbuf) &
@@ -1377,7 +1408,7 @@ contains
                 peer = find_entry(c%peerSendCopyOff, c%nPeers, gp)
                 gp = c%peerSendOff(peer-1) + (gp - c%peerSendCopyOff(peer-1))
             end if
-            e = find_entry(c%sOff, c%nSend, gp)
+            e = c%sPointEntry(gp)
             pt = gp - c%sOff(e-1)
             ni = c%sExt(1,e)
             nj = c%sExt(2,e)
@@ -1425,7 +1456,7 @@ contains
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
-        !$omp& map(to: totalItems, nv, copyOnly, sf, c%nPeers, c%nRecv, c%rOff, c%rSlot, c%rPeer, &
+        !$omp& map(to: totalItems, nv, copyOnly, sf, c%nPeers, c%nRecv, c%rOff, c%rPointEntry, c%rSlot, c%rPeer, &
         !$omp& c%rLo, c%rExt, c%rDir, c%rWp, c%rWpDst, c%rNrm, &
         !$omp& c%peerRecvOff, c%peerRecvCopyOff, c%activeVars, c%recvbuf) &
         !$omp& map(tofrom: blk%q) &
@@ -1438,7 +1469,7 @@ contains
                 peer = find_entry(c%peerRecvCopyOff, c%nPeers, gp)
                 gp = c%peerRecvOff(peer-1) + (gp - c%peerRecvCopyOff(peer-1))
             end if
-            e = find_entry(c%rOff, c%nRecv, gp)
+            e = c%rPointEntry(gp)
             pt = gp - c%rOff(e-1)
             ni = c%rExt(1,e)
             nj = c%rExt(2,e)
@@ -1483,13 +1514,13 @@ contains
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
-        !$omp& map(to: totalItems, sfr, c%nSend, c%sOff, c%sSlot, c%sPeer, &
+        !$omp& map(to: totalItems, sfr, c%nSend, c%sOff, c%sPointEntry, c%sSlot, c%sPeer, &
         !$omp& c%sDstLo, c%sExt, c%sGA, c%sGB, c%sGS, c%sGC, c%sPhiN, c%peerSendOff, scalar) &
         !$omp& map(tofrom: c%sendbuf) &
         !$omp& private(p,e,pt,ni,nj,di,dj,dk,peer,pos,b1,b2,b3,c1,c2,c3,s1,s2,s3,val,pn)
 #endif
         do p = 1, totalItems
-            e = find_entry(c%sOff, c%nSend, p - 1)
+            e = c%sPointEntry(p - 1)
             pt = p - 1 - c%sOff(e-1)
             ni = c%sExt(1,e)
             nj = c%sExt(2,e)
@@ -1539,13 +1570,13 @@ contains
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
-        !$omp& map(to: totalItems, c%nRecv, c%rOff, c%rSlot, c%rPeer, &
+        !$omp& map(to: totalItems, c%nRecv, c%rOff, c%rPointEntry, c%rSlot, c%rPeer, &
         !$omp& c%rLo, c%rExt, c%peerRecvOff, c%recvbuf) &
         !$omp& map(tofrom: scalar) &
         !$omp& private(p,e,pt,ni,nj,i,j,k,peer,pos)
 #endif
         do p = 1, totalItems
-            e = find_entry(c%rOff, c%nRecv, p - 1)
+            e = c%rPointEntry(p - 1)
             pt = p - 1 - c%rOff(e-1)
             ni = c%rExt(1,e)
             nj = c%rExt(2,e)

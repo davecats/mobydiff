@@ -53,7 +53,8 @@ program main
     ! MOBY_PHASETIME: accumulate wall time per major loop phase (target regions are
     ! synchronous, so host timers capture GPU time) and print the breakdown at the
     ! end -- to see where the refinement cost goes. Off by default.
-    real(C_DOUBLE) :: pt0, tRecon, tReflux, tMom, tExch, tProj, tTstep
+    real(C_DOUBLE) :: pt0, pt1, tRecon, tReflux, tMom, tExch, tProj, tTstep
+    real(C_DOUBLE) :: tRfC, tRfE, tRfA
     character(len=16) :: diagEnv
     ! MOBY_STEPDIV: per-timestep divergence monitor -- after the full RK step, print
     ! the final field's divergence L2 (rms) and max, and the global mass residual
@@ -275,6 +276,7 @@ program main
     call get_environment_variable("MOBY_PHASETIME", diagEnv)
     phaseTime = len_trim(diagEnv) > 0
     tRecon = 0.0d0; tReflux = 0.0d0; tMom = 0.0d0; tExch = 0.0d0; tProj = 0.0d0; tTstep = 0.0d0
+    tRfC = 0.0d0; tRfE = 0.0d0; tRfA = 0.0d0
     ! MOBY_MANUF=<amp>: add a pure-gradient perturbation amp*grad(phi),
     ! phi = cos(kx)cos(ky)cos(kz), to the (exact, div-free) initial field.
     ! The result is globally mass-conserving (a periodic gradient integrates
@@ -330,9 +332,15 @@ program main
                     call reflux_zero(blk)
                     do refluxDir = 1, 3
                         do refluxComp = 1, 3
+                            if (phaseTime) pt1 = les_wall_seconds()
                             call reflux_compute_flux(blk, refluxDir, refluxComp)
+                            if (phaseTime) tRfC = tRfC + les_wall_seconds() - pt1
+                            if (phaseTime) pt1 = les_wall_seconds()
                             call exchange_scalar_halos(c, blk%refluxF, ifaceRow=.true.)
+                            if (phaseTime) tRfE = tRfE + les_wall_seconds() - pt1
+                            if (phaseTime) pt1 = les_wall_seconds()
                             call reflux_accumulate(blk, refluxDir, refluxComp)
+                            if (phaseTime) tRfA = tRfA + les_wall_seconds() - pt1
                         end do
                     end do
                 end if
@@ -412,6 +420,7 @@ program main
             print '(a,i0,a)', "PHASETIME (", int(loop_steps), " steps, ms/step | % of timed):"
             print '(a,f9.3,a,f5.1,a)', "  reconstruct  ", 1.0d3*tRecon /loop_steps, " | ", 100*tRecon /max(pt0,1d-30), "%"
             print '(a,f9.3,a,f5.1,a)', "  reflux       ", 1.0d3*tReflux/loop_steps, " | ", 100*tReflux/max(pt0,1d-30), "%"
+            print '(a,f9.3,a,f9.3,a,f9.3,a)', "    rf.compute ", 1.0d3*tRfC/loop_steps, "  rf.exch ", 1.0d3*tRfE/loop_steps, "  rf.accum ", 1.0d3*tRfA/loop_steps, " (ms/step)"
             print '(a,f9.3,a,f5.1,a)', "  momentum     ", 1.0d3*tMom   /loop_steps, " | ", 100*tMom   /max(pt0,1d-30), "%"
             print '(a,f9.3,a,f5.1,a)', "  exchange(vel)", 1.0d3*tExch  /loop_steps, " | ", 100*tExch  /max(pt0,1d-30), "%"
             print '(a,f9.3,a,f5.1,a)', "  projection   ", 1.0d3*tProj  /loop_steps, " | ", 100*tProj  /max(pt0,1d-30), "%"
