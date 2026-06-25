@@ -373,6 +373,70 @@ already 1/2-weighted = skew-symmetric for div-free; the work is the interface:
 single-valued constant-1/2 convective flux + adjoint transfer), per V&V 2003.
 Next-session prompt: docs/next_session_skew_symmetric.md.
 
+## Session 2026-06-25g: MOBY_KEBAL gate BUILT + V&V attribution MEASURED (commit 47961fe)
+
+Built the kinetic-energy-balance gate (next_session_skew_symmetric.md step 1) and
+used it to measure the V&V prescription. The gate is `print_step_ke_balance` in
+main.f90 (mirror MOBY_STEPDIV), off by default (`MOBY_KEBAL`), bit-exact unset.
+
+**What it reports.** Per RK step, the convective KE production `Sum vol*u*C(u)` (no
+pressure/diffusion/forcing, stencil identical to `momentum`), split BAND (cells in a
+FACE_FINE *or* FACE_COARSE interface row -- both sides) vs INTERIOR, in two forms:
+- **DIV** = `vol*u*C_div`: the divergence-form production the scheme actually uses.
+  It telescopes to `-Sum KE*(div u)`, so it is **contaminated by the projection's
+  residual divergence** (large at niter=6) -- not a clean interface signal.
+- **SKEW** = `vol*( u*C_div + 1/2 u^2 * Div_cv )`, `Div_cv` = the velocity divergence
+  on the component's control volume (same face neighbours as the convective fluxes).
+  This is the production of the skew-symmetric form `C_skew = C_div + 1/2 u(div u)`;
+  it is **identically zero in the interior for ANY field** (constant-1/2 telescoping,
+  divergence-state independent), so the band SKEW value is the **pure interface energy
+  defect** -- the pass/fail. (Sign is PLUS: a minus gives exactly 2*DIV; verified by
+  the uniform interior going to round-off only with the plus sign.)
+
+**Validation.** Uniform (no interface): interior SKEW = **2.4e-14** (round-off), band
+empty. Beltrami y-slab (`slab_y_diag.ini`, 1 step, ~5 s CPU): band SKEW = **+1.27e-1
+PRODUCTION** -- the defect, on the clean uniform-grid testbed.
+
+**Slab toggle sweep (band SKEW, 1 step) -- the key result:**
+
+| config | band SKEW | vs base |
+|---|---|---|
+| baseline (no reflux, recon, metric) | +0.127 | -- |
+| reflux | +0.124 | -2% (inert on energy) |
+| reflux + NORECON (no cubic) | +0.056 | **-56%** |
+| reflux + NORECON + VELINJECT (const-1/2 prolong) | +0.045 | **-65%** |
+| NORECON only | +0.054 | -58% |
+
+=> the **cubic deep-halo reconstruction** (the increment-5 `3q1-3q2+q3`, a non-
+constant-1/2 metric extrapolation) is the **DOMINANT interface energy producer**; the
+**metric prolong** is secondary; the single-valued momentum **reflux is ~inert on
+ENERGY** (it conserves momentum, not energy). This is *exactly* V&V 2003: constant-1/2
+weights conserve energy, metric/cubic weights destroy it -- and it explains why all
+four prior fixes (none on the constant-1/2 energy path) failed. The residual **+0.045**
+(~35%) is the genuine div-form 2:1 skew-defect that needs the skew FORM, not just
+constant-1/2 inputs.
+
+**Channel (GPU, refined_y110, IC `make_channel_restart --mode refined --band-cells 24`,
+nsteps=150).** Ran STABLE to step 150 (wrote channel_field_150.h5). KEBAL band SKEW
+~ -95 (steady, |.|~1.75e4) vs interior SKEW ~ -59 (|.|~1.33e5): band ~25x higher
+RELATIVE skew-imbalance -- a real localized interface signal -- BUT the channel's
+near-wall **y-stretching contaminates SKEW** (the div form is not energy-conserving on
+a stretched grid either, concentrated exactly where the wall band is) and flips its
+sign vs the uniform slab. So **KEBAL is cleanest on the UNIFORM slab**; the channel's
+decisive gate remains `channel_band_profile.py` (the u_rms gj=24/39 band).
+
+**NOT done (next session):** (1) on the channel, run NORECON+VELINJECT(+reflux) and
+measure the PHYSICAL band with `channel_band_profile.py` (gj=24/39) + stability past
+step 200 -- the slab energy sweep predicts -56..-65% energy; test whether the u_rms
+band actually shrinks AND stays stable (V&V's order-for-energy trade; the prompt says
+gate the cubic/metric prolong OFF on the energy path). (2) For the residual +0.045,
+implement the skew FORM at the interface band (add `1/2 u(div u)` at band cells to turn
+div->skew there; caveat: it breaks LOCAL momentum conservation but -> 0 as the
+projection converges -- weigh against the reflux). Scratchpad files (regenerable):
+`IC.h5`, `chan_ke.ini` (refined_y110 + that IC + nsteps=150), `s1_reflux.ini`.
+RUN GPU CASES ONE AT A TIME and pkill stray `build_*/main` between runs (they
+accumulate and starve everything).
+
 ## Memory
 `interface-validation-suite` (the gates + this state), `corner-reconstruction-todo`,
 `restart-overrides-config-sor`, `refinement-perf-profile`, `chebyshev-jacobi-plan`.
