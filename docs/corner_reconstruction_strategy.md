@@ -1,6 +1,42 @@
 # 2:1 edge/corner reconstruction — strategy for a consistent (≥O(h)) corner
 
-Branch `claude/jacobi-interface`. Status after commit `e3a4a7a`.
+Branch `claude/jacobi-interface`.
+
+## RESOLUTION (read this first)
+
+The clean "composite diffusion" of §"Strategy" below was implemented and is
+**unstable** — it is recorded here because the *reason* is fundamental and rules
+out the whole family.
+
+A consistent corner diffusion needs the cubic ghost's curvature, and the cubic
+ghost `3q1-3q2+q3` makes the interface-cell second-derivative
+`(q0-2q1+q2) → (q1-2q2+q3)`: the **self-coefficient on the cell flips from −2 to
++1**. On a planar interface the two tangential directions (−2 each) keep the net
+negative (stable); at a **3D corner all three directions are one-sided → net
+anti-diffusive +3** → the explicit predictor blows up. Verified: a separate
+`add_interface_diffusion_correction` that adds exactly `ire·lap·(q1-2q2+q3)` at
+corner cells gives a **clean O(h) operator order (patch fine band 1.24→1.06)** but
+**NaNs the `interface_decay` decay gate**. Consistency and stability cannot both
+come from a deep-halo ghost.
+
+**Shipped fix (commit after `e3a4a7a`):** a **slope-limited cubic** (`lim_extrap`
+in `step.f90`), gated to corner blocks (`nIf ≥ 2`). The cubic increment is clipped
+to ≤ the trusted linear slope (minmod-family), which clips exactly the high-k
+modes the anti-diffusion would amplify while leaving smooth corners (low
+curvature) on the full cubic. Stable, planar slab still 2.0, and the **patch
+corner fine-band order rises to ~1.2→1.06 (≈O(h)+)** vs the linear ghost's
+0.5–0.86. Mass round-off, reflux conserves, bit-exact off, CPU==GPU.
+
+Remaining gap: on the harsh tgv3d gate the order still drifts down at fine
+resolution (the limiter clips at the flow's curvature extrema). For the realistic
+refine_body corner (smooth buffer flow, low curvature) the limiter is inert and
+the corner is the full 2nd-order cubic. A genuinely consistent *and* stable corner
+would need an IMPLICIT or flux-form interface diffusion (negative-definite by
+construction), out of scope here.
+
+---
+
+## Original analysis (status after commit `e3a4a7a`)
 
 ## The problem
 

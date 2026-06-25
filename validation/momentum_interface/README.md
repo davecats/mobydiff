@@ -95,17 +95,26 @@ Validated (`MOBY_PREDONLY` + `MOBY_RHSDUMP`, per-component `Sum(vol*rhs)`):
 **Corner/edge stability (inc 6).** The cubic deep-halo reconstruction `3q1-3q2+q3`
 amplifies a high-k mode ~7x; on a single (planar) interface this is harmless, but
 a block at a 2:1 EDGE/CORNER reconstructs in 2-3 directions that feed the same
-corner cell's cross-advection and the combined amplification BLOWS UP (the
-3D-patch `interface_decay` gate; dt-scaled → predictor, not projection). Fix: the
-extrapolation ORDER is lowered at edge/corner blocks — `nIf` (interface-face
-count) < 2 keeps the 2nd-order cubic `(3,-3,1)`; `nIf ≥ 2` uses the **linear ghost
-`2q1-q2` `(2,-1,0)`** (L1 norm 3, bounded under the corner coupling). Result:
-`interface_decay` PASSES, the **planar slab keeps its 2nd-order fine band**, and
-the **patch corner operator is now CONSISTENT** (fine-band rms 1.4e-3→5.3e-4,
-converging, ~14x smaller than the un-reconstructed O(1)/diverging case). The
-order is still sub-O(h) (~0.5–0.86) because linear's `dif_y=0` leaves the corner
-NORMAL diffusion at O(1); a composite-stencil corner diffusion for clean O(h)+ is
-OPEN (memory `corner-reconstruction-todo`, `docs/corner_reconstruction_strategy.md`).
+corner cell and BLOW UP (the 3D-patch `interface_decay` gate; dt-scaled →
+predictor, not projection). Fix: a **slope-limited cubic** (`lim_extrap`), gated to
+edge/corner blocks (`nIf ≥ 2`) — the cubic increment is clipped to ≤ the trusted
+linear slope (minmod-family) so a high-k mode cannot grow, while a smooth corner
+(low curvature) keeps the full cubic. Planar blocks (`nIf < 2`, incl. the channel
+bands) use the unlimited cubic. Result: `interface_decay` PASSES, the **planar
+slab keeps its 2nd-order fine band**, and the **patch corner fine-band order rises
+to ~1.2→1.06 (≈O(h)+)** — vs the linear ghost's 0.5–0.86 and the un-reconstructed
+O(1)/diverging case.
+
+Why limited (not a "composite" cubic-consistent diffusion): a consistent corner
+diffusion is **inherently unstable**. The cubic ghost's `3q1` term flips the
+interface-cell 2nd-derivative self-coefficient from `−2` to `+1`; on a planar
+interface the two tangential directions (`−2` each) keep the net negative, but at
+a 3D corner all three one-sided directions sum to a net **anti-diffusive `+3`**.
+A separate cubic-equivalent diffusion correction was implemented and verified to
+give clean O(h) operator order **but it NaNs the decay gate** — so consistency and
+stability cannot both come from the ghost. The limiter is the stable compromise:
+it clips exactly the high-k modes the anti-diffusion would amplify. See
+`docs/corner_reconstruction_strategy.md`, memory `corner-reconstruction-todo`.
 
 **The one piece NOT refluxed — viscous corners.** The 2:1 viscous flux conserves
 on a FLAT interface (slab dif ≈ 1e-17) but leaks ~1st order at edges/corners

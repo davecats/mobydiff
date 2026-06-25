@@ -103,10 +103,54 @@ contains
     ! Purely local (no cross-block reads, no exchange-ordering race). Inert without
     ! a 2:1 interface (no FACE_COARSE/FACE_FINE face), hence bit-exact for
     ! single-level runs. Call right before the predictor, after the halo exchange.
+    !
+    ! STABILITY (the edge/corner blow-up): the plain cubic ghost amplifies a high-k
+    ! mode ~7x. On a planar interface that is harmless, but at a 2:1 EDGE/CORNER a
+    ! block reconstructs in 2-3 directions whose amplified halos feed the same cell's
+    ! cross-advection and BLOW UP (3D-patch interface_decay; dt-scaled -> predictor).
+    ! Fix: SLOPE-LIMIT the cubic (lim_extrap below). Where the field is smooth the
+    ! limiter is inert -> full cubic -> 2nd-order ghost (the realistic refine_body
+    ! corner sits in smooth buffer flow); where a high-k mode would be amplified the
+    ! extrapolation increment is clipped to <= CLIM x the trusted linear slope,
+    ! bounding it like the linear ghost (~3x) -> stable. One ghost, no adv/diff
+    ! split. See docs/corner_reconstruction_strategy.md.
+
+    ! Slope-limited one-sided extrapolation of the deep halo q(0) from the fine
+    ! interior q(1),q(2),q(3). lim=.false. (a PLANAR single-interface block) -> the
+    ! plain 2nd-order cubic 3q1-3q2+q3 (slab fine band 2.0). lim=.true. (a 2:1
+    ! EDGE/CORNER block) -> the cubic INCREMENT (2q1-3q2+q3) is clipped to <= CLIM x
+    ! the trusted linear slope (q1-q2), minmod-family. This is also the ONLY stable
+    ! way to add curvature at a corner: a consistent (cubic) ghost makes the
+    ! interface-cell 2nd-derivative self-coefficient +1 instead of -2, so at a 3D
+    ! corner all three one-sided directions sum to a net ANTI-diffusive +3 and the
+    ! explicit step blows up (verified: a separate cubic-equivalent diffusion
+    ! correction gives clean O(h) operator order but NaNs the decay). The limiter
+    ! clips exactly the high-k modes that anti-diffusion would amplify while leaving
+    ! smooth corners (low curvature) on the cubic -> stable AND ~O(h). Limiting
+    ! EVERYWHERE would clip the planar slab at its flow extrema (drops it to ~1st
+    ! order), so it is gated to corner blocks. See docs/corner_reconstruction_strategy.md.
+    real(C_DOUBLE) function lim_extrap(q1, q2, q3, lim)
+        !$omp declare target
+        real(C_DOUBLE), intent(in) :: q1, q2, q3
+        logical, intent(in) :: lim
+        real(C_DOUBLE), parameter :: CLIM = 1.0d0
+        real(C_DOUBLE) :: dlt, s
+        dlt = 2.0d0*q1 - 3.0d0*q2 + q3      ! cubic increment q(0) - q(1)
+        if (.not. lim) then
+            lim_extrap = q1 + dlt            ! planar: full cubic
+            return
+        end if
+        s = q1 - q2                          ! trusted linear slope
+        if (s*dlt <= 0.0d0) then
+            lim_extrap = q1                  ! extremum / opposite sign -> no extrapolation
+        else
+            lim_extrap = q1 + sign(min(abs(dlt), CLIM*abs(s)), s)
+        end if
+    end function lim_extrap
+
     subroutine reconstruct_interface_halos(blk)
         type(block_set_type), intent(inout) :: blk
         integer :: b, i, j, k, d, nx, ny, nz, nBlocks, nIf
-        real(C_DOUBLE) :: c1, c2, c3
 
         nx = int(blk%nb(1)); ny = int(blk%nb(2)); nz = int(blk%nb(3))
         nBlocks = int(blk%nBlocks)
@@ -116,27 +160,12 @@ contains
         ! interface face reaches the neighbouring tangential halo column (e.g.
         ! v's d(vu)/dx at i reads u(i+1,0,k), so the edge cell i=nx needs
         ! u(nx+1,0,k) reconstructed too). Components NORMAL to a HIGH face are the
-        ! owned interface face, not a deep halo, and are left untouched.
-        !
-        ! STABILITY: the cubic extrapolation q(0)=3q1-3q2+q3 amplifies a high-k
-        ! mode ~7x. On a SINGLE (planar) interface this is harmless, but a block at
-        ! a 2:1 EDGE/CORNER reconstructs in 2-3 directions whose halos feed the
-        ! same corner cell's cross-advection and the combined amplification BLOWS
-        ! UP (the 3D-patch interface_decay gate; dt-scaled -> the predictor, not a
-        ! projection null mode). So the extrapolation ORDER is lowered at
-        ! edge/corner blocks: nIf (number of interface faces) < 2 -> the 2nd-order
-        ! cubic (c=3,-3,1); nIf >= 2 -> the LINEAR ghost q(0)=2q1-q2 (c=2,-1,0),
-        ! whose L1 norm 3 is small enough to stay bounded under the corner
-        ! coupling. The planar slab keeps its 2nd-order fine band; the corner cells
-        ! drop to ~O(h) (vs O(1) for no reconstruction). Linear loses the normal
-        ! diffusion curvature (the corner normal dif is then ~O(1)); a
-        ! composite-stencil corner diffusion for clean O(h)+ is open work
-        ! (memory corner-reconstruction-todo).
+        ! owned interface face, not a deep halo, and are left untouched. Every ghost
+        ! is the slope-limited cubic lim_extrap (corner stability, see the header).
 
-        ! x-interface deep halos: normal = u, tangential = v,w. (nIf and the
-        ! coefficients c1..c3 are recomputed per block in each region.)
+        ! x-interface deep halos: normal = u, tangential = v,w.
         !$omp target teams distribute parallel do collapse(2) &
-        !$omp& map(to: blk%physLow, blk%physHigh) map(tofrom: blk%q) private(i,j,k,d,b,nIf,c1,c2,c3)
+        !$omp& map(to: blk%physLow, blk%physHigh) map(tofrom: blk%q) private(i,j,k,d,b,nIf)
         do b = 1, nBlocks
             do k = 0, nz+1
                 nIf = 0
@@ -144,42 +173,38 @@ contains
                     if (blk%physLow(d,b) == FACE_COARSE .or. blk%physLow(d,b) == FACE_FINE) nIf = nIf + 1
                     if (blk%physHigh(d,b) == FACE_COARSE .or. blk%physHigh(d,b) == FACE_FINE) nIf = nIf + 1
                 end do
-                c1 = merge(2.0d0, 3.0d0, nIf >= 2)
-                c2 = merge(-1.0d0, -3.0d0, nIf >= 2)
-                c3 = merge(0.0d0, 1.0d0, nIf >= 2)
                 if (blk%physLow(1,b) == FACE_COARSE) then
                     do j = 0, ny+1
-                        blk%q(0,j,k,VAR_U,b) = c1*blk%q(1,j,k,VAR_U,b) &
-                            + c2*blk%q(2,j,k,VAR_U,b) + c3*blk%q(3,j,k,VAR_U,b)
-                        blk%q(0,j,k,VAR_V,b) = c1*blk%q(1,j,k,VAR_V,b) &
-                            + c2*blk%q(2,j,k,VAR_V,b) + c3*blk%q(3,j,k,VAR_V,b)
-                        blk%q(0,j,k,VAR_W,b) = c1*blk%q(1,j,k,VAR_W,b) &
-                            + c2*blk%q(2,j,k,VAR_W,b) + c3*blk%q(3,j,k,VAR_W,b)
+                        blk%q(0,j,k,VAR_U,b) = lim_extrap(blk%q(1,j,k,VAR_U,b), &
+                            blk%q(2,j,k,VAR_U,b), blk%q(3,j,k,VAR_U,b), nIf >= 2)
+                        blk%q(0,j,k,VAR_V,b) = lim_extrap(blk%q(1,j,k,VAR_V,b), &
+                            blk%q(2,j,k,VAR_V,b), blk%q(3,j,k,VAR_V,b), nIf >= 2)
+                        blk%q(0,j,k,VAR_W,b) = lim_extrap(blk%q(1,j,k,VAR_W,b), &
+                            blk%q(2,j,k,VAR_W,b), blk%q(3,j,k,VAR_W,b), nIf >= 2)
                     end do
                 end if
                 if (blk%physHigh(1,b) == FACE_COARSE) then
                     do j = 0, ny+1
-                        blk%q(nx+1,j,k,VAR_V,b) = c1*blk%q(nx,j,k,VAR_V,b) &
-                            + c2*blk%q(nx-1,j,k,VAR_V,b) + c3*blk%q(nx-2,j,k,VAR_V,b)
-                        blk%q(nx+1,j,k,VAR_W,b) = c1*blk%q(nx,j,k,VAR_W,b) &
-                            + c2*blk%q(nx-1,j,k,VAR_W,b) + c3*blk%q(nx-2,j,k,VAR_W,b)
+                        blk%q(nx+1,j,k,VAR_V,b) = lim_extrap(blk%q(nx,j,k,VAR_V,b), &
+                            blk%q(nx-1,j,k,VAR_V,b), blk%q(nx-2,j,k,VAR_V,b), nIf >= 2)
+                        blk%q(nx+1,j,k,VAR_W,b) = lim_extrap(blk%q(nx,j,k,VAR_W,b), &
+                            blk%q(nx-1,j,k,VAR_W,b), blk%q(nx-2,j,k,VAR_W,b), nIf >= 2)
                     end do
                 end if
                 ! Coarse side (coarse-above-fine): point-accurate normal ghost.
                 if (blk%physLow(1,b) == FACE_FINE) then
                     do j = 0, ny+1
-                        blk%q(0,j,k,VAR_U,b) = c1*blk%q(1,j,k,VAR_U,b) &
-                            + c2*blk%q(2,j,k,VAR_U,b) + c3*blk%q(3,j,k,VAR_U,b)
+                        blk%q(0,j,k,VAR_U,b) = lim_extrap(blk%q(1,j,k,VAR_U,b), &
+                            blk%q(2,j,k,VAR_U,b), blk%q(3,j,k,VAR_U,b), nIf >= 2)
                     end do
                 end if
             end do
         end do
         !$omp end target teams distribute parallel do
 
-        ! y-interface deep halos: normal = v, tangential = u,w. Clip the i-ring so
-        ! it does not reach into an x-interface halo (already reconstructed above).
+        ! y-interface deep halos: normal = v, tangential = u,w.
         !$omp target teams distribute parallel do collapse(2) &
-        !$omp& map(to: blk%physLow, blk%physHigh) map(tofrom: blk%q) private(i,j,k,d,b,nIf,c1,c2,c3)
+        !$omp& map(to: blk%physLow, blk%physHigh) map(tofrom: blk%q) private(i,j,k,d,b,nIf)
         do b = 1, nBlocks
             do k = 0, nz+1
                 nIf = 0
@@ -187,42 +212,38 @@ contains
                     if (blk%physLow(d,b) == FACE_COARSE .or. blk%physLow(d,b) == FACE_FINE) nIf = nIf + 1
                     if (blk%physHigh(d,b) == FACE_COARSE .or. blk%physHigh(d,b) == FACE_FINE) nIf = nIf + 1
                 end do
-                c1 = merge(2.0d0, 3.0d0, nIf >= 2)
-                c2 = merge(-1.0d0, -3.0d0, nIf >= 2)
-                c3 = merge(0.0d0, 1.0d0, nIf >= 2)
                 if (blk%physLow(2,b) == FACE_COARSE) then
                     do i = 0, nx+1
-                        blk%q(i,0,k,VAR_U,b) = c1*blk%q(i,1,k,VAR_U,b) &
-                            + c2*blk%q(i,2,k,VAR_U,b) + c3*blk%q(i,3,k,VAR_U,b)
-                        blk%q(i,0,k,VAR_V,b) = c1*blk%q(i,1,k,VAR_V,b) &
-                            + c2*blk%q(i,2,k,VAR_V,b) + c3*blk%q(i,3,k,VAR_V,b)
-                        blk%q(i,0,k,VAR_W,b) = c1*blk%q(i,1,k,VAR_W,b) &
-                            + c2*blk%q(i,2,k,VAR_W,b) + c3*blk%q(i,3,k,VAR_W,b)
+                        blk%q(i,0,k,VAR_U,b) = lim_extrap(blk%q(i,1,k,VAR_U,b), &
+                            blk%q(i,2,k,VAR_U,b), blk%q(i,3,k,VAR_U,b), nIf >= 2)
+                        blk%q(i,0,k,VAR_V,b) = lim_extrap(blk%q(i,1,k,VAR_V,b), &
+                            blk%q(i,2,k,VAR_V,b), blk%q(i,3,k,VAR_V,b), nIf >= 2)
+                        blk%q(i,0,k,VAR_W,b) = lim_extrap(blk%q(i,1,k,VAR_W,b), &
+                            blk%q(i,2,k,VAR_W,b), blk%q(i,3,k,VAR_W,b), nIf >= 2)
                     end do
                 end if
                 if (blk%physHigh(2,b) == FACE_COARSE) then
                     do i = 0, nx+1
-                        blk%q(i,ny+1,k,VAR_U,b) = c1*blk%q(i,ny,k,VAR_U,b) &
-                            + c2*blk%q(i,ny-1,k,VAR_U,b) + c3*blk%q(i,ny-2,k,VAR_U,b)
-                        blk%q(i,ny+1,k,VAR_W,b) = c1*blk%q(i,ny,k,VAR_W,b) &
-                            + c2*blk%q(i,ny-1,k,VAR_W,b) + c3*blk%q(i,ny-2,k,VAR_W,b)
+                        blk%q(i,ny+1,k,VAR_U,b) = lim_extrap(blk%q(i,ny,k,VAR_U,b), &
+                            blk%q(i,ny-1,k,VAR_U,b), blk%q(i,ny-2,k,VAR_U,b), nIf >= 2)
+                        blk%q(i,ny+1,k,VAR_W,b) = lim_extrap(blk%q(i,ny,k,VAR_W,b), &
+                            blk%q(i,ny-1,k,VAR_W,b), blk%q(i,ny-2,k,VAR_W,b), nIf >= 2)
                     end do
                 end if
                 ! Coarse side (coarse-above-fine): point-accurate normal ghost.
                 if (blk%physLow(2,b) == FACE_FINE) then
                     do i = 0, nx+1
-                        blk%q(i,0,k,VAR_V,b) = c1*blk%q(i,1,k,VAR_V,b) &
-                            + c2*blk%q(i,2,k,VAR_V,b) + c3*blk%q(i,3,k,VAR_V,b)
+                        blk%q(i,0,k,VAR_V,b) = lim_extrap(blk%q(i,1,k,VAR_V,b), &
+                            blk%q(i,2,k,VAR_V,b), blk%q(i,3,k,VAR_V,b), nIf >= 2)
                     end do
                 end if
             end do
         end do
         !$omp end target teams distribute parallel do
 
-        ! z-interface deep halos: normal = w, tangential = u,v. Clip the i-ring
-        ! (x-interface) AND the j-ring (y-interface) -- both already reconstructed.
+        ! z-interface deep halos: normal = w, tangential = u,v.
         !$omp target teams distribute parallel do collapse(2) &
-        !$omp& map(to: blk%physLow, blk%physHigh) map(tofrom: blk%q) private(i,j,k,d,b,nIf,c1,c2,c3)
+        !$omp& map(to: blk%physLow, blk%physHigh) map(tofrom: blk%q) private(i,j,k,d,b,nIf)
         do b = 1, nBlocks
             do j = 0, ny+1
                 nIf = 0
@@ -230,32 +251,29 @@ contains
                     if (blk%physLow(d,b) == FACE_COARSE .or. blk%physLow(d,b) == FACE_FINE) nIf = nIf + 1
                     if (blk%physHigh(d,b) == FACE_COARSE .or. blk%physHigh(d,b) == FACE_FINE) nIf = nIf + 1
                 end do
-                c1 = merge(2.0d0, 3.0d0, nIf >= 2)
-                c2 = merge(-1.0d0, -3.0d0, nIf >= 2)
-                c3 = merge(0.0d0, 1.0d0, nIf >= 2)
                 if (blk%physLow(3,b) == FACE_COARSE) then
                     do i = 0, nx+1
-                        blk%q(i,j,0,VAR_U,b) = c1*blk%q(i,j,1,VAR_U,b) &
-                            + c2*blk%q(i,j,2,VAR_U,b) + c3*blk%q(i,j,3,VAR_U,b)
-                        blk%q(i,j,0,VAR_V,b) = c1*blk%q(i,j,1,VAR_V,b) &
-                            + c2*blk%q(i,j,2,VAR_V,b) + c3*blk%q(i,j,3,VAR_V,b)
-                        blk%q(i,j,0,VAR_W,b) = c1*blk%q(i,j,1,VAR_W,b) &
-                            + c2*blk%q(i,j,2,VAR_W,b) + c3*blk%q(i,j,3,VAR_W,b)
+                        blk%q(i,j,0,VAR_U,b) = lim_extrap(blk%q(i,j,1,VAR_U,b), &
+                            blk%q(i,j,2,VAR_U,b), blk%q(i,j,3,VAR_U,b), nIf >= 2)
+                        blk%q(i,j,0,VAR_V,b) = lim_extrap(blk%q(i,j,1,VAR_V,b), &
+                            blk%q(i,j,2,VAR_V,b), blk%q(i,j,3,VAR_V,b), nIf >= 2)
+                        blk%q(i,j,0,VAR_W,b) = lim_extrap(blk%q(i,j,1,VAR_W,b), &
+                            blk%q(i,j,2,VAR_W,b), blk%q(i,j,3,VAR_W,b), nIf >= 2)
                     end do
                 end if
                 if (blk%physHigh(3,b) == FACE_COARSE) then
                     do i = 0, nx+1
-                        blk%q(i,j,nz+1,VAR_U,b) = c1*blk%q(i,j,nz,VAR_U,b) &
-                            + c2*blk%q(i,j,nz-1,VAR_U,b) + c3*blk%q(i,j,nz-2,VAR_U,b)
-                        blk%q(i,j,nz+1,VAR_V,b) = c1*blk%q(i,j,nz,VAR_V,b) &
-                            + c2*blk%q(i,j,nz-1,VAR_V,b) + c3*blk%q(i,j,nz-2,VAR_V,b)
+                        blk%q(i,j,nz+1,VAR_U,b) = lim_extrap(blk%q(i,j,nz,VAR_U,b), &
+                            blk%q(i,j,nz-1,VAR_U,b), blk%q(i,j,nz-2,VAR_U,b), nIf >= 2)
+                        blk%q(i,j,nz+1,VAR_V,b) = lim_extrap(blk%q(i,j,nz,VAR_V,b), &
+                            blk%q(i,j,nz-1,VAR_V,b), blk%q(i,j,nz-2,VAR_V,b), nIf >= 2)
                     end do
                 end if
                 ! Coarse side (coarse-above-fine): point-accurate normal ghost.
                 if (blk%physLow(3,b) == FACE_FINE) then
                     do i = 0, nx+1
-                        blk%q(i,j,0,VAR_W,b) = c1*blk%q(i,j,1,VAR_W,b) &
-                            + c2*blk%q(i,j,2,VAR_W,b) + c3*blk%q(i,j,3,VAR_W,b)
+                        blk%q(i,j,0,VAR_W,b) = lim_extrap(blk%q(i,j,1,VAR_W,b), &
+                            blk%q(i,j,2,VAR_W,b), blk%q(i,j,3,VAR_W,b), nIf >= 2)
                     end do
                 end if
             end do
