@@ -247,6 +247,82 @@ coupling to the fine streaks does not pump energy; (c) accept the band as intrin
 and instead gate STABILITY (Davide's actual requirement) -- find what tips the
 ~step-180 blow-up and bound only that. (a)/(b) are the principled directions.
 
+## Session 2026-06-25d: Galerkin (adjoint) transfer pair -- tested, not the lever
+
+The velocity prolong is linear INTERPOLATION (fdfd477 default) while the restrict
+is simple AVERAGE -> a NON-adjoint pair. The two adjoint alternatives are
+injection-prolong+average-restrict (0th order) and interp-prolong+full-weighting-
+restrict (1st order). Tested the prolong half cheaply (`MOBY_VELINJECT`, comm.f90:
+injection instead of tangential interp -> the injection+average ADJOINT pair):
+channel 150 steps, STABLE (div 2.457e-3), band u(gj=24) 1.378 -> 1.322 (~4%),
+gj=39 unchanged. Baseline (velInject off) bit-exact (1.3778) -- the toggle is
+inert by default.
+
+So making the transfer pair adjoint barely moves the band. The remaining half
+(full-weighting restrict adjoint to the interp prolong) is provably no better:
+the band is LOW-k, and EVERY consistent linear restrict (average, full-weighting)
+is the identity on low-k modes -- they differ only at O((k h)^2), i.e. on the
+high-k content the band does not have. A low-k band is immune to the choice of
+(consistent) grid-transfer operator. Hence the full Galerkin pair was NOT built
+(intricate gather-map + MPI-pack widening for a provably-null change); the
+`MOBY_VELINJECT` diagnostic is kept.
+
+CONCLUSION across all four attempts (cubic reconstruction, high-k filter,
+phi-prolong interp, Galerkin transfer pair): the band is a LOW-k, predictor-
+ADVECTION-driven energy pileup at the coarse cell next to the fine band, immune to
+grid-transfer and filtering. The one untried principled lever is the
+DISCRETIZATION: a skew-symmetric / kinetic-energy-conserving advection at the
+coarse interface cell so its advective coupling to the resolved fine-side streaks
+neither produces nor reflects energy (Morinishi/Verstappen-style energy-conserving
+convection, restricted to the interface-adjacent coarse cells). Alternative if that
+also fails: accept the band as intrinsic to the 2:1 resolution jump and gate only
+STABILITY (Davide's real requirement) -- bisect what tips the ~step-180 blow-up
+(CFL at the interface? the band amplitude crossing a threshold?) and bound that.
+
+## Session 2026-06-25e: bug hunt (task i) -- NO bug feeds the coarse-cell band
+
+Done before any energy-conserving implementation, to rule out a bug (Davide's
+request). All checks point to the band being a real nonlinear effect, not a defect:
+
+- **Periodic borders: NOT a bug.** The band is UNIFORM in x,z (u' vs x at gj=24:
+  mean 1.35, no spike at the x=0/Lx or z=0/Lz seam). MOBY_HALO_AUDIT bad-count is
+  IDENTICAL with x,z periodic vs x,z walls (292848) -> the bad cells are NOT at the
+  seams (else walls would skip them). So the periodic halo wrap is not implicated.
+- **Conservative transfers feeding the coarse cell: EXACT for a linear field.**
+  MOBY_HALO_AUDIT (linear manufactured field, every exchanged halo vs the transfer
+  design): COPY = 0 bad, RESTRICT = 0 bad. The coarse cell's tangential deep-halo
+  inputs and the divergence interface face are restrict/copy-filled -> no
+  first-order transfer bug at the coarse cell. (The PROLONG "bad" cells are
+  fine-block halos that reconstruct_interface_halos OVERWRITES -- the exchange-only
+  audit cannot validate them, and they feed the FINE block, not the coarse cell.)
+- **Reconstruction (incl. its uniform-spacing cubic on the stretched grid): ~3.5%.**
+  MOBY_NORECON on the channel: u(gj=24) 1.378 -> 1.330, gj=39 1.548 -> 1.536; band
+  persists. So the predictor deep-halo reconstruction is not the cause. (There IS a
+  real minor stretched-grid inexactness -- the cubic 3q1-3q2+q3 assumes uniform
+  spacing; worth fixing for accuracy but it is not the band.)
+- **Not the stretched grid.** The band SEED appears on a UNIFORM grid too:
+  refined-vs-uniform-coarse Beltrami at IDENTICAL dt (5 steps, dtmax=1e-3) deviates
+  most at the interface-adjacent coarse cell (j=24: dv 3.2e-3, du 1.6e-3), decaying
+  inward -- on a uniform grid.
+- **Not projection convergence** (niter 6==50, earlier) ; **not high-k** (FFT: low-k).
+
+WHICH TERM / WHY-CHANNEL-NOT-MANUFACTURED: the band is the PREDICTOR's advection at
+the coarse interface cell (projection doesn't touch u; reconstruction ~3.5%; the
+remainder is the coarse cell's nonlinear advective coupling to the resolved fine-
+side streaks). It DOES appear in a manufactured field -- in the FULL Beltrami step
+(predictor+projection), interface-localized at matched dt -- just small, because
+k=1 Beltrami has little interface energy/shear; the channel has a lot, so the band
+is large. Since the coarse cell's LINEAR inputs are exact, the band is a NONLINEAR
+(kinetic-energy) effect, not a linear transfer bug.
+
+CONCLUSION (task i): no bug. The hypotheses hold -- low-k, predictor-advection-
+driven, kinetic-energy pileup at the coarse cell adjacent to the better-resolved
+fine band. => proceed to (ii): skew-symmetric / KE-conserving advection at the
+interface-adjacent coarse cells (Morinishi/Verstappen), so the coarse cell's
+advective coupling to the fine-side resolved streaks neither produces nor reflects
+kinetic energy. (Diagnostic kept: MOBY_VELINJECT in comm.f90 = injection vs interp
+velocity prolong, the adjoint-pair toggle.)
+
 ## Memory
 `interface-validation-suite` (the gates + this state), `corner-reconstruction-todo`,
 `restart-overrides-config-sor`, `refinement-perf-profile`, `chebyshev-jacobi-plan`.
