@@ -19,6 +19,8 @@ module config
         logical :: cflmax = .false.
         logical :: pecletmax = .false.
         logical :: dtmax = .false.
+        logical :: pressure_niter = .false.
+        logical :: pressure_sor = .false.
     end type config_seen_type
 
     logical, save :: terminal_output = .true.
@@ -195,11 +197,13 @@ subroutine apply_config_value(section, key, value, dns, g, les, ps, bc, c, seen,
             call read_integer(value, niter_value, line_no)
             if (niter_value >= 0) then
                 ps%nIter = int(niter_value, C_INT)
+                seen%pressure_niter = .true.
             else
                 if (terminal_output) print *, "warning: pressure nIter must be non-negative on input line", line_no
             end if
         case ("sor")
             call read_real(value, ps%sor, line_no)
+            seen%pressure_sor = .true.
         case ("accel")
             ! none | jacobi (default) or chebyshev (Chebyshev-Jacobi).
             select case (trim(lower(clean_string(value))))

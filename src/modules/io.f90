@@ -233,7 +233,8 @@ subroutine write_grid_export(dns, g, blk, bc, file_name, has_terminal)
 end subroutine write_grid_export
 
 subroutine read_restart_metadata(dns, g, bc, pressure_niter, pressure_sor, file_name, c, &
-        preserve_cflmax, preserve_pecletmax, preserve_dtmax, preserve_t_final)
+        preserve_cflmax, preserve_pecletmax, preserve_dtmax, preserve_t_final, &
+        preserve_pressure_niter, preserve_pressure_sor)
     type(dns_type), intent(inout) :: dns
     type(grid_type), intent(inout) :: g
     type(boundary_type), intent(inout) :: bc
@@ -242,6 +243,7 @@ subroutine read_restart_metadata(dns, g, bc, pressure_niter, pressure_sor, file_
     character(len=*), intent(in) :: file_name
     type(comm_type), intent(in) :: c
     logical, intent(in), optional :: preserve_cflmax, preserve_pecletmax, preserve_dtmax, preserve_t_final
+    logical, intent(in), optional :: preserve_pressure_niter, preserve_pressure_sor
 
     character(kind=C_CHAR,len=:), allocatable :: c_file_name
     integer(C_INT) :: ierr
@@ -250,6 +252,8 @@ subroutine read_restart_metadata(dns, g, bc, pressure_niter, pressure_sor, file_
     integer(C_INT) :: ibm_enabled
     integer :: dir
     real(C_DOUBLE) :: input_cflmax, input_pecletmax, input_dtmax, input_t_final
+    integer(C_INT) :: input_pressure_niter
+    real(C_DOUBLE) :: input_pressure_sor
 
     file_nsteps = dns%nsteps
     periodic = merge(1_C_INT, 0_C_INT, bc%isPeriodic)
@@ -258,6 +262,8 @@ subroutine read_restart_metadata(dns, g, bc, pressure_niter, pressure_sor, file_
     input_pecletmax = dns%pecletmax
     input_dtmax = dns%dtmax
     input_t_final = dns%t_final
+    input_pressure_niter = pressure_niter
+    input_pressure_sor = pressure_sor
     c_file_name = to_c_string(file_name)
     ierr = fdm_h5_read_metadata(c_file_name, dns%globalSize(1), dns%globalSize(2), dns%globalSize(3), &
         dns%step_current, file_nsteps, &
@@ -282,6 +288,16 @@ subroutine read_restart_metadata(dns, g, bc, pressure_niter, pressure_sor, file_
     end if
     if (present(preserve_t_final)) then
         if (preserve_t_final) dns%t_final = input_t_final
+    end if
+    ! Pressure solver settings (niter, sor/omega) are CONFIG authority: a restart
+    ! stores whatever the producing run used (e.g. an old red-black sor=1.5), which
+    ! would silently override -- and with damped Jacobi a sor>0.8 DIVERGES. So when
+    ! the ini set them, keep the ini value.
+    if (present(preserve_pressure_niter)) then
+        if (preserve_pressure_niter) pressure_niter = input_pressure_niter
+    end if
+    if (present(preserve_pressure_sor)) then
+        if (preserve_pressure_sor) pressure_sor = input_pressure_sor
     end if
 
     if (dns%nsteps <= 0_C_INT) dns%nsteps = file_nsteps

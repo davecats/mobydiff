@@ -18,7 +18,8 @@ program main
     use :: ibmm
     use :: les_model
     use :: comm, only: comm_type, comm_init_world, comm_init, comm_finalize, &
-        init_block_exchange, exchange_halos, exchange_scalar_halos
+        init_block_exchange, exchange_halos, exchange_scalar_halos, &
+        comm_allreduce_sum, comm_allreduce_max
     implicit none
 
     integer :: arg_status, rkStage, refluxDir, refluxComp
@@ -47,8 +48,13 @@ program main
     ! field -- any change it makes IS the correction/interface defect. MOBY_PREDONLY:
     ! skip the projection so the field is the pure predictor. Either dumps the
     ! initial field (900000) so the change can be diffed.
-    logical :: projOnly, predOnly, divdump, rhsdump, noRecon
+    logical :: projOnly, predOnly, divdump, rhsdump, noRecon, stepDiv
     character(len=16) :: diagEnv
+    ! MOBY_STEPDIV: per-timestep divergence monitor -- after the full RK step, print
+    ! the final field's divergence L2 (rms) and max, and the global mass residual
+    ! (Sum vol*div). Tracks whether an under-converged projection lets divergence
+    ! accumulate / blow up. Off by default.
+    real(C_DOUBLE), allocatable :: divStepBuf(:,:,:,:)
     ! MOBY_DIVDUMP: write the discrete (raw staggered) divergence the solver sees,
     ! BEFORE the last projection (div_pre = D u*, e.g. of the exact field under
     ! MOBY_PROJONLY) and AFTER (div_post = D u_after), as companion field files.
@@ -82,7 +88,9 @@ program main
         if (c%has_terminal) print *, "reading restart metadata: ", trim(dns%restart_file)
         call read_restart_metadata(dns, g, bc, ps%nIter, ps%sor, dns%restart_file, c, &
             preserve_cflmax=config_seen%cflmax, preserve_pecletmax=config_seen%pecletmax, &
-            preserve_dtmax=config_seen%dtmax, preserve_t_final=config_seen%t_final)
+            preserve_dtmax=config_seen%dtmax, preserve_t_final=config_seen%t_final, &
+            preserve_pressure_niter=config_seen%pressure_niter, &
+            preserve_pressure_sor=config_seen%pressure_sor)
     end if
     call comm_init(c, dns, bc)
 
@@ -257,6 +265,8 @@ program main
     rhsdump = len_trim(diagEnv) > 0
     call get_environment_variable("MOBY_NORECON", diagEnv)
     noRecon = len_trim(diagEnv) > 0   ! debug: skip reconstruct_interface_halos
+    call get_environment_variable("MOBY_STEPDIV", diagEnv)
+    stepDiv = len_trim(diagEnv) > 0   ! per-step divergence L2/max + global mass monitor
     ! MOBY_MANUF=<amp>: add a pure-gradient perturbation amp*grad(phi),
     ! phi = cos(kx)cos(ky)cos(kz), to the (exact, div-free) initial field.
     ! The result is globally mass-conserving (a periodic gradient integrates
@@ -354,6 +364,8 @@ program main
             if (divdump .and. rkStage == 1) call capture_divergence(blk, divPost)
 
         end do
+
+        if (stepDiv) call print_step_divergence(blk, c, dns, divStepBuf)
 
         if (les_is_enabled(les)) then
             call update_timestep_limits(blk, dns, c, les)
@@ -602,6 +614,59 @@ contains
         !$omp end target teams distribute parallel do
 #endif
     end subroutine capture_divergence
+
+    ! Per-timestep divergence monitor (MOBY_STEPDIV). After the full RK step, form
+    ! the discrete divergence of the final velocity and reduce it to: L2 = rms over
+    ! all interior cells, MAX = max|div|, and MASS = Sum(vol*div) (the global mass
+    ! residual; round-off for a conservative scheme on a periodic box). Reductions
+    ! are MPI-global. cell volume = 1/(d1x*d1y*d1z) on the pressure metric (per
+    ! block, so correct across levels).
+    subroutine print_step_divergence(blk, c, dns, divBuf)
+        type(block_set_type), intent(inout) :: blk
+        type(comm_type), intent(in) :: c
+        type(dns_type), intent(in) :: dns
+        real(C_DOUBLE), allocatable, intent(inout) :: divBuf(:,:,:,:)
+        integer(C_INT) :: i, j, k, b, nx, ny, nz
+        real(C_DOUBLE) :: sumsq, masssum, ncells, maxabs, vol, d
+        real(C_DOUBLE) :: red(3), redmax(1)
+
+        call capture_divergence(blk, divBuf)
+        nx = blk%nb(1); ny = blk%nb(2); nz = blk%nb(3)
+        sumsq = 0.0d0; masssum = 0.0d0; ncells = 0.0d0; maxabs = 0.0d0
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target teams distribute parallel do collapse(4) &
+        !$omp& map(to: divBuf, blk%d1x, blk%d1y, blk%d1z) &
+        !$omp& reduction(+:sumsq,masssum,ncells) reduction(max:maxabs) &
+        !$omp& private(i,j,k,b,vol,d)
+#endif
+        do b = 1_C_INT, blk%nBlocks
+            do k = 1, nz
+                do j = 1, ny
+                    do i = 1, nx
+                        d = divBuf(i,j,k,b)
+                        vol = 1.0d0/(blk%d1x(i,VAR_P,b)*blk%d1y(j,VAR_P,b)*blk%d1z(k,VAR_P,b))
+                        sumsq = sumsq + d*d
+                        masssum = masssum + vol*d
+                        ncells = ncells + 1.0d0
+                        maxabs = max(maxabs, abs(d))
+                    end do
+                end do
+            end do
+        end do
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp end target teams distribute parallel do
+#endif
+        red = [sumsq, masssum, ncells]
+        call comm_allreduce_sum(c, red)
+        redmax = [maxabs]
+        call comm_allreduce_max(c, redmax)
+        if (c%has_terminal) then
+            if (red(3) > 0.0d0) red(1) = sqrt(red(1)/red(3))
+            print '(a,i7,a,es12.5,a,es12.5,a,es12.5)', &
+                "STEPDIV step", int(dns%step_current), &
+                "  div_l2=", red(1), "  div_max=", redmax(1), "  mass=", red(2)
+        end if
+    end subroutine print_step_divergence
 
     ! MOBY_DIVDUMP: park a scalar buffer in the pressure slot so write_field emits
     ! it as "pn" (its target update from(blk%q) then pulls these values).
