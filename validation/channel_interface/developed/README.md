@@ -18,6 +18,26 @@ transient does not pollute it):
 At `dtmax = 3.125e-4` that is ~16 000 + ~64 000 steps (≈0.6 s/step on one RTX-class
 GPU → ~14 h total; ~half on 2 GPUs).
 
+## Quick path: `run_developed.py`
+
+One command runs both legs (generates `IC.h5` if missing, runs transient → stats,
+prints the plot command):
+
+```bash
+module load /opt/nvidia/hpc_sdk/modulefiles/nvhpc-hpcx-cuda13/26.3
+./compile.sh gpu
+cd validation/channel_interface/developed
+python3 run_developed.py --arch gpu --ranks 2              # constant-1/2 default
+python3 run_developed.py --arch gpu --ranks 2 --skew       # + interface_skew
+# -> runs/<name>/stats/channel_stats.h5 (+ _l1)
+python3 ../../../tools/plot_channel_stats.py stats.png \
+    runs/default/stats/channel_stats.h5:constant-1/2 \
+    runs/skew/stats/channel_stats.h5:+KESKEW
+```
+
+`--ranks N` sets the x-decomposition (`dims = N 1 1`) and `mpirun -n N`. The manual
+steps below are equivalent.
+
 ## 0. Build (on the run machine)
 
 ```bash
