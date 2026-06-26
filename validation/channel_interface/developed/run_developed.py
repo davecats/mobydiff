@@ -62,17 +62,21 @@ def main():
     ap.add_argument("--arch", default="gpu", choices=["gpu", "cpu"])
     ap.add_argument("--ranks", type=int, default=2)
     ap.add_argument("--skew", action="store_true", help="also add interface_skew = true")
+    ap.add_argument("--no-reflux", action="store_true",
+                    help="set momentum_reflux = false (the reflux is the u'/v' band source -- "
+                         "see docs/next_session_orientation_asymmetry.md)")
     ap.add_argument("--t-transient", type=float, default=5.0)
     ap.add_argument("--t-average", type=float, default=20.0)
-    ap.add_argument("--name", default=None, help="run subdir name (default: default / skew)")
+    ap.add_argument("--name", default=None, help="run subdir name (default: default / skew / noreflux)")
     a = ap.parse_args()
 
     binary = os.path.join(ROOT, f"build_{a.arch}", "main")
     if not os.path.isfile(binary):
         sys.exit(f"binary {binary} not found -- build with ./compile.sh {a.arch}")
-    name = a.name or ("skew" if a.skew else "default")
+    name = a.name or ("noreflux" if a.no_reflux else "skew" if a.skew else "default")
     t_end = a.t_transient + a.t_average
     skew_sub = [(r"^; interface_skew.*$", "interface_skew = true")] if a.skew else []
+    reflux_sub = [(r"^momentum_reflux = .*$", "momentum_reflux = false")] if a.no_reflux else []
     mpirun = ["mpirun", "-n", str(a.ranks)]
     dims_sub = [(r"^dims = .*$", f"dims = {a.ranks} 1 1")]
 
@@ -94,7 +98,7 @@ def main():
     print(f"== {name}: transient leg t = 0 .. {a.t_transient}")
     make_ini(os.path.join(HERE, "transient.ini"), os.path.join(dirA, "input.ini"),
              [(r"^t_final = .*$", f"t_final = {a.t_transient}"),
-              (r"^file = .*$", f"file = {IC}")] + dims_sub + skew_sub)
+              (r"^file = .*$", f"file = {IC}")] + dims_sub + skew_sub + reflux_sub)
     sh(mpirun + [binary, "input.ini"], cwd=dirA)
     restart = final_field(dirA)
     print(f"   transient final field: {restart}")
@@ -107,7 +111,7 @@ def main():
     print(f"== {name}: statistics leg t = {a.t_transient} .. {t_end}")
     make_ini(os.path.join(HERE, "developed.ini"), os.path.join(dirB, "input.ini"),
              [(r"^t_final = .*$", f"t_final = {t_end}"),
-              (r"^file = .*$", f"file = {restart}")] + dims_sub + skew_sub)
+              (r"^file = .*$", f"file = {restart}")] + dims_sub + skew_sub + reflux_sub)
     sh(mpirun + [binary, "input.ini"], cwd=dirB)
 
     stats = os.path.join(dirB, "channel_stats.h5")

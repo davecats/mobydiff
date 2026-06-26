@@ -96,6 +96,22 @@ python3 tools/plot_channel_stats.py channel_stats.png \
 Produces mean U+ vs y+ (law of the wall), u'/v'/w' rms, and −⟨u'v'⟩, fine near the
 walls + coarse in the core, with the 2:1 interface marked.
 
+## Reflux ON-vs-OFF study (the current open question)
+
+The u'/v' interface BANDS are a momentum-reflux artifact (the reflux injects the
+fine-side resolved Reynolds-stress flux into the under-resolved coarse interface
+cell; see `docs/next_session_orientation_asymmetry.md`). `run_reflux_study.sh`
+runs the developed two-leg stats for reflux ON (default) and reflux OFF and prints
+the overlay command, to test the trade: reflux OFF removes the band but the reflux
+exists to conserve the MEAN interface flux (-<u'v'>), so check whether reflux OFF
+degrades the mean profile / Reynolds shear vs the uniform-fine reference.
+
+```bash
+cd validation/channel_interface/developed
+./run_reflux_study.sh gpu 2          # arch nranks; runs reflux_on + reflux_off
+# (single case: run_developed.py --no-reflux)
+```
+
 ## Multi-rank / multi-GPU notes
 
 - The solver pins each rank to a GPU automatically (node-local rank → device,
