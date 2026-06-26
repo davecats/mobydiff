@@ -237,8 +237,9 @@ program main
         if (len_trim(termEnv) > 0) then
             read(termEnv, *) termVar
             ! Match the predictor: reconstruct the interface deep halos so the
-            ! dumped terms reflect what momentum actually evaluates.
-            call reconstruct_interface_halos(blk)
+            ! dumped terms reflect what momentum actually evaluates (skipped for
+            ! the constant-1/2 interface, which the predictor also skips).
+            if (.not. dns%block_interface_const_half) call reconstruct_interface_halos(blk)
             allocate(advT(1:blk%nb(1),1:blk%nb(2),1:blk%nb(3),NVEL,blk%nBlocks))
             allocate(difT(1:blk%nb(1),1:blk%nb(2),1:blk%nb(3),NVEL,blk%nBlocks))
             call compute_momentum_terms(blk, dns, termVar, advT, difT)
@@ -281,8 +282,9 @@ program main
     phaseTime = len_trim(diagEnv) > 0
     call get_environment_variable("MOBY_KEBAL", diagEnv)
     keBal = len_trim(diagEnv) > 0   ! per-step convective KE-balance: band vs interior
+    ! Skew-symmetric interface convection: [blocks] interface_skew or MOBY_KESKEW.
     call get_environment_variable("MOBY_KESKEW", diagEnv)
-    skewIface = len_trim(diagEnv) > 0   ! skew-symmetric (energy-conserving) interface convection
+    skewIface = len_trim(diagEnv) > 0 .or. logical(dns%block_interface_skew)
     call get_environment_variable("MOBY_IFFILT", diagEnv)
     ifFiltAlpha = 0.0d0
     if (len_trim(diagEnv) > 0) read(diagEnv, *) ifFiltAlpha
@@ -329,10 +331,14 @@ program main
             ! Skipped under MOBY_PROJONLY (the projection then acts on the exact field).
             if (.not. projOnly) then
                 ! Reconstruct the velocity deep halos across each 2:1 interface so
-                ! the predictor's advection/diffusion reaching into them (normal
-                ! and tangential) are 2nd order (inert without an interface).
+                ! the predictor's advection/diffusion reaching into them are 2nd
+                ! order (inert without an interface). SKIPPED for the energy-
+                ! conserving constant-1/2 interface (the cubic breaks constant-1/2
+                ! and destabilizes -- the deep halos then keep their constant-1/2
+                ! restricted/injected exchange values).
                 if (phaseTime) pt0 = les_wall_seconds()
-                if (.not. noRecon) call reconstruct_interface_halos(blk)
+                if (.not. noRecon .and. .not. dns%block_interface_const_half) &
+                    call reconstruct_interface_halos(blk)
                 if (phaseTime) tRecon = tRecon + les_wall_seconds() - pt0
                 ! Momentum reflux: from the start-of-substage velocity, capture
                 ! each interface direction's normal advective flux, restrict the
@@ -417,7 +423,7 @@ program main
         end do
 
         if (stepDiv) call print_step_divergence(blk, c, dns, divStepBuf)
-        if (keBal) call print_step_ke_balance(blk, c, dns, noRecon)
+        if (keBal) call print_step_ke_balance(blk, c, dns, noRecon .or. dns%block_interface_const_half)
 
         if (phaseTime) pt0 = les_wall_seconds()
         if (les_is_enabled(les)) then

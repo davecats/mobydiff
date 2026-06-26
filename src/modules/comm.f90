@@ -171,10 +171,13 @@ contains
 
         call comm_init_world(c)
 
+        ! Constant-1/2 (energy-conserving) interface => inject the velocity prolong.
+        ! Default ON via [blocks] interface_constant_half; MOBY_VELINJECT forces it.
+        c%velInject = logical(dns%block_interface_const_half)
         block
             character(len=16) :: env
             call get_environment_variable("MOBY_VELINJECT", env)
-            c%velInject = len_trim(env) > 0
+            if (len_trim(env) > 0) c%velInject = .true.
         end block
 
         c%periodic = bc%isPeriodic

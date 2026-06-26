@@ -247,6 +247,10 @@ subroutine apply_config_value(section, key, value, dns, g, les, ps, bc, c, seen,
             call read_bool(value, dns%block_refine_body, line_no)
         case ("momentum_reflux")
             call read_bool(value, dns%block_momentum_reflux, line_no)
+        case ("interface_constant_half")
+            call read_bool(value, dns%block_interface_const_half, line_no)
+        case ("interface_skew")
+            call read_bool(value, dns%block_interface_skew, line_no)
         end select
     case ("les")
         call apply_les_value(key_l, value, les, line_no)

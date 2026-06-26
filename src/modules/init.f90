@@ -69,6 +69,24 @@ module init
         ! flux restriction per substage; only needed for turbulence-grade
         ! interfaces (the smooth-flow leak is ~4th order).
         logical(C_BOOL) :: block_momentum_reflux = .false.
+        ! [blocks] interface_constant_half: use the energy-conserving CONSTANT-1/2
+        ! interface treatment (Verstappen & Veldman 2003) on 2:1 refined runs --
+        ! inject (not metric-interpolate) the velocity prolong AND skip the cubic
+        ! deep-halo reconstruction, so the interface velocity-to-face weights are
+        ! constant 1/2. This conserves interface kinetic energy and keeps the
+        ! refined channel STABLE (the truncation-optimal metric/cubic weights pump
+        ! energy at the coarse-fine jump and blow up ~step 200; constant-1/2 settles
+        ! -- docs/interface_band_handout.md). Default ON: it is the stable scheme
+        ! and is inert (bit-exact) without a 2:1 interface. Set false to recover the
+        ! old accuracy-optimal (metric prolong + cubic reconstruction) interface.
+        logical(C_BOOL) :: block_interface_const_half = .true.
+        ! [blocks] interface_skew: also add the skew-symmetric convective correction
+        ! 1/2 u(div u) at the 2:1 interface-band cells (Verstappen & Veldman 2003),
+        ! turning their convection energy-conserving for non-divergence-free
+        ! predictor fields. Needs momentum_reflux (the correction rides refluxCorr).
+        ! Default off: it improves interface energy accuracy a further ~20% but adds
+        ! no extra stability over constant-1/2 alone. Bit-exact without an interface.
+        logical(C_BOOL) :: block_interface_skew = .false.
         logical(C_BOOL) :: ibm_enabled = .true.
         character(len=256) :: ibm_coeff_file = ""
         character(len=256) :: field_prefix = ""
