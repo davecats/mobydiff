@@ -43,13 +43,13 @@ def reassemble_xy(path, var):
         z0, z1 = oz * f0, (oz + nb) * f0
         if not (z0 <= kz < z1):
             continue
-        kc = (kz - z0) // f0                 # local k cell in this block
-        blk = D[bid]                         # (nb,nb,nb)
-        for i in range(nb):
+        kc = (kz - z0) // f0                 # local k(z) cell in this block
+        blk = D[bid]                         # h5py axes = [k(z), j(y), i(x)]
+        for i in range(nb):                  # i -> x
             xi0 = (ox + i) * f0
-            for j in range(nb):
+            for j in range(nb):              # j -> y
                 yj0 = (oy + j) * f0
-                img[yj0:yj0 + f0, xi0:xi0 + f0] = blk[i, j, kc]
+                img[yj0:yj0 + f0, xi0:xi0 + f0] = blk[kc, j, i]
         if lev > 0:
             for j in range(nb):
                 yj0 = (oy + j) * f0
