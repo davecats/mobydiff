@@ -17,7 +17,7 @@ Read `docs/interface_band_handout.md` first (full state; "Session 2026-06-26" an
   band energy 0.127 → 0.054 (no cubic) → 0.045 (const-1/2 prolong) → 0.036 (local
   skew); the residual 0.036 is the cross-interface area-mismatch term.
 - Validation cases curated: `validation/channel_interface/VALIDATION_CASES.md`
-  (stability benchmark, KEBAL gate, bit-exact, multi-rank, developed stats).
+  (interface benchmark (stability + banding), KEBAL gate, bit-exact, multi-rank, developed stats).
 - Developed-flow stats setup: `validation/channel_interface/developed/`
   (`run_developed.py`, two-leg, 2-GPU). `tools/plot_channel_stats.py`.
 
@@ -59,7 +59,7 @@ component role:
 
 ## Guardrails (every change)
 
-Re-run the validation cases (`VALIDATION_CASES.md`): stability benchmark PASS,
+Re-run the validation cases (`VALIDATION_CASES.md`): interface benchmark PASS (stability) + band metrics (u' excess, v' kink) tracked,
 KEBAL slab, bit-exact no-interface, 1==2 rank. Don't chase interface truncation
 order — chase the KE balance / the v' step. CPU `-Mnofma`, GPU `-Mnofma -gpu=nofma`
 for bit-exact; one GPU case at a time; pkill stray `build_*/main` between runs.

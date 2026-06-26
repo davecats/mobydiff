@@ -10,7 +10,7 @@ module load /opt/nvidia/hpc_sdk/modulefiles/nvhpc-hpcx-cuda13/26.3
 
 | # | case | what it checks | runtime |
 |---|------|----------------|---------|
-| 1 | **stability benchmark** | constant-1/2 BOUNDED vs baseline BLOW-UP (~step 200) | ~5 min (GPU) |
+| 1 | **interface benchmark** | (A) stability: constant-1/2 BOUNDED vs baseline BLOW-UP; (B) interface banding: u'/v' rms excess (tracked, to reduce) | ~5 min (GPU) |
 | 2 | **KEBAL energy gate** (slab) | convective KE production at the interface band | ~5 s (CPU) |
 | 3 | **bit-exact no-interface** | single-level run unchanged by the interface code | ~1 min |
 | 4 | **bit-exact multi-rank** | 1-rank == 2-rank (x-split) | ~1 min (GPU) |
@@ -19,16 +19,20 @@ module load /opt/nvidia/hpc_sdk/modulefiles/nvhpc-hpcx-cuda13/26.3
 
 ## 1. Stability benchmark (the headline regression — THIS session's case)
 
-The ~250-step refined channel: the constant-1/2 default must stay bounded where the
-old metric/cubic interface blows up. Self-checking (PASS/FAIL).
+The ~250-step refined channel, checking BOTH (A) stability and (B) the interface
+banding. Self-checking on stability; banding reported as tracked metrics.
 
 ```bash
-cd validation/channel_interface/stability_benchmark
+cd validation/channel_interface/interface_benchmark
 python3 run_benchmark.py --arch gpu --ranks 1        # energy (bounded) + baseline (blow-up)
 python3 run_benchmark.py --arch gpu --ranks 1 --energy-only   # just the stable case
 ```
-Pass = energy case `div_max < 0.5` (measured ~0.09, settles) AND baseline blows up
-(`div_max -> 2e8` ~step 200). Discriminates the fix from the bug.
+(A) Stability PASS = energy `div_max < 0.5` (measured ~0.09, settles) AND baseline
+blows up (`div_max -> 1e11` ~step 200). Discriminates the fix from the bug.
+(B) Banding (energy final field, current default values, LOWER = better):
+`u' excess x1.45-1.56` at the interfaces (streak band) and `v' kink 0.24-0.31`
+(the wall-normal step). These are the numbers a better interface treatment must
+reduce -- the constant-1/2 default stabilises the band but does not remove it.
 
 ## 2. KEBAL energy gate (Beltrami slab, V&V metric)
 
