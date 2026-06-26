@@ -87,9 +87,30 @@ into the under-resolved coarse interface cell -> it piles up as the u'/v' band
 (exactly Cevheri & Stoesser's "energy accumulation at grid coarsening"). The
 reflux conserves the MEAN interface flux (its design purpose, the -<u'v'> defect,
 validation/momentum_interface) but pumps the FLUCTUATING stress onto the coarse
-cell. The reflux was built/validated with the OLD recon-based interface (memory
-momentum-interface-todo); under const-1/2 recon is OFF and the reflux's
-band-creating side-effect dominates with no offsetting benefit measured.
+cell.
+
+NOT A BUG (checked): the reflux is conservation-CORRECT and consistent with
+const-1/2. Under const-1/2 the coarse halo q(0) is already avg(u_fine), so the
+predictor's coarse flux is (avg(u_fine)+u_coarse)^2 and the reflux upgrades it to
+avg(F_fine); the difference is exactly avg(u^2)-(avg u)^2 = the fine-side velocity
+VARIANCE across the face -- the genuinely conservative flux (the fine cells advect
+with u^2, so local conservation needs avg(u^2), not (avg u)^2). It matches the
+predictor term-for-term (same q(0) halo) -- no double-counting / no
+recon-vs-const-1/2 mismatch. VERIFIED: a constant flow through the refined patch
+with reflux ON stays EXACTLY constant (max dev 0.0, 5 steps); the reflux injects
+nothing for uniform flow and activates only on resolved fine-side variation. So
+the band is the physically real resolved Reynolds-stress deposited on the
+under-resolved coarse cell by local conservation across the 2:1 jump (the AMR
+coarsening problem), not an implementation error. (An earlier "reflux inconsistent
+with const-1/2 / buggy" lead was investigated and DISPROVEN by this.)
+
+CONSEQUENCE for a GENERIC fix: you cannot locally conserve the NONLINEAR advective
+flux across a 2:1 jump AND avoid depositing the resolved variance -- they are the
+same operation. Mean-only / x,z-averaged reflux is channel-specific (rejected).
+The question the stats study answers: is the reflux's conservation benefit (mean
+-<u'v'>) worth the band? If the mean profile is fine without it, drop the reflux
+(generic). If the mean degrades, the band is an intrinsic cost of 2:1 conservation
+and the lever is sub-grid (a coarse-cell closure), not the transfer.
 
 The orientation asymmetry (w' clean at fine-owns / kink at coarse-owns) is the
 reflux acting only on the coarse side (physLow/High==FACE_FINE) -- the coarse cell
