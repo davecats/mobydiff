@@ -814,7 +814,10 @@ contains
         real(C_DOUBLE) :: vu_p,vu_m,vv_p,vv_m,vw_p,vw_m
         real(C_DOUBLE) :: wu_p,wu_m,ww_p,ww_m,wv_p,wv_m
         real(C_DOUBLE) :: convU, convV, convW, prodD, prodS, divcv, vol, qd
-        real(C_DOUBLE) :: keBandD, keIntD, keBandS, keIntS, absBandS, absIntS, red(6)
+        real(C_DOUBLE) :: keBandD, keIntD, keBandS, keIntS, absBandS, absIntS, red(9)
+        ! Per-component band SKEW: which velocity component leaves the residual
+        ! interface energy defect (the v-normal hypothesis: keBandSv dominates).
+        real(C_DOUBLE) :: keBandSu, keBandSv, keBandSw
         logical :: bandU, bandV, bandW
 
         ! Match the predictor's halo state so the interface stencil reads the same
@@ -825,10 +828,12 @@ contains
         nx = blk%nb(1); ny = blk%nb(2); nz = blk%nb(3)
         keBandD = 0.0d0; keIntD = 0.0d0; keBandS = 0.0d0
         keIntS = 0.0d0; absBandS = 0.0d0; absIntS = 0.0d0
+        keBandSu = 0.0d0; keBandSv = 0.0d0; keBandSw = 0.0d0
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do collapse(4) &
         !$omp& map(to: blk%q, blk%d1x, blk%d1y, blk%d1z, blk%physLow, blk%physHigh) &
         !$omp& reduction(+:keBandD,keIntD,keBandS,keIntS,absBandS,absIntS) &
+        !$omp& reduction(+:keBandSu,keBandSv,keBandSw) &
         !$omp& private(i,j,k,b,ip,im,jp,jm,kp,km,uStartX,vStartY,wStartZ, &
         !$omp& uu_p,uu_m,uv_p,uv_m,uw_p,uw_m,vu_p,vu_m,vv_p,vv_m,vw_p,vw_m, &
         !$omp& wu_p,wu_m,ww_p,ww_m,wv_p,wv_m,convU,convV,convW,prodD,prodS,divcv,vol,qd, &
@@ -884,6 +889,7 @@ contains
                         if (bandU) then
                             keBandD = keBandD + prodD
                             keBandS = keBandS + prodS; absBandS = absBandS + abs(prodS)
+                            keBandSu = keBandSu + prodS
                         else
                             keIntD = keIntD + prodD
                             keIntS = keIntS + prodS; absIntS = absIntS + abs(prodS)
@@ -916,6 +922,7 @@ contains
                         if (bandV) then
                             keBandD = keBandD + prodD
                             keBandS = keBandS + prodS; absBandS = absBandS + abs(prodS)
+                            keBandSv = keBandSv + prodS
                         else
                             keIntD = keIntD + prodD
                             keIntS = keIntS + prodS; absIntS = absIntS + abs(prodS)
@@ -948,6 +955,7 @@ contains
                         if (bandW) then
                             keBandD = keBandD + prodD
                             keBandS = keBandS + prodS; absBandS = absBandS + abs(prodS)
+                            keBandSw = keBandSw + prodS
                         else
                             keIntD = keIntD + prodD
                             keIntS = keIntS + prodS; absIntS = absIntS + abs(prodS)
@@ -960,7 +968,8 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
 #endif
-        red = [keBandD, keIntD, keBandS, keIntS, absBandS, absIntS]
+        red = [keBandD, keIntD, keBandS, keIntS, absBandS, absIntS, &
+               keBandSu, keBandSv, keBandSw]
         call comm_allreduce_sum(c, red)
         if (c%has_terminal) then
             ! SKEW band_net is the pass/fail (pure interface energy defect, should
@@ -972,6 +981,9 @@ contains
             print '(a,es12.5,a,es12.5,a,es12.5)', &
                 "           DIV  band=", red(1), "  int=", red(2), &
                 "  total=", red(1)+red(2)
+            ! Per-component band SKEW (u tangential / v interface-normal / w tangential):
+            print '(a,es12.5,a,es12.5,a,es12.5)', &
+                "           SKEW band  u=", red(7), "  v=", red(8), "  w=", red(9)
         end if
     end subroutine print_step_ke_balance
 
