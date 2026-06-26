@@ -490,6 +490,39 @@ energy; (b) turbulence-statistics validation (t=5..25 stats leg) that the bounde
 band does not corrupt the mean profile. (Longer-run stability is settled:
 NORECON+VELINJECT runs 500 steps with div_max DECREASING to 0.056.)
 
+## Session 2026-06-26b: snapshot statistics observations (step 250 = t=0.078, EARLY)
+
+Single-snapshot x,z-averaged profiles of the refined channel (constant-1/2 default
+vs +KESKEW), tools/channel_stats_profile.py + channel_loglaw.py. CAVEAT: step 250
+is t=0.078 -- deep in the DISCARDED transient (the validation accumulates t=5..25),
+so absolute levels and the two-wall asymmetry are NOT converged. Robust findings
+(IC-vs-step250, so solver-created not interpolation):
+
+- **Mean U(y):** fine -- follows U+=y+ sublayer and the log law (u_tau=1 from the
+  force balance tau_w=forcing*h, Re_tau=180). No band in the mean.
+- **u' (streamwise, TANGENTIAL):** spikes at BOTH interfaces (u'_rms 1.51 lower /
+  1.77 upper at y+~116, vs ~0.9-1.2 neighbours) -- the documented coarse-cell band.
+  u carries the mean shear/streaks, so the resolution jump perturbs it most.
+- **v' (wall-normal = interface-NORMAL): a SOLVER-CREATED STEP at the interface.**
+  The raw IC is SMOOTH across it (0.620->0.616->0.609, monotone); by step 250 the
+  fine side is SUPPRESSED (0.620->0.491) and the coarse side RAISED (0.609->0.741)
+  -- a discontinuous wall-normal-energy redistribution across the 2:1 face. v is the
+  interface-normal component (special 2:1 face treatment: restriction / shared
+  face), so this is a v-SPECIFIC interface signature, DISTINCT from the u' band, and
+  consistent with the residual cross-interface skew defect (KEBAL 0.036; KESKEW
+  barely moves v', <0.3%). **This is the most suspicious item -- likely a real lead
+  for the interface-normal treatment; revisit with developed stats.**
+- **w' (spanwise, TANGENTIAL): almost NO interface spike** (0.736 lower, 0.843
+  upper, ~= neighbours). Not chance: w has no mean gradient (unlike u), so the
+  tangential interface perturbation has little energetic streak to amplify. The
+  u'-spike / w'-no-spike contrast is itself diagnostic (mean-shear-driven).
+- constant-1/2 vs +KESKEW: statistically identical (<0.3% at every row).
+
+=> the interface signatures sort by component role: TANGENTIAL-with-mean-shear (u)
+= big rms spike; TANGENTIAL-no-shear (w) = none; NORMAL (v) = a smooth-IC-broken
+energy step. Develop the flow (t>5) + time-average to quantify cleanly, ideally vs
+a uniform-fine reference; the v-normal step is the prime suspect for a real defect.
+
 ## Memory
 `interface-validation-suite` (the gates + this state), `corner-reconstruction-todo`,
 `restart-overrides-config-sor`, `refinement-perf-profile`, `chebyshev-jacobi-plan`.
