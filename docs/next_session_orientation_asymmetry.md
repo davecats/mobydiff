@@ -62,41 +62,61 @@ storage convention (fine face DOFs in unpredictable halos; restriction would wri
 the coarse INTERIOR u(1) plane against the prolong reading it)", so they settled for
 low-owns. We now SEE its cost: the coarse-owns orientation pollutes w' and v'.
 
-## Mechanism (working model -- VERIFY before fixing)
+## MECHANISM CONFIRMED (2026-06-26c): the MOMENTUM REFLUX creates the bands.
 
-Under the const-1/2 default, `reconstruct_interface_halos` is OFF (main.f90:340).
-So the asymmetry is in the exchange transfer + reflux + the post-predictor
-`exchange_halos(..., syncface=.true.)` (main.f90:394) that writes the low-owned
-shared face. `interface_normal_dim` (comm.f90:741) skips the cross-level
-PROLONG/RESTRICT only for off(d)==+1 (a block keeping its own HIGH face q(nb+1)),
-making the LOW block the owner. At a coarse-owns face the shared normal v is
-predicted at COARSE resolution and the fine side is slaved (PROLONG injection) ->
-the fine cells adjacent cannot be div-free at fine resolution -> the projection
-compensates with spurious tangential (w') motion. At a fine-owns face both sides
-see a fine-resolution face and stay consistent.
+Decisive toggle on the benchmark (250 steps, const-1/2, GPU): momentum_reflux
+OFF vs ON, per-interface bands from the final field (rms_rows):
+
+| interface | u' excess ON->OFF | v' kink ON->OFF |
+|---|---|---|
+| bottom (fine-owns) | x1.56 -> **x1.00** | 0.238 -> **0.025** |
+| top (coarse-owns)  | x1.45 -> **x1.02** | 0.306 -> **0.040** |
+
+Reflux OFF essentially ERASES both the u' streak spike and the v' normal step,
+at NO cost to stability or divergence (div_l2 ~2.3e-3, div_max ~0.089, mass
+round-off -- IDENTICAL to reflux ON). The bands are a momentum-reflux artifact,
+NOT the interface transfer/ownership and NOT an energy (KEBAL) defect (KEBAL is
+inert on the reflux because the band is momentum structure, not skew-energy).
+
+WHY (step.f90 reflux_accumulate:634, reflux_compute_flux:478): the reflux replaces
+the coarse interface-cell flux F_coarse by the restricted fine flux avg(F_fine).
+For the normal component F=(q_halo+q_int)^2, so avg(F_fine)=avg(of squares) >>
+(avg)^2 ~ F_coarse (Jensen gap) whenever the fine side carries resolved
+fluctuations. The reflux thus INJECTS the fine-side resolved Reynolds-stress flux
+into the under-resolved coarse interface cell -> it piles up as the u'/v' band
+(exactly Cevheri & Stoesser's "energy accumulation at grid coarsening"). The
+reflux conserves the MEAN interface flux (its design purpose, the -<u'v'> defect,
+validation/momentum_interface) but pumps the FLUCTUATING stress onto the coarse
+cell. The reflux was built/validated with the OLD recon-based interface (memory
+momentum-interface-todo); under const-1/2 recon is OFF and the reflux's
+band-creating side-effect dominates with no offsetting benefit measured.
+
+The orientation asymmetry (w' clean at fine-owns / kink at coarse-owns) is the
+reflux acting only on the coarse side (physLow/High==FACE_FINE) -- the coarse cell
+that receives avg(F_fine) is the low block at the top interface, the high at the
+bottom; the asymmetry is which side carries the resolved-stress injection.
 
 ## Do this, in order
 
-1. CONFIRM the mechanism cheaply before any big change: localize whether the top
-   (coarse-owns) w'/v' kink comes from (a) the normal-v PROLONG injection to the
-   fine halo, (b) the syncFace, or (c) the reflux. The slab has BOTH orientations
-   (middle refined -> bottom = coarse-owns, top = fine-owns -- OPPOSITE of the
-   channel); per-component KEBAL + a per-orientation roughness probe on the slab is
-   the fast (~5s) testbed. The benchmark (~2.5min GPU) gives stability + early u'/v'
-   banding but NOT the converged w' kink (only 14h stats show that) -- weigh this.
-2. FIX APPROACH (Davide's call -- two very different efforts):
-   - **Targeted**: make the normal-v PROLONG to the fine halo at a COARSE-owns face
-     a fine-resolution reconstruction (not coarse injection), so the fine side near
-     a coarse-owned face is not slaved to one coarse value. Smaller, testable on the
-     benchmark for stability; converged w' only via stats.
-   - **Architectural**: restore UNCONDITIONAL fine-owns-face (reverse the 3c
-     deviation). Principled and symmetric, but the documented hard problem ("fine
-     face DOFs in unpredictable halos"). High risk (many prior interface changes
-     blew up); needs the full gate suite + stats.
-3. GATE every change: interface_benchmark stability PASS + banding not worse; KEBAL
-   slab (now per-component); bit-exact no-interface; 1-rank==2-rank (dims N 1 1).
-   The decisive metric (converged w'/v' asymmetry) needs the 14h developed stats
-   (run_developed.py --ranks 2) + the existing uniform-fine reference.
+1. THE TRADE (decisive, needs stats): run the developed stats with reflux OFF
+   (run_developed.py with momentum_reflux=false) vs ON vs the uniform-fine
+   reference. Reflux exists for the MEAN -<u'v'> interface flux; confirm whether
+   reflux-OFF degrades the mean profile / Reynolds shear at the interface (the
+   thing reflux conserves) or whether it is simply better here. ~14h GPU.
+2. FIX (if reflux-off harms the mean): make the reflux transfer the MEAN flux only,
+   not the fluctuating part -- e.g. reflux the x,z-averaged (homogeneous-direction)
+   flux mismatch, or a single-valued constant-1/2 flux, so it conserves -<u'v'>
+   without injecting the fine-side resolved stress into the coarse cell. Gate on
+   the benchmark (u'/v' band NOT regrown, stable) + the mean profile via stats.
+   Investigate the 0.25 scaling / Jensen gap in reflux_accumulate for correctness.
+3. GATE every change: interface_benchmark stability PASS + band metrics (u'/v')
+   tracked; KEBAL slab (per-component); bit-exact no-interface; 1-rank==2-rank.
+   The decisive metric (converged mean + Reynolds stresses) needs the 14h stats.
+
+The earlier adjoint-normal-transfer and fine-owns-ownership leads are now
+SECONDARY: with reflux off the residual bands are ~1.0-1.02 excess / 0.025-0.040
+kink (near zero). Confirm the reflux is the whole story (converged stats) before
+chasing them.
 
 ## State / artifacts
 
