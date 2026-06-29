@@ -112,6 +112,13 @@ cd validation/channel_interface/developed
 # (single case: run_developed.py --no-reflux)
 ```
 
+`run_reference.sh gpu N` runs the **uniform-fine reference** (256x128x256, single
+level, two-leg, same t-window/params) — the ground truth the refined reflux_on /
+reflux_off runs are compared against (the refined fine level shares this grid
+bitwise). It generates `runs/reference/REF_IC.h5` on first use and prints the
+3-way overlay command (reflux-on / reflux-off / uniform). Tested on 1 GPU
+(~0.29 s/step, fits in 6 GB at 256^3); much faster on a multi-GPU box.
+
 ## Multi-rank / multi-GPU notes
 
 - The solver pins each rank to a GPU automatically (node-local rank → device,
