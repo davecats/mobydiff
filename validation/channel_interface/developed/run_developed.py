@@ -64,7 +64,7 @@ def main():
     ap.add_argument("--skew", action="store_true", help="also add interface_skew = true")
     ap.add_argument("--no-reflux", action="store_true",
                     help="set momentum_reflux = false (the reflux is the u'/v' band source -- "
-                         "see docs/next_session_orientation_asymmetry.md)")
+                         "see docs/next_session_edges_les.md)")
     ap.add_argument("--t-transient", type=float, default=5.0)
     ap.add_argument("--t-average", type=float, default=20.0)
     ap.add_argument("--name", default=None, help="run subdir name (default: default / skew / noreflux)")

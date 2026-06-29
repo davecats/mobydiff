@@ -8,7 +8,7 @@
 # Reynolds-stress flux into the under-resolved coarse cell -> the band (Cevheri &
 # Stoesser energy accumulation). On the benchmark (250 steps) reflux OFF erases the
 # u' spike (excess 1.56->1.00) and v' step (kink 0.31->0.04) at zero stability /
-# divergence cost. See docs/next_session_orientation_asymmetry.md "MECHANISM
+# divergence cost. See docs/next_session_edges_les.md "MECHANISM
 # CONFIRMED". The reflux exists to conserve the MEAN interface momentum flux
 # (-<u'v'>), so this study checks the TRADE on the converged statistics: does
 # reflux OFF degrade the mean profile / Reynolds shear, or is it simply better?
