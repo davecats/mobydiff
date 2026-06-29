@@ -6,9 +6,12 @@ Guidance for Claude when working in this repository.
 
 mobydiff: an incompressible Navier-Stokes solver. Second-order finite
 differences on a staggered Cartesian grid (uniform or stretched per
-direction), RK3 time stepping, coupled velocity-pressure red-black SOR
-projection, volume-penalization immersed boundary method (IBM), optional
-LES. Fortran + MPI (3D Cartesian decomposition, 26-neighbour halos) with
+direction), RK3 time stepping, a segregated **damped-Jacobi pressure
+projection** with optional **Chebyshev-Jacobi** acceleration (`[pressure]
+accel = chebyshev`; on the `claude/jacobi-interface` branch — it replaced the
+old coupled red-black SOR projection, which could not make the 2:1 interface
+operators consistent), volume-penalization immersed boundary method (IBM),
+optional LES. Fortran + MPI (3D Cartesian decomposition, 26-neighbour halos) with
 OpenMP target offload for GPU. Entry points: `src/main.f90` (solver) and
 `src/mobygrid.f90` (serial grid/preprocessing tool). Geometry
 classification tooling lives in `tools/mobygeom*`.
@@ -40,9 +43,13 @@ mpirun -n 1 ./build_gpu/main path/to/input.ini
   device once in `enter_*_data`/`exit_*_data` routines (see `gpu_runtime.f90`,
   `blocks.f90`). No allocatable components inside arrays of derived types.
 
-## Active work: block refactor (branch `claude/blocks`)
+## Active work: block refinement + 2:1 interface (branch `claude/jacobi-interface`)
 
-The plan is `docs/block_refinement_strategy.md` — read it first. Goal:
+The block refactor (Phases 0–3) is complete and lives on `claude/jacobi-interface`
+(forked from `claude/blocks` to rebuild the projection on a damped-Jacobi /
+Chebyshev smoother). The CURRENT state and next steps are in
+`docs/next_session_edges_les.md` (read it first); the master design is
+`docs/block_refinement_strategy.md`. Goal:
 BCM-style equal-size blocks (Nakahashi & Kim 2004; Jansson et al. 2019) to
 enable 2:1 local refinement and removal of blocks buried inside the
 immersed boundary. Phased, each phase verified before the next:
@@ -212,10 +219,32 @@ immersed boundary. Phased, each phase verified before the next:
     kernels), and entries are ordered same-level-copies-first with
     prefix counts so the per-colour copy-only exchange is a prefix of
     the full one (shorter messages, no runtime filtering).
+- 2:1 interface — turbulent validation (resolved 2026-06-29, branch
+  `claude/jacobi-interface`). The energy-conserving **constant-1/2 interface is
+  the DEFAULT** (`[blocks] interface_constant_half`): inject the velocity prolong
+  + skip the cubic deep-halo reconstruction (the truncation-optimal cubic/metric
+  weights break interface energy conservation and DESTABILIZE; const-1/2 is V&V
+  2003's order-for-energy trade). The pressure projection is symmetric/SPD at the
+  interface (`face_grad` composite stencil + conservative copy reconciliation),
+  which is what keeps Chebyshev-Jacobi stable there.
+  The u'/v' interface BANDS were a **momentum-reflux artifact**: the reflux
+  replaces the coarse interface flux F_coarse by avg(F_fine); for the normal flux
+  (q)^2, avg(of squares) >> (avg)^2 (Jensen), so it injects the fine-side resolved
+  Reynolds-stress flux into the under-resolved coarse cell. It is conservation-
+  CORRECT (verified: vanishes for uniform flow) but pumps the fluctuating stress
+  onto the coarse cell — the textbook AMR coarsening band. **`momentum_reflux`
+  should be OFF** for the generic 2:1 interface: developed-channel stats (Re_tau
+  180, t=5..25) with reflux OFF remove the u' spike (excess 1.56->1.00) and v'
+  step (kink 0.31->0.04) at ZERO cost to stability/divergence, and match the
+  uniform-256 reference: -<u'v'> to 0.2%, no spurious band (x-y/z-y cross-sections
+  clean across the interface). The only residual is a SMALL (~5%, isolated against
+  a matched uniform-128 control) under-transmission of small-scale v'/w'
+  fluctuation energy into the coarse core — the const-1/2 restriction is mildly
+  dissipative (a loss, not a band; the mean transport is exact). Validation in
+  `validation/channel_interface/` (developed/, interface_benchmark/, reference.ini
+  / uniform128.ini); see `docs/next_session_edges_les.md` for the open items
+  (edge/corner + LES validation; less-dissipative interface transfer).
 - Phase 4: performance (overlap, see `docs/nonblocking_overlap_strategy.md`).
-
-If the branch `claude/blocks` does not exist yet, create it from the
-current checkout (`codex/les`) before committing: `git switch -c claude/blocks`.
 
 ## Verification
 

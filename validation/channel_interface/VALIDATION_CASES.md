@@ -1,7 +1,16 @@
 # 2:1 interface — validation cases
 
 Curated benchmarks for the energy-conserving (constant-1/2) 2:1 interface work
-(`docs/interface_band_handout.md`). Ordered fast → slow. Build first:
+(`docs/next_session_edges_les.md`). Ordered fast → slow. Build first:
+
+> STATUS 2026-06-29: the flat 2:1 interface is validated in turbulence with
+> `interface_constant_half = true` (default) and **`momentum_reflux = false`** —
+> the reflux was the u'/v' band (a conservation-correct resolved-stress injection
+> into the coarse cell). Developed-channel stats with reflux off match the
+> uniform-256 reference (`-<u'v'>` to 0.2%, no band); the only residual is a ~5%
+> small-scale v'/w' loss in the coarse core (isolated vs a uniform-128 control).
+> Next: edge/corner + LES validation. See `developed/run_reflux_study.sh`,
+> `run_reference.sh`, `run_uniform128.sh`.
 
 ```bash
 module load /opt/nvidia/hpc_sdk/modulefiles/nvhpc-hpcx-cuda13/26.3
