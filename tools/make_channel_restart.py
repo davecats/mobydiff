@@ -183,7 +183,7 @@ def write_attrs(h5, attrs):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", default="tutorials/channel_kmm180/channel_kmm180_restart.h5")
-    parser.add_argument("--mode", choices=("reference", "refined"), required=True)
+    parser.add_argument("--mode", choices=("reference", "refined", "base"), required=True)
     parser.add_argument("--out", required=True)
     parser.add_argument("--band-cells", type=int, default=24,
                         help="refined band height in base y-cells per wall (refined mode)")
@@ -211,11 +211,27 @@ def main():
         f = src["fields"][name]
         fine[name] = interp_field(f, spos, staggered_positions(fine_nodes, var),
                                   periodic, lengths)
-        if args.mode == "refined":
+        if args.mode in ("refined", "base"):
             coarse[name] = interp_field(f, spos, staggered_positions(base_nodes, var),
                                         periodic, lengths)
 
-    if args.mode == "reference":
+    if args.mode == "base":
+        # Uniform 128x64x128 at the base resolution (no refinement), legacy
+        # global-3D layout. Its grid lines ARE the refined case's level-0
+        # (coarse core) lines bitwise, so refined-core vs base isolates the
+        # interface effect from the coarse-resolution deficit.
+        attrs = common_attrs(src["attrs"], base[0], base[1], base[2], args.dyw_plus)
+        with h5py.File(args.out, "w") as h5:
+            write_attrs(h5, attrs)
+            for name in names:
+                h5.create_dataset(name, data=coarse[name])
+            h5.create_dataset("x", data=base_nodes[0])
+            h5.create_dataset("y", data=base_nodes[1])
+            h5.create_dataset("z", data=base_nodes[2])
+            h5.create_dataset("rank_local_range", data=np.array(
+                [[1, base[0], 1, base[1], 1, base[2]]], dtype=np.int32))
+        iface = None
+    elif args.mode == "reference":
         attrs = common_attrs(src["attrs"], 2*base[0], 2*base[1], 2*base[2], args.dyw_plus)
         with h5py.File(args.out, "w") as h5:
             write_attrs(h5, attrs)
