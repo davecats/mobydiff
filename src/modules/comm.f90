@@ -1218,25 +1218,19 @@ contains
     ! cell-centred 2-row average) into the coarse interface-correction ghost --
     ! used for phi so the interface corrections are conservative; off for
     ! cell-centred scalars like les%nut.
-    subroutine exchange_scalar_halos(c, scalar, blk, ifaceRow, interpProlong)
+    subroutine exchange_scalar_halos(c, scalar, blk, ifaceRow)
         type(comm_type), intent(inout) :: c
         real(C_DOUBLE), intent(inout) :: scalar(0:,0:,0:,1:)
         type(block_set_type), intent(in) :: blk
-        logical, intent(in), optional :: ifaceRow, interpProlong
+        logical, intent(in), optional :: ifaceRow
 
         integer :: ierr, p, nRequest
-        logical :: doInterp
 
         call require_ready(c)
         if (c%exchangeActive) error stop "halo exchange already active"
 
         c%phiIfaceRow = .false.
         if (present(ifaceRow)) c%phiIfaceRow = ifaceRow
-        ! FIX (ii): tangentially interpolate the cross-level prolong of the scalar
-        ! (phi) instead of injecting it. Needs the two-pass ordering so phase 1's
-        ! same-level copies fill the coarse halo the phase-2 interp reads.
-        doInterp = .false.
-        if (present(interpProlong)) doInterp = interpProlong
 
         if (c%nPeers > 0) then
             call pack_scalar_entries(c, scalar)
@@ -1258,12 +1252,7 @@ contains
 #endif
         end if
 
-        if (doInterp) then
-            call copy_local_scalar_entries(c, scalar, blk, 1, .false.)
-            call copy_local_scalar_entries(c, scalar, blk, 2, .true.)
-        else
-            call copy_local_scalar_entries(c, scalar, blk, 0, .false.)
-        end if
+        call copy_local_scalar_entries(c, scalar, blk)
 
         if (c%nPeers > 0) then
             nRequest = 2*c%nPeers
@@ -1408,38 +1397,29 @@ contains
     ! two-pass ordering (phase 1 fills the coarse halo the interp reads). doInterp
     ! requires `blk` (node lines); injection (doInterp=.false.) is bit-exact with
     ! the old behaviour and needs no node lines.
-    subroutine copy_local_scalar_entries(c, scalar, blk, phase, doInterp)
+    subroutine copy_local_scalar_entries(c, scalar, blk)
         type(comm_type), intent(inout) :: c
         real(C_DOUBLE), intent(inout) :: scalar(0:,0:,0:,1:)
         type(block_set_type), intent(in) :: blk
-        integer, intent(in) :: phase
-        logical, intent(in) :: doInterp
 
-        integer :: p, e, pt, ni, nj, pLo, pHi, doI
+        integer :: p, e, pt, ni, nj, pHi
         integer :: di, dj, dk, sfr, pn, ss, ds
         integer :: b1, b2, b3, og1, og2, og3, np1, np2, np3, s1, s2, s3
         real(C_DOUBLE) :: val, wa1, wb1, wa2, wb2, wa3, wb3
 
-        if (phase == 1) then
-            pLo = 0;                pHi = c%nLocalCopyPts
-        else if (phase == 2) then
-            pLo = c%nLocalCopyPts;  pHi = c%nLocalPts
-        else
-            pLo = 0;                pHi = c%nLocalPts
-        end if
-        if (pHi <= pLo) return
+        pHi = c%nLocalPts
+        if (pHi <= 0) return
         sfr = merge(1, 0, c%phiIfaceRow)
-        doI = merge(1, 0, doInterp)
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
-        !$omp& map(to: pLo, pHi, sfr, doI, c%nLocal, c%lOff, c%lPointEntry, c%lSrcSlot, c%lDstSlot, &
+        !$omp& map(to: pHi, sfr, c%nLocal, c%lOff, c%lPointEntry, c%lSrcSlot, c%lDstSlot, &
         !$omp& c%lDstLo, c%lExt, c%lGA, c%lGB, c%lGS, c%lGC, c%lPhiN, blk%x, blk%y, blk%z) &
         !$omp& map(tofrom: scalar) &
         !$omp& private(p,e,pt,ni,nj,di,dj,dk,b1,b2,b3,og1,og2,og3,np1,np2,np3,s1,s2,s3, &
         !$omp& val,wa1,wb1,wa2,wb2,wa3,wb3,pn,ss,ds)
 #endif
-        do p = pLo + 1, pHi
+        do p = 1, pHi
             e = c%lPointEntry(p - 1)
             pt = p - 1 - c%lOff(e-1)
             ni = c%lExt(1,e)
@@ -1451,32 +1431,20 @@ contains
             b1 = ishft(c%lGA(1,e)*di + c%lGB(1,e), -c%lGS(1,e))
             b2 = ishft(c%lGA(2,e)*dj + c%lGB(2,e), -c%lGS(2,e))
             b3 = ishft(c%lGA(3,e)*dk + c%lGB(3,e), -c%lGS(3,e))
-            ! Per-dim 2-point weighted gather. lGS(d)==1 = prolong tangential:
-            ! interpolate (doInterp) on the cell-centred node line, else inject.
-            ! lGC(d)==2 = restrict average (0.5/0.5). Otherwise a single source.
-            if (c%lGS(1,e) == 1 .and. doI == 1) then
-                og1 = 2*iand(c%lGA(1,e)*di + c%lGB(1,e), 1) - 1; np1 = 2
-                wa1 = (blk%x(di,NVAR,ds) - blk%x(b1+og1,NVAR,ss)) &
-                    / (blk%x(b1,NVAR,ss) - blk%x(b1+og1,NVAR,ss)); wb1 = 1.0d0 - wa1
-            else if (c%lGC(1,e) == 2) then
+            ! Per-dim 2-point weighted gather. lGC(d)==2 = restrict average
+            ! (0.5/0.5); the cross-level prolong of a cell-centred scalar injects
+            ! the covering coarse cell (single source). Otherwise a single source.
+            if (c%lGC(1,e) == 2) then
                 og1 = 1; np1 = 2; wa1 = 0.5d0; wb1 = 0.5d0
             else
                 og1 = 0; np1 = 1; wa1 = 1.0d0; wb1 = 0.0d0
             end if
-            if (c%lGS(2,e) == 1 .and. doI == 1) then
-                og2 = 2*iand(c%lGA(2,e)*dj + c%lGB(2,e), 1) - 1; np2 = 2
-                wa2 = (blk%y(dj,NVAR,ds) - blk%y(b2+og2,NVAR,ss)) &
-                    / (blk%y(b2,NVAR,ss) - blk%y(b2+og2,NVAR,ss)); wb2 = 1.0d0 - wa2
-            else if (c%lGC(2,e) == 2) then
+            if (c%lGC(2,e) == 2) then
                 og2 = 1; np2 = 2; wa2 = 0.5d0; wb2 = 0.5d0
             else
                 og2 = 0; np2 = 1; wa2 = 1.0d0; wb2 = 0.0d0
             end if
-            if (c%lGS(3,e) == 1 .and. doI == 1) then
-                og3 = 2*iand(c%lGA(3,e)*dk + c%lGB(3,e), 1) - 1; np3 = 2
-                wa3 = (blk%z(dk,NVAR,ds) - blk%z(b3+og3,NVAR,ss)) &
-                    / (blk%z(b3,NVAR,ss) - blk%z(b3+og3,NVAR,ss)); wb3 = 1.0d0 - wa3
-            else if (c%lGC(3,e) == 2) then
+            if (c%lGC(3,e) == 2) then
                 og3 = 1; np3 = 2; wa3 = 0.5d0; wb3 = 0.5d0
             else
                 og3 = 0; np3 = 1; wa3 = 1.0d0; wb3 = 0.0d0
