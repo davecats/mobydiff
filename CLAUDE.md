@@ -256,9 +256,7 @@ immersed boundary. Phased, each phase verified before the next:
   (velocity+nut band ratios 0.98-1.03). nut is written to field snapshots via
   `fdm_h5_append_nut` (no-LES output byte-identical). Case + figures + analysis in
   `validation/channel_interface/les/` (run_les.py, les_stats.py, fig_interface_rms.py).
-  CAVEAT: LES is still **IBM-UNAWARE in practice** — validated for channel flow
-  only; the LES<->IBM coupling (the `ibm_aware` solid-cell nut masking) was NOT
-  exercised and is untested with block refinement / across the 2:1 interface.
+  (LES<->IBM coupling now VALIDATED — see next bullet — so this CAVEAT is lifted.)
   RESIDUAL (the next no-LES task): a small v'-only spike at COARSE-OWNS y-faces
   (the Phase-3c low-block-owns-face orientation asymmetry; the fine cells get their
   interface-NORMAL velocity by prolong-injection of the under-resolved coarse face
@@ -280,14 +278,28 @@ immersed boundary. Phased, each phase verified before the next:
   and even then no fine data exists across the fine-owns face). So const-1/2's
   stability and this residual are the same trade. Full writeup +
   ruled-out levers: `docs/next_session_interface_normal.md` (RESOLVED header).
-- NEXT SESSIONS (in order): (i) **LES<->IBM coupling** — exercise the `ibm_aware`
-  solid-cell nut masking across block refinement + the 2:1 interface; test case =
-  a plane-wall channel whose walls are described by the IBM and do NOT coincide
-  with grid points. Handout: `docs/next_session_les_ibm.md`. (ii) **Code cleanup** — remove the testing/diagnostic
+- LES<->IBM coupling — VALIDATED (2026-06-30, branch `claude/jacobi-interface`).
+  The `ibm_aware` solid-cell nut masking (`les.f90`) exercised on an off-grid IBM
+  plane-wall channel (file-based IBM from two wall-slab STLs via mobygeom, uniform
+  y, walls mid-cell at y=0.259375/2.259375, fluid gap exactly 2.0, Re_tau~180).
+  **NO solver code change**: the existing mask + WALE `sd2` already give the
+  physical nut->0 into the IBM wall with NO spurious band, on a single grid AND
+  across the 2:1 interface. The prime suspect (a spurious nut spike at the band
+  cells, SGS reading the IBM velocity drop as resolved strain) does NOT
+  materialise: band/core nut ratio 0.05 (gate 2). Gate 1 solid-cell nut==0 exact;
+  gate 3 law of the wall recovered (U+~y+, log 2.44 ln y+ +5, bulk U=15.5); gate 4
+  refine_body triple nut(y) smooth across the 2:1 interface, no band; gate 5
+  stable (case a 4000 + case c 400 steps, no NaN); gate 7 CPU==GPU to 4.6e-14
+  (masking branch). The IBM is IMPLICIT (`mu=1/(1+dt*coef)`, ibm.f90:506) so no dt
+  restriction. Case + driver + analysis + committed prereqs in
+  `validation/channel_interface/les_ibm/` (README + RESUME_STATUS). REMAINING: the
+  converged developed-statistics campaign (t=5..25, gates 3-4 quantitative incl.
+  the b_none LES-off control) — run `run_ibm_les.py --case all` on a faster GPU.
+- NEXT SESSIONS (in order): (i) **Code cleanup** — remove the testing/diagnostic
   facilities (the MOBY_* hooks: PROJONLY/PREDONLY/DIVDUMP/RHSDUMP/TERMDUMP/MANUF/
   KEBAL/IFFILT/NORECON/HALO_AUDIT/PHASETIME/STEPDIV and the dead gated paths),
-  streamline. (iii) **Optional volume force** in the momentum equation (config-
-  driven body force). (iv) **Profile + optimise** (the refined channel is
+  streamline. (ii) **Optional volume force** in the momentum equation (config-
+  driven body force). (iii) **Profile + optimise** (the refined channel is
   halo-exchange bound; Phase 4 overlap, see `docs/nonblocking_overlap_strategy.md`).
 
 ## Verification
