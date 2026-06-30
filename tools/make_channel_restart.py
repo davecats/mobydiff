@@ -124,6 +124,15 @@ def morton_key(cx, cy, cz):
     return key
 
 
+def morton_sort(leaves, lmax=1):
+    def key(leaf):
+        lev, cx, cy, cz = leaf
+        f = 2**(lmax - lev)
+        return morton_key(cx*f, cy*f, cz*f)
+    leaves.sort(key=key)
+    return leaves
+
+
 def band_leaf_table(gnbt, band_rows):
     """(level, origin-in-level-cells) leaves: y block rows < band_rows or
     >= gnbt[1]-band_rows refined to level 1; Morton ids on the finest
@@ -140,13 +149,38 @@ def band_leaf_table(gnbt, band_rows):
                                 leaves.append((1, 2*cx + sx, 2*cy + sy, 2*cz + sz))
                 else:
                     leaves.append((0, cx, cy, cz))
-    lmax = 1
-    def key(leaf):
-        lev, cx, cy, cz = leaf
-        f = 2**(lmax - lev)
-        return morton_key(cx*f, cy*f, cz*f)
-    leaves.sort(key=key)
-    return leaves
+    return morton_sort(leaves)
+
+
+def box_leaf_table(gnbt, nb, base_nodes, boxes):
+    """(level, origin-in-level-cells) leaves mirroring blocks.f90
+    build_leaf_table for refine_levels = 1 (lmax = 1, so the 2:1 smoothing
+    loop `do l = 0, lmax-2` runs zero times -- a pure box-overlap test). A
+    base block is refined to level 1 iff its physical extent overlaps any
+    refine box, using the SAME strict inequality as blocks.f90:486-488
+    (lo < box_hi .and. hi > box_lo, per dim) evaluated on the bit-identical
+    base node lines. Morton ids on the finest lattice."""
+    lines = base_nodes  # (x, y, z)
+    leaves = []
+    for cz in range(gnbt[2]):
+        for cy in range(gnbt[1]):
+            for cx in range(gnbt[0]):
+                c = (cx, cy, cz)
+                lo = [lines[d][c[d]*nb] for d in range(3)]
+                hi = [lines[d][(c[d] + 1)*nb] for d in range(3)]
+                refined = any(
+                    lo[0] < b[1] and hi[0] > b[0] and
+                    lo[1] < b[3] and hi[1] > b[2] and
+                    lo[2] < b[5] and hi[2] > b[4]
+                    for b in boxes)
+                if refined:
+                    for sz in (0, 1):
+                        for sy in (0, 1):
+                            for sx in (0, 1):
+                                leaves.append((1, 2*cx + sx, 2*cy + sy, 2*cz + sz))
+                else:
+                    leaves.append((0, cx, cy, cz))
+    return morton_sort(leaves)
 
 
 # ---------------------------------------------------------------------------
@@ -183,10 +217,15 @@ def write_attrs(h5, attrs):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", default="tutorials/channel_kmm180/channel_kmm180_restart.h5")
-    parser.add_argument("--mode", choices=("reference", "refined", "base"), required=True)
+    parser.add_argument("--mode", choices=("reference", "refined", "base", "patch"),
+                        required=True)
     parser.add_argument("--out", required=True)
     parser.add_argument("--band-cells", type=int, default=24,
                         help="refined band height in base y-cells per wall (refined mode)")
+    parser.add_argument("--refine-box", type=float, nargs=6, action="append",
+                        metavar=("X0", "X1", "Y0", "Y1", "Z0", "Z1"),
+                        help="patch mode: physical refine box (repeatable); "
+                             "same 6 numbers as [blocks] refine in the .ini")
     parser.add_argument("--dyw-plus", type=float, default=0.5)
     args = parser.parse_args()
 
@@ -211,7 +250,7 @@ def main():
         f = src["fields"][name]
         fine[name] = interp_field(f, spos, staggered_positions(fine_nodes, var),
                                   periodic, lengths)
-        if args.mode in ("refined", "base"):
+        if args.mode in ("refined", "base", "patch"):
             coarse[name] = interp_field(f, spos, staggered_positions(base_nodes, var),
                                         periodic, lengths)
 
@@ -245,9 +284,13 @@ def main():
         iface = None
     else:
         gnbt = tuple(n//NB for n in base)
-        band_rows = args.band_cells//NB
-        assert band_rows*NB == args.band_cells, "band must be whole block rows"
-        leaves = band_leaf_table(gnbt, band_rows)
+        if args.mode == "patch":
+            assert args.refine_box, "patch mode requires at least one --refine-box"
+            leaves = box_leaf_table(gnbt, NB, base_nodes, args.refine_box)
+        else:
+            band_rows = args.band_cells//NB
+            assert band_rows*NB == args.band_cells, "band must be whole block rows"
+            leaves = band_leaf_table(gnbt, band_rows)
         nleaf = len(leaves)
         blocks = np.zeros((nleaf, 4), dtype=np.int32)
         rows = {name: np.zeros((nleaf, NB, NB, NB)) for name in names}
@@ -269,9 +312,12 @@ def main():
             h5.create_dataset("x", data=base_nodes[0])
             h5.create_dataset("y", data=base_nodes[1])
             h5.create_dataset("z", data=base_nodes[2])
-        iface = 0.5*(base_nodes[1][args.band_cells] + base_nodes[1][args.band_cells + 1])
+        if args.mode == "patch":
+            iface = None
+        else:
+            iface = 0.5*(base_nodes[1][args.band_cells] + base_nodes[1][args.band_cells + 1])
         nref = int((blocks[:, 3] == 1).sum())
-        print(f"refined leaf table: {nleaf} leaves, {nref} fine")
+        print(f"{args.mode} leaf table: {nleaf} leaves, {nref} fine")
 
     y = base_nodes[1]
     print(f"wrote {args.out}")

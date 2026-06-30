@@ -36,7 +36,35 @@ run_reference.sh, run_uniform128.sh — two-leg stats; analysis scripts produce 
 `uniform128.ini` (base-128 control). Beltrami slab energy gate: `MOBY_KEBAL` (now
 per-component u/v/w) on `validation/beltrami/slab_y_diag.ini`.
 
-## Open item 1 — VALIDATE edges and corners (single refined block)
+## Open item 1 — VALIDATE edges and corners (single refined block)  ✅ DONE 2026-06-29
+
+> RESOLVED 2026-06-29: all gates PASS, NO edge/corner band. Embedded CORE patch
+> (`validation/channel_interface/core_patch/`, README + `edge-corner-validation`
+> memory). Developed banding (gate 5, 201 snaps/case t=5..25,
+> `tools/patch_interface_stats.py`): fluctuation energy at the interface-adjacent
+> coarse cells within 1-2% of the base-128 control for u/v/w (max corner v'
+> +2.2%, 8 cells) -- no band (the old flat-face u' spike was ~1.5); the mean
+> footprint is a few-cell sampling artifact (the patch-free base run shows it
+> STRONGER, patch <= base every class). const-1/2 + momentum_reflux=false is
+> clean at edges/corners just as at flat faces. The original progress note (build
+> + gates 1-4) follows.
+
+> PROGRESS 2026-06-29: case built + gates 1-3 PASS. Embedded CORE patch chosen
+> over a wall patch (clean attribution + full orientation coverage + y-symmetry;
+> see `validation/channel_interface/core_patch/README.md` and the
+> `edge-corner-validation` memory). `make_channel_restart.py` gained
+> `--mode patch --refine-box ...` (box leaf table, refine_levels=1). Gate 1 N/A
+> (Python-only change); gate 2 uniform-flow exactness through the patch = 0.0 at
+> every face/edge/corner; gate 3 250-step turbulent stability bounded
+> (post-transient div_max ~0.012, mass 1e-15, no NaN). Gate 4 edge/corner banding
+> metric BUILT (`tools/patch_interface_diff.py`, reference-based vs a base-128
+> control `base.ini`) + first reading PASS: edge/corner coarse-cell diff is
+> 0.30-0.37x / 0.06-0.12x the face level (smaller, contact-area-natural; a band
+> would make them anomalously high). REMAINING: gate 5 developed time-averaged
+> stats vs uniform-256/128 for the converged number (the 250-step run is t=0.0025,
+> IC-dominated, so gate-4 magnitudes aren't converged -- only the relative
+> ordering is the signal there).
+
 
 The turbulent validation so far is FLAT-FACE only: the wall bands span the full
 x-z plane, so the only 2:1 interfaces are y-faces — no edges (two interface faces
@@ -61,6 +89,11 @@ in the coarse interior exercises all 6 faces + 12 edges + 8 corners.
   const-1/2, re-confirm they are stable in TURBULENCE, not just Beltrami.
 
 ## Open item 2 — VALIDATE LES across the 2:1 interface
+
+> HANDOUT 2026-06-30: full plan + next-session prompt in `docs/next_session_les.md`
+> (LES path mechanics, Phase A decomposition compat, Phase B interface mechanics,
+> Phase C three turbulence cases — uniform / slab-refined / block-refined). The
+> notes below are the seed for that handout.
 
 LES (`les.f90`, `les%nut`) has not been validated WITH refinement in turbulence.
 - The eddy viscosity `nut` is a scalar carried per block with a trailing block index
