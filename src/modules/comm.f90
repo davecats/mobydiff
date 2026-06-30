@@ -131,9 +131,9 @@ module comm
         ! ROW into the coarse interface-correction ghost (see lPhiN). Off for
         ! cell-centred scalars (e.g. les%nut).
         logical :: phiIfaceRow = .false.
-        ! MOBY_VELINJECT: inject (vs tangentially interpolate) the velocity prolong
-        ! -- restores the injection-prolong + average-restrict ADJOINT pair (energy-
-        ! consistent transfer) for the Galerkin experiment. Read once at init.
+        ! Inject (vs tangentially interpolate) the velocity prolong -- the
+        ! injection-prolong + average-restrict pair is the energy-consistent
+        ! constant-1/2 transfer. Set from [blocks] interface_constant_half at init.
         logical :: velInject = .false.
     end type comm_type
 
@@ -171,14 +171,10 @@ contains
 
         call comm_init_world(c)
 
-        ! Constant-1/2 (energy-conserving) interface => inject the velocity prolong.
-        ! Default ON via [blocks] interface_constant_half; MOBY_VELINJECT forces it.
+        ! Constant-1/2 (energy-conserving) interface => inject the velocity prolong
+        ! (default ON via [blocks] interface_constant_half); otherwise the prolong
+        ! tangentially interpolates on the var-staggered node line.
         c%velInject = logical(dns%block_interface_const_half)
-        block
-            character(len=16) :: env
-            call get_environment_variable("MOBY_VELINJECT", env)
-            if (len_trim(env) > 0) c%velInject = .true.
-        end block
 
         c%periodic = bc%isPeriodic
 
