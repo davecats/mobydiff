@@ -1,10 +1,16 @@
 # LES validation with block refinement (2:1 interface)
 
-Validates the LES (`[les] model = wale`) path across the block decomposition and
-the 2:1 refinement interface, on branch `claude/jacobi-interface`. This is open
-item 2 of `docs/next_session_edges_les.md` (item 1, edge/corner no-LES, is DONE
-in `../core_patch/`). Settings throughout: **WALE**, `momentum_reflux = false`,
-`interface_constant_half = true` (the resolved production defaults).
+**STATUS: VALIDATED (2026-06-30)** — the LES (`[les] model = wale`) path works
+across the block decomposition and the 2:1 refinement interface (channel flow);
+see "Results" below. Open item 2 of `docs/next_session_edges_les.md` (item 1,
+edge/corner no-LES, is DONE in `../core_patch/`). Settings throughout: **WALE**,
+`momentum_reflux = false`, `interface_constant_half = true`.
+
+> **CAVEAT — LES is still IBM-UNAWARE in practice.** This validation is channel
+> flow only (no immersed boundary). The LES↔IBM coupling — the `ibm_aware`
+> solid-cell `nut` masking in `les.f90` — was never exercised here and is
+> **untested with block refinement and across the 2:1 interface**. Validate the
+> LES+IBM+refinement combination before trusting LES on IBM bodies.
 
 ## Why WALE + a coarse grid
 

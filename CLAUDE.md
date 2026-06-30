@@ -244,6 +244,30 @@ immersed boundary. Phased, each phase verified before the next:
   `validation/channel_interface/` (developed/, interface_benchmark/, reference.ini
   / uniform128.ini); see `docs/next_session_edges_les.md` for the open items
   (edge/corner + LES validation; less-dissipative interface transfer).
+- 2:1 interface — edge/corner + LES validation (DONE 2026-06-30, branch
+  `claude/jacobi-interface`). EDGE/CORNER (no-LES): embedded core patch, all 6
+  faces/12 edges/8 corners; const-1/2 + reflux-off clean (no band, developed
+  stats). LES (WALE) across block refinement + the 2:1 interface VALIDATED in
+  developed turbulence (coarse 64x48x64 Re_tau 180, vs a 128^3 no-LES filtered-DNS
+  reference): mean U (log law) + Reynolds shear stress match to ~1%; the standard
+  coarse-LES/WALE normal-stress bias (u' +5%, v'/w' -10%, partly the unfiltered-
+  reference gap); WALE nut->0 at the wall; nut steps by the physical filter-width
+  ratio (delta^2) across flat AND edge/corner interfaces with NO spurious band
+  (velocity+nut band ratios 0.98-1.03). nut is written to field snapshots via
+  `fdm_h5_append_nut` (no-LES output byte-identical). Case + figures + analysis in
+  `validation/channel_interface/les/` (run_les.py, les_stats.py, fig_interface_rms.py).
+  CAVEAT: LES is still **IBM-UNAWARE in practice** — validated for channel flow
+  only; the LES<->IBM coupling (the `ibm_aware` solid-cell nut masking) was NOT
+  exercised and is untested with block refinement / across the 2:1 interface.
+  RESIDUAL (the next no-LES task): a small v'-only spike at COARSE-OWNS y-faces
+  (the Phase-3c low-block-owns-face orientation asymmetry; the fine cells get their
+  interface-NORMAL velocity by prolong-injection of the under-resolved coarse face
+  value). Reflux-off shrinks it to ~17% localized v' excess; fine-owns faces are
+  clean. See `docs/next_session_interface_normal.md`.
+- NEXT (no LES): interface-NORMAL velocity treatment — replace the orientation-
+  dependent coarse-owns(inject)/fine-owns(restrict) ownership with a two-sided
+  symmetric conservative reconciliation so both faces behave like the clean
+  fine-owns one. Handout: `docs/next_session_interface_normal.md`.
 - Phase 4: performance (overlap, see `docs/nonblocking_overlap_strategy.md`).
 
 ## Verification
