@@ -91,11 +91,14 @@ def homogeneous_figure():
     # U+ vs y+ (log law), lower half only
     a = ax[0, 0]
     yp = np.logspace(0, np.log10(RETAU), 100)
-    a.semilogx(yp, yp, "k:", lw=0.8, label="U+=y+")
-    a.semilogx(yp[yp > 11], np.log(yp[yp > 11]) / 0.41 + 5.2, "k--", lw=0.8, label="log law")
+    sub = yp[yp <= 15]                                  # viscous sublayer line, capped
+    a.semilogx(sub, sub, "k:", lw=0.8, label="U+=y+ (y+<15)")
+    logr = yp[yp >= 11]
+    a.semilogx(logr, np.log(logr) / 0.41 + 5.2, "k--", lw=0.8, label="log law")
     for k in data:
         y = Y[k]; lo = y <= 1.0
         a.semilogx(y[lo] * RETAU, C[k][0][lo], color=COL[k], lw=1.4, label=k)
+    a.set_ylim(0, 20)                                   # data peaks ~18; don't let U+=y+ blow up the axis
     a.set_xlabel("y+"); a.set_ylabel("U+"); a.set_title("mean velocity (log law)"); a.legend(fontsize=8)
 
     for axi, (ci, t) in zip([ax[0, 1], ax[0, 2], ax[1, 0], ax[1, 1]],
