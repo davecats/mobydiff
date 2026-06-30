@@ -89,8 +89,7 @@ contains
             ! velocity varies in the normal direction at all three interface
             ! orientations (Beltrami's dv/dy=0 makes that term vanish). The
             ! Laplacian of each component is -3k^2 times the component, so the
-            ! analytic diffusion is trivial; the advection is closed-form (see
-            ! tools/rhsband.py). Used by the MOBY_RHSDUMP operator gate.
+            ! analytic diffusion is trivial; the advection is closed-form.
             ! Set interior + the single halo layer; use blk%q's real bounds
             ! (0:nb+1 here) since blk%x/y/z extend further (-1:nb+2) than q.
             kk = 8.0d0*atan(1.0d0)/dns%leng(1)

@@ -4,17 +4,12 @@ module pressure_solver
     use :: blocks, only: block_set_type, FACE_PHYS, FACE_CLOSED, FACE_COARSE, FACE_FINE
     use :: ibmm, only: ibm_type
     use :: boundary, only: boundary_type, apply_bc
-    use :: les_model, only: les_wall_seconds
-    use :: comm, only: comm_type, exchange_halos, exchange_scalar_halos, &
-        comm_allreduce_max, comm_allreduce_sum
+    use :: comm, only: comm_type, exchange_halos, exchange_scalar_halos
 
     implicit none
 
     private
     public :: pressure_solver_type, init_pressure_solver, pressure_projection
-    ! MOBY_PHASETIME split of pressure_projection: time in halo exchanges vs solve
-    ! kernels (jacobi compute/apply + cheb). Accumulated across the run, read by main.
-    real(C_DOUBLE), public :: proj_t_exch = 0.0d0, proj_t_ker = 0.0d0
 
     type :: pressure_solver_type
         integer(C_INT) :: nIter=3
@@ -24,11 +19,6 @@ module pressure_solver
         ! the factor strictly below 1 (omega=1 is marginally unstable). 0.8 is
         ! a safe default; the config key is still "sor".
         real(C_DOUBLE) :: sor=0.8d0
-        ! Diagnostic (MOBY_RESLOG): print the residual norm max|div| / L2|div|
-        ! every iteration of the projection, to measure convergence rate
-        ! (iterations to tolerance) for Jacobi vs an accelerator. Off by
-        ! default; read once at init.
-        logical :: resLog=.false.
         ! Chebyshev-Jacobi acceleration ([pressure] accel = chebyshev, or
         ! MOBY_CHEB): a Chebyshev semi-iteration over the diagonal(Jacobi)-
         ! preconditioned projection operator, whose spectrum is bounded in
@@ -72,8 +62,6 @@ contains
 
         ! Damped Jacobi needs no red-black colouring, so the even-global-size
         ! restriction of the red-black scheme no longer applies.
-        call get_environment_variable("MOBY_RESLOG", env)
-        ps%resLog = len_trim(env) > 0
         call get_environment_variable("MOBY_PHIINTERP", env)
         if (len_trim(env) > 0) ps%phiInterp = .true.
         ! [pressure] accel = chebyshev sets ps%cheb in config; MOBY_CHEB* env
@@ -115,17 +103,11 @@ contains
         type(comm_type), intent(inout) :: c
 
         integer(C_INT) :: iIter
-        real(C_DOUBLE) :: rmax, rl2, omega, tpc
+        real(C_DOUBLE) :: omega
         real(C_DOUBLE) :: dd, cc, alpha, alphaPrev, beta, gamma
 
         call allocate_phi(blk)
         if (ps%cheb) call allocate_delta(blk)
-
-        if (ps%resLog) then
-            call residual_norm(blk, c, rmax, rl2)
-            if (c%has_terminal) print '(a,i6,a,es14.6,a,es14.6)', &
-                "RESLOG iter ", 0_C_INT, " max ", rmax, " l2 ", rl2
-        end if
 
         ! Chebyshev semi-iteration coefficients over [lmin, lmax].
         dd = 0.5d0*(ps%chebLmax + ps%chebLmin)
@@ -143,7 +125,6 @@ contains
         ! velocity (+ pressure on the last iteration) halos for the next
         ! divergence.
         do iIter = 1_C_INT, ps%nIter
-            tpc = les_wall_seconds()
             call jacobi_compute_phi(blk, ibm, omega)
             if (ps%cheb) then
                 if (iIter == 1_C_INT) then
@@ -157,72 +138,16 @@ contains
                 end if
                 call cheb_combine(blk, alpha, gamma)
             end if
-            proj_t_ker = proj_t_ker + les_wall_seconds() - tpc
-            tpc = les_wall_seconds()
             call exchange_scalar_halos(c, phi, blk, ifaceRow=.true., interpProlong=ps%phiInterp)
-            proj_t_exch = proj_t_exch + les_wall_seconds() - tpc
-            tpc = les_wall_seconds()
             call jacobi_apply(ps, blk, dt_gamma, ibm)
             call apply_bc(blk, bc)
-            proj_t_ker = proj_t_ker + les_wall_seconds() - tpc
-            tpc = les_wall_seconds()
             if (iIter == ps%nIter) then
                 call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W, VAR_P])
             else
                 call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W], interp=.false.)
             end if
-            proj_t_exch = proj_t_exch + les_wall_seconds() - tpc
-            if (ps%resLog) then
-                call residual_norm(blk, c, rmax, rl2)
-                if (c%has_terminal) print '(a,i6,a,es14.6,a,es14.6)', &
-                    "RESLOG iter ", iIter, " max ", rmax, " l2 ", rl2
-            end if
         end do
     end subroutine pressure_projection
-
-    ! Residual-norm diagnostic (MOBY_RESLOG): max|div| and the l2 norm
-    ! sqrt(sum div^2) of the current velocity over all interior cells, reduced
-    ! across ranks. div is the staggered divergence the Jacobi sweep minimises
-    ! (proportional to the linear-system residual b - L p), so these norms track
-    ! convergence directly.
-    subroutine residual_norm(blk, c, rmax, rl2)
-        type(block_set_type), intent(in) :: blk
-        type(comm_type), intent(inout) :: c
-        real(C_DOUBLE), intent(out) :: rmax, rl2
-
-        real(C_DOUBLE) :: div, vmax, vsum, mx(1), sm(1)
-        integer(C_INT) :: i, j, k, b, nx, ny, nz
-
-        nx = blk%nb(1); ny = blk%nb(2); nz = blk%nb(3)
-        vmax = 0.0d0; vsum = 0.0d0
-
-#ifdef USE_OPENMP_OFFLOAD
-        !$omp target teams distribute parallel do collapse(4) &
-        !$omp& map(to: nx, ny, nz, blk%q, blk%d1x, blk%d1y, blk%d1z) &
-        !$omp& private(i,j,k,b,div) reduction(max:vmax) reduction(+:vsum)
-#endif
-        do b = 1_C_INT, blk%nBlocks
-        do k = 1_C_INT, nz
-            do j = 1_C_INT, ny
-                do i = 1_C_INT, nx
-                    div = (blk%q(i+1,j,k,VAR_U,b)-blk%q(i,j,k,VAR_U,b))*blk%d1x(i,VAR_P,b) &
-                        + (blk%q(i,j+1,k,VAR_V,b)-blk%q(i,j,k,VAR_V,b))*blk%d1y(j,VAR_P,b) &
-                        + (blk%q(i,j,k+1,VAR_W,b)-blk%q(i,j,k,VAR_W,b))*blk%d1z(k,VAR_P,b)
-                    vmax = max(vmax, abs(div))
-                    vsum = vsum + div*div
-                end do
-            end do
-        end do
-        end do
-#ifdef USE_OPENMP_OFFLOAD
-        !$omp end target teams distribute parallel do
-#endif
-        mx(1) = vmax; sm(1) = vsum
-        call comm_allreduce_max(c, mx)
-        call comm_allreduce_sum(c, sm)
-        rmax = mx(1)
-        rl2 = sqrt(sm(1))
-    end subroutine residual_norm
 
     ! Allocate the device-resident phi buffer once (same 0:nb+1 spatial bounds
     ! as blk%q so the scalar halo exchange and the face corrections line up).

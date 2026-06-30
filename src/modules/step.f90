@@ -218,7 +218,7 @@ contains
     !    Its deep halo q(i,0,k) sits below that owned face; the velocity prolong
     !    fills it with one coarse face value -- O(h) inaccurate TANGENTIALLY --
     !    which the wall-normal d(vv)/dy and d2v/dy2 at the face amplify to O(1) and
-    !    O(1/h) (increment 3, verified term-by-term with MOBY_TERMDUMP). The high
+    !    O(1/h) (increment 3, verified term-by-term). The high
     !    face (orientation A) needs nothing: there the interface face is the
     !    prolonged coarse face AT the face location y_int, already 2nd order.
     !
@@ -710,7 +710,7 @@ contains
     ! (Verstappen & Veldman 2003). The divergence-form convection is
     ! skew-symmetric (conserves kinetic energy) ONLY for a discretely div-free
     ! field; at a 2:1 interface the constant-1/2 telescoping breaks and the
-    ! coarse-fine cells pump energy (the spurious band, MOBY_KEBAL). The skew form
+    ! coarse-fine cells pump energy (the spurious band). The skew form
     ! C_skew = C_div + 1/2 u (div u) is energy-conserving for ANY field. This adds
     ! the correction 1/2 u * Div_cv -- Div_cv = the velocity divergence on the
     ! component's own control volume (same face averages as the convective fluxes)

@@ -43,8 +43,8 @@ module init
         ! test: every component varies in every direction, so the wall-normal
         ! velocity varies in the normal direction at all three interface
         ! orientations -- the property Beltrami lacks). tgv3d is NOT an exact
-        ! NS solution; it is only used by the MOBY_RHSDUMP operator gate.
-        ! These are exact incompressible-NS solutions used as projection gates.
+        ! NS solution; it is a manufactured momentum-operator test field.
+        ! uniform/beltrami/tgv are exact incompressible-NS solutions used as gates.
         character(len=32) :: initial = "uniform"
         ! [blocks] nb: cubic block edge in cells; 0 = one block per rank box.
         integer(C_INT) :: block_nb = 0_C_INT
