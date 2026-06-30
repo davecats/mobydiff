@@ -264,11 +264,31 @@ immersed boundary. Phased, each phase verified before the next:
   interface-NORMAL velocity by prolong-injection of the under-resolved coarse face
   value). Reflux-off shrinks it to ~17% localized v' excess; fine-owns faces are
   clean. See `docs/next_session_interface_normal.md`.
-- NEXT (no LES): interface-NORMAL velocity treatment — replace the orientation-
-  dependent coarse-owns(inject)/fine-owns(restrict) ownership with a two-sided
-  symmetric conservative reconciliation so both faces behave like the clean
-  fine-owns one. Handout: `docs/next_session_interface_normal.md`.
-- Phase 4: performance (overlap, see `docs/nonblocking_overlap_strategy.md`).
+- 2:1 interface — interface-NORMAL velocity asymmetry (RESOLVED 2026-06-30,
+  ACCEPTED as the const-1/2 price; no code change). The coarse-owns y-face's ~9%
+  v' excess (no LES, `vface_asym.py`: lower/upper v'_rms 0.85/0.78) is a **~2.7x
+  spurious sub-coarse-cell fine-structure spike** (v_fine 0.235 vs the ~0.086
+  interior/fine-owns baseline). MECHANISM: at a coarse-owns face the fine block
+  PREDICTS its interface-normal face `q(1)` but its flux `vv_m=(q(0)+q(1))^2` reads
+  the const-1/2 prolong-INJECTED coarse deep halo `q(0)` -> Jensen variance
+  injection. Every lever is blocked: (1) the deep halo is the SOURCE but is on a
+  stability knife-edge — a gentle `q(0)=q(1)` blew the patch up exponentially
+  (~10^4/snapshot, <120 steps); the const-1/2 injection is load-bearing; (2) the
+  shared-FACE reconciliation can't reach a predictor-sourced excess AND is
+  storage-blocked (single halo layer `q(0:nb+1)` — the fine can't predict its
+  high-halo face `q(ny+1)`, which needs `q(ny+2)`; a 2-layer halo would be needed
+  and even then no fine data exists across the fine-owns face). So const-1/2's
+  stability and this residual are the same trade. Full writeup +
+  ruled-out levers: `docs/next_session_interface_normal.md` (RESOLVED header).
+- NEXT SESSIONS (in order): (i) **LES<->IBM coupling** — exercise the `ibm_aware`
+  solid-cell nut masking across block refinement + the 2:1 interface; test case =
+  a plane-wall channel whose walls are described by the IBM and do NOT coincide
+  with grid points. (ii) **Code cleanup** — remove the testing/diagnostic
+  facilities (the MOBY_* hooks: PROJONLY/PREDONLY/DIVDUMP/RHSDUMP/TERMDUMP/MANUF/
+  KEBAL/IFFILT/NORECON/HALO_AUDIT/PHASETIME/STEPDIV and the dead gated paths),
+  streamline. (iii) **Optional volume force** in the momentum equation (config-
+  driven body force). (iv) **Profile + optimise** (the refined channel is
+  halo-exchange bound; Phase 4 overlap, see `docs/nonblocking_overlap_strategy.md`).
 
 ## Verification
 

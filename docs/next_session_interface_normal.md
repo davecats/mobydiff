@@ -1,4 +1,69 @@
-# Next session — 2:1 interface-NORMAL velocity treatment (no LES)
+# 2:1 interface-NORMAL velocity treatment (no LES) — RESOLVED 2026-06-30
+
+**OUTCOME: the ~9% coarse-owns v' asymmetry is ACCEPTED as the intrinsic price of
+the energy-conserving const-1/2 interface. No code change. The production
+interface is unchanged and stays validated.** The investigation below pinned the
+mechanism conclusively and ruled out every lever; do not re-litigate without new
+infrastructure (a 2-layer normal halo, and even that only partially helps).
+
+## What was measured (no LES, `vface_asym.py`, committed)
+
+Developed core-patch run, time-avg v'_rms over the box's two mirror-symmetric
+y-faces (physics demands they be EQUAL):
+
+| y-face | v_full | v_coarse (injectable) | v_fine (sub-coarse-cell) |
+|---|---|---|---|
+| LOWER = coarse-owns | 0.850 | 0.817 | **0.235** |
+| UPPER = fine-owns   | 0.778 | 0.773 | **0.086** |
+| interior (centreline) | 0.566 | 0.560 | 0.084 |
+
+lower/upper v'_rms mean ratio ≈ 1.09–1.12. The excess is a **~2.7× spurious
+sub-coarse-cell fine-structure spike at the coarse-owns face** (v_fine 0.235 vs
+the ~0.086 interior / fine-owns baseline) — NOT a coarse-scale (mean-transport)
+effect.
+
+## Mechanism (conclusive)
+
+At the **coarse-owns** face the FINE block is the high side, so it PREDICTS its own
+interface-normal face `q(1)` — but its advective flux `vv_m = (q(0)+q(1))²` reads
+the deep halo `q(0)`, which under const-1/2 is the **prolong-INJECTED coarse value**
+(one coarse v replicated over the 4 fine cells). That pumps Jensen-type
+(avg-of-squares ≫ square-of-avg) variance into the fine prediction → the v' spike.
+At the **fine-owns** face the fine's interface face is its high HALO, not predicted
+(only injected + projection-corrected), so it shows just the physical baseline.
+
+## Why every lever is blocked (three converging probes)
+
+1. **Deep-halo lever (the source) is violently unstable.** A diagnostic that
+   gently replaced the injected normal deep halo with `q(0)=q(1)` (removing the
+   coarse-injected variance, no cubic) blew the developed patch up exponentially —
+   `max|v|` 4.3 → 4.2e3 → 5.7e7 … ~10⁴/snapshot, diverging within ~120 steps. The
+   const-1/2 injection of the interface-normal deep halo is on a **stability
+   knife-edge** and is LOAD-BEARING — the same failure mode the cubic
+   reconstruction had. The asymmetry's source cannot be touched.
+2. **The face reconciliation can't reach the source.** It changes the stored face
+   value / divergence, not what the predictor reads, so a symmetric shared-face
+   reconciliation would not remove a predictor-sourced sub-cell variance excess.
+3. **The face reconciliation is independently storage-blocked.** `blk%q` carries a
+   SINGLE halo layer `(0:nb+1)`. Making the fine-owns face fine-authoritative needs
+   the fine block to PREDICT its high-halo interface-normal face `q(ny+1)`, whose
+   flux/Laplacian read `q(ny+2)` — which does not exist. A 2-layer normal halo
+   would be required, and even then the fluid ACROSS the fine-owns face is the
+   COARSE region (no fine data exists there), so the normal velocity stays
+   coarse-influenced. Partial payoff at best for a large infrastructure change.
+
+Net: const-1/2's stability and its ~9% interface-normal v' asymmetry are two faces
+of the same conservative low-order treatment. The deep halo is the source but is
+untouchable; the face lever can't reach it and is storage-blocked. Accepted.
+
+Tools (permanent record): `validation/channel_interface/core_patch/vface_asym.py`
+(per-face v'_rms + peakedness) and the within-coarse-cell decomposition snippet in
+the 2026-06-30 session transcript. Production settings unchanged:
+`interface_constant_half = true`, `momentum_reflux = false`.
+
+---
+
+# ORIGINAL HANDOUT (superseded by the resolution above)
 
 Branch `claude/jacobi-interface`. The 2:1 interface is validated in turbulence for
 both the flat-face and edge/corner cases, and LES rides on it cleanly
