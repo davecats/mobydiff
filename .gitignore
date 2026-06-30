@@ -86,3 +86,4 @@ validation/beltrami/suite/
 validation/*/runs/
 __pycache__/
 *.pyc
+validation/channel_interface/les/runs/

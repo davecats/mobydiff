@@ -92,6 +92,41 @@ Gates:
 - `les_stats.py` — analysis (channel_stats profiles + log law + nut(y) + patch band).
 - `nut_interface_slice.png` — the Phase-B mechanics `nut` cross-section.
 
+## Results (developed run, t=5..25, GPU)
+
+Figures: `les_profiles.png` (profiles), `fig_{patch,slab}_slice_*.png`
+(instantaneous cross-sections, all vars incl nut), `fig_{slab,patch}_rms_slice.png`
+(time-avg fluctuation rms + mean nut cross-sections, `fig_interface_rms.py`).
+
+**LES quality (uniform vs filtered-DNS reference).** CORE (0.3<y<1.7) ratio
+LES/reference: U 1.01, −⟨u'v'⟩ 0.99 — mean velocity (log law recovered) and the
+resolved Reynolds shear stress match the DNS. Normal stresses show the classic
+coarse-LES/WALE bias at Re_tau 180: u' +5% (streak energy piles up), v'/w' −10%
+(under-resolved cross-stream motions). Part of the v'/w' deficit is the legitimate
+filtering gap (reference is *unfiltered* DNS). `nut` is physical: →0 at the wall
+(WALE y³, no van Driest), peak ~0.26 ν in the core. Acceptable LES.
+
+**Flat interface (slab).** `nut` steps down by the physical `delta²` (~4×) into the
+fine wall bands — a clean sharp step, NO overshoot/band (see `fig_slab_rms_slice`
+mean-nut panel and the `nut(y)` profile). The fine bands resolve MORE velocity
+fluctuation (closer to DNS) — refinement improves the near-wall stresses; the
+transition is smooth with no spurious rms ridge at the interface.
+
+**Edge/corner interface (patch).** Band metric (patch vs uniform LES control):
+velocity AND `nut` band ratios 0.98–1.03 at face/edge/corner — NO band,
+edge/corner not worse than face. The mean-`nut` cross-section shows the fine core
+box as a crisp low-`nut` square with no surrounding halo. The const-1/2 +
+reflux-off interface treatment carries over cleanly to LES.
+
+**Caveat — pressure null mode (NOT LES/interface related).** ALL runs, including
+the no-LES 128³ reference, carry a large velocity-decoupled pressure null mode
+(pn std 2e5–1.3e6, |max| up to 2e7) from the under-converged niter=6
+Chebyshev-Jacobi projection (see the `pressure-volume-average-drift` note). It is
+gradient-free: velocity, divergence and all turbulence statistics are healthy and
+match DNS. It makes the pressure field meaningless and inflates the patch `p` band
+ratio (1.2–1.5) — DISREGARD the `p` column; u/v/w/nut are the valid ones. For runs
+where pressure matters, raise niter or pin/zero-mean the pressure.
+
 ## Notes
 
 - The reference is *unfiltered* DNS, so LES resolved stresses sit slightly below
