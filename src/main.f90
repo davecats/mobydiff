@@ -23,7 +23,7 @@ program main
         comm_allreduce_sum, comm_allreduce_max
     implicit none
 
-    integer :: arg_status, rkStage, refluxDir, refluxComp
+    integer :: arg_status, rkStage
     integer(C_INT) :: loop_steps
     real(C_DOUBLE) :: dt_alpha, dt_beta, dt_gamma
     real(C_DOUBLE) :: les_profile_start
@@ -44,9 +44,6 @@ program main
     integer(C_INT), allocatable :: blockTouch(:,:), blockBuried(:,:)
     integer :: refineLevel, maskCount
     logical :: blockActiveFound
-    ! skewIface ([blocks] interface_skew): add the energy-conserving skew-symmetric
-    ! interface convection correction (rides the momentum reflux).
-    logical :: skewIface
 
     call comm_init_world(c)
     call splash(c%has_terminal)
@@ -184,9 +181,6 @@ program main
         call update_timestep_limits(blk, dns, c)
     end if
 
-    ! Skew-symmetric interface convection correction ([blocks] interface_skew).
-    skewIface = logical(dns%block_interface_skew)
-
     if (c%has_terminal) print *, "main loop starting..."
     loop_steps = 0_C_INT
     call reset_les_profile(les_prof)
@@ -212,25 +206,6 @@ program main
             ! halos then keep their constant-1/2 restricted/injected exchange values).
             if (.not. dns%block_interface_const_half) &
                 call reconstruct_interface_halos(blk)
-            ! Momentum reflux: from the start-of-substage velocity, capture each
-            ! interface direction's normal advective flux, restrict the fine flux
-            ! into the coarse across-interface halo, and accumulate the coarse RHS
-            ! correction; applied to the predicted field below.
-            if (dns%block_momentum_reflux) then
-                call reflux_zero(blk)
-                do refluxDir = 1, 3
-                    do refluxComp = 1, 3
-                        call reflux_compute_flux(blk, refluxDir, refluxComp)
-                        call exchange_scalar_halos(c, blk%refluxF, blk, ifaceRow=.true.)
-                        call reflux_accumulate(blk, refluxDir, refluxComp)
-                    end do
-                end do
-                ! Energy-conserving (V&V) skew-symmetric interface convection: add
-                ! 1/2 u (div u) at the interface-band cells INTO refluxCorr so
-                ! reflux_apply lands it with the reflux correction ([blocks]
-                ! interface_skew); inert without a 2:1 interface.
-                if (skewIface) call skew_interface_correction(blk)
-            end if
             call update_ibm_mu(ibm, dt_gamma)
             if (les_is_enabled(les)) then
                 les_profile_start = les_wall_seconds()
@@ -243,7 +218,6 @@ program main
             else
                 call momentum(blk, dns, dt_alpha, dt_beta, dt_gamma, ibm)
             end if
-            if (dns%block_momentum_reflux) call reflux_apply(blk, dt_alpha)
             call apply_bc(blk, bc)
             ! Post-predictor exchange with the conservation SYNC: the cross-level
             ! PROLONG/RESTRICT write the shared 2:1 face so the two stored copies

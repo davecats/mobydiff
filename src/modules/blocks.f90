@@ -115,14 +115,6 @@ module blocks
         real(C_DOUBLE), allocatable :: q(:,:,:,:,:)      ! (0:nb+1,...,NVAR,nBlocks)
         real(C_DOUBLE), allocatable :: qs(:,:,:,:,:)     ! (0:nb+1,...,NVEL,nBlocks)
         real(C_DOUBLE), allocatable :: oldrhs(:,:,:,:,:) ! (1:nb,...,NVEL,nBlocks)
-        ! Momentum reflux scratch (allocated only with [blocks] momentum_reflux):
-        ! refluxF holds, one interface direction at a time, the interface-adjacent
-        ! advective flux at each cell (a scalar, exchanged/restricted so a coarse
-        ! cell reads the averaged fine flux in its across-interface halo);
-        ! refluxCorr accumulates the per-component RHS reflux correction applied
-        ! to the predicted field. See reflux_* in step.f90.
-        real(C_DOUBLE), allocatable :: refluxF(:,:,:,:)      ! (0:nb+1,...,nBlocks)
-        real(C_DOUBLE), allocatable :: refluxCorr(:,:,:,:,:) ! (1:nb,...,NVEL,nBlocks)
     end type block_set_type
 
 contains
@@ -261,12 +253,6 @@ contains
         blk%q = 0.0d0
         blk%qs = 0.0d0
         blk%oldrhs = 0.0d0
-        if (dns%block_momentum_reflux) then
-            allocate(blk%refluxF(0:nx+1,0:ny+1,0:nz+1,blk%nBlocks))
-            allocate(blk%refluxCorr(1:nx,1:ny,1:nz,NVEL,blk%nBlocks))
-            blk%refluxF = 0.0d0
-            blk%refluxCorr = 0.0d0
-        end if
     end subroutine init_block_set
 
     subroutine destroy_block_set(blk)
@@ -295,8 +281,6 @@ contains
         if (allocated(blk%q)) deallocate(blk%q)
         if (allocated(blk%qs)) deallocate(blk%qs)
         if (allocated(blk%oldrhs)) deallocate(blk%oldrhs)
-        if (allocated(blk%refluxF)) deallocate(blk%refluxF)
-        if (allocated(blk%refluxCorr)) deallocate(blk%refluxCorr)
 
         if (allocated(blk%leafLevel)) deallocate(blk%leafLevel)
         if (allocated(blk%leafCoord)) deallocate(blk%leafCoord)
@@ -329,9 +313,6 @@ contains
         !$omp& blk%lapYm, blk%lapY0, blk%lapYp, &
         !$omp& blk%lapZm, blk%lapZ0, blk%lapZp, &
         !$omp& blk%q, blk%qs, blk%oldrhs)
-        if (allocated(blk%refluxF)) then
-            !$omp target enter data map(to: blk%refluxF, blk%refluxCorr)
-        end if
 #endif
     end subroutine enter_block_data
 
@@ -346,9 +327,6 @@ contains
         !$omp& blk%lapYm, blk%lapY0, blk%lapYp, &
         !$omp& blk%lapZm, blk%lapZ0, blk%lapZp, &
         !$omp& blk%q, blk%qs, blk%oldrhs)
-        if (allocated(blk%refluxF)) then
-            !$omp target exit data map(delete: blk%refluxF, blk%refluxCorr)
-        end if
         !$omp target exit data map(delete: blk)
 #endif
     end subroutine exit_block_data
