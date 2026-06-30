@@ -199,13 +199,6 @@ program main
             dt_gamma = dns%dt*rk_gamma(rkStage)
 
             ! Predictor: advance tentative staggered velocities, then enforce solid/body constraints.
-            ! Reconstruct the velocity deep halos across each 2:1 interface so the
-            ! predictor's advection/diffusion reaching into them are 2nd order (inert
-            ! without an interface). SKIPPED for the energy-conserving constant-1/2
-            ! interface (the cubic breaks constant-1/2 and destabilizes -- the deep
-            ! halos then keep their constant-1/2 restricted/injected exchange values).
-            if (.not. dns%block_interface_const_half) &
-                call reconstruct_interface_halos(blk)
             call update_ibm_mu(ibm, dt_gamma)
             if (les_is_enabled(les)) then
                 les_profile_start = les_wall_seconds()

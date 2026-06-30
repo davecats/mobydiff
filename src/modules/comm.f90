@@ -131,10 +131,6 @@ module comm
         ! ROW into the coarse interface-correction ghost (see lPhiN). Off for
         ! cell-centred scalars (e.g. les%nut).
         logical :: phiIfaceRow = .false.
-        ! Inject (vs tangentially interpolate) the velocity prolong -- the
-        ! injection-prolong + average-restrict pair is the energy-consistent
-        ! constant-1/2 transfer. Set from [blocks] interface_constant_half at init.
-        logical :: velInject = .false.
     end type comm_type
 
     public :: comm_init_world, comm_init, comm_finalize
@@ -170,11 +166,6 @@ contains
         integer :: local_n(3)
 
         call comm_init_world(c)
-
-        ! Constant-1/2 (energy-conserving) interface => inject the velocity prolong
-        ! (default ON via [blocks] interface_constant_half); otherwise the prolong
-        ! tangentially interpolates on the var-staggered node line.
-        c%velInject = logical(dns%block_interface_const_half)
 
         c%periodic = bc%isPeriodic
 
@@ -1269,13 +1260,12 @@ contains
         integer, intent(in) :: phase
 
         integer :: p, gp, v, e, pt, ni, nj, pLo, pHi
-        integer :: di, dj, dk, var, nv, sf, inj
+        integer :: di, dj, dk, var, nv, sf
         integer :: b1, b2, b3, s1, s2, s3, og1, og2, og3, np1, np2, np3
         real(C_DOUBLE) :: val, wa1, wb1, wa2, wb2, wa3, wb3
         logical :: doBlend
 
         nv = c%nActiveVars
-        inj = merge(1, 0, c%velInject)
         if (phase == 1) then
             pLo = 0;                pHi = c%nLocalCopyPts*nv
         else if (phase == 2) then
@@ -1290,7 +1280,7 @@ contains
         !$omp target teams distribute parallel do &
         !$omp& map(to: pLo, pHi, nv, sf, c%nLocal, c%lOff, c%lPointEntry, c%lSrcSlot, c%lDstSlot, &
         !$omp& c%lDstLo, c%lExt, c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lWp, c%lWpDst, &
-        !$omp& c%lNrm, c%activeVars, inj, blk%x, blk%y, blk%z) &
+        !$omp& c%lNrm, c%activeVars) &
         !$omp& map(tofrom: blk%q) &
         !$omp& private(p,gp,v,e,pt,ni,nj,di,dj,dk,var,b1,b2,b3,s1,s2,s3,val,doBlend, &
         !$omp& og1,og2,og3,np1,np2,np3,wa1,wb1,wa2,wb2,wa3,wb3)
@@ -1306,41 +1296,24 @@ contains
             dj = c%lDstLo(2,e) + modulo(pt/ni, nj)
             dk = c%lDstLo(3,e) + pt/(ni*nj)
             var = int(c%activeVars(v+1))
-            ! Per-dim 2-point weighted gather. lGS(d)==1 marks a prolong tangential
-            ! dim: linear-interpolate the coarse value to the fine cell's location
-            ! using the var-staggered node line (covering coarse cell + parity-side
-            ! neighbour), instead of injecting it -- this kills the tangential
-            ! checkerboard. lGC==2 (non-normal component) averages 2 cells
-            ! (restriction); everything else is a single source.
+            ! Per-dim 2-point weighted gather. The constant-1/2 interface INJECTS
+            ! the velocity prolong (the energy-conserving transfer): the covering
+            ! coarse value is placed at the fine halo. lGC==2 (non-normal component)
+            ! averages 2 cells (restriction); everything else is a single source.
             b1 = ishft(c%lGA(1,e)*di + c%lGB(1,e), -c%lGS(1,e))
             b2 = ishft(c%lGA(2,e)*dj + c%lGB(2,e), -c%lGS(2,e))
             b3 = ishft(c%lGA(3,e)*dk + c%lGB(3,e), -c%lGS(3,e))
-            if (c%lGS(1,e) == 1 .and. inj == 0) then
-                og1 = 2*iand(c%lGA(1,e)*di + c%lGB(1,e), 1) - 1; np1 = 2
-                wa1 = (blk%x(di,var,c%lDstSlot(e)) - blk%x(b1+og1,var,c%lSrcSlot(e))) &
-                    / (blk%x(b1,var,c%lSrcSlot(e)) - blk%x(b1+og1,var,c%lSrcSlot(e)))
-                wb1 = 1.0d0 - wa1
-            else if (c%lGC(1,e) == 2 .and. var /= 1) then
+            if (c%lGC(1,e) == 2 .and. var /= 1) then
                 og1 = 1; np1 = 2; wa1 = 0.5d0; wb1 = 0.5d0
             else
                 og1 = 0; np1 = 1; wa1 = 1.0d0; wb1 = 0.0d0
             end if
-            if (c%lGS(2,e) == 1 .and. inj == 0) then
-                og2 = 2*iand(c%lGA(2,e)*dj + c%lGB(2,e), 1) - 1; np2 = 2
-                wa2 = (blk%y(dj,var,c%lDstSlot(e)) - blk%y(b2+og2,var,c%lSrcSlot(e))) &
-                    / (blk%y(b2,var,c%lSrcSlot(e)) - blk%y(b2+og2,var,c%lSrcSlot(e)))
-                wb2 = 1.0d0 - wa2
-            else if (c%lGC(2,e) == 2 .and. var /= 2) then
+            if (c%lGC(2,e) == 2 .and. var /= 2) then
                 og2 = 1; np2 = 2; wa2 = 0.5d0; wb2 = 0.5d0
             else
                 og2 = 0; np2 = 1; wa2 = 1.0d0; wb2 = 0.0d0
             end if
-            if (c%lGS(3,e) == 1 .and. inj == 0) then
-                og3 = 2*iand(c%lGA(3,e)*dk + c%lGB(3,e), 1) - 1; np3 = 2
-                wa3 = (blk%z(dk,var,c%lDstSlot(e)) - blk%z(b3+og3,var,c%lSrcSlot(e))) &
-                    / (blk%z(b3,var,c%lSrcSlot(e)) - blk%z(b3+og3,var,c%lSrcSlot(e)))
-                wb3 = 1.0d0 - wa3
-            else if (c%lGC(3,e) == 2 .and. var /= 3) then
+            if (c%lGC(3,e) == 2 .and. var /= 3) then
                 og3 = 1; np3 = 2; wa3 = 0.5d0; wb3 = 0.5d0
             else
                 og3 = 0; np3 = 1; wa3 = 1.0d0; wb3 = 0.0d0
@@ -1384,15 +1357,11 @@ contains
 #endif
     end subroutine copy_local_entries
 
-    ! phase: 0 = all local points, 1 = same-level-copy prefix, 2 = cross-level
-    ! suffix (mirrors copy_local_entries). doInterp (FIX ii): for a PROLONG
-    ! tangential dim (lGS(d)==1) linearly INTERPOLATE the coarse scalar to the fine
-    ! cell's location on the cell-centred (VAR_P=NVAR) node line -- instead of
-    ! injecting the coarse value (a tangential step). Mirrors the velocity prolong
-    ! tangential interp (commit fdfd477) for the phi/pressure scalar; needs the
-    ! two-pass ordering (phase 1 fills the coarse halo the interp reads). doInterp
-    ! requires `blk` (node lines); injection (doInterp=.false.) is bit-exact with
-    ! the old behaviour and needs no node lines.
+    ! Gather every local cross-block halo point of a cell-centred scalar (phi /
+    ! les%nut): same-level COPY, fine->coarse RESTRICT (lGC(d)==2 averages the 2
+    ! covering fine cells per dim), coarse->fine PROLONG by INJECTION of the
+    ! covering coarse cell. The phi interface-row restrict (phiIfaceRow) collapses
+    ! the normal dim to the single fine row touching the face.
     subroutine copy_local_scalar_entries(c, scalar, blk)
         type(comm_type), intent(inout) :: c
         real(C_DOUBLE), intent(inout) :: scalar(0:,0:,0:,1:)

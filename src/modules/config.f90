@@ -245,8 +245,6 @@ subroutine apply_config_value(section, key, value, dns, g, les, ps, bc, c, seen,
             call read_c_int(value, dns%block_refine_levels, line_no)
         case ("refine_body")
             call read_bool(value, dns%block_refine_body, line_no)
-        case ("interface_constant_half")
-            call read_bool(value, dns%block_interface_const_half, line_no)
         end select
     case ("les")
         call apply_les_value(key_l, value, les, line_no)

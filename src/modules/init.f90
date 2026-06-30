@@ -61,17 +61,6 @@ module init
         ! immersed surface to the finest level (+1 block buffer), and remove
         ! buried blocks at every level (analytic IBM).
         logical(C_BOOL) :: block_refine_body = .false.
-        ! [blocks] interface_constant_half: use the energy-conserving CONSTANT-1/2
-        ! interface treatment (Verstappen & Veldman 2003) on 2:1 refined runs --
-        ! inject (not metric-interpolate) the velocity prolong AND skip the cubic
-        ! deep-halo reconstruction, so the interface velocity-to-face weights are
-        ! constant 1/2. This conserves interface kinetic energy and keeps the
-        ! refined channel STABLE (the truncation-optimal metric/cubic weights pump
-        ! energy at the coarse-fine jump and blow up ~step 200; constant-1/2 settles
-        ! -- docs/interface_band_handout.md). Default ON: it is the stable scheme
-        ! and is inert (bit-exact) without a 2:1 interface. Set false to recover the
-        ! old accuracy-optimal (metric prolong + cubic reconstruction) interface.
-        logical(C_BOOL) :: block_interface_const_half = .true.
         logical(C_BOOL) :: ibm_enabled = .true.
         character(len=256) :: ibm_coeff_file = ""
         character(len=256) :: field_prefix = ""
