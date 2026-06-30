@@ -283,7 +283,7 @@ immersed boundary. Phased, each phase verified before the next:
 - NEXT SESSIONS (in order): (i) **LES<->IBM coupling** — exercise the `ibm_aware`
   solid-cell nut masking across block refinement + the 2:1 interface; test case =
   a plane-wall channel whose walls are described by the IBM and do NOT coincide
-  with grid points. (ii) **Code cleanup** — remove the testing/diagnostic
+  with grid points. Handout: `docs/next_session_les_ibm.md`. (ii) **Code cleanup** — remove the testing/diagnostic
   facilities (the MOBY_* hooks: PROJONLY/PREDONLY/DIVDUMP/RHSDUMP/TERMDUMP/MANUF/
   KEBAL/IFFILT/NORECON/HALO_AUDIT/PHASETIME/STEPDIV and the dead gated paths),
   streamline. (iii) **Optional volume force** in the momentum equation (config-
