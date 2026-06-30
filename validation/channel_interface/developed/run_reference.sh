@@ -58,14 +58,14 @@ gen_ini() {  # $1 dest  $2 restart  $3 t_final  $4 stats_sample  $5 stats_write 
 
 echo "== LEG 1 transient t=0..$T_TRANSIENT (stats off), arch=$ARCH ranks=$RANKS =="
 gen_ini "$RUN/transient/input.ini" "$IC" "$T_TRANSIENT" -1 -1 "$FIELD1"
-( cd "$RUN/transient" && MOBY_STEPDIV=1 mpirun -n "$RANKS" "$BIN" input.ini > run.log 2>&1 )
+( cd "$RUN/transient" && mpirun -n "$RANKS" "$BIN" input.ini > run.log 2>&1 )
 LAST=$(ls -t "$RUN"/transient/channel_field_*.h5 | head -1)
 echo "   transient final field: $LAST"
 
 echo "== LEG 2 stats t=$T_TRANSIENT..$T_END (stats on, fresh) =="
 rm -f "$RUN"/stats/channel_stats.h5 "$RUN"/stats/channel_stats_l*.h5
 gen_ini "$RUN/stats/input.ini" "$LAST" "$T_END" 50 20000 0
-( cd "$RUN/stats" && MOBY_STEPDIV=1 mpirun -n "$RANKS" "$BIN" input.ini > run.log 2>&1 )
+( cd "$RUN/stats" && mpirun -n "$RANKS" "$BIN" input.ini > run.log 2>&1 )
 
 STATS="$RUN/stats/channel_stats.h5"
 echo

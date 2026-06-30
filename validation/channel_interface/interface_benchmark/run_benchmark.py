@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""2:1-INTERFACE benchmark (~250 steps, fast): checks BOTH
+"""RETIRED: the stability/banding metrics below parse the per-step MOBY_STEPDIV
+divergence monitor, which was removed in the code cleanup. Kept as a record of
+the method; the divergence peak will read inf until that hook is reinstated.
+
+2:1-INTERFACE benchmark (~250 steps, fast): checks BOTH
 
   (A) STABILITY -- the energy-conserving constant-1/2 interface (default) keeps the
       refined channel BOUNDED where the old metric/cubic interface BLOWS UP

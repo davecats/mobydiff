@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# RETIRED: this gate drove the MOBY_PREDONLY / MOBY_RHSDUMP / MOBY_DIVDUMP /
+# MOBY_TERMDUMP diagnostic hooks, which were removed in the code cleanup once the
+# 2:1 momentum predictor was validated. Kept verbatim as a record of the method;
+# it will NOT produce the dumps below until those hooks are reinstated.
+#
 # Momentum-predictor 2:1-interface gate (two axes, both single-step).
 #
 # Builds the operator-truncation instrument's input decks on the fly (uniform /

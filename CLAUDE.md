@@ -209,10 +209,9 @@ immersed boundary. Phased, each phase verified before the next:
     sailplane stable, impulsive transient decaying, refined-region
     pressure 7x closer to uniform-fine than the unrefined run
     (pointwise velocities decohere at Re=1e5 — not a usable gate).
-    `MOBY_HALO_AUDIT=1` (hook in main.f90) audits every
-    exchange-written halo cell against manufactured linear fields on
-    the real layout (1.2M + 7.9M cells, 0 bad) — run it FIRST when an
-    interface case misbehaves. Follow-up refactor (validated
+    A manufactured-linear-field halo audit (the `MOBY_HALO_AUDIT` hook,
+    since removed in the cleanup) checked every exchange-written halo
+    cell on the real layout (1.2M + 7.9M cells, 0 bad). Follow-up refactor (validated
     2026-06-12, bit-exact on the full case list): the exchange is one
     weighted gather (per-dim affine maps from `entry_gather_map`, ghost
     blend = destination-completion weights, no op branches in the
@@ -299,11 +298,25 @@ immersed boundary. Phased, each phase verified before the next:
   band (fine wall bands carry lower nut, the physical filter-width step). Case +
   driver + analysis + committed prereqs + figure (`ibm_les_profiles.png`) in
   `validation/channel_interface/les_ibm/` (README + RESUME_STATUS). DONE.
-- NEXT SESSIONS (in order): (i) **Code cleanup** — remove the testing/diagnostic
-  facilities (the MOBY_* hooks: PROJONLY/PREDONLY/DIVDUMP/RHSDUMP/TERMDUMP/MANUF/
-  KEBAL/IFFILT/NORECON/HALO_AUDIT/PHASETIME/STEPDIV and the dead gated paths),
-  streamline. (ii) **Optional volume force** in the momentum equation (config-
-  driven body force). (iii) **Profile + optimise** (the refined channel is
+- Code cleanup (DONE 2026-06-30, branch `claude/jacobi-interface`). Removed the
+  19 `MOBY_*` testing/diagnostic hooks (63 refs). Category A (pure diagnostics:
+  PROJONLY/PREDONLY/DIVDUMP/RHSDUMP/TERMDUMP/MANUF/KEBAL/KESKEW-env/PHASETIME/
+  HALO_AUDIT/RESLOG/STEPDIV) deleted outright with their buffers, slot-parking and
+  the whole `main.f90` `contains` block; Category B (algorithmic toggles) collapsed
+  to the validated production branch and the losing branch deleted: CHEB* env →
+  config `accel = chebyshev`; PHIINTERP → inject (the dead `doInterp` two-pass
+  scalar-exchange path removed); VELINJECT → `[blocks] interface_constant_half`;
+  IFFILT → filter removed (production α=0); NORECON → the `const_half` guard alone.
+  Config keys `interface_constant_half` / `momentum_reflux` / `interface_skew` are
+  NOT hooks and were kept. Pure refactor: bit-exact (max_abs 0, un/vn/wn/pn) vs the
+  pre-cleanup `-Mnofma`/`-gpu=nofma` binary, CPU AND GPU, on min_channel (blocks +
+  2:1 interface + Chebyshev), les_ibm channel + refine_body (file IBM + WALE LES ±
+  2:1) and the Beltrami y-slab interface regression. Retired diagnostic drivers
+  (`momentum_interface/run_gate.sh`, `interface_benchmark/run_benchmark.py`) carry a
+  RETIRED header; the orphaned dump post-processors in `tools/` (rhsband/rhsterms/
+  divsum/momsum/...) are now dead and can be deleted in a follow-up.
+- NEXT SESSIONS (in order): (i) **Optional volume force** in the momentum equation
+  (config-driven body force). (ii) **Profile + optimise** (the refined channel is
   halo-exchange bound; Phase 4 overlap, see `docs/nonblocking_overlap_strategy.md`).
 
 ## Verification
