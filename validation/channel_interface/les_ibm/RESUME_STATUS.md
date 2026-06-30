@@ -1,9 +1,21 @@
 # LES <-> IBM coupling validation — STATUS
 
 Branch `claude/jacobi-interface`. See `README.md` for the full case + results table.
-This file is the session handoff: what's done, what remains.
 
-## Done (dev GPU, this session)
+## COMPLETE — converged developed-statistics campaign run (t=5..25, 51 snapshots)
+
+The campaign ran on a faster GPU (a_wale / b_none / c_refine to ~25 600 steps).
+ALL gates PASS converged (`ibm_les_profiles.png`):
+- Gate 1 solid nut==0 exact (51 snapshots). Gate 2 band/core nut ratio 0.05.
+- Gate 3 a_wale + b_none + grid-aligned `../les/` collapse on the log law; WALE
+  bulk U=15.09 > no-LES 14.69; resolved stresses symmetric across both IBM walls.
+- Gate 4 nut steps 2.03x up into the coarse core across the y=0.75/1.75 2:1
+  interface — smooth step, NO band.
+- Gate 5 stable ~25 600 steps. Gate 6 N/A. Gate 7 CPU==GPU 4.6e-14.
+
+Nothing outstanding. (Optional follow-ups below.)
+
+## Earlier dev-GPU confirmation (superseded by the converged campaign)
 
 The LES<->IBM coupling (`ibm_aware` solid-cell nut masking, `les.f90`) is validated
 on an off-grid IBM plane-wall channel. **No solver code changed** — the existing
@@ -25,23 +37,15 @@ mask + WALE `sd2` already give the physical `nut->0` into the wall, no band.
 Evidence runs (gitignored): `runs/a_transient/`, `runs/a_stats/` (12 nut snapshots),
 `runs/c_smoke/`.
 
-## Remaining — the developed-statistics campaign (hand to a faster GPU)
-
-Quantitative confirmation of gates 3 (converged mean U + resolved stresses,
-a_wale vs b_none control vs grid-aligned `../les/`) and 4 (nut step magnitude across
-the interface). All inputs are committed/regeneratable; just run:
+## Reproduce the campaign
 
 ```bash
 cd validation/channel_interface/les_ibm
 [ -f IC_refine.h5 ] || ./setup.sh            # regenerate the gitignored case-c files (needs geometry venv) — or rsync them
-MP=/opt/.../hpcx-2.25.1/ompi/bin/mpirun       # or "mpirun"
-python3 run_ibm_les.py --arch gpu --case all --mpirun "$MP"   # a_wale, b_none, c_refine; t=5..25
-python3 measure_nut.py   --run runs/a_wale/stats              # gates 1-2 on the developed run
+python3 run_ibm_les.py --arch gpu --case all --mpirun "<mpirun>"   # a_wale, b_none, c_refine; t=5..25
+python3 measure_nut.py   --run runs/a_wale/stats              # gates 1-2
 python3 ibm_les_stats.py                                       # gates 3-4 -> ibm_les_profiles.png
 ```
-
-This covers the still-pending **case (b) LES-off control** (task #4) — it is the
-`b_none` case in the driver.
 
 ## Optional follow-ups (not blocking)
 - Strict CPU==GPU bit-exact (nofma builds) -> 0.0, vs the 4.6e-14 FMA result here.

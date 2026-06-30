@@ -1,7 +1,7 @@
 # LES &harr; IBM coupling validation (off-grid plane-wall channel)
 
-**STATUS: the single-level coupling is VALIDATED; the 2:1-interface triple is
-stable and band-free (full developed-statistics campaign pending on a faster GPU).**
+**STATUS: VALIDATED (2026-06-30) with converged developed statistics (t=5..25).**
+All gates pass on a single grid AND across the 2:1 interface; see `ibm_les_profiles.png`.
 
 LES (WALE) is validated for **grid-aligned** channel walls across block refinement
 and the 2:1 interface (`../les/`). The one untested piece was the **LES&harr;IBM
@@ -52,25 +52,24 @@ campaign). `measure_nut.py`/`ibm_les_stats.py` need only numpy + h5py.
 
 ## Gates & results
 
+Converged over **51 snapshots, t=5..25** (a_wale / b_none / c_refine ran to ~25 600 steps):
+
 | # | gate | result |
 |---|------|--------|
-| 1 | solid-cell `nut==0` (hard) | **PASS** &mdash; `max\|nut\|` over all solid cells = `0.0`, every snapshot |
-| 2 | no spurious wall-`nut` spike | **PASS** &mdash; `nut/&nu;` band cell 0.012 &rarr; core 0.224, **band/core = 0.05** (physical `nut&rarr;0`, not a spike) |
-| 3 | mean-U law of the wall | **PASS (sanity)** &mdash; sublayer `U&plus;&asymp;y&plus;`, log layer matches `2.44 ln y&plus; +5` (13.4 vs 13.2 at y&plus;=29), bulk U=15.5 (KMM180 ~15.6); converged stats pending |
-| 4 | `nut` step (not band) across the 2:1 interface | **PREVIEW PASS** &mdash; `nut(y)` smooth across the y=0.75 interface, no overshoot/band; quantitative step pending the developed run |
-| 5 | stability 1000+ steps | **PASS** &mdash; case (a) 4000 steps + case (c) 400 steps, `div` bounded, mass ~1e-15, no NaN |
+| 1 | solid-cell `nut==0` (hard) | **PASS** &mdash; `max\|nut\|` over all solid cells = `0.0`, all 51 snapshots |
+| 2 | no spurious wall-`nut` spike | **PASS** &mdash; `nut/&nu;` band cell 0.011 &rarr; core 0.222, **band/core = 0.05** (physical `nut&rarr;0`, not a spike) |
+| 3 | mean-U law of the wall | **PASS** &mdash; a_wale, b_none AND the grid-aligned `../les/` LES channel collapse on `2.44 ln y&plus; +5` (U&plus;=13.1 vs 13.2 at y&plus;=29; sublayer 1.20 vs 1.13); WALE bulk U=15.09 &gt; no-LES 14.69 (SGS raises the log-layer U toward the reference); resolved stresses symmetric across both IBM walls |
+| 4 | `nut` step (not band) across the 2:1 interface | **PASS** &mdash; the fine wall bands carry lower `nut` (halved filter width); at y=0.75/1.75 `nut` steps up to the coarse core by **2.03&times;** (toward the `delta^2` ratio; the resolved strain is also lower on the coarse side), a sharp **smooth step with NO overshoot/band** |
+| 5 | stability 1000+ steps | **PASS** &mdash; all three cases ran ~25 600 steps to t=25, `div` bounded, mass ~1e-15, no NaN |
 | 6 | bit-exact no-LES / no-IBM | **N/A** &mdash; no solver code changed; paths byte-identical by construction |
 | 7 | CPU == GPU (masking branch) | **PASS** &mdash; case (a) 10 steps agree to 4.6e-14 (FMA round-off; the offloaded `ibm_aware` branch is correct on GPU) |
 
 **Key finding:** the prime suspect &mdash; a spurious `nut` spike at the IBM band
 cells where the SGS model reads the IBM-forced velocity drop as resolved strain
 &mdash; does **not** materialise. WALE's `sd2` operator kills `nut` at the IBM band
-just as it does at a grid-aligned wall. No band-aware `nut` damping is needed.
-
-The remaining work is purely **quantitative confirmation on a faster GPU**: the
-developed-statistics campaign (t=5..25) for the converged gate-3 (mean U + resolved
-stresses, a_wale vs b_none vs the grid-aligned `../les/` channel) and gate-4 (the
-`nut` step magnitude across the interface). Everything to run it is here.
+just as it does at a grid-aligned wall, and the `nut` step across the 2:1 interface
+that coincides with the IBM wall is the physical filter-width step, not a band. No
+band-aware `nut` damping is needed; **no solver code change**. See `ibm_les_profiles.png`.
 
 ## Files
 
