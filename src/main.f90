@@ -44,11 +44,9 @@ program main
     integer(C_INT), allocatable :: blockTouch(:,:), blockBuried(:,:)
     integer :: refineLevel, maskCount
     logical :: blockActiveFound
-    ! noRecon (MOBY_NORECON, debug): skip the 2:1 deep-halo reconstruction.
     ! skewIface ([blocks] interface_skew): add the energy-conserving skew-symmetric
     ! interface convection correction (rides the momentum reflux).
-    logical :: noRecon, skewIface
-    character(len=16) :: diagEnv
+    logical :: skewIface
 
     call comm_init_world(c)
     call splash(c%has_terminal)
@@ -186,8 +184,6 @@ program main
         call update_timestep_limits(blk, dns, c)
     end if
 
-    call get_environment_variable("MOBY_NORECON", diagEnv)
-    noRecon = len_trim(diagEnv) > 0   ! debug: skip reconstruct_interface_halos
     ! Skew-symmetric interface convection correction ([blocks] interface_skew).
     skewIface = logical(dns%block_interface_skew)
 
@@ -214,7 +210,7 @@ program main
             ! without an interface). SKIPPED for the energy-conserving constant-1/2
             ! interface (the cubic breaks constant-1/2 and destabilizes -- the deep
             ! halos then keep their constant-1/2 restricted/injected exchange values).
-            if (.not. noRecon .and. .not. dns%block_interface_const_half) &
+            if (.not. dns%block_interface_const_half) &
                 call reconstruct_interface_halos(blk)
             ! Momentum reflux: from the start-of-substage velocity, capture each
             ! interface direction's normal advective flux, restrict the fine flux

@@ -572,9 +572,9 @@ contains
     ! reflux_apply lands it on q and oldrhs (needs [blocks] momentum_reflux on --
     ! V&V also require the single-valued flux the reflux provides). Reads the
     ! start-of-substage q (call after reflux_accumulate, before reflux_apply, like
-    ! the reflux). Inert without a 2:1 interface (no band cell) -> bit-exact. For
-    ! the energy path also gate off the metric prolong / cubic reconstruction
-    ! (MOBY_VELINJECT / MOBY_NORECON), which break the constant-1/2 condition.
+    ! the reflux). Inert without a 2:1 interface (no band cell) -> bit-exact. The
+    ! energy path needs the constant-1/2 transfer ([blocks] interface_constant_half,
+    ! the default): the metric prolong / cubic reconstruction would break it.
     subroutine skew_interface_correction(blk)
         type(block_set_type), intent(inout) :: blk
         integer :: b, i, j, k, nx, ny, nz, nBlocks
