@@ -19,8 +19,8 @@ module pressure_solver
         ! the factor strictly below 1 (omega=1 is marginally unstable). 0.8 is
         ! a safe default; the config key is still "sor".
         real(C_DOUBLE) :: sor=0.8d0
-        ! Chebyshev-Jacobi acceleration ([pressure] accel = chebyshev, or
-        ! MOBY_CHEB): a Chebyshev semi-iteration over the diagonal(Jacobi)-
+        ! Chebyshev-Jacobi acceleration ([pressure] accel = chebyshev):
+        ! a Chebyshev semi-iteration over the diagonal(Jacobi)-
         ! preconditioned projection operator, whose spectrum is bounded in
         ! [chebLmin, chebLmax]. lmax~2 by Gershgorin regardless of grid
         ! stretching / 2:1 interface; lmin is the condition-number knob,
@@ -64,14 +64,8 @@ contains
         ! restriction of the red-black scheme no longer applies.
         call get_environment_variable("MOBY_PHIINTERP", env)
         if (len_trim(env) > 0) ps%phiInterp = .true.
-        ! [pressure] accel = chebyshev sets ps%cheb in config; MOBY_CHEB* env
-        ! vars override (handy for sweeping the bounds without editing configs).
-        call get_environment_variable("MOBY_CHEB", env)
-        if (len_trim(env) > 0) ps%cheb = .true.
-        call get_environment_variable("MOBY_CHEB_LMIN", env)
-        if (len_trim(env) > 0) read(env, *) ps%chebLmin
-        call get_environment_variable("MOBY_CHEB_LMAX", env)
-        if (len_trim(env) > 0) read(env, *) ps%chebLmax
+        ! [pressure] accel = chebyshev sets ps%cheb in config; the eigenvalue
+        ! bounds chebLmin/chebLmax are auto-derived below (config default -1).
 
         ! Auto eigenvalue bounds (non-positive => auto): lmax = 2 (Gershgorin,
         ! holds for any Jacobi-preconditioned Poisson with zero interior row
