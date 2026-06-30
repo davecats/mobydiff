@@ -227,6 +227,9 @@ def main():
                         help="patch mode: physical refine box (repeatable); "
                              "same 6 numbers as [blocks] refine in the .ini")
     parser.add_argument("--dyw-plus", type=float, default=0.5)
+    parser.add_argument("--nx", type=int, default=128, help="base grid nx (coarsen for LES-active runs)")
+    parser.add_argument("--ny", type=int, default=64, help="base grid ny")
+    parser.add_argument("--nz", type=int, default=128, help="base grid nz")
     args = parser.parse_args()
 
     src = load_source(args.source)
@@ -234,7 +237,9 @@ def main():
     lengths = (lx, ly, lz)
     periodic = (True, False, True)
 
-    base = (128, 64, 128)
+    base = (args.nx, args.ny, args.nz)
+    for n in base:
+        assert n % NB == 0, f"base dims must be divisible by block size NB={NB}: {base}"
     base_nodes = (uniform_line(base[0], lx),
                   natural_line(base[1], ly, 16.0, args.dyw_plus),
                   uniform_line(base[2], lz))

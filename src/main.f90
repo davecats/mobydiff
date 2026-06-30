@@ -246,10 +246,10 @@ program main
             termBase = dns%field_prefix
             call overwrite_velocity(blk, advT)
             dns%field_prefix = trim(termBase)//"_adv"
-            call write_field(blk, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%sor)
+            call write_field(blk, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%sor, les%nut)
             call overwrite_velocity(blk, difT)
             dns%field_prefix = trim(termBase)//"_dif"
-            call write_field(blk, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%sor)
+            call write_field(blk, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%sor, les%nut)
             dns%field_prefix = termBase
             stop
         end if
@@ -308,7 +308,7 @@ program main
         end block
     end if
     if (projOnly .or. predOnly) &
-        call write_field(blk, dns, g, 900000, c, bc, ps%nIter, ps%sor)
+        call write_field(blk, dns, g, 900000, c, bc, ps%nIter, ps%sor, les%nut)
 
     if (c%has_terminal) print *, "main loop starting..."
     loop_steps = 0_C_INT
@@ -434,7 +434,7 @@ program main
         if (phaseTime) tTstep = tTstep + les_wall_seconds() - pt0
 
         if (dns%field_interval > 0) then
-            call maybe_write_field(blk, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%sor)
+            call maybe_write_field(blk, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%sor, les%nut)
         end if
         call flow%after_step(blk, dns, g, c)
 
@@ -460,7 +460,7 @@ program main
         end if
     end if
 
-    call write_field(blk, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%sor)
+    call write_field(blk, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%sor, les%nut)
 
     ! MOBY_DIVDUMP companions: park the divergence in the pressure slot and write
     ! it as separate field files (blk%q is not reused after the final dump).
@@ -468,10 +468,10 @@ program main
         divBasePrefix = dns%field_prefix
         call overwrite_var_p(blk, divPre)
         dns%field_prefix = trim(divBasePrefix)//"_divpre"
-        call write_field(blk, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%sor)
+        call write_field(blk, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%sor, les%nut)
         call overwrite_var_p(blk, divPost)
         dns%field_prefix = trim(divBasePrefix)//"_divpost"
-        call write_field(blk, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%sor)
+        call write_field(blk, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%sor, les%nut)
         dns%field_prefix = divBasePrefix
     end if
 
@@ -481,7 +481,7 @@ program main
         rhsBasePrefix = dns%field_prefix
         call overwrite_velocity(blk, rhsBuf)
         dns%field_prefix = trim(rhsBasePrefix)//"_rhs"
-        call write_field(blk, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%sor)
+        call write_field(blk, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%sor, les%nut)
         dns%field_prefix = rhsBasePrefix
     end if
 
@@ -681,6 +681,128 @@ contains
         print '(a,3es12.4)', " HALO AUDIT maxErr  per op (copy,prolong,restrict): ", maxErrOp
         print '(a,i9)', " HALO AUDIT of which UN-WRITTEN (sentinel): ", nSentinel
         print '(a,3i9)', " HALO AUDIT un-written by off-type (face,edge,corner): ", sentByOff
+
+        ! ---- LES nut scalar-exchange audit ----
+        ! nut is a cell-centred scalar carried through exchange_scalar_halos with
+        ! DEFAULT args: same-level COPY, fine->coarse RESTRICT (average), coarse->
+        ! fine PROLONG (plain INJECTION of the covering coarse cell -- no blend, no
+        ! tangential interp). A linear cell-centred field is reproduced exactly by
+        ! copy and restrict at the halo location, and by injection at the COVERING
+        ! COARSE cell centre (the expected, by-design step across the interface).
+        ! No fine-owns-face subtlety (scalar), so every cross-block non-wall halo
+        ! must be written.
+        if (les_is_enabled(les) .and. allocated(les%nut)) then
+            block
+                real(C_DOUBLE), parameter :: AX = 1.3d0, AY = 0.7d0, AZ = 0.9d0
+                integer(C_INT) :: nBadNut, nChkNut, nSentNut
+                real(C_DOUBLE) :: maxErrNut
+
+                do b = 1, int(blk%nBlocks)
+                    do k = 0, nb(3) + 1
+                        do j = 0, nb(2) + 1
+                            do i = 0, nb(1) + 1
+                                if (i >= 1 .and. i <= nb(1) .and. j >= 1 .and. j <= nb(2) &
+                                    .and. k >= 1 .and. k <= nb(3)) then
+                                    les%nut(i,j,k,b) = AX*blk%x(i,VAR_P,b) &
+                                        + AY*blk%y(j,VAR_P,b) + AZ*blk%z(k,VAR_P,b)
+                                else
+                                    les%nut(i,j,k,b) = SENTINEL
+                                end if
+                            end do
+                        end do
+                    end do
+                end do
+#ifdef USE_OPENMP_OFFLOAD
+                !$omp target update to(les%nut)
+#endif
+                call exchange_scalar_halos(c, les%nut, blk)
+#ifdef USE_OPENMP_OFFLOAD
+                !$omp target update from(les%nut)
+#endif
+
+                nBadNut = 0; nChkNut = 0; nSentNut = 0; maxErrNut = 0.0d0
+                do b = 1, int(blk%nBlocks)
+                    l = int(blk%level(b))
+                    do k = 0, nb(3) + 1
+                        do j = 0, nb(2) + 1
+                            do i = 0, nb(1) + 1
+                                idx = [i, j, k]
+                                do d = 1, 3
+                                    off(d) = 0
+                                    if (idx(d) == 0) off(d) = -1
+                                    if (idx(d) == nb(d) + 1) off(d) = 1
+                                end do
+                                if (all(off == 0)) cycle
+
+                                skip = .false.
+                                do d = 1, 3
+                                    gnl = level_cells(dns, d, int(l, C_INT))
+                                    to(d) = int(blk%origin(d,b)) + off(d)*nb(d)
+                                    if (to(d) < 0 .or. to(d) >= gnl) skip = .true.
+                                end do
+                                if (skip) cycle
+
+                                cl = to/nb
+                                idSame = int(leaf_at(blk, int(l, C_INT), int(cl, C_INT)))
+                                idParent = -1
+                                if (l > 0) idParent = int(leaf_at(blk, int(l - 1, C_INT), &
+                                    int(cl/2, C_INT)))
+
+                                posD = [blk%x(i,VAR_P,b), blk%y(j,VAR_P,b), blk%z(k,VAR_P,b)]
+                                if (idSame >= 0) then
+                                    want = AX*posD(1) + AY*posD(2) + AZ*posD(3)
+                                else if (idParent >= 0) then
+                                    ! PROLONG: injection of the covering coarse cell
+                                    ! centre (cell-centred in every dim -> midpoint
+                                    ! of the two coarse node lines).
+                                    do d = 1, 3
+                                        gnl = level_cells(dns, d, int(l, C_INT))
+                                        gidx = int(blk%origin(d,b)) + idx(d) - 1
+                                        cov = modulo(gidx, gnl)/2
+                                        srcD(d) = 0.5d0*(line_at(blk, d, l - 1, cov) &
+                                                       + line_at(blk, d, l - 1, cov + 1))
+                                    end do
+                                    want = AX*srcD(1) + AY*srcD(2) + AZ*srcD(3)
+                                else
+                                    anyChild = .false.
+                                    do sz = 0, 1
+                                    do sy = 0, 1
+                                    do sx = 0, 1
+                                        cc = 2*cl + [sx, sy, sz]
+                                        if (leaf_at(blk, int(l + 1, C_INT), int(cc, C_INT)) >= 0) &
+                                            anyChild = .true.
+                                    end do
+                                    end do
+                                    end do
+                                    if (.not. anyChild) cycle
+                                    want = AX*posD(1) + AY*posD(2) + AZ*posD(3)
+                                end if
+
+                                got = les%nut(i,j,k,b)
+                                nChkNut = nChkNut + 1
+                                if (abs(got - want) > 1.0d-10*max(1.0d0, abs(want))) then
+                                    nBadNut = nBadNut + 1
+                                    if (abs(got) > 1.0d30) then
+                                        nSentNut = nSentNut + 1
+                                    else
+                                        maxErrNut = max(maxErrNut, abs(got - want))
+                                    end if
+                                    if (nBadNut <= 20) then
+                                        print '(a,i6,a,i2,a,3i4,a,3i5,a,2es22.14)', &
+                                            " NUT AUDIT BAD b=", b, " lvl=", l, &
+                                            " ijk=", i, j, k, " orig=", blk%origin(:,b), &
+                                            " got/want=", got, want
+                                    end if
+                                end if
+                            end do
+                        end do
+                    end do
+                end do
+                print *, "NUT HALO AUDIT: checked", nChkNut, " bad", nBadNut
+                print '(a,es12.4)', " NUT HALO AUDIT maxErr: ", maxErrNut
+                print '(a,i9)', " NUT HALO AUDIT of which UN-WRITTEN (sentinel): ", nSentNut
+            end block
+        end if
     end subroutine halo_audit
 
     ! MOBY_DIVDUMP: raw staggered divergence of the current velocity (the exact D

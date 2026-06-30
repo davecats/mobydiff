@@ -38,6 +38,19 @@ module io
             integer(C_INT) :: ierr
         end function fdm_h5_write_field
 
+        ! Appends the LES eddy viscosity as a "nut" block dataset to an existing
+        ! field file (collective). Called only when LES is active, so nut is a
+        ! plain allocated array -- no c_loc (nvfortran ICEs on it).
+        function fdm_h5_append_nut(file_name, nbx, nby, nbz, n_blocks, &
+                n_blocks_global, id_start, nut) &
+                bind(C, name="fdm_h5_append_nut") result(ierr)
+            import :: C_CHAR, C_INT, C_DOUBLE
+            character(kind=C_CHAR), intent(in) :: file_name(*)
+            integer(C_INT), value :: nbx, nby, nbz, n_blocks, n_blocks_global, id_start
+            real(C_DOUBLE), intent(in) :: nut(*)
+            integer(C_INT) :: ierr
+        end function fdm_h5_append_nut
+
         function fdm_h5_write_grid(file_name, nx, ny, nz, lx, ly, lz, &
                 periodic, grid_distribution, grid_stretch, grid_natural_dyw_plus, grid_natural_one_sided, &
                 x_node, y_node, z_node, xu, yu, zu, xv, yv, zv, xw, yw, zw) &
@@ -124,7 +137,7 @@ logical function output_is_due(step, output_interval)
     end if
 end function output_is_due
 
-subroutine maybe_write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor)
+subroutine maybe_write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor, nut)
     type(block_set_type), intent(inout) :: blk
     type(dns_type), intent(in) :: dns
     type(grid_type), intent(in) :: g
@@ -133,12 +146,13 @@ subroutine maybe_write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_
     type(boundary_type), intent(in) :: bc
     integer(C_INT), intent(in) :: pressure_niter
     real(C_DOUBLE), intent(in) :: pressure_sor
+    real(C_DOUBLE), allocatable, intent(in) :: nut(:,:,:,:)   ! LES eddy viscosity (unallocated when LES off)
 
     if (.not. output_is_due(step, dns%field_interval)) return
-    call write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor)
+    call write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor, nut)
 end subroutine maybe_write_field
 
-subroutine write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor)
+subroutine write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor, nut)
     ! Parallel HDF5 call: all MPI ranks must enter this routine together.
     ! Global datasets, one hyperslab per block.
     type(block_set_type), intent(inout) :: blk
@@ -149,6 +163,7 @@ subroutine write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor)
     type(boundary_type), intent(in) :: bc
     integer(C_INT), intent(in) :: pressure_niter
     real(C_DOUBLE), intent(in) :: pressure_sor
+    real(C_DOUBLE), allocatable, intent(in) :: nut(:,:,:,:)   ! LES eddy viscosity (unallocated when LES off)
 
     character(len=256) :: h5_file_name, xdmf_file_name
     character(kind=C_CHAR,len=:), allocatable :: c_file_name
@@ -187,6 +202,21 @@ subroutine write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor)
     if (ierr /= 0_C_INT) then
         if (c%has_terminal) print *, "error: could not write HDF5 field file: ", trim(h5_file_name)
         error stop
+    end if
+
+    ! Append the LES eddy viscosity as a "nut" dataset (only when LES is active,
+    ! i.e. nut allocated, so the no-LES file is byte-identical). Collective; nut
+    ! goes out on the host.
+    if (allocated(nut)) then
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target update from(nut)
+#endif
+        ierr = fdm_h5_append_nut(c_file_name, blk%nb(1), blk%nb(2), blk%nb(3), &
+            blk%nBlocks, blk%nBlocksGlobal, blk%idStart, nut)
+        if (ierr /= 0_C_INT) then
+            if (c%has_terminal) print *, "error: could not append nut to: ", trim(h5_file_name)
+            error stop
+        end if
     end if
 
     ! No XDMF for the block-table layout; reassemble with

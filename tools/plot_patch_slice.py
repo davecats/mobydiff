@@ -106,9 +106,14 @@ def main():
     an, bn = fn[a_lab], fn[b_lab]           # in-plane node lines
     sa, sb = patch_span(hp, nb, lmax, axis)
 
-    fig, axes = plt.subplots(len(VARS), 2, figsize=(11, 4 * len(VARS)),
+    # Add the LES eddy viscosity panel when both files carry it.
+    vars_to_plot = list(VARS)
+    if "nut" in hp and "nut" in hb:
+        vars_to_plot.append(("nut", "nut"))
+
+    fig, axes = plt.subplots(len(vars_to_plot), 2, figsize=(11, 4 * len(vars_to_plot)),
                              constrained_layout=True)
-    for r, (name, dset) in enumerate(VARS):
+    for r, (name, dset) in enumerate(vars_to_plot):
         fp = load_field(hp, dset)
         fb = load_field(hb, dset)
         if up_b > 1:                               # base onto the patch lattice

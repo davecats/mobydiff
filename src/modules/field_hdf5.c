@@ -701,6 +701,39 @@ int fdm_h5_write_field(const char *filename, int nbx, int nby, int nbz,
     return ierr != 0;
 }
 
+/* Append the LES eddy viscosity as a "nut" block dataset to a field file that
+ * fdm_h5_write_field already produced. Kept separate so the no-LES output is
+ * byte-identical (write_field untouched) and so the Fortran side can pass nut as
+ * a plain array (no c_loc, which nvfortran ICEs on for allocatable components).
+ * Collective: all ranks must call it together (LES on/off is a global setting).
+ * nut has the same haloed per-block layout as one velocity component. */
+int fdm_h5_append_nut(const char *filename, int nbx, int nby, int nbz,
+                      int n_blocks, int n_blocks_global, int id_start,
+                      const double *nut)
+{
+    const size_t var_stride = (size_t)(nbx + 2)*(size_t)(nby + 2)*(size_t)(nbz + 2);
+    hid_t plist, file;
+    int ierr = 0;
+
+    if (nbx < 1 || nby < 1 || nbz < 1 || n_blocks < 1) return 1;
+
+    plist = H5Pcreate(H5P_FILE_ACCESS);
+    if (plist < 0) return 1;
+    if (H5Pset_fapl_mpio(plist, MPI_COMM_WORLD, MPI_INFO_NULL) < 0) {
+        H5Pclose(plist);
+        return 1;
+    }
+    file = H5Fopen(filename, H5F_ACC_RDWR, plist);
+    H5Pclose(plist);
+    if (file < 0) return 1;
+
+    ierr |= write_block_dataset(file, "nut", nbx, nby, nbz,
+                                n_blocks, n_blocks_global, id_start,
+                                nut, var_stride);
+    ierr |= H5Fclose(file) < 0;
+    return ierr != 0;
+}
+
 int fdm_h5_read_metadata(const char *filename,
                          int *global_nx, int *global_ny, int *global_nz,
                          int *step, int *nsteps,

@@ -44,26 +44,40 @@ from patch_interface_diff import (  # noqa: E402
 import h5py  # noqa: E402
 
 
-def accumulate(paths):
+# var -> HDF5 dataset name. "nut" (LES eddy viscosity) is included only when the
+# snapshot files carry it (auto-detected), so this tool still works on non-LES runs.
+BASE_VARMAP = {"u": "un", "v": "vn", "w": "wn", "p": "pn"}
+
+
+def varmap_for(path):
+    with h5py.File(path, "r") as f:
+        has_nut = "nut" in f
+    vm = dict(BASE_VARMAP)
+    if has_nut:
+        vm["nut"] = "nut"
+    return vm
+
+
+def accumulate(paths, varmap):
     """Time mean and variance per cell over the snapshot set, on the run's own
     leaf layout. Returns nb, blocks, mean{v}, fluct_rms{v} (each (nleaf,nb,nb,nb))."""
     paths = sorted(paths)
     if not paths:
         sys.exit("no snapshots matched")
     nb, blocks, _ = read_blocks(paths[0])
-    s1 = {v: None for v in VARS}
-    s2 = {v: None for v in VARS}
+    s1 = {v: None for v in varmap}
+    s2 = {v: None for v in varmap}
     n = 0
     for p in paths:
         f = h5py.File(p, "r")
-        for v in VARS:
-            q = f[{"u": "un", "v": "vn", "w": "wn", "p": "pn"}[v]][...].astype(np.float64)
+        for v in varmap:
+            q = f[varmap[v]][...].astype(np.float64)
             s1[v] = q.copy() if s1[v] is None else s1[v] + q
             s2[v] = q * q if s2[v] is None else s2[v] + q * q
         f.close()
         n += 1
-    mean = {v: s1[v] / n for v in VARS}
-    fluct = {v: np.sqrt(np.maximum(s2[v] / n - mean[v] ** 2, 0.0)) for v in VARS}
+    mean = {v: s1[v] / n for v in varmap}
+    fluct = {v: np.sqrt(np.maximum(s2[v] / n - mean[v] ** 2, 0.0)) for v in varmap}
     print(f"  {os.path.dirname(paths[0])}: {n} snapshots")
     return nb, blocks, mean, fluct
 
@@ -75,10 +89,19 @@ def main():
     ap.add_argument("--periodic-y", action="store_true")
     a = ap.parse_args()
 
+    ppaths, bpaths = sorted(glob.glob(a.patch)), sorted(glob.glob(a.base))
+    if not ppaths or not bpaths:
+        sys.exit("no snapshots matched --patch/--base")
+    # nut is compared only when BOTH runs carry it (e.g. both LES); otherwise the
+    # metric reduces to u,v,w,p exactly as before.
+    varmap = {v: ds for v, ds in varmap_for(ppaths[0]).items() if v in varmap_for(bpaths[0])}
+    VARS = list(varmap)
+    print(f"variables: {VARS}")
+
     print("accumulating patch run...")
-    nb, pblocks, pmean, pfluct = accumulate(glob.glob(a.patch))
+    nb, pblocks, pmean, pfluct = accumulate(ppaths, varmap)
     print("accumulating base run...")
-    nbb, bblocks, bmean, bfluct = accumulate(glob.glob(a.base))
+    nbb, bblocks, bmean, bfluct = accumulate(bpaths, varmap)
     assert nb == nbb, "block sizes differ"
 
     gnbt = tuple(int(bblocks[:, d].max()) // nb + 1 for d in range(3))
