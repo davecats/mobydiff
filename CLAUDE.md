@@ -291,10 +291,14 @@ immersed boundary. Phased, each phase verified before the next:
   refine_body triple nut(y) smooth across the 2:1 interface, no band; gate 5
   stable (case a 4000 + case c 400 steps, no NaN); gate 7 CPU==GPU to 4.6e-14
   (masking branch). The IBM is IMPLICIT (`mu=1/(1+dt*coef)`, ibm.f90:506) so no dt
-  restriction. Case + driver + analysis + committed prereqs in
-  `validation/channel_interface/les_ibm/` (README + RESUME_STATUS). REMAINING: the
-  converged developed-statistics campaign (t=5..25, gates 3-4 quantitative incl.
-  the b_none LES-off control) — run `run_ibm_les.py --case all` on a faster GPU.
+  restriction. CONVERGED developed-stats campaign (t=5..25, 51 snapshots, all 3
+  cases ~25600 steps) confirms it: gate 2 band/core nut 0.05; gate 3 a_wale +
+  b_none + grid-aligned `../les/` collapse on `2.44 ln y+ +5` (WALE bulk U=15.09 >
+  no-LES 14.69 — SGS raises the log-layer U toward the reference); gate 4 nut steps
+  2.03x up into the coarse core across the 2:1 interface, a smooth step with NO
+  band (fine wall bands carry lower nut, the physical filter-width step). Case +
+  driver + analysis + committed prereqs + figure (`ibm_les_profiles.png`) in
+  `validation/channel_interface/les_ibm/` (README + RESUME_STATUS). DONE.
 - NEXT SESSIONS (in order): (i) **Code cleanup** — remove the testing/diagnostic
   facilities (the MOBY_* hooks: PROJONLY/PREDONLY/DIVDUMP/RHSDUMP/TERMDUMP/MANUF/
   KEBAL/IFFILT/NORECON/HALO_AUDIT/PHASETIME/STEPDIV and the dead gated paths),
