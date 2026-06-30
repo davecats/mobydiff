@@ -307,14 +307,26 @@ immersed boundary. Phased, each phase verified before the next:
   config `accel = chebyshev`; PHIINTERP → inject (the dead `doInterp` two-pass
   scalar-exchange path removed); VELINJECT → `[blocks] interface_constant_half`;
   IFFILT → filter removed (production α=0); NORECON → the `const_half` guard alone.
-  Config keys `interface_constant_half` / `momentum_reflux` / `interface_skew` are
-  NOT hooks and were kept. Pure refactor: bit-exact (max_abs 0, un/vn/wn/pn) vs the
+  Pure refactor: bit-exact (max_abs 0, un/vn/wn/pn) vs the
   pre-cleanup `-Mnofma`/`-gpu=nofma` binary, CPU AND GPU, on min_channel (blocks +
   2:1 interface + Chebyshev), les_ibm channel + refine_body (file IBM + WALE LES ±
   2:1) and the Beltrami y-slab interface regression. Retired diagnostic drivers
   (`momentum_interface/run_gate.sh`, `interface_benchmark/run_benchmark.py`) carry a
-  RETIRED header; the orphaned dump post-processors in `tools/` (rhsband/rhsterms/
-  divsum/momsum/...) are now dead and can be deleted in a follow-up.
+  RETIRED header.
+- Production-config lockdown (DONE 2026-07-01, branch `claude/jacobi-interface`).
+  The solver now carries ONLY the validated 2:1-interface configuration; the
+  interface config toggles are gone (not options -- the validated behaviour is a
+  must): `interface_constant_half` removed and the const-1/2 transfer hardwired
+  ON (the cubic/metric reconstruction path + `reconstruct_interface_halos` /
+  `lim_extrap` / the velocity-prolong tangential-interp branch deleted);
+  `momentum_reflux` removed (it was the u'/v' coarse-cell band artifact -- the
+  reflux machinery `reflux_*` + `refluxF`/`refluxCorr` deleted); `interface_skew`
+  removed (experimental, rode the reflux). The four orphaned dump post-processors
+  (`tools/{rhsband,rhsterms,divsum,momsum}.py`) deleted. Bit-exact CPU+GPU on the
+  full suite (every production case already ran const-1/2 / reflux-off). Recover
+  the removed numerics from history: 4149aa0 (reflux), 1428641 (const-1/2 default
+  + interface_skew), 9343a3c / 902e30a (deep-halo reconstruction), df697d8 (corner
+  cubic), 61499af (the reflux-band finding); the MOBY_* hooks from 5fcdd0c.
 - NEXT SESSIONS (in order): (i) **Optional volume force** in the momentum equation
   (config-driven body force). (ii) **Profile + optimise** (the refined channel is
   halo-exchange bound; Phase 4 overlap, see `docs/nonblocking_overlap_strategy.md`).

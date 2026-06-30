@@ -1,5 +1,11 @@
 # Momentum-predictor 2:1-interface gate
 
+> RETIRED record. The diagnostic hooks (`MOBY_RHSDUMP` / `MOBY_TERMDUMP` /
+> `MOBY_DIVDUMP`) and the post-processors (`tools/{rhsband,rhsterms,divsum,
+> momsum}.py`) this gate used were removed once the predictor was validated
+> (see CLAUDE.md "Production-config lockdown"); recover them from git history
+> if the gate is ever rerun. Kept as a description of the method.
+
 The 2:1-interface **projection** (pressure correction) is divergence-consistent
 and mass-conserving to round-off (branch `claude/jacobi-interface`, commit
 `d2e743a`). This gate instruments the remaining piece: the **momentum predictor**

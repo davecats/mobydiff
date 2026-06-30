@@ -1,5 +1,12 @@
 # Momentum predictor at the 2:1 interface — handout
 
+> RETIRED record. The `MOBY_RHSDUMP` / `MOBY_TERMDUMP` / `MOBY_DIVDUMP` hooks and
+> the `rhsband.py` / `rhsterms.py` / `divsum.py` / `momsum.py` post-processors used
+> below were removed after the predictor was validated (CLAUDE.md
+> "Production-config lockdown"); the constant-1/2 interface is now unconditional
+> and the cubic reconstruction this handout describes is deleted. Recover from git
+> history (9343a3c / 902e30a / df697d8) if revisited.
+
 Branch **`claude/jacobi-interface`**, tag **`jacobi-momentum-interface`** (HEAD
 `e261df2`; the code milestone is `a5fc325`, inc 3). Read this first, then the
 memory `momentum-interface-todo`, then
