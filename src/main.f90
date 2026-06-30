@@ -48,9 +48,6 @@ program main
     ! skewIface ([blocks] interface_skew): add the energy-conserving skew-symmetric
     ! interface convection correction (rides the momentum reflux).
     logical :: noRecon, skewIface
-    ! MOBY_IFFILT=<alpha>: coefficient of the coarse-interface-band tangential
-    ! filter. 0 (default) = off / bit-exact.
-    real(C_DOUBLE) :: ifFiltAlpha
     character(len=16) :: diagEnv
 
     call comm_init_world(c)
@@ -193,9 +190,6 @@ program main
     noRecon = len_trim(diagEnv) > 0   ! debug: skip reconstruct_interface_halos
     ! Skew-symmetric interface convection correction ([blocks] interface_skew).
     skewIface = logical(dns%block_interface_skew)
-    call get_environment_variable("MOBY_IFFILT", diagEnv)
-    ifFiltAlpha = 0.0d0
-    if (len_trim(diagEnv) > 0) read(diagEnv, *) ifFiltAlpha
 
     if (c%has_terminal) print *, "main loop starting..."
     loop_steps = 0_C_INT
@@ -261,13 +255,6 @@ program main
             ! projection then owns the face and the composite stencil keeps it
             ! conservative.
             call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W], syncface=.true.)
-            ! FIX (i): damp the coarse-interface-band tangential velocity, then
-            ! refresh halos so the projection sees the filtered field. Inert at
-            ! alpha=0.
-            if (ifFiltAlpha /= 0.0d0) then
-                call filter_interface_band(blk, ifFiltAlpha)
-                call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W])
-            end if
 
             ! Projection: solve for pressure correction and project tentative velocities.
             call pressure_projection(ps, blk, dns, dt_gamma, ibm, bc, c)
