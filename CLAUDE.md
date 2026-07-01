@@ -348,8 +348,15 @@ immersed boundary. Phased, each phase verified before the next:
   reproduces the `forcing_x` trajectory to round-off (~5e-15 u), sine profile +
   file source both have the expected effect and are CPU==GPU bit-exact. Design in
   `docs/next_session_bodyforce.md`.
-- NEXT SESSION: **Profile + optimise** (the refined channel is halo-exchange
-  bound; Phase 4 overlap, see `docs/nonblocking_overlap_strategy.md`).
+- NEXT SESSION: **Profile + optimise** the GPU step for the 2:1-refined channel.
+  The last hard profile is STALE (the reflux that was 23% is removed; the
+  `MOBY_PHASETIME` timer is deleted): re-profile first with a minimal removable
+  phase timer, then attack the dominant cost (likely the projection's
+  per-Jacobi-iteration halo exchanges). Every change is a scheduling refactor and
+  must stay bit-exact. Full plan + next-session prompt in
+  `docs/next_session_profiling.md` (Phase-4 overlap sketch in
+  `docs/nonblocking_overlap_strategy.md`, which predates the Chebyshev-Jacobi
+  solver and needs updating).
 
 ## Verification
 
