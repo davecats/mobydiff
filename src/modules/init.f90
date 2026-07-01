@@ -63,6 +63,21 @@ module init
         logical(C_BOOL) :: block_refine_body = .false.
         logical(C_BOOL) :: ibm_enabled = .true.
         character(len=256) :: ibm_coeff_file = ""
+        ! [force] optional spatially-varying volumetric body force
+        ! (bodyforce.f90), added to the momentum predictor on top of the
+        ! constant [flow] forcing_*. Disabled -> bit-exact with no force.
+        !   type:    profile | file | custom
+        !   profile: named analytic form (constant | sine)
+        !   amp:     per-component amplitude
+        !   wavenumber / dir: sine profile wavenumber and variation direction
+        !   file:    HDF5 field (un/vn/wn = fx/fy/fz) for type = file
+        logical(C_BOOL) :: force_enabled = .false.
+        character(len=16) :: force_type = "profile"
+        character(len=16) :: force_profile = "constant"
+        real(C_DOUBLE) :: force_amp(1:3) = 0.0d0
+        real(C_DOUBLE) :: force_wavenumber(1:3) = 0.0d0
+        integer(C_INT) :: force_dir = 1_C_INT
+        character(len=256) :: force_file = ""
         character(len=256) :: field_prefix = ""
         integer :: field_interval = 0
         character(len=256) :: restart_file = ""

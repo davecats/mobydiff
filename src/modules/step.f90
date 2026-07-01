@@ -20,6 +20,7 @@ module step
     use :: comm, only: comm_type, comm_allreduce_max
     use :: les_model, only: les_type, les_is_enabled, les_profile_type, &
         les_wall_seconds, add_les_profile, LES_PROF_SGS
+    use :: bodyforce, only: bodyforce_type, bodyforce_is_enabled
     implicit none
 
     real(C_DOUBLE), parameter :: rk_alpha(3) = [64.0d0/120.0d0,  50.0d0/120.0d0,  90.0d0/120.0d0]
@@ -58,13 +59,17 @@ contains
         dns%peclet_rate = local_rate(1)
     end subroutine precompute_peclet_rate
 
-    subroutine momentum(blk, dns, dt_alpha, dt_beta, dt_gamma, ibm, les, les_prof)
+    subroutine momentum(blk, dns, dt_alpha, dt_beta, dt_gamma, ibm, les, les_prof, bf)
         type(block_set_type), intent(inout) :: blk
         type(dns_type),   intent(in)    :: dns
         real(C_DOUBLE),   intent(in)    :: dt_alpha, dt_beta, dt_gamma
         type(ibm_type),   intent(in)    :: ibm
         type(les_type),   intent(in), optional :: les
         type(les_profile_type), intent(inout), optional :: les_prof
+        ! Optional volumetric body force. When absent (or disabled) the
+        ! predictor kernel below is byte-identical to a no-force build: the
+        ! correction is a separate pass, called only when the force is on.
+        type(bodyforce_type), intent(in), optional :: bf
 
         integer :: i,j,k,b,ip,im,kp,km,jp,jm
         integer :: nx, ny, nz, nBlocks, uStartX, vStartY, wStartZ
@@ -265,6 +270,13 @@ contains
             end if
         end if
 
+        ! Optional volumetric body force, added like the LES SGS correction
+        ! (into qs, masked by the IBM; into oldrhs, unmasked) so the fused
+        ! predictor kernel above stays untouched.
+        if (present(bf)) then
+            if (bodyforce_is_enabled(bf)) call add_bodyforce_correction(blk, bf, dt_alpha, ibm)
+        end if
+
         !$omp target teams distribute parallel do collapse(4) &
         !$omp& map(to: blk%qs) &
         !$omp& map(tofrom: blk%q) &
@@ -283,6 +295,60 @@ contains
         !$omp end target teams distribute parallel do
 
     end subroutine momentum
+
+
+    ! Add the volumetric body force f(x) to the tentative velocity, exactly
+    ! parallel to the LES SGS correction: qs += dt_alpha*f*mu (the IBM mask mu
+    ! zeroes the force inside the body -- intended) and oldrhs += f (unmasked,
+    ! matching how the predictor stores its RHS). Only the same interior faces
+    ! the predictor advanced are touched (the physLow start masks); the
+    ! shared 2:1 face is predicted on both sides, so it is not pinned here.
+    subroutine add_bodyforce_correction(blk, bf, dt_alpha, ibm)
+        type(block_set_type), intent(inout) :: blk
+        type(bodyforce_type), intent(in) :: bf
+        real(C_DOUBLE), intent(in) :: dt_alpha
+        type(ibm_type), intent(in) :: ibm
+
+        integer :: i, j, k, b, nx, ny, nz, nBlocks, uStartX, vStartY, wStartZ
+
+        nx = int(blk%nb(1))
+        ny = int(blk%nb(2))
+        nz = int(blk%nb(3))
+        nBlocks = int(blk%nBlocks)
+
+        !$omp target teams distribute parallel do collapse(4) &
+        !$omp& map(to: dt_alpha, blk%physLow, bf%f, ibm%mu) &
+        !$omp& map(tofrom: blk%qs, blk%oldrhs) &
+        !$omp& private(i,j,k,b,uStartX,vStartY,wStartZ)
+        do b = 1, nBlocks
+        do k = 1, nz
+            do j = 1, ny
+                do i = 1, nx
+                    uStartX = merge(2, 1, blk%physLow(1,b) == FACE_PHYS .or. blk%physLow(1,b) == FACE_CLOSED)
+                    vStartY = merge(2, 1, blk%physLow(2,b) == FACE_PHYS .or. blk%physLow(2,b) == FACE_CLOSED)
+                    wStartZ = merge(2, 1, blk%physLow(3,b) == FACE_PHYS .or. blk%physLow(3,b) == FACE_CLOSED)
+
+                    if (i >= uStartX) then
+                        blk%qs(i,j,k,VAR_U,b) = blk%qs(i,j,k,VAR_U,b) &
+                            + dt_alpha*bf%f(i,j,k,VAR_U,b)*ibm%mu(i,j,k,VAR_U,b)
+                        blk%oldrhs(i,j,k,VAR_U,b) = blk%oldrhs(i,j,k,VAR_U,b) + bf%f(i,j,k,VAR_U,b)
+                    end if
+                    if (j >= vStartY) then
+                        blk%qs(i,j,k,VAR_V,b) = blk%qs(i,j,k,VAR_V,b) &
+                            + dt_alpha*bf%f(i,j,k,VAR_V,b)*ibm%mu(i,j,k,VAR_V,b)
+                        blk%oldrhs(i,j,k,VAR_V,b) = blk%oldrhs(i,j,k,VAR_V,b) + bf%f(i,j,k,VAR_V,b)
+                    end if
+                    if (k >= wStartZ) then
+                        blk%qs(i,j,k,VAR_W,b) = blk%qs(i,j,k,VAR_W,b) &
+                            + dt_alpha*bf%f(i,j,k,VAR_W,b)*ibm%mu(i,j,k,VAR_W,b)
+                        blk%oldrhs(i,j,k,VAR_W,b) = blk%oldrhs(i,j,k,VAR_W,b) + bf%f(i,j,k,VAR_W,b)
+                    end if
+                end do
+            end do
+        end do
+        end do
+        !$omp end target teams distribute parallel do
+    end subroutine add_bodyforce_correction
 
 
     subroutine add_les_momentum_correction(blk, dns, dt_alpha, ibm, les, les_prof)

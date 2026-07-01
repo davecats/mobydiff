@@ -1,6 +1,6 @@
 module io
     use, intrinsic :: iso_c_binding
-    use :: init, only: dns_type, grid_type, VAR_U, VAR_V, VAR_W, VAR_P
+    use :: init, only: dns_type, grid_type, VAR_U, VAR_V, VAR_W, VAR_P, NVAR, NVEL
     use :: blocks, only: block_set_type
     use :: boundary, only: boundary_type, NFACES
     use :: comm, only: comm_type
@@ -406,6 +406,44 @@ subroutine read_field(blk, dns, file_name, c)
     !$omp target update to(blk%q)
 #endif
 end subroutine read_field
+
+subroutine read_force_file(f, blk, dns, file_name, has_terminal)
+    ! Read a volumetric body force from an HDF5 field laid out like a
+    ! velocity field: un/vn/wn = fx/fy/fz at the staggered points, pn ignored.
+    ! Reuses the block-table field reader into a temporary q-shaped buffer,
+    ! then copies the interior velocity components into the force array
+    ! f(1:nb,1:nb,1:nb,NVEL,nBlocks). Host side; the caller maps f to device.
+    ! Parallel HDF5 call: all MPI ranks must enter together.
+    real(C_DOUBLE), intent(out) :: f(:,:,:,:,:)
+    type(block_set_type), intent(in) :: blk
+    type(dns_type), intent(in) :: dns
+    character(len=*), intent(in) :: file_name
+    logical, intent(in) :: has_terminal
+
+    character(kind=C_CHAR,len=:), allocatable :: c_file_name
+    real(C_DOUBLE), allocatable :: qtmp(:,:,:,:,:)
+    integer(C_INT) :: ierr
+    integer :: nx, ny, nz
+
+    if (len_trim(file_name) == 0) error stop "[force] type = file needs [force] file = path"
+
+    nx = int(blk%nb(1)); ny = int(blk%nb(2)); nz = int(blk%nb(3))
+    allocate(qtmp(0:nx+1, 0:ny+1, 0:nz+1, NVAR, blk%nBlocks))
+    qtmp = 0.0d0
+
+    c_file_name = to_c_string(file_name)
+    ierr = fdm_h5_read_field(c_file_name, blk%nb(1), blk%nb(2), blk%nb(3), &
+        blk%nBlocks, blk%nBlocksGlobal, blk%idStart, blk%origin, &
+        dns%globalSize(1), dns%globalSize(2), dns%globalSize(3), &
+        qtmp)
+    if (ierr /= 0_C_INT) then
+        if (has_terminal) print *, "error: could not read force field file: ", trim(file_name)
+        error stop
+    end if
+
+    f(1:nx,1:ny,1:nz,VAR_U:VAR_W,:) = qtmp(1:nx,1:ny,1:nz,VAR_U:VAR_W,:)
+    deallocate(qtmp)
+end subroutine read_force_file
 
 subroutine write_xdmf(xdmf_file_name, h5_file_name, dns, g)
     character(len=*), intent(in) :: xdmf_file_name, h5_file_name

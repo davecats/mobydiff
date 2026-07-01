@@ -29,6 +29,7 @@ set(MODULE_SOURCES
     ${MODULE_DIR}/gpu_runtime.f90
     ${MODULE_DIR}/field_hdf5.c
     ${MODULE_DIR}/io.f90
+    ${MODULE_DIR}/bodyforce.f90
     ${MODULE_DIR}/comm.f90
     ${MODULE_DIR}/step.f90
     ${MODULE_DIR}/pressure_solver.f90

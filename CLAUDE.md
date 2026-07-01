@@ -327,13 +327,29 @@ immersed boundary. Phased, each phase verified before the next:
   the removed numerics from history: 4149aa0 (reflux), 1428641 (const-1/2 default
   + interface_skew), 9343a3c / 902e30a (deep-halo reconstruction), df697d8 (corner
   cubic), 61499af (the reflux-band finding); the MOBY_* hooks from 5fcdd0c.
-- NEXT SESSIONS (in order): (i) **Spatially-varying volumetric body force** —
-  config-gated `f(x)` added to the momentum predictor ON TOP of the constant
-  `[flow] forcing_*`; own module `bodyforce.f90` + `bodyforce_type`, `[force]
-  type = profile|file|custom`, disabled == bit-exact. Full design + next-session
-  prompt in `docs/next_session_bodyforce.md`. (ii) **Profile + optimise** (the
-  refined channel is halo-exchange bound; Phase 4 overlap, see
-  `docs/nonblocking_overlap_strategy.md`).
+- Spatially-varying volumetric body force (DONE 2026-07-01, branch
+  `claude/jacobi-interface`). Config-gated `f(x)` added to the momentum predictor
+  ON TOP of the constant `[flow] forcing_*`. Own module `src/modules/bodyforce.f90`
+  + `bodyforce_type` owning a flat `f(1:nb,1:nb,1:nb,NVEL,nBlocks)` device-mapped
+  array (`enter_/exit_bodyforce_data`). New `[force]` config on `dns` (`enabled`
+  default false; `type = profile|file|custom`; `profile = constant|sine` with
+  `amp_{x,y,z}`, `k_{x,y,z}`/`dir`; `file`). `profile` fills `f` at each
+  component's staggered coord at init; `file` reads fx/fy/fz from an HDF5 velocity-
+  layout field (`io.f90 read_force_file`, reuses `fdm_h5_read_field`); `custom`
+  = the user edits the `update_bodyforce(bf, blk, dns, g, t)` hook to fill `bf%f`
+  in the RK loop (public `bf%f` + `bodyforce_zero`/`_update_to_device`/`_from_device`).
+  KEY DESIGN: the force is a SEPARATE correction kernel `add_bodyforce_correction`
+  (step.f90, parallel to the LES SGS pass: `qs += dt_alpha*f*mu`, `oldrhs += f`),
+  so the fused predictor kernel is byte-for-byte untouched -> disabled is bit-exact
+  BY CONSTRUCTION (not a `+0.0`/FMA argument). The `*ibm%mu` mask zeroes the force
+  in solid cells (intended; not re-masked). Gates: disabled bit-exact (max_abs 0)
+  vs the pre-feature binary on min_channel (blocks+2:1+cheb), les_ibm channel (file
+  IBM+WALE) and refine_body, Beltrami y-slab — CPU AND GPU; enabled: a constant `f`
+  reproduces the `forcing_x` trajectory to round-off (~5e-15 u), sine profile +
+  file source both have the expected effect and are CPU==GPU bit-exact. Design in
+  `docs/next_session_bodyforce.md`.
+- NEXT SESSION: **Profile + optimise** (the refined channel is halo-exchange
+  bound; Phase 4 overlap, see `docs/nonblocking_overlap_strategy.md`).
 
 ## Verification
 

@@ -18,6 +18,7 @@ program main
     use :: gpu_runtime
     use :: ibmm
     use :: les_model
+    use :: bodyforce
     use :: comm, only: comm_type, comm_init_world, comm_init, comm_finalize, &
         init_block_exchange, exchange_halos, exchange_scalar_halos, &
         comm_allreduce_sum, comm_allreduce_max
@@ -38,6 +39,7 @@ program main
     type(ibm_type) :: ibm
     type(les_type) :: les
     type(les_profile_type) :: les_prof
+    type(bodyforce_type) :: bf
     type(config_seen_type) :: config_seen
     type(comm_type) :: c
     integer(C_INT), allocatable :: blockActive(:)
@@ -169,6 +171,12 @@ program main
         call enter_les_data(les, dns)
     end if
 
+    if (dns%force_enabled) then
+        if (c%has_terminal) print *, "initialising body force..."
+        call init_bodyforce(bf, dns, blk, g, c%has_terminal)
+        call enter_bodyforce_data(bf)
+    end if
+
     call apply_bc(blk, bc)
     call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W, VAR_P])
 
@@ -200,6 +208,9 @@ program main
 
             ! Predictor: advance tentative staggered velocities, then enforce solid/body constraints.
             call update_ibm_mu(ibm, dt_gamma)
+            ! Body force: refresh the (custom) force for this substage; profile
+            ! and file sources are filled once at init and this is a no-op.
+            if (dns%force_enabled) call update_bodyforce(bf, blk, dns, g, dns%t_current)
             if (les_is_enabled(les)) then
                 les_profile_start = les_wall_seconds()
                 call update_les_viscosity(les, blk, dns, ibm)
@@ -207,9 +218,9 @@ program main
                 les_profile_start = les_wall_seconds()
                 call exchange_scalar_halos(c, les%nut, blk)
                 call add_les_profile(les_prof, LES_PROF_EXCHANGE, les_wall_seconds() - les_profile_start)
-                call momentum(blk, dns, dt_alpha, dt_beta, dt_gamma, ibm, les, les_prof)
+                call momentum(blk, dns, dt_alpha, dt_beta, dt_gamma, ibm, les, les_prof, bf=bf)
             else
-                call momentum(blk, dns, dt_alpha, dt_beta, dt_gamma, ibm)
+                call momentum(blk, dns, dt_alpha, dt_beta, dt_gamma, ibm, bf=bf)
             end if
             call apply_bc(blk, bc)
             ! Post-predictor exchange with the conservation SYNC: the cross-level
@@ -248,6 +259,8 @@ program main
 
     ! Release device-side data before the host allocatables go out of scope.
     call flow%finalize(dns, g, c)
+    if (dns%force_enabled) call exit_bodyforce_data(bf)
+    call destroy_bodyforce(bf)
     if (les_is_enabled(les)) call exit_les_data(les, dns)
     call destroy_les(les)
     call exit_ibm_data(ibm, dns)
