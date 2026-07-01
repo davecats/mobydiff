@@ -87,3 +87,20 @@ validation/*/runs/
 __pycache__/
 *.pyc
 validation/channel_interface/les/runs/
+
+# Solver output & large binaries (regenerated; keep them out of git so
+# `git add -A` never sweeps run outputs into commits). Add a `!path` exception
+# below when a binary genuinely belongs in the repo.
+*.h5
+*.png
+*.xmf
+
+# Exceptions: reference data / figures that ARE committed on purpose.
+!.mobydiff.png
+!smoke/**/*.h5
+!tools/mobygeom_tests/**/*.h5
+!tutorials/sailplane/*.h5
+!validation/channel_interface/divergence_comparison.png
+!validation/channel_interface/les/*.png
+!validation/channel_interface/les_ibm/*.png
+!validation/channel_interface/les_ibm/*.h5

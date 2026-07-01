@@ -327,9 +327,13 @@ immersed boundary. Phased, each phase verified before the next:
   the removed numerics from history: 4149aa0 (reflux), 1428641 (const-1/2 default
   + interface_skew), 9343a3c / 902e30a (deep-halo reconstruction), df697d8 (corner
   cubic), 61499af (the reflux-band finding); the MOBY_* hooks from 5fcdd0c.
-- NEXT SESSIONS (in order): (i) **Optional volume force** in the momentum equation
-  (config-driven body force). (ii) **Profile + optimise** (the refined channel is
-  halo-exchange bound; Phase 4 overlap, see `docs/nonblocking_overlap_strategy.md`).
+- NEXT SESSIONS (in order): (i) **Spatially-varying volumetric body force** —
+  config-gated `f(x)` added to the momentum predictor ON TOP of the constant
+  `[flow] forcing_*`; own module `bodyforce.f90` + `bodyforce_type`, `[force]
+  type = profile|file|custom`, disabled == bit-exact. Full design + next-session
+  prompt in `docs/next_session_bodyforce.md`. (ii) **Profile + optimise** (the
+  refined channel is halo-exchange bound; Phase 4 overlap, see
+  `docs/nonblocking_overlap_strategy.md`).
 
 ## Verification
 
