@@ -12,6 +12,7 @@ program main
     use :: flow_case, only: case_type, create_flow_case
     use :: config
     use :: boundary
+    use :: wall_bc, only: update_wall_bc
     use :: io
     use :: step
     use :: pressure_solver
@@ -63,6 +64,7 @@ program main
         call read_restart_metadata(dns, g, bc, ps%nIter, ps%sor, dns%restart_file, c, &
             preserve_cflmax=config_seen%cflmax, preserve_pecletmax=config_seen%pecletmax, &
             preserve_dtmax=config_seen%dtmax, preserve_t_final=config_seen%t_final, &
+            preserve_t_current=config_seen%t_current, &
             preserve_pressure_niter=config_seen%pressure_niter, &
             preserve_pressure_sor=config_seen%pressure_sor)
     end if
@@ -177,6 +179,7 @@ program main
         call enter_bodyforce_data(bf)
     end if
 
+    call update_wall_bc(bc, blk, dns%t_current)
     call apply_bc(blk, bc)
     call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W, VAR_P])
 
@@ -222,6 +225,9 @@ program main
             else
                 call momentum(blk, dns, dt_alpha, dt_beta, dt_gamma, ibm, bf=bf)
             end if
+            ! Refresh the (possibly time-varying) wall velocities for this
+            ! substage, then enforce them on the tentative velocity field.
+            call update_wall_bc(bc, blk, dns%t_current)
             call apply_bc(blk, bc)
             ! Post-predictor exchange with the conservation SYNC: the cross-level
             ! PROLONG/RESTRICT write the shared 2:1 face so the two stored copies

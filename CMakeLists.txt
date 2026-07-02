@@ -23,6 +23,7 @@ set(MODULE_SOURCES
     ${MODULE_DIR}/blocks.f90
     ${MODULE_DIR}/chron.f90
     ${MODULE_DIR}/boundary.f90
+    ${MODULE_DIR}/wall_bc.f90
     ${MODULE_DIR}/ibm.f90
     ${MODULE_DIR}/les.f90
     ${MODULE_DIR}/config.f90

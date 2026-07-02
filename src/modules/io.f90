@@ -264,7 +264,7 @@ end subroutine write_grid_export
 
 subroutine read_restart_metadata(dns, g, bc, pressure_niter, pressure_sor, file_name, c, &
         preserve_cflmax, preserve_pecletmax, preserve_dtmax, preserve_t_final, &
-        preserve_pressure_niter, preserve_pressure_sor)
+        preserve_t_current, preserve_pressure_niter, preserve_pressure_sor)
     type(dns_type), intent(inout) :: dns
     type(grid_type), intent(inout) :: g
     type(boundary_type), intent(inout) :: bc
@@ -273,6 +273,7 @@ subroutine read_restart_metadata(dns, g, bc, pressure_niter, pressure_sor, file_
     character(len=*), intent(in) :: file_name
     type(comm_type), intent(in) :: c
     logical, intent(in), optional :: preserve_cflmax, preserve_pecletmax, preserve_dtmax, preserve_t_final
+    logical, intent(in), optional :: preserve_t_current
     logical, intent(in), optional :: preserve_pressure_niter, preserve_pressure_sor
 
     character(kind=C_CHAR,len=:), allocatable :: c_file_name
@@ -281,7 +282,7 @@ subroutine read_restart_metadata(dns, g, bc, pressure_niter, pressure_sor, file_
     integer(C_INT) :: periodic(1:3)
     integer(C_INT) :: ibm_enabled
     integer :: dir
-    real(C_DOUBLE) :: input_cflmax, input_pecletmax, input_dtmax, input_t_final
+    real(C_DOUBLE) :: input_cflmax, input_pecletmax, input_dtmax, input_t_final, input_t_current
     integer(C_INT) :: input_pressure_niter
     real(C_DOUBLE) :: input_pressure_sor
 
@@ -292,6 +293,7 @@ subroutine read_restart_metadata(dns, g, bc, pressure_niter, pressure_sor, file_
     input_pecletmax = dns%pecletmax
     input_dtmax = dns%dtmax
     input_t_final = dns%t_final
+    input_t_current = dns%t_current
     input_pressure_niter = pressure_niter
     input_pressure_sor = pressure_sor
     c_file_name = to_c_string(file_name)
@@ -318,6 +320,11 @@ subroutine read_restart_metadata(dns, g, bc, pressure_niter, pressure_sor, file_
     end if
     if (present(preserve_t_final)) then
         if (preserve_t_final) dns%t_final = input_t_final
+    end if
+    ! When the user prescribes [time] t_start, keep it: the start time is set by
+    ! the config, not read from the restart file.
+    if (present(preserve_t_current)) then
+        if (preserve_t_current) dns%t_current = input_t_current
     end if
     ! Pressure solver settings (niter, sor/omega) are CONFIG authority: a restart
     ! stores whatever the producing run used (e.g. an old red-black sor=1.5), which

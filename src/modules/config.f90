@@ -16,6 +16,7 @@ module config
         logical :: dt = .false.
         logical :: nsteps = .false.
         logical :: t_final = .false.
+        logical :: t_current = .false.
         logical :: cflmax = .false.
         logical :: pecletmax = .false.
         logical :: dtmax = .false.
@@ -168,6 +169,12 @@ subroutine apply_config_value(section, key, value, dns, g, les, ps, bc, c, seen,
         case ("t_final")
             call read_real(value, dns%t_final, line_no)
             seen%t_final = .true.
+        case ("t_start")
+            ! Prescribe the start time of the simulation. When set, this value
+            ! is used as the current time instead of the one stored in a
+            ! restart file (see preserve_t_current in read_restart_metadata).
+            call read_real(value, dns%t_current, line_no)
+            seen%t_current = .true.
         case ("cflmax")
             call read_real(value, dns%cflmax, line_no)
             seen%cflmax = .true.

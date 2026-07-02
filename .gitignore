@@ -104,3 +104,33 @@ validation/channel_interface/les/runs/
 !validation/channel_interface/les/*.png
 !validation/channel_interface/les_ibm/*.png
 !validation/channel_interface/les_ibm/*.h5
+
+# ============================================================================
+# assignment branch: keep the student clone slender.
+# The paths below stay on disk locally (no data is lost) but are excluded from
+# git so a fresh clone contains only the solver, the two tutorials and the
+# statistics tool. Recover any of them from another branch's history.
+# ============================================================================
+/docs/
+/smoke/
+/profile_200_20_gpu_ibm/
+/profile_200_20_gpu_noibm/
+/validation/
+/TODO.txt
+/CLAUDE.md
+/channel_field_*.h5
+/diag_*.h5
+/channel_*_step*.png
+
+# tools/: ship only the statistics plotter
+/tools/*
+!/tools/plot_stats.py
+
+# tutorials/: ship only the two assignment cases, plus small runnable data
+# (the mfu initial field and a sample stats file). The large 256^3 kmm180
+# field restart.h5 is left out on purpose -- it is too big for a clone.
+/tutorials/*
+!/tutorials/channel_kmm180/
+!/tutorials/channel_mfu_jm180/
+!/tutorials/channel_kmm180/channel_stats.h5
+!/tutorials/channel_mfu_jm180/restart.h5
