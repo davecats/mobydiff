@@ -214,6 +214,10 @@ program main
             ! Body force: refresh the (custom) force for this substage; profile
             ! and file sources are filled once at init and this is a no-op.
             if (dns%force_enabled) call update_bodyforce(bf, blk, dns, g, dns%t_current)
+            ! Refresh the (possibly time-varying / flow-sensing) wall velocities.
+            ! Done before the predictor so feedback controls (opposition control)
+            ! sense the projected, divergence-free field of the previous substage.
+            call update_wall_bc(bc, blk, dns%t_current)
             if (les_is_enabled(les)) then
                 les_profile_start = les_wall_seconds()
                 call update_les_viscosity(les, blk, dns, ibm)
@@ -225,9 +229,6 @@ program main
             else
                 call momentum(blk, dns, dt_alpha, dt_beta, dt_gamma, ibm, bf=bf)
             end if
-            ! Refresh the (possibly time-varying) wall velocities for this
-            ! substage, then enforce them on the tentative velocity field.
-            call update_wall_bc(bc, blk, dns%t_current)
             call apply_bc(blk, bc)
             ! Post-predictor exchange with the conservation SYNC: the cross-level
             ! PROLONG/RESTRICT write the shared 2:1 face so the two stored copies
