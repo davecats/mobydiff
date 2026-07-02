@@ -46,8 +46,8 @@ contains
     !    ! Moving bottom wall -> plane Couette flow
     !    if (wall == WALL_BOTTOM) u = 1.0d0
     !
-    !    ! Wall oscillating in the streamwise direction (Stokes layer)
-    !    u = 0.5d0 * sin(2.0d0 * t)
+    !    ! Wall oscillating in the spanwise direction (Stokes layer)
+    !    w = 0.5d0 * sin(2.0d0 * t)
     !
     !    ! Spanwise travelling wave of wall velocity (drag control)
     !    w = 2.0d0 * sin(1.0d0 * x - 0.5d0 * t)
