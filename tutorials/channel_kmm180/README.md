@@ -38,11 +38,18 @@ parts, and it prints u_tau and Re_tau.
 
 ## Experiment: your own wall boundary conditions
 
-The velocity of the two walls is prescribed in one place:
-`src/modules/wall_bc.f90`, subroutine `wall_velocity`. Edit it (for a moving
-wall, an oscillating wall, blowing/suction, ...), rebuild, and rerun. The
-`channel_mfu_jm180` tutorial is a much smaller, faster case for such
-experiments.
+There are two single-edit-point control hooks:
+
+- **Wall boundary conditions:** `src/modules/wall_bc.f90`, subroutine
+  `wall_velocity` — a moving wall, an oscillating wall, blowing/suction, a
+  travelling wave, or opposition control (it receives the sensed wall-normal
+  velocity).
+- **Steady volume force:** `src/modules/volume_force.f90`, subroutine
+  `body_force` — e.g. the Schlatter & Canton streamwise vortices. Off unless
+  `input.ini` sets `[force] enabled = true` and `type = steady`.
+
+Edit the hook, rebuild, and rerun. The `channel_mfu_jm180` tutorial is a much
+smaller, faster case for such experiments (see its README for details).
 
 ## Prescribing the start time
 

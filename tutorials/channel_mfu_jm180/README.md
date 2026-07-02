@@ -46,6 +46,28 @@ and rerun. Examples you can implement in that one function:
   (y+ ~ 11 by default, tunable at the top of `wall_bc.f90`) and passes it in;
   you just oppose it. Add a gain if you like: `v = -gain*v_sensed`.
 
+## Experiment: your own volume force
+
+A different control strategy applies a steady (time-independent) volumetric
+force inside the flow — e.g. the streamwise vortices of Schlatter & Canton
+(doi:10.1007/s10494-016-9723-8). This has its own single edit point: the
+subroutine `body_force` in `src/modules/volume_force.f90`, which returns the
+force `(fx, fy, fz)` at a point `(x, y, z)`. The Schlatter & Canton form is
+written out there ready to paste in.
+
+Unlike the wall condition, the volume force is OFF by default. Turn it on by
+adding to `input.ini`:
+
+```ini
+[force]
+enabled = true
+type    = steady
+```
+
+Then edit `body_force`, rebuild, and rerun. (Remember `beta` must be a multiple
+of `2*pi/Lz` so the force is periodic in the spanwise direction — here
+`Lz = 2`, so the fundamental is `beta = pi`.)
+
 ## Prescribing the start time
 
 Set `t_start` under `[time]` in `input.ini` to choose the initial time of the

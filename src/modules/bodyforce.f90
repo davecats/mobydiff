@@ -31,6 +31,7 @@ module bodyforce
     use :: init, only: dns_type, grid_type, VAR_U, VAR_V, VAR_W, NVAR, NVEL
     use :: blocks, only: block_set_type
     use :: io, only: read_force_file
+    use :: volume_force, only: fill_volume_force
     implicit none
 
     private
@@ -46,6 +47,9 @@ module bodyforce
     integer(C_INT), parameter, public :: SRC_PROFILE = 1_C_INT
     integer(C_INT), parameter, public :: SRC_FILE    = 2_C_INT
     integer(C_INT), parameter, public :: SRC_CUSTOM  = 3_C_INT
+    ! Steady spatially-varying force defined by the student hook in
+    ! volume_force.f90; filled once at init like a profile.
+    integer(C_INT), parameter, public :: SRC_STEADY  = 4_C_INT
 
     ! Named analytic profiles ([force] profile). Add new forms here and in
     ! fill_profile below; keep them cheap closed-form expressions.
@@ -96,7 +100,7 @@ contains
         bf%wavenumber = dns%force_wavenumber
         bf%prof_dir   = dns%force_dir
 
-        if (bf%source == SRC_NONE) error stop "[force] type must be profile, file or custom"
+        if (bf%source == SRC_NONE) error stop "[force] type must be profile, steady, file or custom"
         if (bf%prof_dir < 1_C_INT .or. bf%prof_dir > 3_C_INT) &
             error stop "[force] dir must be 1, 2 or 3"
 
@@ -109,6 +113,9 @@ contains
         select case (bf%source)
         case (SRC_PROFILE)
             call fill_profile(bf, blk, nx, ny, nz)
+        case (SRC_STEADY)
+            ! Steady student-defined force: fill once from volume_force.f90.
+            call fill_volume_force(bf%f, blk)
         case (SRC_FILE)
             call read_force_file(bf%f, blk, dns, dns%force_file, c_has_terminal)
         case (SRC_CUSTOM)
@@ -274,6 +281,8 @@ contains
         select case (trim(adjustl(name)))
         case ("profile", "")
             id = SRC_PROFILE
+        case ("steady")
+            id = SRC_STEADY
         case ("file")
             id = SRC_FILE
         case ("custom")
