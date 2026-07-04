@@ -35,6 +35,7 @@ module blocks
     public :: subdivide_node_line
     public :: zorder_owner, zorder_start, zorder_count
     public :: zero_closed_halos, face_kind, leaf_at, level_cells
+    public :: level_cell_width, occupied_any_level
     public :: DIST_RANKBOX, DIST_ZORDER
     public :: FACE_OPEN, FACE_PHYS, FACE_CLOSED, FACE_COARSE, FACE_FINE
 
@@ -346,6 +347,22 @@ contains
         n = dns%globalSize(d)*int(2**int(level), C_INT)
     end function level_cells
 
+    ! Width of 0-based cell g of the level-l node line in direction d.
+    function level_cell_width(blk, d, level, g) result(width)
+        type(block_set_type), intent(in) :: blk
+        integer, intent(in) :: d, level, g
+        real(C_DOUBLE) :: width
+
+        select case (d)
+        case (1)
+            width = blk%lineX(g + 1, level + 1) - blk%lineX(g, level + 1)
+        case (2)
+            width = blk%lineY(g + 1, level + 1) - blk%lineY(g, level + 1)
+        case default
+            width = blk%lineZ(g + 1, level + 1) - blk%lineZ(g, level + 1)
+        end select
+    end function level_cell_width
+
     ! Per-level node lines: level 0 is the configured grid, level l+1 the
     ! midpoint subdivision of level l (subdivide_node_line).
     subroutine build_level_lines(blk, dns, g)
@@ -376,10 +393,7 @@ contains
         type(block_set_type), intent(in) :: blk
         integer, intent(in) :: level, c(3)
 
-        integer :: nl(3)
-
-        nl = int(blk%gnbt)*2**level
-        idx = int(blk%lidOff(level)) + 1 + c(1) + nl(1)*(c(2) + nl(2)*c(3))
+        idx = int(blk%lidOff(level)) + level_raster(blk, level, c)
     end function lid_index
 
     ! Leaf id occupying the level-`level` lattice cell c, or -1.
@@ -452,7 +466,7 @@ contains
                         c = [gx, gy, gz]
                         if (blk%lidOf(lid_index(blk, l, c)) /= int(M_LEAF, C_INT)) cycle
                         hit = .false.
-                        if (dns%block_refine_nboxes > 0_C_INT) then
+                        if (refine_box_set(dns)) then
                             lo(1) = blk%lineX(c(1)*int(blk%nb(1)), l+1)
                             hi(1) = blk%lineX((c(1)+1)*int(blk%nb(1)), l+1)
                             lo(2) = blk%lineY(c(2)*int(blk%nb(2)), l+1)
@@ -691,6 +705,31 @@ contains
         end do
         fk = FACE_CLOSED
     end function face_kind
+
+    ! True if the level-l lattice cell cl is occupied by a leaf at the same,
+    ! the coarser (cl/2), or any of the finer (2*cl+child) levels -- i.e. a
+    ! non-wall neighbour exists at some level (the 2:1-aware occupancy test).
+    logical function occupied_any_level(blk, level, cl) result(occ)
+        type(block_set_type), intent(in) :: blk
+        integer, intent(in) :: level, cl(3)
+
+        integer :: sx, sy, sz
+
+        occ = leaf_at(blk, level, cl) >= 0_C_INT
+        if (occ) return
+        occ = leaf_at(blk, level - 1, cl/2) >= 0_C_INT
+        if (occ) return
+        do sz = 0, 1
+            do sy = 0, 1
+                do sx = 0, 1
+                    if (leaf_at(blk, level + 1, 2*cl + [sx, sy, sz]) >= 0_C_INT) then
+                        occ = .true.
+                        return
+                    end if
+                end do
+            end do
+        end do
+    end function occupied_any_level
 
     ! FACE_CLOSED faces are exact zero-flux faces: the halo layer and the
     ! pinned interface velocity are zeroed once here and never written

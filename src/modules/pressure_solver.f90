@@ -18,7 +18,7 @@ module pressure_solver
         ! projection operator the high-frequency (checkerboard) mode forces
         ! the factor strictly below 1 (omega=1 is marginally unstable). 0.8 is
         ! a safe default; the config key is still "sor".
-        real(C_DOUBLE) :: sor=0.8d0
+        real(C_DOUBLE) :: omega=0.8d0
         ! Chebyshev-Jacobi acceleration ([pressure] accel = chebyshev):
         ! a Chebyshev semi-iteration over the diagonal(Jacobi)-
         ! preconditioned projection operator, whose spectrum is bounded in
@@ -100,7 +100,7 @@ contains
         ! Chebyshev semi-iteration coefficients over [lmin, lmax].
         dd = 0.5d0*(ps%chebLmax + ps%chebLmin)
         cc = 0.5d0*(ps%chebLmax - ps%chebLmin)
-        omega = merge(1.0d0, ps%sor, ps%cheb)
+        omega = merge(1.0d0, ps%omega, ps%cheb)
         alpha = 0.0d0
 
         ! Projection. Each iteration: (1) preconditioned residual into phi
@@ -199,7 +199,7 @@ contains
     ! from the frozen velocity. denom is the projection diagonal (sum of the
     ! cell's non-pinned face metrics); pinned faces (walls, closed faces) leave
     ! the diagonal exactly as in the red-black scheme.
-    ! omega: the damping factor. Plain Jacobi passes ps%sor (the increment IS
+    ! omega: the damping factor. Plain Jacobi passes ps%omega (the increment IS
     ! phi = -omega*div/denom); Chebyshev passes 1.0 so phi holds the pure
     ! diagonal-preconditioned residual z = -div/denom (the damping then comes
     ! from the Chebyshev coefficients).
@@ -346,15 +346,6 @@ contains
         !$omp end target teams distribute parallel do
 #endif
     end subroutine jacobi_apply
-
-    ! Pinned faces carry zero flux forever (physical walls, closed faces against
-    ! removed blocks): they leave both the diagonal and the corrections.
-    pure logical function face_pinned(fk)
-!$omp declare target
-        integer(C_INT), intent(in) :: fk
-
-        face_pinned = fk == FACE_PHYS .or. fk == FACE_CLOSED
-    end function face_pinned
 
     ! A 2:1 coarse-fine interface face (either orientation).
     pure logical function is_interface(fk)

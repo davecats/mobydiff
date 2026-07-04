@@ -1,6 +1,7 @@
 module io
     use, intrinsic :: iso_c_binding
-    use :: init, only: dns_type, grid_type, VAR_U, VAR_V, VAR_W, VAR_P, NVAR, NVEL
+    use :: init, only: dns_type, grid_type, VAR_U, VAR_V, VAR_W, VAR_P, NVAR, NVEL, &
+        config_seen_type
     use :: blocks, only: block_set_type
     use :: boundary, only: boundary_type, NFACES
     use :: comm, only: comm_type
@@ -165,7 +166,7 @@ subroutine write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor, n
     real(C_DOUBLE), intent(in) :: pressure_sor
     real(C_DOUBLE), allocatable, intent(in) :: nut(:,:,:,:)   ! LES eddy viscosity (unallocated when LES off)
 
-    character(len=256) :: h5_file_name, xdmf_file_name
+    character(len=256) :: h5_file_name
     character(kind=C_CHAR,len=:), allocatable :: c_file_name
     integer(C_INT) :: ierr
     integer(C_INT) :: periodic(1:3)
@@ -175,7 +176,6 @@ subroutine write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor, n
     ibm_enabled = merge(1_C_INT, 0_C_INT, dns%ibm_enabled)
 
     call make_output_filename(trim(dns%field_prefix), step, ".h5", h5_file_name)
-    call make_output_filename(trim(dns%field_prefix), step, ".xdmf", xdmf_file_name)
     if (c%has_terminal) then
         print *, "current time step: ", step, "   field filename: ", trim(h5_file_name)
     end if
@@ -262,9 +262,7 @@ subroutine write_grid_export(dns, g, blk, bc, file_name, has_terminal)
     end if
 end subroutine write_grid_export
 
-subroutine read_restart_metadata(dns, g, bc, pressure_niter, pressure_sor, file_name, c, &
-        preserve_cflmax, preserve_pecletmax, preserve_dtmax, preserve_t_final, &
-        preserve_pressure_niter, preserve_pressure_sor)
+subroutine read_restart_metadata(dns, g, bc, pressure_niter, pressure_sor, file_name, c, seen)
     type(dns_type), intent(inout) :: dns
     type(grid_type), intent(inout) :: g
     type(boundary_type), intent(inout) :: bc
@@ -272,8 +270,8 @@ subroutine read_restart_metadata(dns, g, bc, pressure_niter, pressure_sor, file_
     real(C_DOUBLE), intent(inout) :: pressure_sor
     character(len=*), intent(in) :: file_name
     type(comm_type), intent(in) :: c
-    logical, intent(in), optional :: preserve_cflmax, preserve_pecletmax, preserve_dtmax, preserve_t_final
-    logical, intent(in), optional :: preserve_pressure_niter, preserve_pressure_sor
+    ! Which values the ini set explicitly; config wins over the restart file for these.
+    type(config_seen_type), intent(in) :: seen
 
     character(kind=C_CHAR,len=:), allocatable :: c_file_name
     integer(C_INT) :: ierr
@@ -307,28 +305,16 @@ subroutine read_restart_metadata(dns, g, bc, pressure_niter, pressure_sor, file_
         error stop
     end if
 
-    if (present(preserve_cflmax)) then
-        if (preserve_cflmax) dns%cflmax = input_cflmax
-    end if
-    if (present(preserve_pecletmax)) then
-        if (preserve_pecletmax) dns%pecletmax = input_pecletmax
-    end if
-    if (present(preserve_dtmax)) then
-        if (preserve_dtmax) dns%dtmax = input_dtmax
-    end if
-    if (present(preserve_t_final)) then
-        if (preserve_t_final) dns%t_final = input_t_final
-    end if
-    ! Pressure solver settings (niter, sor/omega) are CONFIG authority: a restart
-    ! stores whatever the producing run used (e.g. an old red-black sor=1.5), which
-    ! would silently override -- and with damped Jacobi a sor>0.8 DIVERGES. So when
-    ! the ini set them, keep the ini value.
-    if (present(preserve_pressure_niter)) then
-        if (preserve_pressure_niter) pressure_niter = input_pressure_niter
-    end if
-    if (present(preserve_pressure_sor)) then
-        if (preserve_pressure_sor) pressure_sor = input_pressure_sor
-    end if
+    ! Config is authority: for every value the ini set explicitly, keep the ini
+    ! value rather than the one stored in the restart file. This matters most for
+    ! the pressure solver -- a restart from an old red-black run stores sor=1.5,
+    ! which DIVERGES under damped Jacobi (sor>0.8).
+    if (seen%cflmax)         dns%cflmax     = input_cflmax
+    if (seen%pecletmax)      dns%pecletmax  = input_pecletmax
+    if (seen%dtmax)          dns%dtmax      = input_dtmax
+    if (seen%t_final)        dns%t_final    = input_t_final
+    if (seen%pressure_niter) pressure_niter = input_pressure_niter
+    if (seen%pressure_sor)   pressure_sor   = input_pressure_sor
 
     if (dns%nsteps <= 0_C_INT) dns%nsteps = file_nsteps
     do dir = 1, 3
@@ -444,73 +430,6 @@ subroutine read_force_file(f, blk, dns, file_name, has_terminal)
     f(1:nx,1:ny,1:nz,VAR_U:VAR_W,:) = qtmp(1:nx,1:ny,1:nz,VAR_U:VAR_W,:)
     deallocate(qtmp)
 end subroutine read_force_file
-
-subroutine write_xdmf(xdmf_file_name, h5_file_name, dns, g)
-    character(len=*), intent(in) :: xdmf_file_name, h5_file_name
-    type(dns_type), intent(in) :: dns
-    type(grid_type), intent(in) :: g
-
-    character(len=256) :: h5_ref
-    integer :: io, slash
-    integer(C_INT) :: nx, ny, nz
-
-    nx = dns%globalSize(1)
-    ny = dns%globalSize(2)
-    nz = dns%globalSize(3)
-
-    h5_ref = trim(h5_file_name)
-    slash = scan(trim(h5_ref), "/", back=.true.)
-    if (slash > 0) h5_ref = h5_ref(slash+1:)
-    h5_ref = "./"//trim(h5_ref)
-
-    open(newunit=io, file=trim(xdmf_file_name), status="replace", action="write")
-    write(io,'(A)') '<?xml version="1.0" ?>'
-    write(io,'(A)') '<!DOCTYPE Xdmf SYSTEM "Xdmf.dtd" []>'
-    write(io,'(A)') '<Xdmf Version="2.0">'
-    write(io,'(A)') '  <Domain>'
-    write(io,'(A)') '    <Grid Name="mobyDiff" GridType="Uniform">'
-    write(io,'(A,ES20.12,A)') '      <Time Value="', dns%t_current, '"/>'
-    write(io,'(A,I0,1X,I0,1X,I0,A)') &
-        '      <Topology TopologyType="3DRectMesh" Dimensions="', nz+1_C_INT, ny+1_C_INT, nx+1_C_INT, '"/>'
-    write(io,'(A)') '      <Geometry GeometryType="VXVYVZ">'
-    call write_xdmf_coord(io, h5_ref, "/x", nx+1_C_INT)
-    call write_xdmf_coord(io, h5_ref, "/y", ny+1_C_INT)
-    call write_xdmf_coord(io, h5_ref, "/z", nz+1_C_INT)
-    write(io,'(A)') '      </Geometry>'
-    call write_xdmf_scalar(io, "un", h5_ref, "/un", nx, ny, nz)
-    call write_xdmf_scalar(io, "vn", h5_ref, "/vn", nx, ny, nz)
-    call write_xdmf_scalar(io, "wn", h5_ref, "/wn", nx, ny, nz)
-    call write_xdmf_scalar(io, "pn", h5_ref, "/pn", nx, ny, nz)
-    write(io,'(A)') '    </Grid>'
-    write(io,'(A)') '  </Domain>'
-    write(io,'(A)') '</Xdmf>'
-    close(io)
-end subroutine write_xdmf
-
-subroutine write_xdmf_coord(io, h5_ref, dataset, n)
-    integer, intent(in) :: io
-    character(len=*), intent(in) :: h5_ref, dataset
-    integer(C_INT), intent(in) :: n
-
-    write(io,'(A,I0,A,A,A,A,A)') &
-        '        <DataItem Dimensions="', n, &
-        '" NumberType="Float" Precision="8" Format="HDF">', &
-        trim(h5_ref), ':', trim(dataset), '</DataItem>'
-end subroutine write_xdmf_coord
-
-subroutine write_xdmf_scalar(io, name, h5_ref, dataset, nx, ny, nz)
-    integer, intent(in) :: io
-    character(len=*), intent(in) :: name, h5_ref, dataset
-    integer(C_INT), intent(in) :: nx, ny, nz
-
-    write(io,'(A,A,A)') '      <Attribute Name="', trim(name), '" AttributeType="Scalar" Center="Cell">'
-    write(io,'(A,I0,1X,I0,1X,I0,A,A,A,A,A)') &
-        '        <DataItem Dimensions="', nz, ny, nx, &
-        '" NumberType="Float" Precision="8" Format="HDF">', &
-        trim(h5_ref), ':', trim(dataset), '</DataItem>'
-    write(io,'(A)') '      </Attribute>'
-end subroutine write_xdmf_scalar
-
 
 subroutine make_output_filename(prefix, step, extension, file_name)
     character(len=*), intent(in) :: prefix, extension

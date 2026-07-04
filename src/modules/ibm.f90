@@ -17,7 +17,7 @@ module ibmm
     use :: init, only: dns_type, grid_type, VAR_U, VAR_V, VAR_W, VAR_P, &
         is_face_staggered, face_at, cell_center_at
     use :: blocks, only: block_set_type, subdivide_node_line
-    use :: io, only: to_c_string
+    use :: io, only: to_c_string, read_block_active, read_block_masks
     implicit none
 
     real(C_DOUBLE), parameter :: SOLID = 1.0d30
@@ -277,11 +277,11 @@ contains
                         do k = o(3), o(3) + nb + 1
                             do j = o(2), o(2) + nb + 1
                                 do i = o(1), o(1) + nb + 1
-                                    xA(1) = location_coord(g%xNode, dns%globalSize(1), &
+                                    xA(1) = location_coord(g%xNode, int(dns%globalSize(1)), &
                                         dns%leng(1), periodic(1), 1, var, i)
-                                    xA(2) = location_coord(g%yNode, dns%globalSize(2), &
+                                    xA(2) = location_coord(g%yNode, int(dns%globalSize(2)), &
                                         dns%leng(2), periodic(2), 2, var, j)
-                                    xA(3) = location_coord(g%zNode, dns%globalSize(3), &
+                                    xA(3) = location_coord(g%zNode, int(dns%globalSize(3)), &
                                         dns%leng(3), periodic(3), 3, var, k)
                                     if (.not. isInBody(xA, ibm, dns)) then
                                         buried = .false.
@@ -297,19 +297,21 @@ contains
         end do
     end subroutine classify_active_blocks
 
-    ! Coordinate of variable `var` at 1-based global cell index `idx` along
-    ! direction `dir`, matching slice_grid_direction's staggering.
-    real(C_DOUBLE) function location_coord(node, nGlobal, length, periodic, dir, var, idx) result(x)
+    ! Coordinate of variable `var` at 1-based cell index `idx` along direction
+    ! `dir`, matching slice_grid_direction's staggering. `n` is the cell count
+    ! of the node line, so the same routine serves the global grid and the
+    ! per-level refinement lines.
+    real(C_DOUBLE) function location_coord(node, n, length, periodic, dir, var, idx) result(x)
         real(C_DOUBLE), intent(in) :: node(0:)
-        integer(C_INT), intent(in) :: nGlobal
+        integer, intent(in) :: n
         real(C_DOUBLE), intent(in) :: length
         logical(C_BOOL), intent(in) :: periodic
         integer, intent(in) :: dir, var, idx
 
         if (is_face_staggered(dir, var)) then
-            x = face_at(node, int(nGlobal), length, idx - 1, periodic)
+            x = face_at(node, n, length, idx - 1, periodic)
         else
-            x = cell_center_at(node, int(nGlobal), length, idx, periodic)
+            x = cell_center_at(node, n, length, idx, periodic)
         end if
     end function location_coord
 
@@ -366,11 +368,11 @@ contains
                             do k = o(3), o(3) + nb + 1
                                 do j = o(2), o(2) + nb + 1
                                     do i = o(1), o(1) + nb + 1
-                                        xA(1) = level_coord(lineX(:,l), nl(1), dns%leng(1), &
+                                        xA(1) = location_coord(lineX(:,l), nl(1), dns%leng(1), &
                                             periodic(1), 1, var, i)
-                                        xA(2) = level_coord(lineY(:,l), nl(2), dns%leng(2), &
+                                        xA(2) = location_coord(lineY(:,l), nl(2), dns%leng(2), &
                                             periodic(2), 2, var, j)
-                                        xA(3) = level_coord(lineZ(:,l), nl(3), dns%leng(3), &
+                                        xA(3) = location_coord(lineZ(:,l), nl(3), dns%leng(3), &
                                             periodic(3), 3, var, k)
                                         inside = isInBody(xA, ibm, dns)
                                         anySolid = anySolid .or. inside
@@ -390,19 +392,82 @@ contains
         deallocate(lineX, lineY, lineZ)
     end subroutine classify_block_geometry
 
-    real(C_DOUBLE) function level_coord(node, nl, length, periodic, dir, var, idx) result(x)
-        real(C_DOUBLE), intent(in) :: node(0:)
-        integer, intent(in) :: nl
-        real(C_DOUBLE), intent(in) :: length
-        logical(C_BOOL), intent(in) :: periodic
-        integer, intent(in) :: dir, var, idx
+    ! Produce the per-block keep mask for solid-block removal ([blocks]
+    ! remove_solid): read it from the coefficient file (mobygeom
+    ! block-active) or classify it from the analytic geometry. The mask is
+    ! allocated here to the lattice size; the caller hands it to
+    ! init_block_set. This is the geometry input to block-set construction,
+    ! kept out of main so the construction dispatch stays thin.
+    subroutine classify_active_mask(active, dns, g, ibm, periodic, has_terminal)
+        integer(C_INT), allocatable, intent(out) :: active(:)
+        type(dns_type), intent(in) :: dns
+        type(grid_type), intent(in) :: g
+        type(ibm_type), intent(inout) :: ibm
+        logical(C_BOOL), intent(in) :: periodic(1:3)
+        logical, intent(in) :: has_terminal
 
-        if (is_face_staggered(dir, var)) then
-            x = face_at(node, nl, length, idx - 1, periodic)
-        else
-            x = cell_center_at(node, nl, length, idx, periodic)
+        logical :: found
+
+        if (any(mod(dns%globalSize, dns%block_nb) /= 0_C_INT)) then
+            error stop "[blocks] nb must divide the global grid in every direction"
         end if
-    end function level_coord
+        if (dns%block_refine_nboxes > 0_C_INT) then
+            error stop "solid-block removal with box refinement is unsupported; use refine_body"
+        end if
+        allocate(active(product(dns%globalSize/dns%block_nb)))
+        if (len_trim(dns%ibm_coeff_file) > 0) then
+            call read_block_active(active, found, dns, has_terminal)
+            if (.not. found) then
+                if (has_terminal) print *, &
+                    "coefficient file has no block_active table; keeping all blocks"
+                active = 1_C_INT
+            end if
+        else
+            call classify_active_blocks(active, dns, g, ibm, periodic)
+        end if
+    end subroutine classify_active_mask
+
+    ! Produce the per-level touch/buried masks for geometry-driven
+    ! refinement ([blocks] refine_body): read them from the coefficient
+    ! file (mobygeom block-table) or classify them from the analytic
+    ! geometry. Both arrays are allocated here for the finest lattice (one
+    ! column per level); the caller hands them to init_block_set.
+    subroutine classify_refinement_masks(touch, buried, dns, g, ibm, periodic, has_terminal)
+        integer(C_INT), allocatable, intent(out) :: touch(:,:), buried(:,:)
+        type(dns_type), intent(in) :: dns
+        type(grid_type), intent(in) :: g
+        type(ibm_type), intent(inout) :: ibm
+        logical(C_BOOL), intent(in) :: periodic(1:3)
+        logical, intent(in) :: has_terminal
+
+        integer :: level, maskCount
+        logical :: found
+
+        if (.not. dns%ibm_enabled) then
+            error stop "[blocks] refine_body needs the IBM enabled"
+        end if
+        if (any(mod(dns%globalSize, dns%block_nb) /= 0_C_INT)) then
+            error stop "[blocks] nb must divide the global grid in every direction"
+        end if
+        allocate(touch(product(dns%globalSize/dns%block_nb)*8**dns%block_refine_levels, &
+            dns%block_refine_levels + 1))
+        allocate(buried(size(touch,1), size(touch,2)))
+        if (len_trim(dns%ibm_coeff_file) > 0) then
+            ! File-based geometry: masks computed by mobygeom block-table.
+            do level = 0, int(dns%block_refine_levels)
+                maskCount = int(product(dns%globalSize/dns%block_nb))*(8**level)
+                call read_block_masks(touch(1:maskCount, level+1), &
+                    buried(1:maskCount, level+1), level, maskCount, &
+                    found, dns, has_terminal)
+                if (.not. found) then
+                    error stop "coefficient file has no refinement masks; run mobygeom block-table"
+                end if
+            end do
+        else
+            call classify_block_geometry(touch, buried, dns, g, ibm, periodic, &
+                int(dns%block_refine_levels) + 1)
+        end if
+    end subroutine classify_refinement_masks
 
     subroutine set_ibm_coeff(dns, blk, ibm, var)
         type(dns_type), intent(in) :: dns

@@ -1,6 +1,6 @@
 module les_model
     use, intrinsic :: iso_c_binding
-    use, intrinsic :: iso_fortran_env, only: int64
+    use :: chron, only: profiler_type, init_profiler
     use :: init, only: dns_type, VAR_U, VAR_V, VAR_W, VAR_P
     use :: blocks, only: block_set_type
     use :: ibmm, only: ibm_type
@@ -11,10 +11,10 @@ module les_model
     integer(C_INT), parameter, public :: LES_NONE = 0_C_INT
     integer(C_INT), parameter, public :: LES_SMAGORINSKY = 1_C_INT
     integer(C_INT), parameter, public :: LES_WALE = 2_C_INT
+    ! Category indices into the LES timing profiler (see init_les_profiler).
     integer, parameter, public :: LES_PROF_NUT = 1
     integer, parameter, public :: LES_PROF_EXCHANGE = 2
     integer, parameter, public :: LES_PROF_SGS = 3
-    integer, parameter, public :: LES_PROF_NCATS = 3
 
     type, public :: les_type
         integer(C_INT) :: model = LES_NONE
@@ -33,74 +33,20 @@ module les_model
         real(C_DOUBLE), allocatable :: inv_dx(:,:,:), inv_dy(:,:,:), inv_dz(:,:,:)
     end type les_type
 
-    type, public :: les_profile_type
-        real(C_DOUBLE) :: seconds(LES_PROF_NCATS) = 0.0d0
-        integer(C_INT) :: calls(LES_PROF_NCATS) = 0_C_INT
-    end type les_profile_type
-
     public :: init_les, destroy_les, enter_les_data, exit_les_data
     public :: les_is_enabled, update_les_viscosity
-    public :: reset_les_profile, add_les_profile, write_les_profile, les_wall_seconds
+    public :: init_les_profiler
 
 contains
 
-    real(C_DOUBLE) function les_wall_seconds() result(seconds)
-        integer(int64) :: count, rate
+    ! Build the LES timing profiler: output tag "les_timing" and the three
+    ! phase labels, ordered to match the LES_PROF_* category indices.
+    subroutine init_les_profiler(profile)
+        type(profiler_type), intent(out) :: profile
 
-        call system_clock(count=count, count_rate=rate)
-        seconds = real(count, C_DOUBLE)/real(rate, C_DOUBLE)
-    end function les_wall_seconds
-
-    subroutine reset_les_profile(profile)
-        type(les_profile_type), intent(inout) :: profile
-
-        profile%seconds = 0.0d0
-        profile%calls = 0_C_INT
-    end subroutine reset_les_profile
-
-    subroutine add_les_profile(profile, category, elapsed_seconds)
-        type(les_profile_type), intent(inout) :: profile
-        integer, intent(in) :: category
-        real(C_DOUBLE), intent(in) :: elapsed_seconds
-
-        if (category < 1 .or. category > LES_PROF_NCATS) return
-        profile%seconds(category) = profile%seconds(category) + elapsed_seconds
-        profile%calls(category) = profile%calls(category) + 1_C_INT
-    end subroutine add_les_profile
-
-    subroutine write_les_profile(profile, nsteps)
-        type(les_profile_type), intent(in) :: profile
-        integer(C_INT), intent(in) :: nsteps
-
-        real(C_DOUBLE) :: total_seconds
-
-        total_seconds = sum(profile%seconds)
-        call write_les_profile_line("nut_update", profile%seconds(LES_PROF_NUT), &
-            profile%calls(LES_PROF_NUT), nsteps)
-        call write_les_profile_line("nut_exchange", profile%seconds(LES_PROF_EXCHANGE), &
-            profile%calls(LES_PROF_EXCHANGE), nsteps)
-        call write_les_profile_line("sgs_correction", profile%seconds(LES_PROF_SGS), &
-            profile%calls(LES_PROF_SGS), nsteps)
-        call write_les_profile_line("total_measured", total_seconds, sum(profile%calls), nsteps)
-    end subroutine write_les_profile
-
-    subroutine write_les_profile_line(label, seconds, calls, nsteps)
-        character(len=*), intent(in) :: label
-        real(C_DOUBLE), intent(in) :: seconds
-        integer(C_INT), intent(in) :: calls, nsteps
-
-        real(C_DOUBLE) :: seconds_per_step, seconds_per_call
-
-        seconds_per_step = 0.0d0
-        seconds_per_call = 0.0d0
-        if (nsteps > 0_C_INT) seconds_per_step = seconds/real(nsteps, C_DOUBLE)
-        if (calls > 0_C_INT) seconds_per_call = seconds/real(calls, C_DOUBLE)
-
-        write(*,'(A,1X,A,1X,A,1X,I0,1X,A,1X,I0,1X,A,1X,ES16.8,1X,A,1X,ES16.8,1X,A,1X,ES16.8)') &
-            "les_timing:", trim(label), "calls", calls, "nsteps", nsteps, &
-            "seconds", seconds, "seconds_per_step", seconds_per_step, &
-            "seconds_per_call", seconds_per_call
-    end subroutine write_les_profile_line
+        call init_profiler(profile, "les_timing", &
+            [character(len=24) :: "nut_update", "nut_exchange", "sgs_correction"])
+    end subroutine init_les_profiler
 
     logical function les_is_enabled(les)
         type(les_type), intent(in) :: les
@@ -302,13 +248,10 @@ contains
         integer :: i, j, k, b, nx, ny, nz, nBlocks
         integer(C_INT) :: model
         logical(C_BOOL) :: ibm_aware, ibm_enabled
-        real(C_DOUBLE) :: cs, cw, cs2, cw2, delta_scale
+        real(C_DOUBLE) :: cs, cs2, delta_scale
         real(C_DOUBLE) :: delta
         real(C_DOUBLE) :: g11, g12, g13, g21, g22, g23, g31, g32, g33
         real(C_DOUBLE) :: s11, s22, s33, s12, s13, s23, s2, strain_mag
-        real(C_DOUBLE) :: g2_11, g2_12, g2_13, g2_21, g2_22, g2_23, g2_31, g2_32, g2_33
-        real(C_DOUBLE) :: trace_g2, sd11, sd22, sd33, sd12, sd13, sd23, sd2, denom
-        real(C_DOUBLE) :: sqrt_s2, sqrt_sd2, s2_52, sd2_32, sd2_54
         real(C_DOUBLE) :: d0, d1, solid_threshold
         logical :: solid_cell
 
@@ -320,9 +263,7 @@ contains
         nBlocks = int(blk%nBlocks)
         model = les%model
         cs = les%cs
-        cw = les%cw
         cs2 = cs*cs
-        cw2 = cw*cw
         delta_scale = les%delta_scale
         ibm_aware = les%ibm_aware
         ibm_enabled = dns%ibm_enabled
@@ -331,7 +272,7 @@ contains
         if (model == LES_NONE) return
 
         !$omp target teams distribute parallel do collapse(4) &
-        !$omp& map(to: model, cs2, cw2, delta_scale, ibm_aware, ibm_enabled, solid_threshold, &
+        !$omp& map(to: model, cs2, delta_scale, ibm_aware, ibm_enabled, solid_threshold, &
         !$omp& blk%q, blk%d1x, blk%d1y, blk%d1z, ibm%coef, &
         !$omp& les%filter_x, les%filter_y, les%filter_z, &
         !$omp& les%d1xm, les%d1x0, les%d1xp, les%d1ym, les%d1y0, les%d1yp, &
@@ -339,10 +280,7 @@ contains
         !$omp& les%p_from_u_x, les%p_from_v_y, les%p_from_w_z) &
         !$omp& map(tofrom: les%nut) &
         !$omp& private(i,j,k,b,delta,g11,g12,g13,g21,g22,g23,g31,g32,g33, &
-        !$omp& s11,s22,s33,s12,s13,s23,s2,strain_mag,g2_11,g2_12,g2_13, &
-        !$omp& g2_21,g2_22,g2_23,g2_31,g2_32,g2_33,trace_g2,sd11,sd22,sd33, &
-        !$omp& sd12,sd13,sd23,sd2,denom,sqrt_s2,sqrt_sd2, &
-        !$omp& s2_52,sd2_32,sd2_54,d0,d1,solid_cell)
+        !$omp& s11,s22,s33,s12,s13,s23,s2,strain_mag,d0,d1,solid_cell)
         do b = 1, nBlocks
         do k = 1, nz
             do j = 1, ny
@@ -422,38 +360,13 @@ contains
                     s23 = 0.5d0*(g23 + g32)
                     s2 = s11*s11 + s22*s22 + s33*s33 + 2.0d0*(s12*s12 + s13*s13 + s23*s23)
 
+                    ! WALE is dispatched to update_wale_viscosity; this generic
+                    ! path handles the Smagorinsky (and any future algebraic
+                    ! eddy-viscosity) model.
                     select case (model)
                     case (LES_SMAGORINSKY)
                         strain_mag = sqrt(max(0.0d0, 2.0d0*s2))
                         les%nut(i,j,k,b) = cs2*delta*delta*strain_mag
-                    case (LES_WALE)
-                        g2_11 = g11*g11 + g12*g21 + g13*g31
-                        g2_12 = g11*g12 + g12*g22 + g13*g32
-                        g2_13 = g11*g13 + g12*g23 + g13*g33
-                        g2_21 = g21*g11 + g22*g21 + g23*g31
-                        g2_22 = g21*g12 + g22*g22 + g23*g32
-                        g2_23 = g21*g13 + g22*g23 + g23*g33
-                        g2_31 = g31*g11 + g32*g21 + g33*g31
-                        g2_32 = g31*g12 + g32*g22 + g33*g32
-                        g2_33 = g31*g13 + g32*g23 + g33*g33
-
-                        trace_g2 = g2_11 + g2_22 + g2_33
-                        sd11 = g2_11 - trace_g2/3.0d0
-                        sd22 = g2_22 - trace_g2/3.0d0
-                        sd33 = g2_33 - trace_g2/3.0d0
-                        sd12 = 0.5d0*(g2_12 + g2_21)
-                        sd13 = 0.5d0*(g2_13 + g2_31)
-                        sd23 = 0.5d0*(g2_23 + g2_32)
-                        sd2 = sd11*sd11 + sd22*sd22 + sd33*sd33 + &
-                              2.0d0*(sd12*sd12 + sd13*sd13 + sd23*sd23)
-
-                        sqrt_s2 = sqrt(s2)
-                        sqrt_sd2 = sqrt(sd2)
-                        s2_52 = s2*s2*sqrt_s2
-                        sd2_32 = sd2*sqrt_sd2
-                        sd2_54 = sd2*sqrt(sqrt_sd2)
-                        denom = s2_52 + sd2_54 + 1.0d-30
-                        les%nut(i,j,k,b) = cw2*delta*delta*sd2_32/denom
                     end select
                 end do
             end do

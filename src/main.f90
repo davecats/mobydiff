@@ -8,7 +8,8 @@ program main
     use :: blocks, only: block_set_type, init_block_set, destroy_block_set, &
         enter_block_data, exit_block_data, zero_closed_halos, &
         FACE_FINE, FACE_PHYS, FACE_CLOSED
-    use :: chron, only: chron_type, start_chron, stop_chron, write_chron
+    use :: chron, only: chron_type, start_chron, stop_chron, write_chron, &
+        profiler_type, wall_seconds, profiler_add, write_profiler
     use :: flow_case, only: case_type, create_flow_case
     use :: config
     use :: boundary
@@ -38,14 +39,12 @@ program main
     type(pressure_solver_type) :: ps
     type(ibm_type) :: ibm
     type(les_type) :: les
-    type(les_profile_type) :: les_prof
+    type(profiler_type) :: les_prof
     type(bodyforce_type) :: bf
     type(config_seen_type) :: config_seen
     type(comm_type) :: c
     integer(C_INT), allocatable :: blockActive(:)
     integer(C_INT), allocatable :: blockTouch(:,:), blockBuried(:,:)
-    integer :: refineLevel, maskCount
-    logical :: blockActiveFound
 
     call comm_init_world(c)
     call splash(c%has_terminal)
@@ -60,11 +59,7 @@ program main
     call read_runtime_config(dns, g, les, ps, bc, c, input_file, c%has_terminal, config_seen)
     if (has_restart_file(dns)) then
         if (c%has_terminal) print *, "reading restart metadata: ", trim(dns%restart_file)
-        call read_restart_metadata(dns, g, bc, ps%nIter, ps%sor, dns%restart_file, c, &
-            preserve_cflmax=config_seen%cflmax, preserve_pecletmax=config_seen%pecletmax, &
-            preserve_dtmax=config_seen%dtmax, preserve_t_final=config_seen%t_final, &
-            preserve_pressure_niter=config_seen%pressure_niter, &
-            preserve_pressure_sor=config_seen%pressure_sor)
+        call read_restart_metadata(dns, g, bc, ps%nIter, ps%omega, dns%restart_file, c, config_seen)
     end if
     call comm_init(c, dns, bc)
 
@@ -77,54 +72,17 @@ program main
     ! immersed boundary, blocks buried inside the body are removed from the
     ! global table before the set is built.
     if (dns%block_nb > 0_C_INT .and. dns%block_refine_body) then
-        ! Geometry-driven refinement (analytic IBM): refine to the finest
-        ! level at the surface with a one-block buffer, removing buried
-        ! blocks at every level.
-        if (.not. dns%ibm_enabled) then
-            error stop "[blocks] refine_body needs the IBM enabled"
-        end if
-        if (any(mod(dns%globalSize, dns%block_nb) /= 0_C_INT)) then
-            error stop "[blocks] nb must divide the global grid in every direction"
-        end if
-        allocate(blockTouch(product(dns%globalSize/dns%block_nb)*8**dns%block_refine_levels, &
-            dns%block_refine_levels + 1))
-        allocate(blockBuried(size(blockTouch,1), size(blockTouch,2)))
-        if (len_trim(dns%ibm_coeff_file) > 0) then
-            ! File-based geometry: masks computed by mobygeom block-table.
-            do refineLevel = 0, int(dns%block_refine_levels)
-                maskCount = int(product(dns%globalSize/dns%block_nb))*(8**refineLevel)
-                call read_block_masks(blockTouch(1:maskCount, refineLevel+1), &
-                    blockBuried(1:maskCount, refineLevel+1), refineLevel, maskCount, &
-                    blockActiveFound, dns, c%has_terminal)
-                if (.not. blockActiveFound) then
-                    error stop "coefficient file has no refinement masks; run mobygeom block-table"
-                end if
-            end do
-        else
-            call classify_block_geometry(blockTouch, blockBuried, dns, g, ibm, bc%isPeriodic, &
-                int(dns%block_refine_levels) + 1)
-        end if
+        ! Geometry-driven refinement (analytic or file IBM): refine to the
+        ! finest level at the surface with a one-block buffer, removing
+        ! buried blocks at every level. ibmm produces the geometry masks.
+        call classify_refinement_masks(blockTouch, blockBuried, dns, g, ibm, &
+            bc%isPeriodic, c%has_terminal)
         call init_block_set(blk, dns, g, bc%isPeriodic, int(c%cart_size, C_INT), &
             int(c%cart_rank, C_INT), touch=blockTouch, buried=blockBuried)
         deallocate(blockTouch, blockBuried)
     else if (dns%block_nb > 0_C_INT .and. dns%ibm_enabled .and. dns%block_remove_solid) then
-        if (any(mod(dns%globalSize, dns%block_nb) /= 0_C_INT)) then
-            error stop "[blocks] nb must divide the global grid in every direction"
-        end if
-        if (dns%block_refine_nboxes > 0_C_INT) then
-            error stop "solid-block removal with box refinement is unsupported; use refine_body"
-        end if
-        allocate(blockActive(product(dns%globalSize/dns%block_nb)))
-        if (len_trim(dns%ibm_coeff_file) > 0) then
-            call read_block_active(blockActive, blockActiveFound, dns, c%has_terminal)
-            if (.not. blockActiveFound) then
-                if (c%has_terminal) print *, &
-                    "coefficient file has no block_active table; keeping all blocks"
-                blockActive = 1_C_INT
-            end if
-        else
-            call classify_active_blocks(blockActive, dns, g, ibm, bc%isPeriodic)
-        end if
+        ! Solid-block removal: drop blocks buried inside the immersed body.
+        call classify_active_mask(blockActive, dns, g, ibm, bc%isPeriodic, c%has_terminal)
         call init_block_set(blk, dns, g, bc%isPeriodic, int(c%cart_size, C_INT), &
             int(c%cart_rank, C_INT), blockActive)
         deallocate(blockActive)
@@ -136,7 +94,7 @@ program main
     call precompute_peclet_rate(dns, blk, c)
     call init_boundary_faces(bc, blk)
     call init_openmp_offload(c%has_terminal)
-    call enter_grid_data(g, dns)
+    call enter_grid_data(g)
     call enter_boundary_data(bc)
 
     if (c%has_terminal) print *, "initialising fields..."
@@ -191,7 +149,7 @@ program main
 
     if (c%has_terminal) print *, "main loop starting..."
     loop_steps = 0_C_INT
-    call reset_les_profile(les_prof)
+    call init_les_profiler(les_prof)
     call start_chron(loop_timer)
     do while (run_should_continue(dns, loop_steps))
         call trim_dt_for_final_time(dns)
@@ -212,12 +170,12 @@ program main
             ! and file sources are filled once at init and this is a no-op.
             if (dns%force_enabled) call update_bodyforce(bf, blk, dns, g, dns%t_current)
             if (les_is_enabled(les)) then
-                les_profile_start = les_wall_seconds()
+                les_profile_start = wall_seconds()
                 call update_les_viscosity(les, blk, dns, ibm)
-                call add_les_profile(les_prof, LES_PROF_NUT, les_wall_seconds() - les_profile_start)
-                les_profile_start = les_wall_seconds()
+                call profiler_add(les_prof, LES_PROF_NUT, wall_seconds() - les_profile_start)
+                les_profile_start = wall_seconds()
                 call exchange_scalar_halos(c, les%nut, blk)
-                call add_les_profile(les_prof, LES_PROF_EXCHANGE, les_wall_seconds() - les_profile_start)
+                call profiler_add(les_prof, LES_PROF_EXCHANGE, wall_seconds() - les_profile_start)
                 call momentum(blk, dns, dt_alpha, dt_beta, dt_gamma, ibm, les, les_prof, bf=bf)
             else
                 call momentum(blk, dns, dt_alpha, dt_beta, dt_gamma, ibm, bf=bf)
@@ -242,7 +200,7 @@ program main
         end if
 
         if (dns%field_interval > 0) then
-            call maybe_write_field(blk, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%sor, les%nut)
+            call maybe_write_field(blk, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%omega, les%nut)
         end if
         call flow%after_step(blk, dns, g, c)
 
@@ -252,10 +210,10 @@ program main
     if (c%has_terminal) then
         print *, "main loop ended..."
         call write_chron(loop_timer)
-        if (les_is_enabled(les)) call write_les_profile(les_prof, loop_steps)
+        if (les_is_enabled(les)) call write_profiler(les_prof, loop_steps)
     end if
 
-    call write_field(blk, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%sor, les%nut)
+    call write_field(blk, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%omega, les%nut)
 
     ! Release device-side data before the host allocatables go out of scope.
     call flow%finalize(dns, g, c)
@@ -266,7 +224,7 @@ program main
     call exit_ibm_data(ibm, dns)
     call exit_block_data(blk)
     call exit_boundary_data(bc)
-    call exit_grid_data(g, dns)
+    call exit_grid_data(g)
     call destroy_block_set(blk)
     call destroy_grid(g)
     call destroy_boundary_faces(bc)

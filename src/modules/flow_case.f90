@@ -2,8 +2,7 @@ module flow_case
     use :: flow_case_base, only: case_type
     use :: generic_flow, only: create_generic_case, GENERIC_CASE_NAME
     use :: channel_flow, only: create_channel_case, CHANNEL_CASE_NAME
-    use :: case_config_helpers, only: strip_config_comment, parse_config_section, &
-        split_config_key_value, to_lower, clean_config_string
+    use :: case_config_helpers, only: next_config_entry, to_lower, clean_config_string
     implicit none
 
     private
@@ -41,12 +40,13 @@ contains
         character(len=*), intent(in) :: input_file
         character(len=*), intent(inout) :: case_name
 
-        integer :: unit, stat
-        character(len=512) :: line, key, value
+        integer :: unit, stat, line_no
+        character(len=512) :: key, value
         character(len=64) :: section
-        logical :: exists
+        logical :: exists, ok
 
         section = ""
+        line_no = 0
         inquire(file=trim(input_file), exist=exists)
         if (.not. exists) return
 
@@ -54,17 +54,9 @@ contains
         if (stat /= 0) return
 
         do
-            read(unit, '(A)', iostat=stat) line
-            if (stat /= 0) exit
-            call strip_config_comment(line)
-            line = adjustl(line)
-            if (len_trim(line) == 0) cycle
-            if (line(1:1) == "[") then
-                call parse_config_section(line, section)
-                cycle
-            end if
+            call next_config_entry(unit, section, key, value, line_no, ok)
+            if (.not. ok) exit
             if (trim(section) /= "case") cycle
-            call split_config_key_value(line, key, value)
             if (trim(to_lower(key)) == "name") case_name = to_lower(clean_config_string(value))
         end do
 

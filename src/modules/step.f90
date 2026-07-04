@@ -18,8 +18,8 @@ module step
     use :: blocks, only: block_set_type, FACE_PHYS, FACE_CLOSED, FACE_COARSE, FACE_FINE
     use :: ibmm, only: ibm_type
     use :: comm, only: comm_type, comm_allreduce_max
-    use :: les_model, only: les_type, les_is_enabled, les_profile_type, &
-        les_wall_seconds, add_les_profile, LES_PROF_SGS
+    use :: les_model, only: les_type, les_is_enabled, LES_PROF_SGS
+    use :: chron, only: profiler_type, wall_seconds, profiler_add
     use :: bodyforce, only: bodyforce_type, bodyforce_is_enabled
     implicit none
 
@@ -28,6 +28,16 @@ module step
     real(C_DOUBLE), parameter :: rk_gamma(3) = [64.0d0/120.0d0,  16.0d0/120.0d0,  40.0d0/120.0d0]
 
 contains
+
+    ! Lower-face momentum start index: skip the pinned face (index 1) only for
+    ! physical walls and closed faces. A 2:1 interface face is predicted on both
+    ! sides (the restriction overwrites the coarse copy, Phase 3c), so it is not
+    ! skipped. Shared by the momentum, body-force, and LES predictor kernels.
+    pure integer function momentum_face_start(fk) result(s)
+!$omp declare target
+        integer(C_INT), intent(in) :: fk
+        s = merge(2, 1, fk == FACE_PHYS .or. fk == FACE_CLOSED)
+    end function momentum_face_start
 
     subroutine precompute_peclet_rate(dns, blk, c)
         type(dns_type), intent(inout) :: dns
@@ -65,7 +75,7 @@ contains
         real(C_DOUBLE),   intent(in)    :: dt_alpha, dt_beta, dt_gamma
         type(ibm_type),   intent(in)    :: ibm
         type(les_type),   intent(in), optional :: les
-        type(les_profile_type), intent(inout), optional :: les_prof
+        type(profiler_type), intent(inout), optional :: les_prof
         ! Optional volumetric body force. When absent (or disabled) the
         ! predictor kernel below is byte-identical to a no-force build: the
         ! correction is a separate pass, called only when the force is on.
@@ -125,9 +135,9 @@ contains
                     ! Only physical walls and closed faces are pinned. Both
                     ! sides of a 2:1 interface predict the shared face (the
                     ! restriction overwrites the coarse copy, Phase 3c).
-                    uStartX = merge(2, 1, blk%physLow(1,b) == FACE_PHYS .or. blk%physLow(1,b) == FACE_CLOSED)
-                    vStartY = merge(2, 1, blk%physLow(2,b) == FACE_PHYS .or. blk%physLow(2,b) == FACE_CLOSED)
-                    wStartZ = merge(2, 1, blk%physLow(3,b) == FACE_PHYS .or. blk%physLow(3,b) == FACE_CLOSED)
+                    uStartX = momentum_face_start(blk%physLow(1,b))
+                    vStartY = momentum_face_start(blk%physLow(2,b))
+                    wStartZ = momentum_face_start(blk%physLow(3,b))
 
                     if (i >= uStartX) then
                         uu_p = (blk%q(i,j,k,VAR_U,b) + blk%q(ip,j,k,VAR_U,b))**2
@@ -260,15 +270,9 @@ contains
         end do
         !$omp end target teams distribute parallel do
 
-        if (present(les)) then
-            if (use_les) then
-                if (present(les_prof)) then
-                    call add_les_momentum_correction(blk, dns, dt_alpha, ibm, les, les_prof)
-                else
-                    call add_les_momentum_correction(blk, dns, dt_alpha, ibm, les)
-                end if
-            end if
-        end if
+        ! use_les is .true. only when les is present; les_prof is optional in
+        ! add_les_momentum_correction and passes through absent when unset.
+        if (use_les) call add_les_momentum_correction(blk, dns, dt_alpha, ibm, les, les_prof)
 
         ! Optional volumetric body force, added like the LES SGS correction
         ! (into qs, masked by the IBM; into oldrhs, unmasked) so the fused
@@ -324,9 +328,9 @@ contains
         do k = 1, nz
             do j = 1, ny
                 do i = 1, nx
-                    uStartX = merge(2, 1, blk%physLow(1,b) == FACE_PHYS .or. blk%physLow(1,b) == FACE_CLOSED)
-                    vStartY = merge(2, 1, blk%physLow(2,b) == FACE_PHYS .or. blk%physLow(2,b) == FACE_CLOSED)
-                    wStartZ = merge(2, 1, blk%physLow(3,b) == FACE_PHYS .or. blk%physLow(3,b) == FACE_CLOSED)
+                    uStartX = momentum_face_start(blk%physLow(1,b))
+                    vStartY = momentum_face_start(blk%physLow(2,b))
+                    wStartZ = momentum_face_start(blk%physLow(3,b))
 
                     if (i >= uStartX) then
                         blk%qs(i,j,k,VAR_U,b) = blk%qs(i,j,k,VAR_U,b) &
@@ -357,7 +361,7 @@ contains
         real(C_DOUBLE), intent(in) :: dt_alpha
         type(ibm_type), intent(in) :: ibm
         type(les_type), intent(in) :: les
-        type(les_profile_type), intent(inout), optional :: les_prof
+        type(profiler_type), intent(inout), optional :: les_prof
 
         integer :: i, j, k, b, ip, im, jp, jm, kp, km
         integer :: nx, ny, nz, nBlocks, uStartX, vStartY, wStartZ
@@ -371,7 +375,7 @@ contains
         nz = int(blk%nb(3))
         nBlocks = int(blk%nBlocks)
 
-        if (present(les_prof)) profile_start = les_wall_seconds()
+        if (present(les_prof)) profile_start = wall_seconds()
 
         !$omp target teams distribute parallel do collapse(4) &
         !$omp& map(to: dt_alpha, &
@@ -395,9 +399,9 @@ contains
                     ! Only physical walls and closed faces are pinned. Both
                     ! sides of a 2:1 interface predict the shared face (the
                     ! restriction overwrites the coarse copy, Phase 3c).
-                    uStartX = merge(2, 1, blk%physLow(1,b) == FACE_PHYS .or. blk%physLow(1,b) == FACE_CLOSED)
-                    vStartY = merge(2, 1, blk%physLow(2,b) == FACE_PHYS .or. blk%physLow(2,b) == FACE_CLOSED)
-                    wStartZ = merge(2, 1, blk%physLow(3,b) == FACE_PHYS .or. blk%physLow(3,b) == FACE_CLOSED)
+                    uStartX = momentum_face_start(blk%physLow(1,b))
+                    vStartY = momentum_face_start(blk%physLow(2,b))
+                    wStartZ = momentum_face_start(blk%physLow(3,b))
 
                     if (i >= uStartX) then
                         tau_xp = 2.0d0*les%nut(i,j,k,b) &
@@ -557,8 +561,8 @@ contains
         end do
         !$omp end target teams distribute parallel do
 
-        if (present(les_prof)) call add_les_profile(les_prof, LES_PROF_SGS, &
-            les_wall_seconds() - profile_start)
+        if (present(les_prof)) call profiler_add(les_prof, LES_PROF_SGS, &
+            wall_seconds() - profile_start)
     end subroutine add_les_momentum_correction
 
     subroutine get_timestep_rates(blk, dns, rates, les)
@@ -666,15 +670,13 @@ contains
         end if
         call comm_allreduce_max(c, rates)
 
-        next_dt = dns%dt
+        next_dt = dns%dtmax
         have_limit = .false.
         if (dns%cflmax > 0.0d0 .and. rates(CFL_COURANT) > 0.0d0) then
-            if (.not. have_limit) next_dt = dns%dtmax
             next_dt = min(next_dt, dns%cflmax/rates(CFL_COURANT))
             have_limit = .true.
         end if
         if (dns%pecletmax > 0.0d0 .and. rates(CFL_PECLET) > 0.0d0) then
-            if (.not. have_limit) next_dt = dns%dtmax
             next_dt = min(next_dt, dns%pecletmax/rates(CFL_PECLET))
             have_limit = .true.
         end if

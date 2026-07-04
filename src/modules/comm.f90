@@ -3,7 +3,7 @@ module comm
     use :: mpi_f08
     use :: init, only: dns_type, NVAR
     use :: blocks, only: block_set_type, DIST_ZORDER, zorder_owner, zorder_start, zorder_count, &
-        leaf_at, level_cells
+        leaf_at, level_cells, level_cell_width, occupied_any_level
     use :: boundary, only: boundary_type
 #ifdef USE_OPENMP_OFFLOAD
     use omp_lib
@@ -60,7 +60,10 @@ module comm
         integer, allocatable :: lDstLo(:,:), lExt(:,:)     ! (3,nLocal)
         integer, allocatable :: lGA(:,:), lGB(:,:), lGS(:,:), lGC(:,:) ! gather map (3,nLocal)
         integer, allocatable :: lDir(:,:)                  ! direction (dst-completion adjacency)
-        real(C_DOUBLE), allocatable :: lWp(:), lWpDst(:)   ! pressure dst-completion weights
+        ! Prolong ghost-completion blend weights (Wp = weight-for-prolong). The
+        ! blend is applied to the pressure ghost AND to tangential-velocity
+        ! ghosts at 2:1 PROLONG faces; 1.0 (identity) for every other entry.
+        real(C_DOUBLE), allocatable :: lWp(:), lWpDst(:)
         integer, allocatable :: lOff(:)                    ! (0:nLocal) point prefix
         ! Per-point -> entry index, precomputed once so the exchange kernels do an
         ! O(1) lookup instead of a per-point binary search over lOff/sOff/rOff
@@ -544,7 +547,7 @@ contains
         if (.not. haveNeighbor) return
 
         if (blk%distMode /= DIST_ZORDER) then
-            call owner_of_origin(c, blk, dns, level, to, owner(1), slot(1))
+            call owner_of_origin(c, dns, to, owner(1), slot(1))
             if (owner(1) >= 0) then
                 n = 1
                 op(1) = OP_COPY
@@ -795,22 +798,6 @@ contains
         end do
     end function entry_blend
 
-    ! Width of 0-based cell g of the level-l node line in direction d.
-    function level_cell_width(blk, d, level, g) result(width)
-        type(block_set_type), intent(in) :: blk
-        integer, intent(in) :: d, level, g
-        real(C_DOUBLE) :: width
-
-        select case (d)
-        case (1)
-            width = blk%lineX(g + 1, level + 1) - blk%lineX(g, level + 1)
-        case (2)
-            width = blk%lineY(g + 1, level + 1) - blk%lineY(g, level + 1)
-        case default
-            width = blk%lineZ(g + 1, level + 1) - blk%lineZ(g, level + 1)
-        end select
-    end function level_cell_width
-
     ! Level-l cell origin of the neighbour block in direction off, with
     ! periodic wrap; haveNeighbor is false outside non-periodic boundaries.
     subroutine neighbor_origin(c, dns, level, dorigin, off, nb, haveNeighbor, to)
@@ -837,47 +824,21 @@ contains
         end do
     end subroutine neighbor_origin
 
-    ! Owner rank and owner-local slot of the leaf at level-l origin `to`.
-    subroutine owner_of_origin(c, blk, dns, level, to, owner, slot)
+    ! Owner rank and owner-local slot (always 1) of the block at origin `to`
+    ! in rank-box mode.
+    subroutine owner_of_origin(c, dns, to, owner, slot)
         type(comm_type), intent(in) :: c
-        type(block_set_type), intent(in) :: blk
         type(dns_type), intent(in) :: dns
-        integer, intent(in) :: level, to(3)
+        integer, intent(in) :: to(3)
         integer, intent(out) :: owner, slot
 
-        integer :: d, r, id, ierr, sx, sy, sz
+        integer :: d, r, ierr
         integer(C_INT) :: first, last
-        integer :: ownerCoords(3), bcoord(3)
+        integer :: ownerCoords(3)
 
-        if (blk%distMode == DIST_ZORDER) then
-            bcoord = to/int(blk%nb)
-            id = int(leaf_at(blk, level, bcoord))
-            if (id < 0) then
-                ! A coarser or finer occupant is a 2:1 interface; transfer
-                ! operators arrive in Phase 3b/3c.
-                if (int(leaf_at(blk, level - 1, bcoord/2)) >= 0) then
-                    error stop "2:1 level interfaces are not supported yet (Phase 3b)"
-                end if
-                do sz = 0, 1
-                    do sy = 0, 1
-                        do sx = 0, 1
-                            if (int(leaf_at(blk, level + 1, 2*bcoord + [sx, sy, sz])) >= 0) then
-                                error stop "2:1 level interfaces are not supported yet (Phase 3b)"
-                            end if
-                        end do
-                    end do
-                end do
-                owner = -1
-                slot = -1
-                return
-            end if
-            owner = int(zorder_owner(int(id, C_INT), blk%nBlocksGlobal, int(c%cart_size, C_INT)))
-            slot = id - int(zorder_start(blk%nBlocksGlobal, int(c%cart_size, C_INT), &
-                int(owner, C_INT))) + 1
-            return
-        end if
-
-        ! Rank-box mode: one block per rank, owner from the Cartesian ranges.
+        ! Rank-box mode only: the Z-order path resolves owners via id_owner_slot
+        ! in resolve_neighbors (this routine is called only when distMode is not
+        ! DIST_ZORDER). One block per rank, owner from the Cartesian ranges.
         do d = 1, 3
             ownerCoords(d) = -1
             do r = 0, c%dims(d) - 1
@@ -893,37 +854,6 @@ contains
         call MPI_Cart_rank(c%cart_comm, ownerCoords, owner, ierr)
         slot = 1
     end subroutine owner_of_origin
-
-    logical function origin_is_mine(blk, dns, level, to)
-        type(block_set_type), intent(in) :: blk
-        type(dns_type), intent(in) :: dns
-        integer, intent(in) :: level, to(3)
-
-        integer :: id
-
-        if (blk%distMode == DIST_ZORDER) then
-            id = int(leaf_at(blk, level, to/int(blk%nb)))
-            origin_is_mine = id >= int(blk%idStart) .and. &
-                             id < int(blk%idStart) + int(blk%nBlocks)
-        else
-            origin_is_mine = all(to >= int(dns%localSize(1:3,0)) - 1) .and. &
-                             all(to <= int(dns%localSize(1:3,1)) - 1)
-        end if
-    end function origin_is_mine
-
-    integer function my_slot_of(blk, dns, level, to) result(slot)
-        type(block_set_type), intent(in) :: blk
-        type(dns_type), intent(in) :: dns
-        integer, intent(in) :: level, to(3)
-
-        if (blk%distMode == DIST_ZORDER) then
-            slot = int(leaf_at(blk, level, to/int(blk%nb))) - int(blk%idStart) + 1
-        else
-            slot = 1
-        end if
-        associate(unused => dns)
-        end associate
-    end function my_slot_of
 
     ! Source/destination boxes for the entry (dst block B, direction off):
     ! src is in the neighbour block's local frame, dst in B's. The
@@ -986,28 +916,6 @@ contains
             exists = occupied_any_level(blk, level, to/nb)
         end if
     end function combined_neighbor_exists
-
-    logical function occupied_any_level(blk, level, cl) result(occ)
-        type(block_set_type), intent(in) :: blk
-        integer, intent(in) :: level, cl(3)
-
-        integer :: sx, sy, sz
-
-        occ = leaf_at(blk, level, cl) >= 0_C_INT
-        if (occ) return
-        occ = leaf_at(blk, level - 1, cl/2) >= 0_C_INT
-        if (occ) return
-        do sz = 0, 1
-            do sy = 0, 1
-                do sx = 0, 1
-                    if (leaf_at(blk, level + 1, 2*cl + [sx, sy, sz]) >= 0_C_INT) then
-                        occ = .true.
-                        return
-                    end if
-                end do
-            end do
-        end do
-    end function occupied_any_level
 
     subroutine collect_peers(c, blk, dns, off)
         type(comm_type), intent(inout) :: c

@@ -7,8 +7,7 @@ module channel_flow
     use :: boundary, only: boundary_type, boundary_face_id
     use :: pressure_solver, only: pressure_solver_type
     use :: comm, only: comm_type
-    use :: case_config_helpers, only: strip_config_comment, parse_config_section, &
-        split_config_key_value, to_lower, clean_config_string
+    use :: case_config_helpers, only: next_config_entry, to_lower, clean_config_string
     use :: channel_profile, only: initialise_channel_fields
     use :: channel_stats, only: channel_stats_type
     implicit none
@@ -16,8 +15,10 @@ module channel_flow
     private
 
     character(len=*), parameter :: CHANNEL_CASE_NAME = "channel"
-    integer(C_INT), parameter :: CHANNEL_STREAM_DIR = 1_C_INT
-    integer(C_INT), parameter :: CHANNEL_WALL_DIR = 2_C_INT
+    ! Direction labels used as array indices (any integer kind works); plain
+    ! default integer so boundary_face_id needs no cast.
+    integer, parameter :: CHANNEL_STREAM_DIR = 1
+    integer, parameter :: CHANNEL_WALL_DIR = 2
 
     type, extends(case_type), public :: channel_case_type
         integer :: n_walls = 2
@@ -118,8 +119,8 @@ contains
 
         integer :: min_face, max_face
 
-        min_face = boundary_face_id(int(CHANNEL_WALL_DIR), 0)
-        max_face = boundary_face_id(int(CHANNEL_WALL_DIR), 1)
+        min_face = boundary_face_id(CHANNEL_WALL_DIR, 0)
+        max_face = boundary_face_id(CHANNEL_WALL_DIR, 1)
 
         bc%faceBcType(VAR_U:VAR_W,min_face) = 0_C_INT
         bc%faceBcDefaultValue(VAR_U:VAR_W,min_face) = 0.0d0
@@ -141,31 +142,22 @@ contains
         logical, intent(in), optional :: has_terminal
 
         integer :: unit, stat, line_no
-        character(len=512) :: line, key, value
+        character(len=512) :: key, value
         character(len=64) :: section
-        logical :: exists
+        logical :: exists, ok
 
         section = ""
+        line_no = 0
         inquire(file=trim(input_file), exist=exists)
         if (.not. exists) return
 
         open(newunit=unit, file=trim(input_file), status="old", action="read", iostat=stat)
         if (stat /= 0) return
 
-        line_no = 0
         do
-            read(unit, '(A)', iostat=stat) line
-            if (stat /= 0) exit
-            line_no = line_no + 1
-            call strip_config_comment(line)
-            line = adjustl(line)
-            if (len_trim(line) == 0) cycle
-            if (line(1:1) == "[") then
-                call parse_config_section(line, section)
-                cycle
-            end if
+            call next_config_entry(unit, section, key, value, line_no, ok)
+            if (.not. ok) exit
             if (trim(section) /= "case.channel") cycle
-            call split_config_key_value(line, key, value)
             call apply_channel_case_value(this, to_lower(key), value, line_no, has_terminal)
         end do
 

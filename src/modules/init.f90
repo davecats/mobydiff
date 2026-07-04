@@ -16,6 +16,25 @@ module init
     integer(C_INT), parameter :: CFL_PECLET  = 2_C_INT
     integer(C_INT), parameter :: NCFL = 2_C_INT
 
+    ! Records which values the ini set explicitly, so config can win over the
+    ! restart-file metadata for those fields (see read_restart_metadata). Lives
+    ! here in the base module so both config (writer) and io (reader) can use it
+    ! without an io<->config module cycle.
+    type :: config_seen_type
+        logical :: size(1:3) = .false.
+        logical :: length(1:3) = .false.
+        logical :: forcing(1:3) = .false.
+        logical :: re = .false.
+        logical :: dt = .false.
+        logical :: nsteps = .false.
+        logical :: t_final = .false.
+        logical :: cflmax = .false.
+        logical :: pecletmax = .false.
+        logical :: dtmax = .false.
+        logical :: pressure_niter = .false.
+        logical :: pressure_sor = .false.
+    end type config_seen_type
+
     ! Runtime/domain state shared by the solver modules.
     type :: dns_type
         integer(C_INT) :: globalSize(1:3) = 0_C_INT

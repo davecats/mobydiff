@@ -126,11 +126,11 @@ contains
         value = z - 0.57d0*z**7
     end function luchini_plane_duct_wake
 
-    real(C_DOUBLE) function stream_profile(var, laminar_u) result(value)
+    real(C_DOUBLE) function stream_profile(var, mean_u) result(value)
         integer, intent(in) :: var
-        real(C_DOUBLE), intent(in) :: laminar_u
+        real(C_DOUBLE), intent(in) :: mean_u
 
-        value = merge(laminar_u, 0.0d0, var == VAR_U)
+        value = merge(mean_u, 0.0d0, var == VAR_U)
     end function stream_profile
 
     real(C_DOUBLE) function disturbance_envelope(n_walls, var, wall_y, wall_length) result(value)

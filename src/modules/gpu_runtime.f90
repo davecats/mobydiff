@@ -1,6 +1,6 @@
 module gpu_runtime
     use, intrinsic :: iso_c_binding
-    use :: init, only: dns_type, grid_type
+    use :: init, only: grid_type
 #ifdef USE_OPENMP_OFFLOAD
     use omp_lib
 #endif
@@ -26,9 +26,8 @@ contains
 #endif
     end subroutine init_openmp_offload
 
-    subroutine enter_grid_data(g, dns)
+    subroutine enter_grid_data(g)
         type(grid_type), intent(inout) :: g
-        type(dns_type), intent(in)     :: dns
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target enter data map(to: g)
@@ -36,9 +35,8 @@ contains
 #endif
     end subroutine enter_grid_data
 
-    subroutine exit_grid_data(g, dns)
+    subroutine exit_grid_data(g)
         type(grid_type), intent(inout) :: g
-        type(dns_type), intent(in)     :: dns
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target exit data map(delete: g%xNode, g%yNode, g%zNode)

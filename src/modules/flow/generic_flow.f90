@@ -196,7 +196,9 @@ contains
 
         c%dims = 0
         ps%nIter = 3_C_INT
-        ps%sor = 1.5d0
+        ! Damped-Jacobi relaxation factor: the projection DIVERGES for sor > 0.8
+        ! (the retired red-black SOR used 1.5). See pressure_solver_type%omega.
+        ps%omega = 0.8d0
     end subroutine set_generic_defaults
 
 end module generic_flow

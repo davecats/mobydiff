@@ -15,9 +15,32 @@ module chron
         logical :: running = .false.
     end type chron_type
 
+    ! Generic multi-bucket phase profiler: accumulate wall time and call counts
+    ! into named categories and print one line each plus a total. The category
+    ! labels and the output-line tag are supplied by the caller, so any
+    ! subsystem (LES today, the projection profiling to come) can reuse it.
+    integer, parameter, public :: PROFILER_MAX_CATS = 8
+
+    type, public :: profiler_type
+        character(len=24) :: tag = "timing"                 ! output line prefix
+        integer :: ncats = 0
+        character(len=24) :: labels(PROFILER_MAX_CATS) = ""
+        real(C_DOUBLE) :: seconds(PROFILER_MAX_CATS) = 0.0d0
+        integer(C_INT) :: calls(PROFILER_MAX_CATS) = 0_C_INT
+    end type profiler_type
+
     public :: init_chron, start_chron, stop_chron, write_chron
+    public :: wall_seconds, init_profiler, reset_profiler, profiler_add, write_profiler
 
 contains
+
+    ! Wall-clock reading in seconds, shared by the stopwatch and the profiler.
+    real(C_DOUBLE) function wall_seconds() result(seconds)
+        integer(int64) :: count, rate
+
+        call system_clock(count=count, count_rate=rate)
+        seconds = real(count, C_DOUBLE)/real(rate, C_DOUBLE)
+    end function wall_seconds
 
     subroutine init_chron(timer)
         type(chron_type), intent(inout) :: timer
@@ -65,5 +88,69 @@ contains
             "timing: nsteps", timer%nsteps, "loop_seconds", timer%elapsed_seconds, &
             "seconds_per_step", timer%seconds_per_step
     end subroutine write_chron
+
+    ! Set the output tag and the per-category labels; zero the accumulators.
+    subroutine init_profiler(profile, tag, labels)
+        type(profiler_type), intent(out) :: profile
+        character(len=*), intent(in) :: tag
+        character(len=*), intent(in) :: labels(:)
+
+        if (size(labels) > PROFILER_MAX_CATS) error stop "profiler: too many categories"
+        profile%tag = tag
+        profile%ncats = size(labels)
+        profile%labels(1:profile%ncats) = labels
+        profile%seconds = 0.0d0
+        profile%calls = 0_C_INT
+    end subroutine init_profiler
+
+    ! Zero the accumulators, keeping the tag and labels.
+    subroutine reset_profiler(profile)
+        type(profiler_type), intent(inout) :: profile
+
+        profile%seconds = 0.0d0
+        profile%calls = 0_C_INT
+    end subroutine reset_profiler
+
+    subroutine profiler_add(profile, category, elapsed_seconds)
+        type(profiler_type), intent(inout) :: profile
+        integer, intent(in) :: category
+        real(C_DOUBLE), intent(in) :: elapsed_seconds
+
+        if (category < 1 .or. category > profile%ncats) return
+        profile%seconds(category) = profile%seconds(category) + elapsed_seconds
+        profile%calls(category) = profile%calls(category) + 1_C_INT
+    end subroutine profiler_add
+
+    subroutine write_profiler(profile, nsteps)
+        type(profiler_type), intent(in) :: profile
+        integer(C_INT), intent(in) :: nsteps
+
+        integer :: i
+
+        do i = 1, profile%ncats
+            call write_profiler_line(profile%tag, profile%labels(i), &
+                profile%seconds(i), profile%calls(i), nsteps)
+        end do
+        call write_profiler_line(profile%tag, "total_measured", &
+            sum(profile%seconds(1:profile%ncats)), sum(profile%calls(1:profile%ncats)), nsteps)
+    end subroutine write_profiler
+
+    subroutine write_profiler_line(tag, label, seconds, calls, nsteps)
+        character(len=*), intent(in) :: tag, label
+        real(C_DOUBLE), intent(in) :: seconds
+        integer(C_INT), intent(in) :: calls, nsteps
+
+        real(C_DOUBLE) :: seconds_per_step, seconds_per_call
+
+        seconds_per_step = 0.0d0
+        seconds_per_call = 0.0d0
+        if (nsteps > 0_C_INT) seconds_per_step = seconds/real(nsteps, C_DOUBLE)
+        if (calls > 0_C_INT) seconds_per_call = seconds/real(calls, C_DOUBLE)
+
+        write(*,'(A,1X,A,1X,A,1X,I0,1X,A,1X,I0,1X,A,1X,ES16.8,1X,A,1X,ES16.8,1X,A,1X,ES16.8)') &
+            trim(tag)//":", trim(label), "calls", calls, "nsteps", nsteps, &
+            "seconds", seconds, "seconds_per_step", seconds_per_step, &
+            "seconds_per_call", seconds_per_call
+    end subroutine write_profiler_line
 
 end module chron

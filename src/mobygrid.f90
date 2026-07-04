@@ -45,9 +45,7 @@ program mobygrid
     call read_runtime_config(dns, g, les, ps, bc, c, input_file, c%has_terminal, config_seen)
     if (has_restart_file(dns)) then
         if (c%has_terminal) print *, "reading restart metadata: ", trim(dns%restart_file)
-        call read_restart_metadata(dns, g, bc, ps%nIter, ps%sor, dns%restart_file, c, &
-            preserve_cflmax=config_seen%cflmax, preserve_pecletmax=config_seen%pecletmax, &
-            preserve_dtmax=config_seen%dtmax, preserve_t_final=config_seen%t_final)
+        call read_restart_metadata(dns, g, bc, ps%nIter, ps%omega, dns%restart_file, c, config_seen)
     end if
 
     call set_serial_local_size(dns)

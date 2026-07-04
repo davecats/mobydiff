@@ -1,27 +1,12 @@
 module config
     use, intrinsic :: iso_c_binding
     use :: init, only: dns_type, grid_type, VAR_U, VAR_V, VAR_W, VAR_P, &
-        GRID_UNIFORM, GRID_COSINE, GRID_TANH, GRID_NATURAL
+        GRID_UNIFORM, GRID_COSINE, GRID_TANH, GRID_NATURAL, config_seen_type
     use :: les_model, only: les_type, LES_NONE, LES_SMAGORINSKY, LES_WALE
     use :: pressure_solver, only: pressure_solver_type
     use :: boundary, only: boundary_type, boundary_face_id
     use :: comm, only: comm_type
     implicit none
-
-    type :: config_seen_type
-        logical :: size(1:3) = .false.
-        logical :: length(1:3) = .false.
-        logical :: forcing(1:3) = .false.
-        logical :: re = .false.
-        logical :: dt = .false.
-        logical :: nsteps = .false.
-        logical :: t_final = .false.
-        logical :: cflmax = .false.
-        logical :: pecletmax = .false.
-        logical :: dtmax = .false.
-        logical :: pressure_niter = .false.
-        logical :: pressure_sor = .false.
-    end type config_seen_type
 
     logical, save :: terminal_output = .true.
 
@@ -103,7 +88,7 @@ subroutine apply_config_value(section, key, value, dns, g, les, ps, bc, c, seen,
     integer, intent(in) :: line_no
 
     character(len=:), allocatable :: section_l, key_l
-    integer :: niter_value
+    integer(C_INT) :: niter_value
 
     section_l = lower(trim(section))
     key_l = lower(trim(key))
@@ -112,13 +97,13 @@ subroutine apply_config_value(section, key, value, dns, g, les, ps, bc, c, seen,
     case ("grid")
         select case (key_l)
         case ("nx")
-            call read_c_int(value, dns%globalSize(1), line_no)
+            call read_int(value, dns%globalSize(1), line_no)
             seen%size(1) = .true.
         case ("ny")
-            call read_c_int(value, dns%globalSize(2), line_no)
+            call read_int(value, dns%globalSize(2), line_no)
             seen%size(2) = .true.
         case ("nz")
-            call read_c_int(value, dns%globalSize(3), line_no)
+            call read_int(value, dns%globalSize(3), line_no)
             seen%size(3) = .true.
         case ("lx")
             call read_real(value, dns%leng(1), line_no)
@@ -163,7 +148,7 @@ subroutine apply_config_value(section, key, value, dns, g, les, ps, bc, c, seen,
             call read_real(value, dns%dt, line_no)
             seen%dt = .true.
         case ("nsteps")
-            call read_c_int(value, dns%nsteps, line_no)
+            call read_int(value, dns%nsteps, line_no)
             seen%nsteps = .true.
         case ("t_final")
             call read_real(value, dns%t_final, line_no)
@@ -181,7 +166,7 @@ subroutine apply_config_value(section, key, value, dns, g, les, ps, bc, c, seen,
     case ("output")
         select case (key_l)
         case ("field_interval")
-            call read_integer(value, dns%field_interval, line_no)
+            call read_int(value, dns%field_interval, line_no)
         case ("field_prefix")
             dns%field_prefix = clean_string(value)
         end select
@@ -193,16 +178,16 @@ subroutine apply_config_value(section, key, value, dns, g, les, ps, bc, c, seen,
     case ("pressure")
         select case (key_l)
         case ("niter")
-            niter_value = int(ps%nIter)
-            call read_integer(value, niter_value, line_no)
-            if (niter_value >= 0) then
-                ps%nIter = int(niter_value, C_INT)
+            niter_value = ps%nIter
+            call read_int(value, niter_value, line_no)
+            if (niter_value >= 0_C_INT) then
+                ps%nIter = niter_value
                 seen%pressure_niter = .true.
             else
                 if (terminal_output) print *, "warning: pressure nIter must be non-negative on input line", line_no
             end if
         case ("sor")
-            call read_real(value, ps%sor, line_no)
+            call read_real(value, ps%omega, line_no)
             seen%pressure_sor = .true.
         case ("accel")
             ! none | jacobi (default) or chebyshev (Chebyshev-Jacobi).
@@ -230,7 +215,7 @@ subroutine apply_config_value(section, key, value, dns, g, les, ps, bc, c, seen,
     case ("blocks")
         select case (key_l)
         case ("nb")
-            call read_c_int(value, dns%block_nb, line_no)
+            call read_int(value, dns%block_nb, line_no)
         case ("remove_solid")
             call read_bool(value, dns%block_remove_solid, line_no)
         case ("refine")
@@ -242,7 +227,7 @@ subroutine apply_config_value(section, key, value, dns, g, les, ps, bc, c, seen,
             dns%block_refine_nboxes = dns%block_refine_nboxes + 1_C_INT
             call read_real6(value, dns%block_refine_box(:, dns%block_refine_nboxes), line_no)
         case ("refine_levels")
-            call read_c_int(value, dns%block_refine_levels, line_no)
+            call read_int(value, dns%block_refine_levels, line_no)
         case ("refine_body")
             call read_bool(value, dns%block_refine_body, line_no)
         end select
@@ -267,7 +252,7 @@ subroutine apply_config_value(section, key, value, dns, g, les, ps, bc, c, seen,
         case ("wavenumber_z", "k_z")
             call read_real(value, dns%force_wavenumber(3), line_no)
         case ("dir")
-            call read_c_int(value, dns%force_dir, line_no)
+            call read_int(value, dns%force_dir, line_no)
         case ("file")
             dns%force_file = clean_string(value)
         end select
@@ -396,7 +381,7 @@ subroutine apply_grid_axis_value(section, key, value, dns, g, seen, line_no)
     case ("subdivided")
         call read_bool(value, g%subdivided(dir), line_no)
     case ("n")
-        call read_c_int(value, dns%globalSize(dir), line_no)
+        call read_int(value, dns%globalSize(dir), line_no)
         seen%size(dir) = .true.
     case ("length")
         call read_real(value, dns%leng(dir), line_no)
@@ -418,16 +403,6 @@ integer function grid_axis_index(section) result(dir)
         dir = 0
     end select
 end function grid_axis_index
-
-subroutine require_config_value(seen, name)
-    logical, intent(in) :: seen
-    character(len=*), intent(in) :: name
-
-    if (.not. seen) then
-        if (terminal_output) print *, "error: missing required input value: ", trim(name)
-        error stop "invalid input file"
-    end if
-end subroutine require_config_value
 
 subroutine apply_boundary_value(key, value, bc, line_no)
     character(len=*), intent(in) :: key, value
@@ -679,11 +654,13 @@ subroutine strip_comment(line)
     if (cut > 0) line(cut:) = ""
 end subroutine strip_comment
 
-subroutine read_integer(value, target, line_no)
+! Parse a single integer config value. The C_INT target also accepts default
+! integer actuals (same kind on this platform), so one routine serves both.
+subroutine read_int(value, target, line_no)
     character(len=*), intent(in) :: value
-    integer, intent(inout) :: target
+    integer(C_INT), intent(inout) :: target
     integer, intent(in) :: line_no
-    integer :: stat, parsed
+    integer(C_INT) :: stat, parsed
 
     read(value, *, iostat=stat) parsed
     if (stat == 0) then
@@ -691,7 +668,7 @@ subroutine read_integer(value, target, line_no)
     else
         if (terminal_output) print *, "warning: could not parse integer on input line", line_no
     end if
-end subroutine read_integer
+end subroutine read_int
 
 subroutine read_real6(value, target, line_no)
     character(len=*), intent(in) :: value
@@ -721,34 +698,6 @@ subroutine read_integer3(value, target, line_no)
         if (terminal_output) print *, "warning: could not parse three integer values on input line", line_no
     end if
 end subroutine read_integer3
-
-subroutine read_c_int(value, target, line_no)
-    character(len=*), intent(in) :: value
-    integer(C_INT), intent(inout) :: target
-    integer, intent(in) :: line_no
-    integer :: stat, parsed
-
-    read(value, *, iostat=stat) parsed
-    if (stat == 0) then
-        target = int(parsed, C_INT)
-    else
-        if (terminal_output) print *, "warning: could not parse integer on input line", line_no
-    end if
-end subroutine read_c_int
-
-subroutine read_c_int3(value, target, line_no)
-    character(len=*), intent(in) :: value
-    integer(C_INT), intent(inout) :: target(1:3)
-    integer, intent(in) :: line_no
-    integer :: stat, parsed(3)
-
-    read(value, *, iostat=stat) parsed
-    if (stat == 0) then
-        target = int(parsed, C_INT)
-    else
-        if (terminal_output) print *, "warning: could not parse three integer values on input line", line_no
-    end if
-end subroutine read_c_int3
 
 subroutine read_real(value, target, line_no)
     character(len=*), intent(in) :: value

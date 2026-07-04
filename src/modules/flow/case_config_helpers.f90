@@ -4,9 +4,41 @@ module case_config_helpers
     private
 
     public :: strip_config_comment, parse_config_section, split_config_key_value
-    public :: to_lower, clean_config_string
+    public :: to_lower, clean_config_string, next_config_entry
 
 contains
+
+    ! Read the next `key = value` entry from an open config file, skipping blank
+    ! and comment lines and tracking the current [section]. ok is .false. at end
+    ! of file. line_no counts every physical line read (for diagnostics). This is
+    ! the shared scan skeleton for the per-case config readers.
+    subroutine next_config_entry(unit, section, key, value, line_no, ok)
+        integer, intent(in) :: unit
+        character(len=*), intent(inout) :: section
+        character(len=*), intent(out) :: key, value
+        integer, intent(inout) :: line_no
+        logical, intent(out) :: ok
+
+        integer :: stat
+        character(len=512) :: line
+
+        ok = .false.
+        do
+            read(unit, '(A)', iostat=stat) line
+            if (stat /= 0) return
+            line_no = line_no + 1
+            call strip_config_comment(line)
+            line = adjustl(line)
+            if (len_trim(line) == 0) cycle
+            if (line(1:1) == "[") then
+                call parse_config_section(line, section)
+                cycle
+            end if
+            call split_config_key_value(line, key, value)
+            ok = .true.
+            return
+        end do
+    end subroutine next_config_entry
 
     subroutine strip_config_comment(line)
         character(len=*), intent(inout) :: line
