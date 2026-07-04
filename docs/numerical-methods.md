@@ -50,15 +50,15 @@ capped by `dtmax`.
 
 ## Pressure projection
 
-Each RK stage produces an intermediate velocity $\mathbf{u}^{*}$ that is not divergence
+Each RK stage produces an intermediate velocity $\mathbf{u}^{\ast}$ that is not divergence
 free. A projection removes its divergence: solve a variable-coefficient Poisson equation for
 a pressure correction $\phi$ and subtract its gradient,
 
 $$
 \nabla\cdot\!\left(\frac{1}{\rho}\nabla\phi\right)
-= \frac{1}{\Delta t}\,\nabla\cdot\mathbf{u}^{*},
+= \frac{1}{\Delta t}\,\nabla\cdot\mathbf{u}^{\ast},
 \qquad
-\mathbf{u}^{n+1} = \mathbf{u}^{*} - \Delta t\,\nabla\phi .
+\mathbf{u}^{n+1} = \mathbf{u}^{\ast} - \Delta t\,\nabla\phi .
 $$
 
 The Poisson problem is solved **iteratively with a damped-Jacobi smoother**, optionally

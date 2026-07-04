@@ -1,4 +1,6 @@
-<img src=".mobydiff.png" width="380" align="right" alt="mobydiff logo"/>
+<p align="center">
+  <img src=".mobydiff.png" width="320" alt="mobydiff logo"/>
+</p>
 
 # mobydiff
 
@@ -16,8 +18,6 @@ stretching, block-structured **2:1 local refinement**, a volume-penalization **i
 boundary method** (IBM) for arbitrary STL geometries, and optional **large-eddy
 simulation** (LES). It runs distributed on CPUs (MPI) and offloads to NVIDIA GPUs
 (OpenMP target offload).
-
-<br clear="right"/>
 
 ---
 
@@ -40,9 +40,9 @@ spatially varying field). The incompressibility constraint is enforced at every 
 a pressure projection that solves a variable-coefficient Poisson problem
 
 $$
-\nabla^2 \phi = \frac{1}{\Delta t}\,\nabla\cdot\mathbf{u}^{*},
+\nabla^2 \phi = \frac{1}{\Delta t}\,\nabla\cdot\mathbf{u}^{\ast},
 \qquad
-\mathbf{u}^{n+1} = \mathbf{u}^{*} - \Delta t\,\nabla \phi .
+\mathbf{u}^{n+1} = \mathbf{u}^{\ast} - \Delta t\,\nabla \phi .
 $$
 
 Immersed solid bodies are imposed with volume penalization: a per-cell coefficient field
@@ -154,10 +154,9 @@ flowchart TD
     A[input.ini] --> B[config: parse sections]
     B --> C[grid: node lines per direction]
     C --> D[blocks: build leaf blocks<br/>+ 2:1 refinement]
-    D --> E[ibm: penalization coefficients]
-    D --> F[les: subgrid model]
-    E --> G{RK3 time loop}
-    F --> G
+    D --> E[ibm: penalization coefficients<br/>optional]
+    E --> F[les: subgrid model<br/>optional]
+    F --> G{RK3 time loop}
     G --> H[momentum predictor]
     H --> I[pressure projection<br/>damped / Chebyshev–Jacobi]
     I --> J[velocity correction]
