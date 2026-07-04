@@ -9,13 +9,9 @@ design records for the block-refinement machinery are in the
 `mobydiff` integrates the incompressible Navier–Stokes equations, non-dimensionalized by a
 reference length and velocity so that viscosity enters as $1/\mathrm{Re}$:
 
-$$
-\frac{\partial \mathbf{u}}{\partial t}
-+ (\mathbf{u}\cdot\nabla)\,\mathbf{u}
-= -\nabla p + \frac{1}{\mathrm{Re}}\,\nabla^2\mathbf{u} + \mathbf{f},
-\qquad
-\nabla\cdot\mathbf{u} = 0 .
-$$
+```math
+\frac{\partial \mathbf{u}}{\partial t} + (\mathbf{u}\cdot\nabla)\,\mathbf{u} = -\nabla p + \frac{1}{\mathrm{Re}}\,\nabla^2\mathbf{u} + \mathbf{f}, \qquad \nabla\cdot\mathbf{u} = 0 .
+```
 
 Here $p$ is the kinematic pressure and $\mathbf{f}$ collects the constant forcing
 `[flow] forcing_*` and the optional spatially varying `[force]` field.
@@ -54,12 +50,9 @@ Each RK stage produces an intermediate velocity $\mathbf{u}^{\ast}$ that is not 
 free. A projection removes its divergence: solve a variable-coefficient Poisson equation for
 a pressure correction $\phi$ and subtract its gradient,
 
-$$
-\nabla\cdot\!\left(\frac{1}{\rho}\nabla\phi\right)
-= \frac{1}{\Delta t}\,\nabla\cdot\mathbf{u}^{\ast},
-\qquad
-\mathbf{u}^{n+1} = \mathbf{u}^{\ast} - \Delta t\,\nabla\phi .
-$$
+```math
+\nabla\cdot\left(\frac{1}{\rho}\nabla\phi\right) = \frac{1}{\Delta t}\,\nabla\cdot\mathbf{u}^{\ast}, \qquad \mathbf{u}^{n+1} = \mathbf{u}^{\ast} - \Delta t\,\nabla\phi .
+```
 
 The Poisson problem is solved **iteratively with a damped-Jacobi smoother**, optionally
 accelerated by a **Chebyshev–Jacobi** polynomial iteration (`[pressure] accel = chebyshev`).

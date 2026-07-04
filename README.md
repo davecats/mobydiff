@@ -25,25 +25,18 @@ simulation** (LES). It runs distributed on CPUs (MPI) and offloads to NVIDIA GPU
 
 `mobydiff` solves the incompressible Navier–Stokes equations for a Newtonian fluid,
 
-$$
-\frac{\partial \mathbf{u}}{\partial t}
-+ (\mathbf{u}\cdot\nabla)\,\mathbf{u}
-= -\nabla p + \frac{1}{\mathrm{Re}}\,\nabla^2 \mathbf{u}
-+ \mathbf{f},
-\qquad
-\nabla\cdot\mathbf{u} = 0,
-$$
+```math
+\frac{\partial \mathbf{u}}{\partial t} + (\mathbf{u}\cdot\nabla)\,\mathbf{u} = -\nabla p + \frac{1}{\mathrm{Re}}\,\nabla^2 \mathbf{u} + \mathbf{f}, \qquad \nabla\cdot\mathbf{u} = 0,
+```
 
 where $\mathbf{u}$ is the velocity, $p$ the pressure (divided by density), $\mathrm{Re}$
 the Reynolds number, and $\mathbf{f}$ an optional body force (constant forcing and/or a
 spatially varying field). The incompressibility constraint is enforced at every stage by
 a pressure projection that solves a variable-coefficient Poisson problem
 
-$$
-\nabla^2 \phi = \frac{1}{\Delta t}\,\nabla\cdot\mathbf{u}^{\ast},
-\qquad
-\mathbf{u}^{n+1} = \mathbf{u}^{\ast} - \Delta t\,\nabla \phi .
-$$
+```math
+\nabla^2 \phi = \frac{1}{\Delta t}\,\nabla\cdot\mathbf{u}^{\ast}, \qquad \mathbf{u}^{n+1} = \mathbf{u}^{\ast} - \Delta t\,\nabla \phi .
+```
 
 Immersed solid bodies are imposed with volume penalization: a per-cell coefficient field
 drives the velocity to zero inside the body via an implicit source term, so no explicit
