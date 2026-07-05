@@ -225,7 +225,7 @@ contains
         type(dns_type), intent(in) :: dns
 
         integer :: off(3,26)
-        integer :: nb(3), gn(3)
+        integer :: nb(3)
         integer :: b, d, p, pass, cand, ncand
         integer :: owner(4), slot(4), opc(4), tqc(3,4)
         integer :: srcLo(3), dstLo(3), ext(3)
@@ -235,7 +235,6 @@ contains
 
         call build_direction_table(off)
         nb = int(blk%nb)
-        gn = int(dns%globalSize)
 
         call free_block_exchange(c)
         call collect_peers(c, blk, dns, off)
