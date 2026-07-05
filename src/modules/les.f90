@@ -239,6 +239,75 @@ contains
         end select
     end subroutine update_les_viscosity
 
+    ! Velocity-gradient tensor g(a,b) = du_a/dx_b at the centre of cell (i,j,k)
+    ! in block b, on the staggered mesh: the diagonal terms are the face
+    ! difference across the cell; each off-diagonal term interpolates the
+    ! neighbouring face-difference to the cell centre with the p_from_* staggered
+    ! weights and the les d1?? stencils. Shared verbatim by the Smagorinsky and
+    ! WALE kernels; declared target so both device kernels can call it.
+    subroutine velocity_gradient_tensor(blk, les, i, j, k, b, &
+            g11, g12, g13, g21, g22, g23, g31, g32, g33)
+!$omp declare target
+        type(block_set_type), intent(in) :: blk
+        type(les_type), intent(in) :: les
+        integer, intent(in) :: i, j, k, b
+        real(C_DOUBLE), intent(out) :: g11, g12, g13, g21, g22, g23, g31, g32, g33
+
+        real(C_DOUBLE) :: d0, d1
+
+        g11 = (blk%q(i+1,j,k,VAR_U,b) - blk%q(i,j,k,VAR_U,b))*blk%d1x(i,VAR_P,b)
+        g22 = (blk%q(i,j+1,k,VAR_V,b) - blk%q(i,j,k,VAR_V,b))*blk%d1y(j,VAR_P,b)
+        g33 = (blk%q(i,j,k+1,VAR_W,b) - blk%q(i,j,k,VAR_W,b))*blk%d1z(k,VAR_P,b)
+
+        d0 = les%d1ym(j,VAR_U,b)*blk%q(i,j-1,k,VAR_U,b) &
+           + les%d1y0(j,VAR_U,b)*blk%q(i,j,k,VAR_U,b) &
+           + les%d1yp(j,VAR_U,b)*blk%q(i,j+1,k,VAR_U,b)
+        d1 = les%d1ym(j,VAR_U,b)*blk%q(i+1,j-1,k,VAR_U,b) &
+           + les%d1y0(j,VAR_U,b)*blk%q(i+1,j,k,VAR_U,b) &
+           + les%d1yp(j,VAR_U,b)*blk%q(i+1,j+1,k,VAR_U,b)
+        g12 = (1.0d0 - les%p_from_u_x(i,b))*d0 + les%p_from_u_x(i,b)*d1
+
+        d0 = les%d1zm(k,VAR_U,b)*blk%q(i,j,k-1,VAR_U,b) &
+           + les%d1z0(k,VAR_U,b)*blk%q(i,j,k,VAR_U,b) &
+           + les%d1zp(k,VAR_U,b)*blk%q(i,j,k+1,VAR_U,b)
+        d1 = les%d1zm(k,VAR_U,b)*blk%q(i+1,j,k-1,VAR_U,b) &
+           + les%d1z0(k,VAR_U,b)*blk%q(i+1,j,k,VAR_U,b) &
+           + les%d1zp(k,VAR_U,b)*blk%q(i+1,j,k+1,VAR_U,b)
+        g13 = (1.0d0 - les%p_from_u_x(i,b))*d0 + les%p_from_u_x(i,b)*d1
+
+        d0 = les%d1xm(i,VAR_V,b)*blk%q(i-1,j,k,VAR_V,b) &
+           + les%d1x0(i,VAR_V,b)*blk%q(i,j,k,VAR_V,b) &
+           + les%d1xp(i,VAR_V,b)*blk%q(i+1,j,k,VAR_V,b)
+        d1 = les%d1xm(i,VAR_V,b)*blk%q(i-1,j+1,k,VAR_V,b) &
+           + les%d1x0(i,VAR_V,b)*blk%q(i,j+1,k,VAR_V,b) &
+           + les%d1xp(i,VAR_V,b)*blk%q(i+1,j+1,k,VAR_V,b)
+        g21 = (1.0d0 - les%p_from_v_y(j,b))*d0 + les%p_from_v_y(j,b)*d1
+
+        d0 = les%d1zm(k,VAR_V,b)*blk%q(i,j,k-1,VAR_V,b) &
+           + les%d1z0(k,VAR_V,b)*blk%q(i,j,k,VAR_V,b) &
+           + les%d1zp(k,VAR_V,b)*blk%q(i,j,k+1,VAR_V,b)
+        d1 = les%d1zm(k,VAR_V,b)*blk%q(i,j+1,k-1,VAR_V,b) &
+           + les%d1z0(k,VAR_V,b)*blk%q(i,j+1,k,VAR_V,b) &
+           + les%d1zp(k,VAR_V,b)*blk%q(i,j+1,k+1,VAR_V,b)
+        g23 = (1.0d0 - les%p_from_v_y(j,b))*d0 + les%p_from_v_y(j,b)*d1
+
+        d0 = les%d1xm(i,VAR_W,b)*blk%q(i-1,j,k,VAR_W,b) &
+           + les%d1x0(i,VAR_W,b)*blk%q(i,j,k,VAR_W,b) &
+           + les%d1xp(i,VAR_W,b)*blk%q(i+1,j,k,VAR_W,b)
+        d1 = les%d1xm(i,VAR_W,b)*blk%q(i-1,j,k+1,VAR_W,b) &
+           + les%d1x0(i,VAR_W,b)*blk%q(i,j,k+1,VAR_W,b) &
+           + les%d1xp(i,VAR_W,b)*blk%q(i+1,j,k+1,VAR_W,b)
+        g31 = (1.0d0 - les%p_from_w_z(k,b))*d0 + les%p_from_w_z(k,b)*d1
+
+        d0 = les%d1ym(j,VAR_W,b)*blk%q(i,j-1,k,VAR_W,b) &
+           + les%d1y0(j,VAR_W,b)*blk%q(i,j,k,VAR_W,b) &
+           + les%d1yp(j,VAR_W,b)*blk%q(i,j+1,k,VAR_W,b)
+        d1 = les%d1ym(j,VAR_W,b)*blk%q(i,j-1,k+1,VAR_W,b) &
+           + les%d1y0(j,VAR_W,b)*blk%q(i,j,k+1,VAR_W,b) &
+           + les%d1yp(j,VAR_W,b)*blk%q(i,j+1,k+1,VAR_W,b)
+        g32 = (1.0d0 - les%p_from_w_z(k,b))*d0 + les%p_from_w_z(k,b)*d1
+    end subroutine velocity_gradient_tensor
+
     subroutine update_generic_les_viscosity(les, blk, dns, ibm)
         type(les_type), intent(inout) :: les
         type(block_set_type), intent(inout) :: blk
@@ -252,7 +321,7 @@ contains
         real(C_DOUBLE) :: delta
         real(C_DOUBLE) :: g11, g12, g13, g21, g22, g23, g31, g32, g33
         real(C_DOUBLE) :: s11, s22, s33, s12, s13, s23, s2, strain_mag
-        real(C_DOUBLE) :: d0, d1, solid_threshold
+        real(C_DOUBLE) :: solid_threshold
         logical :: solid_cell
 
         if (.not. allocated(les%nut)) return
@@ -280,7 +349,7 @@ contains
         !$omp& les%p_from_u_x, les%p_from_v_y, les%p_from_w_z) &
         !$omp& map(tofrom: les%nut) &
         !$omp& private(i,j,k,b,delta,g11,g12,g13,g21,g22,g23,g31,g32,g33, &
-        !$omp& s11,s22,s33,s12,s13,s23,s2,strain_mag,d0,d1,solid_cell)
+        !$omp& s11,s22,s33,s12,s13,s23,s2,strain_mag,solid_cell)
         do b = 1, nBlocks
         do k = 1, nz
             do j = 1, ny
@@ -300,57 +369,8 @@ contains
 
                     delta = delta_scale*les%filter_x(i,b)*les%filter_y(j,b)*les%filter_z(k,b)
 
-                    g11 = (blk%q(i+1,j,k,VAR_U,b) - blk%q(i,j,k,VAR_U,b))*blk%d1x(i,VAR_P,b)
-                    g22 = (blk%q(i,j+1,k,VAR_V,b) - blk%q(i,j,k,VAR_V,b))*blk%d1y(j,VAR_P,b)
-                    g33 = (blk%q(i,j,k+1,VAR_W,b) - blk%q(i,j,k,VAR_W,b))*blk%d1z(k,VAR_P,b)
-
-                    d0 = les%d1ym(j,VAR_U,b)*blk%q(i,j-1,k,VAR_U,b) &
-                       + les%d1y0(j,VAR_U,b)*blk%q(i,j,k,VAR_U,b) &
-                       + les%d1yp(j,VAR_U,b)*blk%q(i,j+1,k,VAR_U,b)
-                    d1 = les%d1ym(j,VAR_U,b)*blk%q(i+1,j-1,k,VAR_U,b) &
-                       + les%d1y0(j,VAR_U,b)*blk%q(i+1,j,k,VAR_U,b) &
-                       + les%d1yp(j,VAR_U,b)*blk%q(i+1,j+1,k,VAR_U,b)
-                    g12 = (1.0d0 - les%p_from_u_x(i,b))*d0 + les%p_from_u_x(i,b)*d1
-
-                    d0 = les%d1zm(k,VAR_U,b)*blk%q(i,j,k-1,VAR_U,b) &
-                       + les%d1z0(k,VAR_U,b)*blk%q(i,j,k,VAR_U,b) &
-                       + les%d1zp(k,VAR_U,b)*blk%q(i,j,k+1,VAR_U,b)
-                    d1 = les%d1zm(k,VAR_U,b)*blk%q(i+1,j,k-1,VAR_U,b) &
-                       + les%d1z0(k,VAR_U,b)*blk%q(i+1,j,k,VAR_U,b) &
-                       + les%d1zp(k,VAR_U,b)*blk%q(i+1,j,k+1,VAR_U,b)
-                    g13 = (1.0d0 - les%p_from_u_x(i,b))*d0 + les%p_from_u_x(i,b)*d1
-
-                    d0 = les%d1xm(i,VAR_V,b)*blk%q(i-1,j,k,VAR_V,b) &
-                       + les%d1x0(i,VAR_V,b)*blk%q(i,j,k,VAR_V,b) &
-                       + les%d1xp(i,VAR_V,b)*blk%q(i+1,j,k,VAR_V,b)
-                    d1 = les%d1xm(i,VAR_V,b)*blk%q(i-1,j+1,k,VAR_V,b) &
-                       + les%d1x0(i,VAR_V,b)*blk%q(i,j+1,k,VAR_V,b) &
-                       + les%d1xp(i,VAR_V,b)*blk%q(i+1,j+1,k,VAR_V,b)
-                    g21 = (1.0d0 - les%p_from_v_y(j,b))*d0 + les%p_from_v_y(j,b)*d1
-
-                    d0 = les%d1zm(k,VAR_V,b)*blk%q(i,j,k-1,VAR_V,b) &
-                       + les%d1z0(k,VAR_V,b)*blk%q(i,j,k,VAR_V,b) &
-                       + les%d1zp(k,VAR_V,b)*blk%q(i,j,k+1,VAR_V,b)
-                    d1 = les%d1zm(k,VAR_V,b)*blk%q(i,j+1,k-1,VAR_V,b) &
-                       + les%d1z0(k,VAR_V,b)*blk%q(i,j+1,k,VAR_V,b) &
-                       + les%d1zp(k,VAR_V,b)*blk%q(i,j+1,k+1,VAR_V,b)
-                    g23 = (1.0d0 - les%p_from_v_y(j,b))*d0 + les%p_from_v_y(j,b)*d1
-
-                    d0 = les%d1xm(i,VAR_W,b)*blk%q(i-1,j,k,VAR_W,b) &
-                       + les%d1x0(i,VAR_W,b)*blk%q(i,j,k,VAR_W,b) &
-                       + les%d1xp(i,VAR_W,b)*blk%q(i+1,j,k,VAR_W,b)
-                    d1 = les%d1xm(i,VAR_W,b)*blk%q(i-1,j,k+1,VAR_W,b) &
-                       + les%d1x0(i,VAR_W,b)*blk%q(i,j,k+1,VAR_W,b) &
-                       + les%d1xp(i,VAR_W,b)*blk%q(i+1,j,k+1,VAR_W,b)
-                    g31 = (1.0d0 - les%p_from_w_z(k,b))*d0 + les%p_from_w_z(k,b)*d1
-
-                    d0 = les%d1ym(j,VAR_W,b)*blk%q(i,j-1,k,VAR_W,b) &
-                       + les%d1y0(j,VAR_W,b)*blk%q(i,j,k,VAR_W,b) &
-                       + les%d1yp(j,VAR_W,b)*blk%q(i,j+1,k,VAR_W,b)
-                    d1 = les%d1ym(j,VAR_W,b)*blk%q(i,j-1,k+1,VAR_W,b) &
-                       + les%d1y0(j,VAR_W,b)*blk%q(i,j,k+1,VAR_W,b) &
-                       + les%d1yp(j,VAR_W,b)*blk%q(i,j+1,k+1,VAR_W,b)
-                    g32 = (1.0d0 - les%p_from_w_z(k,b))*d0 + les%p_from_w_z(k,b)*d1
+                    call velocity_gradient_tensor(blk, les, i, j, k, b, &
+                        g11, g12, g13, g21, g22, g23, g31, g32, g33)
 
                     s11 = g11
                     s22 = g22
@@ -388,7 +408,7 @@ contains
         real(C_DOUBLE) :: s2, g2_11, g2_22, g2_33, trace_g2
         real(C_DOUBLE) :: sd11, sd22, sd33, sd12, sd13, sd23, sd2, denom
         real(C_DOUBLE) :: sqrt_s2, sqrt_sd2, s2_52, sd2_32, sd2_54
-        real(C_DOUBLE) :: d0, d1, solid_threshold
+        real(C_DOUBLE) :: solid_threshold
         logical :: solid_cell
 
         nx = int(blk%nb(1))
@@ -411,7 +431,7 @@ contains
         !$omp& map(tofrom: les%nut) &
         !$omp& private(i,j,k,b,delta,g11,g12,g13,g21,g22,g23,g31,g32,g33, &
         !$omp& s2,g2_11,g2_22,g2_33,trace_g2,sd11,sd22,sd33,sd12,sd13,sd23, &
-        !$omp& sd2,denom,sqrt_s2,sqrt_sd2,s2_52,sd2_32,sd2_54,d0,d1,solid_cell)
+        !$omp& sd2,denom,sqrt_s2,sqrt_sd2,s2_52,sd2_32,sd2_54,solid_cell)
         do b = 1, nBlocks
         do k = 1, nz
             do j = 1, ny
@@ -431,57 +451,8 @@ contains
 
                     delta = delta_scale*les%filter_x(i,b)*les%filter_y(j,b)*les%filter_z(k,b)
 
-                    g11 = (blk%q(i+1,j,k,VAR_U,b) - blk%q(i,j,k,VAR_U,b))*blk%d1x(i,VAR_P,b)
-                    g22 = (blk%q(i,j+1,k,VAR_V,b) - blk%q(i,j,k,VAR_V,b))*blk%d1y(j,VAR_P,b)
-                    g33 = (blk%q(i,j,k+1,VAR_W,b) - blk%q(i,j,k,VAR_W,b))*blk%d1z(k,VAR_P,b)
-
-                    d0 = les%d1ym(j,VAR_U,b)*blk%q(i,j-1,k,VAR_U,b) &
-                       + les%d1y0(j,VAR_U,b)*blk%q(i,j,k,VAR_U,b) &
-                       + les%d1yp(j,VAR_U,b)*blk%q(i,j+1,k,VAR_U,b)
-                    d1 = les%d1ym(j,VAR_U,b)*blk%q(i+1,j-1,k,VAR_U,b) &
-                       + les%d1y0(j,VAR_U,b)*blk%q(i+1,j,k,VAR_U,b) &
-                       + les%d1yp(j,VAR_U,b)*blk%q(i+1,j+1,k,VAR_U,b)
-                    g12 = (1.0d0 - les%p_from_u_x(i,b))*d0 + les%p_from_u_x(i,b)*d1
-
-                    d0 = les%d1zm(k,VAR_U,b)*blk%q(i,j,k-1,VAR_U,b) &
-                       + les%d1z0(k,VAR_U,b)*blk%q(i,j,k,VAR_U,b) &
-                       + les%d1zp(k,VAR_U,b)*blk%q(i,j,k+1,VAR_U,b)
-                    d1 = les%d1zm(k,VAR_U,b)*blk%q(i+1,j,k-1,VAR_U,b) &
-                       + les%d1z0(k,VAR_U,b)*blk%q(i+1,j,k,VAR_U,b) &
-                       + les%d1zp(k,VAR_U,b)*blk%q(i+1,j,k+1,VAR_U,b)
-                    g13 = (1.0d0 - les%p_from_u_x(i,b))*d0 + les%p_from_u_x(i,b)*d1
-
-                    d0 = les%d1xm(i,VAR_V,b)*blk%q(i-1,j,k,VAR_V,b) &
-                       + les%d1x0(i,VAR_V,b)*blk%q(i,j,k,VAR_V,b) &
-                       + les%d1xp(i,VAR_V,b)*blk%q(i+1,j,k,VAR_V,b)
-                    d1 = les%d1xm(i,VAR_V,b)*blk%q(i-1,j+1,k,VAR_V,b) &
-                       + les%d1x0(i,VAR_V,b)*blk%q(i,j+1,k,VAR_V,b) &
-                       + les%d1xp(i,VAR_V,b)*blk%q(i+1,j+1,k,VAR_V,b)
-                    g21 = (1.0d0 - les%p_from_v_y(j,b))*d0 + les%p_from_v_y(j,b)*d1
-
-                    d0 = les%d1zm(k,VAR_V,b)*blk%q(i,j,k-1,VAR_V,b) &
-                       + les%d1z0(k,VAR_V,b)*blk%q(i,j,k,VAR_V,b) &
-                       + les%d1zp(k,VAR_V,b)*blk%q(i,j,k+1,VAR_V,b)
-                    d1 = les%d1zm(k,VAR_V,b)*blk%q(i,j+1,k-1,VAR_V,b) &
-                       + les%d1z0(k,VAR_V,b)*blk%q(i,j+1,k,VAR_V,b) &
-                       + les%d1zp(k,VAR_V,b)*blk%q(i,j+1,k+1,VAR_V,b)
-                    g23 = (1.0d0 - les%p_from_v_y(j,b))*d0 + les%p_from_v_y(j,b)*d1
-
-                    d0 = les%d1xm(i,VAR_W,b)*blk%q(i-1,j,k,VAR_W,b) &
-                       + les%d1x0(i,VAR_W,b)*blk%q(i,j,k,VAR_W,b) &
-                       + les%d1xp(i,VAR_W,b)*blk%q(i+1,j,k,VAR_W,b)
-                    d1 = les%d1xm(i,VAR_W,b)*blk%q(i-1,j,k+1,VAR_W,b) &
-                       + les%d1x0(i,VAR_W,b)*blk%q(i,j,k+1,VAR_W,b) &
-                       + les%d1xp(i,VAR_W,b)*blk%q(i+1,j,k+1,VAR_W,b)
-                    g31 = (1.0d0 - les%p_from_w_z(k,b))*d0 + les%p_from_w_z(k,b)*d1
-
-                    d0 = les%d1ym(j,VAR_W,b)*blk%q(i,j-1,k,VAR_W,b) &
-                       + les%d1y0(j,VAR_W,b)*blk%q(i,j,k,VAR_W,b) &
-                       + les%d1yp(j,VAR_W,b)*blk%q(i,j+1,k,VAR_W,b)
-                    d1 = les%d1ym(j,VAR_W,b)*blk%q(i,j-1,k+1,VAR_W,b) &
-                       + les%d1y0(j,VAR_W,b)*blk%q(i,j,k+1,VAR_W,b) &
-                       + les%d1yp(j,VAR_W,b)*blk%q(i,j+1,k+1,VAR_W,b)
-                    g32 = (1.0d0 - les%p_from_w_z(k,b))*d0 + les%p_from_w_z(k,b)*d1
+                    call velocity_gradient_tensor(blk, les, i, j, k, b, &
+                        g11, g12, g13, g21, g22, g23, g31, g32, g33)
 
                     s2 = g11*g11 + g22*g22 + g33*g33 &
                        + 0.5d0*((g12 + g21)*(g12 + g21) &
