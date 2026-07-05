@@ -18,7 +18,7 @@ module step
     use :: blocks, only: block_set_type, FACE_PHYS, FACE_CLOSED, FACE_COARSE, FACE_FINE
     use :: ibmm, only: ibm_type
     use :: comm, only: comm_type, comm_allreduce_max
-    use :: les_model, only: les_type, les_is_enabled, LES_PROF_SGS
+    use :: turbulence, only: turb_type, turbulence_is_enabled, TURB_PROF_SGS
     use :: chron, only: profiler_type, wall_seconds, profiler_add
     use :: bodyforce, only: bodyforce_type, bodyforce_is_enabled
     implicit none
@@ -69,13 +69,13 @@ contains
         dns%peclet_rate = local_rate(1)
     end subroutine precompute_peclet_rate
 
-    subroutine momentum(blk, dns, dt_alpha, dt_beta, dt_gamma, ibm, les, les_prof, bf)
+    subroutine momentum(blk, dns, dt_alpha, dt_beta, dt_gamma, ibm, turb, turb_prof, bf)
         type(block_set_type), intent(inout) :: blk
         type(dns_type),   intent(in)    :: dns
         real(C_DOUBLE),   intent(in)    :: dt_alpha, dt_beta, dt_gamma
         type(ibm_type),   intent(in)    :: ibm
-        type(les_type),   intent(in), optional :: les
-        type(profiler_type), intent(inout), optional :: les_prof
+        type(turb_type),  intent(in), optional :: turb
+        type(profiler_type), intent(inout), optional :: turb_prof
         ! Optional volumetric body force. When absent (or disabled) the
         ! predictor kernel below is byte-identical to a no-force build: the
         ! correction is a separate pass, called only when the force is on.
@@ -96,7 +96,7 @@ contains
         real(C_DOUBLE) :: mu_u, mu_v, mu_w
         real(C_DOUBLE) :: ire
         real(C_DOUBLE) :: forcing(1:3)
-        logical :: use_les
+        logical :: use_eddy_viscosity
 
         nx = int(blk%nb(1))
         ny = int(blk%nb(2))
@@ -104,8 +104,8 @@ contains
         nBlocks = int(blk%nBlocks)
         ire = 1.0d0/dns%re
         forcing = dns%forcing
-        use_les = .false.
-        if (present(les)) use_les = les_is_enabled(les) .and. allocated(les%nut)
+        use_eddy_viscosity = .false.
+        if (present(turb)) use_eddy_viscosity = turbulence_is_enabled(turb) .and. allocated(turb%nut)
 
         ! Predictor for all staggered velocity components. The face on a
         ! physical lower boundary is held by apply_bc: each block skips it via
@@ -270,9 +270,10 @@ contains
         end do
         !$omp end target teams distribute parallel do
 
-        ! use_les is .true. only when les is present; les_prof is optional in
-        ! add_les_momentum_correction and passes through absent when unset.
-        if (use_les) call add_les_momentum_correction(blk, dns, dt_alpha, ibm, les, les_prof)
+        ! use_eddy_viscosity is .true. only when turb is present; turb_prof is
+        ! optional in add_eddy_viscosity_correction and passes through absent
+        ! when unset.
+        if (use_eddy_viscosity) call add_eddy_viscosity_correction(blk, dns, dt_alpha, ibm, turb, turb_prof)
 
         ! Optional volumetric body force, added like the LES SGS correction
         ! (into qs, masked by the IBM; into oldrhs, unmasked) so the fused
@@ -355,13 +356,16 @@ contains
     end subroutine add_bodyforce_correction
 
 
-    subroutine add_les_momentum_correction(blk, dns, dt_alpha, ibm, les, les_prof)
+    ! Divergence of the deviatoric eddy-viscosity (Boussinesq) stress, added to
+    ! the tentative velocity. Model-agnostic: reads only turb%nut, whatever
+    ! producer filled it (LES today; RANS/IDDES later).
+    subroutine add_eddy_viscosity_correction(blk, dns, dt_alpha, ibm, turb, turb_prof)
         type(block_set_type), intent(inout) :: blk
         type(dns_type), intent(in) :: dns
         real(C_DOUBLE), intent(in) :: dt_alpha
         type(ibm_type), intent(in) :: ibm
-        type(les_type), intent(in) :: les
-        type(profiler_type), intent(inout), optional :: les_prof
+        type(turb_type), intent(in) :: turb
+        type(profiler_type), intent(inout), optional :: turb_prof
 
         integer :: i, j, k, b, ip, im, jp, jm, kp, km
         integer :: nx, ny, nz, nBlocks, uStartX, vStartY, wStartZ
@@ -375,13 +379,13 @@ contains
         nz = int(blk%nb(3))
         nBlocks = int(blk%nBlocks)
 
-        if (present(les_prof)) profile_start = wall_seconds()
+        if (present(turb_prof)) profile_start = wall_seconds()
 
         !$omp target teams distribute parallel do collapse(4) &
         !$omp& map(to: dt_alpha, &
-        !$omp& blk%physLow, blk%d1x, blk%d1y, blk%d1z, blk%q, ibm%mu, les%nut, &
-        !$omp& les%u_from_p_x, les%v_from_p_y, les%w_from_p_z, &
-        !$omp& les%inv_dx, les%inv_dy, les%inv_dz) &
+        !$omp& blk%physLow, blk%d1x, blk%d1y, blk%d1z, blk%q, ibm%mu, turb%nut, &
+        !$omp& turb%u_from_p_x, turb%v_from_p_y, turb%w_from_p_z, &
+        !$omp& turb%inv_dx, turb%inv_dy, turb%inv_dz) &
         !$omp& map(tofrom: blk%qs, blk%oldrhs) &
         !$omp& private(i,j,k,b,ip,im,jp,jm,kp,km,uStartX,vStartY,wStartZ, &
         !$omp& sgs_u,sgs_v,sgs_w,tau_xp,tau_xm, &
@@ -404,46 +408,46 @@ contains
                     wStartZ = momentum_face_start(blk%physLow(3,b))
 
                     if (i >= uStartX) then
-                        tau_xp = 2.0d0*les%nut(i,j,k,b) &
+                        tau_xp = 2.0d0*turb%nut(i,j,k,b) &
                                * (blk%q(ip,j,k,VAR_U,b) - blk%q(i,j,k,VAR_U,b))*blk%d1x(i,VAR_P,b)
-                        tau_xm = 2.0d0*les%nut(im,j,k,b) &
+                        tau_xm = 2.0d0*turb%nut(im,j,k,b) &
                                * (blk%q(i,j,k,VAR_U,b) - blk%q(im,j,k,VAR_U,b))*blk%d1x(im,VAR_P,b)
 
-                        wx = les%u_from_p_x(i,b)
-                        wy = les%v_from_p_y(jp,b)
-                        nut0 = (1.0d0 - wx)*les%nut(im,j,k,b) + wx*les%nut(i,j,k,b)
-                        nut1 = (1.0d0 - wx)*les%nut(im,jp,k,b) + wx*les%nut(i,jp,k,b)
+                        wx = turb%u_from_p_x(i,b)
+                        wy = turb%v_from_p_y(jp,b)
+                        nut0 = (1.0d0 - wx)*turb%nut(im,j,k,b) + wx*turb%nut(i,j,k,b)
+                        nut1 = (1.0d0 - wx)*turb%nut(im,jp,k,b) + wx*turb%nut(i,jp,k,b)
                         nut_edge = (1.0d0 - wy)*nut0 + wy*nut1
                         tau_yp = nut_edge*( &
-                            (blk%q(i,jp,k,VAR_U,b) - blk%q(i,j,k,VAR_U,b))*les%inv_dy(jp,VAR_U,b) &
-                          + (blk%q(i,jp,k,VAR_V,b) - blk%q(im,jp,k,VAR_V,b))*les%inv_dx(i,VAR_V,b) )
+                            (blk%q(i,jp,k,VAR_U,b) - blk%q(i,j,k,VAR_U,b))*turb%inv_dy(jp,VAR_U,b) &
+                          + (blk%q(i,jp,k,VAR_V,b) - blk%q(im,jp,k,VAR_V,b))*turb%inv_dx(i,VAR_V,b) )
 
-                        wx = les%u_from_p_x(i,b)
-                        wy = les%v_from_p_y(j,b)
-                        nut0 = (1.0d0 - wx)*les%nut(im,jm,k,b) + wx*les%nut(i,jm,k,b)
-                        nut1 = (1.0d0 - wx)*les%nut(im,j,k,b) + wx*les%nut(i,j,k,b)
+                        wx = turb%u_from_p_x(i,b)
+                        wy = turb%v_from_p_y(j,b)
+                        nut0 = (1.0d0 - wx)*turb%nut(im,jm,k,b) + wx*turb%nut(i,jm,k,b)
+                        nut1 = (1.0d0 - wx)*turb%nut(im,j,k,b) + wx*turb%nut(i,j,k,b)
                         nut_edge = (1.0d0 - wy)*nut0 + wy*nut1
                         tau_ym = nut_edge*( &
-                            (blk%q(i,j,k,VAR_U,b) - blk%q(i,jm,k,VAR_U,b))*les%inv_dy(j,VAR_U,b) &
-                          + (blk%q(i,j,k,VAR_V,b) - blk%q(im,j,k,VAR_V,b))*les%inv_dx(i,VAR_V,b) )
+                            (blk%q(i,j,k,VAR_U,b) - blk%q(i,jm,k,VAR_U,b))*turb%inv_dy(j,VAR_U,b) &
+                          + (blk%q(i,j,k,VAR_V,b) - blk%q(im,j,k,VAR_V,b))*turb%inv_dx(i,VAR_V,b) )
 
-                        wx = les%u_from_p_x(i,b)
-                        wy = les%w_from_p_z(kp,b)
-                        nut0 = (1.0d0 - wx)*les%nut(im,j,k,b) + wx*les%nut(i,j,k,b)
-                        nut1 = (1.0d0 - wx)*les%nut(im,j,kp,b) + wx*les%nut(i,j,kp,b)
+                        wx = turb%u_from_p_x(i,b)
+                        wy = turb%w_from_p_z(kp,b)
+                        nut0 = (1.0d0 - wx)*turb%nut(im,j,k,b) + wx*turb%nut(i,j,k,b)
+                        nut1 = (1.0d0 - wx)*turb%nut(im,j,kp,b) + wx*turb%nut(i,j,kp,b)
                         nut_edge = (1.0d0 - wy)*nut0 + wy*nut1
                         tau_zp = nut_edge*( &
-                            (blk%q(i,j,kp,VAR_U,b) - blk%q(i,j,k,VAR_U,b))*les%inv_dz(kp,VAR_U,b) &
-                          + (blk%q(i,j,kp,VAR_W,b) - blk%q(im,j,kp,VAR_W,b))*les%inv_dx(i,VAR_W,b) )
+                            (blk%q(i,j,kp,VAR_U,b) - blk%q(i,j,k,VAR_U,b))*turb%inv_dz(kp,VAR_U,b) &
+                          + (blk%q(i,j,kp,VAR_W,b) - blk%q(im,j,kp,VAR_W,b))*turb%inv_dx(i,VAR_W,b) )
 
-                        wx = les%u_from_p_x(i,b)
-                        wy = les%w_from_p_z(k,b)
-                        nut0 = (1.0d0 - wx)*les%nut(im,j,km,b) + wx*les%nut(i,j,km,b)
-                        nut1 = (1.0d0 - wx)*les%nut(im,j,k,b) + wx*les%nut(i,j,k,b)
+                        wx = turb%u_from_p_x(i,b)
+                        wy = turb%w_from_p_z(k,b)
+                        nut0 = (1.0d0 - wx)*turb%nut(im,j,km,b) + wx*turb%nut(i,j,km,b)
+                        nut1 = (1.0d0 - wx)*turb%nut(im,j,k,b) + wx*turb%nut(i,j,k,b)
                         nut_edge = (1.0d0 - wy)*nut0 + wy*nut1
                         tau_zm = nut_edge*( &
-                            (blk%q(i,j,k,VAR_U,b) - blk%q(i,j,km,VAR_U,b))*les%inv_dz(k,VAR_U,b) &
-                          + (blk%q(i,j,k,VAR_W,b) - blk%q(im,j,k,VAR_W,b))*les%inv_dx(i,VAR_W,b) )
+                            (blk%q(i,j,k,VAR_U,b) - blk%q(i,j,km,VAR_U,b))*turb%inv_dz(k,VAR_U,b) &
+                          + (blk%q(i,j,k,VAR_W,b) - blk%q(im,j,k,VAR_W,b))*turb%inv_dx(i,VAR_W,b) )
 
                         sgs_u = (tau_xp - tau_xm)*blk%d1x(i,VAR_U,b) &
                               + (tau_yp - tau_ym)*blk%d1y(j,VAR_U,b) &
@@ -455,46 +459,46 @@ contains
                     end if
 
                     if (j >= vStartY) then
-                        wx = les%u_from_p_x(ip,b)
-                        wy = les%v_from_p_y(j,b)
-                        nut0 = (1.0d0 - wx)*les%nut(i,jm,k,b) + wx*les%nut(ip,jm,k,b)
-                        nut1 = (1.0d0 - wx)*les%nut(i,j,k,b) + wx*les%nut(ip,j,k,b)
+                        wx = turb%u_from_p_x(ip,b)
+                        wy = turb%v_from_p_y(j,b)
+                        nut0 = (1.0d0 - wx)*turb%nut(i,jm,k,b) + wx*turb%nut(ip,jm,k,b)
+                        nut1 = (1.0d0 - wx)*turb%nut(i,j,k,b) + wx*turb%nut(ip,j,k,b)
                         nut_edge = (1.0d0 - wy)*nut0 + wy*nut1
                         tau_xp = nut_edge*( &
-                            (blk%q(ip,j,k,VAR_U,b) - blk%q(ip,jm,k,VAR_U,b))*les%inv_dy(j,VAR_U,b) &
-                          + (blk%q(ip,j,k,VAR_V,b) - blk%q(i,j,k,VAR_V,b))*les%inv_dx(ip,VAR_V,b) )
+                            (blk%q(ip,j,k,VAR_U,b) - blk%q(ip,jm,k,VAR_U,b))*turb%inv_dy(j,VAR_U,b) &
+                          + (blk%q(ip,j,k,VAR_V,b) - blk%q(i,j,k,VAR_V,b))*turb%inv_dx(ip,VAR_V,b) )
 
-                        wx = les%u_from_p_x(i,b)
-                        wy = les%v_from_p_y(j,b)
-                        nut0 = (1.0d0 - wx)*les%nut(im,jm,k,b) + wx*les%nut(i,jm,k,b)
-                        nut1 = (1.0d0 - wx)*les%nut(im,j,k,b) + wx*les%nut(i,j,k,b)
+                        wx = turb%u_from_p_x(i,b)
+                        wy = turb%v_from_p_y(j,b)
+                        nut0 = (1.0d0 - wx)*turb%nut(im,jm,k,b) + wx*turb%nut(i,jm,k,b)
+                        nut1 = (1.0d0 - wx)*turb%nut(im,j,k,b) + wx*turb%nut(i,j,k,b)
                         nut_edge = (1.0d0 - wy)*nut0 + wy*nut1
                         tau_xm = nut_edge*( &
-                            (blk%q(i,j,k,VAR_U,b) - blk%q(i,jm,k,VAR_U,b))*les%inv_dy(j,VAR_U,b) &
-                          + (blk%q(i,j,k,VAR_V,b) - blk%q(im,j,k,VAR_V,b))*les%inv_dx(i,VAR_V,b) )
+                            (blk%q(i,j,k,VAR_U,b) - blk%q(i,jm,k,VAR_U,b))*turb%inv_dy(j,VAR_U,b) &
+                          + (blk%q(i,j,k,VAR_V,b) - blk%q(im,j,k,VAR_V,b))*turb%inv_dx(i,VAR_V,b) )
 
-                        tau_yp = 2.0d0*les%nut(i,j,k,b) &
+                        tau_yp = 2.0d0*turb%nut(i,j,k,b) &
                                * (blk%q(i,jp,k,VAR_V,b) - blk%q(i,j,k,VAR_V,b))*blk%d1y(j,VAR_P,b)
-                        tau_ym = 2.0d0*les%nut(i,jm,k,b) &
+                        tau_ym = 2.0d0*turb%nut(i,jm,k,b) &
                                * (blk%q(i,j,k,VAR_V,b) - blk%q(i,jm,k,VAR_V,b))*blk%d1y(jm,VAR_P,b)
 
-                        wx = les%v_from_p_y(j,b)
-                        wy = les%w_from_p_z(kp,b)
-                        nut0 = (1.0d0 - wx)*les%nut(i,jm,k,b) + wx*les%nut(i,j,k,b)
-                        nut1 = (1.0d0 - wx)*les%nut(i,jm,kp,b) + wx*les%nut(i,j,kp,b)
+                        wx = turb%v_from_p_y(j,b)
+                        wy = turb%w_from_p_z(kp,b)
+                        nut0 = (1.0d0 - wx)*turb%nut(i,jm,k,b) + wx*turb%nut(i,j,k,b)
+                        nut1 = (1.0d0 - wx)*turb%nut(i,jm,kp,b) + wx*turb%nut(i,j,kp,b)
                         nut_edge = (1.0d0 - wy)*nut0 + wy*nut1
                         tau_zp = nut_edge*( &
-                            (blk%q(i,j,kp,VAR_V,b) - blk%q(i,j,k,VAR_V,b))*les%inv_dz(kp,VAR_V,b) &
-                          + (blk%q(i,j,kp,VAR_W,b) - blk%q(i,jm,kp,VAR_W,b))*les%inv_dy(j,VAR_W,b) )
+                            (blk%q(i,j,kp,VAR_V,b) - blk%q(i,j,k,VAR_V,b))*turb%inv_dz(kp,VAR_V,b) &
+                          + (blk%q(i,j,kp,VAR_W,b) - blk%q(i,jm,kp,VAR_W,b))*turb%inv_dy(j,VAR_W,b) )
 
-                        wx = les%v_from_p_y(j,b)
-                        wy = les%w_from_p_z(k,b)
-                        nut0 = (1.0d0 - wx)*les%nut(i,jm,km,b) + wx*les%nut(i,j,km,b)
-                        nut1 = (1.0d0 - wx)*les%nut(i,jm,k,b) + wx*les%nut(i,j,k,b)
+                        wx = turb%v_from_p_y(j,b)
+                        wy = turb%w_from_p_z(k,b)
+                        nut0 = (1.0d0 - wx)*turb%nut(i,jm,km,b) + wx*turb%nut(i,j,km,b)
+                        nut1 = (1.0d0 - wx)*turb%nut(i,jm,k,b) + wx*turb%nut(i,j,k,b)
                         nut_edge = (1.0d0 - wy)*nut0 + wy*nut1
                         tau_zm = nut_edge*( &
-                            (blk%q(i,j,k,VAR_V,b) - blk%q(i,j,km,VAR_V,b))*les%inv_dz(k,VAR_V,b) &
-                          + (blk%q(i,j,k,VAR_W,b) - blk%q(i,jm,k,VAR_W,b))*les%inv_dy(j,VAR_W,b) )
+                            (blk%q(i,j,k,VAR_V,b) - blk%q(i,j,km,VAR_V,b))*turb%inv_dz(k,VAR_V,b) &
+                          + (blk%q(i,j,k,VAR_W,b) - blk%q(i,jm,k,VAR_W,b))*turb%inv_dy(j,VAR_W,b) )
 
                         sgs_v = (tau_xp - tau_xm)*blk%d1x(i,VAR_V,b) &
                               + (tau_yp - tau_ym)*blk%d1y(j,VAR_V,b) &
@@ -506,45 +510,45 @@ contains
                     end if
 
                     if (k >= wStartZ) then
-                        wx = les%u_from_p_x(ip,b)
-                        wy = les%w_from_p_z(k,b)
-                        nut0 = (1.0d0 - wx)*les%nut(i,j,km,b) + wx*les%nut(ip,j,km,b)
-                        nut1 = (1.0d0 - wx)*les%nut(i,j,k,b) + wx*les%nut(ip,j,k,b)
+                        wx = turb%u_from_p_x(ip,b)
+                        wy = turb%w_from_p_z(k,b)
+                        nut0 = (1.0d0 - wx)*turb%nut(i,j,km,b) + wx*turb%nut(ip,j,km,b)
+                        nut1 = (1.0d0 - wx)*turb%nut(i,j,k,b) + wx*turb%nut(ip,j,k,b)
                         nut_edge = (1.0d0 - wy)*nut0 + wy*nut1
                         tau_xp = nut_edge*( &
-                            (blk%q(ip,j,k,VAR_U,b) - blk%q(ip,j,km,VAR_U,b))*les%inv_dz(k,VAR_U,b) &
-                          + (blk%q(ip,j,k,VAR_W,b) - blk%q(i,j,k,VAR_W,b))*les%inv_dx(ip,VAR_W,b) )
+                            (blk%q(ip,j,k,VAR_U,b) - blk%q(ip,j,km,VAR_U,b))*turb%inv_dz(k,VAR_U,b) &
+                          + (blk%q(ip,j,k,VAR_W,b) - blk%q(i,j,k,VAR_W,b))*turb%inv_dx(ip,VAR_W,b) )
 
-                        wx = les%u_from_p_x(i,b)
-                        wy = les%w_from_p_z(k,b)
-                        nut0 = (1.0d0 - wx)*les%nut(im,j,km,b) + wx*les%nut(i,j,km,b)
-                        nut1 = (1.0d0 - wx)*les%nut(im,j,k,b) + wx*les%nut(i,j,k,b)
+                        wx = turb%u_from_p_x(i,b)
+                        wy = turb%w_from_p_z(k,b)
+                        nut0 = (1.0d0 - wx)*turb%nut(im,j,km,b) + wx*turb%nut(i,j,km,b)
+                        nut1 = (1.0d0 - wx)*turb%nut(im,j,k,b) + wx*turb%nut(i,j,k,b)
                         nut_edge = (1.0d0 - wy)*nut0 + wy*nut1
                         tau_xm = nut_edge*( &
-                            (blk%q(i,j,k,VAR_U,b) - blk%q(i,j,km,VAR_U,b))*les%inv_dz(k,VAR_U,b) &
-                          + (blk%q(i,j,k,VAR_W,b) - blk%q(im,j,k,VAR_W,b))*les%inv_dx(i,VAR_W,b) )
+                            (blk%q(i,j,k,VAR_U,b) - blk%q(i,j,km,VAR_U,b))*turb%inv_dz(k,VAR_U,b) &
+                          + (blk%q(i,j,k,VAR_W,b) - blk%q(im,j,k,VAR_W,b))*turb%inv_dx(i,VAR_W,b) )
 
-                        wx = les%v_from_p_y(jp,b)
-                        wy = les%w_from_p_z(k,b)
-                        nut0 = (1.0d0 - wx)*les%nut(i,j,km,b) + wx*les%nut(i,jp,km,b)
-                        nut1 = (1.0d0 - wx)*les%nut(i,j,k,b) + wx*les%nut(i,jp,k,b)
+                        wx = turb%v_from_p_y(jp,b)
+                        wy = turb%w_from_p_z(k,b)
+                        nut0 = (1.0d0 - wx)*turb%nut(i,j,km,b) + wx*turb%nut(i,jp,km,b)
+                        nut1 = (1.0d0 - wx)*turb%nut(i,j,k,b) + wx*turb%nut(i,jp,k,b)
                         nut_edge = (1.0d0 - wy)*nut0 + wy*nut1
                         tau_yp = nut_edge*( &
-                            (blk%q(i,jp,k,VAR_V,b) - blk%q(i,jp,km,VAR_V,b))*les%inv_dz(k,VAR_V,b) &
-                          + (blk%q(i,jp,k,VAR_W,b) - blk%q(i,j,k,VAR_W,b))*les%inv_dy(jp,VAR_W,b) )
+                            (blk%q(i,jp,k,VAR_V,b) - blk%q(i,jp,km,VAR_V,b))*turb%inv_dz(k,VAR_V,b) &
+                          + (blk%q(i,jp,k,VAR_W,b) - blk%q(i,j,k,VAR_W,b))*turb%inv_dy(jp,VAR_W,b) )
 
-                        wx = les%v_from_p_y(j,b)
-                        wy = les%w_from_p_z(k,b)
-                        nut0 = (1.0d0 - wx)*les%nut(i,jm,km,b) + wx*les%nut(i,j,km,b)
-                        nut1 = (1.0d0 - wx)*les%nut(i,jm,k,b) + wx*les%nut(i,j,k,b)
+                        wx = turb%v_from_p_y(j,b)
+                        wy = turb%w_from_p_z(k,b)
+                        nut0 = (1.0d0 - wx)*turb%nut(i,jm,km,b) + wx*turb%nut(i,j,km,b)
+                        nut1 = (1.0d0 - wx)*turb%nut(i,jm,k,b) + wx*turb%nut(i,j,k,b)
                         nut_edge = (1.0d0 - wy)*nut0 + wy*nut1
                         tau_ym = nut_edge*( &
-                            (blk%q(i,j,k,VAR_V,b) - blk%q(i,j,km,VAR_V,b))*les%inv_dz(k,VAR_V,b) &
-                          + (blk%q(i,j,k,VAR_W,b) - blk%q(i,jm,k,VAR_W,b))*les%inv_dy(j,VAR_W,b) )
+                            (blk%q(i,j,k,VAR_V,b) - blk%q(i,j,km,VAR_V,b))*turb%inv_dz(k,VAR_V,b) &
+                          + (blk%q(i,j,k,VAR_W,b) - blk%q(i,jm,k,VAR_W,b))*turb%inv_dy(j,VAR_W,b) )
 
-                        tau_zp = 2.0d0*les%nut(i,j,k,b) &
+                        tau_zp = 2.0d0*turb%nut(i,j,k,b) &
                                * (blk%q(i,j,kp,VAR_W,b) - blk%q(i,j,k,VAR_W,b))*blk%d1z(k,VAR_P,b)
-                        tau_zm = 2.0d0*les%nut(i,j,km,b) &
+                        tau_zm = 2.0d0*turb%nut(i,j,km,b) &
                                * (blk%q(i,j,k,VAR_W,b) - blk%q(i,j,km,VAR_W,b))*blk%d1z(km,VAR_P,b)
 
                         sgs_w = (tau_xp - tau_xm)*blk%d1x(i,VAR_W,b) &
@@ -561,28 +565,28 @@ contains
         end do
         !$omp end target teams distribute parallel do
 
-        if (present(les_prof)) call profiler_add(les_prof, LES_PROF_SGS, &
+        if (present(turb_prof)) call profiler_add(turb_prof, TURB_PROF_SGS, &
             wall_seconds() - profile_start)
-    end subroutine add_les_momentum_correction
+    end subroutine add_eddy_viscosity_correction
 
-    subroutine get_timestep_rates(blk, dns, rates, les)
+    subroutine get_timestep_rates(blk, dns, rates, turb)
         type(block_set_type), intent(inout) :: blk
         type(dns_type),   intent(in)    :: dns
         real(C_DOUBLE), intent(out) :: rates(1:NCFL)
-        type(les_type), intent(in), optional :: les
+        type(turb_type), intent(in), optional :: turb
 
         integer :: i,j,k,b
         integer :: nx, ny, nz, nBlocks
         real(C_DOUBLE) :: cfl_rate, peclet_rate, ire, nu_eff
-        logical :: use_les
+        logical :: use_eddy_viscosity
 
         nx = int(blk%nb(1))
         ny = int(blk%nb(2))
         nz = int(blk%nb(3))
         nBlocks = int(blk%nBlocks)
         cfl_rate = 0.0d0
-        use_les = .false.
-        if (present(les)) use_les = les_is_enabled(les) .and. allocated(les%nut)
+        use_eddy_viscosity = .false.
+        if (present(turb)) use_eddy_viscosity = turbulence_is_enabled(turb) .and. allocated(turb%nut)
 
         !$omp target teams distribute parallel do collapse(4) reduction(max:cfl_rate) &
         !$omp& map(to: blk%d1x, blk%d1y, blk%d1z, blk%q) &
@@ -602,19 +606,19 @@ contains
 
         rates(CFL_COURANT) = cfl_rate
         rates(CFL_PECLET) = dns%peclet_rate
-        if (.not. use_les) return
+        if (.not. use_eddy_viscosity) return
 
         peclet_rate = dns%peclet_rate
         ire = 1.0d0/dns%re
 
         !$omp target teams distribute parallel do collapse(4) reduction(max:peclet_rate) &
-        !$omp& map(to: blk%d1x, blk%d1y, blk%d1z, les%nut) &
+        !$omp& map(to: blk%d1x, blk%d1y, blk%d1z, turb%nut) &
         !$omp& private(i,j,k,b,nu_eff)
         do b = 1, nBlocks
         do k = 1, nz
             do j = 1, ny
                 do i = 1, nx
-                    nu_eff = ire + max(0.0d0, les%nut(i,j,k,b))
+                    nu_eff = ire + max(0.0d0, turb%nut(i,j,k,b))
                     peclet_rate = max(peclet_rate, nu_eff*blk%d1x(i,VAR_P,b)**2)
                     peclet_rate = max(peclet_rate, nu_eff*blk%d1y(j,VAR_P,b)**2)
                     peclet_rate = max(peclet_rate, nu_eff*blk%d1z(k,VAR_P,b)**2)
@@ -652,19 +656,19 @@ contains
         dns%dt = min(dns%dt, max(0.0d0, remaining))
     end subroutine trim_dt_for_final_time
 
-    subroutine update_timestep_limits(blk, dns, c, les)
+    subroutine update_timestep_limits(blk, dns, c, turb)
         type(block_set_type), intent(inout) :: blk
         type(dns_type), intent(inout) :: dns
         type(comm_type), intent(in) :: c
-        type(les_type), intent(in), optional :: les
+        type(turb_type), intent(in), optional :: turb
 
         real(C_DOUBLE) :: rates(1:NCFL), next_dt
         logical :: have_limit
 
         if (dns%cflmax <= 0.0d0 .and. dns%pecletmax <= 0.0d0) return
 
-        if (present(les)) then
-            call get_timestep_rates(blk, dns, rates, les)
+        if (present(turb)) then
+            call get_timestep_rates(blk, dns, rates, turb)
         else
             call get_timestep_rates(blk, dns, rates)
         end if

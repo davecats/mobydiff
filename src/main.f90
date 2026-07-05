@@ -18,6 +18,7 @@ program main
     use :: pressure_solver
     use :: gpu_runtime
     use :: ibmm
+    use :: turbulence
     use :: les_model
     use :: bodyforce
     use :: comm, only: comm_type, comm_init_world, comm_init, comm_finalize, &
@@ -28,7 +29,7 @@ program main
     integer :: arg_status, rkStage
     integer(C_INT) :: loop_steps
     real(C_DOUBLE) :: dt_alpha, dt_beta, dt_gamma
-    real(C_DOUBLE) :: les_profile_start
+    real(C_DOUBLE) :: turb_profile_start
     character(len=256) :: input_file
     type(chron_type) :: loop_timer
     class(case_type), allocatable :: flow
@@ -38,8 +39,9 @@ program main
     type(boundary_type) :: bc
     type(pressure_solver_type) :: ps
     type(ibm_type) :: ibm
+    type(turb_type) :: turb
     type(les_type) :: les
-    type(profiler_type) :: les_prof
+    type(profiler_type) :: turb_prof
     type(bodyforce_type) :: bf
     type(config_seen_type) :: config_seen
     type(comm_type) :: c
@@ -56,7 +58,7 @@ program main
     if (c%has_terminal) print *, "reading input data..."
     call create_flow_case(flow, input_file, c%has_terminal)
     call flow%apply_defaults(dns, g, bc, c, ps)
-    call read_runtime_config(dns, g, les, ps, bc, c, input_file, c%has_terminal, config_seen)
+    call read_runtime_config(dns, g, turb, les, ps, bc, c, input_file, c%has_terminal, config_seen)
     if (has_restart_file(dns)) then
         if (c%has_terminal) print *, "reading restart metadata: ", trim(dns%restart_file)
         call read_restart_metadata(dns, g, bc, ps%nIter, ps%omega, dns%restart_file, c, config_seen)
@@ -123,10 +125,10 @@ program main
         call set_ibm_coeff(dns, blk, ibm, VAR_W)
     end if
 
-    if (les_is_enabled(les)) then
-        if (c%has_terminal) print *, "initialising LES model..."
-        call init_les(les, dns, blk)
-        call enter_les_data(les, dns)
+    if (turbulence_is_enabled(turb)) then
+        if (c%has_terminal) print *, "initialising turbulence model..."
+        call init_turbulence(turb, blk)
+        call enter_turbulence_data(turb)
     end if
 
     if (dns%force_enabled) then
@@ -139,17 +141,19 @@ program main
     call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W, VAR_P])
 
     call flow%setup_after_grid(blk, dns, g, bc, c)
-    if (les_is_enabled(les)) then
-        call update_les_viscosity(les, blk, dns, ibm)
-        call exchange_scalar_halos(c, les%nut, blk)
-        call update_timestep_limits(blk, dns, c, les)
+    ! Only the LES producer exists so far; the RANS/IDDES phases will turn
+    ! this into a select case on turb%model (docs/next_session_iddes.md).
+    if (turbulence_is_enabled(turb)) then
+        call update_sgs_viscosity(les, turb, blk, dns, ibm, turb%nut)
+        call exchange_scalar_halos(c, turb%nut, blk)
+        call update_timestep_limits(blk, dns, c, turb)
     else
         call update_timestep_limits(blk, dns, c)
     end if
 
     if (c%has_terminal) print *, "main loop starting..."
     loop_steps = 0_C_INT
-    call init_les_profiler(les_prof)
+    call init_turbulence_profiler(turb_prof)
     call start_chron(loop_timer)
     do while (run_should_continue(dns, loop_steps))
         call trim_dt_for_final_time(dns)
@@ -169,14 +173,14 @@ program main
             ! Body force: refresh the (custom) force for this substage; profile
             ! and file sources are filled once at init and this is a no-op.
             if (dns%force_enabled) call update_bodyforce(bf, blk, dns, g, dns%t_current)
-            if (les_is_enabled(les)) then
-                les_profile_start = wall_seconds()
-                call update_les_viscosity(les, blk, dns, ibm)
-                call profiler_add(les_prof, LES_PROF_NUT, wall_seconds() - les_profile_start)
-                les_profile_start = wall_seconds()
-                call exchange_scalar_halos(c, les%nut, blk)
-                call profiler_add(les_prof, LES_PROF_EXCHANGE, wall_seconds() - les_profile_start)
-                call momentum(blk, dns, dt_alpha, dt_beta, dt_gamma, ibm, les, les_prof, bf=bf)
+            if (turbulence_is_enabled(turb)) then
+                turb_profile_start = wall_seconds()
+                call update_sgs_viscosity(les, turb, blk, dns, ibm, turb%nut)
+                call profiler_add(turb_prof, TURB_PROF_NUT, wall_seconds() - turb_profile_start)
+                turb_profile_start = wall_seconds()
+                call exchange_scalar_halos(c, turb%nut, blk)
+                call profiler_add(turb_prof, TURB_PROF_EXCHANGE, wall_seconds() - turb_profile_start)
+                call momentum(blk, dns, dt_alpha, dt_beta, dt_gamma, ibm, turb, turb_prof, bf=bf)
             else
                 call momentum(blk, dns, dt_alpha, dt_beta, dt_gamma, ibm, bf=bf)
             end if
@@ -193,14 +197,14 @@ program main
 
         end do
 
-        if (les_is_enabled(les)) then
-            call update_timestep_limits(blk, dns, c, les)
+        if (turbulence_is_enabled(turb)) then
+            call update_timestep_limits(blk, dns, c, turb)
         else
             call update_timestep_limits(blk, dns, c)
         end if
 
         if (dns%field_interval > 0) then
-            call maybe_write_field(blk, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%omega, les%nut)
+            call maybe_write_field(blk, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%omega, turb%nut)
         end if
         call flow%after_step(blk, dns, g, c)
 
@@ -210,17 +214,17 @@ program main
     if (c%has_terminal) then
         print *, "main loop ended..."
         call write_chron(loop_timer)
-        if (les_is_enabled(les)) call write_profiler(les_prof, loop_steps)
+        if (turbulence_is_enabled(turb)) call write_profiler(turb_prof, loop_steps)
     end if
 
-    call write_field(blk, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%omega, les%nut)
+    call write_field(blk, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%omega, turb%nut)
 
     ! Release device-side data before the host allocatables go out of scope.
     call flow%finalize(dns, g, c)
     if (dns%force_enabled) call exit_bodyforce_data(bf)
     call destroy_bodyforce(bf)
-    if (les_is_enabled(les)) call exit_les_data(les, dns)
-    call destroy_les(les)
+    if (turbulence_is_enabled(turb)) call exit_turbulence_data(turb)
+    call destroy_turbulence(turb)
     call exit_ibm_data(ibm, dns)
     call exit_block_data(blk)
     call exit_boundary_data(bc)

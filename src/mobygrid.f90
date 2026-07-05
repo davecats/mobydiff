@@ -7,6 +7,7 @@ program mobygrid
     use :: boundary, only: boundary_type
     use :: io, only: write_grid_export, read_restart_metadata
     use :: pressure_solver, only: pressure_solver_type
+    use :: turbulence, only: turb_type
     use :: les_model, only: les_type
     use :: comm, only: comm_type, comm_init_world, comm_finalize
     implicit none
@@ -20,6 +21,7 @@ program mobygrid
     type(block_set_type) :: blk
     type(boundary_type) :: bc
     type(pressure_solver_type) :: ps
+    type(turb_type) :: turb
     type(les_type) :: les
     type(config_seen_type) :: config_seen
     type(comm_type) :: c
@@ -42,7 +44,7 @@ program mobygrid
     if (c%has_terminal) print *, "reading input data: ", trim(input_file)
     call create_flow_case(flow, input_file, c%has_terminal)
     call flow%apply_defaults(dns, g, bc, c, ps)
-    call read_runtime_config(dns, g, les, ps, bc, c, input_file, c%has_terminal, config_seen)
+    call read_runtime_config(dns, g, turb, les, ps, bc, c, input_file, c%has_terminal, config_seen)
     if (has_restart_file(dns)) then
         if (c%has_terminal) print *, "reading restart metadata: ", trim(dns%restart_file)
         call read_restart_metadata(dns, g, bc, ps%nIter, ps%omega, dns%restart_file, c, config_seen)

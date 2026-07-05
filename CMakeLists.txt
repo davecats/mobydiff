@@ -24,6 +24,7 @@ set(MODULE_SOURCES
     ${MODULE_DIR}/chron.f90
     ${MODULE_DIR}/boundary.f90
     ${MODULE_DIR}/ibm.f90
+    ${MODULE_DIR}/turbulence.f90
     ${MODULE_DIR}/les.f90
     ${MODULE_DIR}/config.f90
     ${MODULE_DIR}/gpu_runtime.f90

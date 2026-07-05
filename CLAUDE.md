@@ -348,7 +348,28 @@ immersed boundary. Phased, each phase verified before the next:
   reproduces the `forcing_x` trajectory to round-off (~5e-15 u), sine profile +
   file source both have the expected effect and are CPU==GPU bit-exact. Design in
   `docs/next_session_bodyforce.md`.
-- NEXT SESSION: **Profile + optimise** the GPU step for the 2:1-refined channel.
+- IDDES phase T0 — turbulence-module hoist (DONE 2026-07-05, branch
+  `claude/jacobi-interface`). Pure refactor opening the k-ω SST / IDDES plan
+  (`docs/next_session_iddes.md`): new `src/modules/turbulence.f90` with
+  `turb_type` (model enum TURB_NONE/TURB_LES live, TURB_RANS/TURB_IDDES
+  reserved; the `nut` array; the grid-metric tables hoisted from `les_type`).
+  `les.f90` keeps only the algebraic SGS kernels — `update_sgs_viscosity(les,
+  turb, blk, dns, ibm, nut)` writes a caller-supplied nut target,
+  `velocity_gradient_tensor` reads the turb metrics. step.f90/main.f90
+  rewired to `turb`; `add_les_momentum_correction` →
+  `add_eddy_viscosity_correction` (reads `turb%nut`; the nut consumer chain
+  moved verbatim — never edit it, that is the whole bit-exactness argument
+  for the later phases). New `[turbulence]` config section (model =
+  none|smagorinsky|wale + cs/cw/delta_scale/ibm_aware; sst/sst-iddes
+  rejected until implemented); `[les]` stays as a deprecated warn-once
+  alias, so every existing ini runs unchanged. The SGS timing profiler
+  moved to turbulence.f90 (`turb_timing` tag, TURB_PROF_*). Gate: bit-exact
+  (nofma, max_abs 0 incl. nut) vs pre-refactor 4cd7c97 on min_channel
+  (blocks + 2:1 + chebyshev, 4-rank CPU), les_ibm channel + refine_body
+  (file IBM + WALE ± 2:1), Beltrami y-slab — CPU AND GPU; a `[turbulence]`-
+  section run is byte-identical to the `[les]`-alias run. NEXT IDDES phase:
+  T1 (dwall + wall cells), prompt at the end of `docs/next_session_iddes.md`.
+- ALSO PENDING: **Profile + optimise** the GPU step for the 2:1-refined channel.
   The last hard profile is STALE (the reflux that was 23% is removed; the
   `MOBY_PHASETIME` timer is deleted): re-profile first with a minimal removable
   phase timer, then attack the dominant cost (likely the projection's
