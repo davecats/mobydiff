@@ -249,7 +249,7 @@ contains
         type(ibm_type), intent(inout) :: ibm
         logical(C_BOOL), intent(in) :: periodic(1:3)
 
-        integer :: nb, gnbt(3), gx, gy, gz, raster, d
+        integer :: nb, nTiles(3), gx, gy, gz, raster, d
         integer :: i, j, k, var, o(3)
         real(C_DOUBLE) :: xA(3)
         logical :: buried
@@ -261,14 +261,14 @@ contains
             if (mod(int(dns%globalSize(d)), nb) /= 0) then
                 error stop "[blocks] nb must divide the global grid in every direction"
             end if
-            gnbt(d) = int(dns%globalSize(d))/nb
+            nTiles(d) = int(dns%globalSize(d))/nb
         end do
-        if (size(active) /= product(gnbt)) error stop "block active mask size mismatch"
+        if (size(active) /= product(nTiles)) error stop "block active mask size mismatch"
 
         raster = 0
-        do gz = 0, gnbt(3) - 1
-            do gy = 0, gnbt(2) - 1
-                do gx = 0, gnbt(1) - 1
+        do gz = 0, nTiles(3) - 1
+            do gy = 0, nTiles(2) - 1
+                do gx = 0, nTiles(1) - 1
                     raster = raster + 1
                     o = [gx, gy, gz]*nb
                     buried = .true.
@@ -330,7 +330,7 @@ contains
         logical(C_BOOL), intent(in) :: periodic(1:3)
         integer, intent(in) :: nLevels
 
-        integer :: nb, l, gnbt(3), gx, gy, gz, raster, d
+        integer :: nb, l, nTiles(3), gx, gy, gz, raster, d
         integer :: i, j, k, var, o(3), nf(3), nl(3)
         real(C_DOUBLE) :: xA(3)
         real(C_DOUBLE), allocatable :: lineX(:,:), lineY(:,:), lineZ(:,:)
@@ -355,11 +355,11 @@ contains
 
         do l = 1, nLevels
             nl = int(dns%globalSize)*2**(l-1)
-            gnbt = nl/nb
+            nTiles = nl/nb
             raster = 0
-            do gz = 0, gnbt(3) - 1
-                do gy = 0, gnbt(2) - 1
-                    do gx = 0, gnbt(1) - 1
+            do gz = 0, nTiles(3) - 1
+                do gy = 0, nTiles(2) - 1
+                    do gx = 0, nTiles(1) - 1
                         raster = raster + 1
                         o = [gx, gy, gz]*nb
                         anySolid = .false.
