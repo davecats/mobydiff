@@ -401,7 +401,13 @@ immersed boundary. Phased, each phase verified before the next:
   the added dwall_blocks; T0 case list (min_channel 4-rank CPU + GPU, les_ibm
   ± refine_body, Beltrami y-slab, wavy section) bit-exact (nofma, max_abs 0)
   CPU AND GPU, and [rans]-on fields bit-exact vs [rans]-off (init-only).
-  NEXT IDDES phase: T2 (SST transport, resolved mode), prompt at the end of
+  KNOWN LIMITATION → phase T1b: the ANALYTIC dwall path is WAVY-WALL
+  SPECIFIC (`body_surface_distance` minimizes over the sine curve) while
+  `isInBody` is the one user-editable analytic-geometry hook — a new
+  analytic body would silently keep dwall measuring the old surface. dwall
+  must be computed correctly for ANY analytic geometry from the isInBody
+  indicator alone. NEXT IDDES phase: T1b (generic analytic dwall), then T2
+  (SST transport, resolved mode) — both prompts at the end of
   `docs/next_session_iddes.md`.
 - ALSO PENDING: **Profile + optimise** the GPU step for the 2:1-refined channel.
   The last hard profile is STALE (the reflux that was 23% is removed; the

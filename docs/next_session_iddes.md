@@ -331,6 +331,13 @@ dwall source → error; etc.).
   additive); full T0 case list (min_channel 4-rank, les_ibm ± refine_body,
   Beltrami y-slab, wavy section) bit-exact (nofma, max_abs 0) CPU AND GPU,
   and a [rans]-on run's fields bit-exact vs [rans]-off (init-only state).
+- **T1b — geometry-agnostic analytic dwall (KNOWN T1 LIMITATION; run
+  before or with T2).** The analytic dwall path is WAVY-WALL SPECIFIC
+  (`body_surface_distance` minimizes over the sine curve), but `isInBody`
+  is the one user-editable analytic-geometry hook — editing it for a new
+  analytic body would silently keep dwall measuring distance to the old
+  surface. dwall must be computed correctly for ANY analytic geometry,
+  from the isInBody indicator alone. Full prompt below.
 - **T2 — SST, no transition, resolved mode.** The scalar-transport
   infrastructure (fused kernel, TVD convection helper, point-implicit
   sinks, floors, scalar BCs, halos, restart/io of k, ω) + nut_rans
@@ -403,7 +410,40 @@ dwall source → error; etc.).
 - `git add` explicit paths only (see memory: git-staging-discipline);
   validation output .h5/.png are gitignored on purpose.
 
-## NEXT-SESSION PROMPT (T1 done 2026-07-06; T2 is next)
+## NEXT-SESSION PROMPT (T1 done 2026-07-06; T1b — generic analytic dwall — is next)
+
+> Read `docs/next_session_iddes.md` and CLAUDE.md. Branch
+> `claude/jacobi-interface`. Execute phase T1b ONLY: make the analytic-IBM
+> wall distance GEOMETRY-AGNOSTIC. Today `body_surface_distance` (ibm.f90)
+> is wavy-wall specific (it minimizes over the sine curve), but `isInBody`
+> is the single user-editable analytic-geometry hook — the RANS `dwall`
+> must be correct for ANY isInBody, computed from the indicator alone.
+> Suggested design (host-only init code, decide the details in-session):
+> (1) build a surface point cloud once by bisecting every finest-level
+> grid-line segment whose endpoints straddle isInBody (reuse `bisection`
+> and `location_coord`; sample at the finest refinement level so
+> refine_body leaves see the surface at their own h); (2) dwall(cell) =
+> distance to the nearest cloud point via a uniform-bin spatial hash
+> (brute force is O(cells x cloud) — too slow at 200^3), then POLISH by
+> recursively re-sampling/bisecting the surface in a shrinking
+> neighbourhood of that nearest point until the distance converges (the
+> raw cloud distance overestimates by O(s^2/d) — worst at the near-wall
+> cells that matter most); (3) domain-wall min and the y_eff floor stay
+> unchanged. Structure the machinery to take the indicator as a procedure
+> argument (isInBody in production) so a gate can drive it with a second
+> geometry. Keep the wavy-specific minimization ONLY as a gate reference
+> (or move it into the gate) — production must not dispatch on the
+> geometry. Gates: (a) the wavy.ini gate reproduces the specialized-
+> minimization reference through the generic path (tolerance ~1e-10,
+> demonstrably converging with polish depth); (b) a second indicator
+> (sphere → closed form |r - R|) through the SAME machinery, smallest
+> harness wins; (c) per-level correctness under an analytic refine_body
+> case; (d) file-IBM path (mobygeom dwall_blocks) untouched — flat gates
+> still 0.0; (e) T0/T1 case list still bit-exact (nofma, max_abs 0), and
+> [rans]-off runs untouched. Then proceed to T2 (prompt below), one phase
+> per gate.
+
+## T2 PROMPT (run after T1b)
 
 > Read `docs/next_session_iddes.md` and CLAUDE.md. Branch
 > `claude/jacobi-interface`. Execute phase T2 ONLY: k-ω SST transport, no

@@ -204,6 +204,14 @@ contains
     ! point (the curve repeats, so all distinct surface points are covered)
     ! brackets the minimum, golden-section then refines it to round-off.
     ! Host-only init code (RANS wall distance, rans.f90).
+    !
+    ! LIMITATION (IDDES phase T1b, docs/next_session_iddes.md): this is
+    ! WAVY-WALL SPECIFIC. isInBody is the one analytic-geometry hook, and the
+    ! RANS dwall must stay consistent with WHATEVER it defines: editing
+    ! isInBody for a new analytic body without replacing this minimization
+    ! silently leaves dwall measuring distance to the sine curve. T1b
+    ! replaces this with a geometry-agnostic distance evaluated from the
+    ! isInBody indicator alone.
     real(C_DOUBLE) function body_surface_distance(xIN, ibm, dns) result(dist)
         real(C_DOUBLE), intent(in) :: xIN(1:3)
         type(ibm_type), intent(in) :: ibm
