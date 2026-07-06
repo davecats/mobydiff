@@ -396,6 +396,12 @@ subroutine apply_rans_value(key, value, dns, line_no)
     select case (trim(key))
     case ("dump_geometry")
         call read_bool(value, dns%rans_dump_geometry, line_no)
+    case ("dwall_tol")
+        call read_real(value, dns%rans_dwall_tol, line_no)
+        if (dns%rans_dwall_tol <= 0.0d0) then
+            if (terminal_output) print *, "error: [rans] dwall_tol must be positive"
+            error stop
+        end if
     case default
         if (terminal_output) print *, "warning: unknown [rans] key on input line", &
             line_no, ": ", trim(key)

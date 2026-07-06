@@ -401,13 +401,25 @@ immersed boundary. Phased, each phase verified before the next:
   the added dwall_blocks; T0 case list (min_channel 4-rank CPU + GPU, les_ibm
   ± refine_body, Beltrami y-slab, wavy section) bit-exact (nofma, max_abs 0)
   CPU AND GPU, and [rans]-on fields bit-exact vs [rans]-off (init-only).
-  KNOWN LIMITATION → phase T1b: the ANALYTIC dwall path is WAVY-WALL
-  SPECIFIC (`body_surface_distance` minimizes over the sine curve) while
-  `isInBody` is the one user-editable analytic-geometry hook — a new
-  analytic body would silently keep dwall measuring the old surface. dwall
-  must be computed correctly for ANY analytic geometry from the isInBody
-  indicator alone. NEXT IDDES phase: T1b (generic analytic dwall), then T2
-  (SST transport, resolved mode) — both prompts at the end of
+- IDDES phase T1b — geometry-agnostic analytic dwall (DONE 2026-07-07,
+  branch `claude/jacobi-interface`). New `src/modules/walldist.f90`: the
+  analytic-IBM wall distance is computed from the isInBody indicator ALONE
+  (host-only init; the indicator is a procedure argument): surface point
+  cloud by bisecting finest-level cell-centre segments that straddle the
+  indicator (deterministic two-pass plane scan), kd-tree nearest point
+  (bbox pruning; ±L image queries folded to the minimum image on periodic
+  dims), then a shrinking-3x3x3-lattice POLISH to `[rans] dwall_tol`
+  (default 1e-10; the raw cloud distance overestimates by O(s²/d)). The
+  wavy-specific `body_surface_distance` is DELETED (the scipy minimization
+  in check_rans_geometry.py is the surviving specialized reference); in
+  periodic dims the indicator must be length-periodic. Gates all PASS
+  (validation/rans_geometry/): wavy generic-vs-scipy 2.3e-11 with monotone
+  dwall_tol-sweep convergence; a sphere across the periodic boundary
+  through the SAME machinery (`walldist_test`, src/test_walldist.f90)
+  tracks tol down to 1.6e-10; refine_body per-level 2.4e-11; flat file-IBM
+  gates still 0.0; T0/T1 case list bit-exact (nofma, max_abs 0) CPU AND
+  GPU; ransgeom dump 1-rank == 4-rank == GPU. NEXT IDDES phase: T2 (SST
+  transport, resolved mode) — prompt at the end of
   `docs/next_session_iddes.md`.
 - ALSO PENDING: **Profile + optimise** the GPU step for the 2:1-refined channel.
   The last hard profile is STALE (the reflux that was 23% is removed; the

@@ -24,6 +24,7 @@ set(MODULE_SOURCES
     ${MODULE_DIR}/chron.f90
     ${MODULE_DIR}/boundary.f90
     ${MODULE_DIR}/ibm.f90
+    ${MODULE_DIR}/walldist.f90
     ${MODULE_DIR}/turbulence.f90
     ${MODULE_DIR}/les.f90
     ${MODULE_DIR}/config.f90
@@ -44,10 +45,12 @@ set(MODULE_SOURCES
     ${MODULE_DIR}/flow_case.f90
 )
 
-set(SOLVER_TARGETS main mobygrid)
+set(SOLVER_TARGETS main mobygrid walldist_test)
 
 add_executable(main ${SRC_DIR}/main.f90 ${MODULE_SOURCES})
 add_executable(mobygrid ${SRC_DIR}/mobygrid.f90 ${MODULE_SOURCES})
+# Gate driver for the geometry-agnostic wall distance (IDDES T1b gate b).
+add_executable(walldist_test ${SRC_DIR}/test_walldist.f90 ${MODULE_SOURCES})
 
 # =========================
 # Module directory

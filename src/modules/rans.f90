@@ -26,7 +26,10 @@
 !                   `mobygeom.py block-table` (evaluated at each leaf's
 !                   level, exactly like coef_blocks, cross-checked against
 !                   the solver's leaf table at read);
-!   analytic IBM    body_surface_distance (ibm.f90) at each block's own
+!   analytic IBM    the geometry-agnostic walldist machinery (walldist.f90,
+!                   IDDES phase T1b): surface point cloud from the isInBody
+!                   indicator alone + kd-tree nearest + local polish to
+!                   [rans] dwall_tol, queried at each block's own
 !                   (level-sliced) cell centres.
 ! The domain-wall part comes from the global node-line ends of every
 ! non-periodic direction whose face is no-slip (Dirichlet on both
@@ -42,7 +45,9 @@ module rans
     use :: init, only: dns_type, grid_type, VAR_U, VAR_V, VAR_W, VAR_P
     use :: blocks, only: block_set_type
     use :: boundary, only: boundary_type, boundary_face_id
-    use :: ibmm, only: ibm_type, body_surface_distance
+    use :: ibmm, only: ibm_type, isInBody
+    use :: walldist, only: walldist_type, build_walldist, destroy_walldist, &
+        walldist_distance
     use :: io, only: read_dwall_blocks, write_rans_geometry_file
     use :: comm, only: comm_type, comm_allreduce_sum
     implicit none
@@ -104,7 +109,7 @@ contains
             if (len_trim(dns%ibm_coeff_file) > 0) then
                 call read_body_distance_file(sst, dns, blk, c%has_terminal)
             else
-                call fill_body_distance_analytic(sst, dns, blk, ibm)
+                call fill_body_distance_analytic(sst, dns, blk, bc, ibm, c%has_terminal)
             end if
         end if
         call min_in_domain_wall_distance(sst, dns, g, blk, bc)
@@ -162,17 +167,34 @@ contains
         end if
     end subroutine read_body_distance_file
 
-    ! Immersed-surface distance for the analytic (wavy-wall) IBM, evaluated
-    ! at each block's own cell centres — blocks carry level-sliced
-    ! coordinates, so refined leaves are evaluated at their level for free.
-    subroutine fill_body_distance_analytic(sst, dns, blk, ibm)
+    ! Immersed-surface distance for the analytic IBM: geometry-agnostic,
+    ! computed from the isInBody indicator alone (walldist.f90, phase T1b) —
+    ! isInBody is the one user-editable analytic-geometry hook, so dwall
+    ! stays correct for ANY body defined there. The surface cloud samples
+    ! the finest refinement level; queries run at each block's own
+    ! (level-sliced) cell centres, so refined leaves are exact at their
+    ! level for free.
+    subroutine fill_body_distance_analytic(sst, dns, blk, bc, ibm, has_terminal)
         type(sst_type), intent(inout) :: sst
         type(dns_type), intent(in) :: dns
         type(block_set_type), intent(in) :: blk
+        type(boundary_type), intent(in) :: bc
         type(ibm_type), intent(in) :: ibm
+        logical, intent(in) :: has_terminal
 
-        integer :: i, j, k, b, nx, ny, nz
+        type(walldist_type) :: w
+        integer :: i, j, k, b, nx, ny, nz, nf(3)
         real(C_DOUBLE) :: xA(1:3)
+
+        nf = int(dns%globalSize)*2**(int(blk%nLevels) - 1)
+        call build_walldist(w, isInBody, ibm, dns, &
+            blk%lineX(0:nf(1), int(blk%nLevels)), &
+            blk%lineY(0:nf(2), int(blk%nLevels)), &
+            blk%lineZ(0:nf(3), int(blk%nLevels)), &
+            nf, dns%leng, logical(bc%isPeriodic), has_terminal)
+        ! No surface crossing (body outside the domain / below grid
+        ! resolution): keep the no-wall distance, build_walldist warned.
+        if (w%nCloud == 0) return
 
         nx = int(blk%nb(1))
         ny = int(blk%nb(2))
@@ -186,12 +208,15 @@ contains
                     xA(1) = blk%x(i, VAR_P, b)
                     xA(2) = blk%y(j, VAR_P, b)
                     xA(3) = blk%z(k, VAR_P, b)
-                    sst%dwall(i,j,k,b) = body_surface_distance(xA, ibm, dns)
+                    sst%dwall(i,j,k,b) = walldist_distance(w, isInBody, ibm, dns, &
+                        xA, dns%rans_dwall_tol)
                 end do
             end do
         end do
         end do
         !$omp end parallel do
+
+        call destroy_walldist(w)
     end subroutine fill_body_distance_analytic
 
     ! min in the distance to every no-slip domain face: non-periodic
