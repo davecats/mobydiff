@@ -1614,6 +1614,17 @@ def build_leaf_table_py(gnbt, levels, periodic, touch, buried, refine_box, lines
     return lev[order], crd[order]
 
 
+def dwall_tile_from_mesh(prox, la: argparse.Namespace, o: np.ndarray, nb: int) -> np.ndarray:
+    """Cell-centred unsigned distance to the immersed surface over one leaf's
+    ghost-inclusive (nb+2)^3 window, at the leaf's level (la = level args).
+    Global 1-based cell indices o..o+nb+1 mirror the solver's local 0:nb+1."""
+    idx = np.arange(nb + 2, dtype=np.int64)
+    ii, jj, kk = np.meshgrid(idx + int(o[0]), idx + int(o[1]), idx + int(o[2]), indexing="ij")
+    points = stl_points_for_indices(ii.ravel(), jj.ravel(), kk.ravel(), 0, la)
+    _, dist, _ = prox.on_surface(points)
+    return dist.reshape(nb + 2, nb + 2, nb + 2)
+
+
 def block_table_from_stl(args: argparse.Namespace) -> None:
     """Write the block-table IBM coefficient file for refined runs: blocks
     (id -> origin, level), per-leaf coefficient windows evaluated at each
@@ -1685,6 +1696,17 @@ def block_table_from_stl(args: argparse.Namespace) -> None:
                     int(o[2]), int(o[2])+nb+2)
             coef_tile, _ = stl_coeff_tile_from_mesh(mesh, vertices, faces, la, tile)
             coef[i] = coef_tile
+        if not getattr(args, "no_dwall", False):
+            # Per-leaf cell-centred distance to the immersed surface for the
+            # RANS wall treatment, at each leaf's level like coef_blocks
+            # (ghost-inclusive (nb+2)^3 windows; the solver mins in the
+            # domain-wall part and applies the half-cell floor itself).
+            _, trimesh, _ = require_stl_tools()
+            dwall = h5.create_dataset("dwall_blocks", shape=(n_leaves, nb+2, nb+2, nb+2),
+                                      dtype=np.float64, chunks=(1, nb+2, nb+2, nb+2))
+            prox = trimesh.proximity.ProximityQuery(mesh)
+            for i in range(n_leaves):
+                dwall[i] = dwall_tile_from_mesh(prox, level_args[lev[i]], crd[i]*nb, nb)
     print(f"block-table coefficients written to: {output}")
 
 
@@ -2702,6 +2724,8 @@ def main(argv: list[str] | None = None) -> int:
                    help="number of levels (refine_levels + 1)")
     p.add_argument("--refine-box", type=float, nargs=6, default=None,
                    help="x0 x1 y0 y1 z0 z1: box refinement instead of body-driven")
+    p.add_argument("--no-dwall", action="store_true",
+                   help="skip the per-leaf dwall_blocks wall-distance dataset (RANS)")
     add_common_grid_args(p)
     add_stl_args(p)
     p.set_defaults(func=block_table_from_stl)

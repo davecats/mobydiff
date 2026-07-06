@@ -170,6 +170,23 @@ contains
     end subroutine read_ibm_coeff_file
 
 
+    ! Height of the analytic wavy bottom wall at streamwise position x.
+    ! Shared by the solid classification (isInBody) and the wall-distance
+    ! evaluation (body_surface_distance) so both see the same surface.
+    real(C_DOUBLE) function wavy_wall_height(x, ibm, dns) result(y_body)
+!$omp declare target
+        real(C_DOUBLE), intent(in) :: x
+        type(ibm_type), intent(in) :: ibm
+        type(dns_type), intent(in) :: dns
+
+        real(C_DOUBLE), parameter :: pi = 3.141592653589793d0
+        real(C_DOUBLE), parameter :: y_offset = 1.0d-2
+
+        y_body = ibm%amp_x * 0.5d0 * &
+                 (1.0d0 + sin(2.0d0*pi*real(ibm%n_wave_x,C_DOUBLE)*x/dns%leng(1) + ibm%phase_x)) + &
+                 y_offset
+    end function wavy_wall_height
+
     logical function isInBody(xIN, ibm, dns)
         implicit none
 
@@ -177,15 +194,67 @@ contains
         type(ibm_type), intent(in) :: ibm
         type(dns_type), intent(in) :: dns
 
-        real(C_DOUBLE), parameter :: pi = 3.141592653589793d0
-        real(C_DOUBLE), parameter :: y_offset = 1.0d-2
-        real(C_DOUBLE) :: y_body
-
-        y_body = ibm%amp_x * 0.5d0 * &
-                 (1.0d0 + sin(2.0d0*pi*real(ibm%n_wave_x,C_DOUBLE)*xIN(1)/dns%leng(1) + ibm%phase_x)) + &
-                 y_offset
-        isInBody = (xIN(2) < y_body)
+        isInBody = (xIN(2) < wavy_wall_height(xIN(1), ibm, dns))
     end function isInBody
+
+    ! Euclidean distance from a point to the analytic wavy-wall surface
+    ! y = wavy_wall_height(x) (extruded in z, periodic in x). No closed form
+    ! exists for a sine curve, so minimize d(s)^2 = (x-s)^2 + (y-f(s))^2 over
+    ! the curve parameter s: a coarse scan over one wave period centred on the
+    ! point (the curve repeats, so all distinct surface points are covered)
+    ! brackets the minimum, golden-section then refines it to round-off.
+    ! Host-only init code (RANS wall distance, rans.f90).
+    real(C_DOUBLE) function body_surface_distance(xIN, ibm, dns) result(dist)
+        real(C_DOUBLE), intent(in) :: xIN(1:3)
+        type(ibm_type), intent(in) :: ibm
+        type(dns_type), intent(in) :: dns
+
+        integer, parameter :: N_SCAN = 256
+        real(C_DOUBLE), parameter :: GOLDEN = 0.618033988749895d0
+        real(C_DOUBLE) :: period, h, s, sBest, dBest, d2
+        real(C_DOUBLE) :: a, b, s1, s2, d1
+        integer :: i, it
+
+        period = dns%leng(1)/real(max(ibm%n_wave_x, 1), C_DOUBLE)
+
+        ! Coarse scan of one full period centred on the point.
+        h = period/real(N_SCAN, C_DOUBLE)
+        sBest = xIN(1)
+        dBest = huge(1.0d0)
+        do i = 0, N_SCAN
+            s = xIN(1) - 0.5d0*period + real(i, C_DOUBLE)*h
+            d2 = (xIN(1) - s)**2 + (xIN(2) - wavy_wall_height(s, ibm, dns))**2
+            if (d2 < dBest) then
+                dBest = d2
+                sBest = s
+            end if
+        end do
+
+        ! Golden-section refinement on the bracketing interval.
+        a = sBest - h
+        b = sBest + h
+        s1 = b - GOLDEN*(b - a)
+        s2 = a + GOLDEN*(b - a)
+        d1 = (xIN(1) - s1)**2 + (xIN(2) - wavy_wall_height(s1, ibm, dns))**2
+        d2 = (xIN(1) - s2)**2 + (xIN(2) - wavy_wall_height(s2, ibm, dns))**2
+        do it = 1, 200
+            if (b - a <= 1.0d-14*max(1.0d0, abs(sBest))) exit
+            if (d1 < d2) then
+                b = s2
+                s2 = s1
+                d2 = d1
+                s1 = b - GOLDEN*(b - a)
+                d1 = (xIN(1) - s1)**2 + (xIN(2) - wavy_wall_height(s1, ibm, dns))**2
+            else
+                a = s1
+                s1 = s2
+                d1 = d2
+                s2 = a + GOLDEN*(b - a)
+                d2 = (xIN(1) - s2)**2 + (xIN(2) - wavy_wall_height(s2, ibm, dns))**2
+            end if
+        end do
+        dist = sqrt(min(d1, d2, dBest))
+    end function body_surface_distance
 
     real(C_DOUBLE) function distance3(xA, xB) result(d)
         real(C_DOUBLE), intent(in) :: xA(1:3), xB(1:3)

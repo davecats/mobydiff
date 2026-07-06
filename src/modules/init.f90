@@ -98,6 +98,12 @@ module init
         real(C_DOUBLE) :: force_wavenumber(1:3) = 0.0d0
         integer(C_INT) :: force_dir = 1_C_INT
         character(len=256) :: force_file = ""
+        ! [rans] section (rans.f90). In the T1 increment the section's mere
+        ! presence builds the SST geometry state (wall distance + IBM wall
+        ! cells) at init so it can be validated before any RANS transport
+        ! exists; dump_geometry writes the diagnostic HDF5 file.
+        logical(C_BOOL) :: rans_configured = .false.
+        logical(C_BOOL) :: rans_dump_geometry = .false.
         character(len=256) :: field_prefix = ""
         integer :: field_interval = 0
         character(len=256) :: restart_file = ""

@@ -389,6 +389,104 @@ static int write_block_dataset(hid_t file, const char *name,
     return ierr;
 }
 
+/*
+ * Integer variant of write_block_dataset for per-cell markers held
+ * interior-only ((nbx,nby,nbz) per block, Fortran order, no ghost layer).
+ */
+static int write_block_int_dataset(hid_t file, const char *name,
+                                   int nbx, int nby, int nbz,
+                                   int n_blocks, int n_blocks_global, int id_start,
+                                   const int *vals)
+{
+    const size_t n = (size_t)nbx*(size_t)nby*(size_t)nbz;
+    hsize_t global_dims[4] = {(hsize_t)n_blocks_global, (hsize_t)nbz, (hsize_t)nby, (hsize_t)nbx};
+    hsize_t local_dims[4] = {(hsize_t)n_blocks, (hsize_t)nbz, (hsize_t)nby, (hsize_t)nbx};
+    hsize_t start[4] = {(hsize_t)id_start, 0, 0, 0};
+    hid_t file_space = -1;
+    hid_t mem_space = -1;
+    hid_t dset = -1;
+    hid_t xfer = -1;
+    int *buffer = NULL;
+    herr_t status = 0;
+    int ierr = 0;
+
+    buffer = (int *)malloc((size_t)n_blocks*n*sizeof(int));
+    if (buffer == NULL) return 1;
+
+    for (int b = 0; b < n_blocks; ++b) {
+        const int *field = vals + (size_t)b*n;
+        int *row = buffer + (size_t)b*n;
+        for (size_t k = 0; k < (size_t)nbz; ++k) {
+            for (size_t j = 0; j < (size_t)nby; ++j) {
+                for (size_t i = 0; i < (size_t)nbx; ++i) {
+                    row[linear_hdf5(k, j, i, (size_t)nby, (size_t)nbx)] =
+                        field[linear_fortran(i, j, k, (size_t)nbx, (size_t)nby)];
+                }
+            }
+        }
+    }
+
+    file_space = H5Screate_simple(4, global_dims, NULL);
+    dset = file_space >= 0 ? H5Dcreate2(file, name, H5T_NATIVE_INT, file_space,
+                                        H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT) : -1;
+    mem_space = H5Screate_simple(4, local_dims, NULL);
+    xfer = H5Pcreate(H5P_DATASET_XFER);
+    if (file_space < 0 || dset < 0 || mem_space < 0 || xfer < 0 ||
+        H5Sselect_hyperslab(file_space, H5S_SELECT_SET, start, NULL, local_dims, NULL) < 0) {
+        ierr = 1;
+    } else {
+        H5Pset_dxpl_mpio(xfer, H5FD_MPIO_INDEPENDENT);
+        status = H5Dwrite(dset, H5T_NATIVE_INT, mem_space, file_space, xfer, buffer);
+        if (status < 0) ierr = 1;
+    }
+
+    if (xfer >= 0) H5Pclose(xfer);
+    if (mem_space >= 0) H5Sclose(mem_space);
+    if (dset >= 0) H5Dclose(dset);
+    if (file_space >= 0) H5Sclose(file_space);
+    free(buffer);
+    return ierr;
+}
+
+/*
+ * One row of n doubles per global block id (e.g. per-block 1D coordinate
+ * lines); each rank writes its contiguous id range independently.
+ */
+static int write_block_rows(hid_t file, const char *name, int n,
+                            int n_blocks, int n_blocks_global, int id_start,
+                            const double *rows)
+{
+    hsize_t global_dims[2] = {(hsize_t)n_blocks_global, (hsize_t)n};
+    hsize_t local_dims[2] = {(hsize_t)n_blocks, (hsize_t)n};
+    hsize_t start[2] = {(hsize_t)id_start, 0};
+    hid_t file_space = -1;
+    hid_t mem_space = -1;
+    hid_t dset = -1;
+    hid_t xfer = -1;
+    herr_t status = 0;
+    int ierr = 0;
+
+    file_space = H5Screate_simple(2, global_dims, NULL);
+    dset = file_space >= 0 ? H5Dcreate2(file, name, H5T_NATIVE_DOUBLE, file_space,
+                                        H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT) : -1;
+    mem_space = H5Screate_simple(2, local_dims, NULL);
+    xfer = H5Pcreate(H5P_DATASET_XFER);
+    if (file_space < 0 || dset < 0 || mem_space < 0 || xfer < 0 ||
+        H5Sselect_hyperslab(file_space, H5S_SELECT_SET, start, NULL, local_dims, NULL) < 0) {
+        ierr = 1;
+    } else {
+        H5Pset_dxpl_mpio(xfer, H5FD_MPIO_INDEPENDENT);
+        status = H5Dwrite(dset, H5T_NATIVE_DOUBLE, mem_space, file_space, xfer, rows);
+        if (status < 0) ierr = 1;
+    }
+
+    if (xfer >= 0) H5Pclose(xfer);
+    if (mem_space >= 0) H5Sclose(mem_space);
+    if (dset >= 0) H5Dclose(dset);
+    if (file_space >= 0) H5Sclose(file_space);
+    return ierr;
+}
+
 static int read_block_dataset(hid_t file, hid_t dset, hid_t file_space,
                               int nbx, int nby, int nbz,
                               int n_blocks, int n_blocks_global, int id_start,
@@ -734,6 +832,53 @@ int fdm_h5_append_nut(const char *filename, int nbx, int nby, int nbz,
     return ierr != 0;
 }
 
+/*
+ * RANS geometry diagnostic file (rans.f90, [rans] dump_geometry): the leaf
+ * block table, interior dwall/yeff/wallcell rows in the block-table layout
+ * and the per-block cell-centre coordinate lines. Self-contained file --
+ * the field-output layout is not touched. Collective: all ranks enter.
+ * dwall/yeff carry the solver's ghost layout ((nb+2)^3 per block); the
+ * interior is extracted here. wallcell and xc/yc/zc are interior-only.
+ */
+int fdm_h5_write_rans_geometry(const char *filename, int nbx, int nby, int nbz,
+                               int n_blocks, int n_blocks_global, int id_start,
+                               const int *block_origin, const int *block_level,
+                               const double *dwall, const double *yeff,
+                               const int *wallcell,
+                               const double *xc, const double *yc, const double *zc)
+{
+    const size_t block_stride = (size_t)(nbx + 2)*(size_t)(nby + 2)*(size_t)(nbz + 2);
+    hid_t file;
+    int ierr = 0;
+
+    if (nbx < 1 || nby < 1 || nbz < 1 || n_blocks < 1) return 1;
+
+    file = create_parallel_file(filename);
+    if (file < 0) return 1;
+
+    ierr |= write_attr_int(file, "block_nb_x", nbx);
+    ierr |= write_attr_int(file, "block_nb_y", nby);
+    ierr |= write_attr_int(file, "block_nb_z", nbz);
+    ierr |= write_attr_int(file, "n_blocks", n_blocks_global);
+
+    ierr |= write_block_table(file, n_blocks_global, id_start, n_blocks,
+                              block_origin, block_level);
+    ierr |= write_block_dataset(file, "dwall", nbx, nby, nbz,
+                                n_blocks, n_blocks_global, id_start,
+                                dwall, block_stride);
+    ierr |= write_block_dataset(file, "yeff", nbx, nby, nbz,
+                                n_blocks, n_blocks_global, id_start,
+                                yeff, block_stride);
+    ierr |= write_block_int_dataset(file, "wallcell", nbx, nby, nbz,
+                                    n_blocks, n_blocks_global, id_start, wallcell);
+    ierr |= write_block_rows(file, "xc", nbx, n_blocks, n_blocks_global, id_start, xc);
+    ierr |= write_block_rows(file, "yc", nby, n_blocks, n_blocks_global, id_start, yc);
+    ierr |= write_block_rows(file, "zc", nbz, n_blocks, n_blocks_global, id_start, zc);
+
+    ierr |= H5Fclose(file) < 0;
+    return ierr != 0;
+}
+
 int fdm_h5_read_metadata(const char *filename,
                          int *global_nx, int *global_ny, int *global_nz,
                          int *step, int *nsteps,
@@ -961,6 +1106,45 @@ int fdm_h5_read_block_masks(const char *filename, int level, int n_raster,
 }
 
 /*
+ * Check the file's leaf table against the solver's over this rank's
+ * contiguous id range: origin (3) + level per global block id. Returns 0
+ * on match, 2 on a row mismatch (stale or differently-built file) and 1
+ * on a read failure.
+ */
+static int check_block_table(hid_t file, int n_blocks, int id_start,
+                             const int *block_origin, const int *block_level)
+{
+    hid_t bset = H5Dopen2(file, "blocks", H5P_DEFAULT);
+    hid_t bspace = bset >= 0 ? H5Dget_space(bset) : -1;
+    hsize_t bstart[2] = {(hsize_t)id_start, 0};
+    hsize_t bcount[2] = {(hsize_t)n_blocks, 4};
+    hid_t bmem = H5Screate_simple(2, bcount, NULL);
+    int *rows = (int *)malloc((size_t)n_blocks*4*sizeof(int));
+    int ierr = 0;
+
+    if (bset < 0 || bspace < 0 || bmem < 0 || rows == NULL ||
+        H5Sselect_hyperslab(bspace, H5S_SELECT_SET, bstart, NULL, bcount, NULL) < 0 ||
+        H5Dread(bset, H5T_NATIVE_INT, bmem, bspace, H5P_DEFAULT, rows) < 0) {
+        ierr = 1;
+    } else {
+        for (int b = 0; b < n_blocks; ++b) {
+            if (rows[4*b+0] != block_origin[3*b+0] ||
+                rows[4*b+1] != block_origin[3*b+1] ||
+                rows[4*b+2] != block_origin[3*b+2] ||
+                rows[4*b+3] != block_level[b]) {
+                ierr = 2;
+                break;
+            }
+        }
+    }
+    if (rows != NULL) free(rows);
+    if (bmem >= 0) H5Sclose(bmem);
+    if (bspace >= 0) H5Sclose(bspace);
+    if (bset >= 0) H5Dclose(bset);
+    return ierr;
+}
+
+/*
  * Block-table coefficients (mobygeom block-table): coef_blocks rows are
  * (nb+2)^3 ghost windows x 3 staggered vars at each leaf's level. The
  * file's blocks table is checked against the solver's leaf table so a
@@ -982,7 +1166,6 @@ int fdm_h5_read_ibm_coeff_blocks(const char *filename, int nbx, int nby, int nbz
     hsize_t file_dims[5] = {0, 0, 0, 0, 0};
     hid_t file = -1, dset = -1, file_space = -1, mem_space = -1;
     double *buffer = NULL;
-    int *rows = NULL;
     double file_lx = 0.0, file_ly = 0.0, file_lz = 0.0, file_re = 0.0;
     int ierr = 0;
     herr_t status = -1;
@@ -1005,32 +1188,8 @@ int fdm_h5_read_ibm_coeff_blocks(const char *filename, int nbx, int nby, int nbz
 
     /* The file's leaf table must match the solver's. */
     {
-        hid_t bset = H5Dopen2(file, "blocks", H5P_DEFAULT);
-        hid_t bspace = bset >= 0 ? H5Dget_space(bset) : -1;
-        hsize_t bstart[2] = {(hsize_t)id_start, 0};
-        hsize_t bcount[2] = {(hsize_t)n_blocks, 4};
-        hid_t bmem = H5Screate_simple(2, bcount, NULL);
-
-        rows = (int *)malloc((size_t)n_blocks*4*sizeof(int));
-        if (bset < 0 || bspace < 0 || bmem < 0 || rows == NULL ||
-            H5Sselect_hyperslab(bspace, H5S_SELECT_SET, bstart, NULL, bcount, NULL) < 0 ||
-            H5Dread(bset, H5T_NATIVE_INT, bmem, bspace, H5P_DEFAULT, rows) < 0) {
-            ierr = 1;
-        } else {
-            for (int b = 0; b < n_blocks; ++b) {
-                if (rows[4*b+0] != block_origin[3*b+0] ||
-                    rows[4*b+1] != block_origin[3*b+1] ||
-                    rows[4*b+2] != block_origin[3*b+2] ||
-                    rows[4*b+3] != block_level[b]) {
-                    ierr = 2;
-                    break;
-                }
-            }
-        }
-        if (rows != NULL) free(rows);
-        if (bmem >= 0) H5Sclose(bmem);
-        if (bspace >= 0) H5Sclose(bspace);
-        if (bset >= 0) H5Dclose(bset);
+        int berr = check_block_table(file, n_blocks, id_start, block_origin, block_level);
+        if (berr) ierr = berr;
     }
     if (ierr) {
         H5Fclose(file);
@@ -1077,6 +1236,100 @@ int fdm_h5_read_ibm_coeff_blocks(const char *filename, int nbx, int nby, int nbz
                             size_t h5_idx = (((i*nj) + j)*nk + k)*3 + v;
                             block_coef[linear_fortran4(i, j, k, v, ni, nj, nk)] = row[h5_idx];
                         }
+                    }
+                }
+            }
+        }
+    } else {
+        ierr = 1;
+    }
+
+    H5Sclose(mem_space);
+    free(buffer);
+    H5Sclose(file_space);
+    H5Dclose(dset);
+    H5Fclose(file);
+    if (!ierr) *found = 1;
+    return ierr;
+}
+
+/*
+ * Per-leaf wall-distance tiles (mobygeom block-table): dwall_blocks rows
+ * are (nb+2)^3 ghost windows of the cell-centred distance to the immersed
+ * surface, evaluated at each leaf's level. Cross-checked against the
+ * file's blocks table exactly like coef_blocks (returns 2 on a stale
+ * table). *found = 0 when the file carries no dwall_blocks.
+ */
+int fdm_h5_read_dwall_blocks(const char *filename, int nbx, int nby, int nbz,
+                             int n_blocks, int id_start,
+                             const int *block_origin, const int *block_level,
+                             int *found, double *dwall)
+{
+    const size_t ni = (size_t)nbx + 2;
+    const size_t nj = (size_t)nby + 2;
+    const size_t nk = (size_t)nbz + 2;
+    const size_t n = ni*nj*nk;
+    hsize_t local_dims[4] = {(hsize_t)n_blocks, ni, nj, nk};
+    hsize_t start[4] = {(hsize_t)id_start, 0, 0, 0};
+    hsize_t file_dims[4] = {0, 0, 0, 0};
+    hid_t file = -1, dset = -1, file_space = -1, mem_space = -1;
+    double *buffer = NULL;
+    int ierr = 0;
+    herr_t status = -1;
+
+    *found = 0;
+    file = H5Fopen(filename, H5F_ACC_RDONLY, H5P_DEFAULT);
+    if (file < 0) return 1;
+
+    if (H5Lexists(file, "dwall_blocks", H5P_DEFAULT) <= 0) {
+        H5Fclose(file);
+        return 0;
+    }
+
+    ierr = check_block_table(file, n_blocks, id_start, block_origin, block_level);
+    if (ierr) {
+        H5Fclose(file);
+        return ierr;
+    }
+
+    dset = H5Dopen2(file, "dwall_blocks", H5P_DEFAULT);
+    file_space = dset >= 0 ? H5Dget_space(dset) : -1;
+    if (dset < 0 || file_space < 0 || H5Sget_simple_extent_ndims(file_space) != 4) {
+        if (file_space >= 0) H5Sclose(file_space);
+        if (dset >= 0) H5Dclose(dset);
+        H5Fclose(file);
+        return 1;
+    }
+    H5Sget_simple_extent_dims(file_space, file_dims, NULL);
+    if (file_dims[1] != ni || file_dims[2] != nj || file_dims[3] != nk) {
+        H5Sclose(file_space);
+        H5Dclose(dset);
+        H5Fclose(file);
+        return 1;
+    }
+
+    buffer = (double *)malloc((size_t)n_blocks*n*sizeof(double));
+    mem_space = H5Screate_simple(4, local_dims, NULL);
+    if (buffer == NULL || mem_space < 0 ||
+        H5Sselect_hyperslab(file_space, H5S_SELECT_SET, start, NULL, local_dims, NULL) < 0) {
+        if (buffer != NULL) free(buffer);
+        if (mem_space >= 0) H5Sclose(mem_space);
+        H5Sclose(file_space);
+        H5Dclose(dset);
+        H5Fclose(file);
+        return 1;
+    }
+
+    status = H5Dread(dset, H5T_NATIVE_DOUBLE, mem_space, file_space, H5P_DEFAULT, buffer);
+    if (status >= 0) {
+        for (int b = 0; b < n_blocks; ++b) {
+            double *block_dwall = dwall + (size_t)b*n;
+            const double *row = buffer + (size_t)b*n;
+            for (size_t k = 0; k < nk; ++k) {
+                for (size_t j = 0; j < nj; ++j) {
+                    for (size_t i = 0; i < ni; ++i) {
+                        block_dwall[linear_fortran(i, j, k, ni, nj)] =
+                            row[(i*nj + j)*nk + k];
                     }
                 }
             }

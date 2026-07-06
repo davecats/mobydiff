@@ -112,6 +112,32 @@ module io
             integer(C_INT) :: ierr
         end function fdm_h5_read_block_active
 
+        function fdm_h5_read_dwall_blocks(file_name, nbx, nby, nbz, n_blocks, id_start, &
+                block_origin, block_level, found, dwall) &
+                bind(C, name="fdm_h5_read_dwall_blocks") result(ierr)
+            import :: C_CHAR, C_INT, C_DOUBLE
+            character(kind=C_CHAR), intent(in) :: file_name(*)
+            integer(C_INT), value :: nbx, nby, nbz, n_blocks, id_start
+            integer(C_INT), intent(in) :: block_origin(*), block_level(*)
+            integer(C_INT), intent(out) :: found
+            real(C_DOUBLE), intent(inout) :: dwall(*)
+            integer(C_INT) :: ierr
+        end function fdm_h5_read_dwall_blocks
+
+        function fdm_h5_write_rans_geometry(file_name, nbx, nby, nbz, n_blocks, &
+                n_blocks_global, id_start, block_origin, block_level, &
+                dwall, yeff, wallcell, xc, yc, zc) &
+                bind(C, name="fdm_h5_write_rans_geometry") result(ierr)
+            import :: C_CHAR, C_INT, C_DOUBLE
+            character(kind=C_CHAR), intent(in) :: file_name(*)
+            integer(C_INT), value :: nbx, nby, nbz, n_blocks, n_blocks_global, id_start
+            integer(C_INT), intent(in) :: block_origin(*), block_level(*)
+            real(C_DOUBLE), intent(in) :: dwall(*), yeff(*)
+            integer(C_INT), intent(in) :: wallcell(*)
+            real(C_DOUBLE), intent(in) :: xc(*), yc(*), zc(*)
+            integer(C_INT) :: ierr
+        end function fdm_h5_write_rans_geometry
+
         function fdm_h5_read_field(file_name, nbx, nby, nbz, n_blocks, &
                 n_blocks_global, id_start, block_origin, &
                 global_nx, global_ny, global_nz, q) &
@@ -367,6 +393,61 @@ subroutine read_block_masks(touch, buried, level, n_raster, found, dns, has_term
     end if
     found = c_found /= 0_C_INT
 end subroutine read_block_masks
+
+! Per-leaf wall-distance tiles from the IBM coefficient file (mobygeom
+! block-table, dataset dwall_blocks). found is false when the file carries
+! none; a stale blocks table is a hard error (like the coefficient read).
+subroutine read_dwall_blocks(dwall, found, dns, blk, has_terminal)
+    real(C_DOUBLE), intent(inout) :: dwall(*)
+    logical, intent(out) :: found
+    type(dns_type), intent(in) :: dns
+    type(block_set_type), intent(in) :: blk
+    logical, intent(in) :: has_terminal
+
+    character(kind=C_CHAR,len=:), allocatable :: c_file_name
+    integer(C_INT) :: ierr, c_found
+
+    c_file_name = to_c_string(dns%ibm_coeff_file)
+    ierr = fdm_h5_read_dwall_blocks(c_file_name, blk%nb(1), blk%nb(2), blk%nb(3), &
+        blk%nBlocks, blk%idStart, blk%origin, blk%level, c_found, dwall)
+    if (ierr == 2_C_INT) then
+        if (has_terminal) print *, "error: coefficient file block table does not match", &
+            " the solver's leaf table (stale file?): ", trim(dns%ibm_coeff_file)
+        error stop
+    end if
+    if (ierr /= 0_C_INT) then
+        if (has_terminal) print *, "error: could not read dwall_blocks from: ", &
+            trim(dns%ibm_coeff_file)
+        error stop
+    end if
+    found = c_found /= 0_C_INT
+end subroutine read_dwall_blocks
+
+! RANS geometry diagnostic dump ([rans] dump_geometry): blocks table plus
+! interior dwall/yeff/wallcell and the per-block cell-centre coordinates.
+! Parallel HDF5 call: all MPI ranks must enter this routine together.
+subroutine write_rans_geometry_file(file_name, blk, dwall, yeff, wallcell, &
+        xc, yc, zc, has_terminal)
+    character(len=*), intent(in) :: file_name
+    type(block_set_type), intent(in) :: blk
+    real(C_DOUBLE), intent(in) :: dwall(*), yeff(*)
+    integer(C_INT), intent(in) :: wallcell(*)
+    real(C_DOUBLE), intent(in) :: xc(*), yc(*), zc(*)
+    logical, intent(in) :: has_terminal
+
+    character(kind=C_CHAR,len=:), allocatable :: c_file_name
+    integer(C_INT) :: ierr
+
+    c_file_name = to_c_string(file_name)
+    ierr = fdm_h5_write_rans_geometry(c_file_name, blk%nb(1), blk%nb(2), blk%nb(3), &
+        blk%nBlocks, blk%nBlocksGlobal, blk%idStart, blk%origin, blk%level, &
+        dwall, yeff, wallcell, xc, yc, zc)
+    if (ierr /= 0_C_INT) then
+        if (has_terminal) print *, "error: could not write RANS geometry file: ", &
+            trim(file_name)
+        error stop
+    end if
+end subroutine write_rans_geometry_file
 
 subroutine read_field(blk, dns, file_name, c)
     ! Parallel HDF5 call: all MPI ranks must enter this routine together.

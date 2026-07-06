@@ -300,14 +300,37 @@ dwall source → error; etc.).
   Note: the SGS timing profiler moved with the hoist
   (`init_turbulence_profiler`, tag `turb_timing`, TURB_PROF_*) — console
   output name only.
-- **T1 — dwall + wall cells.** `dwall`/`y_eff` (mobygeom `dwall_blocks`
-  per leaf + analytic path + domain-wall min + the ½min(Δ) floor);
-  wall-cell classification; device mapping. Gates: y_eff exact vs
-  closed form on the les_ibm plane-wall channel (the wall offset is known
-  analytically) and on a wavychannel section; per-level correctness under
-  `refine_body` (leaf-level evaluation, cross-checked Fortran vs mobygeom
-  like the block-table read); T0 cases still bit-exact (dwall unused when
-  model ≠ sst*).
+- **T1 — dwall + wall cells. DONE (validated 2026-07-06).**
+  `src/modules/rans.f90` / `sst_type` holds the geometry state only:
+  `dwall` (raw cell-centred wall distance, ghost-inclusive — every value
+  evaluated pointwise from geometry, no exchange), `yeff = max(dwall,
+  ½·min(Δx,Δy,Δz))` (use THIS in the model), and the interior byte marker
+  `wallcell` (0 fluid / 1 wall = ≥1 of the 6 staggered faces solid, the
+  ibm_aware threshold test / 2 solid = all 6), plus
+  `enter_/exit_rans_data`. dwall sources: file IBM reads the new per-leaf
+  `dwall_blocks` tiles (`mobygeom.py block-table` writes them by default,
+  trimesh unsigned surface distance at each leaf's level, `--no-dwall`
+  opts out; the solver read cross-checks the file's blocks table like
+  coef_blocks and hard-errors on legacy files without the dataset);
+  analytic IBM uses `body_surface_distance` (ibm.f90: true Euclidean
+  distance to the wavy wall by coarse scan + golden section, sharing the
+  extracted `wavy_wall_height` with isInBody); the domain-wall part
+  (non-periodic faces with Dirichlet tangential velocities) is min'ed in
+  from the node-line ends. HOOK until [turbulence] model = rans exists:
+  a `[rans]` section's presence builds the state at init;
+  `[rans] dump_geometry = true` writes `<prefix>_ransgeom.h5`
+  (blocks table + interior dwall/yeff/wallcell + per-block cell-centre
+  coords; new self-contained parallel writer — the field-output path is
+  untouched). Gates (validation/rans_geometry/, all PASS): flat les_ibm
+  walls y_eff vs exact point-to-slab-box closed form max|err| = 0.0
+  (float32 STL vertex quantization is part of the as-built geometry),
+  single-level AND per-level under refine_body, wallcell exact; analytic
+  wavy section vs independent scipy minimization 1.1e-16; 4-rank dump ==
+  1-rank; GPU == CPU; regenerated block-table file's coef/masks/blocks
+  byte-identical to the committed les_ibm file (dwall_blocks purely
+  additive); full T0 case list (min_channel 4-rank, les_ibm ± refine_body,
+  Beltrami y-slab, wavy section) bit-exact (nofma, max_abs 0) CPU AND GPU,
+  and a [rans]-on run's fields bit-exact vs [rans]-off (init-only state).
 - **T2 — SST, no transition, resolved mode.** The scalar-transport
   infrastructure (fused kernel, TVD convection helper, point-implicit
   sinks, floors, scalar BCs, halos, restart/io of k, ω) + nut_rans
@@ -380,27 +403,34 @@ dwall source → error; etc.).
 - `git add` explicit paths only (see memory: git-staging-discipline);
   validation output .h5/.png are gitignored on purpose.
 
-## NEXT-SESSION PROMPT (T0 done 2026-07-05, commits c4a13ad + bb4a616; T1 is next)
+## NEXT-SESSION PROMPT (T1 done 2026-07-06; T2 is next)
 
 > Read `docs/next_session_iddes.md` and CLAUDE.md. Branch
-> `claude/jacobi-interface`. Execute phase T1 ONLY: wall distance + IBM
-> wall cells (items 1–2 of the "IBM wall treatment" section). Build
-> `dwall`/`y_eff`: the mobygeom `dwall_blocks` per-leaf dataset (evaluated
-> at each leaf's level, like `coef_blocks`), the analytic-IBM path
-> computed in the flow-case init, the domain-wall distance from the node
-> lines min'ed in, and the y_eff = max(dwall, ½·min(Δx,Δy,Δz)) floor.
-> Classify IBM wall cells (fluid cell with ≥1 solid staggered face, the
-> existing ibm_aware test) into a per-cell byte marker. Home: create
-> `src/modules/rans.f90` with an `sst_type` that for now holds ONLY the
-> geometry state (dwall/y_eff, the wall-cell marker) + its
-> enter_/exit_*_data; the transport arrays arrive in T2. Note
-> `[turbulence] model = rans` is still rejected, so give the gate a way to
-> exercise dwall — smallest hook wins (e.g. build it whenever a `[rans]`
-> section is present, or an init-time diagnostic dump); no MOBY_* env
-> hooks. Gates: y_eff exact vs closed form on the les_ibm plane-wall
-> channel (walls at y = 0.259375 / 2.259375) and on a wavychannel
-> section; per-level correctness under `refine_body` (Fortran vs mobygeom
-> cross-check at read, like the block-table); all T0 cases still bit-exact
-> (nofma, max_abs 0) — nothing new executes when no `[rans]` section is
-> configured. Make a plan first; execute after. Subsequent sessions
-> proceed T2 → T5 per the doc, one phase per gate.
+> `claude/jacobi-interface`. Execute phase T2 ONLY: k-ω SST transport, no
+> transition, resolved wall mode. Build in `rans.f90` on the T1 geometry
+> state (`sst_type` already holds dwall/yeff/wallcell): the k and ω
+> arrays + their oldrhs (cell-centred, halo 0:nb+1, RK3 low-storage like
+> the momentum predictor), ONE fused per-substage transport kernel
+> (velocity-gradient tensor / S / F1 / F2 computed once per cell — reuse
+> `velocity_gradient_tensor`), TVD (van Leer) convection helper,
+> face-averaged effective diffusivity, POINT-IMPLICIT sinks + floors
+> (k ≥ 0, ω ≥ ω_min — a naive explicit ω destruction NaNs immediately),
+> the Menter ω wall-cell pinning (viscous limb, BEFORE the transport
+> kernel reads neighbours), a small cell-centred-scalar BC routine
+> (Dirichlet mirror / Neumann copy at FACE_PHYS), scalar halos via
+> `exchange_scalar_halos`, nut_rans = a1 k/max(a1 ω, S F2) assembled into
+> `turb%nut` via the turbulence.f90 select-case (enable
+> `[turbulence] model = rans` + `[rans] model = sst`; solid cells keep
+> benign ω / k = 0 / nut = 0 set at init and after restart), restart/io
+> of k and ω riding the block-table machinery (absent datasets →
+> initialize from `[rans] tu`/`nut_ratio` and warn), and the k/γ/Re_θt
+> diffusive-flux masking through solid staggered faces. Gates (doc T2
+> list): (a) laminar channel stays laminar, parabola exact, seeded k
+> decays; (b) developed turbulent channel Re_τ 180 + one higher Re vs the
+> log law / DNS mean — RANS-quality (a few %); (c) the les_ibm off-grid
+> IBM plane channel reproduces (b) through the IBM wall treatment — THE
+> key gate; (d) band-refined RANS channel vs single-level: no interface
+> band in k/ω/nut; (e) CPU==GPU to round-off; LES/no-model cases still
+> bit-exact (nofma, max_abs 0) — the nut consumer chain must not be
+> edited. Make a plan first; execute after. T3 (wall functions) → T5 per
+> the doc, one phase per gate.

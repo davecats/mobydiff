@@ -372,8 +372,37 @@ immersed boundary. Phased, each phase verified before the next:
   (blocks + 2:1 + chebyshev, 4-rank CPU), les_ibm channel + refine_body
   (file IBM + WALE ± 2:1), Beltrami y-slab — CPU AND GPU; a run with
   explicit `[turbulence] model = les` is byte-identical to the implied-
-  family run. NEXT IDDES phase: T1 (dwall + wall cells), prompt at the end
-  of `docs/next_session_iddes.md`.
+  family run.
+- IDDES phase T1 — wall distance + IBM wall cells (DONE 2026-07-06, branch
+  `claude/jacobi-interface`). New `src/modules/rans.f90` / `sst_type` holding
+  ONLY the SST geometry state: cell-centred `dwall` (ghost-inclusive, every
+  value pointwise from geometry — no exchange), `yeff = max(dwall,
+  ½·min(Δx,Δy,Δz))` (the model must use yeff), interior byte `wallcell`
+  (0 fluid / 1 wall = ≥1 of the 6 staggered faces solid, the ibm_aware
+  threshold test / 2 solid = all 6) + `enter_/exit_rans_data`. dwall sources:
+  file IBM = per-leaf `dwall_blocks` tiles (`mobygeom.py block-table` writes
+  them by default at each leaf's level like coef_blocks, `--no-dwall` opts
+  out; the solver read cross-checks the file's blocks table and hard-errors
+  on legacy files without the dataset); analytic IBM = `body_surface_distance`
+  (ibm.f90, coarse scan + golden section to the wavy wall; `wavy_wall_height`
+  extracted, shared with isInBody); domain walls (non-periodic faces with
+  Dirichlet tangential BCs) min'ed in from the node-line ends. HOOK until
+  `[turbulence] model = rans` exists (still rejected): a `[rans]` section's
+  presence builds the state at init; `[rans] dump_geometry = true` writes
+  `<prefix>_ransgeom.h5` (blocks table + interior dwall/yeff/wallcell +
+  per-block cell centres; self-contained parallel writer — the field-output
+  path untouched). Gates in `validation/rans_geometry/` (all PASS): flat
+  les_ibm walls vs the exact slab-box closed form, max|err| 0.0 single-level
+  AND per-level under refine_body, wallcell exact (the STL float32 vertex
+  quantization is part of the as-built geometry — reference must round the
+  planes through float32); analytic wavy section vs an independent scipy
+  minimization 1.1e-16; 4-rank dump == 1-rank; GPU == CPU; the regenerated
+  block-table file is byte-identical to the committed les_ibm one apart from
+  the added dwall_blocks; T0 case list (min_channel 4-rank CPU + GPU, les_ibm
+  ± refine_body, Beltrami y-slab, wavy section) bit-exact (nofma, max_abs 0)
+  CPU AND GPU, and [rans]-on fields bit-exact vs [rans]-off (init-only).
+  NEXT IDDES phase: T2 (SST transport, resolved mode), prompt at the end of
+  `docs/next_session_iddes.md`.
 - ALSO PENDING: **Profile + optimise** the GPU step for the 2:1-refined channel.
   The last hard profile is STALE (the reflux that was 23% is removed; the
   `MOBY_PHASETIME` timer is deleted): re-profile first with a minimal removable

@@ -20,6 +20,7 @@ program main
     use :: ibmm
     use :: turbulence
     use :: les_model
+    use :: rans
     use :: bodyforce
     use :: comm, only: comm_type, comm_init_world, comm_init, comm_finalize, &
         init_block_exchange, exchange_halos, exchange_scalar_halos, &
@@ -41,6 +42,7 @@ program main
     type(ibm_type) :: ibm
     type(turb_type) :: turb
     type(les_type) :: les
+    type(sst_type) :: sst
     type(profiler_type) :: turb_prof
     type(bodyforce_type) :: bf
     type(config_seen_type) :: config_seen
@@ -123,6 +125,21 @@ program main
         call set_ibm_coeff(dns, blk, ibm, VAR_U)
         call set_ibm_coeff(dns, blk, ibm, VAR_V)
         call set_ibm_coeff(dns, blk, ibm, VAR_W)
+    end if
+
+    ! IDDES phase T1: a configured [rans] section builds the SST geometry
+    ! state (wall distance + IBM wall cells) so it can be validated; nothing
+    ! consumes it until the T2 transport phase, so this is init-only.
+    if (dns%rans_configured) then
+        if (c%has_terminal) print *, "initialising RANS geometry..."
+#ifdef USE_OPENMP_OFFLOAD
+        ! The analytic IBM coefficients are computed on the device; the
+        ! wall-cell classification reads the host copy.
+        !$omp target update from(ibm%coef)
+#endif
+        call init_rans_geometry(sst, dns, g, blk, bc, ibm, c)
+        call enter_rans_data(sst)
+        if (dns%rans_dump_geometry) call write_rans_geometry(sst, blk, dns, c)
     end if
 
     if (turbulence_is_enabled(turb)) then
@@ -225,6 +242,8 @@ program main
     call destroy_bodyforce(bf)
     if (turbulence_is_enabled(turb)) call exit_turbulence_data(turb)
     call destroy_turbulence(turb)
+    if (dns%rans_configured) call exit_rans_data(sst)
+    call destroy_rans_geometry(sst)
     call exit_ibm_data(ibm, dns)
     call exit_block_data(blk)
     call exit_boundary_data(bc)

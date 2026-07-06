@@ -59,6 +59,11 @@ subroutine read_runtime_config(dns, g, turb, les, ps, bc, c, input_file, has_ter
 
         if (line(1:1) == "[") then
             call parse_section(line, section)
+            ! T1 hook (docs/next_session_iddes.md): the [rans] section's mere
+            ! presence builds the SST geometry state at init, even with no
+            ! keys, so the wall distance can be validated before the RANS
+            ! transport phases land.
+            if (trim(section) == "rans") dns%rans_configured = .true.
             cycle
         end if
 
@@ -271,6 +276,8 @@ subroutine apply_config_value(section, key, value, dns, g, turb, les, ps, bc, c,
         call apply_turbulence_value(key_l, value, turb, seen, line_no)
     case ("les")
         call apply_les_value(key_l, value, les, line_no)
+    case ("rans")
+        call apply_rans_value(key_l, value, dns, line_no)
     case ("mpi")
         call apply_mpi_value(key_l, value, c, line_no)
     case ("boundary")
@@ -377,6 +384,23 @@ subroutine apply_turbulence_value(key, value, turb, seen, line_no)
         seen%turbulence_model = .true.
     end select
 end subroutine apply_turbulence_value
+
+! [rans] — the k-omega SST sub-model section. T1 carries only the geometry
+! diagnostic switch; model/transition/wall_treatment arrive with the T2+
+! transport phases (docs/next_session_iddes.md).
+subroutine apply_rans_value(key, value, dns, line_no)
+    character(len=*), intent(in) :: key, value
+    type(dns_type), intent(inout) :: dns
+    integer, intent(in) :: line_no
+
+    select case (trim(key))
+    case ("dump_geometry")
+        call read_bool(value, dns%rans_dump_geometry, line_no)
+    case default
+        if (terminal_output) print *, "warning: unknown [rans] key on input line", &
+            line_no, ": ", trim(key)
+    end select
+end subroutine apply_rans_value
 
 subroutine apply_les_value(key, value, les, line_no)
     character(len=*), intent(in) :: key, value
