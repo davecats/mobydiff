@@ -359,16 +359,21 @@ immersed boundary. Phased, each phase verified before the next:
   rewired to `turb`; `add_les_momentum_correction` →
   `add_eddy_viscosity_correction` (reads `turb%nut`; the nut consumer chain
   moved verbatim — never edit it, that is the whole bit-exactness argument
-  for the later phases). New `[turbulence]` config section (model =
-  none|smagorinsky|wale + cs/cw/delta_scale/ibm_aware; sst/sst-iddes
-  rejected until implemented); `[les]` stays as a deprecated warn-once
-  alias, so every existing ini runs unchanged. The SGS timing profiler
-  moved to turbulence.f90 (`turb_timing` tag, TURB_PROF_*). Gate: bit-exact
+  for the later phases). Config is HIERARCHICAL, mirroring the modules:
+  `[turbulence] model = none|les|rans|iddes` selects the FAMILY (rans/iddes
+  rejected until implemented; an SGS name here is a hard error pointing at
+  [les]); `[les]` is the canonical SGS section (model =
+  none|smagorinsky|wale + cs/cw/delta_scale/ibm_aware, NOT deprecated);
+  `[rans]` arrives in T2. When the [turbulence] key is absent, a configured
+  `[les] model` implies the les family (explicit none wins), so every
+  existing ini runs unchanged. The SGS timing profiler moved to
+  turbulence.f90 (`turb_timing` tag, TURB_PROF_*). Gate: bit-exact
   (nofma, max_abs 0 incl. nut) vs pre-refactor 4cd7c97 on min_channel
   (blocks + 2:1 + chebyshev, 4-rank CPU), les_ibm channel + refine_body
-  (file IBM + WALE ± 2:1), Beltrami y-slab — CPU AND GPU; a `[turbulence]`-
-  section run is byte-identical to the `[les]`-alias run. NEXT IDDES phase:
-  T1 (dwall + wall cells), prompt at the end of `docs/next_session_iddes.md`.
+  (file IBM + WALE ± 2:1), Beltrami y-slab — CPU AND GPU; a run with
+  explicit `[turbulence] model = les` is byte-identical to the implied-
+  family run. NEXT IDDES phase: T1 (dwall + wall cells), prompt at the end
+  of `docs/next_session_iddes.md`.
 - ALSO PENDING: **Profile + optimise** the GPU step for the 2:1-refined channel.
   The last hard profile is STALE (the reflux that was 23% is removed; the
   `MOBY_PHASETIME` timer is deleted): re-profile first with a minimal removable

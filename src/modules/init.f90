@@ -33,6 +33,7 @@ module init
         logical :: dtmax = .false.
         logical :: pressure_niter = .false.
         logical :: pressure_sor = .false.
+        logical :: turbulence_model = .false.
     end type config_seen_type
 
     ! Runtime/domain state shared by the solver modules.

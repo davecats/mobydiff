@@ -10,8 +10,6 @@ module config
     implicit none
 
     logical, save :: terminal_output = .true.
-    ! Warn only once about the deprecated [les] section alias.
-    logical, save :: les_alias_warned = .false.
 
 contains
 
@@ -71,6 +69,14 @@ subroutine read_runtime_config(dns, g, turb, les, ps, bc, c, input_file, has_ter
 
     close(unit)
     if (present(seen_config)) seen_config = seen
+
+    ! [turbulence] model selects the FAMILY (none|les|rans|iddes); when the
+    ! key is absent, a configured [les] model implies the LES family, so inis
+    ! predating the [turbulence] section run unchanged. An explicit
+    ! model = none wins over a configured [les] section (an off switch).
+    if (.not. seen%turbulence_model) then
+        turb%model = merge(TURB_LES, TURB_NONE, les%model /= LES_NONE)
+    end if
 
     if (has_restart_file(dns)) then
         if (dns%field_interval < 0) error stop "field interval must be non-negative"
@@ -262,15 +268,9 @@ subroutine apply_config_value(section, key, value, dns, g, turb, les, ps, bc, c,
             dns%force_file = clean_string(value)
         end select
     case ("turbulence")
-        call apply_turbulence_value(key_l, value, turb, les, line_no)
+        call apply_turbulence_value(key_l, value, turb, seen, line_no)
     case ("les")
-        ! Deprecated alias for [turbulence]; identical keys.
-        if (.not. les_alias_warned) then
-            if (terminal_output) print *, &
-                "warning: the [les] section is deprecated; use [turbulence] (same keys)"
-            les_alias_warned = .true.
-        end if
-        call apply_turbulence_value(key_l, value, turb, les, line_no)
+        call apply_les_value(key_l, value, les, line_no)
     case ("mpi")
         call apply_mpi_value(key_l, value, c, line_no)
     case ("boundary")
@@ -302,12 +302,12 @@ subroutine validate_turbulence_values(turb, les)
     case default
         error stop "invalid LES model"
     end select
-    ! The model key sets both enums together; catch any future drift.
-    if ((turb%model == TURB_NONE) .neqv. (les%model == LES_NONE)) then
-        error stop "inconsistent turbulence/LES model state"
-    end if
     if (turb%model == TURB_NONE) return
 
+    ! The LES family (and later iddes) needs an SGS kernel from [les].
+    if (les%model == LES_NONE) then
+        error stop "[turbulence] model = les requires an SGS model in [les]"
+    end if
     if (les%model == LES_SMAGORINSKY .and. les%cs < 0.0d0) then
         error stop "LES Smagorinsky constant must be non-negative"
     end if
@@ -363,15 +363,29 @@ subroutine apply_mpi_value(key, value, c, line_no)
     end select
 end subroutine apply_mpi_value
 
-subroutine apply_turbulence_value(key, value, turb, les, line_no)
+! [turbulence] holds the model FAMILY (and, later, the IDDES blend options);
+! the family sub-models keep their own sections: [les] now, [rans] from T2.
+subroutine apply_turbulence_value(key, value, turb, seen, line_no)
     character(len=*), intent(in) :: key, value
     type(turb_type), intent(inout) :: turb
+    type(config_seen_type), intent(inout) :: seen
+    integer, intent(in) :: line_no
+
+    select case (trim(key))
+    case ("model")
+        call read_turbulence_model(value, turb%model, line_no)
+        seen%turbulence_model = .true.
+    end select
+end subroutine apply_turbulence_value
+
+subroutine apply_les_value(key, value, les, line_no)
+    character(len=*), intent(in) :: key, value
     type(les_type), intent(inout) :: les
     integer, intent(in) :: line_no
 
     select case (trim(key))
     case ("model")
-        call read_turbulence_model(value, turb, les, line_no)
+        call read_les_model(value, les%model, line_no)
     case ("cs")
         call read_real(value, les%cs, line_no)
     case ("cw")
@@ -381,7 +395,7 @@ subroutine apply_turbulence_value(key, value, turb, les, line_no)
     case ("ibm_aware")
         call read_bool(value, les%ibm_aware, line_no)
     end select
-end subroutine apply_turbulence_value
+end subroutine apply_les_value
 
 subroutine apply_grid_axis_value(section, key, value, dns, g, seen, line_no)
     character(len=*), intent(in) :: section, key, value
@@ -602,13 +616,38 @@ subroutine read_grid_distribution(value, target, line_no)
     end select
 end subroutine read_grid_distribution
 
-! The model key drives both enums: the family (turb%model) and, within the
-! LES family, the SGS kernel (les%model). sst / sst-iddes are recognized but
-! not implemented yet (docs/next_session_iddes.md).
-subroutine read_turbulence_model(value, turb, les, line_no)
+! Turbulence model FAMILY. rans / iddes are recognized but not implemented
+! yet (docs/next_session_iddes.md); the SGS kernel choice lives in [les].
+subroutine read_turbulence_model(value, target, line_no)
     character(len=*), intent(in) :: value
-    type(turb_type), intent(inout) :: turb
-    type(les_type), intent(inout) :: les
+    integer(C_INT), intent(inout) :: target
+    integer, intent(in) :: line_no
+
+    character(len=:), allocatable :: value_l
+
+    value_l = lower(clean_string(value))
+    select case (trim(value_l))
+    case ("none", "off", "disabled")
+        target = TURB_NONE
+    case ("les")
+        target = TURB_LES
+    case ("rans", "sst", "iddes", "sst-iddes")
+        if (terminal_output) print *, "error: turbulence model not implemented yet on input line", &
+            line_no, ": ", trim(value_l)
+        error stop "turbulence model not implemented yet"
+    case ("smagorinsky", "smag", "wale")
+        if (terminal_output) print *, "error: [turbulence] model selects the family;", &
+            " use model = les here and set the SGS model in [les] (input line", line_no, ")"
+        error stop "SGS model belongs in the [les] section"
+    case default
+        if (terminal_output) print *, "warning: unknown turbulence model on input line", &
+            line_no, ": ", trim(value_l)
+    end select
+end subroutine read_turbulence_model
+
+subroutine read_les_model(value, target, line_no)
+    character(len=*), intent(in) :: value
+    integer(C_INT), intent(inout) :: target
     integer, intent(in) :: line_no
 
     integer :: stat, parsed
@@ -617,29 +656,20 @@ subroutine read_turbulence_model(value, turb, les, line_no)
     value_l = lower(clean_string(value))
     select case (trim(value_l))
     case ("none", "off", "disabled", "0")
-        turb%model = TURB_NONE
-        les%model = LES_NONE
+        target = LES_NONE
     case ("smagorinsky", "smag", "1")
-        turb%model = TURB_LES
-        les%model = LES_SMAGORINSKY
+        target = LES_SMAGORINSKY
     case ("wale", "2")
-        turb%model = TURB_LES
-        les%model = LES_WALE
-    case ("sst", "sst-iddes", "iddes")
-        if (terminal_output) print *, "error: turbulence model not implemented yet on input line", &
-            line_no, ": ", trim(value_l)
-        error stop "turbulence model not implemented yet"
+        target = LES_WALE
     case default
         read(value_l, *, iostat=stat) parsed
         if (stat == 0 .and. parsed >= LES_NONE .and. parsed <= LES_WALE) then
-            les%model = int(parsed, C_INT)
-            turb%model = merge(TURB_NONE, TURB_LES, les%model == LES_NONE)
+            target = int(parsed, C_INT)
         else
-            if (terminal_output) print *, "warning: unknown turbulence model on input line", &
-                line_no, ": ", trim(value_l)
+            if (terminal_output) print *, "warning: unknown LES model on input line", line_no, ": ", trim(value_l)
         end if
     end select
-end subroutine read_turbulence_model
+end subroutine read_les_model
 
 subroutine parse_section(line, section)
     character(len=*), intent(in) :: line

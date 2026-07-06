@@ -245,26 +245,38 @@ as follows.
   y⁺ ≲ 1; running it through log wall functions is meaningless) — hard
   config error, not a warning.
 
-## Config
+## Config (hierarchical: family in [turbulence], sub-models in their own sections)
 
-One section replaces/extends `[les]`:
+The sections mirror the module layout one-to-one — [turbulence]→turb_type,
+[les]→les_type, [rans]→sst_type:
 
 ```
 [turbulence]
-model          = none | smagorinsky | wale | sst | sst-iddes   (default none)
-transition     = true|false        (sst/sst-iddes only; default false)
+model = none | les | rans | iddes    (FAMILY; default none. When the key is
+                                      absent, a configured [les] model implies
+                                      les, so pre-[turbulence] inis run
+                                      unchanged; an explicit none wins.)
+# T5: the IDDES blend options (delta choice, f_e branch toggle) live here.
+
+[les]           # SGS sub-model; REQUIRED for model = les and iddes
+model = smagorinsky | wale
+# cs, cw, delta_scale, ibm_aware (as today)
+
+[rans]          # RANS sub-model; REQUIRED for model = rans and iddes (T2)
+model          = sst
+transition     = true|false        (default false)
 wall_treatment = resolved | wall_function   (default resolved)
-# LES constants (as today): cs, cw, delta_scale, ibm_aware
-# SST/IDDES constants only if overriding published defaults
+# SST constants only if overriding published defaults
 # inlet/initial turbulence: tu (%), nut_ratio  -> k, omega initial+BC values
 ```
 
-Keep `[les] model = wale` etc. parsing as a DEPRECATED ALIAS mapping onto
-`[turbulence]` (warn once) — every existing ini and the bit-exact
-regression suite must keep running unchanged. Parsing lives in config.f90
-`apply_config_value` (new `case ("turbulence")` beside the existing les
-case); validation in a `validate_turbulence_values` (transition ∧
-wall_function → error; sst ∧ no dwall source → error; etc.).
+`[les]` is NOT deprecated — it is the canonical SGS section (T0 briefly
+made it an alias; the hierarchical form replaced that same-day). rans /
+iddes are recognized and rejected with "not implemented yet" until their
+phases land; `model = wale` under [turbulence] is a hard error pointing at
+[les]. Validation in `validate_turbulence_values` (family les with no
+[les] model → error; later: transition ∧ wall_function → error; sst ∧ no
+dwall source → error; etc.).
 
 ## Phase plan (each gated; never start N+1 with N unverified)
 
@@ -275,10 +287,11 @@ wall_function → error; sst ∧ no dwall source → error; etc.).
   caller-supplied nut target; `velocity_gradient_tensor` reads turb metrics);
   main.f90/step.f90 call sites switched to `turb`;
   `add_les_momentum_correction` renamed `add_eddy_viscosity_correction`
-  (reads `turb%nut`, body verbatim). `[turbulence]` config section
-  (model none|smagorinsky|wale sets turb%model + les%model together;
-  sst/sst-iddes rejected with "not implemented yet"); `[les]` is a
-  deprecated warn-once alias onto the same handler. Gate PASSED: bit-exact
+  (reads `turb%nut`, body verbatim). Config is the hierarchical scheme of
+  the Config section above: `[turbulence] model = none|les|rans|iddes`
+  (family; rans/iddes rejected until implemented; absent key + configured
+  `[les] model` implies les) with `[les]` as the canonical SGS section
+  (model/cs/cw/delta_scale/ibm_aware, not deprecated). Gate PASSED: bit-exact
   (`-Mnofma`/`-gpu=nofma`, max_abs 0 on un/vn/wn/pn + nut) vs the
   pre-refactor binary (4cd7c97) on min_channel (blocks + 2:1 + chebyshev,
   4-rank CPU), les_ibm channel + refine_body (file IBM + WALE ± 2:1),
