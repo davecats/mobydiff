@@ -380,17 +380,27 @@ dwall source → error; etc.).
 - `git add` explicit paths only (see memory: git-staging-discipline);
   validation output .h5/.png are gitignored on purpose.
 
-## NEXT-SESSION PROMPT (T0 done 2026-07-05; T1 is next)
+## NEXT-SESSION PROMPT (T0 done 2026-07-05, commits c4a13ad + bb4a616; T1 is next)
 
 > Read `docs/next_session_iddes.md` and CLAUDE.md. Branch
 > `claude/jacobi-interface`. Execute phase T1 ONLY: wall distance + IBM
-> wall cells. `dwall`/`y_eff` (mobygeom `dwall_blocks` per leaf, the
-> analytic-IBM path, the domain-wall min, the ½·min(Δ) floor of §IBM-1);
-> wall-cell classification (§IBM-2) into `sst_type`'s per-cell marker (or
-> a T1-local home if rans.f90 does not exist yet); device mapping per the
-> enter_/exit_*_data pattern. Gates: y_eff exact vs closed form on the
-> les_ibm plane-wall channel and a wavychannel section; per-level
-> correctness under `refine_body` (Fortran vs mobygeom cross-check like
-> the block-table read); all T0 cases still bit-exact (dwall unused when
-> model /= sst*). Make a plan first; execute after. Subsequent sessions
+> wall cells (items 1–2 of the "IBM wall treatment" section). Build
+> `dwall`/`y_eff`: the mobygeom `dwall_blocks` per-leaf dataset (evaluated
+> at each leaf's level, like `coef_blocks`), the analytic-IBM path
+> computed in the flow-case init, the domain-wall distance from the node
+> lines min'ed in, and the y_eff = max(dwall, ½·min(Δx,Δy,Δz)) floor.
+> Classify IBM wall cells (fluid cell with ≥1 solid staggered face, the
+> existing ibm_aware test) into a per-cell byte marker. Home: create
+> `src/modules/rans.f90` with an `sst_type` that for now holds ONLY the
+> geometry state (dwall/y_eff, the wall-cell marker) + its
+> enter_/exit_*_data; the transport arrays arrive in T2. Note
+> `[turbulence] model = rans` is still rejected, so give the gate a way to
+> exercise dwall — smallest hook wins (e.g. build it whenever a `[rans]`
+> section is present, or an init-time diagnostic dump); no MOBY_* env
+> hooks. Gates: y_eff exact vs closed form on the les_ibm plane-wall
+> channel (walls at y = 0.259375 / 2.259375) and on a wavychannel
+> section; per-level correctness under `refine_body` (Fortran vs mobygeom
+> cross-check at read, like the block-table); all T0 cases still bit-exact
+> (nofma, max_abs 0) — nothing new executes when no `[rans]` section is
+> configured. Make a plan first; execute after. Subsequent sessions
 > proceed T2 → T5 per the doc, one phase per gate.
