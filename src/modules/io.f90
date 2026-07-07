@@ -1,5 +1,6 @@
 module io
     use, intrinsic :: iso_c_binding
+    use :: mpi_f08
     use :: init, only: dns_type, grid_type, VAR_U, VAR_V, VAR_W, VAR_P, NVAR, NVEL
     use :: blocks, only: block_set_type
     use :: boundary, only: boundary_type, NFACES
@@ -219,8 +220,11 @@ subroutine write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor, n
         end if
     end if
 
-    ! No XDMF for the block-table layout; reassemble with
-    ! tools/compare_fields.py --export-global for visualization.
+    ! Sidecar XDMF so ParaView/VisIt can open the block-table field directly:
+    ! a spatial collection of one uniform sub-grid per block, each referencing
+    ! its slice of the HDF5 field datasets. Collective (it gathers the global
+    ! block table); only rank 0 writes the file.
+    call write_xdmf(xdmf_file_name, h5_file_name, blk, dns, g, c, allocated(nut))
 end subroutine write_field
 
 subroutine write_grid_export(dns, g, blk, bc, file_name, has_terminal)
@@ -452,18 +456,33 @@ subroutine read_force_file(f, blk, dns, file_name, has_terminal)
     deallocate(qtmp)
 end subroutine read_force_file
 
-subroutine write_xdmf(xdmf_file_name, h5_file_name, dns, g)
+subroutine write_xdmf(xdmf_file_name, h5_file_name, blk, dns, g, c, has_nut)
+    ! Sidecar XDMF for the block-table field layout. Each global block becomes
+    ! a uniform rectilinear sub-grid inside a spatial collection; its cell
+    ! values reference the (nBlocksGlobal, nbz, nby, nbx) HDF5 datasets by
+    ! hyperslab, its node coordinates come from the block's level node lines.
+    ! Collective: gathers the global (origin, level) table to rank 0, which is
+    ! the only rank that touches the text file.
     character(len=*), intent(in) :: xdmf_file_name, h5_file_name
+    type(block_set_type), intent(in) :: blk
     type(dns_type), intent(in) :: dns
     type(grid_type), intent(in) :: g
+    type(comm_type), intent(in) :: c
+    logical, intent(in) :: has_nut
 
+    integer(C_INT), allocatable :: table(:,:)      ! (4, nBlocksGlobal): origin(3), level
     character(len=256) :: h5_ref
-    integer :: io, slash
-    integer(C_INT) :: nx, ny, nz
+    integer :: io, slash, gid, lev, ox, oy, oz
+    integer :: nbx, nby, nbz, nblk
 
-    nx = dns%globalSize(1)
-    ny = dns%globalSize(2)
-    nz = dns%globalSize(3)
+    call gather_block_table(blk, c, table)
+    if (c%world_rank /= 0) then
+        if (allocated(table)) deallocate(table)
+        return
+    end if
+
+    nbx = int(blk%nb(1)); nby = int(blk%nb(2)); nbz = int(blk%nb(3))
+    nblk = int(blk%nBlocksGlobal)
 
     h5_ref = trim(h5_file_name)
     slash = scan(trim(h5_ref), "/", back=.true.)
@@ -475,48 +494,125 @@ subroutine write_xdmf(xdmf_file_name, h5_file_name, dns, g)
     write(io,'(A)') '<!DOCTYPE Xdmf SYSTEM "Xdmf.dtd" []>'
     write(io,'(A)') '<Xdmf Version="2.0">'
     write(io,'(A)') '  <Domain>'
-    write(io,'(A)') '    <Grid Name="mobyDiff" GridType="Uniform">'
+    write(io,'(A)') '    <Grid Name="mobyDiff" GridType="Collection" CollectionType="Spatial">'
     write(io,'(A,ES20.12,A)') '      <Time Value="', dns%t_current, '"/>'
-    write(io,'(A,I0,1X,I0,1X,I0,A)') &
-        '      <Topology TopologyType="3DRectMesh" Dimensions="', nz+1_C_INT, ny+1_C_INT, nx+1_C_INT, '"/>'
-    write(io,'(A)') '      <Geometry GeometryType="VXVYVZ">'
-    call write_xdmf_coord(io, h5_ref, "/x", nx+1_C_INT)
-    call write_xdmf_coord(io, h5_ref, "/y", ny+1_C_INT)
-    call write_xdmf_coord(io, h5_ref, "/z", nz+1_C_INT)
-    write(io,'(A)') '      </Geometry>'
-    call write_xdmf_scalar(io, "un", h5_ref, "/un", nx, ny, nz)
-    call write_xdmf_scalar(io, "vn", h5_ref, "/vn", nx, ny, nz)
-    call write_xdmf_scalar(io, "wn", h5_ref, "/wn", nx, ny, nz)
-    call write_xdmf_scalar(io, "pn", h5_ref, "/pn", nx, ny, nz)
+
+    do gid = 0, nblk - 1
+        ox = table(1,gid+1); oy = table(2,gid+1); oz = table(3,gid+1)
+        lev = table(4,gid+1)
+
+        write(io,'(A,I0,A)') '      <Grid Name="block_', gid, '" GridType="Uniform">'
+        write(io,'(A,I0,1X,I0,1X,I0,A)') &
+            '        <Topology TopologyType="3DRectMesh" Dimensions="', nbz+1, nby+1, nbx+1, '"/>'
+        write(io,'(A)') '        <Geometry GeometryType="VXVYVZ">'
+        ! Level-l node lines exist as blk%lineX/Y/Z when the grid is refined;
+        ! a single-level run keeps only the level-0 lines (g%xNode/yNode/zNode).
+        if (allocated(blk%lineX)) then
+            call write_xdmf_coords(io, blk%lineX(:,lev+1), ox, nbx+1)
+            call write_xdmf_coords(io, blk%lineY(:,lev+1), oy, nby+1)
+            call write_xdmf_coords(io, blk%lineZ(:,lev+1), oz, nbz+1)
+        else
+            call write_xdmf_coords(io, g%xNode, ox, nbx+1)
+            call write_xdmf_coords(io, g%yNode, oy, nby+1)
+            call write_xdmf_coords(io, g%zNode, oz, nbz+1)
+        end if
+        write(io,'(A)') '        </Geometry>'
+
+        call write_xdmf_block_attr(io, "un", h5_ref, gid, nblk, nbx, nby, nbz)
+        call write_xdmf_block_attr(io, "vn", h5_ref, gid, nblk, nbx, nby, nbz)
+        call write_xdmf_block_attr(io, "wn", h5_ref, gid, nblk, nbx, nby, nbz)
+        call write_xdmf_block_attr(io, "pn", h5_ref, gid, nblk, nbx, nby, nbz)
+        if (has_nut) call write_xdmf_block_attr(io, "nut", h5_ref, gid, nblk, nbx, nby, nbz)
+
+        write(io,'(A)') '      </Grid>'
+    end do
+
     write(io,'(A)') '    </Grid>'
     write(io,'(A)') '  </Domain>'
     write(io,'(A)') '</Xdmf>'
     close(io)
+    deallocate(table)
 end subroutine write_xdmf
 
-subroutine write_xdmf_coord(io, h5_ref, dataset, n)
-    integer, intent(in) :: io
-    character(len=*), intent(in) :: h5_ref, dataset
-    integer(C_INT), intent(in) :: n
+! Gather every rank's local (origin, level) rows into the global block table
+! on rank 0, indexed by global block id. Each rank owns the contiguous id
+! range [idStart, idStart+nBlocks), so the receive is a plain gatherv keyed by
+! idStart. On ranks other than 0 the returned table is a 1-element placeholder.
+subroutine gather_block_table(blk, c, table)
+    type(block_set_type), intent(in) :: blk
+    type(comm_type), intent(in) :: c
+    integer(C_INT), allocatable, intent(out) :: table(:,:)
 
-    write(io,'(A,I0,A,A,A,A,A)') &
-        '        <DataItem Dimensions="', n, &
+    integer(C_INT), allocatable :: sendbuf(:,:)
+    integer, allocatable :: nb_all(:), id_all(:), counts(:), displs(:)
+    integer :: b, nb_local, id_local
+
+    nb_local = int(blk%nBlocks)
+    id_local = int(blk%idStart)
+
+    allocate(sendbuf(4, max(1, nb_local)))
+    do b = 1, nb_local
+        sendbuf(1:3, b) = blk%origin(:, b)
+        sendbuf(4, b)   = blk%level(b)
+    end do
+
+    if (c%world_rank == 0) then
+        allocate(table(4, int(blk%nBlocksGlobal)))
+        allocate(nb_all(c%world_size), id_all(c%world_size))
+        allocate(counts(c%world_size), displs(c%world_size))
+    else
+        allocate(table(4, 1))
+        allocate(nb_all(1), id_all(1), counts(1), displs(1))
+    end if
+
+    call MPI_Gather(nb_local, 1, MPI_INTEGER, nb_all, 1, MPI_INTEGER, 0, MPI_COMM_WORLD)
+    call MPI_Gather(id_local, 1, MPI_INTEGER, id_all, 1, MPI_INTEGER, 0, MPI_COMM_WORLD)
+    if (c%world_rank == 0) then
+        counts = nb_all*4
+        displs = id_all*4
+    end if
+    call MPI_Gatherv(sendbuf, nb_local*4, MPI_INTEGER, &
+        table, counts, displs, MPI_INTEGER, 0, MPI_COMM_WORLD)
+
+    deallocate(sendbuf, nb_all, id_all, counts, displs)
+end subroutine gather_block_table
+
+! One inline VXVYVZ coordinate array: nodes i0 .. i0+n-1 of a 0-based line.
+subroutine write_xdmf_coords(io, line, i0, n)
+    integer, intent(in) :: io, i0, n
+    real(C_DOUBLE), intent(in) :: line(0:)
+    integer :: p
+
+    write(io,'(A,I0,A)') '          <DataItem Dimensions="', n, &
+        '" NumberType="Float" Precision="8" Format="XML">'
+    write(io,'(*(1X,ES22.14))') (line(i0+p), p = 0, n-1)
+    write(io,'(A)') '          </DataItem>'
+end subroutine write_xdmf_coords
+
+! A cell-centred attribute reading block gid's slice out of the global
+! (nBlocks, nbz, nby, nbx) HDF5 dataset via a hyperslab selection.
+subroutine write_xdmf_block_attr(io, name, h5_ref, gid, nblk, nbx, nby, nbz)
+    integer, intent(in) :: io, gid, nblk, nbx, nby, nbz
+    character(len=*), intent(in) :: name, h5_ref
+
+    write(io,'(A,A,A)') '        <Attribute Name="', trim(name), &
+        '" AttributeType="Scalar" Center="Cell">'
+    ! Outer Dimensions is the 3D result shape (one block); the selection below
+    ! keeps the block index as a 4D count row "1 nbz nby nbx". The legacy Xdmf2
+    ! reader rejects a 4D result shape here, so it must stay 3D.
+    write(io,'(A,I0,1X,I0,1X,I0,A)') &
+        '          <DataItem ItemType="HyperSlab" Dimensions="', nbz, nby, nbx, '" Type="HyperSlab">'
+    write(io,'(A)') '            <DataItem Dimensions="3 4" Format="XML">'
+    write(io,'(A,I0,A,I0,1X,I0,1X,I0)') &
+        '              ', gid, ' 0 0 0   1 1 1 1   1 ', nbz, nby, nbx
+    write(io,'(A)') '            </DataItem>'
+    write(io,'(A,I0,1X,I0,1X,I0,1X,I0,A,A,A,A,A)') &
+        '            <DataItem Dimensions="', nblk, nbz, nby, nbx, &
         '" NumberType="Float" Precision="8" Format="HDF">', &
-        trim(h5_ref), ':', trim(dataset), '</DataItem>'
-end subroutine write_xdmf_coord
-
-subroutine write_xdmf_scalar(io, name, h5_ref, dataset, nx, ny, nz)
-    integer, intent(in) :: io
-    character(len=*), intent(in) :: name, h5_ref, dataset
-    integer(C_INT), intent(in) :: nx, ny, nz
-
-    write(io,'(A,A,A)') '      <Attribute Name="', trim(name), '" AttributeType="Scalar" Center="Cell">'
-    write(io,'(A,I0,1X,I0,1X,I0,A,A,A,A,A)') &
-        '        <DataItem Dimensions="', nz, ny, nx, &
-        '" NumberType="Float" Precision="8" Format="HDF">', &
-        trim(h5_ref), ':', trim(dataset), '</DataItem>'
-    write(io,'(A)') '      </Attribute>'
-end subroutine write_xdmf_scalar
+        trim(h5_ref), ':/', trim(name), '</DataItem>'
+    write(io,'(A)') '          </DataItem>'
+    write(io,'(A)') '        </Attribute>'
+end subroutine write_xdmf_block_attr
 
 
 subroutine make_output_filename(prefix, step, extension, file_name)
