@@ -448,8 +448,41 @@ immersed boundary. Phased, each phase verified before the next:
   gate): initialise_channel_fields filled only block slot 1 — cold-start
   channels with [blocks] nb set got a rank-dependent mostly-zero IC; now
   loops all blocks with block-origin noise indexing (bit-exact for the
-  default layout). NEXT IDDES phase: T3 (wall functions) — prompt at the
-  end of `docs/next_session_iddes.md`.
+  default layout).
+- IDDES phase T3 — wall functions (DONE 2026-07-08, branch
+  `claude/jacobi-interface`). `[rans] wall_treatment = wall_function`
+  (Weber Eqs. 4.39-4.42 / the OpenFOAM omega+nutk wall functions), all
+  branch-gated on the mode so resolved stays bit-exact: constrained-cell
+  ω (IBM wall + domwall rows) = stepwise viscous/log blend on the k-based
+  y⁺ (switch y⁺_lam = 11.5301 = the ln(E y⁺)/κ fixed point; κ = 0.41,
+  E = 9.8); wall-cell ν_t = ν(y⁺κ/ln(E y⁺) − 1) on the log branch AND
+  copied into the no-slip physical-face ghosts (the momentum correction
+  interpolates ν_t to faces — without the ghost copy the wall face sees
+  ν_t,w/2 and the delivered wall shear is wrong); log-branch wall-cell
+  P_k = (ν+ν_t,w)(|U_t|/y_eff)C_μ^¼√k/(κ y_eff) with U_t tangential to
+  the precomputed `sst%wnorm` = normalized ∇dwall (RAW dwall, not the
+  floored yeff; one-sided away from solid staggered faces and no-slip
+  physical faces, where dwall is V-shaped/mirrored). transition ∧
+  wall_function is a hard config error placed ahead of the T4 rejection.
+  Gates (validation/rans_sst/, all PASS): y⁺₁ = 30/45 channels hit the
+  DNS centreline anchor 18.20 to 1.2%/0.7%, u_τ = 1.0000 (delivered
+  wall stress (ν+ν_t,1)U₁/y₁); the y⁺₁ = 5/15/22.5/30/45 sweep degrades
+  gracefully (mild +3% buffer overshoot, NO double-counting dip; first
+  cells below y⁺ 30 carry the textbook 10-19% log-line error,
+  informational); ibm180wf (IBM channel y⁺₁ ~ 2-3 → viscous branch, 200k
+  steps on the local GPU) matches T2 resolved ibm180 to ROUND-OFF
+  (u 4.5e-16 — the viscous branch IS the resolved arithmetic and the
+  RANS fixed point is hardware-independent); resolved mode
+  bit-exact vs 8991192 (nofma, max_abs 0 incl. k/ω/nut, CPU AND GPU) on
+  min_channel/les_ibm ± refine_body/Beltrami y-slab/turb180;
+  wall-function 20-step: 1-rank == 4-rank EXACT, CPU vs GPU ≤ 2e-13 (the
+  wall-function `log()` differs an ulp between host/device libm;
+  resolved stays exactly CPU==GPU). rans_channel_check.py gained
+  `--mode wallfn` (gates y⁺ ≥ 30 + near-centre rows against the RESOLVED
+  turb180 profile — the DNS anchor is transitive) and non-cubic rank-box
+  block support (the ny = 6 case runs with [blocks] nb unset). NEXT
+  IDDES phase: T5 (IDDES blend; T4 transition is separable) — prompt at
+  the end of `docs/next_session_iddes.md`.
 - ALSO PENDING: **Profile + optimise** the GPU step for the 2:1-refined channel.
   The last hard profile is STALE (the reflux that was 23% is removed; the
   `MOBY_PHASETIME` timer is deleted): re-profile first with a minimal removable

@@ -327,16 +327,19 @@ subroutine validate_turbulence_values(turb, les, dns)
     end if
 
     if (turb%model == TURB_RANS) then
-        ! T2 (docs/next_session_iddes.md): SST transport in resolved wall
-        ! mode only; wall functions arrive in T3, transition in T4.
+        ! T2/T3 (docs/next_session_iddes.md): SST transport with resolved
+        ! walls or wall functions; transition arrives in T4.
         if (.not. dns%rans_configured .or. dns%rans_model == 0_C_INT) then
             error stop "[turbulence] model = rans requires [rans] model = sst"
         end if
+        ! gamma-Re_theta needs y+ <~ 1; running it through log wall
+        ! functions is meaningless. Keep this guard ahead of the T4
+        ! rejection so it survives when transition lands.
+        if (dns%rans_transition .and. dns%rans_wall_treatment /= 0_C_INT) then
+            error stop "[rans] transition requires wall_treatment = resolved"
+        end if
         if (dns%rans_transition) then
             error stop "[rans] transition is not implemented yet (phase T4)"
-        end if
-        if (dns%rans_wall_treatment /= 0_C_INT) then
-            error stop "[rans] wall_treatment = wall_function is not implemented yet (phase T3)"
         end if
         if (dns%rans_tu <= 0.0d0) error stop "[rans] tu must be positive (percent)"
         if (dns%rans_nut_ratio <= 0.0d0) error stop "[rans] nut_ratio must be positive"
@@ -406,8 +409,8 @@ end subroutine apply_turbulence_value
 
 ! [rans] — the k-omega SST sub-model section (docs/next_session_iddes.md).
 ! T2: model = sst enables the transport equations under
-! [turbulence] model = rans; transition (T4) and wall_function (T3) are
-! recognized but rejected until their phases land.
+! [turbulence] model = rans; T3: wall_treatment = wall_function;
+! transition (T4) is recognized but rejected until its phase lands.
 subroutine apply_rans_value(key, value, dns, line_no)
     character(len=*), intent(in) :: key, value
     type(dns_type), intent(inout) :: dns

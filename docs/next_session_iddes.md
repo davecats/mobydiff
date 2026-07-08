@@ -406,10 +406,54 @@ dwall source → error; etc.).
   got a rank-count-dependent, mostly-zero IC; fix loops all blocks with
   block-origin noise indexing (bit-exact for the default
   one-block-per-rank layout, where origin == the old rank-box offset).
-- **T3 — wall_function mode.** Log-branch ω/ν_t/G in wall cells. Gate:
-  the same channel deliberately coarsened to y⁺₁ ≈ 30–50 still recovers
-  the log law and the correct bulk U; behaviour degrades gracefully as
-  y⁺₁ varies (no double-counting dip).
+- **T3 — wall_function mode. DONE (validated 2026-07-08).**
+  `[rans] wall_treatment = wall_function` (config accepted; transition ∧
+  wall_function stays a hard error, guard placed ahead of the T4
+  rejection). On top of resolved T2, all branch-gated on the mode so
+  resolved stays bit-exact: (1) constrained-cell ω (IBM wall cells AND
+  domwall rows, both pinning sites host+device) becomes the stepwise
+  viscous/log blend `omega_wall_blend` on the k-based y⁺ =
+  C_μ^¼ √k y_eff/ν with y⁺_lam = 11.5301 (the fixed point of
+  y⁺ = ln(E y⁺)/κ; κ = 0.41, E = 9.8, the OpenFOAM value); (2) wall-cell
+  ν_t overwritten after assembly (`nut_wall_value`: 0 viscous,
+  ν(y⁺κ/ln(E y⁺) − 1) log, continuous at the switch), and COPIED into
+  the no-slip physical-face ghosts (`rans_apply_nut_wall_ghosts`) so the
+  face-interpolated ν_t the momentum correction uses at the wall face IS
+  the wall value — without the ghost copy the face sees ν_t,w/2 and the
+  delivered wall shear (ν + ν_t,face) U₁/y₁ is wrong; (3) log-branch
+  wall-cell k production G = (ν + ν_t,w)(|U_t|/y_eff) C_μ^¼√k/(κ y_eff)
+  from the tangential velocity relative to the local wall normal
+  (`sst%wnorm`, host-precomputed at init as normalized ∇dwall — RAW
+  dwall, not the floored yeff — one-sided AWAY from solid staggered
+  faces and no-slip physical faces, where dwall is V-shaped/mirrored and
+  a centred difference sees spurious zero slope); the viscous branch
+  keeps the resolved rules (IBM wall pk = 0, domwall pk normal). The ω
+  cross-diffusion hardening and first-order upwind are untouched.
+  Gates (validation/rans_sst/, all PASS): (a) wf180_y30/y45 (uniform
+  ny = 6/4; ny = 6 is not nb-divisible → [blocks] nb unset, which also
+  exercised rank-box blocks): implied U+ centreline vs DNS 18.20 to
+  1.2%/0.7%, u_τ (delivered wall stress (ν+ν_t,1)U₁/y₁) = 1.0000;
+  (b) sweep y⁺₁ = 5/15/22.5/30/45: centrelines −3.1%/+2.8%/+3.0%/+1.2%/
+  +0.7% — a mild +3% buffer overshoot decaying into the log layer, NO
+  double-counting dip (that would be a deficit); first cells below
+  y⁺ 30 sit 10–19% above the resolved profile = the log-line error at
+  the anchor cell, reported informationally (`--mode wallfn` in
+  rans_channel_check.py gates rows with y⁺ ≥ 30 and near-centre rows
+  against the RESOLVED turb180 profile, which carries the DNS anchor —
+  the checker now also handles non-cubic rank-box blocks); (c) ibm180wf
+  (the IBM channel at y⁺₁ ~ 2–3 through the wall-function blend, 200k
+  steps on the local GPU at 18.6 ms/step): the steady profile matches
+  the T2 resolved ibm180 field to ROUND-OFF (u 4.5e-16, nut 1.1e-16) —
+  the k-based switch keeps every wall cell on the viscous branch, whose
+  arithmetic is exactly the resolved treatment, and the RANS fixed point
+  is hardware-independent;
+  (d) resolved mode bit-exact vs T2 8991192 (nofma, max_abs 0 incl.
+  k/ω/nut) on min_channel 4-rank, les_ibm ± refine_body, Beltrami
+  y-slab, turb180 — CPU AND GPU; (e) wf180_y15 20-step: 1-rank == 4-rank
+  EXACTLY; CPU vs GPU ≤ 2e-13 (pn) — NOT exact, unlike resolved (which
+  still is): the `log()` intrinsic in the wall-function branch differs
+  by an ulp between host and device libm (same class as the accepted
+  les_ibm masking-branch 4.6e-14 precedent).
 - **T4 — γ–Re_θt transition (resolved only).** The two extra scalars +
   correlations + the P̃_k/D̃_k coupling. Gate caveat: the canonical T3-series
   flat-plate cases need an inflow/outflow capability — CHECK first whether
@@ -464,44 +508,42 @@ dwall source → error; etc.).
 - `git add` explicit paths only (see memory: git-staging-discipline);
   validation output .h5/.png are gitignored on purpose.
 
-## NEXT-SESSION PROMPT (T2 done 2026-07-08; T3 — wall functions — is next)
+## NEXT-SESSION PROMPT (T3 done 2026-07-08; T5 — the IDDES blend — is next;
+## T4 transition is separable and can come before or after)
 
 > Read `docs/next_session_iddes.md` and CLAUDE.md. Branch
-> `claude/jacobi-interface`. Execute phase T3 ONLY: the `[rans]
-> wall_treatment = wall_function` mode (Weber thesis Eqs. 4.39-4.42 /
-> the doc's IBM wall treatment items 3-6). On top of the validated T2
-> resolved mode: (1) wall-cell ω becomes the stepwise viscous/log blend
-> (ω_vis = 6ν/(β1 y_eff²), ω_log = √k/(C_μ^¼ κ y_eff), switch at
-> y⁺_lam ≈ 11 with y⁺ = C_μ^¼ y_eff √k/ν) — same pinning site
-> (rans_set_constrained_cells + the transport kernel's pinned branch),
-> new value; (2) wall-cell ν_t overwritten after assembly: 0 on the
-> viscous branch, ν(y⁺κ/ln(E y⁺) − 1) on the log branch (E = 9.8);
-> (3) wall-cell k-production on the log branch from the tangential
-> velocity relative to the local IB normal (∇dwall by one-sided
-> differences — replaces the P_k = 0 wall-cell rule of resolved mode);
-> (4) the domain-wall first-cell rows (domwall byte) get the same blend.
-> Config: accept wall_function; transition ∧ wall_function stays a hard
-> error. Respect the T2 landmines (memory iddes-plan): the ω
-> cross-diffusion hardening (Patankar split + rate limiter +
-> wall-consistent IC) is load-bearing — do not simplify it; the scalar
-> convection is first-order upwind by design (single halo layer).
-> Gates: (a) the turb180 channel deliberately coarsened to y⁺₁ ≈ 30-50
-> (uniform or mildly stretched y) recovers U+ centreline vs DNS 18.20
-> (2%) and u_τ = 1 — gate against the DNS centreline anchor, NOT the
-> raw κ/B log line (it deviates several % from real profiles; see
-> rans_channel_check.py --uplus-center); (b) graceful degradation as
-> y⁺₁ varies (~5, ~15, ~30, ~50 — no double-counting dip in the buffer
-> range; base180u.ini at y⁺₁≈2.8 is the existing marginal control);
-> (c) the les_ibm IBM channel (ibm180.ini, y⁺₁ ~ 2-3) does not regress
-> vs its T2 resolved result; (d) resolved mode bit-exact vs T2 8991192
-> (the wall_function code must be branch-gated; nofma, max_abs 0, on
-> the short T2 case list); (e) CPU==GPU + 1-vs-4-rank determinism on
-> one wall-function case (20-step runs). WORKFLOW: long physics runs go
-> through validation/rans_sst/run_gates.sh on the big machine (extend
-> it with the new cases; the user rsyncs there and back;
-> check_gates.sh runs locally) — run at most one solver job at a time
-> on the local machine; bit-exactness comparisons use sed-shortened
-> ini copies (~20 steps, reduced niter) per memory
-> bit-exact-gates-short, never full-length runs. Then T4 (transition,
-> separable — first revisit the first-order-upwind front-sharpness
-> question) or T5 (IDDES blend) per the doc, one phase per gate.
+> `claude/jacobi-interface`. Execute phase T5 ONLY: the IDDES blend
+> (SST-IDDES, Gritskevich et al. 2012), DDES shielding form FIRST —
+> f_d = 1 − tanh((8 r_d)³), r_d = (ν_t + ν)/(κ² y_eff² √(Σ g_ij g_ij))
+> reusing velocity_gradient_tensor; l_RANS = √k/(β* ω), l_LES = C_DES Δ
+> (C_DES = F1-blend of 0.78/0.61, Δ = (ΔxΔyΔz)^{1/3} from filter_* to
+> start, Δ selectable); l_hyb replaces l_RANS in the k-destruction ONLY;
+> nut = f_d nut_rans + (1 − f_d) nut_wale with the blend living entirely
+> in turbulence.f90 (les.f90/rans.f90 stay decoupled; pure RANS keeps
+> f_d ≡ 1 and never evaluates the LES kernel; pure LES never allocates
+> RANS state). Config: [turbulence] model = iddes (requires BOTH [les]
+> model and [rans] model = sst; works with either wall_treatment).
+> Respect the T2/T3 landmines (memory iddes-plan): the ω cross-diffusion
+> hardening is load-bearing; scalar convection is first-order upwind by
+> design; the wall-function paths are branch-gated — keep the blend out
+> of the branch-gated wall-cell code. Gates per the doc's T5 list:
+> (a) f_d sane on the developed channel at a WMLES-style grid (→1 at the
+> wall, →0 in the core); (b) channel mean profile: no gross log-layer
+> mismatch vs T2 RANS and pure-WALE references; (c) consistency limits:
+> f_d forced 1 reproduces the T2/T3 RANS answers, f_d forced 0 recovers
+> WALE in the core; (d) the les_ibm IBM channel runs IDDES stably with
+> the wall treatment; (e) model ≠ iddes bit-exact vs T3 (nofma, max_abs
+> 0, short case list incl. a RANS resolved AND a wall_function case) —
+> the elevating f_B/f_e/f_dt branch is a SEPARATE later increment.
+> WORKFLOW: long physics runs go through validation/rans_sst/
+> run_gates.sh (or a new validation dir) on the big machine — the user
+> rsyncs there and back; check scripts run locally; at most one solver
+> job at a time on the local machine (the local GPU is fine for
+> hour-scale runs, e.g. ibm180wf took ~200k steps there); bit-exactness
+> comparisons use sed-shortened ini copies (~20 steps) per memory
+> bit-exact-gates-short, never full-length runs. If doing T4 instead:
+> first revisit the first-order-upwind front-sharpness question
+> (rans.f90 deviation note) — γ–Re_θt fronts may need the TVD limiter,
+> which needs a second upwind halo cell; resolve that BEFORE the
+> correlations, and gate per the doc's T4 list (transition stays
+> resolved-walls-only, the config guard already enforces it).

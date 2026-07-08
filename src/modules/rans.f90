@@ -6,12 +6,20 @@
 !--------------------------!
 !
 ! k-omega SST (Menter 2003 constants), resolved-wall mode (IDDES phase T2,
-! docs/next_session_iddes.md). The module owns the SST GEOMETRY state
-! (phase T1: wall distance + IBM wall cells, below) and the TRANSPORT state
-! (k, omega + their low-storage RK3 rhs history). The model is a producer
-! of the one cell-centred turb%nut; everything downstream of nut (halo
-! exchange, momentum correction, dt limit, io) is the untouched consumer
-! chain.
+! docs/next_session_iddes.md) plus the T3 wall-function mode
+! ([rans] wall_treatment = wall_function; Weber thesis Eqs. 4.39-4.42):
+! the constrained-cell omega becomes the stepwise viscous/log blend on the
+! k-based y+ (omega_wall_blend), the wall-cell nut is overwritten with the
+! log-law value (nut_wall_value, copied into the domain-wall ghosts so the
+! wall FACE carries it), and the log-branch wall-cell k production comes
+! from the tangential velocity relative to the local wall normal
+! (normalized grad dwall). Every wall-function path is branch-gated on the
+! mode, so resolved mode stays bit-exact vs T2. The module owns the SST
+! GEOMETRY state (phase T1: wall distance + IBM wall cells, below) and the
+! TRANSPORT state (k, omega + their low-storage RK3 rhs history). The
+! model is a producer of the one cell-centred turb%nut; everything
+! downstream of nut (halo exchange, momentum correction, dt limit, io) is
+! the untouched consumer chain.
 !
 ! Physics note: the eddy-viscosity correction applies the DEVIATORIC
 ! Boussinesq stress; the -(2/3) k delta_ij part is absorbed into pressure,
@@ -101,6 +109,16 @@ module rans
     ! Floors: k may touch zero; omega must stay positive (it divides).
     real(C_DOUBLE), parameter :: OMEGA_MIN = 1.0d-8
 
+    ! Wall-function constants (T3, Weber thesis Eqs. 4.39-4.42 = the
+    ! OpenFOAM omega/nutk wall functions): kappa, E, C_mu^(1/4), and the
+    ! viscous/log switch y+_lam = the fixed point of y+ = ln(E y+)/kappa
+    ! (OpenFOAM iterates the same fixed point; kappa 0.41, E 9.8 -> 11.53).
+    ! y+ is built from the wall-cell k: y+ = C_mu^(1/4) sqrt(k) y_eff / nu.
+    real(C_DOUBLE), parameter :: WF_KAPPA = 0.41d0
+    real(C_DOUBLE), parameter :: WF_E = 9.8d0
+    real(C_DOUBLE), parameter :: WF_CMU25 = 0.5477225575051661d0   ! 0.09**0.25
+    real(C_DOUBLE), parameter :: WF_YPLUS_LAM = 11.530107402304532d0
+
     ! Wall-cell marker values (per-cell byte).
     integer(C_SIGNED_CHAR), parameter, public :: WALL_CELL_FLUID = 0_C_SIGNED_CHAR
     integer(C_SIGNED_CHAR), parameter, public :: WALL_CELL_WALL  = 1_C_SIGNED_CHAR
@@ -131,6 +149,12 @@ module rans
         ! face (omega pinned there like Menter's wall condition; distinct
         ! from the IBM wallcell marker, which additionally zeroes P_k/nut).
         integer(C_SIGNED_CHAR), allocatable :: domwall(:,:,:,:)
+        ! Unit wall-normal (normalized grad dwall) at the constrained
+        ! (IBM-wall + domain-wall) cells, zero elsewhere; the T3
+        ! wall-function log-branch production projects it out of the
+        ! cell-centre velocity. Filled only for wall_treatment =
+        ! wall_function (allocated always so the device maps are uniform).
+        real(C_DOUBLE), allocatable :: wnorm(:,:,:,:,:)   ! (3,1:nb,...,nBlocks)
         ! Per-face no-slip flags for the cell-centred scalar BCs (index =
         ! boundary_face_id).
         integer(C_INT) :: facewall(NFACES) = 0_C_INT
@@ -182,7 +206,7 @@ contains
         if (allocated(sst%yeff)) deallocate(sst%yeff)
         if (allocated(sst%wallcell)) deallocate(sst%wallcell)
         if (allocated(sst%k)) deallocate(sst%k, sst%omg, sst%ks, sst%omgs, &
-            sst%koldrhs, sst%omgoldrhs, sst%domwall)
+            sst%koldrhs, sst%omgoldrhs, sst%domwall, sst%wnorm)
         sst%geometry_built = .false.
         sst%transport_built = .false.
     end subroutine destroy_rans_geometry
@@ -196,7 +220,7 @@ contains
         !$omp target enter data map(to: sst%dwall, sst%yeff, sst%wallcell)
         if (allocated(sst%k)) then
             !$omp target enter data map(to: sst%k, sst%omg, sst%ks, sst%omgs)
-            !$omp target enter data map(to: sst%koldrhs, sst%omgoldrhs, sst%domwall)
+            !$omp target enter data map(to: sst%koldrhs, sst%omgoldrhs, sst%domwall, sst%wnorm)
         end if
     end subroutine enter_rans_data
 
@@ -206,7 +230,7 @@ contains
         if (.not. allocated(sst%dwall)) return
 
         if (allocated(sst%k)) then
-            !$omp target exit data map(delete: sst%koldrhs, sst%omgoldrhs, sst%domwall)
+            !$omp target exit data map(delete: sst%koldrhs, sst%omgoldrhs, sst%domwall, sst%wnorm)
             !$omp target exit data map(delete: sst%k, sst%omg, sst%ks, sst%omgs)
         end if
         !$omp target exit data map(delete: sst%dwall, sst%yeff, sst%wallcell)
@@ -512,11 +536,12 @@ contains
     ! k = 1.5 (tu/100 |u|)^2 and omega = k/(nut_ratio nu) (floored), then the
     ! constrained cells (solid k = 0, pinned omega). Requires the geometry
     ! state; runs on the HOST before enter_rans_data maps everything.
-    subroutine init_rans_transport(sst, dns, blk, bc, has_terminal)
+    subroutine init_rans_transport(sst, dns, blk, bc, ibm, has_terminal)
         type(sst_type), intent(inout) :: sst
         type(dns_type), intent(in) :: dns
         type(block_set_type), intent(in) :: blk
         type(boundary_type), intent(in) :: bc
+        type(ibm_type), intent(in) :: ibm
         logical, intent(in) :: has_terminal
 
         integer :: i, j, k, b, nx, ny, nz, dir, side
@@ -536,6 +561,8 @@ contains
         allocate(sst%koldrhs(0:nx+1,0:ny+1,0:nz+1,blk%nBlocks))
         allocate(sst%omgoldrhs(0:nx+1,0:ny+1,0:nz+1,blk%nBlocks))
         allocate(sst%domwall(nx,ny,nz,blk%nBlocks))
+        allocate(sst%wnorm(3,nx,ny,nz,blk%nBlocks))
+        sst%wnorm = 0.0d0
 
         ! First interior cell rows adjacent to a no-slip physical domain
         ! face: omega is pinned there (Menter wall condition).
@@ -560,6 +587,12 @@ contains
             if (blk%physHigh(3,b) == FACE_PHYS .and. sst%facewall(boundary_face_id(3,1)) == 1) &
                 sst%domwall(:,:,nz,b) = 1_C_SIGNED_CHAR
         end do
+
+        ! T3 wall functions need the wall-normal direction in every
+        ! constrained cell (log-branch production projects it out of the
+        ! velocity). Resolved mode never reads wnorm; keep it zero there.
+        if (dns%rans_wall_treatment == 1_C_INT) &
+            call compute_wall_normals(sst, dns, blk, ibm)
 
         tu_frac = dns%rans_tu/100.0d0
         nu = 1.0d0/dns%re
@@ -615,6 +648,136 @@ contains
         w = 6.0d0*nu/(SST_BETA1*y*y)
     end function omega_wall_value
 
+    ! T3 wall-function wall omega: stepwise viscous/log switch on the
+    ! k-based y+ (Weber Eqs. 4.39-4.42). At k -> 0 (initial condition,
+    ! laminarizing flow) the switch always takes the viscous limb, so the
+    ! blend degrades continuously to the resolved-mode value.
+    pure real(C_DOUBLE) function omega_wall_blend(nu, y, kv) result(w)
+!$omp declare target
+        real(C_DOUBLE), intent(in) :: nu, y, kv
+
+        real(C_DOUBLE) :: sqrtk
+
+        sqrtk = sqrt(max(kv, 0.0d0))
+        if (WF_CMU25*sqrtk*y/nu < WF_YPLUS_LAM) then
+            w = omega_wall_value(nu, y)
+        else
+            w = sqrtk/(WF_CMU25*WF_KAPPA*y)
+        end if
+    end function omega_wall_blend
+
+    ! T3 wall-function wall-cell eddy viscosity (Weber Eq. 4.41 / OpenFOAM
+    ! nutkWallFunction): zero on the viscous branch, nu (y+ kappa /
+    ! ln(E y+) - 1) on the log branch (continuous at y+_lam by the fixed
+    ! point). This is what carries the log-law wall shear into the
+    ! momentum equation on a coarse near-wall grid.
+    pure real(C_DOUBLE) function nut_wall_value(nu, yplus) result(nutw)
+!$omp declare target
+        real(C_DOUBLE), intent(in) :: nu, yplus
+
+        if (yplus < WF_YPLUS_LAM) then
+            nutw = 0.0d0
+        else
+            nutw = nu*(yplus*WF_KAPPA/log(WF_E*yplus) - 1.0d0)
+        end if
+    end function nut_wall_value
+
+    ! Unit wall-normal at the constrained (IBM-wall + domain-wall) cells as
+    ! the normalized gradient of the RAW dwall field (yeff's floor flattens
+    ! exactly the near-wall slope the normal lives on). Per direction the
+    ! difference is one-sided AWAY from a solid staggered face and away
+    ! from a no-slip physical face (dwall is V-shaped across the immersed
+    ! surface and mirrors across a domain wall, so a centred difference
+    ! there sees a spurious near-zero slope); centred otherwise. Host-only
+    ! init code; halo dwall values are pointwise geometry, hence valid.
+    subroutine compute_wall_normals(sst, dns, blk, ibm)
+        type(sst_type), intent(inout) :: sst
+        type(dns_type), intent(in) :: dns
+        type(block_set_type), intent(in) :: blk
+        type(ibm_type), intent(in) :: ibm
+
+        integer :: i, j, k, b, nx, ny, nz, d
+        real(C_DOUBLE) :: grad(3), gnorm
+        logical :: lowbad(3), highbad(3), ibm_on
+
+        nx = int(blk%nb(1))
+        ny = int(blk%nb(2))
+        nz = int(blk%nb(3))
+        ibm_on = dns%ibm_enabled
+
+        !$omp parallel do collapse(2) private(i,j,k,b,d,grad,gnorm,lowbad,highbad)
+        do b = 1, int(blk%nBlocks)
+        do k = 1, nz
+            do j = 1, ny
+                do i = 1, nx
+                    if (sst%wallcell(i,j,k,b) /= WALL_CELL_WALL .and. &
+                        sst%domwall(i,j,k,b) == 0_C_SIGNED_CHAR) cycle
+
+                    lowbad = .false.
+                    highbad = .false.
+                    if (ibm_on) then
+                        lowbad(1) = abs(ibm%coef(i,  j,  k,  VAR_U,b)) > SOLID_FACE_THRESHOLD
+                        highbad(1) = abs(ibm%coef(i+1,j,  k,  VAR_U,b)) > SOLID_FACE_THRESHOLD
+                        lowbad(2) = abs(ibm%coef(i,  j,  k,  VAR_V,b)) > SOLID_FACE_THRESHOLD
+                        highbad(2) = abs(ibm%coef(i,  j+1,k,  VAR_V,b)) > SOLID_FACE_THRESHOLD
+                        lowbad(3) = abs(ibm%coef(i,  j,  k,  VAR_W,b)) > SOLID_FACE_THRESHOLD
+                        highbad(3) = abs(ibm%coef(i,  j,  k+1,VAR_W,b)) > SOLID_FACE_THRESHOLD
+                    end if
+                    if (i == 1 .and. blk%physLow(1,b) == FACE_PHYS .and. &
+                        sst%facewall(boundary_face_id(1,0)) == 1) lowbad(1) = .true.
+                    if (i == nx .and. blk%physHigh(1,b) == FACE_PHYS .and. &
+                        sst%facewall(boundary_face_id(1,1)) == 1) highbad(1) = .true.
+                    if (j == 1 .and. blk%physLow(2,b) == FACE_PHYS .and. &
+                        sst%facewall(boundary_face_id(2,0)) == 1) lowbad(2) = .true.
+                    if (j == ny .and. blk%physHigh(2,b) == FACE_PHYS .and. &
+                        sst%facewall(boundary_face_id(2,1)) == 1) highbad(2) = .true.
+                    if (k == 1 .and. blk%physLow(3,b) == FACE_PHYS .and. &
+                        sst%facewall(boundary_face_id(3,0)) == 1) lowbad(3) = .true.
+                    if (k == nz .and. blk%physHigh(3,b) == FACE_PHYS .and. &
+                        sst%facewall(boundary_face_id(3,1)) == 1) highbad(3) = .true.
+
+                    grad(1) = dwall_slope(sst%dwall(i-1,j,k,b), sst%dwall(i,j,k,b), &
+                        sst%dwall(i+1,j,k,b), blk%x(i-1,VAR_P,b), blk%x(i,VAR_P,b), &
+                        blk%x(i+1,VAR_P,b), lowbad(1), highbad(1))
+                    grad(2) = dwall_slope(sst%dwall(i,j-1,k,b), sst%dwall(i,j,k,b), &
+                        sst%dwall(i,j+1,k,b), blk%y(j-1,VAR_P,b), blk%y(j,VAR_P,b), &
+                        blk%y(j+1,VAR_P,b), lowbad(2), highbad(2))
+                    grad(3) = dwall_slope(sst%dwall(i,j,k-1,b), sst%dwall(i,j,k,b), &
+                        sst%dwall(i,j,k+1,b), blk%z(k-1,VAR_P,b), blk%z(k,VAR_P,b), &
+                        blk%z(k+1,VAR_P,b), lowbad(3), highbad(3))
+
+                    gnorm = sqrt(grad(1)**2 + grad(2)**2 + grad(3)**2)
+                    ! Degenerate gradient (equidistant ridge): leave the
+                    ! normal zero -- the production then uses the full
+                    ! velocity magnitude, the conservative choice.
+                    if (gnorm > 1.0d-12) then
+                        do d = 1, 3
+                            sst%wnorm(d,i,j,k,b) = grad(d)/gnorm
+                        end do
+                    end if
+                end do
+            end do
+        end do
+        end do
+        !$omp end parallel do
+    end subroutine compute_wall_normals
+
+    pure real(C_DOUBLE) function dwall_slope(dm, d0, dp, xm, x0, xp, lowbad, highbad) &
+            result(slope)
+        real(C_DOUBLE), intent(in) :: dm, d0, dp, xm, x0, xp
+        logical, intent(in) :: lowbad, highbad
+
+        if (lowbad .and. highbad) then
+            slope = 0.0d0
+        else if (lowbad) then
+            slope = (dp - d0)/(xp - x0)
+        else if (highbad) then
+            slope = (d0 - dm)/(x0 - xm)
+        else
+            slope = (dp - dm)/(xp - xm)
+        end if
+    end function dwall_slope
+
     ! Host-side constrained-cell values (init/restart time, before the
     ! device maps exist): solid cells carry k = 0 and a benign pinned
     ! omega; IBM wall cells and domain-wall rows carry the pinned omega.
@@ -625,12 +788,13 @@ contains
 
         integer :: i, j, k, b, nx, ny, nz
         real(C_DOUBLE) :: nu
-        logical :: pinned
+        logical :: pinned, wallfn
 
         nx = int(blk%nb(1))
         ny = int(blk%nb(2))
         nz = int(blk%nb(3))
         nu = 1.0d0/dns%re
+        wallfn = dns%rans_wall_treatment == 1_C_INT
 
         do b = 1, int(blk%nBlocks)
         do k = 1, nz
@@ -639,7 +803,14 @@ contains
                     pinned = sst%wallcell(i,j,k,b) /= WALL_CELL_FLUID .or. &
                              sst%domwall(i,j,k,b) /= 0_C_SIGNED_CHAR
                     if (sst%wallcell(i,j,k,b) == WALL_CELL_SOLID) sst%k(i,j,k,b) = 0.0d0
-                    if (pinned) sst%omg(i,j,k,b) = omega_wall_value(nu, sst%yeff(i,j,k,b))
+                    if (pinned) then
+                        if (wallfn) then
+                            sst%omg(i,j,k,b) = omega_wall_blend(nu, sst%yeff(i,j,k,b), &
+                                sst%k(i,j,k,b))
+                        else
+                            sst%omg(i,j,k,b) = omega_wall_value(nu, sst%yeff(i,j,k,b))
+                        end if
+                    end if
                 end do
             end do
         end do
@@ -656,15 +827,17 @@ contains
 
         integer :: i, j, k, b, nx, ny, nz, nBlocks
         real(C_DOUBLE) :: nu
+        logical :: wallfn
 
         nx = int(blk%nb(1))
         ny = int(blk%nb(2))
         nz = int(blk%nb(3))
         nBlocks = int(blk%nBlocks)
         nu = 1.0d0/dns%re
+        wallfn = dns%rans_wall_treatment == 1_C_INT
 
         !$omp target teams distribute parallel do collapse(4) &
-        !$omp& map(to: nu, sst%wallcell, sst%domwall, sst%yeff) &
+        !$omp& map(to: nu, wallfn, sst%wallcell, sst%domwall, sst%yeff) &
         !$omp& map(tofrom: sst%k, sst%omg) &
         !$omp& private(i,j,k,b)
         do b = 1, nBlocks
@@ -674,7 +847,12 @@ contains
                     if (sst%wallcell(i,j,k,b) == WALL_CELL_SOLID) sst%k(i,j,k,b) = 0.0d0
                     if (sst%wallcell(i,j,k,b) /= WALL_CELL_FLUID .or. &
                         sst%domwall(i,j,k,b) /= 0_C_SIGNED_CHAR) then
-                        sst%omg(i,j,k,b) = omega_wall_value(nu, sst%yeff(i,j,k,b))
+                        if (wallfn) then
+                            sst%omg(i,j,k,b) = omega_wall_blend(nu, sst%yeff(i,j,k,b), &
+                                sst%k(i,j,k,b))
+                        else
+                            sst%omg(i,j,k,b) = omega_wall_value(nu, sst%yeff(i,j,k,b))
+                        end if
                     end if
                 end do
             end do
@@ -748,30 +926,42 @@ contains
         real(C_DOUBLE), intent(inout) :: nut(0:,0:,0:,1:)
 
         integer :: i, j, k, b, nx, ny, nz, nBlocks
-        real(C_DOUBLE) :: nu, y, kv, wv, s2, smag, arg2, f2
+        real(C_DOUBLE) :: nu, y, kv, wv, s2, smag, arg2, f2, yplus
         real(C_DOUBLE) :: g11, g12, g13, g21, g22, g23, g31, g32, g33
+        logical :: wallfn
 
         nx = int(blk%nb(1))
         ny = int(blk%nb(2))
         nz = int(blk%nb(3))
         nBlocks = int(blk%nBlocks)
         nu = 1.0d0/dns%re
+        wallfn = dns%rans_wall_treatment == 1_C_INT
 
         !$omp target teams distribute parallel do collapse(4) &
-        !$omp& map(to: nu, sst%k, sst%omg, sst%yeff, sst%wallcell, &
+        !$omp& map(to: nu, wallfn, sst%k, sst%omg, sst%yeff, sst%wallcell, sst%domwall, &
         !$omp& blk%q, blk%d1x, blk%d1y, blk%d1z, &
         !$omp& turb%d1xm, turb%d1x0, turb%d1xp, turb%d1ym, turb%d1y0, turb%d1yp, &
         !$omp& turb%d1zm, turb%d1z0, turb%d1zp, &
         !$omp& turb%p_from_u_x, turb%p_from_v_y, turb%p_from_w_z) &
         !$omp& map(tofrom: nut) &
-        !$omp& private(i,j,k,b,y,kv,wv,s2,smag,arg2,f2, &
+        !$omp& private(i,j,k,b,y,kv,wv,s2,smag,arg2,f2,yplus, &
         !$omp& g11,g12,g13,g21,g22,g23,g31,g32,g33)
         do b = 1, nBlocks
         do k = 1, nz
             do j = 1, ny
                 do i = 1, nx
-                    if (sst%wallcell(i,j,k,b) /= WALL_CELL_FLUID) then
+                    ! Constrained cells: solid = 0; IBM wall cells = 0 in
+                    ! resolved mode (the Weber viscous limb). T3 wall
+                    ! functions OVERWRITE IBM-wall and domain-wall cells
+                    ! with the viscous/log blend (nut_wall_value).
+                    if (sst%wallcell(i,j,k,b) /= WALL_CELL_FLUID .or. &
+                        (wallfn .and. sst%domwall(i,j,k,b) /= 0_C_SIGNED_CHAR)) then
                         nut(i,j,k,b) = 0.0d0
+                        if (wallfn .and. sst%wallcell(i,j,k,b) /= WALL_CELL_SOLID) then
+                            yplus = WF_CMU25*sqrt(max(sst%k(i,j,k,b), 0.0d0)) &
+                                  *sst%yeff(i,j,k,b)/nu
+                            nut(i,j,k,b) = nut_wall_value(nu, yplus)
+                        end if
                         cycle
                     end if
                     kv = sst%k(i,j,k,b)
@@ -797,6 +987,60 @@ contains
         !$omp end target teams distribute parallel do
     end subroutine rans_assemble_nut
 
+    ! T3 wall functions: copy the wall-cell nut into the ghost across every
+    ! no-slip physical face, so the face-interpolated eddy viscosity the
+    ! momentum correction sees at the wall face IS the wall value and the
+    ! delivered wall shear is (nu + nut_w) U_1/y_1 -- the whole point of
+    ! the log-branch nut. Resolved mode leaves the ghosts alone (nut -> 0
+    ! at resolved walls, ghost 0 is consistent).
+    subroutine rans_apply_nut_wall_ghosts(sst, blk, bc, nut)
+        type(sst_type), intent(in) :: sst
+        type(block_set_type), intent(inout) :: blk
+        type(boundary_type), intent(in) :: bc
+        real(C_DOUBLE), intent(inout) :: nut(0:,0:,0:,1:)
+
+        integer :: n, npts, b, i, j, k, face_id, dir, side
+        integer :: ghost_idx, interior_idx_dir
+        integer :: gi(3), ii(3)
+        integer(C_INT) :: local_n(1:3), facewall(NFACES)
+
+        npts = int(bc%nTotal)
+        if (npts <= 0) return
+        local_n = blk%nb(1:3)
+        facewall = sst%facewall
+
+        !$omp target teams distribute parallel do &
+        !$omp& map(to: npts, local_n(1:3), facewall(1:NFACES), &
+        !$omp& bc%pointFace(1:npts), bc%slot(1:npts), bc%i(1:npts), bc%j(1:npts), bc%k(1:npts)) &
+        !$omp& map(tofrom: nut) &
+        !$omp& private(n,b,i,j,k,face_id,dir,side,ghost_idx,interior_idx_dir,gi,ii)
+        do n = 1, npts
+            face_id = int(bc%pointFace(n))
+            if (facewall(face_id) /= 1_C_INT) cycle
+            b = int(bc%slot(n))
+            dir = (face_id + 1)/2
+            side = modulo(face_id - 1, 2)
+            i = int(bc%i(n))
+            j = int(bc%j(n))
+            k = int(bc%k(n))
+
+            if (side == 0) then
+                ghost_idx = 0
+                interior_idx_dir = 1
+            else
+                ghost_idx = int(local_n(dir)) + 1
+                interior_idx_dir = int(local_n(dir))
+            end if
+            gi = [i, j, k]
+            ii = gi
+            gi(dir) = ghost_idx
+            ii(dir) = interior_idx_dir
+
+            nut(gi(1),gi(2),gi(3),b) = nut(ii(1),ii(2),ii(3),b)
+        end do
+        !$omp end target teams distribute parallel do
+    end subroutine rans_apply_nut_wall_ghosts
+
     ! Pre-loop preparation: constrained cells, scalar ghosts/halos, and the
     ! first nut assembly so the momentum predictor starts consistent.
     subroutine rans_prepare(sst, turb, blk, dns, bc, c)
@@ -812,6 +1056,8 @@ contains
         call exchange_scalar_halos(c, sst%k, blk)
         call exchange_scalar_halos(c, sst%omg, blk)
         call rans_assemble_nut(sst, turb, blk, dns, turb%nut)
+        if (dns%rans_wall_treatment == 1_C_INT) &
+            call rans_apply_nut_wall_ghosts(sst, blk, bc, turb%nut)
     end subroutine rans_prepare
 
     ! One RK3 substage of the SST transport: pin, ghosts, halos, the fused
@@ -834,6 +1080,8 @@ contains
         call rans_transport_kernel(sst, turb, blk, dns, ibm, dt_alpha, dt_beta)
         call rans_copyback(sst, blk)
         call rans_assemble_nut(sst, turb, blk, dns, turb%nut)
+        if (dns%rans_wall_treatment == 1_C_INT) &
+            call rans_apply_nut_wall_ghosts(sst, blk, bc, turb%nut)
     end subroutine rans_substage
 
     subroutine rans_copyback(sst, blk)
@@ -878,7 +1126,7 @@ contains
 
         integer :: i, j, k, b, nx, ny, nz, nBlocks
         integer(C_SIGNED_CHAR) :: marker
-        logical :: pinned_omega, ibm_wall
+        logical :: pinned_omega, ibm_wall, wallfn
         real(C_DOUBLE) :: nu, dtsub, y, kv, wv, nutc
         real(C_DOUBLE) :: g11, g12, g13, g21, g22, g23, g31, g32, g33
         real(C_DOUBLE) :: s2, smag, gkx, gky, gkz, gwx, gwy, gwz, gkgw
@@ -889,6 +1137,7 @@ contains
         real(C_DOUBLE) :: fw, fe, dcoef
         real(C_DOUBLE) :: rhsk, rhsw, knew, wnew
         real(C_DOUBLE) :: solid_threshold
+        real(C_DOUBLE) :: yplus, nutw, uc, vc, wc, un, ut1, ut2, ut3, magut
         logical :: solw, sole, sols, soln, solb, solt
 
         nx = int(blk%nb(1))
@@ -898,10 +1147,11 @@ contains
         nu = 1.0d0/dns%re
         dtsub = dt_alpha + dt_beta
         solid_threshold = SOLID_FACE_THRESHOLD
+        wallfn = dns%rans_wall_treatment == 1_C_INT
 
         !$omp target teams distribute parallel do collapse(4) &
-        !$omp& map(to: nu, dtsub, dt_alpha, dt_beta, solid_threshold, &
-        !$omp& sst%k, sst%omg, sst%yeff, sst%wallcell, sst%domwall, &
+        !$omp& map(to: nu, dtsub, dt_alpha, dt_beta, solid_threshold, wallfn, &
+        !$omp& sst%k, sst%omg, sst%yeff, sst%wallcell, sst%domwall, sst%wnorm, &
         !$omp& blk%q, blk%d1x, blk%d1y, blk%d1z, ibm%coef, &
         !$omp& turb%nut, turb%inv_dx, turb%inv_dy, turb%inv_dz, &
         !$omp& turb%d1xm, turb%d1x0, turb%d1xp, turb%d1ym, turb%d1y0, turb%d1yp, &
@@ -913,6 +1163,7 @@ contains
         !$omp& gkx,gky,gkz,gwx,gwy,gwz,gkgw,cdkw,arg1,f1,arg2,f2,nutloc,cross, &
         !$omp& sigk,sigw,beta_b,alpha_b,pk,uw,ue,vs,vn,wb,wt, &
         !$omp& conv_k,conv_w,diff_k,diff_w,fw,fe,dcoef,rhsk,rhsw,knew,wnew, &
+        !$omp& yplus,nutw,uc,vc,wc,un,ut1,ut2,ut3,magut, &
         !$omp& solw,sole,sols,soln,solb,solt)
         do b = 1, nBlocks
         do k = 1, nz
@@ -984,6 +1235,31 @@ contains
                     ! viscous limb).
                     pk = min(nutloc*s2, 10.0d0*SST_BETA_STAR*max(kv, 0.0d0)*wv)
                     if (ibm_wall) pk = 0.0d0
+                    ! T3 wall functions, log branch: the constrained-cell k
+                    ! production comes from the tangential velocity relative
+                    ! to the local wall normal at y_eff (Weber Eq. 4.40 /
+                    ! OpenFOAM omegaWallFunction G): G = (nu + nut_w)
+                    ! * |U_t|/y * C_mu^(1/4) sqrt(k)/(kappa y). The viscous
+                    ! branch keeps the resolved-mode rule (IBM wall cells
+                    ! produce nothing, domain-wall rows produce normally).
+                    if (wallfn .and. pinned_omega) then
+                        yplus = WF_CMU25*sqrt(max(kv, 0.0d0))*y/nu
+                        if (yplus >= WF_YPLUS_LAM) then
+                            nutw = nut_wall_value(nu, yplus)
+                            uc = 0.5d0*(blk%q(i,j,k,VAR_U,b) + blk%q(i+1,j,k,VAR_U,b))
+                            vc = 0.5d0*(blk%q(i,j,k,VAR_V,b) + blk%q(i,j+1,k,VAR_V,b))
+                            wc = 0.5d0*(blk%q(i,j,k,VAR_W,b) + blk%q(i,j,k+1,VAR_W,b))
+                            un = uc*sst%wnorm(1,i,j,k,b) + vc*sst%wnorm(2,i,j,k,b) &
+                               + wc*sst%wnorm(3,i,j,k,b)
+                            ut1 = uc - un*sst%wnorm(1,i,j,k,b)
+                            ut2 = vc - un*sst%wnorm(2,i,j,k,b)
+                            ut3 = wc - un*sst%wnorm(3,i,j,k,b)
+                            magut = sqrt(ut1*ut1 + ut2*ut2 + ut3*ut3)
+                            pk = (nu + nutw)*(magut/y) &
+                                *WF_CMU25*sqrt(max(kv, 0.0d0))/(WF_KAPPA*y)
+                            pk = min(pk, 10.0d0*SST_BETA_STAR*max(kv, 0.0d0)*wv)
+                        end if
+                    end if
 
                     ! Solid staggered faces: diffusive fluxes masked.
                     solw = abs(ibm%coef(i,  j,  k,  VAR_U,b)) > solid_threshold

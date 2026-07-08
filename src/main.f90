@@ -138,7 +138,7 @@ program main
         !$omp target update from(ibm%coef)
 #endif
         call init_rans_geometry(sst, dns, g, blk, bc, ibm, c)
-        if (turb%model == TURB_RANS) call init_rans_transport(sst, dns, blk, bc, c%has_terminal)
+        if (turb%model == TURB_RANS) call init_rans_transport(sst, dns, blk, bc, ibm, c%has_terminal)
         call enter_rans_data(sst)
         if (dns%rans_dump_geometry) call write_rans_geometry(sst, blk, dns, c)
     end if
