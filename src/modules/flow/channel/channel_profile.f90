@@ -24,13 +24,19 @@ module channel_profile
 contains
 
     subroutine initialise_channel_fields(blk, dns, n_walls, mean_sine_amp, large_amp, noise_amp)
-        ! Initial condition on the single Phase-0 block (== this rank's box).
+        ! Initial condition on EVERY block of the set. The noise index is the
+        ! block-global cell (origin + local index, in the block's own level
+        ! cells), which reduces to the old rank-box indexing for the default
+        ! one-block-per-rank layout — so previously-correct configurations
+        ! are bit-exact. (Before 2026-07-08 this filled only block slot 1, a
+        ! Phase-0 relic: any cold-start channel with [blocks] nb set got a
+        ! rank-count-dependent, mostly-zero initial field.)
         type(block_set_type), intent(inout) :: blk
         type(dns_type), intent(in) :: dns
         integer, intent(in) :: n_walls
         real(C_DOUBLE), intent(in) :: mean_sine_amp, large_amp, noise_amp
 
-        integer :: i, j, k, var, nx, ny, nz
+        integer :: i, j, k, b, var, nx, ny, nz
         real(C_DOUBLE) :: stream_x, span_x, wall_y, envelope, mean_u
         real(C_DOUBLE) :: large, noise
 
@@ -42,13 +48,14 @@ contains
         blk%qs = 0.0d0
         blk%oldrhs = 0.0d0
 
+        do b = 1, int(blk%nBlocks)
         do k = 1, nz
             do j = 1, ny
                 do i = 1, nx
                     do var = VAR_U, VAR_W
-                        stream_x = blk%x(i,var,1)
-                        span_x = blk%z(k,var,1)
-                        wall_y = max(0.0d0, min(blk%y(j,var,1), dns%leng(2)))
+                        stream_x = blk%x(i,var,b)
+                        span_x = blk%z(k,var,b)
+                        wall_y = max(0.0d0, min(blk%y(j,var,b), dns%leng(2)))
 
                         call mean_profile(dns, n_walls, wall_y, mean_sine_amp, mean_u)
                         envelope = disturbance_envelope(n_walls, var, wall_y, dns%leng(2))
@@ -56,14 +63,15 @@ contains
                         large = large_disturbance(large_amp, var, stream_x, wall_y, span_x, &
                             dns%leng(1), dns%leng(2), dns%leng(3), n_walls)
                         noise = noise_amp*envelope * &
-                            deterministic_noise(i + int(dns%localSize(1,0)) - 1, &
-                                                j + int(dns%localSize(2,0)) - 1, &
-                                                k + int(dns%localSize(3,0)) - 1, var)
+                            deterministic_noise(i + int(blk%origin(1,b)), &
+                                                j + int(blk%origin(2,b)), &
+                                                k + int(blk%origin(3,b)), var)
 
-                        blk%q(i,j,k,var,1) = stream_profile(var, mean_u) + large + noise
+                        blk%q(i,j,k,var,b) = stream_profile(var, mean_u) + large + noise
                     end do
                 end do
             end do
+        end do
         end do
     end subroutine initialise_channel_fields
 
