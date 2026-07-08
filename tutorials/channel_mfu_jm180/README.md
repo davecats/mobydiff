@@ -27,6 +27,43 @@ It writes wall-normal statistics to `channel_stats.h5`, which you can plot with:
 python3 tools/plot_stats.py channel_stats.h5
 ```
 
+## Visualise a field in ParaView
+
+By default the case writes only statistics. To also write 3D field snapshots,
+set a positive `field_interval` under `[output]` in `input.ini` (e.g.
+`field_interval = 500`); the solver then writes a `channel_field_<step>.h5`
+every that many steps.
+
+The field HDF5 stores the solver's block-refinement layout, which ParaView
+cannot open portably on its own. Convert a snapshot to a native VTK file first:
+
+```bash
+python3 tools/field_to_vtr.py channel_field_500.h5      # -> channel_field_500.vtr
+```
+
+Open the resulting `channel_field_500.vtr` in ParaView (File > Open) and colour
+by `un`, `vn`, `wn`, or `pn`. The `.vtr` is a self-contained native VTK
+rectilinear grid: it needs no reader choice and opens the same on Linux and
+Windows, including files on a WSL drive. Convert a whole run at once and
+ParaView loads the numbered series as a time animation:
+
+```bash
+python3 tools/field_to_vtr.py channel_field_*.h5
+```
+
+`field_to_vtr.py` reassembles the blocks onto the finest grid and never
+modifies the input `.h5`; it needs the `vtk` Python module (or run it with
+ParaView's `pvpython`). The solver also drops a `.xdmf` sidecar next to each
+snapshot — that works with ParaView's legacy "XDMF Reader" on Linux, but the
+`.vtr` is the reliable cross-platform route.
+
+For a quick static look without ParaView, `tools/plot_field_slices.py` writes a
+PNG of the three centre-plane cross-sections (x-y, x-z, y-z) for every variable:
+
+```bash
+python3 tools/plot_field_slices.py restart.h5      # -> restart.png
+```
+
 ## Experiment: your own wall boundary conditions
 
 This case is ideal for trying time- and space-varying wall boundary

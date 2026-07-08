@@ -457,12 +457,18 @@ subroutine read_force_file(f, blk, dns, file_name, has_terminal)
 end subroutine read_force_file
 
 subroutine write_xdmf(xdmf_file_name, h5_file_name, blk, dns, g, c, has_nut)
-    ! Sidecar XDMF for the block-table field layout. Each global block becomes
-    ! a uniform rectilinear sub-grid inside a spatial collection; its cell
-    ! values reference the (nBlocksGlobal, nbz, nby, nbx) HDF5 datasets by
-    ! hyperslab, its node coordinates come from the block's level node lines.
-    ! Collective: gathers the global (origin, level) table to rank 0, which is
-    ! the only rank that touches the text file.
+    ! Sidecar XDMF for the block-table field layout, referencing the single,
+    ! unchanged field HDF5 file. Each global block becomes a uniform rectilinear
+    ! sub-grid inside a spatial collection; its cell values are read out of the
+    ! (nBlocksGlobal, nbz, nby, nbx) field datasets by a hyperslab that selects
+    ! that block, its node coordinates come from the block's level node lines.
+    ! NOTE: because a block is one slab of a 4D dataset, this uses a HyperSlab
+    ! DataItem, which ParaView's legacy "XDMF Reader" (Xdmf2) handles but the
+    ! "Xdmf3 Reader" does NOT -- open the .xdmf with the XDMF Reader.
+    ! The HDF5 reference is a bare relative name (no "./") so it resolves next to
+    ! the .xdmf across platforms (e.g. a Windows ParaView reading WSL paths).
+    ! Collective: gathers the global (origin, level) table to rank 0, the only
+    ! rank that writes the text file.
     character(len=*), intent(in) :: xdmf_file_name, h5_file_name
     type(block_set_type), intent(in) :: blk
     type(dns_type), intent(in) :: dns
@@ -484,18 +490,18 @@ subroutine write_xdmf(xdmf_file_name, h5_file_name, blk, dns, g, c, has_nut)
     nbx = int(blk%nb(1)); nby = int(blk%nb(2)); nbz = int(blk%nb(3))
     nblk = int(blk%nBlocksGlobal)
 
+    ! Bare relative name (strip any directory) so the reference resolves next to
+    ! the .xdmf regardless of how the viewer mounts the path.
     h5_ref = trim(h5_file_name)
     slash = scan(trim(h5_ref), "/", back=.true.)
     if (slash > 0) h5_ref = h5_ref(slash+1:)
-    h5_ref = "./"//trim(h5_ref)
 
     open(newunit=io, file=trim(xdmf_file_name), status="replace", action="write")
     write(io,'(A)') '<?xml version="1.0" ?>'
-    write(io,'(A)') '<!DOCTYPE Xdmf SYSTEM "Xdmf.dtd" []>'
     write(io,'(A)') '<Xdmf Version="2.0">'
     write(io,'(A)') '  <Domain>'
     write(io,'(A)') '    <Grid Name="mobyDiff" GridType="Collection" CollectionType="Spatial">'
-    write(io,'(A,ES20.12,A)') '      <Time Value="', dns%t_current, '"/>'
+    write(io,'(A,F0.12,A)') '      <Time Value="', dns%t_current, '"/>'
 
     do gid = 0, nblk - 1
         ox = table(1,gid+1); oy = table(2,gid+1); oz = table(3,gid+1)
@@ -577,35 +583,51 @@ subroutine gather_block_table(blk, c, table)
     deallocate(sendbuf, nb_all, id_all, counts, displs)
 end subroutine gather_block_table
 
-! One inline VXVYVZ coordinate array: nodes i0 .. i0+n-1 of a 0-based line.
+! One VXVYVZ coordinate array: nodes i0 .. i0+n-1 of a 0-based line. Written on
+! a SINGLE line (open tag, values, close tag) -- some ParaView/VTK builds
+! mis-tokenize XML DataItem text split across lines with indentation.
 subroutine write_xdmf_coords(io, line, i0, n)
     integer, intent(in) :: io, i0, n
     real(C_DOUBLE), intent(in) :: line(0:)
     integer :: p
 
-    write(io,'(A,I0,A)') '          <DataItem Dimensions="', n, &
-        '" NumberType="Float" Precision="8" Format="XML">'
-    write(io,'(*(1X,ES22.14))') (line(i0+p), p = 0, n-1)
-    write(io,'(A)') '          </DataItem>'
+    ! Plain decimal (F, not E notation): some ParaView/VTK builds mis-parse
+    ! scientific notation in inline XML coordinate arrays. The first value sits
+    ! flush against the ">" (no leading space) -- a leading space makes some VTK
+    ! tokenizers miscount the array, corrupting the grid.
+    write(io,'(A,I0,A)',advance="no") '          <DataItem Dimensions="', n, '" Format="XML">'
+    do p = 0, n-1
+        if (p == 0) then
+            write(io,'(F0.14)',advance="no") line(i0+p)
+        else
+            write(io,'(1X,F0.14)',advance="no") line(i0+p)
+        end if
+    end do
+    write(io,'(A)') '</DataItem>'
 end subroutine write_xdmf_coords
 
-! A cell-centred attribute reading block gid's slice out of the global
-! (nBlocks, nbz, nby, nbx) HDF5 dataset via a hyperslab selection.
+! A cell-centred attribute reading block gid's slab out of the global
+! (nBlocks, nbz, nby, nbx) field dataset via a hyperslab selection. The outer
+! DataItem Dimensions is the 3D result shape; the selection keeps the block
+! index as a 4D count row "1 nbz nby nbx" (the reader wants the 3D result shape
+! here, not 4D). The explicit NumberType/Precision on the HyperSlab item is
+! REQUIRED: without it, Windows VTK builds size the output buffer as float32 and
+! read garbage (~1e+300); with it the whole read is correct on Windows + Linux.
 subroutine write_xdmf_block_attr(io, name, h5_ref, gid, nblk, nbx, nby, nbz)
     integer, intent(in) :: io, gid, nblk, nbx, nby, nbz
     character(len=*), intent(in) :: name, h5_ref
 
     write(io,'(A,A,A)') '        <Attribute Name="', trim(name), &
         '" AttributeType="Scalar" Center="Cell">'
-    ! Outer Dimensions is the 3D result shape (one block); the selection below
-    ! keeps the block index as a 4D count row "1 nbz nby nbx". The legacy Xdmf2
-    ! reader rejects a 4D result shape here, so it must stay 3D.
     write(io,'(A,I0,1X,I0,1X,I0,A)') &
-        '          <DataItem ItemType="HyperSlab" Dimensions="', nbz, nby, nbx, '" Type="HyperSlab">'
-    write(io,'(A)') '            <DataItem Dimensions="3 4" Format="XML">'
-    write(io,'(A,I0,A,I0,1X,I0,1X,I0)') &
-        '              ', gid, ' 0 0 0   1 1 1 1   1 ', nbz, nby, nbx
-    write(io,'(A)') '            </DataItem>'
+        '          <DataItem ItemType="HyperSlab" Dimensions="', nbz, nby, nbx, &
+        '" NumberType="Float" Precision="8" Type="HyperSlab">'
+    ! Selection (start/stride/count) inline on one line -- multi-line text inside
+    ! this DataItem is mis-tokenized by some ParaView/VTK builds, giving a wrong
+    ! hyperslab and near-zero (~1e-30) fill values.
+    write(io,'(A,I0,A,I0,1X,I0,1X,I0,A)') &
+        '            <DataItem Dimensions="3 4" Format="XML">', gid, ' 0 0 0  1 1 1 1  1 ', &
+        nbz, nby, nbx, '</DataItem>'
     write(io,'(A,I0,1X,I0,1X,I0,1X,I0,A,A,A,A,A)') &
         '            <DataItem Dimensions="', nblk, nbz, nby, nbx, &
         '" NumberType="Float" Precision="8" Format="HDF">', &
