@@ -472,25 +472,36 @@ dwall source → error; etc.).
 > the doc's IBM wall treatment items 3-6). On top of the validated T2
 > resolved mode: (1) wall-cell ω becomes the stepwise viscous/log blend
 > (ω_vis = 6ν/(β1 y_eff²), ω_log = √k/(C_μ^¼ κ y_eff), switch at
-> y⁺_lam ≈ 11 with y⁺ = C_μ^¼ y_eff √k/ν) — same pinning site, new
-> value; (2) wall-cell ν_t overwritten after assembly: 0 on the viscous
-> branch, ν(y⁺κ/ln(E y⁺) − 1) on the log branch (E = 9.8); (3) wall-cell
-> production on the log branch from the tangential velocity relative to
-> the local IB normal (∇dwall by one-sided differences); (4) the
-> domain-wall first-cell rows get the same blend. Config: accept
-> wall_function; transition ∧ wall_function stays a hard error. Gates:
-> (a) the turb180 channel deliberately coarsened to y⁺₁ ≈ 30-50 (uniform
-> or mildly stretched y) recovers the log law and the correct bulk U
-> (compare U+ centreline vs DNS 18.20 and u_τ = 1); (b) graceful
-> degradation as y⁺₁ varies (~5, ~15, ~30, ~50 — no double-counting dip
-> in the buffer range); (c) the les_ibm IBM channel (y⁺₁ ~ 2-3, i.e. the
-> awkward marginal range) does not regress vs its T2 resolved result;
-> (d) resolved-mode results bit-exact vs T2 (the wall_function code must
-> be branch-gated, nofma max_abs 0 on the T2 case list); (e) CPU==GPU +
-> rank-count determinism on one wall-function case. Use the
-> validation/rans_sst/ harness (run_gates.sh pattern, short bit-exact
-> runs per bit-exact-gates-short). Then T4 (transition, separable) or T5
-> (IDDES blend) per the doc, one phase per gate. NOTE for T4: the scalar
-> convection is first-order upwind (single halo layer, see the T2 phase
-> notes) — the transition-front sharpness question must be revisited
-> there.
+> y⁺_lam ≈ 11 with y⁺ = C_μ^¼ y_eff √k/ν) — same pinning site
+> (rans_set_constrained_cells + the transport kernel's pinned branch),
+> new value; (2) wall-cell ν_t overwritten after assembly: 0 on the
+> viscous branch, ν(y⁺κ/ln(E y⁺) − 1) on the log branch (E = 9.8);
+> (3) wall-cell k-production on the log branch from the tangential
+> velocity relative to the local IB normal (∇dwall by one-sided
+> differences — replaces the P_k = 0 wall-cell rule of resolved mode);
+> (4) the domain-wall first-cell rows (domwall byte) get the same blend.
+> Config: accept wall_function; transition ∧ wall_function stays a hard
+> error. Respect the T2 landmines (memory iddes-plan): the ω
+> cross-diffusion hardening (Patankar split + rate limiter +
+> wall-consistent IC) is load-bearing — do not simplify it; the scalar
+> convection is first-order upwind by design (single halo layer).
+> Gates: (a) the turb180 channel deliberately coarsened to y⁺₁ ≈ 30-50
+> (uniform or mildly stretched y) recovers U+ centreline vs DNS 18.20
+> (2%) and u_τ = 1 — gate against the DNS centreline anchor, NOT the
+> raw κ/B log line (it deviates several % from real profiles; see
+> rans_channel_check.py --uplus-center); (b) graceful degradation as
+> y⁺₁ varies (~5, ~15, ~30, ~50 — no double-counting dip in the buffer
+> range; base180u.ini at y⁺₁≈2.8 is the existing marginal control);
+> (c) the les_ibm IBM channel (ibm180.ini, y⁺₁ ~ 2-3) does not regress
+> vs its T2 resolved result; (d) resolved mode bit-exact vs T2 8991192
+> (the wall_function code must be branch-gated; nofma, max_abs 0, on
+> the short T2 case list); (e) CPU==GPU + 1-vs-4-rank determinism on
+> one wall-function case (20-step runs). WORKFLOW: long physics runs go
+> through validation/rans_sst/run_gates.sh on the big machine (extend
+> it with the new cases; the user rsyncs there and back;
+> check_gates.sh runs locally) — run at most one solver job at a time
+> on the local machine; bit-exactness comparisons use sed-shortened
+> ini copies (~20 steps, reduced niter) per memory
+> bit-exact-gates-short, never full-length runs. Then T4 (transition,
+> separable — first revisit the first-order-upwind front-sharpness
+> question) or T5 (IDDES blend) per the doc, one phase per gate.
