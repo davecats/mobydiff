@@ -26,6 +26,9 @@ module les_model
     end type les_type
 
     public :: update_sgs_viscosity
+    ! Shared with the RANS producer (SST production/blending need the same
+    ! cell-centred gradient tensor).
+    public :: velocity_gradient_tensor
 
 contains
 

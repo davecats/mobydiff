@@ -364,20 +364,48 @@ dwall source → error; etc.).
   GPU (min_channel 4-rank + GPU, les_ibm +- refine_body, Beltrami
   y-slab, wavy fields), [rans]-on == [rans]-off, ransgeom dump 4-rank ==
   1-rank == GPU.
-- **T2 — SST, no transition, resolved mode.** The scalar-transport
-  infrastructure (fused kernel, TVD convection helper, point-implicit
-  sinks, floors, scalar BCs, halos, restart/io of k, ω) + nut_rans
-  assembly + the ω wall pinning (viscous limb). Gates: (a) laminar
-  channel stays laminar and matches the DNS parabola (`tools/
-  check_parabolic_channel.py`) with k seeded small → decays; (b) developed
-  turbulent channel Re_τ 180 (and one higher-Re, e.g. 395/590) vs the log
-  law + DNS mean profile — RANS-quality agreement (a few %), using the
-  developed-stats harness from `validation/channel_interface/`; (c) the
-  les_ibm off-grid IBM plane channel reproduces (b) through the IBM wall
-  treatment — THE key IBM gate; (d) 2:1 interface: band-refined RANS
-  channel vs single-level — no interface band in k/ω/nut (the scalar
-  exchange is the validated path, but gate it anyway); (e) CPU==GPU to
-  round-off; LES/no-model cases still bit-exact.
+- **T2 — SST, no transition, resolved mode. DONE (validated 2026-07-08;
+  runs on a remote machine via `validation/rans_sst/run_gates.sh`, checks
+  local).** rans.f90 owns the transport state (k/omg + oldrhs pairs +
+  scratch, RK3 low-storage like the momentum predictor) and the fused
+  per-substage kernel (`rans_substage`: constrained-cell pinning BEFORE
+  the kernel reads neighbours → scalar ghosts → k/ω halos → transport →
+  copyback → nut assembly); `[turbulence] model = rans` + `[rans] model =
+  sst` (tu/nut_ratio initial state; transition/wall_function still
+  rejected). k/ω snapshots + restart ride a generalized named-scalar io
+  (`fdm_h5_append_scalar`/`fdm_h5_read_scalar`; absent datasets →
+  reinitialize + warn). DEVIATIONS from this doc, both commented in
+  rans.f90: (1) scalar convection is FIRST-ORDER UPWIND, not TVD van
+  Leer — the limiter needs a second upwind cell that the single halo
+  layer does not carry, and a block-edge fallback would break the
+  nb/rank-independence invariant; revisit before the T4 transition
+  fronts. (2) the ω cross-diffusion needed explicit-RK hardening: a flat
+  freestream ω against the pinned wall rows drives ω through zero, and a
+  floored ω flips F1→0 through the CD_kω branch, re-enabling the term
+  with 1/ω amplification (observed ω→1e150 in 50 steps). Fix =
+  wall-consistent ω IC (max of freestream and 6ν/(β1 y_eff²)) + Patankar
+  sign-split (negative part into the point-implicit denominator) + the
+  explicit positive part rate-limited to ≤ ω/dt_sub. Gates
+  (validation/rans_sst/, all PASS): (a) laminar Re_τ 10, tu 1%: parabola
+  to 2.4e-4, k → 3e-47 (at Re_τ 30/tu 5% the no-transition SST correctly
+  finds its weakly-turbulent branch — that is model physics, not a bug);
+  (b) Re_τ 180/395: U+ centreline 18.16/20.16 vs DNS 18.20/20.13
+  (0.2%/0.15%), u_τ 1.001/1.002, log line to 4.9%/6.5% (the pure κ/B
+  line deviates several % from real profiles — the DNS centreline anchor
+  is the sharper criterion); (c) les_ibm off-grid IBM channel through
+  the wall-cell ω pinning: log line to 4.3%, u_τ 0.966 — THE key IBM
+  gate; (d) wall-band-refined channel: NO interface band
+  (jump/local-variation ratios 0.58–1.11 in k/ω/nut/u), core matches the
+  RESOLVED turb180 reference to ≤2.8% (the uniform coarse twin is an
+  informational control only — its y+₁≈2.8 sublayer feeds a spurious
+  core-k plateau); (e) LES/no-model case list bit-exact (nofma, max_abs
+  0, incl. nut) vs 5851c2f CPU AND GPU; RANS 20-step run bit-exact
+  across 1-rank == 4-rank == GPU (all fields incl. k/ω/nut). Found and
+  fixed while gating (e): `initialise_channel_fields` filled only block
+  slot 1 (Phase-0 relic) — any cold-start channel with `[blocks] nb` set
+  got a rank-count-dependent, mostly-zero IC; fix loops all blocks with
+  block-origin noise indexing (bit-exact for the default
+  one-block-per-rank layout, where origin == the old rank-box offset).
 - **T3 — wall_function mode.** Log-branch ω/ν_t/G in wall cells. Gate:
   the same channel deliberately coarsened to y⁺₁ ≈ 30–50 still recovers
   the log law and the correct bulk U; behaviour degrades gracefully as
@@ -436,34 +464,33 @@ dwall source → error; etc.).
 - `git add` explicit paths only (see memory: git-staging-discipline);
   validation output .h5/.png are gitignored on purpose.
 
-## NEXT-SESSION PROMPT (T1b done 2026-07-07; T2 — SST transport — is next)
+## NEXT-SESSION PROMPT (T2 done 2026-07-08; T3 — wall functions — is next)
 
 > Read `docs/next_session_iddes.md` and CLAUDE.md. Branch
-> `claude/jacobi-interface`. Execute phase T2 ONLY: k-ω SST transport, no
-> transition, resolved wall mode. Build in `rans.f90` on the T1 geometry
-> state (`sst_type` already holds dwall/yeff/wallcell): the k and ω
-> arrays + their oldrhs (cell-centred, halo 0:nb+1, RK3 low-storage like
-> the momentum predictor), ONE fused per-substage transport kernel
-> (velocity-gradient tensor / S / F1 / F2 computed once per cell — reuse
-> `velocity_gradient_tensor`), TVD (van Leer) convection helper,
-> face-averaged effective diffusivity, POINT-IMPLICIT sinks + floors
-> (k ≥ 0, ω ≥ ω_min — a naive explicit ω destruction NaNs immediately),
-> the Menter ω wall-cell pinning (viscous limb, BEFORE the transport
-> kernel reads neighbours), a small cell-centred-scalar BC routine
-> (Dirichlet mirror / Neumann copy at FACE_PHYS), scalar halos via
-> `exchange_scalar_halos`, nut_rans = a1 k/max(a1 ω, S F2) assembled into
-> `turb%nut` via the turbulence.f90 select-case (enable
-> `[turbulence] model = rans` + `[rans] model = sst`; solid cells keep
-> benign ω / k = 0 / nut = 0 set at init and after restart), restart/io
-> of k and ω riding the block-table machinery (absent datasets →
-> initialize from `[rans] tu`/`nut_ratio` and warn), and the k/γ/Re_θt
-> diffusive-flux masking through solid staggered faces. Gates (doc T2
-> list): (a) laminar channel stays laminar, parabola exact, seeded k
-> decays; (b) developed turbulent channel Re_τ 180 + one higher Re vs the
-> log law / DNS mean — RANS-quality (a few %); (c) the les_ibm off-grid
-> IBM plane channel reproduces (b) through the IBM wall treatment — THE
-> key gate; (d) band-refined RANS channel vs single-level: no interface
-> band in k/ω/nut; (e) CPU==GPU to round-off; LES/no-model cases still
-> bit-exact (nofma, max_abs 0) — the nut consumer chain must not be
-> edited. Make a plan first; execute after. T3 (wall functions) → T5 per
-> the doc, one phase per gate.
+> `claude/jacobi-interface`. Execute phase T3 ONLY: the `[rans]
+> wall_treatment = wall_function` mode (Weber thesis Eqs. 4.39-4.42 /
+> the doc's IBM wall treatment items 3-6). On top of the validated T2
+> resolved mode: (1) wall-cell ω becomes the stepwise viscous/log blend
+> (ω_vis = 6ν/(β1 y_eff²), ω_log = √k/(C_μ^¼ κ y_eff), switch at
+> y⁺_lam ≈ 11 with y⁺ = C_μ^¼ y_eff √k/ν) — same pinning site, new
+> value; (2) wall-cell ν_t overwritten after assembly: 0 on the viscous
+> branch, ν(y⁺κ/ln(E y⁺) − 1) on the log branch (E = 9.8); (3) wall-cell
+> production on the log branch from the tangential velocity relative to
+> the local IB normal (∇dwall by one-sided differences); (4) the
+> domain-wall first-cell rows get the same blend. Config: accept
+> wall_function; transition ∧ wall_function stays a hard error. Gates:
+> (a) the turb180 channel deliberately coarsened to y⁺₁ ≈ 30-50 (uniform
+> or mildly stretched y) recovers the log law and the correct bulk U
+> (compare U+ centreline vs DNS 18.20 and u_τ = 1); (b) graceful
+> degradation as y⁺₁ varies (~5, ~15, ~30, ~50 — no double-counting dip
+> in the buffer range); (c) the les_ibm IBM channel (y⁺₁ ~ 2-3, i.e. the
+> awkward marginal range) does not regress vs its T2 resolved result;
+> (d) resolved-mode results bit-exact vs T2 (the wall_function code must
+> be branch-gated, nofma max_abs 0 on the T2 case list); (e) CPU==GPU +
+> rank-count determinism on one wall-function case. Use the
+> validation/rans_sst/ harness (run_gates.sh pattern, short bit-exact
+> runs per bit-exact-gates-short). Then T4 (transition, separable) or T5
+> (IDDES blend) per the doc, one phase per gate. NOTE for T4: the scalar
+> convection is first-order upwind (single halo layer, see the T2 phase
+> notes) — the transition-front sharpness question must be revisited
+> there.

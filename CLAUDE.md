@@ -418,9 +418,38 @@ immersed boundary. Phased, each phase verified before the next:
   through the SAME machinery (`walldist_test`, src/test_walldist.f90)
   tracks tol down to 1.6e-10; refine_body per-level 2.4e-11; flat file-IBM
   gates still 0.0; T0/T1 case list bit-exact (nofma, max_abs 0) CPU AND
-  GPU; ransgeom dump 1-rank == 4-rank == GPU. NEXT IDDES phase: T2 (SST
-  transport, resolved mode) — prompt at the end of
-  `docs/next_session_iddes.md`.
+  GPU; ransgeom dump 1-rank == 4-rank == GPU.
+- IDDES phase T2 — k-ω SST transport, resolved wall mode (DONE 2026-07-08,
+  branch `claude/jacobi-interface`). rans.f90 owns k/ω (+oldrhs, scratch;
+  RK3 low-storage like the momentum predictor) and the fused per-substage
+  kernel: constrained-cell ω pinning BEFORE the kernel reads neighbours
+  (IBM wall cells via wallcell, domain no-slip rows via a new domwall
+  byte; viscous limb 6ν/(β1 y_eff²)), cell-centred scalar ghosts (k
+  mirror-0 at walls, ω copy), k/ω halos via exchange_scalar_halos,
+  point-implicit sinks + floors, solid-face diffusive-flux masking, nut =
+  a1 k/max(a1 ω, S F2) with wall/solid-cell nut = 0. Config
+  `[turbulence] model = rans` + `[rans] model = sst` (tu, nut_ratio;
+  transition→T4, wall_function→T3 rejected). k/ω snapshots + restart via
+  the new named-scalar io (`fdm_h5_append_scalar`/`fdm_h5_read_scalar`;
+  absent → reinit + warn). TWO documented deviations (comments in
+  rans.f90): scalar convection is FIRST-ORDER UPWIND (van Leer needs a
+  2nd upwind halo cell; a block-edge fallback would break
+  nb/rank-independence — revisit before T4 fronts); the ω cross-diffusion
+  needed explicit-RK hardening (wall-consistent ω IC + Patankar
+  sign-split + rate-limited positive part — a floored ω flips F1→0 via
+  the CD_kω branch and the 1/ω term cascades to 1e150 otherwise). Gates
+  all PASS (validation/rans_sst/, long runs remote via run_gates.sh):
+  laminar Re_τ10 parabola 2.4e-4 + k→3e-47; Re_τ 180/395 U+ centreline
+  0.2%/0.15% vs DNS, u_τ 1.001/1.002; les_ibm IBM channel log line 4.3%
+  (THE key IBM gate); wall-band-refined channel: no interface band
+  (jump ratios ≤1.11), core ≤2.8% vs the resolved reference; LES/
+  no-model bit-exact (nofma, max_abs 0) vs 5851c2f CPU+GPU; RANS 1-rank
+  == 4-rank == GPU exactly. ALSO FIXED (pre-existing, found by the rank
+  gate): initialise_channel_fields filled only block slot 1 — cold-start
+  channels with [blocks] nb set got a rank-dependent mostly-zero IC; now
+  loops all blocks with block-origin noise indexing (bit-exact for the
+  default layout). NEXT IDDES phase: T3 (wall functions) — prompt at the
+  end of `docs/next_session_iddes.md`.
 - ALSO PENDING: **Profile + optimise** the GPU step for the 2:1-refined channel.
   The last hard profile is STALE (the reflux that was 23% is removed; the
   `MOBY_PHASETIME` timer is deleted): re-profile first with a minimal removable

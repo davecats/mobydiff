@@ -805,9 +805,10 @@ int fdm_h5_write_field(const char *filename, int nbx, int nby, int nbz,
  * a plain array (no c_loc, which nvfortran ICEs on for allocatable components).
  * Collective: all ranks must call it together (LES on/off is a global setting).
  * nut has the same haloed per-block layout as one velocity component. */
-int fdm_h5_append_nut(const char *filename, int nbx, int nby, int nbz,
-                      int n_blocks, int n_blocks_global, int id_start,
-                      const double *nut)
+int fdm_h5_append_scalar(const char *filename, const char *name,
+                         int nbx, int nby, int nbz,
+                         int n_blocks, int n_blocks_global, int id_start,
+                         const double *s)
 {
     const size_t var_stride = (size_t)(nbx + 2)*(size_t)(nby + 2)*(size_t)(nbz + 2);
     hid_t plist, file;
@@ -825,10 +826,67 @@ int fdm_h5_append_nut(const char *filename, int nbx, int nby, int nbz,
     H5Pclose(plist);
     if (file < 0) return 1;
 
-    ierr |= write_block_dataset(file, "nut", nbx, nby, nbz,
+    ierr |= write_block_dataset(file, name, nbx, nby, nbz,
                                 n_blocks, n_blocks_global, id_start,
-                                nut, var_stride);
+                                s, var_stride);
     ierr |= H5Fclose(file) < 0;
+    return ierr != 0;
+}
+
+int fdm_h5_append_nut(const char *filename, int nbx, int nby, int nbz,
+                      int n_blocks, int n_blocks_global, int id_start,
+                      const double *nut)
+{
+    return fdm_h5_append_scalar(filename, "nut", nbx, nby, nbz,
+                                n_blocks, n_blocks_global, id_start, nut);
+}
+
+/* Read a named cell-centred block-layout scalar (the RANS k/omega restart
+ * datasets). *found = 0 when the dataset is absent, which is not an error:
+ * the solver then reinitializes the scalar and warns (old restart files).
+ * Collective. Only the block-table (4D) layout is supported -- legacy
+ * global 3D restarts never carried these datasets. */
+int fdm_h5_read_scalar(const char *filename, const char *name,
+                       int nbx, int nby, int nbz,
+                       int n_blocks, int n_blocks_global, int id_start,
+                       int *found, double *s)
+{
+    const size_t var_stride = (size_t)(nbx + 2)*(size_t)(nby + 2)*(size_t)(nbz + 2);
+    hid_t file, dset, file_space;
+    htri_t exists;
+    int ierr = 0;
+
+    *found = 0;
+    if (nbx < 1 || nby < 1 || nbz < 1 || n_blocks < 1) return 1;
+
+    file = open_parallel_file(filename);
+    if (file < 0) return 1;
+
+    exists = H5Lexists(file, name, H5P_DEFAULT);
+    if (exists <= 0) {
+        H5Fclose(file);
+        return 0;
+    }
+
+    dset = H5Dopen2(file, name, H5P_DEFAULT);
+    if (dset < 0) {
+        H5Fclose(file);
+        return 1;
+    }
+    file_space = H5Dget_space(dset);
+    if (file_space < 0 || H5Sget_simple_extent_ndims(file_space) != 4) {
+        if (file_space >= 0) H5Sclose(file_space);
+        H5Dclose(dset);
+        H5Fclose(file);
+        return 1;
+    }
+    ierr |= read_block_dataset(file, dset, file_space, nbx, nby, nbz,
+                               n_blocks, n_blocks_global, id_start,
+                               s, var_stride);
+    H5Sclose(file_space);
+    H5Dclose(dset);
+    ierr |= H5Fclose(file) < 0;
+    if (!ierr) *found = 1;
     return ierr != 0;
 }
 

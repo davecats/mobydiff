@@ -2,7 +2,7 @@ module config
     use, intrinsic :: iso_c_binding
     use :: init, only: dns_type, grid_type, VAR_U, VAR_V, VAR_W, VAR_P, &
         GRID_UNIFORM, GRID_COSINE, GRID_TANH, GRID_NATURAL, config_seen_type
-    use :: turbulence, only: turb_type, TURB_NONE, TURB_LES
+    use :: turbulence, only: turb_type, TURB_NONE, TURB_LES, TURB_RANS
     use :: les_model, only: les_type, LES_NONE, LES_SMAGORINSKY, LES_WALE
     use :: pressure_solver, only: pressure_solver_type
     use :: boundary, only: boundary_type, boundary_face_id
@@ -88,7 +88,7 @@ subroutine read_runtime_config(dns, g, turb, les, ps, bc, c, input_file, has_ter
     else
         call validate_runtime_config(dns, g, c, seen)
     end if
-    call validate_turbulence_values(turb, les)
+    call validate_turbulence_values(turb, les, dns)
 end subroutine read_runtime_config
 
 subroutine apply_config_value(section, key, value, dns, g, turb, les, ps, bc, c, seen, line_no)
@@ -295,12 +295,13 @@ subroutine validate_runtime_config(dns, g, c, seen)
     if (any(c%dims < 0)) error stop "MPI dimensions must be non-negative"
 end subroutine validate_runtime_config
 
-subroutine validate_turbulence_values(turb, les)
+subroutine validate_turbulence_values(turb, les, dns)
     type(turb_type), intent(in) :: turb
     type(les_type), intent(in) :: les
+    type(dns_type), intent(in) :: dns
 
     select case (turb%model)
-    case (TURB_NONE, TURB_LES)
+    case (TURB_NONE, TURB_LES, TURB_RANS)
     case default
         error stop "invalid turbulence model"
     end select
@@ -311,17 +312,35 @@ subroutine validate_turbulence_values(turb, les)
     end select
     if (turb%model == TURB_NONE) return
 
-    ! The LES family (and later iddes) needs an SGS kernel from [les].
-    if (les%model == LES_NONE) then
-        error stop "[turbulence] model = les requires an SGS model in [les]"
+    if (turb%model == TURB_LES) then
+        ! The LES family (and later iddes) needs an SGS kernel from [les].
+        if (les%model == LES_NONE) then
+            error stop "[turbulence] model = les requires an SGS model in [les]"
+        end if
+        if (les%model == LES_SMAGORINSKY .and. les%cs < 0.0d0) then
+            error stop "LES Smagorinsky constant must be non-negative"
+        end if
+        if (les%model == LES_WALE .and. les%cw < 0.0d0) then
+            error stop "LES WALE constant must be non-negative"
+        end if
+        if (les%delta_scale <= 0.0d0) error stop "LES delta_scale must be positive"
     end if
-    if (les%model == LES_SMAGORINSKY .and. les%cs < 0.0d0) then
-        error stop "LES Smagorinsky constant must be non-negative"
+
+    if (turb%model == TURB_RANS) then
+        ! T2 (docs/next_session_iddes.md): SST transport in resolved wall
+        ! mode only; wall functions arrive in T3, transition in T4.
+        if (.not. dns%rans_configured .or. dns%rans_model == 0_C_INT) then
+            error stop "[turbulence] model = rans requires [rans] model = sst"
+        end if
+        if (dns%rans_transition) then
+            error stop "[rans] transition is not implemented yet (phase T4)"
+        end if
+        if (dns%rans_wall_treatment /= 0_C_INT) then
+            error stop "[rans] wall_treatment = wall_function is not implemented yet (phase T3)"
+        end if
+        if (dns%rans_tu <= 0.0d0) error stop "[rans] tu must be positive (percent)"
+        if (dns%rans_nut_ratio <= 0.0d0) error stop "[rans] nut_ratio must be positive"
     end if
-    if (les%model == LES_WALE .and. les%cw < 0.0d0) then
-        error stop "LES WALE constant must be non-negative"
-    end if
-    if (les%delta_scale <= 0.0d0) error stop "LES delta_scale must be positive"
 end subroutine validate_turbulence_values
 
 logical function has_restart_file(dns)
@@ -385,15 +404,48 @@ subroutine apply_turbulence_value(key, value, turb, seen, line_no)
     end select
 end subroutine apply_turbulence_value
 
-! [rans] — the k-omega SST sub-model section. T1 carries only the geometry
-! diagnostic switch; model/transition/wall_treatment arrive with the T2+
-! transport phases (docs/next_session_iddes.md).
+! [rans] — the k-omega SST sub-model section (docs/next_session_iddes.md).
+! T2: model = sst enables the transport equations under
+! [turbulence] model = rans; transition (T4) and wall_function (T3) are
+! recognized but rejected until their phases land.
 subroutine apply_rans_value(key, value, dns, line_no)
     character(len=*), intent(in) :: key, value
     type(dns_type), intent(inout) :: dns
     integer, intent(in) :: line_no
 
+    character(len=:), allocatable :: value_l
+
     select case (trim(key))
+    case ("model")
+        value_l = lower(clean_string(value))
+        select case (trim(value_l))
+        case ("sst")
+            dns%rans_model = 1_C_INT
+        case ("none")
+            dns%rans_model = 0_C_INT
+        case default
+            if (terminal_output) print *, "error: unknown [rans] model on input line", &
+                line_no, ": ", trim(value_l)
+            error stop "unknown [rans] model"
+        end select
+    case ("wall_treatment")
+        value_l = lower(clean_string(value))
+        select case (trim(value_l))
+        case ("resolved")
+            dns%rans_wall_treatment = 0_C_INT
+        case ("wall_function")
+            dns%rans_wall_treatment = 1_C_INT
+        case default
+            if (terminal_output) print *, "error: unknown [rans] wall_treatment on input line", &
+                line_no, ": ", trim(value_l)
+            error stop "unknown [rans] wall_treatment"
+        end select
+    case ("transition")
+        call read_bool(value, dns%rans_transition, line_no)
+    case ("tu")
+        call read_real(value, dns%rans_tu, line_no)
+    case ("nut_ratio")
+        call read_real(value, dns%rans_nut_ratio, line_no)
     case ("dump_geometry")
         call read_bool(value, dns%rans_dump_geometry, line_no)
     case ("dwall_tol")
@@ -661,7 +713,13 @@ subroutine read_turbulence_model(value, target, line_no)
         target = TURB_NONE
     case ("les")
         target = TURB_LES
-    case ("rans", "sst", "iddes", "sst-iddes")
+    case ("rans")
+        target = TURB_RANS
+    case ("sst")
+        if (terminal_output) print *, "error: [turbulence] model selects the family;", &
+            " use model = rans here and set model = sst in [rans] (input line", line_no, ")"
+        error stop "RANS model belongs in the [rans] section"
+    case ("iddes", "sst-iddes")
         if (terminal_output) print *, "error: turbulence model not implemented yet on input line", &
             line_no, ": ", trim(value_l)
         error stop "turbulence model not implemented yet"

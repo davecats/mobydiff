@@ -127,9 +127,9 @@ program main
         call set_ibm_coeff(dns, blk, ibm, VAR_W)
     end if
 
-    ! IDDES phase T1: a configured [rans] section builds the SST geometry
-    ! state (wall distance + IBM wall cells) so it can be validated; nothing
-    ! consumes it until the T2 transport phase, so this is init-only.
+    ! A configured [rans] section builds the SST geometry state (T1: wall
+    ! distance + IBM wall cells); [turbulence] model = rans additionally
+    ! builds and advances the k-omega transport state (T2).
     if (dns%rans_configured) then
         if (c%has_terminal) print *, "initialising RANS geometry..."
 #ifdef USE_OPENMP_OFFLOAD
@@ -138,6 +138,7 @@ program main
         !$omp target update from(ibm%coef)
 #endif
         call init_rans_geometry(sst, dns, g, blk, bc, ibm, c)
+        if (turb%model == TURB_RANS) call init_rans_transport(sst, dns, blk, bc, c%has_terminal)
         call enter_rans_data(sst)
         if (dns%rans_dump_geometry) call write_rans_geometry(sst, blk, dns, c)
     end if
@@ -158,10 +159,15 @@ program main
     call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W, VAR_P])
 
     call flow%setup_after_grid(blk, dns, g, bc, c)
-    ! Only the LES producer exists so far; the RANS/IDDES phases will turn
-    ! this into a select case on turb%model (docs/next_session_iddes.md).
+    ! Every producer fills the same turb%nut; the consumer chain (exchange,
+    ! dt limits) is model-agnostic.
     if (turbulence_is_enabled(turb)) then
-        call update_sgs_viscosity(les, turb, blk, dns, ibm, turb%nut)
+        select case (turb%model)
+        case (TURB_RANS)
+            call rans_prepare(sst, turb, blk, dns, bc, c)
+        case default
+            call update_sgs_viscosity(les, turb, blk, dns, ibm, turb%nut)
+        end select
         call exchange_scalar_halos(c, turb%nut, blk)
         call update_timestep_limits(blk, dns, c, turb)
     else
@@ -192,7 +198,12 @@ program main
             if (dns%force_enabled) call update_bodyforce(bf, blk, dns, g, dns%t_current)
             if (turbulence_is_enabled(turb)) then
                 turb_profile_start = wall_seconds()
-                call update_sgs_viscosity(les, turb, blk, dns, ibm, turb%nut)
+                select case (turb%model)
+                case (TURB_RANS)
+                    call rans_substage(sst, turb, blk, dns, ibm, bc, c, dt_alpha, dt_beta)
+                case default
+                    call update_sgs_viscosity(les, turb, blk, dns, ibm, turb%nut)
+                end select
                 call profiler_add(turb_prof, TURB_PROF_NUT, wall_seconds() - turb_profile_start)
                 turb_profile_start = wall_seconds()
                 call exchange_scalar_halos(c, turb%nut, blk)
@@ -221,7 +232,8 @@ program main
         end if
 
         if (dns%field_interval > 0) then
-            call maybe_write_field(blk, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%omega, turb%nut)
+            call maybe_write_field(blk, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%omega, &
+                turb%nut, sst%k, sst%omg)
         end if
         call flow%after_step(blk, dns, g, c)
 
@@ -234,7 +246,8 @@ program main
         if (turbulence_is_enabled(turb)) call write_profiler(turb_prof, loop_steps)
     end if
 
-    call write_field(blk, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%omega, turb%nut)
+    call write_field(blk, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%omega, &
+        turb%nut, sst%k, sst%omg)
 
     ! Release device-side data before the host allocatables go out of scope.
     call flow%finalize(dns, g, c)

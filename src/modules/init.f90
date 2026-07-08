@@ -107,6 +107,15 @@ module init
         ! Absolute tolerance of the geometry-agnostic analytic wall distance
         ! (walldist.f90 polish); gates sweep it to demonstrate convergence.
         real(C_DOUBLE) :: rans_dwall_tol = 1.0d-10
+        ! T2 transport sub-model: 0 = none, 1 = k-omega SST. Wall treatment:
+        ! 0 = resolved (y+_1 <~ 1), 1 = wall_function (phase T3). tu is the
+        ! initial turbulence intensity in PERCENT of the local velocity;
+        ! nut_ratio = nut/nu sets the initial omega = k/(nut_ratio*nu).
+        integer(C_INT) :: rans_model = 0_C_INT
+        integer(C_INT) :: rans_wall_treatment = 0_C_INT
+        logical(C_BOOL) :: rans_transition = .false.
+        real(C_DOUBLE) :: rans_tu = 5.0d0
+        real(C_DOUBLE) :: rans_nut_ratio = 10.0d0
         character(len=256) :: field_prefix = ""
         integer :: field_interval = 0
         character(len=256) :: restart_file = ""

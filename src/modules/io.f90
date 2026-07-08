@@ -52,6 +52,29 @@ module io
             integer(C_INT) :: ierr
         end function fdm_h5_append_nut
 
+        ! Named cell-centred block-layout scalar append/read (the RANS k and
+        ! omega snapshot/restart datasets ride the nut machinery).
+        function fdm_h5_append_scalar(file_name, name, nbx, nby, nbz, n_blocks, &
+                n_blocks_global, id_start, s) &
+                bind(C, name="fdm_h5_append_scalar") result(ierr)
+            import :: C_CHAR, C_INT, C_DOUBLE
+            character(kind=C_CHAR), intent(in) :: file_name(*), name(*)
+            integer(C_INT), value :: nbx, nby, nbz, n_blocks, n_blocks_global, id_start
+            real(C_DOUBLE), intent(in) :: s(*)
+            integer(C_INT) :: ierr
+        end function fdm_h5_append_scalar
+
+        function fdm_h5_read_scalar(file_name, name, nbx, nby, nbz, n_blocks, &
+                n_blocks_global, id_start, found, s) &
+                bind(C, name="fdm_h5_read_scalar") result(ierr)
+            import :: C_CHAR, C_INT, C_DOUBLE
+            character(kind=C_CHAR), intent(in) :: file_name(*), name(*)
+            integer(C_INT), value :: nbx, nby, nbz, n_blocks, n_blocks_global, id_start
+            integer(C_INT), intent(out) :: found
+            real(C_DOUBLE), intent(inout) :: s(*)
+            integer(C_INT) :: ierr
+        end function fdm_h5_read_scalar
+
         function fdm_h5_write_grid(file_name, nx, ny, nz, lx, ly, lz, &
                 periodic, grid_distribution, grid_stretch, grid_natural_dyw_plus, grid_natural_one_sided, &
                 x_node, y_node, z_node, xu, yu, zu, xv, yv, zv, xw, yw, zw) &
@@ -164,7 +187,8 @@ logical function output_is_due(step, output_interval)
     end if
 end function output_is_due
 
-subroutine maybe_write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor, nut)
+subroutine maybe_write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor, nut, &
+        rans_k, rans_omg)
     type(block_set_type), intent(inout) :: blk
     type(dns_type), intent(in) :: dns
     type(grid_type), intent(in) :: g
@@ -174,12 +198,15 @@ subroutine maybe_write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_
     integer(C_INT), intent(in) :: pressure_niter
     real(C_DOUBLE), intent(in) :: pressure_sor
     real(C_DOUBLE), allocatable, intent(in) :: nut(:,:,:,:)   ! LES eddy viscosity (unallocated when LES off)
+    real(C_DOUBLE), allocatable, intent(in), optional :: rans_k(:,:,:,:), rans_omg(:,:,:,:)
 
     if (.not. output_is_due(step, dns%field_interval)) return
-    call write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor, nut)
+    call write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor, nut, &
+        rans_k, rans_omg)
 end subroutine maybe_write_field
 
-subroutine write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor, nut)
+subroutine write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor, nut, &
+        rans_k, rans_omg)
     ! Parallel HDF5 call: all MPI ranks must enter this routine together.
     ! Global datasets, one hyperslab per block.
     type(block_set_type), intent(inout) :: blk
@@ -191,6 +218,9 @@ subroutine write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor, n
     integer(C_INT), intent(in) :: pressure_niter
     real(C_DOUBLE), intent(in) :: pressure_sor
     real(C_DOUBLE), allocatable, intent(in) :: nut(:,:,:,:)   ! LES eddy viscosity (unallocated when LES off)
+    ! RANS transport scalars (T2); appended when present AND allocated, so
+    ! LES/no-model output stays byte-identical.
+    real(C_DOUBLE), allocatable, intent(in), optional :: rans_k(:,:,:,:), rans_omg(:,:,:,:)
 
     character(len=256) :: h5_file_name
     character(kind=C_CHAR,len=:), allocatable :: c_file_name
@@ -245,9 +275,65 @@ subroutine write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor, n
         end if
     end if
 
+    if (present(rans_k)) then
+        if (allocated(rans_k)) call append_scalar_field(c_file_name, "k", rans_k, blk, &
+            h5_file_name, c%has_terminal)
+    end if
+    if (present(rans_omg)) then
+        if (allocated(rans_omg)) call append_scalar_field(c_file_name, "omega", rans_omg, blk, &
+            h5_file_name, c%has_terminal)
+    end if
+
     ! No XDMF for the block-table layout; reassemble with
     ! tools/compare_fields.py --export-global for visualization.
 end subroutine write_field
+
+subroutine append_scalar_field(c_file_name, name, s, blk, h5_file_name, has_terminal)
+    character(kind=C_CHAR,len=*), intent(in) :: c_file_name
+    character(len=*), intent(in) :: name
+    real(C_DOUBLE), allocatable, intent(in) :: s(:,:,:,:)
+    type(block_set_type), intent(in) :: blk
+    character(len=*), intent(in) :: h5_file_name
+    logical, intent(in) :: has_terminal
+
+    character(kind=C_CHAR,len=:), allocatable :: c_name
+    integer(C_INT) :: ierr
+
+#ifdef USE_OPENMP_OFFLOAD
+    !$omp target update from(s)
+#endif
+    c_name = to_c_string(name)
+    ierr = fdm_h5_append_scalar(c_file_name, c_name, blk%nb(1), blk%nb(2), blk%nb(3), &
+        blk%nBlocks, blk%nBlocksGlobal, blk%idStart, s)
+    if (ierr /= 0_C_INT) then
+        if (has_terminal) print *, "error: could not append ", name, " to: ", trim(h5_file_name)
+        error stop
+    end if
+end subroutine append_scalar_field
+
+! Read one named RANS scalar from a restart file; found = .false. when the
+! dataset is absent (old restart), which the caller handles by
+! reinitializing and warning.
+subroutine read_scalar_field(blk, name, file_name, s, found, has_terminal)
+    type(block_set_type), intent(in) :: blk
+    character(len=*), intent(in) :: name, file_name
+    real(C_DOUBLE), intent(inout) :: s(:,:,:,:)
+    logical, intent(out) :: found
+    logical, intent(in) :: has_terminal
+
+    character(kind=C_CHAR,len=:), allocatable :: c_file_name, c_name
+    integer(C_INT) :: ierr, ifound
+
+    c_file_name = to_c_string(file_name)
+    c_name = to_c_string(name)
+    ierr = fdm_h5_read_scalar(c_file_name, c_name, blk%nb(1), blk%nb(2), blk%nb(3), &
+        blk%nBlocks, blk%nBlocksGlobal, blk%idStart, ifound, s)
+    if (ierr /= 0_C_INT) then
+        if (has_terminal) print *, "error: could not read ", name, " from: ", trim(file_name)
+        error stop
+    end if
+    found = ifound /= 0_C_INT
+end subroutine read_scalar_field
 
 subroutine write_grid_export(dns, g, blk, bc, file_name, has_terminal)
     ! Serial preprocessing path (mobygrid): the single block covers the whole
