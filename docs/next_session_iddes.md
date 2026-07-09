@@ -474,12 +474,21 @@ dwall source → error; etc.).
   off = bit-exact), the LM F1 = max(F1, F3) modification; γ_eff = γ — the
   separation-induced γ_sep branch (LM Eq. 18) is a marked later increment.
   STEP-0 DECISION (in the rans.f90 deviation comment): first-order upwind
-  KEPT for the transition scalars — the bc machinery has no inflow/outflow
-  (gate 0: flat plate DEFERRED), so the only runnable fronts are
-  wall-normal channel fronts with ~zero cross-front velocity; measured
-  D_num/D_phys = max|v|·dy/2 / (ν+ν_t) = 7.3e-5 (lam30t) / 7.8e-15
-  (turb180t) via `validation/rans_sst/t4_front_check.py`; revisit (second
-  scalar-only halo layer + TVD) together with inflow BCs. FOUND WHILE
+  KEPT for the transition scalars. Gate 0, corrected per user note
+  2026-07-09: a velocity inlet CAN be composed from the existing
+  Dirichlet/Neumann faces (Dirichlet velocity + Neumann pressure,
+  zero-gradient outlet) — the flat plate is deferred NOT for missing BC
+  machinery but because the RANS layer is not inlet-aware
+  (domain_face_is_wall reads a Dirichlet inlet as a no-slip wall: ω
+  pinned, dwall min'ed to the inlet plane) and the scalars lack
+  Dirichlet-inlet ghost values; plus no inflow/outflow case is validated.
+  The T4 gates are therefore channels, whose fronts are wall-normal with
+  ~zero cross-front velocity; measured D_num/D_phys = max|v|·dy/2 /
+  (ν+ν_t) = 7.3e-5 (lam30t) / 7.8e-15 (turb180t) via
+  `validation/rans_sst/t4_front_check.py`; revisit (second scalar-only
+  halo layer + TVD) together with the flat-plate increment
+  (inlet-vs-wall classification + scalar inlet values + outflow
+  validation). FOUND WHILE
   GATING: R̃e_θt's diffusivity σ_θt(ν+ν_t) = 2(ν+ν_t) is twice the
   momentum diffusivity the Peclet dt controller budgets for — fully
   explicit it checkerboards to 1e6 within ~40 steps; fixed by making the

@@ -496,9 +496,12 @@ immersed boundary. Phased, each phase verified before the next:
   ×min(max(γ,0.1),1) in the point-implicit denominator (×1.0 exact when
   off), F1 = max(F1, F3). γ_eff = γ; γ_sep is a marked later increment.
   STEP-0 decision (deviation comment in rans.f90): first-order upwind
-  KEPT — no inflow/outflow BC exists (flat plate deferred), channel
-  fronts are wall-normal with ~zero cross-front velocity (measured
-  D_num/D_phys 7.3e-5, `t4_front_check.py`). FOUND WHILE GATING: R̃e_θt's
+  KEPT — flat plate deferred (an inlet IS composable from Dirichlet
+  velocity + Neumann pressure faces — user note 2026-07-09 — but the
+  RANS layer is not inlet-aware: domain_face_is_wall reads a Dirichlet
+  inlet as a no-slip wall, and the scalars lack inlet ghost values);
+  channel fronts are wall-normal with ~zero cross-front velocity
+  (measured D_num/D_phys 7.3e-5, `t4_front_check.py`). FOUND WHILE GATING: R̃e_θt's
   diffusivity σ_θt(ν+ν_t) = 2(ν+ν_t) exceeds the Peclet dt budget (2×) —
   explicit diffusion checkerboards to 1e6 in ~40 steps; FIX = its
   diffusion DIAGONAL is point-implicit (same steady state; load-bearing,

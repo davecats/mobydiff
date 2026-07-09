@@ -47,17 +47,22 @@
 !     needs a second upwind cell, which the single halo layer does not
 !     carry — falling back near block edges would make results depend on
 !     the block decomposition. T4 STEP-0 DECISION (2026-07-09): kept for
-!     the transition scalars too. The bc machinery has no inflow/outflow
-!     (Dirichlet/Neumann faces only), so the only transition fronts the
-!     solver can host are the wall-normal ones in channels, and there the
-!     mean cross-front velocity is ~0: the upwind numerical diffusion
-!     |v| dy/2 across the gamma front is orders of magnitude below the
+!     the transition scalars too. A velocity inlet CAN be composed from
+!     the existing faces (Dirichlet velocity + Neumann pressure, zero-
+!     gradient outlet), but no such case is validated and the RANS layer
+!     is not inlet-aware yet: domain_face_is_wall reads "both tangential
+!     components Dirichlet" as no-slip, so an inlet would be classified
+!     as a WALL (omega pinned, dwall min'ed to the inlet plane), and the
+!     transported scalars have no Dirichlet-inlet ghost values. Hence the
+!     T4 gates are channels, whose gamma fronts are wall-normal with ~0
+!     mean cross-front velocity: the upwind numerical diffusion
+!     |v| dy/2 across the front is orders of magnitude below the
 !     physical diffusivity nu + nut/sigma_f (quantified on the T4 gate
 !     fields by validation/rans_sst/t4_front_check.py), and the T4 gates
 !     discriminate laminar vs turbulent correctly. Revisit (a second
 !     scalar-only halo layer + TVD; block-edge fallbacks stay forbidden)
-!     together with inflow/outflow BCs, which are what streamwise-
-!     developing flat-plate fronts need anyway.
+!     together with the flat-plate increment: inlet-vs-wall face
+!     classification + scalar inlet values + outflow validation.
 !   - diffusion is a face-averaged effective diffusivity (nu + sigma*nut,
 !     arithmetic mean, nut lagged by one assembly) times the central
 !     gradient; fluxes through solid staggered faces are masked (the

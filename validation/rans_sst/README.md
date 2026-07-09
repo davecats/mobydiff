@@ -89,8 +89,12 @@ CPU == GPU).
 
 T4 gamma-Re_thetat transition cases (`[rans] transition = true`,
 Langtry & Menter 2009 = OpenFOAM kOmegaSSTLM, resolved walls only; run
-group `t4`). The canonical flat plate needs inflow/outflow BCs the solver
-does not have (Dirichlet/Neumann faces only), so the gates are channels.
+group `t4`). The canonical flat plate is DEFERRED: an inlet can be
+composed from the existing faces (Dirichlet velocity + Neumann pressure,
+zero-gradient outlet), but the RANS layer is not inlet-aware yet (a
+Dirichlet inlet classifies as a no-slip wall in domain_face_is_wall /
+dwall, and the scalars lack inlet ghost values) and no inflow/outflow
+case is validated — so the gates are channels.
 RESULTS 2026-07-09 (local 4-rank CPU) — all PASS:
 
 - `laminart.ini`  gate (a) subcritical control: Re_tau 10 / tu 1% with
@@ -117,7 +121,9 @@ RESULTS 2026-07-09 (local 4-rank CPU) — all PASS:
                   and the cross-front upwind diffusivity max|v| dy/2 is
                   7.3e-5 (lam30t) / 7.8e-15 (turb180t) of the physical
                   nu + nut — first-order cannot smear these fronts.
-                  Revisit together with inflow/outflow BCs (flat plate).
+                  Revisit together with the flat-plate increment
+                  (inlet-vs-wall classification + scalar inlet values +
+                  outflow validation).
 
 T4 short gates (local): correlations unit-tested by
 `src/test_transition.f90` (26 tabulated values vs an independent
