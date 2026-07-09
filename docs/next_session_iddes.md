@@ -454,15 +454,54 @@ dwall source → error; etc.).
   still is): the `log()` intrinsic in the wall-function branch differs
   by an ulp between host and device libm (same class as the accepted
   les_ibm masking-branch 4.6e-14 precedent).
-- **T4 — γ–Re_θt transition (resolved only).** The two extra scalars +
-  correlations + the P̃_k/D̃_k coupling. Gate caveat: the canonical T3-series
-  flat-plate cases need an inflow/outflow capability — CHECK first whether
-  the bc machinery supports it; if not, gate on what the solver can run:
-  (a) laminar channel at subcritical Re with γ active stays laminar
-  (γ → 0 in the BL, P_k suppressed) where plain SST would transition;
-  (b) developed turbulent channel with transition on reproduces the T2
-  result (γ → 1); defer the flat plate to when inflow BCs exist. This
-  phase is SEPARABLE — IDDES (T5) does not depend on it.
+- **T4 — γ–Re_θt transition (resolved only). DONE (validated 2026-07-09).**
+  `[rans] transition = true` (transition ∧ wall_function stays a hard
+  error). Two extra transported scalars γ and R̃e_θt in the fused substage
+  kernel (shared gradients/S/Ω/F1/F2), low-storage RK3 oldrhs pairs,
+  point-implicit sinks in the OpenFOAM split (+P − ce1 P γ, +E − ce2 E γ:
+  both explicit parts pure sources, implicit coefficient nonnegative on
+  BOTH sides of the destruction sign flip at γ = 1/ce2), floors 0 ≤ γ ≤ 1
+  and R̃e_θt ≥ 0, `exchange_scalar_halos`, zero-gradient ghosts, named-
+  scalar io ("gamma"/"rethetat") + restart (absent → reinit + warn; the
+  transition arrays are 1-cell dummies when the flag is off, the wnorm
+  uniform-device-map idiom). Correlations (F_length, Re_θc, F_onset,
+  F_turb, F_θt, Re_θt,eq with its capped λ fixed point) transcribed
+  VERBATIM from OpenFOAM kOmegaSSTLM.C as pure declare-target functions,
+  unit-tested host-side by `src/test_transition.f90` (26 tabulated values
+  vs an independent Python transcription, every piecewise branch).
+  Coupling: P̃_k = γ P_k, the k destruction scaled by min(max(γ,0.1),1)
+  (the factor multiplies the point-implicit denominator; exactly 1.0 when
+  off = bit-exact), the LM F1 = max(F1, F3) modification; γ_eff = γ — the
+  separation-induced γ_sep branch (LM Eq. 18) is a marked later increment.
+  STEP-0 DECISION (in the rans.f90 deviation comment): first-order upwind
+  KEPT for the transition scalars — the bc machinery has no inflow/outflow
+  (gate 0: flat plate DEFERRED), so the only runnable fronts are
+  wall-normal channel fronts with ~zero cross-front velocity; measured
+  D_num/D_phys = max|v|·dy/2 / (ν+ν_t) = 7.3e-5 (lam30t) / 7.8e-15
+  (turb180t) via `validation/rans_sst/t4_front_check.py`; revisit (second
+  scalar-only halo layer + TVD) together with inflow BCs. FOUND WHILE
+  GATING: R̃e_θt's diffusivity σ_θt(ν+ν_t) = 2(ν+ν_t) is twice the
+  momentum diffusivity the Peclet dt controller budgets for — fully
+  explicit it checkerboards to 1e6 within ~40 steps; fixed by making the
+  DIAGONAL of its diffusion operator point-implicit (unconditionally
+  stable, positivity-preserving, same steady state; OpenFOAM's laplacian
+  is fully implicit anyway) — kernel comment documents it. Gates
+  (validation/rans_sst/, `t4` group, all PASS): (a) lam30t (Re_τ 30 /
+  tu 5%, exactly where plain SST self-sustains — the lam30 control shows
+  the branch: parabola off 12.2%, k = 0.37): transition laminarizes it —
+  parabola 1.6e-3, wall-layer γ 0.024, mean-k peak 9.1e-3 (the γ-floor 2%
+  of P_k; stationary t=150→300); laminart (Re_τ 10 / tu 1%) parabola
+  2.4e-4, k → 8.6e-16; (b) turb180t: γ ≥ 0.999 at y+ ≥ 30, U+ centreline
+  18.44 vs DNS 18.20 (1.3%), u_τ 1.0009 (log-line 6.6%, gated at the
+  turb395 0.08 — the anchor is the criterion); (c) transition = false
+  bit-exact vs T3 25ef6ed (nofma, max_abs 0 incl. k/ω/nut, CPU AND GPU)
+  on min_channel / les_ibm ± refine_body / Beltrami y-slab / turb180 /
+  wf180_y30; (d) transition-on 1-rank == 4-rank EXACT, CPU vs GPU
+  ≤ 2.8e-14 (exp/pow intrinsics, the T3 log() class); (e) γ/R̃e_θt restart
+  round-trip proven with a CHANGED tu (read ≈ 122 vs reinit-would-be 584),
+  legacy restarts warn + reinit. This phase was SEPARABLE — T5 does not
+  depend on it (reject transition under model = iddes until explicitly
+  validated there).
 - **T5 — IDDES blend.** f_d (DDES shielding form first), l_hyb into D_k,
   the nut blend, Δ selectable. Gates: (a) f_d field sane on the developed
   channel (→1 at the wall through the RANS layer, →0 in the core) at a
@@ -508,75 +547,56 @@ dwall source → error; etc.).
 - `git add` explicit paths only (see memory: git-staging-discipline);
   validation output .h5/.png are gitignored on purpose.
 
-## NEXT-SESSION PROMPT (T3 done 2026-07-08; T4 — γ–Re_θt transition — is
-## next by user decision; T5 — the IDDES blend — follows, per its bullet)
+## NEXT-SESSION PROMPT (T4 done 2026-07-09; T5 — the IDDES blend — is the
+## last phase, per its bullet)
 
 > Read `docs/next_session_iddes.md` and CLAUDE.md. Branch
-> `claude/jacobi-interface`. Execute phase T4 ONLY: the γ–Re_θt
-> transition variant (Langtry & Menter 2009 = OpenFOAM kOmegaSSTLM),
-> resolved walls only ([rans] transition = true; the transition ∧
-> wall_function hard error already exists — keep it ahead of nothing,
-> it is now the live guard). STEP 0, before any correlation code:
-> resolve the first-order-upwind front-sharpness question (the
-> documented T2 deviation in rans.f90) — transition FRONTS are exactly
-> the feature first-order convection smears. Options, in preference
-> order: (i) demonstrate on a cheap surrogate (e.g. a scalar front
-> advected through a channel, or the gate-(a) case itself) that
-> first-order is adequate for the gates below, then document and keep
-> it; (ii) a second halo layer + TVD van Leer for the transported
-> SCALARS only (do NOT touch the velocity/pressure exchange; any
-> scheme must preserve the nb/rank-count-independence invariant —
-> block-edge fallbacks are forbidden, they were the original reason
-> for choosing first-order). Decide with evidence and write the
-> decision into rans.f90's deviation comment. THEN: two new transported
-> scalars γ (σ_γ = 1, floors 0 ≤ γ ≤ 1, freestream/IC γ = 1) and R̃e_θt
-> (σ_θt = 2, relaxation source c_θt (Re_θt,corr − R̃e_θt)/t_scale with
-> t_scale = 500ν/U² — the session-spec "50" was a typo) riding the SAME
-> machinery as k/ω: the fused substage kernel (they share the
-> gradients/S/Ω/F1/F2 intermediates), low-storage RK3 oldrhs pairs,
-> point-implicit sinks (the γ destruction ca2 F_turb Ω γ (ce2 γ − 1)
-> gets the Patankar treatment; watch the sign flip at γ = 1/ce2),
-> exchange_scalar_halos, cell-centred ghosts (γ and Re_θt are
-> zero-gradient at walls, per kOmegaSSTLM), named-scalar io + restart
-> (absent datasets → reinit + warn, the k/ω pattern). Correlations
-> (F_length, Re_θc, F_onset, F_turb, Re_θt,corr(Tu, λ_θ) with its
-> capped fixed-point iteration) transcribed VERBATIM from Langtry &
-> Menter 2009 / OpenFOAM kOmegaSSTLM — do not re-derive the piecewise
-> fits — as pure `!$omp declare target` functions, and unit-tested
-> host-side against tabulated values (a small `transition_test` driver
-> like src/test_walldist.f90) BEFORE they ever run in a kernel.
-> Coupling into SST: P̃_k = γ_eff P_k, D̃_k scaled by
-> min(max(γ_eff, 0.1), 1); γ_eff = γ for now — the separation-induced
-> γ_sep branch is a clearly-marked SEPARATE later increment (like T5's
-> f_e). Respect the T2/T3 landmines (memory iddes-plan): the ω
-> cross-diffusion hardening (wall-consistent IC + Patankar split +
-> rate limiter) is load-bearing — do not simplify it; solid-cell
-> benign values at init AND after restart; the T3 wall-function paths
-> are branch-gated — transition code must not enter them. Gates
-> (extend validation/rans_sst/ run_gates.sh + check_gates.sh with a
-> `t4` group): (0) the bc machinery almost certainly lacks
-> inflow/outflow — CHECK and say so; if absent, gate on channels and
-> DEFER the canonical T3-series flat plate (the doc's stated caveat):
-> (a) the discriminating laminar gate: a Re_τ 30 / tu 5% channel —
-> exactly where plain no-transition SST self-sustains on its
-> weakly-turbulent branch (T2 README) — with transition on stays
-> LAMINAR (γ stays low in the wall layer, P_k suppressed, parabola
-> recovered to ~1e-2); laminar.ini (Re_τ 10 / tu 1%) must stay laminar
-> too; (b) developed turbulent channel: turb180 with transition = true
-> reproduces the T2/T3 resolved answer (γ → 1 through the turbulent
-> region; U+ centreline still on the DNS anchor 18.20 to ~2%, u_τ ~ 1);
-> (c) transition = false bit-exact vs T3 25ef6ed (nofma, max_abs 0
-> incl. k/ω/nut, CPU AND GPU) on the short case list — min_channel,
-> les_ibm ± refine_body, Beltrami y-slab, turb180 resolved AND one
-> wf180 wall-function case; (d) transition-on determinism: 1-rank ==
-> 4-rank EXACT, CPU vs GPU at worst ulp-intrinsic level (the T3 log()
-> precedent — resolved-arithmetic paths must stay exactly CPU==GPU);
-> (e) γ/Re_θt restart round-trip, and a legacy restart (no γ/Re_θt
-> datasets) reinitializes with the warning. WORKFLOW: the channel gates
-> are small — run them locally, at most one solver job at a time (the
-> local GPU is fine for hour-scale runs: T3's ibm180wf was 200k steps
-> in ~1 h at 18.6 ms/step); extend run_gates.sh anyway so the big
-> machine can rerun everything; bit-exactness comparisons use
-> sed-shortened ini copies (~20 steps, reduced niter) per memory
-> bit-exact-gates-short, never full-length runs. Then T5 (IDDES blend)
-> per the doc's T5 bullet, one phase per gate.
+> `claude/jacobi-interface`. Execute phase T5 ONLY: the IDDES blend,
+> DDES-shielding form FIRST (the full f_B/f_e/f_dt elevating branch is a
+> clearly separate SECOND increment, gated on log-layer-mismatch
+> reduction). Architecture per the doc's "module layout" and "IDDES
+> blend" sections — the blend lives ENTIRELY in turbulence.f90 and
+> touches exactly two places: (1) the k-destruction length l_hyb passed
+> into the RANS kernel, (2) the final nut = f_d nut_rans + (1 - f_d)
+> nut_sgs assembly; les.f90 and rans.f90 must not reference each other.
+> `[turbulence] model = iddes` (enum TURB_IDDES exists) requires BOTH a
+> configured [les] SGS model and [rans] model = sst; reject
+> [rans] transition under iddes (not validated there) and decide/document
+> wall_function ∧ iddes explicitly. Formulation: f_d = 1 - tanh((8 r_d)^3)
+> with r_d = (nu_t + nu)/(kappa^2 y_eff^2 sqrt(sum g_ij g_ij)) — reuse
+> velocity_gradient_tensor; l_RANS = sqrt(k)/(beta* omega); l_LES =
+> C_DES Delta, C_DES = F1-blend of (0.78, 0.61); Delta =
+> (dx dy dz)^(1/3) from the turb%filter_* tables first, the IDDES
+> min/max Delta as a step-2 selectable. l_hyb = f_d l_RANS +
+> (1 - f_d) l_LES replaces l_RANS in D_k ONLY — mind that the T2 kernel
+> integrates the k sink POINT-IMPLICITLY as beta* omega k in the
+> denominator: rewrite the implicit coefficient as sqrt(k)/l_hyb
+> equivalently and keep it point-implicit (an explicit k^{3/2}/l_hyb sink
+> reintroduces exactly the stiffness Patankar removed); with l_hyb =
+> l_RANS the arithmetic must reduce to the T2 form — pure RANS
+> (model = rans) must stay BIT-EXACT, which is the (e) gate. When iddes
+> runs, update_sgs_viscosity writes the nut_sgs scratch (add it to
+> turb_type; pure LES/pure RANS never allocate what they do not use) and
+> the two extra kernels (f_d, blend) are guarded by model == TURB_IDDES.
+> Respect the landmines: the nut consumer chain is untouched; the omega
+> cross-diffusion hardening and the R_thetat diagonal-implicit diffusion
+> are load-bearing; solid-cell benign values at init AND restart; no new
+> scalar diffusivity exceeds the momentum Peclet budget (l_hyb only
+> changes D_k, so none does). Gates (extend validation/rans_sst/ or a new
+> validation/iddes/ with run/check scripts): (a) f_d field sane on a
+> WMLES-style developed channel (-> 1 at the wall through the RANS layer,
+> -> 0 in the core; dump it via the named-scalar io); (b) channel mean
+> profile: no gross log-layer mismatch vs the T2 RANS and pure-WALE
+> references; (c) consistency limits: f_d forced 1 recovers the T2 RANS
+> answers, f_d forced 0 recovers WALE behaviour in the core; (d) the
+> les_ibm IBM channel runs IDDES stably with the wall treatment; (e) full
+> bit-exactness for model /= iddes vs T4 (nofma, max_abs 0 incl.
+> k/omega/nut, CPU AND GPU) on the standard short list — min_channel,
+> les_ibm +- refine_body, Beltrami y-slab, turb180 resolved, one wf180
+> case, lam30t transition; plus iddes-on determinism 1-rank == 4-rank
+> EXACT, CPU vs GPU at the ulp-intrinsic level. WORKFLOW: channel gates
+> local, one solver job at a time (sed-shortened ini copies ~20 steps for
+> bit-exactness per memory bit-exact-gates-short); extend the gate
+> scripts so the big machine can rerun everything. THEN (separate
+> increment, same gates + the log-layer-mismatch metric) the full IDDES
+> f_B/f_e elevating branch.

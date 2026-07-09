@@ -45,12 +45,14 @@ set(MODULE_SOURCES
     ${MODULE_DIR}/flow_case.f90
 )
 
-set(SOLVER_TARGETS main mobygrid walldist_test)
+set(SOLVER_TARGETS main mobygrid walldist_test transition_test)
 
 add_executable(main ${SRC_DIR}/main.f90 ${MODULE_SOURCES})
 add_executable(mobygrid ${SRC_DIR}/mobygrid.f90 ${MODULE_SOURCES})
 # Gate driver for the geometry-agnostic wall distance (IDDES T1b gate b).
 add_executable(walldist_test ${SRC_DIR}/test_walldist.f90 ${MODULE_SOURCES})
+# Host-side unit test for the T4 transition correlations (rans.f90).
+add_executable(transition_test ${SRC_DIR}/test_transition.f90 ${MODULE_SOURCES})
 
 # =========================
 # Module directory

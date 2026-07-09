@@ -69,5 +69,48 @@ REF_IBM=$(latest ibm180)
 check ibm180wf --mode wallfn ${REF_IBM:+--reference "$REF_IBM"} \
     --wall-lo 0.259375 --wall-hi 2.259375
 
+# T4 gate (a): with transition ON, both the genuinely subcritical channel
+# (laminart, Re_tau 10 / tu 1%) AND the Re_tau 30 / tu 5% channel — where
+# the no-transition SST self-sustains on its weakly-turbulent branch
+# (lam30, informational control) — must recover the laminar parabola with
+# gamma held down in the wall layer (its floor is 1/ce2 = 0.02).
+# laminart decays k outright (8.6e-16, like the T2 laminar gate). lam30t
+# cannot: the gamma floor 1/ce2 = 0.02 keeps 2% of P_k, so k equilibrates
+# at a small stationary residual (mean-profile peak 9.1e-3, 40x below the
+# weakly-turbulent branch's 0.37; stationary t=150 -> t=300) — the
+# discriminators are the parabola (1.6e-3 vs the branch's 12%) and the
+# held-down wall-layer gamma.
+check laminart --mode laminar --gamma-wall-max 0.2
+check lam30t   --mode laminar --gamma-wall-max 0.2 --k-max 0.02
+f=$(latest lam30)
+if [ -n "$f" ]; then
+    echo "== lam30 ($f) — informational (transition-OFF control: expected to"
+    echo "   FAIL the parabola by ~10% = the weakly-turbulent branch)"
+    $PY rans_channel_check.py "$f" --mode laminar || true
+    echo
+fi
+
+# T4 gate (b): developed turbulence preserved with transition on — the DNS
+# centreline anchor to 2% (the hard criterion; 1.3% at validation) and
+# gamma -> 1 through the turbulent region. The kappa/B log-line fit gets
+# the turb395 tolerance: the LM sublayer coupling (D_k scaled by 0.1 where
+# gamma is low) lifts the low-log rows ~2% above the T2 profile, and the
+# log line is the documented-weak criterion.
+check turb180t --mode loglaw --tolerance 0.08 --uplus-center 18.20 \
+    --gamma-core-min 0.95
+
+# T4 STEP-0 evidence (first-order upwind adequacy): the gamma front in the
+# channel gates is wall-normal, and the cross-front upwind numerical
+# diffusivity max|v| dy/2 must be far below the physical one (see the
+# deviation comment in rans.f90).
+for t4 in lam30t turb180t; do
+    f=$(latest $t4)
+    if [ -n "$f" ]; then
+        echo "== $t4 front check ($f)"
+        if ! $PY t4_front_check.py "$f"; then status=1; fi
+        echo
+    fi
+done
+
 echo "overall: $([ $status -eq 0 ] && echo ALL PASS || echo FAILURES PRESENT)"
 exit $status

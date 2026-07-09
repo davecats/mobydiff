@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# RANS T2+T3 gate runner (docs/next_session_iddes.md, phases T2/T3) — the
-# LONG physics runs, meant for a big machine:
+# RANS T2+T3+T4 gate runner (docs/next_session_iddes.md, phases T2/T3/T4)
+# — the LONG physics runs, meant for a big machine (the T4 channels are
+# small and also run fine locally):
 #
 #   rsync the repo over, build (see below), then:
 #       ./run_gates.sh            # all gates, sequentially
 #       ./run_gates.sh turb180    # one gate
 #       ./run_gates.sh t3         # the T3 wall-function set only
+#       ./run_gates.sh t4         # the T4 transition set only
 #   rsync the produced *_<step>.h5 + *.log back and run ./check_gates.sh
 #   (needs python3 + h5py/numpy only).
 #
@@ -44,6 +46,9 @@ want() {
     if [ "$sel" = all ] || [ "$sel" = "$1" ]; then return 0; fi
     if [ "$sel" = t3 ]; then
         case "$1" in wf180_*|ibm180wf) return 0;; esac
+    fi
+    if [ "$sel" = t4 ]; then
+        case "$1" in lam30|lam30t|laminart|turb180t) return 0;; esac
     fi
     return 1
 }
@@ -91,6 +96,18 @@ if want ibm180wf; then
         run_case ibm180wf.ini "$RANKS"
     fi
 fi
+
+# T4 gates (a)/(b): the gamma-Re_thetat transition model on channels (the
+# bc machinery has no inflow/outflow, so the canonical flat plate is
+# deferred; see the T4 bullet in docs/next_session_iddes.md). lam30 is the
+# transition-OFF control at the same Re_tau 30 / tu 5% conditions where
+# plain SST self-sustains on its weakly-turbulent branch; lam30t must
+# laminarize them; laminart guards the subcritical Re_tau 10 case; turb180t
+# must preserve the developed turb180 answer (gamma -> 1).   (~minutes-1h)
+want laminart && run_case laminart.ini "$RANKS"
+want lam30    && run_case lam30.ini    "$RANKS"
+want lam30t   && run_case lam30t.ini   "$RANKS"
+want turb180t && run_case turb180t.ini "$RANKS"
 
 echo
 echo "runs done (status $status); rsync *_*.h5 and *.log back, then ./check_gates.sh"

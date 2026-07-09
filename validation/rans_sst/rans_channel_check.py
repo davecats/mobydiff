@@ -42,7 +42,8 @@ def load_raw(path):
     with h5py.File(path, "r") as f:
         blocks = f["blocks"][...]            # (n, 4): origin x,y,z + level
         data = {"u": f["un"][...]}
-        for name, ds in (("k", "k"), ("om", "omega"), ("nut", "nut")):
+        for name, ds in (("k", "k"), ("om", "omega"), ("nut", "nut"),
+                         ("gam", "gamma")):
             data[name] = f[ds][...] if ds in f else None
         y_nodes = f["y"][...]
         re = float(f.attrs["re"])
@@ -101,16 +102,31 @@ def profiles_per_level(blocks, data, ly, ny_glob):
     return out
 
 
-def check_laminar(yc, prof, re, tol):
+def check_laminar(yc, prof, re, tol, gamma_wall_max=None, k_max=1.0e-6):
     exact = 0.5*re*yc*(2.0 - yc)
     err = np.abs(prof["u"] - exact).max()/exact.max()
     kmax = np.nanmax(prof["k"])
     print(f"laminar: max |u - parabola| / u_max = {err:.3e}  (tol {tol})")
-    print(f"k max = {kmax:.3e} (seeded ~ 4e-3; must decay by orders of magnitude)")
-    return err <= tol and kmax < 1.0e-6
+    print(f"k max = {kmax:.3e} (tol {k_max:g}; the default demands decay by "
+          "orders of magnitude — the T4 gamma floor 1/ce2 keeps 2% of P_k, "
+          "so transition gates carry a small stationary k residual instead)")
+    ok = err <= tol and kmax < k_max
+    if prof.get("gam") is not None:
+        # T4: the transition model must hold gamma DOWN in the wall layer
+        # (P_k suppressed); ly = 2 as the parabola assumes.
+        dist = np.minimum(yc, 2.0 - yc)
+        g = prof["gam"]
+        gw = g[dist <= 0.5].max()
+        print(f"gamma: min {g.min():.3f} max {g.max():.3f}, "
+              f"wall layer (dist<=0.5) max {gw:.3f}"
+              + (f" (tol {gamma_wall_max})" if gamma_wall_max is not None else ""))
+        if gamma_wall_max is not None:
+            ok = ok and gw <= gamma_wall_max
+    return ok
 
 
-def check_loglaw(yc, prof, re, tol, wall_lo, wall_hi, uplus_center=None):
+def check_loglaw(yc, prof, re, tol, wall_lo, wall_hi, uplus_center=None,
+                 gamma_core_min=None):
     nu = 1.0/re
     half_h = 0.5*(wall_hi - wall_lo)
     y_rel = yc - wall_lo
@@ -145,6 +161,16 @@ def check_loglaw(yc, prof, re, tol, wall_lo, wall_hi, uplus_center=None):
             p = prof[name][fluid]
             print(f"{name}: min {np.nanmin(p):.3e} max {np.nanmax(p):.3e}")
     ok = rel.max() <= tol and abs(u_tau - 1.0) < 0.06
+    if prof.get("gam") is not None:
+        # T4: developed turbulence must keep gamma -> 1 through the
+        # turbulent region (y+ >= 30 on both halves); the sublayer drop is
+        # the model's design, not a defect.
+        dist = np.minimum(y_rel, wall_hi - wall_lo - y_rel)[fluid]
+        gcore = prof["gam"][fluid][dist*u_tau*re >= 30.0].min()
+        print(f"gamma: turbulent-region (y+ >= 30) min {gcore:.3f}"
+              + (f" (tol >= {gamma_core_min})" if gamma_core_min is not None else ""))
+        if gamma_core_min is not None:
+            ok = ok and gcore >= gamma_core_min
     if uplus_center is not None:
         # DNS centreline anchor: the pure kappa/B log line deviates from
         # real (and SST) profiles by several % in the overlap region, so
@@ -281,6 +307,12 @@ def main() -> int:
                     help="resolved single-level reference field for band mode")
     ap.add_argument("--uplus-center", type=float, default=None,
                     help="DNS centreline U+ anchor (2%% tolerance)")
+    ap.add_argument("--gamma-wall-max", type=float, default=None,
+                    help="laminar mode (T4): max allowed gamma in the wall layer")
+    ap.add_argument("--k-max", type=float, default=1.0e-6,
+                    help="laminar mode: max allowed mean-profile k")
+    ap.add_argument("--gamma-core-min", type=float, default=None,
+                    help="loglaw mode (T4): min required gamma at y+ >= 30")
     args = ap.parse_args()
 
     if args.mode == "band":
@@ -292,7 +324,8 @@ def main() -> int:
         yc, prof = profiles_single_level(blocks, data, y_nodes)
         if args.mode == "laminar":
             ok = check_laminar(yc, prof, re,
-                               args.tolerance if args.tolerance is not None else 2.0e-2)
+                               args.tolerance if args.tolerance is not None else 2.0e-2,
+                               args.gamma_wall_max, args.k_max)
         elif args.mode == "wallfn":
             if not args.reference:
                 raise SystemExit("wallfn mode needs --reference (resolved field)")
@@ -305,7 +338,8 @@ def main() -> int:
             wall_hi = args.wall_hi if args.wall_hi is not None else ly
             ok = check_loglaw(yc, prof, re,
                               args.tolerance if args.tolerance is not None else 0.06,
-                              args.wall_lo, wall_hi, args.uplus_center)
+                              args.wall_lo, wall_hi, args.uplus_center,
+                              args.gamma_core_min)
 
     print("PASS" if ok else "FAIL")
     return 0 if ok else 1

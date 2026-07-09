@@ -480,11 +480,42 @@ immersed boundary. Phased, each phase verified before the next:
   resolved stays exactly CPU==GPU). rans_channel_check.py gained
   `--mode wallfn` (gates y⁺ ≥ 30 + near-centre rows against the RESOLVED
   turb180 profile — the DNS anchor is transitive) and non-cubic rank-box
-  block support (the ny = 6 case runs with [blocks] nb unset). NEXT
-  IDDES phase (user decision): T4 (γ–Re_θt transition, resolved walls
-  only; STEP 0 = settle the first-order-upwind front-sharpness question
-  before the correlations) — prompt at the end of
-  `docs/next_session_iddes.md`; T5 (IDDES blend) follows.
+  block support (the ny = 6 case runs with [blocks] nb unset).
+- IDDES phase T4 — γ–Re_θt transition, resolved walls only (DONE
+  2026-07-09, branch `claude/jacobi-interface`). `[rans] transition =
+  true` (∧ wall_function stays a hard config error): γ and R̃e_θt ride the
+  fused substage kernel (shared gradients/S/Ω/F1/F2), RK3 oldrhs pairs,
+  Patankar sinks in the OpenFOAM split (+P − ce1·P·γ + E − ce2·E·γ —
+  implicit coefficient nonnegative on both sides of the γ = 1/ce2
+  destruction sign flip), zero-gradient ghosts, exchange_scalar_halos,
+  "gamma"/"rethetat" named-scalar io + restart (absent → reinit + warn;
+  arrays are 1-cell dummies when off, the wnorm uniform-map idiom).
+  Correlations transcribed VERBATIM from OpenFOAM kOmegaSSTLM.C as pure
+  declare-target functions, unit-tested by `src/test_transition.f90` (26
+  tabulated values, every branch). Coupling: P̃_k = γ·P_k, k-destruction
+  ×min(max(γ,0.1),1) in the point-implicit denominator (×1.0 exact when
+  off), F1 = max(F1, F3). γ_eff = γ; γ_sep is a marked later increment.
+  STEP-0 decision (deviation comment in rans.f90): first-order upwind
+  KEPT — no inflow/outflow BC exists (flat plate deferred), channel
+  fronts are wall-normal with ~zero cross-front velocity (measured
+  D_num/D_phys 7.3e-5, `t4_front_check.py`). FOUND WHILE GATING: R̃e_θt's
+  diffusivity σ_θt(ν+ν_t) = 2(ν+ν_t) exceeds the Peclet dt budget (2×) —
+  explicit diffusion checkerboards to 1e6 in ~40 steps; FIX = its
+  diffusion DIAGONAL is point-implicit (same steady state; load-bearing,
+  do not simplify). Gates (validation/rans_sst/ `t4` group, all PASS):
+  lam30t (Re_τ 30 / tu 5%, where plain SST self-sustains — control lam30:
+  parabola off 12.2%, k 0.37) laminarizes: parabola 1.6e-3, wall γ 0.024,
+  mean-k 9.1e-3 = the γ-floor residual (stationary t=150→300; check runs
+  --k-max 0.02); laminart parabola 2.4e-4, k → 8.6e-16; turb180t γ ≥
+  0.999 (y⁺ ≥ 30), U+ centreline 18.44 vs DNS 18.20 (1.3%), u_τ 1.0009;
+  transition=false bit-exact vs T3 25ef6ed (nofma, max_abs 0 incl.
+  k/ω/nut, CPU AND GPU) on min_channel / les_ibm ± refine_body / Beltrami
+  y-slab / turb180 / wf180_y30; transition-on 1==4 ranks EXACT, CPU vs
+  GPU ≤ 2.8e-14 (exp/pow ulps, the T3 log() class); restart round-trip
+  proven with a changed tu (read ≈122 vs reinit 584), legacy warns +
+  reinits. NEXT IDDES phase: T5 (IDDES blend, DDES shielding first) —
+  prompt at the end of `docs/next_session_iddes.md`; reject transition
+  under model = iddes until validated there.
 - ALSO PENDING: **Profile + optimise** the GPU step for the 2:1-refined channel.
   The last hard profile is STALE (the reflux that was 23% is removed; the
   `MOBY_PHASETIME` timer is deleted): re-profile first with a minimal removable

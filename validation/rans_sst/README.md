@@ -1,6 +1,6 @@
-# RANS T2+T3 gates — k-omega SST transport (resolved walls + wall functions)
+# RANS T2+T3+T4 gates — k-omega SST transport (resolved walls, wall functions, gamma-Re_thetat transition)
 
-Physics gates for IDDES phases T2 and T3 (docs/next_session_iddes.md).
+Physics gates for IDDES phases T2, T3 and T4 (docs/next_session_iddes.md).
 These are the LONG runs, packaged to run on a remote machine (the T3
 wall-function sweep is tiny and also runs fine on a laptop; ibm180wf ran
 on the local GPU):
@@ -86,6 +86,52 @@ Beltrami y-slab/turb180; wall-function 1-rank == 4-rank exactly, CPU vs
 GPU <= 2e-13 (the `log()` intrinsic in the wall-function branch differs
 by an ulp between host and device libm — resolved mode remains exactly
 CPU == GPU).
+
+T4 gamma-Re_thetat transition cases (`[rans] transition = true`,
+Langtry & Menter 2009 = OpenFOAM kOmegaSSTLM, resolved walls only; run
+group `t4`). The canonical flat plate needs inflow/outflow BCs the solver
+does not have (Dirichlet/Neumann faces only), so the gates are channels.
+RESULTS 2026-07-09 (local 4-rank CPU) — all PASS:
+
+- `laminart.ini`  gate (a) subcritical control: Re_tau 10 / tu 1% with
+                  transition on stays laminar exactly like T2 (parabola
+                  2.4e-4, k -> 8.6e-16, gamma pinned at its 0.02 floor).
+- `lam30.ini`     transition-OFF control at Re_tau 30 / tu 5%: the plain
+                  SST weakly-turbulent branch (parabola off by 12.2%, k
+                  self-sustained at 0.37). Informational — documents WHY
+                  lam30t is discriminating.
+- `lam30t.ini`    gate (a), THE discriminating gate: same conditions with
+                  transition ON laminarize (parabola 1.6e-3, wall-layer
+                  gamma 0.024, mean-k peak 9.1e-3 = 40x below the branch;
+                  state stationary t=150 -> t=300; the k residual is the
+                  gamma-floor 2% of P_k, hence --k-max 0.02).
+- `turb180t.ini`  gate (b): turb180 with transition on preserves developed
+                  turbulence: gamma >= 0.999 for y+ >= 30, U+ centreline
+                  18.44 vs DNS 18.20 (1.3%, tol 2%), u_tau 1.0009; the
+                  kappa/B log-line fit is 6.6% (LM's sublayer D_k x 0.1
+                  coupling lifts the low-log rows ~2% over T2 — gated at
+                  the turb395 tolerance 0.08; the DNS anchor is the hard
+                  criterion).
+- `t4_front_check.py` STEP-0 evidence for keeping first-order upwind on
+                  the transported scalars: the gamma front is wall-normal
+                  and the cross-front upwind diffusivity max|v| dy/2 is
+                  7.3e-5 (lam30t) / 7.8e-15 (turb180t) of the physical
+                  nu + nut — first-order cannot smear these fronts.
+                  Revisit together with inflow/outflow BCs (flat plate).
+
+T4 short gates (local): correlations unit-tested by
+`src/test_transition.f90` (26 tabulated values vs an independent
+transcription, every piecewise branch); transition = false bit-exact vs
+T3 25ef6ed (nofma, max_abs 0 incl. k/omega/nut, CPU AND GPU) on
+min_channel / les_ibm ± refine_body / Beltrami y-slab / turb180 /
+wf180_y30; transition-on 1-rank == 4-rank EXACT, CPU vs GPU <= 2.8e-14
+(exp/pow intrinsics, the T3 log() class); gamma/rethetat restart
+round-trip verified (restart with a CHANGED tu keeps the read values) and
+legacy restarts (no gamma/rethetat datasets) warn + reinitialize.
+Discretization note: the Re_thetat~ diffusivity sigma_thetat (nu + nut)
+is TWICE the momentum diffusivity the Peclet dt controller budgets for,
+so its diffusion diagonal is point-implicit (rans.f90 kernel comment) —
+fully explicit it checkerboards to 1e6 within ~40 steps on lam30t.
 
 `rans_channel_check.py` holds the pass criteria (tolerances overridable
 per invocation in check_gates.sh).

@@ -188,7 +188,7 @@ logical function output_is_due(step, output_interval)
 end function output_is_due
 
 subroutine maybe_write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor, nut, &
-        rans_k, rans_omg)
+        rans_k, rans_omg, rans_gam, rans_ret)
     type(block_set_type), intent(inout) :: blk
     type(dns_type), intent(in) :: dns
     type(grid_type), intent(in) :: g
@@ -199,14 +199,15 @@ subroutine maybe_write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_
     real(C_DOUBLE), intent(in) :: pressure_sor
     real(C_DOUBLE), allocatable, intent(in) :: nut(:,:,:,:)   ! LES eddy viscosity (unallocated when LES off)
     real(C_DOUBLE), allocatable, intent(in), optional :: rans_k(:,:,:,:), rans_omg(:,:,:,:)
+    real(C_DOUBLE), allocatable, intent(in), optional :: rans_gam(:,:,:,:), rans_ret(:,:,:,:)
 
     if (.not. output_is_due(step, dns%field_interval)) return
     call write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor, nut, &
-        rans_k, rans_omg)
+        rans_k, rans_omg, rans_gam, rans_ret)
 end subroutine maybe_write_field
 
 subroutine write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor, nut, &
-        rans_k, rans_omg)
+        rans_k, rans_omg, rans_gam, rans_ret)
     ! Parallel HDF5 call: all MPI ranks must enter this routine together.
     ! Global datasets, one hyperslab per block.
     type(block_set_type), intent(inout) :: blk
@@ -219,8 +220,11 @@ subroutine write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor, n
     real(C_DOUBLE), intent(in) :: pressure_sor
     real(C_DOUBLE), allocatable, intent(in) :: nut(:,:,:,:)   ! LES eddy viscosity (unallocated when LES off)
     ! RANS transport scalars (T2); appended when present AND allocated, so
-    ! LES/no-model output stays byte-identical.
+    ! LES/no-model output stays byte-identical. The T4 transition pair is
+    ! additionally gated on the config flag: the arrays are 1-cell dummies
+    ! (for uniform device maps) when transition is off.
     real(C_DOUBLE), allocatable, intent(in), optional :: rans_k(:,:,:,:), rans_omg(:,:,:,:)
+    real(C_DOUBLE), allocatable, intent(in), optional :: rans_gam(:,:,:,:), rans_ret(:,:,:,:)
 
     character(len=256) :: h5_file_name
     character(kind=C_CHAR,len=:), allocatable :: c_file_name
@@ -281,6 +285,14 @@ subroutine write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor, n
     end if
     if (present(rans_omg)) then
         if (allocated(rans_omg)) call append_scalar_field(c_file_name, "omega", rans_omg, blk, &
+            h5_file_name, c%has_terminal)
+    end if
+    if (present(rans_gam) .and. dns%rans_transition) then
+        if (allocated(rans_gam)) call append_scalar_field(c_file_name, "gamma", rans_gam, blk, &
+            h5_file_name, c%has_terminal)
+    end if
+    if (present(rans_ret) .and. dns%rans_transition) then
+        if (allocated(rans_ret)) call append_scalar_field(c_file_name, "rethetat", rans_ret, blk, &
             h5_file_name, c%has_terminal)
     end if
 

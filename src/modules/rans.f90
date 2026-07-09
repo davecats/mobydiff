@@ -6,7 +6,19 @@
 !--------------------------!
 !
 ! k-omega SST (Menter 2003 constants), resolved-wall mode (IDDES phase T2,
-! docs/next_session_iddes.md) plus the T3 wall-function mode
+! docs/next_session_iddes.md), the T4 gamma-Re_thetat transition variant
+! ([rans] transition = true; Langtry & Menter 2009 = OpenFOAM kOmegaSSTLM,
+! resolved walls only): two extra transported scalars, the intermittency
+! gamma and the transition-onset Reynolds number Re_thetat~, riding the
+! same substage machinery as k/omega; the empirical correlations are
+! transcribed VERBATIM from OpenFOAM kOmegaSSTLM.C (unit-tested by
+! src/test_transition.f90); coupling into SST is P_k -> gamma_eff P_k and
+! the k destruction scaled by min(max(gamma_eff, 0.1), 1), plus the LM F1
+! modification max(F1, F3). gamma_eff = gamma — the separation-induced
+! gamma_sep branch (Langtry-Menter Eq. 18) is a SEPARATE, not yet
+! implemented increment. Every transition path is branch-gated on the
+! flag, so transition = false stays bit-exact vs T3. Also the T3
+! wall-function mode
 ! ([rans] wall_treatment = wall_function; Weber thesis Eqs. 4.39-4.42):
 ! the constrained-cell omega becomes the stepwise viscous/log blend on the
 ! k-based y+ (omega_wall_blend), the wall-cell nut is overwritten with the
@@ -34,8 +46,18 @@
 !   - convection is FIRST-ORDER UPWIND: the doc's TVD van Leer limiter
 !     needs a second upwind cell, which the single halo layer does not
 !     carry — falling back near block edges would make results depend on
-!     the block decomposition. Developed-flow gates are source/sink
-!     dominated; revisit before the T4 transition fronts.
+!     the block decomposition. T4 STEP-0 DECISION (2026-07-09): kept for
+!     the transition scalars too. The bc machinery has no inflow/outflow
+!     (Dirichlet/Neumann faces only), so the only transition fronts the
+!     solver can host are the wall-normal ones in channels, and there the
+!     mean cross-front velocity is ~0: the upwind numerical diffusion
+!     |v| dy/2 across the gamma front is orders of magnitude below the
+!     physical diffusivity nu + nut/sigma_f (quantified on the T4 gate
+!     fields by validation/rans_sst/t4_front_check.py), and the T4 gates
+!     discriminate laminar vs turbulent correctly. Revisit (a second
+!     scalar-only halo layer + TVD; block-edge fallbacks stay forbidden)
+!     together with inflow/outflow BCs, which are what streamwise-
+!     developing flat-plate fronts need anyway.
 !   - diffusion is a face-averaged effective diffusivity (nu + sigma*nut,
 !     arithmetic mean, nut lagged by one assembly) times the central
 !     gradient; fluxes through solid staggered faces are masked (the
@@ -97,6 +119,10 @@ module rans
     public :: write_rans_geometry
     public :: init_rans_transport, rans_prepare, rans_substage
     public :: rans_set_constrained_cells
+    ! T4 transition correlations, public for the host-side unit tests
+    ! (src/test_transition.f90).
+    public :: lm_rethetac, lm_flength, lm_fonset, lm_fturb, lm_rethetat0, &
+        lm_fthetat
 
     ! SST closure constants (Menter 2003). Set 1 = inner/near-wall,
     ! set 2 = outer; blended by F1.
@@ -118,6 +144,26 @@ module rans
     real(C_DOUBLE), parameter :: WF_E = 9.8d0
     real(C_DOUBLE), parameter :: WF_CMU25 = 0.5477225575051661d0   ! 0.09**0.25
     real(C_DOUBLE), parameter :: WF_YPLUS_LAM = 11.530107402304532d0
+
+    ! gamma-Re_thetat transition constants (T4; Langtry & Menter 2009, the
+    ! OpenFOAM kOmegaSSTLM defaults).
+    real(C_DOUBLE), parameter :: LM_CA1 = 2.0d0, LM_CA2 = 0.06d0
+    real(C_DOUBLE), parameter :: LM_CE1 = 1.0d0, LM_CE2 = 50.0d0
+    real(C_DOUBLE), parameter :: LM_CTHETAT = 0.03d0
+    ! Diffusivity structure differs per equation (kOmegaSSTLM):
+    ! gamma uses nu + nut/sigma_f; Re_thetat~ uses sigma_thetat*(nu + nut).
+    real(C_DOUBLE), parameter :: LM_SIGMAF = 1.0d0
+    real(C_DOUBLE), parameter :: LM_SIGMATHETAT = 2.0d0
+    ! The Re_thetat,eq fixed point in the pressure-gradient parameter
+    ! lambda: OpenFOAM iterates to lambdaErr with no hard cap (it only
+    ! warns past maxLambdaIter = 10); a device kernel needs a bound, and
+    ! the map contracts in a handful of iterations.
+    real(C_DOUBLE), parameter :: LM_LAMBDA_ERR = 1.0d-6
+    integer, parameter :: LM_MAX_LAMBDA_ITER = 32
+    ! Us floor (OpenFOAM deltaU = small): keeps Tu, dU/ds and the
+    ! relaxation time finite at stagnant cells; every source vanishes in
+    ! that limit.
+    real(C_DOUBLE), parameter :: LM_DELTAU = 1.0d-15
 
     ! Wall-cell marker values (per-cell byte).
     integer(C_SIGNED_CHAR), parameter, public :: WALL_CELL_FLUID = 0_C_SIGNED_CHAR
@@ -158,6 +204,14 @@ module rans
         ! Per-face no-slip flags for the cell-centred scalar BCs (index =
         ! boundary_face_id).
         integer(C_INT) :: facewall(NFACES) = 0_C_INT
+
+        ! T4 transition state (gamma, Re_thetat~): full arrays only when
+        ! [rans] transition = true, 1-cell dummies otherwise so the device
+        ! maps and kernel map clauses stay uniform (the wnorm idiom) —
+        ! every access is guarded by the transition flag.
+        real(C_DOUBLE), allocatable :: gam(:,:,:,:), ret(:,:,:,:)       ! (0:nb+1,...)
+        real(C_DOUBLE), allocatable :: gams(:,:,:,:), rets(:,:,:,:)     ! substage scratch
+        real(C_DOUBLE), allocatable :: gamoldrhs(:,:,:,:), retoldrhs(:,:,:,:)
     end type sst_type
 
 contains
@@ -206,7 +260,8 @@ contains
         if (allocated(sst%yeff)) deallocate(sst%yeff)
         if (allocated(sst%wallcell)) deallocate(sst%wallcell)
         if (allocated(sst%k)) deallocate(sst%k, sst%omg, sst%ks, sst%omgs, &
-            sst%koldrhs, sst%omgoldrhs, sst%domwall, sst%wnorm)
+            sst%koldrhs, sst%omgoldrhs, sst%domwall, sst%wnorm, &
+            sst%gam, sst%ret, sst%gams, sst%rets, sst%gamoldrhs, sst%retoldrhs)
         sst%geometry_built = .false.
         sst%transport_built = .false.
     end subroutine destroy_rans_geometry
@@ -221,6 +276,8 @@ contains
         if (allocated(sst%k)) then
             !$omp target enter data map(to: sst%k, sst%omg, sst%ks, sst%omgs)
             !$omp target enter data map(to: sst%koldrhs, sst%omgoldrhs, sst%domwall, sst%wnorm)
+            !$omp target enter data map(to: sst%gam, sst%ret, sst%gams, sst%rets)
+            !$omp target enter data map(to: sst%gamoldrhs, sst%retoldrhs)
         end if
     end subroutine enter_rans_data
 
@@ -230,6 +287,8 @@ contains
         if (.not. allocated(sst%dwall)) return
 
         if (allocated(sst%k)) then
+            !$omp target exit data map(delete: sst%gamoldrhs, sst%retoldrhs)
+            !$omp target exit data map(delete: sst%gam, sst%ret, sst%gams, sst%rets)
             !$omp target exit data map(delete: sst%koldrhs, sst%omgoldrhs, sst%domwall, sst%wnorm)
             !$omp target exit data map(delete: sst%k, sst%omg, sst%ks, sst%omgs)
         end if
@@ -546,7 +605,7 @@ contains
 
         integer :: i, j, k, b, nx, ny, nz, dir, side
         real(C_DOUBLE) :: umag2, uc, vc, wc, tu_frac, nu, kin
-        logical :: found_k, found_omg
+        logical :: found_k, found_omg, found_gam, found_ret
 
         if (.not. sst%geometry_built) error stop "RANS transport needs the geometry state"
 
@@ -563,6 +622,30 @@ contains
         allocate(sst%domwall(nx,ny,nz,blk%nBlocks))
         allocate(sst%wnorm(3,nx,ny,nz,blk%nBlocks))
         sst%wnorm = 0.0d0
+
+        ! T4 transition scalars: full arrays only when the model is on,
+        ! 1-cell dummies otherwise (uniform device maps; all accesses are
+        ! flag-guarded).
+        if (dns%rans_transition) then
+            allocate(sst%gam(0:nx+1,0:ny+1,0:nz+1,blk%nBlocks))
+            allocate(sst%ret(0:nx+1,0:ny+1,0:nz+1,blk%nBlocks))
+            allocate(sst%gams(0:nx+1,0:ny+1,0:nz+1,blk%nBlocks))
+            allocate(sst%rets(0:nx+1,0:ny+1,0:nz+1,blk%nBlocks))
+            allocate(sst%gamoldrhs(0:nx+1,0:ny+1,0:nz+1,blk%nBlocks))
+            allocate(sst%retoldrhs(0:nx+1,0:ny+1,0:nz+1,blk%nBlocks))
+        else
+            allocate(sst%gam(0:0,0:0,0:0,1), sst%ret(0:0,0:0,0:0,1), &
+                sst%gams(0:0,0:0,0:0,1), sst%rets(0:0,0:0,0:0,1), &
+                sst%gamoldrhs(0:0,0:0,0:0,1), sst%retoldrhs(0:0,0:0,0:0,1))
+        end if
+        ! IC: gamma = 1 (fully intermittent freestream, per Langtry-Menter);
+        ! Re_thetat~ = the equilibrium correlation at the configured
+        ! freestream Tu with zero pressure gradient (lambda = 0 makes it
+        ! closed-form, independent of nu/U).
+        sst%gam = 1.0d0
+        sst%ret = lm_rethetat0(dns%rans_tu, 0.0d0, 1.0d0, 1.0d0)
+        sst%gamoldrhs = 0.0d0
+        sst%retoldrhs = 0.0d0
 
         ! First interior cell rows adjacent to a no-slip physical domain
         ! face: omega is pinned there (Menter wall condition).
@@ -632,11 +715,27 @@ contains
                 if (has_terminal) print *, "warning: restart file has no k/omega datasets;", &
                     " initializing from [rans] tu / nut_ratio"
             end if
+            if (dns%rans_transition) then
+                call read_scalar_field(blk, "gamma", dns%restart_file, sst%gam, &
+                    found_gam, has_terminal)
+                call read_scalar_field(blk, "rethetat", dns%restart_file, sst%ret, &
+                    found_ret, has_terminal)
+                if (.not. (found_gam .and. found_ret)) then
+                    ! Partial presence reinitializes BOTH: the pair is one
+                    ! coupled state.
+                    if (has_terminal) print *, "warning: restart file has no gamma/rethetat", &
+                        " datasets; initializing transition scalars from [rans] tu"
+                    sst%gam = 1.0d0
+                    sst%ret = lm_rethetat0(dns%rans_tu, 0.0d0, 1.0d0, 1.0d0)
+                end if
+            end if
         end if
 
         call set_constrained_cells_host(sst, dns, blk)
         sst%ks = sst%k
         sst%omgs = sst%omg
+        sst%gams = sst%gam
+        sst%rets = sst%ret
         sst%transport_built = .true.
     end subroutine init_rans_transport
 
@@ -681,6 +780,128 @@ contains
             nutw = nu*(yplus*WF_KAPPA/log(WF_E*yplus) - 1.0d0)
         end if
     end function nut_wall_value
+
+    !========================
+    ! T4: gamma-Re_thetat transition correlations (Langtry & Menter 2009)
+    !========================
+    ! Transcribed VERBATIM from OpenFOAM kOmegaSSTLM.C — the piecewise fits
+    ! are empirical, do NOT re-derive or "simplify" the coefficients. Pure
+    ! device functions, unit-tested host-side by src/test_transition.f90
+    ! against an independent transcription BEFORE they run in a kernel.
+
+    ! Critical (onset) Reynolds number Re_thetac(Re_thetat~).
+    pure real(C_DOUBLE) function lm_rethetac(ret) result(rc)
+!$omp declare target
+        real(C_DOUBLE), intent(in) :: ret
+
+        if (ret <= 1870.0d0) then
+            rc = ret - 396.035d-2 + 120.656d-4*ret - 868.230d-6*ret**2 &
+               + 696.506d-9*ret**3 - 174.105d-12*ret**4
+        else
+            rc = ret - 593.11d0 - 0.482d0*(ret - 1870.0d0)
+        end if
+    end function lm_rethetac
+
+    ! Transition length function F_length(Re_thetat~), blended to 40 inside
+    ! the viscous sublayer on R_omega = y^2 omega / (500 nu) (the exponent
+    ! groups it as y^2 omega/(200 nu), OpenFOAM's form).
+    pure real(C_DOUBLE) function lm_flength(ret, y, wv, nu) result(fl)
+!$omp declare target
+        real(C_DOUBLE), intent(in) :: ret, y, wv, nu
+
+        real(C_DOUBLE) :: fsub
+
+        if (ret < 400.0d0) then
+            fl = 398.189d-1 - 119.270d-4*ret - 132.567d-6*ret**2
+        else if (ret < 596.0d0) then
+            fl = 263.404d0 - 123.939d-2*ret + 194.548d-5*ret**2 &
+               - 101.695d-8*ret**3
+        else if (ret < 1200.0d0) then
+            fl = 0.5d0 - 3.0d-4*(ret - 596.0d0)
+        else
+            fl = 0.3188d0
+        end if
+        fsub = exp(-(y*y*wv/(200.0d0*nu))**2)
+        fl = fl*(1.0d0 - fsub) + 40.0d0*fsub
+    end function lm_flength
+
+    ! Onset trigger F_onset(Re_v, Re_thetac, R_T): the strain-rate Reynolds
+    ! number against the critical value, shut off at high turbulent
+    ! Reynolds number R_T = k/(nu omega).
+    pure real(C_DOUBLE) function lm_fonset(rev, rethetac, rt) result(fon)
+!$omp declare target
+        real(C_DOUBLE), intent(in) :: rev, rethetac, rt
+
+        real(C_DOUBLE) :: fon1, fon2, fon3
+
+        fon1 = rev/(2.193d0*rethetac)
+        fon2 = min(max(fon1, fon1**4), 2.0d0)
+        fon3 = max(1.0d0 - (rt/2.5d0)**3, 0.0d0)
+        fon = max(fon2 - fon3, 0.0d0)
+    end function lm_fonset
+
+    ! F_turb: disables the gamma destruction in fully turbulent regions.
+    pure real(C_DOUBLE) function lm_fturb(rt) result(ft)
+!$omp declare target
+        real(C_DOUBLE), intent(in) :: rt
+
+        ft = exp(-(0.25d0*rt)**4)
+    end function lm_fturb
+
+    ! Equilibrium transition-onset Reynolds number Re_thetat,eq(Tu, lambda)
+    ! — the freestream correlation with its capped fixed-point iteration in
+    ! the pressure-gradient parameter lambda = theta^2/nu dU/ds. Tu is in
+    ! PERCENT and floored at 0.027 (OpenFOAM). Both Tu branches use the
+    ! same F_lambda for dU/ds > 0 (exp(-Tu/0.5) = exp(-2 Tu) — OpenFOAM
+    ! writes it both ways; 0.5 and 2 are exact binary scalings, so the
+    ! merged form is bitwise identical). At lambda = 0 (dU/ds = 0) the
+    ! result is closed-form and independent of nu and Us.
+    pure real(C_DOUBLE) function lm_rethetat0(tu_in, dusds, nu, us) result(ret0)
+!$omp declare target
+        real(C_DOUBLE), intent(in) :: tu_in, dusds, nu, us
+
+        real(C_DOUBLE) :: tu, lam, lam0, flam, thetat
+        integer :: iter
+
+        tu = max(tu_in, 0.027d0)
+        lam = 0.0d0
+        thetat = 0.0d0
+        do iter = 1, LM_MAX_LAMBDA_ITER
+            lam0 = lam
+            if (dusds <= 0.0d0) then
+                flam = 1.0d0 - (-12.986d0*lam - 123.66d0*lam**2 &
+                     - 405.689d0*lam**3)*exp(-(tu/1.5d0)**1.5d0)
+            else
+                flam = 1.0d0 + 0.275d0*(1.0d0 - exp(-35.0d0*lam))*exp(-2.0d0*tu)
+            end if
+            if (tu <= 1.3d0) then
+                thetat = (1173.51d0 - 589.428d0*tu + 0.2196d0/(tu*tu))*flam*nu/us
+            else
+                thetat = 331.50d0*(tu - 0.5658d0)**(-0.671d0)*flam*nu/us
+            end if
+            lam = thetat*thetat/nu*dusds
+            lam = max(min(lam, 0.1d0), -0.1d0)
+            if (abs(lam - lam0) <= LM_LAMBDA_ERR) exit
+        end do
+        ret0 = max(thetat*us/nu, 20.0d0)
+    end function lm_rethetat0
+
+    ! F_thetat: ~1 inside a boundary layer (freezes the transported
+    ! Re_thetat~), -> 0 in the freestream (relaxes it to the local
+    ! equilibrium correlation). y/delta = Us^2/(375 Omega nu Re_thetat~)
+    ! — the y in delta cancels (OpenFOAM's yBydelta).
+    pure real(C_DOUBLE) function lm_fthetat(gam, ret, us, omgmag, wv, y, nu) result(fth)
+!$omp declare target
+        real(C_DOUBLE), intent(in) :: gam, ret, us, omgmag, wv, y, nu
+
+        real(C_DOUBLE) :: ybydelta, reomega, fwake
+
+        ybydelta = us*us/max(375.0d0*omgmag*nu*ret, LM_DELTAU**2)
+        reomega = y*y*wv/nu
+        fwake = exp(-(reomega/1.0d5)**2)
+        fth = min(max(fwake*exp(-ybydelta**4), &
+            1.0d0 - ((gam - 1.0d0/LM_CE2)/(1.0d0 - 1.0d0/LM_CE2))**2), 1.0d0)
+    end function lm_fthetat
 
     ! Unit wall-normal at the constrained (IBM-wall + domain-wall) cells as
     ! the normalized gradient of the RAW dwall field (yeff's floor flattens
@@ -863,9 +1084,12 @@ contains
 
     ! Cell-centred scalar ghosts at physical domain faces: k is Dirichlet 0
     ! at no-slip walls (mirror) and zero-gradient elsewhere; omega is always
-    ! zero-gradient (its wall value is the pinned first cell, not a ghost).
-    subroutine rans_apply_scalar_bcs(sst, blk, bc)
+    ! zero-gradient (its wall value is the pinned first cell, not a ghost);
+    ! gamma and Re_thetat~ are zero-gradient everywhere (kOmegaSSTLM wall
+    ! condition).
+    subroutine rans_apply_scalar_bcs(sst, dns, blk, bc)
         type(sst_type), intent(inout) :: sst
+        type(dns_type), intent(in) :: dns
         type(block_set_type), intent(inout) :: blk
         type(boundary_type), intent(in) :: bc
 
@@ -873,16 +1097,18 @@ contains
         integer :: ghost_idx, interior_idx_dir
         integer :: gi(3), ii(3)
         integer(C_INT) :: local_n(1:3), facewall(NFACES)
+        logical :: transition
 
         npts = int(bc%nTotal)
         if (npts <= 0) return
         local_n = blk%nb(1:3)
         facewall = sst%facewall
+        transition = dns%rans_transition
 
         !$omp target teams distribute parallel do &
-        !$omp& map(to: npts, local_n(1:3), facewall(1:NFACES), &
+        !$omp& map(to: npts, transition, local_n(1:3), facewall(1:NFACES), &
         !$omp& bc%pointFace(1:npts), bc%slot(1:npts), bc%i(1:npts), bc%j(1:npts), bc%k(1:npts)) &
-        !$omp& map(tofrom: sst%k, sst%omg) &
+        !$omp& map(tofrom: sst%k, sst%omg, sst%gam, sst%ret) &
         !$omp& private(n,b,i,j,k,face_id,dir,side,ghost_idx,interior_idx_dir,gi,ii)
         do n = 1, npts
             face_id = int(bc%pointFace(n))
@@ -911,6 +1137,10 @@ contains
                 sst%k(gi(1),gi(2),gi(3),b) = sst%k(ii(1),ii(2),ii(3),b)
             end if
             sst%omg(gi(1),gi(2),gi(3),b) = sst%omg(ii(1),ii(2),ii(3),b)
+            if (transition) then
+                sst%gam(gi(1),gi(2),gi(3),b) = sst%gam(ii(1),ii(2),ii(3),b)
+                sst%ret(gi(1),gi(2),gi(3),b) = sst%ret(ii(1),ii(2),ii(3),b)
+            end if
         end do
         !$omp end target teams distribute parallel do
     end subroutine rans_apply_scalar_bcs
@@ -1052,9 +1282,13 @@ contains
         type(comm_type), intent(inout) :: c
 
         call rans_set_constrained_cells(sst, dns, blk)
-        call rans_apply_scalar_bcs(sst, blk, bc)
+        call rans_apply_scalar_bcs(sst, dns, blk, bc)
         call exchange_scalar_halos(c, sst%k, blk)
         call exchange_scalar_halos(c, sst%omg, blk)
+        if (dns%rans_transition) then
+            call exchange_scalar_halos(c, sst%gam, blk)
+            call exchange_scalar_halos(c, sst%ret, blk)
+        end if
         call rans_assemble_nut(sst, turb, blk, dns, turb%nut)
         if (dns%rans_wall_treatment == 1_C_INT) &
             call rans_apply_nut_wall_ghosts(sst, blk, bc, turb%nut)
@@ -1074,30 +1308,37 @@ contains
         real(C_DOUBLE), intent(in) :: dt_alpha, dt_beta
 
         call rans_set_constrained_cells(sst, dns, blk)
-        call rans_apply_scalar_bcs(sst, blk, bc)
+        call rans_apply_scalar_bcs(sst, dns, blk, bc)
         call exchange_scalar_halos(c, sst%k, blk)
         call exchange_scalar_halos(c, sst%omg, blk)
+        if (dns%rans_transition) then
+            call exchange_scalar_halos(c, sst%gam, blk)
+            call exchange_scalar_halos(c, sst%ret, blk)
+        end if
         call rans_transport_kernel(sst, turb, blk, dns, ibm, dt_alpha, dt_beta)
-        call rans_copyback(sst, blk)
+        call rans_copyback(sst, dns, blk)
         call rans_assemble_nut(sst, turb, blk, dns, turb%nut)
         if (dns%rans_wall_treatment == 1_C_INT) &
             call rans_apply_nut_wall_ghosts(sst, blk, bc, turb%nut)
     end subroutine rans_substage
 
-    subroutine rans_copyback(sst, blk)
+    subroutine rans_copyback(sst, dns, blk)
         type(sst_type), intent(inout) :: sst
+        type(dns_type), intent(in) :: dns
         type(block_set_type), intent(in) :: blk
 
         integer :: i, j, k, b, nx, ny, nz, nBlocks
+        logical :: transition
 
         nx = int(blk%nb(1))
         ny = int(blk%nb(2))
         nz = int(blk%nb(3))
         nBlocks = int(blk%nBlocks)
+        transition = dns%rans_transition
 
         !$omp target teams distribute parallel do collapse(4) &
-        !$omp& map(to: sst%ks, sst%omgs) &
-        !$omp& map(tofrom: sst%k, sst%omg) &
+        !$omp& map(to: transition, sst%ks, sst%omgs, sst%gams, sst%rets) &
+        !$omp& map(tofrom: sst%k, sst%omg, sst%gam, sst%ret) &
         !$omp& private(i,j,k,b)
         do b = 1, nBlocks
         do k = 1, nz
@@ -1105,6 +1346,10 @@ contains
                 do i = 1, nx
                     sst%k(i,j,k,b) = sst%ks(i,j,k,b)
                     sst%omg(i,j,k,b) = sst%omgs(i,j,k,b)
+                    if (transition) then
+                        sst%gam(i,j,k,b) = sst%gams(i,j,k,b)
+                        sst%ret(i,j,k,b) = sst%rets(i,j,k,b)
+                    end if
                 end do
             end do
         end do
@@ -1126,7 +1371,7 @@ contains
 
         integer :: i, j, k, b, nx, ny, nz, nBlocks
         integer(C_SIGNED_CHAR) :: marker
-        logical :: pinned_omega, ibm_wall, wallfn
+        logical :: pinned_omega, ibm_wall, wallfn, transition
         real(C_DOUBLE) :: nu, dtsub, y, kv, wv, nutc
         real(C_DOUBLE) :: g11, g12, g13, g21, g22, g23, g31, g32, g33
         real(C_DOUBLE) :: s2, smag, gkx, gky, gkz, gwx, gwy, gwz, gkgw
@@ -1138,6 +1383,10 @@ contains
         real(C_DOUBLE) :: rhsk, rhsw, knew, wnew
         real(C_DOUBLE) :: solid_threshold
         real(C_DOUBLE) :: yplus, nutw, uc, vc, wc, un, ut1, ut2, ut3, magut
+        real(C_DOUBLE) :: gv, rv, omgmag, usmag, dusds, rt, rev, tuloc
+        real(C_DOUBLE) :: ret0, rethetac, flength, fonset, fturbv, fthetat
+        real(C_DOUBLE) :: tcoef, pgam, egam, conv_g, conv_r, diff_g, diff_r
+        real(C_DOUBLE) :: diag_r, rhsg, rhsr, gnew, rnew, gameff, dkfac
         logical :: solw, sole, sols, soln, solb, solt
 
         nx = int(blk%nb(1))
@@ -1148,22 +1397,28 @@ contains
         dtsub = dt_alpha + dt_beta
         solid_threshold = SOLID_FACE_THRESHOLD
         wallfn = dns%rans_wall_treatment == 1_C_INT
+        transition = dns%rans_transition
 
         !$omp target teams distribute parallel do collapse(4) &
-        !$omp& map(to: nu, dtsub, dt_alpha, dt_beta, solid_threshold, wallfn, &
-        !$omp& sst%k, sst%omg, sst%yeff, sst%wallcell, sst%domwall, sst%wnorm, &
+        !$omp& map(to: nu, dtsub, dt_alpha, dt_beta, solid_threshold, wallfn, transition, &
+        !$omp& sst%k, sst%omg, sst%gam, sst%ret, sst%yeff, sst%wallcell, sst%domwall, sst%wnorm, &
         !$omp& blk%q, blk%d1x, blk%d1y, blk%d1z, ibm%coef, &
         !$omp& turb%nut, turb%inv_dx, turb%inv_dy, turb%inv_dz, &
         !$omp& turb%d1xm, turb%d1x0, turb%d1xp, turb%d1ym, turb%d1y0, turb%d1yp, &
         !$omp& turb%d1zm, turb%d1z0, turb%d1zp, &
         !$omp& turb%p_from_u_x, turb%p_from_v_y, turb%p_from_w_z) &
-        !$omp& map(tofrom: sst%ks, sst%omgs, sst%koldrhs, sst%omgoldrhs) &
+        !$omp& map(tofrom: sst%ks, sst%omgs, sst%koldrhs, sst%omgoldrhs, &
+        !$omp& sst%gams, sst%rets, sst%gamoldrhs, sst%retoldrhs) &
         !$omp& private(i,j,k,b,marker,pinned_omega,ibm_wall,y,kv,wv,nutc, &
         !$omp& g11,g12,g13,g21,g22,g23,g31,g32,g33,s2,smag, &
         !$omp& gkx,gky,gkz,gwx,gwy,gwz,gkgw,cdkw,arg1,f1,arg2,f2,nutloc,cross, &
         !$omp& sigk,sigw,beta_b,alpha_b,pk,uw,ue,vs,vn,wb,wt, &
         !$omp& conv_k,conv_w,diff_k,diff_w,fw,fe,dcoef,rhsk,rhsw,knew,wnew, &
         !$omp& yplus,nutw,uc,vc,wc,un,ut1,ut2,ut3,magut, &
+        !$omp& gv,rv,omgmag,usmag,dusds,rt,rev,tuloc, &
+        !$omp& ret0,rethetac,flength,fonset,fturbv,fthetat, &
+        !$omp& tcoef,pgam,egam,conv_g,conv_r,diff_g,diff_r,diag_r, &
+        !$omp& rhsg,rhsr,gnew,rnew,gameff,dkfac, &
         !$omp& solw,sole,sols,soln,solb,solt)
         do b = 1, nBlocks
         do k = 1, nz
@@ -1176,6 +1431,12 @@ contains
                         sst%omgs(i,j,k,b) = sst%omg(i,j,k,b)
                         sst%koldrhs(i,j,k,b) = 0.0d0
                         sst%omgoldrhs(i,j,k,b) = 0.0d0
+                        if (transition) then
+                            sst%gams(i,j,k,b) = sst%gam(i,j,k,b)
+                            sst%rets(i,j,k,b) = sst%ret(i,j,k,b)
+                            sst%gamoldrhs(i,j,k,b) = 0.0d0
+                            sst%retoldrhs(i,j,k,b) = 0.0d0
+                        end if
                         cycle
                     end if
                     ibm_wall = marker == WALL_CELL_WALL
@@ -1221,6 +1482,12 @@ contains
                                    500.0d0*nu/(y*y*wv)), &
                                4.0d0*SST_SIGW2*max(kv, 0.0d0)/(cdkw*y*y))
                     f1 = tanh(arg1**4)
+                    ! LM F1 modification (transition only): F1 = max(F1, F3)
+                    ! with F3 = exp(-(Ry/120)^8), Ry = y sqrt(k)/nu — keeps
+                    ! the inner-set blending active in low-Ry laminar layers
+                    ! where the transported k would otherwise flip F1 -> 0.
+                    if (transition) &
+                        f1 = max(f1, exp(-(y*sqrt(max(kv, 0.0d0))/nu/120.0d0)**8))
                     arg2 = max(2.0d0*sqrt(max(kv, 0.0d0))/(SST_BETA_STAR*wv*y), &
                                500.0d0*nu/(y*y*wv))
                     f2 = tanh(arg2*arg2)
@@ -1344,6 +1611,179 @@ contains
                         *turb%inv_dz(k+1,VAR_P,b), solt)
                     diff_w = diff_w + (fe - fw)*blk%d1z(k,VAR_P,b)
 
+                    ! T4 gamma-Re_thetat transition (Langtry & Menter 2009):
+                    ! the two extra scalars share every intermediate above
+                    ! (gradients, S, F-blends, face masks). All quantities
+                    ! read START-of-substage values (the explicit-RK stance;
+                    ! OpenFOAM's segregated sweep uses the freshly solved
+                    ! Re_thetat~ in the gamma equation — same fixed point).
+                    ! gamma_eff = gamma; the separation-induced gamma_sep
+                    ! branch (LM Eq. 18) is a SEPARATE later increment.
+                    dkfac = 1.0d0
+                    if (transition) then
+                        gv = sst%gam(i,j,k,b)
+                        rv = sst%ret(i,j,k,b)
+                        ! Vorticity magnitude sqrt(2 W:W) and cell-centre
+                        ! speed/streamline acceleration dU/ds = u_i u_j
+                        ! du_i/dx_j / Us^2 for the correlations.
+                        omgmag = sqrt((g12 - g21)**2 + (g13 - g31)**2 + (g23 - g32)**2)
+                        uc = 0.5d0*(blk%q(i,j,k,VAR_U,b) + blk%q(i+1,j,k,VAR_U,b))
+                        vc = 0.5d0*(blk%q(i,j,k,VAR_V,b) + blk%q(i,j+1,k,VAR_V,b))
+                        wc = 0.5d0*(blk%q(i,j,k,VAR_W,b) + blk%q(i,j,k+1,VAR_W,b))
+                        usmag = max(sqrt(uc*uc + vc*vc + wc*wc), LM_DELTAU)
+                        dusds = (uc*(uc*g11 + vc*g12 + wc*g13) &
+                               + vc*(uc*g21 + vc*g22 + wc*g23) &
+                               + wc*(uc*g31 + vc*g32 + wc*g33))/(usmag*usmag)
+
+                        rt = max(kv, 0.0d0)/(nu*wv)
+                        rev = y*y*smag/nu
+                        tuloc = 100.0d0*sqrt(2.0d0/3.0d0*max(kv, 0.0d0))/usmag
+
+                        ! Re_thetat~ relaxation to the local equilibrium
+                        ! correlation, coefficient c_thetat/t with
+                        ! t = 500 nu/Us^2, gated off inside boundary layers
+                        ! by (1 - F_thetat); the -coef*ret part is the
+                        ! point-implicit sink (OpenFOAM's fvm::Sp).
+                        ret0 = lm_rethetat0(tuloc, dusds, nu, usmag)
+                        fthetat = lm_fthetat(gv, rv, usmag, omgmag, wv, y, nu)
+                        tcoef = LM_CTHETAT*usmag*usmag/(500.0d0*nu)*(1.0d0 - fthetat)
+
+                        ! gamma sources: production ca1 Flength S
+                        ! sqrt(gamma Fonset) (1 - ce1 gamma) and destruction
+                        ! ca2 Fturb Omega gamma (ce2 gamma - 1), both in the
+                        ! OpenFOAM split +P - ce1 P g and +E - ce2 E g:
+                        ! P, E >= 0, so the explicit parts are pure sources
+                        ! and the implicit coefficient stays nonnegative on
+                        ! BOTH sides of the destruction sign flip at
+                        ! gamma = 1/ce2 (Patankar-safe by construction).
+                        rethetac = lm_rethetac(rv)
+                        flength = lm_flength(rv, y, wv, nu)
+                        fonset = lm_fonset(rev, rethetac, rt)
+                        fturbv = lm_fturb(rt)
+                        pgam = LM_CA1*flength*smag*sqrt(max(gv, 0.0d0)*fonset)
+                        egam = LM_CA2*omgmag*fturbv*max(gv, 0.0d0)
+
+                        ! First-order upwind convection (STEP-0 decision in
+                        ! the module header) and face-masked diffusion, the
+                        ! k/omega pattern; gamma diffuses with nu +
+                        ! nut/sigma_f, Re_thetat~ with sigma_thetat (nu + nut).
+                        conv_g = (ue*merge(sst%gam(i,j,k,b), sst%gam(i+1,j,k,b), ue > 0.0d0) &
+                                - uw*merge(sst%gam(i-1,j,k,b), sst%gam(i,j,k,b), uw > 0.0d0)) &
+                                  *blk%d1x(i,VAR_P,b) &
+                               + (vn*merge(sst%gam(i,j,k,b), sst%gam(i,j+1,k,b), vn > 0.0d0) &
+                                - vs*merge(sst%gam(i,j-1,k,b), sst%gam(i,j,k,b), vs > 0.0d0)) &
+                                  *blk%d1y(j,VAR_P,b) &
+                               + (wt*merge(sst%gam(i,j,k,b), sst%gam(i,j,k+1,b), wt > 0.0d0) &
+                                - wb*merge(sst%gam(i,j,k-1,b), sst%gam(i,j,k,b), wb > 0.0d0)) &
+                                  *blk%d1z(k,VAR_P,b)
+                        conv_r = (ue*merge(sst%ret(i,j,k,b), sst%ret(i+1,j,k,b), ue > 0.0d0) &
+                                - uw*merge(sst%ret(i-1,j,k,b), sst%ret(i,j,k,b), uw > 0.0d0)) &
+                                  *blk%d1x(i,VAR_P,b) &
+                               + (vn*merge(sst%ret(i,j,k,b), sst%ret(i,j+1,k,b), vn > 0.0d0) &
+                                - vs*merge(sst%ret(i,j-1,k,b), sst%ret(i,j,k,b), vs > 0.0d0)) &
+                                  *blk%d1y(j,VAR_P,b) &
+                               + (wt*merge(sst%ret(i,j,k,b), sst%ret(i,j,k+1,b), wt > 0.0d0) &
+                                - wb*merge(sst%ret(i,j,k-1,b), sst%ret(i,j,k,b), wb > 0.0d0)) &
+                                  *blk%d1z(k,VAR_P,b)
+
+                        diff_g = 0.0d0
+                        diff_r = 0.0d0
+                        dcoef = nu + 0.5d0*(turb%nut(i-1,j,k,b) + turb%nut(i,j,k,b))/LM_SIGMAF
+                        fw = merge(0.0d0, dcoef*(sst%gam(i,j,k,b) - sst%gam(i-1,j,k,b)) &
+                            *turb%inv_dx(i,VAR_P,b), solw)
+                        dcoef = nu + 0.5d0*(turb%nut(i,j,k,b) + turb%nut(i+1,j,k,b))/LM_SIGMAF
+                        fe = merge(0.0d0, dcoef*(sst%gam(i+1,j,k,b) - sst%gam(i,j,k,b)) &
+                            *turb%inv_dx(i+1,VAR_P,b), sole)
+                        diff_g = diff_g + (fe - fw)*blk%d1x(i,VAR_P,b)
+                        dcoef = nu + 0.5d0*(turb%nut(i,j-1,k,b) + turb%nut(i,j,k,b))/LM_SIGMAF
+                        fw = merge(0.0d0, dcoef*(sst%gam(i,j,k,b) - sst%gam(i,j-1,k,b)) &
+                            *turb%inv_dy(j,VAR_P,b), sols)
+                        dcoef = nu + 0.5d0*(turb%nut(i,j,k,b) + turb%nut(i,j+1,k,b))/LM_SIGMAF
+                        fe = merge(0.0d0, dcoef*(sst%gam(i,j+1,k,b) - sst%gam(i,j,k,b)) &
+                            *turb%inv_dy(j+1,VAR_P,b), soln)
+                        diff_g = diff_g + (fe - fw)*blk%d1y(j,VAR_P,b)
+                        dcoef = nu + 0.5d0*(turb%nut(i,j,k-1,b) + turb%nut(i,j,k,b))/LM_SIGMAF
+                        fw = merge(0.0d0, dcoef*(sst%gam(i,j,k,b) - sst%gam(i,j,k-1,b)) &
+                            *turb%inv_dz(k,VAR_P,b), solb)
+                        dcoef = nu + 0.5d0*(turb%nut(i,j,k,b) + turb%nut(i,j,k+1,b))/LM_SIGMAF
+                        fe = merge(0.0d0, dcoef*(sst%gam(i,j,k+1,b) - sst%gam(i,j,k,b)) &
+                            *turb%inv_dz(k+1,VAR_P,b), solt)
+                        diff_g = diff_g + (fe - fw)*blk%d1z(k,VAR_P,b)
+
+                        ! Re_thetat~ diffusion: sigma_thetat = 2 makes its
+                        ! diffusivity TWICE the momentum value the Peclet dt
+                        ! controller budgets for (k/omega/gamma all have
+                        ! sigma <= 1 and live inside that validated margin),
+                        ! so a fully explicit treatment is unstable at the
+                        ! controller's dt (observed: y-checkerboard growth to
+                        ! 1e6 within ~40 steps on the lam30t gate). RK
+                        ! hardening in the T2 cross-diffusion spirit: the
+                        ! own-cell (diagonal) part of the operator goes into
+                        ! the point-implicit denominator (diag_r), the
+                        ! neighbour part stays explicit — unconditionally
+                        ! stable, positivity-preserving, same steady state
+                        ! (and OpenFOAM's fvm::laplacian is fully implicit
+                        ! anyway). diff_r accumulates the full operator;
+                        ! diag_r the unmasked-face own-cell coefficients.
+                        diag_r = 0.0d0
+                        dcoef = LM_SIGMATHETAT*(nu + 0.5d0*(turb%nut(i-1,j,k,b) + turb%nut(i,j,k,b)))
+                        fw = merge(0.0d0, dcoef*(sst%ret(i,j,k,b) - sst%ret(i-1,j,k,b)) &
+                            *turb%inv_dx(i,VAR_P,b), solw)
+                        diag_r = diag_r + merge(0.0d0, dcoef*turb%inv_dx(i,VAR_P,b), solw) &
+                            *blk%d1x(i,VAR_P,b)
+                        dcoef = LM_SIGMATHETAT*(nu + 0.5d0*(turb%nut(i,j,k,b) + turb%nut(i+1,j,k,b)))
+                        fe = merge(0.0d0, dcoef*(sst%ret(i+1,j,k,b) - sst%ret(i,j,k,b)) &
+                            *turb%inv_dx(i+1,VAR_P,b), sole)
+                        diag_r = diag_r + merge(0.0d0, dcoef*turb%inv_dx(i+1,VAR_P,b), sole) &
+                            *blk%d1x(i,VAR_P,b)
+                        diff_r = diff_r + (fe - fw)*blk%d1x(i,VAR_P,b)
+                        dcoef = LM_SIGMATHETAT*(nu + 0.5d0*(turb%nut(i,j-1,k,b) + turb%nut(i,j,k,b)))
+                        fw = merge(0.0d0, dcoef*(sst%ret(i,j,k,b) - sst%ret(i,j-1,k,b)) &
+                            *turb%inv_dy(j,VAR_P,b), sols)
+                        diag_r = diag_r + merge(0.0d0, dcoef*turb%inv_dy(j,VAR_P,b), sols) &
+                            *blk%d1y(j,VAR_P,b)
+                        dcoef = LM_SIGMATHETAT*(nu + 0.5d0*(turb%nut(i,j,k,b) + turb%nut(i,j+1,k,b)))
+                        fe = merge(0.0d0, dcoef*(sst%ret(i,j+1,k,b) - sst%ret(i,j,k,b)) &
+                            *turb%inv_dy(j+1,VAR_P,b), soln)
+                        diag_r = diag_r + merge(0.0d0, dcoef*turb%inv_dy(j+1,VAR_P,b), soln) &
+                            *blk%d1y(j,VAR_P,b)
+                        diff_r = diff_r + (fe - fw)*blk%d1y(j,VAR_P,b)
+                        dcoef = LM_SIGMATHETAT*(nu + 0.5d0*(turb%nut(i,j,k-1,b) + turb%nut(i,j,k,b)))
+                        fw = merge(0.0d0, dcoef*(sst%ret(i,j,k,b) - sst%ret(i,j,k-1,b)) &
+                            *turb%inv_dz(k,VAR_P,b), solb)
+                        diag_r = diag_r + merge(0.0d0, dcoef*turb%inv_dz(k,VAR_P,b), solb) &
+                            *blk%d1z(k,VAR_P,b)
+                        dcoef = LM_SIGMATHETAT*(nu + 0.5d0*(turb%nut(i,j,k,b) + turb%nut(i,j,k+1,b)))
+                        fe = merge(0.0d0, dcoef*(sst%ret(i,j,k+1,b) - sst%ret(i,j,k,b)) &
+                            *turb%inv_dz(k+1,VAR_P,b), solt)
+                        diag_r = diag_r + merge(0.0d0, dcoef*turb%inv_dz(k+1,VAR_P,b), solt) &
+                            *blk%d1z(k,VAR_P,b)
+                        diff_r = diff_r + (fe - fw)*blk%d1z(k,VAR_P,b)
+
+                        rhsg = pgam + egam - conv_g + diff_g
+                        gnew = (gv + dt_alpha*rhsg + dt_beta*sst%gamoldrhs(i,j,k,b)) &
+                             /(1.0d0 + dtsub*(LM_CE1*pgam + LM_CE2*egam))
+                        sst%gams(i,j,k,b) = min(max(gnew, 0.0d0), 1.0d0)
+                        sst%gamoldrhs(i,j,k,b) = rhsg
+
+                        ! Explicit rhs carries the diffusion NEIGHBOUR part
+                        ! (diff_r + diag_r rv); the diagonal is implicit.
+                        rhsr = tcoef*ret0 - conv_r + diff_r + diag_r*rv
+                        rnew = (rv + dt_alpha*rhsr + dt_beta*sst%retoldrhs(i,j,k,b)) &
+                             /(1.0d0 + dtsub*(tcoef + diag_r))
+                        sst%rets(i,j,k,b) = max(rnew, 0.0d0)
+                        sst%retoldrhs(i,j,k,b) = rhsr
+
+                        ! Coupling into SST: P_k -> gamma_eff P_k and the k
+                        ! destruction scaled by min(max(gamma_eff,0.1),1)
+                        ! (dkfac multiplies the point-implicit denominator;
+                        ! it is exactly 1.0 when transition is off, which is
+                        ! bit-exact).
+                        gameff = gv
+                        dkfac = min(max(gameff, 0.1d0), 1.0d0)
+                        pk = gameff*pk
+                    end if
+
                     ! Explicit RHS; sinks are point-implicit (Patankar). The
                     ! cross-diffusion 2(1-F1) sigma_w2/omega grad k . grad
                     ! omega is SPLIT by sign: its negative part becomes an
@@ -1364,7 +1804,7 @@ contains
                          + min(max(cross, 0.0d0), wv/max(dtsub, 1.0d-30))
 
                     knew = (kv + dt_alpha*rhsk + dt_beta*sst%koldrhs(i,j,k,b)) &
-                         /(1.0d0 + dtsub*SST_BETA_STAR*wv)
+                         /(1.0d0 + dtsub*SST_BETA_STAR*wv*dkfac)
                     knew = max(knew, 0.0d0)
                     sst%ks(i,j,k,b) = knew
                     sst%koldrhs(i,j,k,b) = rhsk
