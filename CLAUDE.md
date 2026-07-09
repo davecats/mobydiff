@@ -518,7 +518,15 @@ immersed boundary. Phased, each phase verified before the next:
   proven with a changed tu (read ≈122 vs reinit 584), legacy warns +
   reinits. NEXT IDDES phase: T5 (IDDES blend, DDES shielding first) —
   prompt at the end of `docs/next_session_iddes.md`; reject transition
-  under model = iddes until validated there.
+  under model = iddes until validated there. T5 STEP 0 (decided
+  2026-07-10): `facePatchType` (wall|patch, non-periodic faces only,
+  default = today's tangential-Dirichlet inference so existing inis stay
+  bit-exact; `periodic_*` untouched) replaces the `domain_face_is_wall`
+  inference — a Dirichlet INLET currently misclassifies as a no-slip
+  wall — plus ONE generic cell-centred scalar BC applicator in
+  boundary.f90 (mechanics only; rans passes mode tables). Deferred by
+  user decision: augmented-q scalar batching (profiling phase, see
+  docs/next_session_profiling.md) and the flat-plate inlet increment.
 - ALSO PENDING: **Profile + optimise** the GPU step for the 2:1-refined channel.
   The last hard profile is STALE (the reflux that was 23% is removed; the
   `MOBY_PHASETIME` timer is deleted): re-profile first with a minimal removable

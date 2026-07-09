@@ -245,6 +245,41 @@ as follows.
   y⁺ ≲ 1; running it through log wall functions is meaningless) — hard
   config error, not a warning.
 
+## Domain-face patch types (decided 2026-07-10, lands as T5 STEP 0)
+
+`domain_face_is_wall` (rans.f90) INFERS wall-ness as "non-periodic and both
+tangential velocities Dirichlet" — which misreads a Dirichlet velocity
+INLET as a no-slip wall (omega pinned on the first rows, the inlet plane
+min'ed into dwall). Before T5 (whose f_d consumes y_eff everywhere), the
+inference is replaced by a declaration:
+
+- `boundary_type` gains `facePatchType(1:NFACES)` with two values,
+  PATCH_GENERIC / PATCH_WALL. Meaningful on non-periodic faces only;
+  `periodic_*` stays exactly as it is (a patch type declared on a periodic
+  direction is a config error; Dirichlet values on periodic faces remain
+  ignored as today — user decision 2026-07-10).
+- Config: one key per face in [boundary], suggested `x_min_patch = wall |
+  patch` (mirroring the `<dir>_<side>_<var>_<type|value>` key family).
+  DEFAULT when absent = the current inference, so every existing ini runs
+  bit-exact by construction; an explicit key wins; the resolved patch
+  types are printed at RANS init.
+- Consumers: `domain_face_is_wall` reads the patch type; everything
+  downstream (sst%facewall, domwall pinning, dwall min-in, wnorm
+  one-sidedness, T3 nut wall ghosts) is unchanged.
+- Same increment: a generic cell-centred scalar BC applicator in
+  boundary.f90 (per-face modes mirror / copy / Dirichlet-value over the
+  bc point lists — MECHANICS only, boundary.f90 must not know RANS
+  exists); rans.f90 calls it with per-scalar mode tables (k mirror at
+  walls / copy elsewhere; omega, gamma, Re_thetat copy), replacing the
+  duplicated ghost-index kernels (rans_apply_scalar_bcs,
+  rans_apply_nut_wall_ghosts). The Dirichlet-value mode is the hook the
+  future flat-plate inlet needs for scalar inlet values. The omega wall
+  condition stays in rans.f90 (a pinned first CELL, not a ghost).
+
+The related AUGMENTED-q idea (transported RANS scalars as extra
+cell-centred q slots, one batched exchange) is deliberately deferred to
+the profiling phase — see docs/next_session_profiling.md.
+
 ## Config (hierarchical: family in [turbulence], sub-models in their own sections)
 
 The sections mirror the module layout one-to-one — [turbulence]→turb_type,
@@ -557,55 +592,89 @@ dwall source → error; etc.).
   validation output .h5/.png are gitignored on purpose.
 
 ## NEXT-SESSION PROMPT (T4 done 2026-07-09; T5 — the IDDES blend — is the
-## last phase, per its bullet)
+## last phase; its STEP 0 is the patch-type increment decided 2026-07-10)
 
 > Read `docs/next_session_iddes.md` and CLAUDE.md. Branch
-> `claude/jacobi-interface`. Execute phase T5 ONLY: the IDDES blend,
-> DDES-shielding form FIRST (the full f_B/f_e/f_dt elevating branch is a
-> clearly separate SECOND increment, gated on log-layer-mismatch
-> reduction). Architecture per the doc's "module layout" and "IDDES
-> blend" sections — the blend lives ENTIRELY in turbulence.f90 and
-> touches exactly two places: (1) the k-destruction length l_hyb passed
-> into the RANS kernel, (2) the final nut = f_d nut_rans + (1 - f_d)
-> nut_sgs assembly; les.f90 and rans.f90 must not reference each other.
-> `[turbulence] model = iddes` (enum TURB_IDDES exists) requires BOTH a
-> configured [les] SGS model and [rans] model = sst; reject
-> [rans] transition under iddes (not validated there) and decide/document
-> wall_function ∧ iddes explicitly. Formulation: f_d = 1 - tanh((8 r_d)^3)
-> with r_d = (nu_t + nu)/(kappa^2 y_eff^2 sqrt(sum g_ij g_ij)) — reuse
-> velocity_gradient_tensor; l_RANS = sqrt(k)/(beta* omega); l_LES =
-> C_DES Delta, C_DES = F1-blend of (0.78, 0.61); Delta =
-> (dx dy dz)^(1/3) from the turb%filter_* tables first, the IDDES
-> min/max Delta as a step-2 selectable. l_hyb = f_d l_RANS +
-> (1 - f_d) l_LES replaces l_RANS in D_k ONLY — mind that the T2 kernel
-> integrates the k sink POINT-IMPLICITLY as beta* omega k in the
-> denominator: rewrite the implicit coefficient as sqrt(k)/l_hyb
-> equivalently and keep it point-implicit (an explicit k^{3/2}/l_hyb sink
-> reintroduces exactly the stiffness Patankar removed); with l_hyb =
-> l_RANS the arithmetic must reduce to the T2 form — pure RANS
+> `claude/jacobi-interface`. Execute phase T5: STEP 0 first, then the
+> IDDES blend in its DDES-shielding form (the full f_B/f_e/f_dt
+> elevating branch is a clearly separate SECOND increment, gated on
+> log-layer-mismatch reduction).
+>
+> STEP 0 — domain-face patch types (the doc's "Domain-face patch types"
+> section, gated before any T5 physics): `boundary_type` gains
+> `facePatchType(1:NFACES)` (PATCH_GENERIC/PATCH_WALL), config key
+> `<dir>_<side>_patch = wall | patch` in [boundary] (meaningful on
+> non-periodic faces only — declaring one on a periodic direction is a
+> config error; `periodic_*` and its semantics stay untouched, user
+> decision 2026-07-10). DEFAULT when the key is absent = today's
+> inference (non-periodic + both tangential velocities Dirichlet =>
+> wall), so every existing ini is bit-exact by construction; an explicit
+> key wins; print the resolved patch types at RANS init.
+> `domain_face_is_wall` reads the patch type; sst%facewall/domwall/dwall/
+> wnorm consumers stay unchanged. Same increment: replace the duplicated
+> ghost-index kernels (rans_apply_scalar_bcs, rans_apply_nut_wall_ghosts)
+> with ONE generic cell-centred scalar BC applicator in boundary.f90
+> (per-face modes mirror/copy/Dirichlet-value over the bc point lists —
+> mechanics only, boundary.f90 must not know RANS exists); rans.f90
+> passes per-scalar mode tables (k mirror at walls / copy elsewhere;
+> omega/gamma/Re_thetat copy). The omega wall condition stays a pinned
+> first CELL in rans.f90. STEP-0 gates: no-declaration runs bit-exact vs
+> T4 (nofma, max_abs 0 incl. k/omega/nut/gamma/rethetat, CPU AND GPU) on
+> the standard short list + turb180 + lam30t; an explicit `wall`
+> declaration byte-identical to the inferred run; a `patch` declaration
+> on a tangential-Dirichlet face verifiably removes the omega pinning
+> and the dwall min-in (assert via [rans] dump_geometry + a 20-step
+> field diff).
+>
+> THEN T5, the DDES blend — architecture per the doc's "module layout"
+> and "IDDES blend" sections: the blend lives ENTIRELY in turbulence.f90
+> and touches exactly two places, (1) the k-destruction length l_hyb
+> passed into the RANS kernel, (2) the final nut = f_d nut_rans +
+> (1 - f_d) nut_sgs assembly; les.f90 and rans.f90 must not reference
+> each other. `[turbulence] model = iddes` (enum TURB_IDDES exists)
+> requires BOTH a configured [les] SGS model and [rans] model = sst;
+> reject [rans] transition under iddes (not validated there) and
+> decide/document wall_function under iddes explicitly. Formulation:
+> f_d = 1 - tanh((8 r_d)^3), r_d = (nu_t + nu)/(kappa^2 y_eff^2
+> sqrt(sum g_ij g_ij)) — reuse velocity_gradient_tensor; l_RANS =
+> sqrt(k)/(beta* omega); l_LES = C_DES Delta with C_DES = the F1-blend
+> of (0.78, 0.61); Delta = (dx dy dz)^(1/3) from the turb%filter_*
+> tables first, the IDDES min/max Delta as a step-2 selectable. l_hyb =
+> f_d l_RANS + (1 - f_d) l_LES replaces l_RANS in D_k ONLY — mind that
+> the T2 kernel integrates the k sink POINT-IMPLICITLY as beta* omega k
+> in the denominator: rewrite the implicit coefficient equivalently as
+> sqrt(k)/l_hyb and keep it point-implicit (an explicit k^{3/2}/l_hyb
+> sink reintroduces exactly the stiffness Patankar removed); with l_hyb
+> = l_RANS the arithmetic must reduce to the T2 form — pure RANS
 > (model = rans) must stay BIT-EXACT, which is the (e) gate. When iddes
-> runs, update_sgs_viscosity writes the nut_sgs scratch (add it to
-> turb_type; pure LES/pure RANS never allocate what they do not use) and
-> the two extra kernels (f_d, blend) are guarded by model == TURB_IDDES.
-> Respect the landmines: the nut consumer chain is untouched; the omega
-> cross-diffusion hardening and the R_thetat diagonal-implicit diffusion
-> are load-bearing; solid-cell benign values at init AND restart; no new
-> scalar diffusivity exceeds the momentum Peclet budget (l_hyb only
-> changes D_k, so none does). Gates (extend validation/rans_sst/ or a new
-> validation/iddes/ with run/check scripts): (a) f_d field sane on a
-> WMLES-style developed channel (-> 1 at the wall through the RANS layer,
-> -> 0 in the core; dump it via the named-scalar io); (b) channel mean
-> profile: no gross log-layer mismatch vs the T2 RANS and pure-WALE
-> references; (c) consistency limits: f_d forced 1 recovers the T2 RANS
-> answers, f_d forced 0 recovers WALE behaviour in the core; (d) the
-> les_ibm IBM channel runs IDDES stably with the wall treatment; (e) full
-> bit-exactness for model /= iddes vs T4 (nofma, max_abs 0 incl.
+> runs, update_sgs_viscosity writes a nut_sgs scratch (add it to
+> turb_type; pure LES / pure RANS never allocate what they do not use)
+> and the two extra kernels (f_d, blend) are guarded by model ==
+> TURB_IDDES. Respect the landmines: the nut consumer chain is
+> untouched; the omega cross-diffusion hardening and the Re_thetat
+> diagonal-implicit diffusion are load-bearing; solid-cell benign values
+> at init AND restart; no new scalar diffusivity exceeds the momentum
+> Peclet budget (l_hyb only changes D_k, so none does). Gates (extend
+> validation/rans_sst/ or a new validation/iddes/ with run/check
+> scripts): (a) f_d field sane on a WMLES-style developed channel (-> 1
+> at the wall through the RANS layer, -> 0 in the core; dump it via the
+> named-scalar io); (b) channel mean profile: no gross log-layer
+> mismatch vs the T2 RANS and pure-WALE references; (c) consistency
+> limits: f_d forced 1 recovers the T2 RANS answers, f_d forced 0
+> recovers WALE behaviour in the core; (d) the les_ibm IBM channel runs
+> IDDES stably with the wall treatment; (e) full bit-exactness for
+> model /= iddes vs the post-STEP-0 baseline (nofma, max_abs 0 incl.
 > k/omega/nut, CPU AND GPU) on the standard short list — min_channel,
 > les_ibm +- refine_body, Beltrami y-slab, turb180 resolved, one wf180
 > case, lam30t transition; plus iddes-on determinism 1-rank == 4-rank
 > EXACT, CPU vs GPU at the ulp-intrinsic level. WORKFLOW: channel gates
-> local, one solver job at a time (sed-shortened ini copies ~20 steps for
-> bit-exactness per memory bit-exact-gates-short); extend the gate
+> local, one solver job at a time (sed-shortened ini copies ~20 steps
+> for bit-exactness per memory bit-exact-gates-short); extend the gate
 > scripts so the big machine can rerun everything. THEN (separate
 > increment, same gates + the log-layer-mismatch metric) the full IDDES
-> f_B/f_e elevating branch.
+> f_B/f_e elevating branch. Deferred, do NOT start them here: the
+> augmented-q scalar batching (docs/next_session_profiling.md) and the
+> flat-plate inlet increment (inlet-aware classification via a new patch
+> value or Dirichlet-inlet detection + scalar inlet values through the
+> STEP-0 applicator's Dirichlet mode + outflow validation + the TVD
+> upwind revisit).

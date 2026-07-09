@@ -166,6 +166,16 @@ Remaining hypotheses, in likely-payoff order (re-rank against fresh Step-1 data)
   enabled; irrelevant to the profile unless a `custom` force is on.
 - Keep any new timer minimal and easy to remove — do not recreate the MOBY_* hook
   sprawl that was just deleted.
+- RANS (T2-T4) adds per-substage `exchange_scalar_halos` calls on top of nut:
+  k + omega always, gamma + Re_thetat with `[rans] transition = true` — 2-4 extra
+  scalar exchanges per substage in the halo-bound budget. The anticipated remedy
+  (user-approved 2026-07-10, sequenced AFTER T5 so the turbulence feature set
+  re-gates once): an AUGMENTED q — the transported RANS scalars become extra
+  cell-centred variable slots of `blk%q`, allocated only under RANS, so one
+  batched `exchange_halos([...])` call carries them all (they ride the validated
+  cell-centred 2:1 class like p/nut; nut itself stays put — its consumer chain is
+  untouchable; the RK scratch/oldrhs pairs stay separate arrays). Pure bit-exact
+  refactor, justified by the fresh profile of a RANS/IDDES case, not assumed.
 
 ## NEXT-SESSION PROMPT
 
