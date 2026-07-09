@@ -481,8 +481,10 @@ immersed boundary. Phased, each phase verified before the next:
   `--mode wallfn` (gates y⁺ ≥ 30 + near-centre rows against the RESOLVED
   turb180 profile — the DNS anchor is transitive) and non-cubic rank-box
   block support (the ny = 6 case runs with [blocks] nb unset). NEXT
-  IDDES phase: T5 (IDDES blend; T4 transition is separable) — prompt at
-  the end of `docs/next_session_iddes.md`.
+  IDDES phase (user decision): T4 (γ–Re_θt transition, resolved walls
+  only; STEP 0 = settle the first-order-upwind front-sharpness question
+  before the correlations) — prompt at the end of
+  `docs/next_session_iddes.md`; T5 (IDDES blend) follows.
 - ALSO PENDING: **Profile + optimise** the GPU step for the 2:1-refined channel.
   The last hard profile is STALE (the reflux that was 23% is removed; the
   `MOBY_PHASETIME` timer is deleted): re-profile first with a minimal removable
