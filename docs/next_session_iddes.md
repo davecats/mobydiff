@@ -594,9 +594,9 @@ dwall source → error; etc.).
   (validation/iddes/, all PASS): (a) fd(y+) = 1.000 below y+ 5, →0 core;
   the handover is EARLY (mean 0.67 at y+ 5–25 — r_d reads instantaneous
   resolved gradients, the known DDES-in-WMLES behaviour the elevating
-  branch exists to fix); (b) developed-channel mean U (t = 5..25) within
-  1.8%/1.9% of the pure-WALE reference / T2 RANS turb180 in the log
-  layer; (c) fd_force = 0 BIT-EXACT vs pure WALE (the blend identity is
+  branch exists to fix); (b) developed-channel mean U (full t = 5..25
+  average) within 3.0%/2.8% of the pure-WALE reference / T2 RANS turb180
+  in the log layer; (c) fd_force = 0 BIT-EXACT vs pure WALE (the blend identity is
   exact in IEEE); fd_force = 1 holds the converged turb180 answer to
   9.8e-13 after 2000 steps; (d) iddes_ibm (les_ibm conditions) 2000
   steps stable, fd ∈ [0,1]; (e) model ≠ iddes bit-exact vs post-STEP-0
@@ -664,7 +664,7 @@ dwall source → error; etc.).
 > purpose): on validation/iddes/iddes180, the fd handover must move
 > outward (today mean fd = 0.67 at y+ 5–25, ~0.10 at 25–60) and the
 > log-layer mean-U deviation vs the references must NOT regress (today
-> 1.8%/1.9% vs WALE/T2-RANS — already tight, so the real win to
+> 3.0%/2.8% vs WALE/T2-RANS — already tight, so the real win to
 > demonstrate is a higher modeled-stress fraction / RANS coverage in the
 > log layer without breaking the mean profile); plus the standard suite:
 > model ≠ iddes bit-exact (nofma, CPU AND GPU), iddes 1==4 ranks exact,

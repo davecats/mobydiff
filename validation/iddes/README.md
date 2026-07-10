@@ -55,8 +55,9 @@ SGS model: measured fd(wall) = 0 and a +16% log-layer error.
   at y+ 5–25, 0.10 at 25–60), < 0.001 in the core. The early handover is
   the known DDES-with-resolved-content behaviour; extending RANS coverage
   outward is the elevating branch's purpose (increment 2).
-- (b) log-layer mean U (t = 5..25 stats): max dev 1.8% vs the pure-WALE
-  stats reference, 1.9% vs the T2 RANS turb180 profile (bar: 15%).
+- (b) log-layer mean U (full t = 5..25 stats): max dev 3.0% vs the
+  pure-WALE stats reference, 2.8% vs the T2 RANS turb180 profile
+  (bar: 15%; the intermediate t = 5..10 window read 1.8%/1.9%).
 - (c) fd_force = 0: bit-exact vs pure WALE (max_abs 0 on u/v/w/p/nut,
   20 steps) — the blend identity 0·nut_rans + 1·nut_sgs is exact.
   fd_force = 1 from the converged turb180 field: drift after 2000 steps

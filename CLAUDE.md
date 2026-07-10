@@ -554,8 +554,8 @@ immersed boundary. Phased, each phase verified before the next:
   all PASS): fd = 1.000 below y⁺ 5 → <0.001 in the core (handover EARLY,
   y⁺ 5–60 — the known DDES-with-resolved-content behaviour; the f_B/f_e
   elevating branch is increment 2's whole purpose); developed-channel
-  log-layer mean U within 1.8%/1.9% of the pure-WALE / T2-RANS
-  references; fd_force=0 BIT-EXACT vs pure WALE (the IEEE blend
+  log-layer mean U within 3.0%/2.8% of the pure-WALE / T2-RANS
+  references (full t=5..25 average); fd_force=0 BIT-EXACT vs pure WALE (the IEEE blend
   identity); fd_force=1 holds converged turb180 to 9.8e-13 over 2000
   steps; iddes_ibm stable 2000 steps; model ≠ iddes bit-exact vs
   post-STEP-0 (nofma, max_abs 0, CPU AND GPU) on the full standard list;
