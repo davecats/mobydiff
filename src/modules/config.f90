@@ -5,7 +5,8 @@ module config
     use :: turbulence, only: turb_type, TURB_NONE, TURB_LES, TURB_RANS
     use :: les_model, only: les_type, LES_NONE, LES_SMAGORINSKY, LES_WALE
     use :: pressure_solver, only: pressure_solver_type
-    use :: boundary, only: boundary_type, boundary_face_id
+    use :: boundary, only: boundary_type, boundary_face_id, &
+        PATCH_GENERIC, PATCH_WALL
     use :: comm, only: comm_type
     implicit none
 
@@ -540,6 +541,14 @@ subroutine apply_boundary_value(key, value, bc, line_no)
         call read_bool(value, bc%isPeriodic(2), line_no)
     case ("periodic_z")
         call read_bool(value, bc%isPeriodic(3), line_no)
+    case ("x_min_patch", "x_max_patch", "y_min_patch", "y_max_patch", &
+          "z_min_patch", "z_max_patch")
+        ! Domain-face patch type (T5 STEP 0): wall | patch. Meaningful on
+        ! non-periodic faces only (validated after parsing, when periodic_*
+        ! is final); absent = the historical tangential-Dirichlet inference.
+        dir = boundary_direction_index(key(1:1))
+        side = boundary_side_index(key(3:5))
+        call read_patch_type(value, bc%facePatchType(boundary_face_id(dir, side)), line_no)
     case default
         call parse_boundary_key(key, dir, side, var, field)
         if (dir == 0 .or. side < 0 .or. var < 0) then
@@ -650,6 +659,26 @@ subroutine read_bool(value, target, line_no)
         if (terminal_output) print *, "warning: could not parse logical value on input line", line_no
     end select
 end subroutine read_bool
+
+subroutine read_patch_type(value, target, line_no)
+    character(len=*), intent(in) :: value
+    integer(C_INT), intent(inout) :: target
+    integer, intent(in) :: line_no
+
+    character(len=:), allocatable :: value_l
+
+    value_l = lower(clean_string(value))
+    select case (trim(value_l))
+    case ("wall")
+        target = PATCH_WALL
+    case ("patch", "generic")
+        target = PATCH_GENERIC
+    case default
+        if (terminal_output) print *, "error: patch type must be wall or patch on input line", &
+            line_no, ": ", trim(value_l)
+        error stop "unknown [boundary] patch type"
+    end select
+end subroutine read_patch_type
 
 subroutine read_bc_type(value, target, line_no)
     character(len=*), intent(in) :: value

@@ -245,7 +245,8 @@ as follows.
   y⁺ ≲ 1; running it through log wall functions is meaningless) — hard
   config error, not a warning.
 
-## Domain-face patch types (decided 2026-07-10, lands as T5 STEP 0)
+## Domain-face patch types (decided 2026-07-10; DONE as T5 STEP 0,
+## validated 2026-07-10 — status notes inline below)
 
 `domain_face_is_wall` (rans.f90) INFERS wall-ness as "non-periodic and both
 tangential velocities Dirichlet" — which misreads a Dirichlet velocity
@@ -279,6 +280,25 @@ inference is replaced by a declaration:
 The related AUGMENTED-q idea (transported RANS scalars as extra
 cell-centred q slots, one batched exchange) is deliberately deferred to
 the profiling phase — see docs/next_session_profiling.md.
+
+STEP-0 STATUS (implemented + gated 2026-07-10): `facePatchType` +
+`domain_face_is_wall` + `validate_patch_types` (config error checked in
+`init_boundary_faces`, after both the patch keys and periodic_* are
+final) live in boundary.f90; config key `<dir>_<side>_patch = wall |
+patch`; the resolved types print at RANS init (`report_patch_types`,
+"(declared)"/"(inferred)"). The generic applicator is
+`apply_scalar_bc(blk, bc, s, mode, value)` with per-face modes
+SCALAR_BC_NONE/COPY/MIRROR/VALUE over the bc point lists;
+`rans_apply_scalar_bcs` / `rans_apply_nut_wall_ghosts` are now thin
+mode-table wrappers (k mirror at walls / copy elsewhere; omega, gamma,
+Re_thetat copy; nut copy at wall faces only). Gates: no-declaration runs
+bit-exact vs T4 e227e68 (nofma, max_abs 0 incl. k/omega/nut/gamma/
+rethetat, CPU AND GPU) on min_channel, les_ibm ± refine_body, Beltrami
+y-slab, turb180, wf180_y30, lam30t; explicit wall declaration ==
+inferred run (max_abs 0); a `patch` declaration on the tangential-
+Dirichlet y_min face removes the dwall min-in (ransgeom dwall == 2 − y
+exactly) and the omega pinning (omega field differs from the wall run);
+a patch key on a periodic direction error-stops.
 
 ## Config (hierarchical: family in [turbulence], sub-models in their own sections)
 

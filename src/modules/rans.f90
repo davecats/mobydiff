@@ -49,11 +49,12 @@
 !     the block decomposition. T4 STEP-0 DECISION (2026-07-09): kept for
 !     the transition scalars too. A velocity inlet CAN be composed from
 !     the existing faces (Dirichlet velocity + Neumann pressure, zero-
-!     gradient outlet), but no such case is validated and the RANS layer
-!     is not inlet-aware yet: domain_face_is_wall reads "both tangential
-!     components Dirichlet" as no-slip, so an inlet would be classified
-!     as a WALL (omega pinned, dwall min'ed to the inlet plane), and the
-!     transported scalars have no Dirichlet-inlet ghost values. Hence the
+!     gradient outlet), but no such case is validated. Since T5 STEP 0 an
+!     inlet face CAN at least be classified correctly ([boundary]
+!     <dir>_<side>_patch = patch overrides the tangential-Dirichlet
+!     inference in domain_face_is_wall, boundary.f90), but the transported
+!     scalars still have no Dirichlet-inlet ghost values (the applicator's
+!     SCALAR_BC_VALUE mode is the hook). Hence the
 !     T4 gates are channels, whose gamma fronts are wall-normal with ~0
 !     mean cross-front velocity: the upwind numerical diffusion
 !     |v| dy/2 across the front is orders of magnitude below the
@@ -107,7 +108,9 @@ module rans
     use, intrinsic :: iso_c_binding
     use :: init, only: dns_type, grid_type, VAR_U, VAR_V, VAR_W, VAR_P
     use :: blocks, only: block_set_type, FACE_PHYS
-    use :: boundary, only: boundary_type, boundary_face_id, NFACES
+    use :: boundary, only: boundary_type, boundary_face_id, NFACES, &
+        domain_face_is_wall, apply_scalar_bc, PATCH_UNSET, &
+        SCALAR_BC_NONE, SCALAR_BC_COPY, SCALAR_BC_MIRROR
     use :: ibmm, only: ibm_type, isInBody
     use :: walldist, only: walldist_type, build_walldist, destroy_walldist, &
         walldist_distance
@@ -256,7 +259,32 @@ contains
 
         sst%geometry_built = .true.
         call report_geometry(sst, blk, c)
+        call report_patch_types(bc, c)
     end subroutine init_rans_geometry
+
+    ! Print the resolved patch type of every non-periodic domain face, and
+    ! whether it was declared ([boundary] <dir>_<side>_patch) or inferred
+    ! from the tangential velocity BCs (T5 STEP 0 visibility).
+    subroutine report_patch_types(bc, c)
+        type(boundary_type), intent(in) :: bc
+        type(comm_type), intent(in) :: c
+
+        character(len=5), parameter :: face_names(NFACES) = &
+            [character(len=5) :: "x_min", "x_max", "y_min", "y_max", "z_min", "z_max"]
+        integer :: dir, side, face_id
+
+        if (.not. c%has_terminal) return
+        do dir = 1, 3
+            if (bc%isPeriodic(dir)) cycle
+            do side = 0, 1
+                face_id = boundary_face_id(dir, side)
+                print '(5A)', " RANS domain face ", trim(face_names(face_id)), ": ", &
+                    trim(merge("wall ", "patch", domain_face_is_wall(bc, dir, side))), &
+                    trim(merge(" (declared)", " (inferred)", &
+                        bc%facePatchType(face_id) /= PATCH_UNSET))
+            end do
+        end do
+    end subroutine report_patch_types
 
     subroutine destroy_rans_geometry(sst)
         type(sst_type), intent(inout) :: sst
@@ -423,27 +451,6 @@ contains
             end do
         end do
     end subroutine min_in_domain_wall_distance
-
-    ! A domain face is a wall iff its direction is non-periodic and both
-    ! tangential velocity components have Dirichlet (no-slip) conditions;
-    ! Neumann tangential faces (free slip, symmetry) carry no wall layer.
-    logical function domain_face_is_wall(bc, dir, side) result(is_wall)
-        type(boundary_type), intent(in) :: bc
-        integer, intent(in) :: dir, side
-
-        integer :: face_id, var
-        integer, parameter :: DIRICHLET = 0
-
-        is_wall = .false.
-        if (bc%isPeriodic(dir)) return
-
-        face_id = boundary_face_id(dir, side)
-        is_wall = .true.
-        do var = int(VAR_U), int(VAR_W)
-            if (var == dir) cycle   ! the normal component does not decide no-slip
-            if (bc%faceBcType(var, face_id) /= DIRICHLET) is_wall = .false.
-        end do
-    end function domain_face_is_wall
 
     real(C_DOUBLE) function domain_wall_coordinate(g, dns, dir, side) result(x)
         type(grid_type), intent(in) :: g
@@ -1087,67 +1094,32 @@ contains
         !$omp end target teams distribute parallel do
     end subroutine rans_set_constrained_cells
 
-    ! Cell-centred scalar ghosts at physical domain faces: k is Dirichlet 0
-    ! at no-slip walls (mirror) and zero-gradient elsewhere; omega is always
-    ! zero-gradient (its wall value is the pinned first cell, not a ghost);
-    ! gamma and Re_thetat~ are zero-gradient everywhere (kOmegaSSTLM wall
-    ! condition).
+    ! Cell-centred scalar ghosts at physical domain faces, via the generic
+    ! boundary.f90 applicator (this module only supplies the per-scalar mode
+    ! tables): k is Dirichlet 0 at no-slip walls (mirror) and zero-gradient
+    ! elsewhere; omega is always zero-gradient (its wall value is the pinned
+    ! first cell, not a ghost); gamma and Re_thetat~ are zero-gradient
+    ! everywhere (kOmegaSSTLM wall condition).
     subroutine rans_apply_scalar_bcs(sst, dns, blk, bc)
         type(sst_type), intent(inout) :: sst
         type(dns_type), intent(in) :: dns
         type(block_set_type), intent(inout) :: blk
         type(boundary_type), intent(in) :: bc
 
-        integer :: n, npts, b, i, j, k, face_id, dir, side
-        integer :: ghost_idx, interior_idx_dir
-        integer :: gi(3), ii(3)
-        integer(C_INT) :: local_n(1:3), facewall(NFACES)
-        logical :: transition
+        integer(C_INT) :: kmode(NFACES), copymode(NFACES)
+        integer :: f
 
-        npts = int(bc%nTotal)
-        if (npts <= 0) return
-        local_n = blk%nb(1:3)
-        facewall = sst%facewall
-        transition = dns%rans_transition
-
-        !$omp target teams distribute parallel do &
-        !$omp& map(to: npts, transition, local_n(1:3), facewall(1:NFACES), &
-        !$omp& bc%pointFace(1:npts), bc%slot(1:npts), bc%i(1:npts), bc%j(1:npts), bc%k(1:npts)) &
-        !$omp& map(tofrom: sst%k, sst%omg, sst%gam, sst%ret) &
-        !$omp& private(n,b,i,j,k,face_id,dir,side,ghost_idx,interior_idx_dir,gi,ii)
-        do n = 1, npts
-            face_id = int(bc%pointFace(n))
-            b = int(bc%slot(n))
-            dir = (face_id + 1)/2
-            side = modulo(face_id - 1, 2)
-            i = int(bc%i(n))
-            j = int(bc%j(n))
-            k = int(bc%k(n))
-
-            if (side == 0) then
-                ghost_idx = 0
-                interior_idx_dir = 1
-            else
-                ghost_idx = int(local_n(dir)) + 1
-                interior_idx_dir = int(local_n(dir))
-            end if
-            gi = [i, j, k]
-            ii = gi
-            gi(dir) = ghost_idx
-            ii(dir) = interior_idx_dir
-
-            if (facewall(face_id) == 1_C_INT) then
-                sst%k(gi(1),gi(2),gi(3),b) = -sst%k(ii(1),ii(2),ii(3),b)
-            else
-                sst%k(gi(1),gi(2),gi(3),b) = sst%k(ii(1),ii(2),ii(3),b)
-            end if
-            sst%omg(gi(1),gi(2),gi(3),b) = sst%omg(ii(1),ii(2),ii(3),b)
-            if (transition) then
-                sst%gam(gi(1),gi(2),gi(3),b) = sst%gam(ii(1),ii(2),ii(3),b)
-                sst%ret(gi(1),gi(2),gi(3),b) = sst%ret(ii(1),ii(2),ii(3),b)
-            end if
+        do f = 1, NFACES
+            kmode(f) = merge(SCALAR_BC_MIRROR, SCALAR_BC_COPY, sst%facewall(f) == 1_C_INT)
         end do
-        !$omp end target teams distribute parallel do
+        copymode = SCALAR_BC_COPY
+
+        call apply_scalar_bc(blk, bc, sst%k, kmode)
+        call apply_scalar_bc(blk, bc, sst%omg, copymode)
+        if (dns%rans_transition) then
+            call apply_scalar_bc(blk, bc, sst%gam, copymode)
+            call apply_scalar_bc(blk, bc, sst%ret, copymode)
+        end if
     end subroutine rans_apply_scalar_bcs
 
     ! Assemble the SST eddy viscosity into the caller-supplied nut target:
@@ -1234,46 +1206,10 @@ contains
         type(boundary_type), intent(in) :: bc
         real(C_DOUBLE), intent(inout) :: nut(0:,0:,0:,1:)
 
-        integer :: n, npts, b, i, j, k, face_id, dir, side
-        integer :: ghost_idx, interior_idx_dir
-        integer :: gi(3), ii(3)
-        integer(C_INT) :: local_n(1:3), facewall(NFACES)
+        integer(C_INT) :: mode(NFACES)
 
-        npts = int(bc%nTotal)
-        if (npts <= 0) return
-        local_n = blk%nb(1:3)
-        facewall = sst%facewall
-
-        !$omp target teams distribute parallel do &
-        !$omp& map(to: npts, local_n(1:3), facewall(1:NFACES), &
-        !$omp& bc%pointFace(1:npts), bc%slot(1:npts), bc%i(1:npts), bc%j(1:npts), bc%k(1:npts)) &
-        !$omp& map(tofrom: nut) &
-        !$omp& private(n,b,i,j,k,face_id,dir,side,ghost_idx,interior_idx_dir,gi,ii)
-        do n = 1, npts
-            face_id = int(bc%pointFace(n))
-            if (facewall(face_id) /= 1_C_INT) cycle
-            b = int(bc%slot(n))
-            dir = (face_id + 1)/2
-            side = modulo(face_id - 1, 2)
-            i = int(bc%i(n))
-            j = int(bc%j(n))
-            k = int(bc%k(n))
-
-            if (side == 0) then
-                ghost_idx = 0
-                interior_idx_dir = 1
-            else
-                ghost_idx = int(local_n(dir)) + 1
-                interior_idx_dir = int(local_n(dir))
-            end if
-            gi = [i, j, k]
-            ii = gi
-            gi(dir) = ghost_idx
-            ii(dir) = interior_idx_dir
-
-            nut(gi(1),gi(2),gi(3),b) = nut(ii(1),ii(2),ii(3),b)
-        end do
-        !$omp end target teams distribute parallel do
+        mode = merge(SCALAR_BC_COPY, SCALAR_BC_NONE, sst%facewall == 1_C_INT)
+        call apply_scalar_bc(blk, bc, nut, mode)
     end subroutine rans_apply_nut_wall_ghosts
 
     ! Pre-loop preparation: constrained cells, scalar ghosts/halos, and the

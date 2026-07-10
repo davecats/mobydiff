@@ -11,6 +11,23 @@ module boundary
     integer(C_INT), parameter :: SIDE_MAX = 1_C_INT
     integer, parameter :: NFACES = 6
 
+    ! Domain-face patch types ([boundary] <dir>_<side>_patch = wall | patch).
+    ! Meaningful on non-periodic faces only. UNSET (no declaration) falls back
+    ! to the historical inference in domain_face_is_wall, so existing inis run
+    ! unchanged.
+    integer(C_INT), parameter :: PATCH_UNSET = 0_C_INT
+    integer(C_INT), parameter :: PATCH_GENERIC = 1_C_INT
+    integer(C_INT), parameter :: PATCH_WALL = 2_C_INT
+
+    ! Per-face ghost modes for the generic cell-centred scalar BC applicator
+    ! (apply_scalar_bc). MIRROR gives a zero face value (Dirichlet 0), COPY a
+    ! zero normal gradient, VALUE a prescribed face value; NONE leaves the
+    ! ghost untouched.
+    integer(C_INT), parameter :: SCALAR_BC_NONE = 0_C_INT
+    integer(C_INT), parameter :: SCALAR_BC_COPY = 1_C_INT
+    integer(C_INT), parameter :: SCALAR_BC_MIRROR = 2_C_INT
+    integer(C_INT), parameter :: SCALAR_BC_VALUE = 3_C_INT
+
     type :: boundary_type
         logical(C_BOOL) :: isPeriodic(1:3)
         integer(C_INT) :: nTotal = 0_C_INT
@@ -23,6 +40,9 @@ module boundary
         integer(C_INT) :: faceBcType(VAR_U:VAR_P,1:NFACES) = 0_C_INT
         real(C_DOUBLE) :: faceBcDefaultValue(VAR_U:VAR_P,1:NFACES) = 0.0d0
         real(C_DOUBLE), allocatable :: pointBcValue(:,:)
+
+        ! Declared patch type per face (index = boundary_face_id).
+        integer(C_INT) :: facePatchType(1:NFACES) = PATCH_UNSET
     end type boundary_type
 
 contains
@@ -35,13 +55,64 @@ contains
         bc%faceBcType = 0_C_INT
         bc%faceBcDefaultValue = 0.0d0
         bc%faceBcType(VAR_P,:) = 1_C_INT
+        bc%facePatchType = PATCH_UNSET
     end subroutine init_bc
+
+    ! A domain face is a wall iff its direction is non-periodic and the face
+    ! is a wall patch: an explicit [boundary] <dir>_<side>_patch declaration
+    ! wins; when absent, the historical inference applies (Dirichlet on both
+    ! tangential velocity components = no-slip; Neumann tangential faces --
+    ! free slip, symmetry -- carry no wall layer). NOTE the inference reads a
+    ! Dirichlet velocity INLET as a wall; declare such a face `patch`.
+    logical function domain_face_is_wall(bc, dir, side) result(is_wall)
+        type(boundary_type), intent(in) :: bc
+        integer, intent(in) :: dir, side
+
+        integer :: face_id, var
+        integer, parameter :: DIRICHLET = 0
+
+        is_wall = .false.
+        if (bc%isPeriodic(dir)) return
+
+        face_id = boundary_face_id(dir, side)
+        select case (bc%facePatchType(face_id))
+        case (PATCH_WALL)
+            is_wall = .true.
+        case (PATCH_GENERIC)
+            is_wall = .false.
+        case default
+            is_wall = .true.
+            do var = int(VAR_U), int(VAR_W)
+                if (var == dir) cycle   ! the normal component does not decide no-slip
+                if (bc%faceBcType(var, face_id) /= DIRICHLET) is_wall = .false.
+            end do
+        end select
+    end function domain_face_is_wall
+
+    ! [boundary] <dir>_<side>_patch is meaningful on non-periodic faces only;
+    ! declaring one on a periodic direction is a config error (checked here,
+    ! after both the patch keys and the periodic_* flags are final).
+    subroutine validate_patch_types(bc)
+        type(boundary_type), intent(in) :: bc
+        integer :: dir, side
+
+        do dir = 1, 3
+            if (.not. bc%isPeriodic(dir)) cycle
+            do side = 0, 1
+                if (bc%facePatchType(boundary_face_id(dir, side)) /= PATCH_UNSET) then
+                    error stop "[boundary] patch type declared on a periodic direction"
+                end if
+            end do
+        end do
+    end subroutine validate_patch_types
 
     subroutine init_boundary_faces(bc, blk)
         type(boundary_type), intent(inout) :: bc
         type(block_set_type), intent(in) :: blk
         integer :: nx, ny, nz
         integer :: b, dir, side, face_id, pos, total
+
+        call validate_patch_types(bc)
 
         nx = int(blk%nb(1))
         ny = int(blk%nb(2))
@@ -337,5 +408,73 @@ contains
         end do
         !$omp end target teams distribute parallel do
     end subroutine apply_bc
+
+    ! Generic cell-centred scalar ghost update at physical domain faces:
+    ! one SCALAR_BC_* mode per face over the bc point lists (mechanics only
+    ! -- the caller supplies the per-scalar mode table). The optional value
+    ! array feeds the VALUE mode (face value via the ghost-mirror identity),
+    ! the hook a scalar inlet needs.
+    subroutine apply_scalar_bc(blk, bc, s, mode, value)
+        type(block_set_type), intent(in) :: blk
+        type(boundary_type), intent(in) :: bc
+        real(C_DOUBLE), intent(inout) :: s(0:,0:,0:,1:)
+        integer(C_INT), intent(in) :: mode(NFACES)
+        real(C_DOUBLE), intent(in), optional :: value(NFACES)
+
+        integer :: n, npts, b, i, j, k, face_id, dir, side, m
+        integer :: ghost_idx, interior_idx_dir
+        integer :: gi(3), ii(3)
+        integer(C_INT) :: local_n(1:3), mode_l(NFACES)
+        real(C_DOUBLE) :: value_l(NFACES)
+
+        npts = int(bc%nTotal)
+        if (npts <= 0) return
+        if (all(mode == SCALAR_BC_NONE)) return
+        local_n = blk%nb(1:3)
+        mode_l = mode
+        value_l = 0.0d0
+        if (present(value)) value_l = value
+
+        !$omp target teams distribute parallel do &
+        !$omp& map(to: npts, local_n(1:3), mode_l(1:NFACES), value_l(1:NFACES), &
+        !$omp& bc%pointFace(1:npts), bc%slot(1:npts), bc%i(1:npts), bc%j(1:npts), bc%k(1:npts)) &
+        !$omp& map(tofrom: s) &
+        !$omp& private(n,b,i,j,k,face_id,dir,side,m,ghost_idx,interior_idx_dir,gi,ii)
+        do n = 1, npts
+            face_id = int(bc%pointFace(n))
+            m = int(mode_l(face_id))
+            if (m == SCALAR_BC_NONE) cycle
+            b = int(bc%slot(n))
+            dir = (face_id + 1)/2
+            side = modulo(face_id - 1, 2)
+            i = int(bc%i(n))
+            j = int(bc%j(n))
+            k = int(bc%k(n))
+
+            if (side == 0) then
+                ghost_idx = 0
+                interior_idx_dir = 1
+            else
+                ghost_idx = int(local_n(dir)) + 1
+                interior_idx_dir = int(local_n(dir))
+            end if
+            gi = [i, j, k]
+            ii = gi
+            gi(dir) = ghost_idx
+            ii(dir) = interior_idx_dir
+
+            select case (m)
+            case (SCALAR_BC_COPY)
+                s(gi(1),gi(2),gi(3),b) = s(ii(1),ii(2),ii(3),b)
+            case (SCALAR_BC_MIRROR)
+                s(gi(1),gi(2),gi(3),b) = -s(ii(1),ii(2),ii(3),b)
+            case (SCALAR_BC_VALUE)
+                ! Ghost chosen so the face midpoint carries the value.
+                s(gi(1),gi(2),gi(3),b) = 2.0d0*value_l(face_id) &
+                                       - s(ii(1),ii(2),ii(3),b)
+            end select
+        end do
+        !$omp end target teams distribute parallel do
+    end subroutine apply_scalar_bc
 
 end module boundary
