@@ -36,8 +36,14 @@ Per time step: 3 RK substages, each (main.f90, ~L205-234):
 ```
 update_ibm_mu
 update_bodyforce            (no-op unless [force] custom; cheap)
-[LES: update_les_viscosity + exchange_scalar_halos(nut) + momentum(+SGS)]
-momentum(...)              predictor kernel (+ body-force correction if enabled)
+[turbulence, per model — timed by the existing turb_timing profiler:
+  les:   update_sgs_viscosity -> turb%nut
+  rans:  rans_substage (pin + ghosts + k/omega exchange_scalar_halos +
+         fused transport + nut assembly; +gamma/Re_thetat when transition)
+  iddes: update_sgs_viscosity(nut_sgs) + compute_iddes_fd (a second
+         gradient-tensor sweep) + rans_substage + blend_iddes_nut
+ then exchange_scalar_halos(nut)]
+momentum(...)              predictor kernel (+ eddy-viscosity/body-force corrections)
 apply_bc
 exchange_halos([u,v,w], syncface=.true.)         ! 1 full velocity exchange
 pressure_projection(...)    ! the loop below
@@ -177,21 +183,41 @@ Remaining hypotheses, in likely-payoff order (re-rank against fresh Step-1 data)
   untouchable; the RK scratch/oldrhs pairs stay separate arrays). Pure bit-exact
   refactor, justified by the fresh profile of a RANS/IDDES case, not assumed.
 
-## NEXT-SESSION PROMPT
+## NEXT-SESSION PROMPT (updated 2026-07-10, post-IDDES-T5)
 
 > Read `docs/next_session_profiling.md` and CLAUDE.md. Branch
-> `claude/jacobi-interface`. RE-PROFILE the GPU step for the 2:1-refined channel:
-> the last hard profile is stale (reflux removed; `MOBY_PHASETIME` deleted). Add a
-> minimal, removable phase timer (reuse `les_wall_seconds`, gate behind one clean
-> config key — NOT env-var hooks), bracket momentum / syncface exchange /
-> projection-kernels / projection-exchange per substage, and print ms/step. Profile
-> `tutorials/min_channel/input.ini` (and `refined_y110.ini`) on GPU, sweeping
-> nb = 8/16/32. From the fresh split, optimise the dominant cost — likely the
-> projection's per-Jacobi-iteration exchanges (merge the phi+velocity exchange into
-> one; do the full velocity exchange less often; or core/shell nonblocking overlap
-> per `docs/nonblocking_overlap_strategy.md`, which you should update off the
-> red-black solver). Every change is a SCHEDULING change and must be bit-exact vs
-> the current binary (`-Mnofma`/`-gpu=nofma`, `tools/compare_fields.py` max_abs 0,
-> CPU+GPU, plus 1-rank==N-rank) on min_channel, les_ibm channel + refine_body,
-> Beltrami y-slab. Do NOT touch the locked 2:1-interface numerics inside the
-> exchange. Make a plan first; execute after.
+> `claude/jacobi-interface`. RE-PROFILE the GPU step, then optimise the dominant
+> cost. The last hard profile is stale (reflux removed; `MOBY_PHASETIME` deleted);
+> the turbulence portion already has a timer (`turb_timing`, turbulence.f90) —
+> extend the same pattern, do NOT add env hooks. STEP 1: add a minimal, removable
+> phase timer behind one clean `[output]` config key, bracketing per substage:
+> momentum / syncface exchange / projection-kernels / projection-exchange (and
+> keep the existing turb_timing subdivision for the turbulence block). Profile on
+> GPU, ~100 steps after warm-up: (a) the 2:1-refined channel
+> `tutorials/min_channel/input.ini`, sweeping nb = 8/16/32; (b) a heavier refined
+> case (`validation/channel_interface/refined_y110.ini` if present); (c) ONE
+> RANS/IDDES case (`validation/iddes/iddes180.ini` 20-step or
+> `validation/rans_sst/turb180.ini`) to measure the per-substage
+> exchange_scalar_halos burden (k+omega+nut, +2 with transition, +fd's second
+> gradient sweep under iddes) — this decides whether the user-approved AUGMENTED-q
+> batching increment (RANS scalars as extra cell-centred `blk%q` slots, one
+> batched exchange; nut and its consumer chain stay put) is worth its re-gating
+> cost. STEP 2, from the fresh split only: the likely wins are, in order, the
+> core/shell nonblocking overlap of the projection's per-iteration exchanges
+> (start_halo_exchange / compute core / finish / shell — update
+> `docs/nonblocking_overlap_strategy.md` off the red-black solver first), the
+> redundant open-halo sweep share, thinning the mid-loop velocity exchange
+> (subtle — verify against the divergence gate), and copy_local_entries occupancy
+> at 12k+ leaves. Do NOT re-try the phi+velocity exchange merge (settled
+> infeasible: jacobi_apply sits between them) and do NOT re-do the entry-map
+> precompute (landed). Every change is a SCHEDULING change and must be bit-exact
+> vs the pre-change binary (`-Mnofma`/`-gpu=nofma`, compare_fields max_abs 0,
+> CPU AND GPU, 1==N ranks) on the standard list — min_channel, les_ibm
+> ± refine_body, Beltrami y-slab (5 steps), and since RANS scalars ride the
+> exchange add turb180 + lam30t (all fields incl. k/omega/nut/gamma/rethetat);
+> an exchange-scheduling bug hides in the multi-rank path, so gate 4-rank
+> explicitly. Report ms/step before/after per phase; confirm the optimisation
+> moved the phase it targeted. Do NOT touch the locked 2:1-interface numerics
+> inside the exchange. Make a plan first; execute after. Deferred elsewhere:
+> the flat-plate inlet increment and transition/wall_function under iddes
+> (docs/next_session_iddes.md).
