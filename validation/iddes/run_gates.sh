@@ -6,7 +6,10 @@
 #   ./run_gates.sh iddes180     # one gate group
 #   groups: iddes180 (transient+stats legs), fd0 (fd_force=0 == pure WALE,
 #           bit-exact), fd1 (fd_force=1 vs the T2 RANS turb180 fixed point),
-#           ibm (les_ibm channel stability), ranks (1==4 rank determinism)
+#           ibm (les_ibm channel stability), ranks (1==4 rank determinism),
+#           toggles (evaluation only, needs the iddes180 transient: short
+#           t=5..10 stats legs for default vs iddes_cdt1=8 / iddes_clip /
+#           iddes_delta=cbrt; check_gates.py reports them side by side)
 #
 # Environment:  BIN=<solver>  (default ../../build_gpu/main)
 #               RANKS=<n>     (default 1; the ranks gate manages its own)
@@ -86,6 +89,33 @@ if want ibm; then
             iddes_ibm.ini > .ibm.ini
         run .ibm.ini "$RANKS" iddes_ibm
         rm -f .ibm.ini
+    fi
+fi
+
+# --- toggle evaluation (NOT a pass/fail gate): C_dt1 8 vs 20, Spalart
+# --- clipping, cbrt vs IDDES mesh length -- short t=5..10 stats legs from
+# --- the SAME default-config transient, one stats file per variant ---
+if want toggles; then
+    devout=$(ls -t iddes180_dev_*.h5 2>/dev/null | head -1)
+    if [ -z "$devout" ]; then
+        echo "== toggles SKIPPED: run the iddes180 group first (needs iddes180_dev_*.h5)"; status=1
+    else
+        for tog in default cdt8 clip cbrt; do
+            sed -e "s|^file = .*|file = ${devout}|" \
+                -e 's/^t_final.*/t_final = 10.0/' \
+                -e 's/^field_interval.*/field_interval = 0/' \
+                -e "s/^field_prefix.*/field_prefix = tog_${tog}/" \
+                -e "s/^stats_sample_interval = 50/stats_sample_interval = 50\nstats_file = stats_${tog}.h5/" \
+                iddes180.ini > .tog.ini
+            case $tog in
+                cdt8) printf '\n[turbulence]\niddes_cdt1 = 8.0\n' >> .tog.ini ;;
+                clip) printf '\n[turbulence]\niddes_clip = true\n' >> .tog.ini ;;
+                cbrt) printf '\n[turbulence]\niddes_delta = cbrt\n' >> .tog.ini ;;
+            esac
+            rm -f "stats_${tog}.h5"
+            run .tog.ini "$RANKS" "tog_${tog}"
+            rm -f .tog.ini
+        done
     fi
 fi
 

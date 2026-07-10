@@ -1337,7 +1337,7 @@ contains
         real(C_DOUBLE) :: diag_r, rhsg, rhsr, gnew, rnew, gameff, dkfac
         real(C_DOUBLE) :: cdes_delta
         logical :: solw, sole, sols, soln, solb, solt
-        logical :: iddes
+        logical :: iddes, iddesclip
 
         nx = int(blk%nb(1))
         ny = int(blk%nb(2))
@@ -1349,12 +1349,15 @@ contains
         wallfn = dns%rans_wall_treatment == 1_C_INT
         transition = dns%rans_transition
         iddes = turb%model == TURB_IDDES
+        iddesclip = .false.
+        if (iddes) iddesclip = logical(turb%iddes_clip)
 
         !$omp target teams distribute parallel do collapse(4) &
         !$omp& map(to: nu, dtsub, dt_alpha, dt_beta, solid_threshold, wallfn, transition, iddes, &
+        !$omp& iddesclip, &
         !$omp& sst%k, sst%omg, sst%gam, sst%ret, sst%yeff, sst%wallcell, sst%domwall, sst%wnorm, &
         !$omp& blk%q, blk%d1x, blk%d1y, blk%d1z, ibm%coef, &
-        !$omp& turb%nut, turb%fd, turb%filter_x, turb%filter_y, turb%filter_z, &
+        !$omp& turb%nut, turb%fd, turb%fe, turb%delta, &
         !$omp& turb%inv_dx, turb%inv_dy, turb%inv_dz, &
         !$omp& turb%d1xm, turb%d1x0, turb%d1xp, turb%d1ym, turb%d1y0, turb%d1yp, &
         !$omp& turb%d1zm, turb%d1z0, turb%d1zp, &
@@ -1756,20 +1759,22 @@ contains
                          + min(max(cross, 0.0d0), wv/max(dtsub, 1.0d-30))
 
                     if (iddes) then
-                        ! T5 DDES: the k-destruction length l_hyb = fd l_RANS
-                        ! + (1 - fd) C_DES Delta replaces l_RANS in D_k ONLY
-                        ! (C_DES = the F1-blend of set 1/2; Delta = the local
-                        ! mesh width from the filter tables, WITHOUT the SGS
-                        ! delta_scale knob -- C_DES is calibrated on the raw
-                        ! width). The sink stays POINT-IMPLICIT via
-                        ! iddes_k_sink_coeff = sqrt(k)/l_hyb; the else branch
-                        ! keeps the T2 arithmetic verbatim, which is the
-                        ! pure-RANS bit-exactness argument.
+                        ! T5: the k-destruction length l_hyb = fd (1 + fe)
+                        ! l_RANS + (1 - fd) C_DES Delta replaces l_RANS in
+                        ! D_k ONLY (C_DES = the F1-blend of set 1/2; Delta =
+                        ! the precomputed [turbulence] iddes_delta mesh
+                        ! length, WITHOUT the SGS delta_scale knob -- C_DES
+                        ! is calibrated on the raw width). The sink stays
+                        ! POINT-IMPLICIT via iddes_k_sink_coeff =
+                        ! sqrt(k)/l_hyb; the else branch keeps the T2
+                        ! arithmetic verbatim, which is the pure-RANS
+                        ! bit-exactness argument.
                         cdes_delta = (f1*IDDES_CDES1 + (1.0d0 - f1)*IDDES_CDES2) &
-                            *turb%filter_x(i,b)*turb%filter_y(j,b)*turb%filter_z(k,b)
+                            *turb%delta(i,j,k,b)
                         knew = (kv + dt_alpha*rhsk + dt_beta*sst%koldrhs(i,j,k,b)) &
                              /(1.0d0 + dtsub*iddes_k_sink_coeff(kv, wv, &
-                                 turb%fd(i,j,k,b), cdes_delta, SST_BETA_STAR)*dkfac)
+                                 turb%fd(i,j,k,b), turb%fe(i,j,k,b), cdes_delta, &
+                                 SST_BETA_STAR, iddesclip)*dkfac)
                     else
                         knew = (kv + dt_alpha*rhsk + dt_beta*sst%koldrhs(i,j,k,b)) &
                              /(1.0d0 + dtsub*SST_BETA_STAR*wv*dkfac)

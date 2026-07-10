@@ -20,13 +20,22 @@ module turbulence
     integer, parameter, public :: TURB_PROF_EXCHANGE = 2
     integer, parameter, public :: TURB_PROF_SGS = 3
 
-    ! IDDES (DDES-shielding form; SST-IDDES calibration, Gritskevich et al.
-    ! 2012): l_LES = C_DES Delta with C_DES the F1-blend of set 1/2; the
-    ! stored fd = tanh((8 r_d)^3) is the RANS-RETENTION weight (see
-    ! compute_iddes_fd) on r_d = (nut + nu)/(kappa^2 y_eff^2 |grad u|).
+    ! IDDES (full elevating/WMLES branch; SST-IDDES calibration, Gritskevich
+    ! et al. 2012): l_LES = C_DES Delta with C_DES the F1-blend of set 1/2;
+    ! the stored fd = max(fd_dt, f_B) is the RANS-RETENTION weight (see
+    ! compute_iddes_fd), fd_dt = tanh((C_dt1 r_dt)^3) on
+    ! r_dt = nut/(kappa^2 y_eff^2 |grad u|) -- nut ALONE, unlike the DDES
+    ! increment's r_d = (nut + nu)/(...). Psi = 1 throughout: the low-Re
+    ! correction Psi guards an SGS constant that misbehaves at low Re_t;
+    ! WALE already gives nut -> 0 in laminar shear, so no correction applies.
     real(C_DOUBLE), parameter, public :: IDDES_CDES1 = 0.78d0
     real(C_DOUBLE), parameter, public :: IDDES_CDES2 = 0.61d0
     real(C_DOUBLE), parameter :: IDDES_KAPPA = 0.41d0
+    real(C_DOUBLE), parameter :: IDDES_CT = 1.87d0
+    real(C_DOUBLE), parameter :: IDDES_CL = 5.0d0
+    ! [turbulence] iddes_delta: the mesh length in l_LES = C_DES Delta.
+    integer(C_INT), parameter, public :: IDDES_DELTA_CBRT = 0_C_INT   ! (dx dy dz)^{1/3}
+    integer(C_INT), parameter, public :: IDDES_DELTA_IDDES = 1_C_INT  ! min(max(0.15 d_w, 0.15 h_max, h_wn), h_max)
 
     ! Model-agnostic turbulence state. Every producer (LES, RANS, the IDDES
     ! blend) fills the same cell-centred eddy viscosity nut, so everything
@@ -41,9 +50,25 @@ module turbulence
         ! nut. Full arrays only under model = iddes -- 1-cell dummies
         ! otherwise (uniform device maps; every access is model-guarded).
         real(C_DOUBLE), allocatable :: nut_sgs(:,:,:,:), fd(:,:,:,:)
+        ! Full-IDDES fields (same 1-cell-dummy idiom): fe = the dynamic
+        ! elevating factor max(f_e1 - 1, 0)*f_e2 riding l_hyb; fb/fe1m1 the
+        ! STATIC geometric pieces on alpha = 0.25 - d_w/h_max and delta the
+        ! STATIC mesh length, all filled once by init_iddes_geometry.
+        real(C_DOUBLE), allocatable :: fe(:,:,:,:)
+        real(C_DOUBLE), allocatable :: fb(:,:,:,:), fe1m1(:,:,:,:), delta(:,:,:,:)
         ! [turbulence] fd_force: validation hook forcing fd to a constant
-        ! (0 = pure-SGS limit, 1 = pure-RANS limit); < 0 = off (production).
+        ! (0 = pure-SGS limit, 1 = pure-RANS limit; fe is zeroed with it so
+        ! force = 1 gives l_hyb = l_RANS exactly); < 0 = off (production).
         real(C_DOUBLE) :: fd_force = -1.0d0
+        ! [turbulence] IDDES blend options (defaults = the Gritskevich 2012
+        ! SST-IDDES calibration; the alternatives are evaluation toggles,
+        ! results in validation/iddes/README.md): iddes_cdt1 = the
+        ! shielding constant C_dt1 (20; Spalart's DDES calibration is 8);
+        ! iddes_clip = Spalart's max(0, l_RANS - l_LES) clipping,
+        ! algebraically l_LES -> min(l_RANS, l_LES) inside the blend.
+        real(C_DOUBLE) :: iddes_cdt1 = 20.0d0
+        logical(C_BOOL) :: iddes_clip = .false._C_BOOL
+        integer(C_INT) :: iddes_delta_mode = IDDES_DELTA_IDDES
         ! Per-block 1D metric tables (trailing block index).
         real(C_DOUBLE), allocatable :: filter_x(:,:), filter_y(:,:), filter_z(:,:)
         real(C_DOUBLE), allocatable :: d1xm(:,:,:), d1x0(:,:,:), d1xp(:,:,:)
@@ -59,6 +84,7 @@ module turbulence
     public :: init_turbulence_profiler
     public :: velocity_gradient_tensor
     public :: compute_iddes_fd, blend_iddes_nut, iddes_k_sink_coeff
+    public :: init_iddes_geometry
 
 contains
 
@@ -94,12 +120,22 @@ contains
         if (turb%model == TURB_IDDES) then
             allocate(turb%nut_sgs(0:nx+1,0:ny+1,0:nz+1,blk%nBlocks))
             allocate(turb%fd(0:nx+1,0:ny+1,0:nz+1,blk%nBlocks))
+            allocate(turb%fe(0:nx+1,0:ny+1,0:nz+1,blk%nBlocks))
+            allocate(turb%fb(0:nx+1,0:ny+1,0:nz+1,blk%nBlocks))
+            allocate(turb%fe1m1(0:nx+1,0:ny+1,0:nz+1,blk%nBlocks))
+            allocate(turb%delta(0:nx+1,0:ny+1,0:nz+1,blk%nBlocks))
         else
             ! 1-cell dummies: uniform device maps, all accesses model-guarded.
             allocate(turb%nut_sgs(0:0,0:0,0:0,1), turb%fd(0:0,0:0,0:0,1))
+            allocate(turb%fe(0:0,0:0,0:0,1), turb%fb(0:0,0:0,0:0,1))
+            allocate(turb%fe1m1(0:0,0:0,0:0,1), turb%delta(0:0,0:0,0:0,1))
         end if
         turb%nut_sgs = 0.0d0
         turb%fd = 1.0d0   ! the RANS limit, until the first compute_iddes_fd
+        turb%fe = 0.0d0
+        turb%fb = 0.0d0
+        turb%fe1m1 = 0.0d0
+        turb%delta = 0.0d0   ! init_iddes_geometry fills the real values
         allocate(turb%filter_x(0:nx+1,blk%nBlocks), turb%filter_y(0:ny+1,blk%nBlocks), &
             turb%filter_z(0:nz+1,blk%nBlocks))
         allocate(turb%d1xm(0:nx+1,VAR_U:VAR_P,blk%nBlocks), turb%d1x0(0:nx+1,VAR_U:VAR_P,blk%nBlocks), &
@@ -125,6 +161,10 @@ contains
         if (allocated(turb%nut)) deallocate(turb%nut)
         if (allocated(turb%nut_sgs)) deallocate(turb%nut_sgs)
         if (allocated(turb%fd)) deallocate(turb%fd)
+        if (allocated(turb%fe)) deallocate(turb%fe)
+        if (allocated(turb%fb)) deallocate(turb%fb)
+        if (allocated(turb%fe1m1)) deallocate(turb%fe1m1)
+        if (allocated(turb%delta)) deallocate(turb%delta)
         if (allocated(turb%filter_x)) deallocate(turb%filter_x)
         if (allocated(turb%filter_y)) deallocate(turb%filter_y)
         if (allocated(turb%filter_z)) deallocate(turb%filter_z)
@@ -156,6 +196,7 @@ contains
         !$omp target enter data map(to: turb)
         !$omp target enter data map(to: turb%nut)
         !$omp target enter data map(to: turb%nut_sgs, turb%fd)
+        !$omp target enter data map(to: turb%fe, turb%fb, turb%fe1m1, turb%delta)
         !$omp target enter data map(to: turb%filter_x, turb%filter_y, turb%filter_z)
         !$omp target enter data map(to: turb%d1xm, turb%d1x0, turb%d1xp)
         !$omp target enter data map(to: turb%d1ym, turb%d1y0, turb%d1yp)
@@ -177,6 +218,7 @@ contains
         !$omp target exit data map(delete: turb%d1ym, turb%d1y0, turb%d1yp)
         !$omp target exit data map(delete: turb%d1xm, turb%d1x0, turb%d1xp)
         !$omp target exit data map(delete: turb%filter_x, turb%filter_y, turb%filter_z)
+        !$omp target exit data map(delete: turb%fe, turb%fb, turb%fe1m1, turb%delta)
         !$omp target exit data map(delete: turb%nut_sgs, turb%fd)
         !$omp target exit data map(delete: turb%nut)
         !$omp target exit data map(delete: turb)
@@ -253,18 +295,26 @@ contains
         g32 = (1.0d0 - turb%p_from_w_z(k,b))*d0 + turb%p_from_w_z(k,b)*d1
     end subroutine velocity_gradient_tensor
 
-    ! IDDES piece (1): the DDES shielding field. We STORE the RANS-retention
-    ! weight fd = tanh((8 r_d)^3) = 1 - f_d^Spalart(2006), so fd -> 1 deep in
-    ! the (attached) boundary layer and -> 0 in the LES region -- the weight
+    ! IDDES piece (1): the shielding + elevating fields (full IDDES,
+    ! Gritskevich et al. 2012 SST calibration). We STORE the RANS-retention
+    ! weight, so IDDES's f~_d = max(1 - f_dt, f_B) is directly
+    ! fd = max(fd_dt, f_B) with fd_dt = tanh((C_dt1 r_dt)^3) on
+    ! r_dt = nut/(kappa^2 y_eff^2 sqrt(sum g_ij g_ij)) -- fd -> 1 deep in
+    ! the (attached) boundary layer and -> 0 in the LES region, the weight
     ! the blend and the l_hyb formula multiply nut_rans/l_RANS by directly
-    ! (storing Spalart's LES-ward f_d with the same blend hands the WALL
+    ! (storing Spalart's LES-ward weight with the same blend hands the WALL
     ! layer to the SGS model: measured +16% log-layer error before the flip).
-    ! r_d = (nut + nu)/(kappa^2 y_eff^2 sqrt(sum g_ij g_ij)) reads the lagged
-    ! BLENDED nut (the previous assembly), the explicit-scheme stance the
-    ! RANS diffusivities already take. y_eff is passed as a plain array so
-    ! this module stays independent of the RANS module that owns the
-    ! wall-distance state. [turbulence] fd_force >= 0 overrides the field
-    ! (validation hook: 0 = pure-SGS limit, 1 = pure-RANS limit).
+    ! The static geometric f_B (init_iddes_geometry) forces RANS retention
+    ! for d_w <~ h_max regardless of the flow. The elevating factor
+    ! fe = max(f_e1 - 1, 0)*f_e2 (Psi = 1, see the module constants) rides
+    ! l_hyb only: f_e2 = 1 - max(f_t, f_l) disables the elevation where
+    ! either the turbulent (r_dt) or the laminar (r_dl, nu in place of nut)
+    ! shield is active. nut is the lagged BLENDED nut (the previous
+    ! assembly), the explicit-scheme stance the RANS diffusivities already
+    ! take. y_eff is passed as a plain array so this module stays
+    ! independent of the RANS module that owns the wall-distance state.
+    ! [turbulence] fd_force >= 0 overrides fd AND zeroes fe (the pure
+    ! limits: 0 = SGS; 1 = RANS with l_hyb = l_RANS exactly).
     subroutine compute_iddes_fd(turb, blk, dns, yeff)
         type(turb_type), intent(inout) :: turb
         type(block_set_type), intent(inout) :: blk
@@ -272,7 +322,7 @@ contains
         real(C_DOUBLE), intent(in) :: yeff(0:,0:,0:,1:)
 
         integer :: i, j, k, b, nx, ny, nz, nBlocks
-        real(C_DOUBLE) :: nu, force, gg, rd, y
+        real(C_DOUBLE) :: nu, force, cdt1, gg, denom, rdt, rdl, fe2, y
         real(C_DOUBLE) :: g11, g12, g13, g21, g22, g23, g31, g32, g33
 
         nx = int(blk%nb(1))
@@ -281,20 +331,23 @@ contains
         nBlocks = int(blk%nBlocks)
         nu = 1.0d0/dns%re
         force = turb%fd_force
+        cdt1 = turb%iddes_cdt1
 
         !$omp target teams distribute parallel do collapse(4) &
-        !$omp& map(to: nu, force, blk%q, blk%d1x, blk%d1y, blk%d1z, yeff, turb%nut, &
+        !$omp& map(to: nu, force, cdt1, blk%q, blk%d1x, blk%d1y, blk%d1z, yeff, turb%nut, &
+        !$omp& turb%fb, turb%fe1m1, &
         !$omp& turb%d1xm, turb%d1x0, turb%d1xp, turb%d1ym, turb%d1y0, turb%d1yp, &
         !$omp& turb%d1zm, turb%d1z0, turb%d1zp, &
         !$omp& turb%p_from_u_x, turb%p_from_v_y, turb%p_from_w_z) &
-        !$omp& map(tofrom: turb%fd) &
-        !$omp& private(i,j,k,b,gg,rd,y,g11,g12,g13,g21,g22,g23,g31,g32,g33)
+        !$omp& map(tofrom: turb%fd, turb%fe) &
+        !$omp& private(i,j,k,b,gg,denom,rdt,rdl,fe2,y,g11,g12,g13,g21,g22,g23,g31,g32,g33)
         do b = 1, nBlocks
         do k = 1, nz
             do j = 1, ny
                 do i = 1, nx
                     if (force >= 0.0d0) then
                         turb%fd(i,j,k,b) = force
+                        turb%fe(i,j,k,b) = 0.0d0
                         cycle
                     end if
                     call velocity_gradient_tensor(blk, turb, i, j, k, b, &
@@ -304,12 +357,16 @@ contains
                             + g31*g31 + g32*g32 + g33*g33)
                     y = yeff(i,j,k,b)
                     ! Stagnant cells (gg -> 0, e.g. inside the IBM solid) get
-                    ! a huge r_d -> fd = 1 (RANS retention); both nut factors
-                    ! are zero there, so the blend is unaffected. The cap
-                    ! keeps (8 r_d)^3 finite.
-                    rd = min((turb%nut(i,j,k,b) + nu) &
-                        /max(IDDES_KAPPA*IDDES_KAPPA*y*y*gg, 1.0d-30), 1.0d10)
-                    turb%fd(i,j,k,b) = tanh((8.0d0*rd)**3)
+                    ! huge r_dt/r_dl -> fd = 1 (RANS retention) and fe = 0;
+                    ! both nut factors are zero there, so the blend is
+                    ! unaffected. The caps keep the tanh arguments finite.
+                    denom = max(IDDES_KAPPA*IDDES_KAPPA*y*y*gg, 1.0d-30)
+                    rdt = min(turb%nut(i,j,k,b)/denom, 1.0d10)
+                    rdl = min(nu/denom, 1.0d10)
+                    turb%fd(i,j,k,b) = max(tanh((cdt1*rdt)**3), turb%fb(i,j,k,b))
+                    fe2 = 1.0d0 - max(tanh((IDDES_CT*IDDES_CT*rdt)**3), &
+                                      tanh((IDDES_CL*IDDES_CL*rdl)**10))
+                    turb%fe(i,j,k,b) = turb%fe1m1(i,j,k,b)*fe2
                 end do
             end do
         end do
@@ -352,24 +409,111 @@ contains
     end subroutine blend_iddes_nut
 
     ! IDDES piece (1b): the POINT-IMPLICIT k-destruction coefficient
-    ! D_k/k = sqrt(k)/l_hyb with l_hyb = f_d l_RANS + (1 - f_d) C_DES Delta
-    ! and l_RANS = sqrt(k)/(beta* omega) -- the hybrid length replaces
-    ! l_RANS in D_k ONLY. Keeping the sink point-implicit is load-bearing:
+    ! D_k/k = sqrt(k)/l_hyb with the full-IDDES hybrid length
+    !   l_hyb = f_d (1 + f_e) l_RANS + (1 - f_d) l_LES,
+    ! l_RANS = sqrt(k)/(beta* omega), l_LES = C_DES Delta -- the hybrid
+    ! length replaces l_RANS in D_k ONLY. clip = Spalart's
+    ! max(0, l_RANS - l_LES) form, algebraically l_LES -> min(l_RANS, l_LES)
+    ! inside the blend (evaluation toggle; Gritskevich's formulation is the
+    ! plain convex blend). Keeping the sink point-implicit is load-bearing:
     ! an explicit k^{3/2}/l_hyb sink reintroduces exactly the near-wall
-    ! stiffness the Patankar treatment removed. With f_d = 1 this equals
-    ! beta* omega up to ROUND-OFF only, so the pure-RANS caller must keep
-    ! its original arithmetic on a separate branch for bit-exactness.
-    pure real(C_DOUBLE) function iddes_k_sink_coeff(kv, wv, fdv, cdes_delta, &
-            betastar) result(coef)
+    ! stiffness the Patankar treatment removed. With f_d = 1 and f_e = 0
+    ! this equals beta* omega up to ROUND-OFF only, so the pure-RANS caller
+    ! must keep its original arithmetic on a separate branch for
+    ! bit-exactness.
+    pure real(C_DOUBLE) function iddes_k_sink_coeff(kv, wv, fdv, fev, &
+            cdes_delta, betastar, clip) result(coef)
 !$omp declare target
-        real(C_DOUBLE), intent(in) :: kv, wv, fdv, cdes_delta, betastar
+        real(C_DOUBLE), intent(in) :: kv, wv, fdv, fev, cdes_delta, betastar
+        logical, intent(in) :: clip
 
-        real(C_DOUBLE) :: sqrtk, lhyb
+        real(C_DOUBLE) :: sqrtk, lrans, lles, lhyb
 
         sqrtk = sqrt(max(kv, 0.0d0))
-        lhyb = fdv*sqrtk/(betastar*wv) + (1.0d0 - fdv)*cdes_delta
+        lrans = sqrtk/(betastar*wv)
+        lles = cdes_delta
+        if (clip) lles = min(lrans, lles)
+        lhyb = fdv*(1.0d0 + fev)*lrans + (1.0d0 - fdv)*lles
         coef = sqrtk/max(lhyb, 1.0d-30)
     end function iddes_k_sink_coeff
+
+    ! The STATIC geometric IDDES fields, host-side at init (main.f90 calls
+    ! this between init_turbulence and enter_turbulence_data). Per interior
+    ! cell, on alpha = 0.25 - d_w/h_max with d_w = y_eff and
+    ! h_max = max(dx, dy, dz):
+    !   f_B   = min(2 exp(-9 alpha^2), 1)  -- geometric RANS retention out
+    !           to d_w ~ 0.53 h_max, ~0 beyond d_w ~ h_max;
+    !   fe1m1 = max(f_e1 - 1, 0) with the two-sided
+    !           f_e1 = 2 exp(-11.09 alpha^2) (alpha >= 0)
+    !                  2 exp(-9 alpha^2)     (alpha < 0);
+    ! and the mesh length Delta per [turbulence] iddes_delta:
+    !   cbrt   (dx dy dz)^{1/3} (the DDES-increment width, kept for
+    !          comparison; built from the SAME filter-table product);
+    !   iddes  min(max(0.15 d_w, 0.15 h_max, h_wn), h_max) with h_wn = the
+    !          spacing along the dominant wall-normal axis (largest
+    !          |grad dwall| component on the RAW ghost-inclusive dwall;
+    !          h_max fallback when the gradient degenerates -- wall-free
+    !          cells have 0.15 d_w >= h_max there anyway). dwall/yeff are
+    !          plain arrays so this module stays independent of rans.f90.
+    subroutine init_iddes_geometry(turb, blk, dwall, yeff)
+        type(turb_type), intent(inout) :: turb
+        type(block_set_type), intent(in) :: blk
+        real(C_DOUBLE), intent(in) :: dwall(0:,0:,0:,1:), yeff(0:,0:,0:,1:)
+
+        integer :: i, j, k, b
+        real(C_DOUBLE) :: hx, hy, hz, hmax, hwn, dw, alpha, fe1
+        real(C_DOUBLE) :: gx, gy, gz, gmax
+
+        if (turb%model /= TURB_IDDES) return
+
+        do b = 1, int(blk%nBlocks)
+        do k = 1, int(blk%nb(3))
+        do j = 1, int(blk%nb(2))
+        do i = 1, int(blk%nb(1))
+            hx = 1.0d0/blk%d1x(i,VAR_P,b)
+            hy = 1.0d0/blk%d1y(j,VAR_P,b)
+            hz = 1.0d0/blk%d1z(k,VAR_P,b)
+            hmax = max(hx, hy, hz)
+            dw = yeff(i,j,k,b)
+            alpha = 0.25d0 - dw/hmax
+            turb%fb(i,j,k,b) = min(2.0d0*exp(-9.0d0*alpha*alpha), 1.0d0)
+            if (alpha >= 0.0d0) then
+                fe1 = 2.0d0*exp(-11.09d0*alpha*alpha)
+            else
+                fe1 = 2.0d0*exp(-9.0d0*alpha*alpha)
+            end if
+            turb%fe1m1(i,j,k,b) = max(fe1 - 1.0d0, 0.0d0)
+
+            if (turb%iddes_delta_mode == IDDES_DELTA_CBRT) then
+                turb%delta(i,j,k,b) = turb%filter_x(i,b)*turb%filter_y(j,b) &
+                    *turb%filter_z(k,b)
+            else
+                gx = turb%d1xm(i,VAR_P,b)*dwall(i-1,j,k,b) &
+                   + turb%d1x0(i,VAR_P,b)*dwall(i,j,k,b) &
+                   + turb%d1xp(i,VAR_P,b)*dwall(i+1,j,k,b)
+                gy = turb%d1ym(j,VAR_P,b)*dwall(i,j-1,k,b) &
+                   + turb%d1y0(j,VAR_P,b)*dwall(i,j,k,b) &
+                   + turb%d1yp(j,VAR_P,b)*dwall(i,j+1,k,b)
+                gz = turb%d1zm(k,VAR_P,b)*dwall(i,j,k-1,b) &
+                   + turb%d1z0(k,VAR_P,b)*dwall(i,j,k,b) &
+                   + turb%d1zp(k,VAR_P,b)*dwall(i,j,k+1,b)
+                gmax = max(abs(gx), abs(gy), abs(gz))
+                hwn = hmax
+                if (gmax > 1.0d-12 .and. gmax < 1.0d12) then
+                    ! |grad dwall| ~ 1 in the fluid; the dominant component
+                    ! picks the wall-normal axis (across a wall face the
+                    ! V-shaped mirror halves it but never flips the winner).
+                    if (gmax == abs(gz)) hwn = hz
+                    if (gmax == abs(gy)) hwn = hy
+                    if (gmax == abs(gx)) hwn = hx
+                end if
+                turb%delta(i,j,k,b) = min(max(0.15d0*dw, 0.15d0*hmax, hwn), hmax)
+            end if
+        end do
+        end do
+        end do
+        end do
+    end subroutine init_iddes_geometry
 
     subroutine precompute_turbulence_metrics(turb, blk, nx, ny, nz)
         type(turb_type), intent(inout) :: turb

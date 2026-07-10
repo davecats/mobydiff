@@ -606,6 +606,52 @@ dwall source → error; etc.).
   (log-layer-mismatch reduction is its entire purpose; also revisit
   C_d1 = 8 vs Gritskevich's SST value 20, and Spalart's
   max(0, l_RANS − l_LES) clipping vs the plain convex blend).
+- **T5 — IDDES elevating/WMLES branch (increment 2). DONE (validated
+  2026-07-10).** Full Gritskevich et al. 2012 SST-IDDES on top of the DDES
+  shielding, everything still in turbulence.f90 and in the RANS-retention
+  convention: IDDES's f̃_d = max(1 − f_dt, f_B) is itself a RANS-retention
+  weight, so the stored field is simply fd = max(fd_dt, f_B) with
+  fd_dt = tanh((C_dt1 r_dt)³), r_dt = ν_t/(κ² y_eff² |∇u|) — ν_t ALONE and
+  C_dt1 = 20 by default (both Gritskevich differences from the DDES r_d).
+  l_hyb = fd (1 + f_e) l_RANS + (1 − fd) l_LES via the extended
+  iddes_k_sink_coeff (still point-implicit; fd = 1 ∧ f_e = 0 reduces to
+  β* ω up to round-off, the pure-RANS branch stays verbatim). The
+  geometric pieces are STATIC and precomputed on the host at init
+  (init_iddes_geometry, between init_turbulence and the device maps):
+  f_B = min(2 exp(−9 α²), 1) and fe1m1 = max(f_e1 − 1, 0) on
+  α = 0.25 − d_w/h_max (d_w = yeff, plain-array argument), plus the mesh
+  length Δ per `[turbulence] iddes_delta` — default `iddes` =
+  min(max(0.15 d_w, 0.15 h_max, h_wn), h_max) with h_wn = the spacing
+  along the dominant |∇dwall| axis (RAW ghost-inclusive dwall, h_max
+  fallback), `cbrt` = the DDES-increment (ΔxΔyΔz)^{1/3}. Dynamic per
+  substage (compute_iddes_fd): fd and
+  f_e = fe1m1 · (1 − max(f_t, f_l)) with f_t = tanh((C_t² r_dt)³),
+  f_l = tanh((C_l² r_dl)^10), r_dl the laminar analogue (ν for ν_t);
+  C_t = 1.87, C_l = 5.0; Ψ = 1 documented (WALE needs no low-Re
+  correction). The WALE blend nut = fd nut_rans + (1 − fd) nut_sgs is
+  KEPT (textbook SST-IDDES has no separate SGS model; ours is the
+  validated variant) and uses the SAME fd. fd_force now zeroes f_e too,
+  so force = 1 is exactly l_hyb = l_RANS. Evaluation toggles (defaults =
+  Gritskevich): `iddes_cdt1` (20 vs the DDES 8), `iddes_clip` (Spalart's
+  max(0, l_RANS − l_LES) clipping ≡ l_LES → min(l_RANS, l_LES) in the
+  blend). Gates (validation/iddes/, all PASS — details in its README):
+  (a) the handover moved outward as required — fd = 1.000 EXACTLY
+  through y+ ≤ 15 (f_B guarantees retention to d_w ≈ 0.53 h_max = y+ 18.6
+  on this grid), band means 0.872 / 0.034 at y+ 5–25 / 25–60 (DDES:
+  0.67 / 0.10), core max 1.8e-4; (b) log-layer mean U (full t = 5..25
+  stats) max dev 0.5% vs pure WALE and 0.7% vs T2 RANS — the DDES
+  increment read 3.0%/2.8%, a ~5x improvement, NOT just no-regress;
+  toggles on t = 5..10 stats legs from the same transient: cdt1 = 8
+  marginally worse, clip never binds (identical to default), cbrt Δ 3x
+  worse vs WALE — the Gritskevich defaults stand; (c) fd_force = 0
+  bit-exact vs pure WALE, fd_force = 1 holds converged turb180 to
+  9.8e-13 over 2000 steps; (d) iddes_ibm stable 2000 steps; (e) model ≠
+  iddes bit-exact vs the pre-increment baseline (nofma, max_abs 0 incl.
+  all RANS scalars, CPU AND GPU, the standard 7-case list); iddes 1==4
+  ranks EXACT; CPU vs GPU 20 steps EXACT (max_abs 0 — the increment-1
+  tanh ulp gap does not reappear). Still open under iddes:
+  transition/wall_function (hard errors), the flat-plate inlet
+  increment, augmented-q batching.
 
 ## Watch for
 
@@ -640,8 +686,11 @@ dwall source → error; etc.).
 - `git add` explicit paths only (see memory: git-staging-discipline);
   validation output .h5/.png are gitignored on purpose.
 
-## NEXT-SESSION PROMPT — T5 increment 2: the full IDDES elevating branch
-## (T5 DDES increment DONE 2026-07-10; STEP 0 + DDES validated, see above)
+## PREVIOUS PROMPT (T5 increment 2, executed 2026-07-10 — kept for the
+## record; the full elevating branch is DONE, see the phase plan above.
+## Remaining IDDES-adjacent work: the flat-plate inlet increment,
+## transition/wall_function under iddes, augmented-q scalar batching
+## (docs/next_session_profiling.md), and the GPU profiling task.)
 
 > Read `docs/next_session_iddes.md` and CLAUDE.md. Branch
 > `claude/jacobi-interface`. Implement the full IDDES elevating/WMLES

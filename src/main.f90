@@ -147,6 +147,11 @@ program main
     if (turbulence_is_enabled(turb)) then
         if (c%has_terminal) print *, "initialising turbulence model..."
         call init_turbulence(turb, blk)
+        ! Full IDDES: the static geometric fields (f_B, f_e1, the mesh
+        ! length) need the RANS wall distance; fill them on the host before
+        ! the device maps.
+        if (turb%model == TURB_IDDES) &
+            call init_iddes_geometry(turb, blk, sst%dwall, sst%yeff)
         call enter_turbulence_data(turb)
     end if
 

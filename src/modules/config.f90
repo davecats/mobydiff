@@ -2,7 +2,8 @@ module config
     use, intrinsic :: iso_c_binding
     use :: init, only: dns_type, grid_type, VAR_U, VAR_V, VAR_W, VAR_P, &
         GRID_UNIFORM, GRID_COSINE, GRID_TANH, GRID_NATURAL, config_seen_type
-    use :: turbulence, only: turb_type, TURB_NONE, TURB_LES, TURB_RANS, TURB_IDDES
+    use :: turbulence, only: turb_type, TURB_NONE, TURB_LES, TURB_RANS, TURB_IDDES, &
+        IDDES_DELTA_CBRT, IDDES_DELTA_IDDES
     use :: les_model, only: les_type, LES_NONE, LES_SMAGORINSKY, LES_WALE
     use :: pressure_solver, only: pressure_solver_type
     use :: boundary, only: boundary_type, boundary_face_id, &
@@ -357,6 +358,7 @@ subroutine validate_turbulence_values(turb, les, dns)
             error stop "[rans] wall_function under model = iddes is not validated; use resolved"
         end if
         if (turb%fd_force > 1.0d0) error stop "[turbulence] fd_force must be <= 1"
+        if (turb%iddes_cdt1 <= 0.0d0) error stop "[turbulence] iddes_cdt1 must be positive"
     end if
 end subroutine validate_turbulence_values
 
@@ -420,10 +422,44 @@ subroutine apply_turbulence_value(key, value, turb, seen, line_no)
         seen%turbulence_model = .true.
     case ("fd_force")
         ! IDDES validation hook: force fd to a constant (0 = pure-SGS
-        ! limit, 1 = pure-RANS limit); < 0 (default) = off.
+        ! limit, 1 = pure-RANS limit; fe is zeroed with it); < 0
+        ! (default) = off.
         call read_real(value, turb%fd_force, line_no)
+    case ("iddes_cdt1")
+        ! The IDDES shielding constant C_dt1 (default 20, the Gritskevich
+        ! SST calibration; 8 is Spalart's DDES value -- evaluation toggle).
+        call read_real(value, turb%iddes_cdt1, line_no)
+    case ("iddes_clip")
+        ! Spalart's max(0, l_RANS - l_LES) clipping in l_hyb (default off
+        ! = the plain Gritskevich convex blend -- evaluation toggle).
+        call read_bool(value, turb%iddes_clip, line_no)
+    case ("iddes_delta")
+        ! Mesh length in l_LES: iddes (default, the IDDES wall-aware
+        ! min/max formula) or cbrt ((dx dy dz)^{1/3}, the DDES-increment
+        ! width kept for comparison).
+        call read_iddes_delta(value, turb%iddes_delta_mode, line_no)
     end select
 end subroutine apply_turbulence_value
+
+subroutine read_iddes_delta(value, target, line_no)
+    character(len=*), intent(in) :: value
+    integer(C_INT), intent(inout) :: target
+    integer, intent(in) :: line_no
+
+    character(len=:), allocatable :: value_l
+
+    value_l = lower(clean_string(value))
+    select case (trim(value_l))
+    case ("iddes")
+        target = IDDES_DELTA_IDDES
+    case ("cbrt")
+        target = IDDES_DELTA_CBRT
+    case default
+        if (terminal_output) print *, "error: iddes_delta must be iddes or cbrt on input line", &
+            line_no, ": ", trim(value_l)
+        error stop "unknown [turbulence] iddes_delta"
+    end select
+end subroutine read_iddes_delta
 
 ! [rans] — the k-omega SST sub-model section (docs/next_session_iddes.md).
 ! T2: model = sst enables the transport equations under

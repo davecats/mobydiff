@@ -559,11 +559,40 @@ immersed boundary. Phased, each phase verified before the next:
   identity); fd_force=1 holds converged turb180 to 9.8e-13 over 2000
   steps; iddes_ibm stable 2000 steps; model ≠ iddes bit-exact vs
   post-STEP-0 (nofma, max_abs 0, CPU AND GPU) on the full standard list;
-  iddes 1==4 ranks EXACT; CPU vs GPU ≤ 2e-14 (tanh ulps). NEXT: T5
-  increment 2 — the f_B/f_e/f_dt elevating branch + the IDDES Δ
-  selectable + C_d1 8-vs-20 + the Spalart max(0,·) clipping evaluation;
-  prompt at the end of `docs/next_session_iddes.md`. Deferred: augmented-q
-  scalar batching (profiling), the flat-plate inlet increment.
+  iddes 1==4 ranks EXACT; CPU vs GPU ≤ 2e-14 (tanh ulps). Deferred:
+  augmented-q scalar batching (profiling), the flat-plate inlet increment.
+- IDDES T5 increment 2 — full IDDES elevating/WMLES branch (DONE
+  2026-07-10; Gritskevich et al. 2012 SST-IDDES). In our RANS-RETENTION
+  convention IDDES's f̃_d = max(1 − f_dt, f_B) is simply fd =
+  max(fd_dt, f_B): fd_dt = tanh((C_dt1 r_dt)³) with r_dt = ν_t/(κ² y_eff²
+  |∇u|) — ν_t ALONE and C_dt1 = 20 (both Gritskevich differences from the
+  DDES r_d); l_hyb = fd (1 + f_e) l_RANS + (1 − fd) l_LES
+  (iddes_k_sink_coeff, still point-implicit; fd = 1 ∧ f_e = 0 reduces to
+  β* ω — the pure-RANS branch stays verbatim). f_e = max(f_e1 − 1, 0)·
+  (1 − max(f_t, f_l)) (f_t/f_l on r_dt/r_dl, C_t = 1.87, C_l = 5.0,
+  Ψ = 1: WALE needs no low-Re correction); the geometric pieces (f_B,
+  f_e1 on α = 0.25 − d_w/h_max, and the mesh length Δ) are STATIC,
+  host-precomputed at init (`init_iddes_geometry`, called from main.f90
+  between init_turbulence and the device maps; d_w = sst%yeff as a plain
+  array). `[turbulence] iddes_delta = iddes` (default: min(max(0.15 d_w,
+  0.15 h_max, h_wn), h_max), h_wn = spacing along the dominant |∇dwall|
+  axis) | `cbrt`; evaluation toggles `iddes_cdt1` (20; 8 = DDES) and
+  `iddes_clip` (Spalart max(0, l_RANS − l_LES) ≡ l_LES → min(l_RANS,
+  l_LES)). The WALE blend nut = fd nut_rans + (1 − fd) nut_sgs is KEPT
+  with the SAME fd (textbook SST-IDDES has no separate SGS model; ours is
+  the validated variant); fd_force now zeroes f_e (force = 1 ⇒ l_hyb =
+  l_RANS exactly). Gates (validation/iddes/, all PASS): fd = 1.000
+  through y+ ≤ 15 (f_B guarantee, d_w ≈ 0.53 h_max = y+ 18.6), band means
+  0.872/0.034 at y+ 5–25/25–60 (DDES: 0.67/0.10) — the handover moved
+  outward; log-layer mean U (full t = 5..25) 0.5%/0.7% vs pure-WALE /
+  T2-RANS (DDES increment: 3.0%/2.8% — a ~5x improvement); toggles: cdt1=8
+  marginally worse, clip never binds, cbrt Δ 3x worse vs WALE ⇒ Gritskevich
+  defaults stand; fd_force limits unchanged (0 = bit-exact WALE, 1 = holds
+  turb180 to 9.8e-13/2000 steps); iddes_ibm stable; model ≠ iddes
+  bit-exact vs pre-increment (nofma, max_abs 0 incl. all RANS scalars,
+  CPU AND GPU, 7-case list); iddes 1==4 ranks EXACT; CPU vs GPU 20 steps
+  EXACT (max_abs 0). NEXT (IDDES track): flat-plate inlet increment,
+  transition/wall_function under iddes (hard errors until validated).
 - ALSO PENDING: **Profile + optimise** the GPU step for the 2:1-refined channel.
   The last hard profile is STALE (the reflux that was 23% is removed; the
   `MOBY_PHASETIME` timer is deleted): re-profile first with a minimal removable
