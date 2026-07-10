@@ -188,7 +188,7 @@ logical function output_is_due(step, output_interval)
 end function output_is_due
 
 subroutine maybe_write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor, nut, &
-        rans_k, rans_omg, rans_gam, rans_ret)
+        rans_k, rans_omg, rans_gam, rans_ret, iddes_fd)
     type(block_set_type), intent(inout) :: blk
     type(dns_type), intent(in) :: dns
     type(grid_type), intent(in) :: g
@@ -200,14 +200,15 @@ subroutine maybe_write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_
     real(C_DOUBLE), allocatable, intent(in) :: nut(:,:,:,:)   ! LES eddy viscosity (unallocated when LES off)
     real(C_DOUBLE), allocatable, intent(in), optional :: rans_k(:,:,:,:), rans_omg(:,:,:,:)
     real(C_DOUBLE), allocatable, intent(in), optional :: rans_gam(:,:,:,:), rans_ret(:,:,:,:)
+    real(C_DOUBLE), allocatable, intent(in), optional :: iddes_fd(:,:,:,:)
 
     if (.not. output_is_due(step, dns%field_interval)) return
     call write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor, nut, &
-        rans_k, rans_omg, rans_gam, rans_ret)
+        rans_k, rans_omg, rans_gam, rans_ret, iddes_fd)
 end subroutine maybe_write_field
 
 subroutine write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor, nut, &
-        rans_k, rans_omg, rans_gam, rans_ret)
+        rans_k, rans_omg, rans_gam, rans_ret, iddes_fd)
     ! Parallel HDF5 call: all MPI ranks must enter this routine together.
     ! Global datasets, one hyperslab per block.
     type(block_set_type), intent(inout) :: blk
@@ -225,6 +226,9 @@ subroutine write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor, n
     ! (for uniform device maps) when transition is off.
     real(C_DOUBLE), allocatable, intent(in), optional :: rans_k(:,:,:,:), rans_omg(:,:,:,:)
     real(C_DOUBLE), allocatable, intent(in), optional :: rans_gam(:,:,:,:), rans_ret(:,:,:,:)
+    ! IDDES DDES-shielding function: a 1-cell dummy unless model = iddes
+    ! (size gate below), so non-iddes output is unchanged.
+    real(C_DOUBLE), allocatable, intent(in), optional :: iddes_fd(:,:,:,:)
 
     character(len=256) :: h5_file_name
     character(kind=C_CHAR,len=:), allocatable :: c_file_name
@@ -294,6 +298,12 @@ subroutine write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor, n
     if (present(rans_ret) .and. dns%rans_transition) then
         if (allocated(rans_ret)) call append_scalar_field(c_file_name, "rethetat", rans_ret, blk, &
             h5_file_name, c%has_terminal)
+    end if
+    if (present(iddes_fd)) then
+        if (allocated(iddes_fd)) then
+            if (size(iddes_fd) > 1) call append_scalar_field(c_file_name, "fd", iddes_fd, blk, &
+                h5_file_name, c%has_terminal)
+        end if
     end if
 
     ! No XDMF for the block-table layout; reassemble with

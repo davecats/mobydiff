@@ -2,7 +2,7 @@ module config
     use, intrinsic :: iso_c_binding
     use :: init, only: dns_type, grid_type, VAR_U, VAR_V, VAR_W, VAR_P, &
         GRID_UNIFORM, GRID_COSINE, GRID_TANH, GRID_NATURAL, config_seen_type
-    use :: turbulence, only: turb_type, TURB_NONE, TURB_LES, TURB_RANS
+    use :: turbulence, only: turb_type, TURB_NONE, TURB_LES, TURB_RANS, TURB_IDDES
     use :: les_model, only: les_type, LES_NONE, LES_SMAGORINSKY, LES_WALE
     use :: pressure_solver, only: pressure_solver_type
     use :: boundary, only: boundary_type, boundary_face_id, &
@@ -302,7 +302,7 @@ subroutine validate_turbulence_values(turb, les, dns)
     type(dns_type), intent(in) :: dns
 
     select case (turb%model)
-    case (TURB_NONE, TURB_LES, TURB_RANS)
+    case (TURB_NONE, TURB_LES, TURB_RANS, TURB_IDDES)
     case default
         error stop "invalid turbulence model"
     end select
@@ -313,10 +313,10 @@ subroutine validate_turbulence_values(turb, les, dns)
     end select
     if (turb%model == TURB_NONE) return
 
-    if (turb%model == TURB_LES) then
-        ! The LES family (and later iddes) needs an SGS kernel from [les].
+    if (turb%model == TURB_LES .or. turb%model == TURB_IDDES) then
+        ! The LES family and the IDDES hybrid need an SGS kernel from [les].
         if (les%model == LES_NONE) then
-            error stop "[turbulence] model = les requires an SGS model in [les]"
+            error stop "[turbulence] model = les/iddes requires an SGS model in [les]"
         end if
         if (les%model == LES_SMAGORINSKY .and. les%cs < 0.0d0) then
             error stop "LES Smagorinsky constant must be non-negative"
@@ -327,12 +327,12 @@ subroutine validate_turbulence_values(turb, les, dns)
         if (les%delta_scale <= 0.0d0) error stop "LES delta_scale must be positive"
     end if
 
-    if (turb%model == TURB_RANS) then
+    if (turb%model == TURB_RANS .or. turb%model == TURB_IDDES) then
         ! T2/T3/T4 (docs/next_session_iddes.md): SST transport with resolved
         ! walls or wall functions, plus the gamma-Re_thetat transition
-        ! variant on resolved walls.
+        ! variant on resolved walls. IDDES rides the same SST transport.
         if (.not. dns%rans_configured .or. dns%rans_model == 0_C_INT) then
-            error stop "[turbulence] model = rans requires [rans] model = sst"
+            error stop "[turbulence] model = rans/iddes requires [rans] model = sst"
         end if
         ! gamma-Re_theta needs y+ <~ 1; running it through log wall
         ! functions is meaningless.
@@ -341,6 +341,22 @@ subroutine validate_turbulence_values(turb, les, dns)
         end if
         if (dns%rans_tu <= 0.0d0) error stop "[rans] tu must be positive (percent)"
         if (dns%rans_nut_ratio <= 0.0d0) error stop "[rans] nut_ratio must be positive"
+    end if
+
+    if (turb%model == TURB_IDDES) then
+        ! T5 first increment (DDES shielding): reject the combinations not
+        ! validated under the hybrid. wall_function under iddes is a
+        ! DELIBERATE rejection, not an oversight: the T5 gates run resolved
+        ! walls only, and the wall-function log-branch production reads the
+        ! RANS nut, whose wall-cell value the blend would dilute -- validate
+        ! before allowing.
+        if (dns%rans_transition) then
+            error stop "[rans] transition under model = iddes is not validated"
+        end if
+        if (dns%rans_wall_treatment /= 0_C_INT) then
+            error stop "[rans] wall_function under model = iddes is not validated; use resolved"
+        end if
+        if (turb%fd_force > 1.0d0) error stop "[turbulence] fd_force must be <= 1"
     end if
 end subroutine validate_turbulence_values
 
@@ -402,6 +418,10 @@ subroutine apply_turbulence_value(key, value, turb, seen, line_no)
     case ("model")
         call read_turbulence_model(value, turb%model, line_no)
         seen%turbulence_model = .true.
+    case ("fd_force")
+        ! IDDES validation hook: force fd to a constant (0 = pure-SGS
+        ! limit, 1 = pure-RANS limit); < 0 (default) = off.
+        call read_real(value, turb%fd_force, line_no)
     end select
 end subroutine apply_turbulence_value
 
@@ -728,8 +748,8 @@ subroutine read_grid_distribution(value, target, line_no)
     end select
 end subroutine read_grid_distribution
 
-! Turbulence model FAMILY. rans / iddes are recognized but not implemented
-! yet (docs/next_session_iddes.md); the SGS kernel choice lives in [les].
+! Turbulence model FAMILY (docs/next_session_iddes.md); the SGS kernel
+! choice lives in [les], the SST sub-model in [rans]; iddes needs both.
 subroutine read_turbulence_model(value, target, line_no)
     character(len=*), intent(in) :: value
     integer(C_INT), intent(inout) :: target
@@ -750,9 +770,7 @@ subroutine read_turbulence_model(value, target, line_no)
             " use model = rans here and set model = sst in [rans] (input line", line_no, ")"
         error stop "RANS model belongs in the [rans] section"
     case ("iddes", "sst-iddes")
-        if (terminal_output) print *, "error: turbulence model not implemented yet on input line", &
-            line_no, ": ", trim(value_l)
-        error stop "turbulence model not implemented yet"
+        target = TURB_IDDES
     case ("smagorinsky", "smag", "wale")
         if (terminal_output) print *, "error: [turbulence] model selects the family;", &
             " use model = les here and set the SGS model in [les] (input line", line_no, ")"

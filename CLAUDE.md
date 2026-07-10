@@ -516,17 +516,54 @@ immersed boundary. Phased, each phase verified before the next:
   y-slab / turb180 / wf180_y30; transition-on 1==4 ranks EXACT, CPU vs
   GPU ≤ 2.8e-14 (exp/pow ulps, the T3 log() class); restart round-trip
   proven with a changed tu (read ≈122 vs reinit 584), legacy warns +
-  reinits. NEXT IDDES phase: T5 (IDDES blend, DDES shielding first) —
-  prompt at the end of `docs/next_session_iddes.md`; reject transition
-  under model = iddes until validated there. T5 STEP 0 (decided
-  2026-07-10): `facePatchType` (wall|patch, non-periodic faces only,
-  default = today's tangential-Dirichlet inference so existing inis stay
-  bit-exact; `periodic_*` untouched) replaces the `domain_face_is_wall`
-  inference — a Dirichlet INLET currently misclassifies as a no-slip
-  wall — plus ONE generic cell-centred scalar BC applicator in
-  boundary.f90 (mechanics only; rans passes mode tables). Deferred by
-  user decision: augmented-q scalar batching (profiling phase, see
-  docs/next_session_profiling.md) and the flat-plate inlet increment.
+  reinits.
+- IDDES T5 STEP 0 — domain-face patch types + generic scalar BCs (DONE
+  2026-07-10, commit 91f129f). `[boundary] <dir>_<side>_patch = wall|patch`
+  (`facePatchType`; non-periodic faces only — a periodic declaration is a
+  config error checked in init_boundary_faces; absent = the tangential-
+  Dirichlet inference, so existing inis are bit-exact by construction;
+  resolved types print at RANS init). `domain_face_is_wall` lives in
+  boundary.f90 and reads the declaration first — declare a Dirichlet
+  velocity INLET `patch` so RANS stops classifying it as a no-slip wall.
+  ONE generic cell-centred scalar ghost applicator `apply_scalar_bc`
+  (per-face SCALAR_BC_NONE/COPY/MIRROR/VALUE over the bc point lists;
+  VALUE = the future scalar-inlet hook) replaced the duplicated rans ghost
+  kernels (now thin mode-table wrappers). Gates: bit-exact vs T4 e227e68
+  (nofma, max_abs 0 incl. all RANS scalars, CPU AND GPU) on min_channel /
+  les_ibm ± refine_body / Beltrami y-slab / turb180 / wf180_y30 / lam30t;
+  declared wall == inferred exactly; y_min=patch removes the dwall min-in
+  (ransgeom dwall == 2−y exactly) + the omega pinning.
+- IDDES T5 — DDES-shielding blend (DONE 2026-07-10; first of the two T5
+  increments). `[turbulence] model = iddes` (needs [les] SGS + [rans] sst;
+  transition/wall_function under iddes are hard errors until validated).
+  The blend lives in turbulence.f90 and touches exactly two things: the
+  POINT-IMPLICIT k-destruction coefficient √k/l_hyb (`iddes_k_sink_coeff`;
+  l_hyb = fd·l_RANS + (1−fd)·C_DES·Δ, C_DES = F1-blend of 0.78/0.61, Δ =
+  raw (ΔxΔyΔz)^⅓ without delta_scale) on the rans kernel's iddes branch —
+  the pure-RANS branch keeps the T2 arithmetic VERBATIM, which is the
+  bit-exactness argument — and nut = fd·nut_rans + (1−fd)·nut_sgs
+  (`blend_iddes_nut`). CONVENTION LANDMINE: the stored fd is the
+  RANS-RETENTION weight tanh((8 r_d)³) = 1 − f_d^Spalart; implementing
+  Spalart's formula verbatim with this blend hands the WALL layer to WALE
+  (measured fd(wall)=0, +16% log-layer error before the flip).
+  `velocity_gradient_tensor` HOISTED les.f90 → turbulence.f90 (the module
+  graph runs turbulence → les/rans; the shielding needs it below both
+  producers). turb_type gains nut_sgs/fd (1-cell dummies off-iddes) +
+  `[turbulence] fd_force` (validation hook; 0 = SGS limit, 1 = RANS
+  limit); fd rides the named-scalar io ("fd"). Gates (validation/iddes/,
+  all PASS): fd = 1.000 below y⁺ 5 → <0.001 in the core (handover EARLY,
+  y⁺ 5–60 — the known DDES-with-resolved-content behaviour; the f_B/f_e
+  elevating branch is increment 2's whole purpose); developed-channel
+  log-layer mean U within 1.8%/1.9% of the pure-WALE / T2-RANS
+  references; fd_force=0 BIT-EXACT vs pure WALE (the IEEE blend
+  identity); fd_force=1 holds converged turb180 to 9.8e-13 over 2000
+  steps; iddes_ibm stable 2000 steps; model ≠ iddes bit-exact vs
+  post-STEP-0 (nofma, max_abs 0, CPU AND GPU) on the full standard list;
+  iddes 1==4 ranks EXACT; CPU vs GPU ≤ 2e-14 (tanh ulps). NEXT: T5
+  increment 2 — the f_B/f_e/f_dt elevating branch + the IDDES Δ
+  selectable + C_d1 8-vs-20 + the Spalart max(0,·) clipping evaluation;
+  prompt at the end of `docs/next_session_iddes.md`. Deferred: augmented-q
+  scalar batching (profiling), the flat-plate inlet increment.
 - ALSO PENDING: **Profile + optimise** the GPU step for the 2:1-refined channel.
   The last hard profile is STALE (the reflux that was 23% is removed; the
   `MOBY_PHASETIME` timer is deleted): re-profile first with a minimal removable

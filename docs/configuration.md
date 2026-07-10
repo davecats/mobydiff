@@ -110,10 +110,14 @@ Only read when `[case] name = channel`.
 | `periodic_x/y/z` | bool | false | Periodicity per direction. |
 | `{x,y,z}_{min,max}_{u,v,w,p}_type` | enum | `dirichlet` | Face BC type: `dirichlet` / `0` or `neumann` / `1`. |
 | `{x,y,z}_{min,max}_{u,v,w,p}_value` | real | 0.0 | The Dirichlet / Neumann value for that face and variable. |
+| `{x,y,z}_{min,max}_patch` | enum | (inferred) | Face patch type for the RANS layer: `wall` or `patch`. Absent = infer a wall from Dirichlet tangential velocities. Non-periodic faces only (config error otherwise). |
 
 Every non-periodic face defaults to a homogeneous Dirichlet condition. See the
 [`sailplane`](tutorials.md#sailplane-external-aerodynamics-with-ibm) tutorial for a full
-inflow/outflow/symmetry set.
+inflow/outflow/symmetry set. The patch type only affects the turbulence
+models (wall distance, ω pinning, scalar wall ghosts) — declare a
+Dirichlet velocity inlet `patch` so RANS does not read it as a no-slip
+wall.
 
 ## `[ibm]` — immersed boundary method
 
@@ -149,7 +153,20 @@ Optional force `f(x)` added **on top of** the constant `[flow] forcing_*`.
 | `dir` | int | 1 | Force direction index. |
 | `file` | string | (empty) | Force-field HDF5 file (velocity layout) for `type = file`. |
 
-## `[les]` — large-eddy simulation
+## `[turbulence]` — model family
+
+| Key | Type | Default | Meaning |
+|-----|------|---------|---------|
+| `model` | enum | `none` | Family: `none`, `les`, `rans`, or `iddes`. Absent + a configured `[les] model` implies `les` (an explicit `none` wins). |
+| `fd_force` | real | -1 (off) | IDDES validation hook: force the DDES shielding function to a constant (0 = pure-SGS limit, 1 = pure-RANS limit). |
+
+`les` needs an SGS model in `[les]`; `rans` needs `[rans] model = sst`;
+`iddes` needs BOTH (SST transport near walls, the SGS model where the
+DDES shielding releases the flow to LES). In RANS/IDDES runs the output
+`p` is a modified pressure (the −2/3 k δij part of the Boussinesq stress
+is absorbed into it).
+
+## `[les]` — subgrid-scale model (used by `les` and `iddes`)
 
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
@@ -158,6 +175,22 @@ Optional force `f(x)` added **on top of** the constant `[flow] forcing_*`.
 | `cw` | real | 0.325 | WALE constant. |
 | `delta_scale` | real | 1.0 | Filter-width scaling (> 0). |
 | `ibm_aware` | bool | true | Zero the subgrid viscosity inside solid (IBM) cells. |
+
+## `[rans]` — k-ω SST (used by `rans` and `iddes`)
+
+The section's presence alone builds the SST geometry state (wall
+distance, IBM wall cells) so it can be inspected before any transport
+runs; `[turbulence] model = rans|iddes` additionally advances k/ω.
+
+| Key | Type | Default | Meaning |
+|-----|------|---------|---------|
+| `model` | enum | `none` | `sst` enables the transport equations. |
+| `wall_treatment` | enum | `resolved` | `resolved` (y⁺₁ ≲ 1) or `wall_function` (Weber/OpenFOAM ω+νt wall functions). Rejected under `iddes` (not validated). |
+| `transition` | bool | false | γ–Re_θt transition model (Langtry–Menter 2009); resolved walls only; rejected under `iddes`. |
+| `tu` | real | 5.0 | Initial/freestream turbulence intensity in percent. |
+| `nut_ratio` | real | 10.0 | Initial ν_t/ν, sets ω = k/(nut_ratio ν). |
+| `dump_geometry` | bool | false | Write `<prefix>_ransgeom.h5` (dwall/yeff/wallcell + coordinates). |
+| `dwall_tol` | real | 1e-10 | Analytic wall-distance polish tolerance. |
 
 ## `[output]` — field output
 

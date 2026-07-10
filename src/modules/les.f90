@@ -3,7 +3,7 @@ module les_model
     use :: init, only: dns_type, VAR_U, VAR_V, VAR_W, VAR_P
     use :: blocks, only: block_set_type
     use :: ibmm, only: ibm_type
-    use :: turbulence, only: turb_type
+    use :: turbulence, only: turb_type, velocity_gradient_tensor
     implicit none
 
     private
@@ -26,9 +26,6 @@ module les_model
     end type les_type
 
     public :: update_sgs_viscosity
-    ! Shared with the RANS producer (SST production/blending need the same
-    ! cell-centred gradient tensor).
-    public :: velocity_gradient_tensor
 
 contains
 
@@ -50,74 +47,9 @@ contains
         end select
     end subroutine update_sgs_viscosity
 
-    ! Velocity-gradient tensor g(a,b) = du_a/dx_b at the centre of cell (i,j,k)
-    ! in block b, on the staggered mesh: the diagonal terms are the face
-    ! difference across the cell; each off-diagonal term interpolates the
-    ! neighbouring face-difference to the cell centre with the p_from_* staggered
-    ! weights and the turb d1?? stencils. Shared verbatim by the Smagorinsky and
-    ! WALE kernels; declared target so both device kernels can call it.
-    subroutine velocity_gradient_tensor(blk, turb, i, j, k, b, &
-            g11, g12, g13, g21, g22, g23, g31, g32, g33)
-!$omp declare target
-        type(block_set_type), intent(in) :: blk
-        type(turb_type), intent(in) :: turb
-        integer, intent(in) :: i, j, k, b
-        real(C_DOUBLE), intent(out) :: g11, g12, g13, g21, g22, g23, g31, g32, g33
-
-        real(C_DOUBLE) :: d0, d1
-
-        g11 = (blk%q(i+1,j,k,VAR_U,b) - blk%q(i,j,k,VAR_U,b))*blk%d1x(i,VAR_P,b)
-        g22 = (blk%q(i,j+1,k,VAR_V,b) - blk%q(i,j,k,VAR_V,b))*blk%d1y(j,VAR_P,b)
-        g33 = (blk%q(i,j,k+1,VAR_W,b) - blk%q(i,j,k,VAR_W,b))*blk%d1z(k,VAR_P,b)
-
-        d0 = turb%d1ym(j,VAR_U,b)*blk%q(i,j-1,k,VAR_U,b) &
-           + turb%d1y0(j,VAR_U,b)*blk%q(i,j,k,VAR_U,b) &
-           + turb%d1yp(j,VAR_U,b)*blk%q(i,j+1,k,VAR_U,b)
-        d1 = turb%d1ym(j,VAR_U,b)*blk%q(i+1,j-1,k,VAR_U,b) &
-           + turb%d1y0(j,VAR_U,b)*blk%q(i+1,j,k,VAR_U,b) &
-           + turb%d1yp(j,VAR_U,b)*blk%q(i+1,j+1,k,VAR_U,b)
-        g12 = (1.0d0 - turb%p_from_u_x(i,b))*d0 + turb%p_from_u_x(i,b)*d1
-
-        d0 = turb%d1zm(k,VAR_U,b)*blk%q(i,j,k-1,VAR_U,b) &
-           + turb%d1z0(k,VAR_U,b)*blk%q(i,j,k,VAR_U,b) &
-           + turb%d1zp(k,VAR_U,b)*blk%q(i,j,k+1,VAR_U,b)
-        d1 = turb%d1zm(k,VAR_U,b)*blk%q(i+1,j,k-1,VAR_U,b) &
-           + turb%d1z0(k,VAR_U,b)*blk%q(i+1,j,k,VAR_U,b) &
-           + turb%d1zp(k,VAR_U,b)*blk%q(i+1,j,k+1,VAR_U,b)
-        g13 = (1.0d0 - turb%p_from_u_x(i,b))*d0 + turb%p_from_u_x(i,b)*d1
-
-        d0 = turb%d1xm(i,VAR_V,b)*blk%q(i-1,j,k,VAR_V,b) &
-           + turb%d1x0(i,VAR_V,b)*blk%q(i,j,k,VAR_V,b) &
-           + turb%d1xp(i,VAR_V,b)*blk%q(i+1,j,k,VAR_V,b)
-        d1 = turb%d1xm(i,VAR_V,b)*blk%q(i-1,j+1,k,VAR_V,b) &
-           + turb%d1x0(i,VAR_V,b)*blk%q(i,j+1,k,VAR_V,b) &
-           + turb%d1xp(i,VAR_V,b)*blk%q(i+1,j+1,k,VAR_V,b)
-        g21 = (1.0d0 - turb%p_from_v_y(j,b))*d0 + turb%p_from_v_y(j,b)*d1
-
-        d0 = turb%d1zm(k,VAR_V,b)*blk%q(i,j,k-1,VAR_V,b) &
-           + turb%d1z0(k,VAR_V,b)*blk%q(i,j,k,VAR_V,b) &
-           + turb%d1zp(k,VAR_V,b)*blk%q(i,j,k+1,VAR_V,b)
-        d1 = turb%d1zm(k,VAR_V,b)*blk%q(i,j+1,k-1,VAR_V,b) &
-           + turb%d1z0(k,VAR_V,b)*blk%q(i,j+1,k,VAR_V,b) &
-           + turb%d1zp(k,VAR_V,b)*blk%q(i,j+1,k+1,VAR_V,b)
-        g23 = (1.0d0 - turb%p_from_v_y(j,b))*d0 + turb%p_from_v_y(j,b)*d1
-
-        d0 = turb%d1xm(i,VAR_W,b)*blk%q(i-1,j,k,VAR_W,b) &
-           + turb%d1x0(i,VAR_W,b)*blk%q(i,j,k,VAR_W,b) &
-           + turb%d1xp(i,VAR_W,b)*blk%q(i+1,j,k,VAR_W,b)
-        d1 = turb%d1xm(i,VAR_W,b)*blk%q(i-1,j,k+1,VAR_W,b) &
-           + turb%d1x0(i,VAR_W,b)*blk%q(i,j,k+1,VAR_W,b) &
-           + turb%d1xp(i,VAR_W,b)*blk%q(i+1,j,k+1,VAR_W,b)
-        g31 = (1.0d0 - turb%p_from_w_z(k,b))*d0 + turb%p_from_w_z(k,b)*d1
-
-        d0 = turb%d1ym(j,VAR_W,b)*blk%q(i,j-1,k,VAR_W,b) &
-           + turb%d1y0(j,VAR_W,b)*blk%q(i,j,k,VAR_W,b) &
-           + turb%d1yp(j,VAR_W,b)*blk%q(i,j+1,k,VAR_W,b)
-        d1 = turb%d1ym(j,VAR_W,b)*blk%q(i,j-1,k+1,VAR_W,b) &
-           + turb%d1y0(j,VAR_W,b)*blk%q(i,j,k+1,VAR_W,b) &
-           + turb%d1yp(j,VAR_W,b)*blk%q(i,j+1,k+1,VAR_W,b)
-        g32 = (1.0d0 - turb%p_from_w_z(k,b))*d0 + turb%p_from_w_z(k,b)*d1
-    end subroutine velocity_gradient_tensor
+    ! The shared velocity_gradient_tensor helper lives in turbulence.f90
+    ! (hoisted for IDDES: the shielding function needs it there, and the
+    ! module graph runs turbulence -> les/rans, not the other way).
 
     subroutine update_generic_les_viscosity(les, turb, blk, dns, ibm, nut)
         type(les_type), intent(in) :: les

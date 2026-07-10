@@ -146,8 +146,14 @@ REQUIRES resolved walls (below).
   length — start with the simpler Δ = (ΔxΔyΔz)^{1/3} from `filter_*` and
   the IDDES Δ = min(max(0.15 d_w, 0.15 h_max, h_wn), h_max) as a step-2
   refinement; make Δ a small selectable).
-- Blend function: implement the DDES shielding first —
-  f_d = 1 − tanh((8 r_d)³), r_d = (ν_t + ν)/(κ² y_eff² √(Σ g_ij g_ij)) —
+- Blend function: implement the DDES shielding first. CONVENTION FIX
+  (found while gating T5): this doc's f_d is the RANS-RETENTION weight,
+  f_d = tanh((8 r_d)³) = 1 − f_d^Spalart(2006), so f_d → 1 at the wall and
+  → 0 in the LES region — consistent with the blend and gate (a) below.
+  (The first implementation used Spalart's 1 − tanh((8 r_d)³) verbatim
+  with the same blend, which hands the WALL layer to the SGS model:
+  measured fd(wall) = 0 and +16% log-layer error.)
+  r_d = (ν_t + ν)/(κ² y_eff² √(Σ g_ij g_ij)) —
   reusing velocity_gradient_tensor for Σ g_ij². Full IDDES adds the
   elevating/WMLES branch (f_B, f_e, f_dt); phase it AFTER the DDES form is
   validated (the DDES f_d is a strict subset and the standard first gate).
@@ -566,17 +572,40 @@ dwall source → error; etc.).
   legacy restarts warn + reinit. This phase was SEPARABLE — T5 does not
   depend on it (reject transition under model = iddes until explicitly
   validated there).
-- **T5 — IDDES blend.** f_d (DDES shielding form first), l_hyb into D_k,
-  the nut blend, Δ selectable. Gates: (a) f_d field sane on the developed
-  channel (→1 at the wall through the RANS layer, →0 in the core) at a
-  WMLES-style grid; (b) channel mean profile: no gross log-layer
-  mismatch vs the T2 RANS and the pure-WALE LES references; (c) fd ≡ 1
-  recovers T2 RANS answers, fd forced 0 recovers WALE behaviour in the
-  core (consistency limits); (d) the les_ibm IBM channel runs IDDES
-  stably with the wall treatment; (e) full-suite bit-exactness for
-  model ≠ sst-iddes unchanged. THEN (separate increment) the full IDDES
-  f_B/f_e elevating branch, gated on the same channel (log-layer-mismatch
-  reduction is its entire purpose).
+- **T5 — IDDES blend, DDES-shielding increment. DONE (validated
+  2026-07-10).** STEP 0 (patch types + scalar-BC applicator) landed
+  first (91f129f, see the Domain-face patch types section). The blend
+  lives ENTIRELY in turbulence.f90: `compute_iddes_fd` (the stored fd is
+  the RANS-RETENTION weight tanh((8 r_d)³) = 1 − f_d^Spalart — the
+  formula this doc originally gave, with this blend, hands the WALL
+  layer to the SGS model: measured fd(wall) = 0, +16% log-layer error),
+  `blend_iddes_nut` (nut = fd·nut_rans + (1−fd)·nut_sgs) and the
+  point-implicit `iddes_k_sink_coeff` = √k/l_hyb the RANS kernel calls
+  on its iddes branch (the pure-RANS branch keeps the T2 arithmetic
+  verbatim — that is the bit-exactness argument).
+  `velocity_gradient_tensor` HOISTED from les.f90 into turbulence.f90
+  (the module graph runs turbulence → les/rans, so the shielding could
+  not otherwise reuse it). turb_type gains nut_sgs/fd (1-cell dummies
+  off-iddes) + `[turbulence] fd_force` (validation hook). `model =
+  iddes` requires [les] SGS + [rans] sst; transition and wall_function
+  under iddes are hard errors until validated. Δ = (ΔxΔyΔz)^{1/3} from
+  filter_* WITHOUT delta_scale (C_DES is calibrated on the raw width);
+  the IDDES min/max Δ stays an increment-2 selectable. Gates
+  (validation/iddes/, all PASS): (a) fd(y+) = 1.000 below y+ 5, →0 core;
+  the handover is EARLY (mean 0.67 at y+ 5–25 — r_d reads instantaneous
+  resolved gradients, the known DDES-in-WMLES behaviour the elevating
+  branch exists to fix); (b) developed-channel mean U (t = 5..25) within
+  1.8%/1.9% of the pure-WALE reference / T2 RANS turb180 in the log
+  layer; (c) fd_force = 0 BIT-EXACT vs pure WALE (the blend identity is
+  exact in IEEE); fd_force = 1 holds the converged turb180 answer to
+  9.8e-13 after 2000 steps; (d) iddes_ibm (les_ibm conditions) 2000
+  steps stable, fd ∈ [0,1]; (e) model ≠ iddes bit-exact vs post-STEP-0
+  (nofma, max_abs 0, CPU AND GPU) on the standard list; iddes 1==4 ranks
+  EXACT, CPU vs GPU ≤ 2e-14. THEN (separate increment) the full IDDES
+  f_B/f_e elevating branch, gated on the same channel
+  (log-layer-mismatch reduction is its entire purpose; also revisit
+  C_d1 = 8 vs Gritskevich's SST value 20, and Spalart's
+  max(0, l_RANS − l_LES) clipping vs the plain convex blend).
 
 ## Watch for
 
@@ -611,8 +640,41 @@ dwall source → error; etc.).
 - `git add` explicit paths only (see memory: git-staging-discipline);
   validation output .h5/.png are gitignored on purpose.
 
-## NEXT-SESSION PROMPT (T4 done 2026-07-09; T5 — the IDDES blend — is the
-## last phase; its STEP 0 is the patch-type increment decided 2026-07-10)
+## NEXT-SESSION PROMPT — T5 increment 2: the full IDDES elevating branch
+## (T5 DDES increment DONE 2026-07-10; STEP 0 + DDES validated, see above)
+
+> Read `docs/next_session_iddes.md` and CLAUDE.md. Branch
+> `claude/jacobi-interface`. Implement the full IDDES elevating/WMLES
+> branch (Gritskevich et al. 2012 SST-IDDES) on top of the validated
+> DDES shielding: f_B (the geometric blend on dw/h_max), f_e (the
+> elevating function restoring RANS stress in the log layer), f_dt =
+> 1 − tanh((8 r_dt)³), l_IDDES = f̃_d (1+f_e) l_RANS + (1−f̃_d) l_LES with
+> f̃_d = max(1−f_dt, f_B), and the IDDES mesh length Δ = min(max(0.15 d_w,
+> 0.15 h_max, h_wn), h_max) as the selectable the DDES increment
+> deferred. NOTE the convention: the code's stored fd is the
+> RANS-RETENTION weight (1 − f_d^Spalart) — transcribe the Gritskevich
+> formulas into that convention carefully, and keep the pure-RANS branch
+> arithmetic verbatim (bit-exactness gate). Everything stays in
+> turbulence.f90 (compute_iddes_fd / blend_iddes_nut /
+> iddes_k_sink_coeff); h_max/h_wn come from the filter/metric tables;
+> d_w is sst%yeff passed as a plain array. While in there, evaluate
+> (as SEPARATE toggles, gated): C_d1 = 20 (the Gritskevich SST
+> calibration) vs the current 8, and Spalart's max(0, l_RANS − l_LES)
+> clipping vs the plain convex l_hyb blend. GATE (the increment's entire
+> purpose): on validation/iddes/iddes180, the fd handover must move
+> outward (today mean fd = 0.67 at y+ 5–25, ~0.10 at 25–60) and the
+> log-layer mean-U deviation vs the references must NOT regress (today
+> 1.8%/1.9% vs WALE/T2-RANS — already tight, so the real win to
+> demonstrate is a higher modeled-stress fraction / RANS coverage in the
+> log layer without breaking the mean profile); plus the standard suite:
+> model ≠ iddes bit-exact (nofma, CPU AND GPU), iddes 1==4 ranks exact,
+> fd_force limits unchanged, iddes_ibm stable. Deferred: augmented-q
+> scalar batching (docs/next_session_profiling.md), the flat-plate inlet
+> increment (patch classification exists since STEP 0; scalars still
+> need inlet values via SCALAR_BC_VALUE + outflow validation + the TVD
+> revisit), transition/wall_function under iddes.
+
+## PREVIOUS PROMPT (T5, executed 2026-07-10 — kept for the record)
 
 > Read `docs/next_session_iddes.md` and CLAUDE.md. Branch
 > `claude/jacobi-interface`. Execute phase T5: STEP 0 first, then the

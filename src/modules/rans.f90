@@ -31,7 +31,14 @@
 ! TRANSPORT state (k, omega + their low-storage RK3 rhs history). The
 ! model is a producer of the one cell-centred turb%nut; everything
 ! downstream of nut (halo exchange, momentum correction, dt limit, io) is
-! the untouched consumer chain.
+! the untouched consumer chain. Under [turbulence] model = iddes (T5,
+! DDES-shielding form) the SAME transport runs with ONE change inside the
+! fused kernel: the point-implicit k-destruction coefficient becomes
+! sqrt(k)/l_hyb (iddes_k_sink_coeff, turbulence.f90) on the fd field the
+! orchestrator computed before the substage; the nut this module
+! assembles is then blended with the SGS viscosity OUTSIDE this module
+! (blend_iddes_nut). transition and wall_function are rejected under
+! iddes until validated there.
 !
 ! Physics note: the eddy-viscosity correction applies the DEVIATORIC
 ! Boussinesq stress; the -(2/3) k delta_ij part is absorbed into pressure,
@@ -114,8 +121,8 @@ module rans
     use :: ibmm, only: ibm_type, isInBody
     use :: walldist, only: walldist_type, build_walldist, destroy_walldist, &
         walldist_distance
-    use :: turbulence, only: turb_type
-    use :: les_model, only: velocity_gradient_tensor
+    use :: turbulence, only: turb_type, velocity_gradient_tensor, &
+        TURB_IDDES, IDDES_CDES1, IDDES_CDES2, iddes_k_sink_coeff
     use :: io, only: read_dwall_blocks, write_rans_geometry_file, read_scalar_field
     use :: comm, only: comm_type, comm_allreduce_sum, exchange_scalar_halos
     implicit none
@@ -1328,7 +1335,9 @@ contains
         real(C_DOUBLE) :: ret0, rethetac, flength, fonset, fturbv, fthetat
         real(C_DOUBLE) :: tcoef, pgam, egam, conv_g, conv_r, diff_g, diff_r
         real(C_DOUBLE) :: diag_r, rhsg, rhsr, gnew, rnew, gameff, dkfac
+        real(C_DOUBLE) :: cdes_delta
         logical :: solw, sole, sols, soln, solb, solt
+        logical :: iddes
 
         nx = int(blk%nb(1))
         ny = int(blk%nb(2))
@@ -1339,12 +1348,14 @@ contains
         solid_threshold = SOLID_FACE_THRESHOLD
         wallfn = dns%rans_wall_treatment == 1_C_INT
         transition = dns%rans_transition
+        iddes = turb%model == TURB_IDDES
 
         !$omp target teams distribute parallel do collapse(4) &
-        !$omp& map(to: nu, dtsub, dt_alpha, dt_beta, solid_threshold, wallfn, transition, &
+        !$omp& map(to: nu, dtsub, dt_alpha, dt_beta, solid_threshold, wallfn, transition, iddes, &
         !$omp& sst%k, sst%omg, sst%gam, sst%ret, sst%yeff, sst%wallcell, sst%domwall, sst%wnorm, &
         !$omp& blk%q, blk%d1x, blk%d1y, blk%d1z, ibm%coef, &
-        !$omp& turb%nut, turb%inv_dx, turb%inv_dy, turb%inv_dz, &
+        !$omp& turb%nut, turb%fd, turb%filter_x, turb%filter_y, turb%filter_z, &
+        !$omp& turb%inv_dx, turb%inv_dy, turb%inv_dz, &
         !$omp& turb%d1xm, turb%d1x0, turb%d1xp, turb%d1ym, turb%d1y0, turb%d1yp, &
         !$omp& turb%d1zm, turb%d1z0, turb%d1zp, &
         !$omp& turb%p_from_u_x, turb%p_from_v_y, turb%p_from_w_z) &
@@ -1359,7 +1370,7 @@ contains
         !$omp& gv,rv,omgmag,usmag,dusds,rt,rev,tuloc, &
         !$omp& ret0,rethetac,flength,fonset,fturbv,fthetat, &
         !$omp& tcoef,pgam,egam,conv_g,conv_r,diff_g,diff_r,diag_r, &
-        !$omp& rhsg,rhsr,gnew,rnew,gameff,dkfac, &
+        !$omp& rhsg,rhsr,gnew,rnew,gameff,dkfac,cdes_delta, &
         !$omp& solw,sole,sols,soln,solb,solt)
         do b = 1, nBlocks
         do k = 1, nz
@@ -1744,8 +1755,25 @@ contains
                     rhsw = alpha_b*s2 - conv_w + diff_w &
                          + min(max(cross, 0.0d0), wv/max(dtsub, 1.0d-30))
 
-                    knew = (kv + dt_alpha*rhsk + dt_beta*sst%koldrhs(i,j,k,b)) &
-                         /(1.0d0 + dtsub*SST_BETA_STAR*wv*dkfac)
+                    if (iddes) then
+                        ! T5 DDES: the k-destruction length l_hyb = fd l_RANS
+                        ! + (1 - fd) C_DES Delta replaces l_RANS in D_k ONLY
+                        ! (C_DES = the F1-blend of set 1/2; Delta = the local
+                        ! mesh width from the filter tables, WITHOUT the SGS
+                        ! delta_scale knob -- C_DES is calibrated on the raw
+                        ! width). The sink stays POINT-IMPLICIT via
+                        ! iddes_k_sink_coeff = sqrt(k)/l_hyb; the else branch
+                        ! keeps the T2 arithmetic verbatim, which is the
+                        ! pure-RANS bit-exactness argument.
+                        cdes_delta = (f1*IDDES_CDES1 + (1.0d0 - f1)*IDDES_CDES2) &
+                            *turb%filter_x(i,b)*turb%filter_y(j,b)*turb%filter_z(k,b)
+                        knew = (kv + dt_alpha*rhsk + dt_beta*sst%koldrhs(i,j,k,b)) &
+                             /(1.0d0 + dtsub*iddes_k_sink_coeff(kv, wv, &
+                                 turb%fd(i,j,k,b), cdes_delta, SST_BETA_STAR)*dkfac)
+                    else
+                        knew = (kv + dt_alpha*rhsk + dt_beta*sst%koldrhs(i,j,k,b)) &
+                             /(1.0d0 + dtsub*SST_BETA_STAR*wv*dkfac)
+                    end if
                     knew = max(knew, 0.0d0)
                     sst%ks(i,j,k,b) = knew
                     sst%koldrhs(i,j,k,b) = rhsk

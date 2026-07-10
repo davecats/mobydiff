@@ -138,7 +138,8 @@ program main
         !$omp target update from(ibm%coef)
 #endif
         call init_rans_geometry(sst, dns, g, blk, bc, ibm, c)
-        if (turb%model == TURB_RANS) call init_rans_transport(sst, dns, blk, bc, ibm, c%has_terminal)
+        if (turb%model == TURB_RANS .or. turb%model == TURB_IDDES) &
+            call init_rans_transport(sst, dns, blk, bc, ibm, c%has_terminal)
         call enter_rans_data(sst)
         if (dns%rans_dump_geometry) call write_rans_geometry(sst, blk, dns, c)
     end if
@@ -165,6 +166,14 @@ program main
         select case (turb%model)
         case (TURB_RANS)
             call rans_prepare(sst, turb, blk, dns, bc, c)
+        case (TURB_IDDES)
+            ! IDDES: SGS viscosity into the scratch, the DDES shielding fd
+            ! (reads the lagged blended nut), the RANS pass (l_hyb rides
+            ! turb%fd inside the kernel), then the blend.
+            call update_sgs_viscosity(les, turb, blk, dns, ibm, turb%nut_sgs)
+            call compute_iddes_fd(turb, blk, dns, sst%yeff)
+            call rans_prepare(sst, turb, blk, dns, bc, c)
+            call blend_iddes_nut(turb, blk)
         case default
             call update_sgs_viscosity(les, turb, blk, dns, ibm, turb%nut)
         end select
@@ -201,6 +210,11 @@ program main
                 select case (turb%model)
                 case (TURB_RANS)
                     call rans_substage(sst, turb, blk, dns, ibm, bc, c, dt_alpha, dt_beta)
+                case (TURB_IDDES)
+                    call update_sgs_viscosity(les, turb, blk, dns, ibm, turb%nut_sgs)
+                    call compute_iddes_fd(turb, blk, dns, sst%yeff)
+                    call rans_substage(sst, turb, blk, dns, ibm, bc, c, dt_alpha, dt_beta)
+                    call blend_iddes_nut(turb, blk)
                 case default
                     call update_sgs_viscosity(les, turb, blk, dns, ibm, turb%nut)
                 end select
@@ -233,7 +247,7 @@ program main
 
         if (dns%field_interval > 0) then
             call maybe_write_field(blk, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%omega, &
-                turb%nut, sst%k, sst%omg, sst%gam, sst%ret)
+                turb%nut, sst%k, sst%omg, sst%gam, sst%ret, turb%fd)
         end if
         call flow%after_step(blk, dns, g, c)
 
@@ -247,7 +261,7 @@ program main
     end if
 
     call write_field(blk, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%omega, &
-        turb%nut, sst%k, sst%omg, sst%gam, sst%ret)
+        turb%nut, sst%k, sst%omg, sst%gam, sst%ret, turb%fd)
 
     ! Release device-side data before the host allocatables go out of scope.
     call flow%finalize(dns, g, c)
