@@ -593,6 +593,21 @@ immersed boundary. Phased, each phase verified before the next:
   CPU AND GPU, 7-case list); iddes 1==4 ranks EXACT; CPU vs GPU 20 steps
   EXACT (max_abs 0). NEXT (IDDES track): flat-plate inlet increment,
   transition/wall_function under iddes (hard errors until validated).
+- NEXT (user decision 2026-07-10, ahead of the profiling task): **airfoil
+  flow case** — quasi-2D IBM airfoil for RANS + γ–Re_θt validation. New
+  `[case] name = airfoil` (`src/modules/flow/airfoil/`): angle-of-attack →
+  Dirichlet inflow; freestream BCs (inlet = Dirichlet velocity + Neumann p,
+  outlet = `outflow` velocity + Dirichlet p — the Dirichlet-pressure outlet
+  in the projection is the ONE new solver piece, everything else is
+  case-level composition); runtime stats = C_L/C_D from the volume-
+  integrated momentum equation (= the exact penalization integral
+  ∫coef·u dV under the implicit mu bookkeeping). Phased A0 (projection
+  outlet, all branches dormant without a Dirichlet-p face ⇒ bit-exact by
+  construction) → A1 (case module) → A2 (forces; cylinder Re 40/100 gates)
+  → A3 (RANS scalar inlet values via SCALAR_BC_VALUE + SD7003 Re 6e4
+  transition benchmark; first-order upwind kept until the measured γ-front
+  smearing says otherwise). Full handout + prompt:
+  `docs/next_session_airfoil.md`.
 - ALSO PENDING: **Profile + optimise** the GPU step for the 2:1-refined channel.
   The last hard profile is STALE (the reflux that was 23% is removed; the
   `MOBY_PHASETIME` timer is deleted): re-profile first with a minimal removable
