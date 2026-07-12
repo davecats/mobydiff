@@ -596,15 +596,22 @@ immersed boundary. Phased, each phase verified before the next:
 - NEXT (user decision 2026-07-10, ahead of the profiling task): **airfoil
   flow case** — quasi-2D IBM airfoil for RANS + γ–Re_θt validation. New
   `[case] name = airfoil` (`src/modules/flow/airfoil/`): angle-of-attack →
-  Dirichlet inflow; freestream BCs (inlet = Dirichlet velocity + Neumann p,
-  outlet = `outflow` velocity + Dirichlet p — the Dirichlet-pressure outlet
-  in the projection is the ONE new solver piece, everything else is
-  case-level composition); runtime stats = C_L/C_D from the volume-
-  integrated momentum equation (= the exact penalization integral
-  ∫coef·u dV under the implicit mu bookkeeping). Phased A0 (projection
-  outlet, all branches dormant without a Dirichlet-p face ⇒ bit-exact by
-  construction) → A1 (case module) → A2 (forces; cylinder Re 40/100 gates)
-  → A3 (RANS scalar inlet values via SCALAR_BC_VALUE + SD7003 Re 6e4
+  Dirichlet inflow; freestream BCs via the SIMPLIFIED face concept (user
+  2026-07-12): `<dir>_<side>_patch` extended to wall|patch|inlet|outlet as
+  the ONE user-facing axis, `resolve_face_bcs` derives the per-variable
+  rows (outlet ⇒ internal `outflow` normal velocity + Dirichlet p) —
+  the Dirichlet-pressure outlet in the projection is the ONE new solver
+  piece, everything else is composition. Runtime stats = C_L/C_D from the
+  volume-integrated momentum equation = the exact penalization integral
+  ∫coef·u dV (mu-masked eddy-viscosity stress means turbulent stresses are
+  INCLUDED automatically; the Gauss/CV outer-border flux balance is the
+  independent A2 GATE on the steady cylinder + a mean-force decomposition
+  diagnostic — discretely identical in the time mean, penalization wins as
+  the runtime statistic: instantaneous, no cancellation, no explicit
+  turbulence terms). Phased A0 (face concept + projection outlet, dormant
+  without a declared inlet/outlet ⇒ bit-exact by construction) → A1 (case
+  module) → A2 (forces; cylinder Re 40/100 + CV cross-check gates) → A3
+  (RANS scalar inlet values keyed on PATCH_INLET + SD7003 Re 6e4
   transition benchmark; first-order upwind kept until the measured γ-front
   smearing says otherwise). Full handout + prompt:
   `docs/next_session_airfoil.md`.
