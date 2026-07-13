@@ -1614,15 +1614,19 @@ def build_leaf_table_py(gnbt, levels, periodic, touch, buried, refine_box, lines
     return lev[order], crd[order]
 
 
-def dwall_tile_from_mesh(prox, la: argparse.Namespace, o: np.ndarray, nb: int) -> np.ndarray:
+def dwall_tile_from_mesh(vertices: np.ndarray, faces: np.ndarray,
+                         la: argparse.Namespace, o: np.ndarray, nb: int) -> np.ndarray:
     """Cell-centred unsigned distance to the immersed surface over one leaf's
     ghost-inclusive (nb+2)^3 window, at the leaf's level (la = level args).
-    Global 1-based cell indices o..o+nb+1 mirror the solver's local 0:nb+1."""
+    Global 1-based cell indices o..o+nb+1 mirror the solver's local 0:nb+1.
+    igl's AABB query is exact; trimesh's proximity.on_surface was measured
+    O(1e-6) high near the quantized surface (A3 INCREMENT 0 gate)."""
+    igl, _, _ = require_stl_tools()
     idx = np.arange(nb + 2, dtype=np.int64)
     ii, jj, kk = np.meshgrid(idx + int(o[0]), idx + int(o[1]), idx + int(o[2]), indexing="ij")
     points = stl_points_for_indices(ii.ravel(), jj.ravel(), kk.ravel(), 0, la)
-    _, dist, _ = prox.on_surface(points)
-    return dist.reshape(nb + 2, nb + 2, nb + 2)
+    sq_dist, _, _ = igl.point_mesh_squared_distance(points, vertices, faces)
+    return np.sqrt(sq_dist).reshape(nb + 2, nb + 2, nb + 2)
 
 
 def block_table_from_stl(args: argparse.Namespace) -> None:
@@ -1701,12 +1705,10 @@ def block_table_from_stl(args: argparse.Namespace) -> None:
             # RANS wall treatment, at each leaf's level like coef_blocks
             # (ghost-inclusive (nb+2)^3 windows; the solver mins in the
             # domain-wall part and applies the half-cell floor itself).
-            _, trimesh, _ = require_stl_tools()
             dwall = h5.create_dataset("dwall_blocks", shape=(n_leaves, nb+2, nb+2, nb+2),
                                       dtype=np.float64, chunks=(1, nb+2, nb+2, nb+2))
-            prox = trimesh.proximity.ProximityQuery(mesh)
             for i in range(n_leaves):
-                dwall[i] = dwall_tile_from_mesh(prox, level_args[lev[i]], crd[i]*nb, nb)
+                dwall[i] = dwall_tile_from_mesh(vertices, faces, level_args[lev[i]], crd[i]*nb, nb)
     print(f"block-table coefficients written to: {output}")
 
 
