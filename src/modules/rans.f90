@@ -117,7 +117,8 @@ module rans
     use :: blocks, only: block_set_type, FACE_PHYS
     use :: boundary, only: boundary_type, boundary_face_id, NFACES, &
         domain_face_is_wall, apply_scalar_bc, PATCH_UNSET, &
-        SCALAR_BC_NONE, SCALAR_BC_COPY, SCALAR_BC_MIRROR
+        PATCH_GENERIC, PATCH_WALL, PATCH_INLET, PATCH_OUTLET, &
+        SCALAR_BC_NONE, SCALAR_BC_COPY, SCALAR_BC_MIRROR, SCALAR_BC_VALUE
     use :: ibmm, only: ibm_type, isInBody
     use :: walldist, only: walldist_type, build_walldist, destroy_walldist, &
         walldist_distance
@@ -219,6 +220,18 @@ module rans
         ! Per-face no-slip flags for the cell-centred scalar BCs (index =
         ! boundary_face_id).
         integer(C_INT) :: facewall(NFACES) = 0_C_INT
+        ! A3 scalar inlets: per-face inlet/outlet flags — pure functions of
+        ! the DECLARED patch type ([boundary] <dir>_<side>_patch), no
+        ! re-inference from the velocity BC rows — plus the freestream
+        ! values held at inlet faces, computed once at transport init from
+        ! [rans] tu / nut_ratio and the face's Dirichlet velocity values
+        ! (gamma_inf = 1 is a literal; Re_thetat~_inf is the same lambda = 0
+        ! tu correlation as the T4 initial condition).
+        integer(C_INT) :: faceinlet(NFACES) = 0_C_INT
+        integer(C_INT) :: faceoutlet(NFACES) = 0_C_INT
+        real(C_DOUBLE) :: inletk(NFACES) = 0.0d0
+        real(C_DOUBLE) :: inletomg(NFACES) = 0.0d0
+        real(C_DOUBLE) :: inletret = 0.0d0
 
         ! T4 transition state (gamma, Re_thetat~): full arrays only when
         ! [rans] transition = true, 1-cell dummies otherwise so the device
@@ -279,14 +292,28 @@ contains
         character(len=5), parameter :: face_names(NFACES) = &
             [character(len=5) :: "x_min", "x_max", "y_min", "y_max", "z_min", "z_max"]
         integer :: dir, side, face_id
+        character(len=6) :: tname
 
         if (.not. c%has_terminal) return
         do dir = 1, 3
             if (bc%isPeriodic(dir)) cycle
             do side = 0, 1
                 face_id = boundary_face_id(dir, side)
+                select case (bc%facePatchType(face_id))
+                case (PATCH_WALL)
+                    tname = "wall"
+                case (PATCH_GENERIC)
+                    tname = "patch"
+                case (PATCH_INLET)
+                    tname = "inlet"
+                case (PATCH_OUTLET)
+                    tname = "outlet"
+                case default   ! UNSET: the historical wall inference
+                    tname = merge("wall  ", "patch ", &
+                        domain_face_is_wall(bc, dir, side))
+                end select
                 print '(5A)', " RANS domain face ", trim(face_names(face_id)), ": ", &
-                    trim(merge("wall ", "patch", domain_face_is_wall(bc, dir, side))), &
+                    trim(tname), &
                     trim(merge(" (declared)", " (inferred)", &
                         bc%facePatchType(face_id) /= PATCH_UNSET))
             end do
@@ -622,8 +649,8 @@ contains
         type(ibm_type), intent(in) :: ibm
         logical, intent(in) :: has_terminal
 
-        integer :: i, j, k, b, nx, ny, nz, dir, side
-        real(C_DOUBLE) :: umag2, uc, vc, wc, tu_frac, nu, kin
+        integer :: i, j, k, b, nx, ny, nz, dir, side, face_id
+        real(C_DOUBLE) :: umag2, uc, vc, wc, tu_frac, nu, kin, uinf2
         logical :: found_k, found_omg, found_gam, found_ret
 
         if (.not. sst%geometry_built) error stop "RANS transport needs the geometry state"
@@ -698,6 +725,31 @@ contains
 
         tu_frac = dns%rans_tu/100.0d0
         nu = 1.0d0/dns%re
+
+        ! A3 scalar inlets: freestream values held at DECLARED inlet faces,
+        ! zero-gradient at declared outlets (rans_apply_scalar_bcs). U_inf
+        ! per face is the magnitude of its Dirichlet velocity values (a
+        ! profile face uses the face-uniform default = the profile peak);
+        ! k_inf = 1.5 (tu/100 U_inf)^2 and omega_inf = k_inf/(nut_ratio nu)
+        ! mirror the initial condition below, WITHOUT the wall blend — an
+        ! inlet face carries the freestream, not a wall layer.
+        do dir = 1, 3
+            do side = 0, 1
+                face_id = boundary_face_id(dir, side)
+                sst%faceinlet(face_id) = merge(1_C_INT, 0_C_INT, &
+                    bc%facePatchType(face_id) == PATCH_INLET)
+                sst%faceoutlet(face_id) = merge(1_C_INT, 0_C_INT, &
+                    bc%facePatchType(face_id) == PATCH_OUTLET)
+                uinf2 = bc%faceBcDefaultValue(VAR_U,face_id)**2 &
+                      + bc%faceBcDefaultValue(VAR_V,face_id)**2 &
+                      + bc%faceBcDefaultValue(VAR_W,face_id)**2
+                kin = max(1.5d0*tu_frac*tu_frac*uinf2, 1.0d-10)
+                sst%inletk(face_id) = kin
+                sst%inletomg(face_id) = max(kin/(dns%rans_nut_ratio*nu), OMEGA_MIN)
+            end do
+        end do
+        sst%inletret = lm_rethetat0(dns%rans_tu, 0.0d0, 1.0d0, 1.0d0)
+
         sst%k = 0.0d0
         sst%omg = OMEGA_MIN
         do b = 1, int(blk%nBlocks)
@@ -1106,26 +1158,43 @@ contains
     ! tables): k is Dirichlet 0 at no-slip walls (mirror) and zero-gradient
     ! elsewhere; omega is always zero-gradient (its wall value is the pinned
     ! first cell, not a ghost); gamma and Re_thetat~ are zero-gradient
-    ! everywhere (kOmegaSSTLM wall condition).
+    ! everywhere (kOmegaSSTLM wall condition). A3: DECLARED inlet faces hold
+    ! the freestream values (SCALAR_BC_VALUE, computed at init), declared
+    ! outlets are zero-gradient — both pure functions of the patch type.
     subroutine rans_apply_scalar_bcs(sst, dns, blk, bc)
         type(sst_type), intent(inout) :: sst
         type(dns_type), intent(in) :: dns
         type(block_set_type), intent(inout) :: blk
         type(boundary_type), intent(in) :: bc
 
-        integer(C_INT) :: kmode(NFACES), copymode(NFACES)
+        integer(C_INT) :: kmode(NFACES), smode(NFACES)
+        real(C_DOUBLE) :: gamval(NFACES), retval(NFACES)
         integer :: f
 
         do f = 1, NFACES
-            kmode(f) = merge(SCALAR_BC_MIRROR, SCALAR_BC_COPY, sst%facewall(f) == 1_C_INT)
+            if (sst%faceinlet(f) == 1_C_INT) then
+                kmode(f) = SCALAR_BC_VALUE
+                smode(f) = SCALAR_BC_VALUE
+            else if (sst%faceoutlet(f) == 1_C_INT) then
+                ! Zero-gradient: identical to the historical non-wall mode
+                ! (an outlet face is never a wall), spelled out so the
+                ! outlet stance is explicit.
+                kmode(f) = SCALAR_BC_COPY
+                smode(f) = SCALAR_BC_COPY
+            else
+                kmode(f) = merge(SCALAR_BC_MIRROR, SCALAR_BC_COPY, &
+                    sst%facewall(f) == 1_C_INT)
+                smode(f) = SCALAR_BC_COPY
+            end if
         end do
-        copymode = SCALAR_BC_COPY
 
-        call apply_scalar_bc(blk, bc, sst%k, kmode)
-        call apply_scalar_bc(blk, bc, sst%omg, copymode)
+        call apply_scalar_bc(blk, bc, sst%k, kmode, sst%inletk)
+        call apply_scalar_bc(blk, bc, sst%omg, smode, sst%inletomg)
         if (dns%rans_transition) then
-            call apply_scalar_bc(blk, bc, sst%gam, copymode)
-            call apply_scalar_bc(blk, bc, sst%ret, copymode)
+            gamval = 1.0d0
+            retval = sst%inletret
+            call apply_scalar_bc(blk, bc, sst%gam, smode, gamval)
+            call apply_scalar_bc(blk, bc, sst%ret, smode, retval)
         end if
     end subroutine rans_apply_scalar_bcs
 
