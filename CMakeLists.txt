@@ -42,6 +42,7 @@ set(MODULE_SOURCES
     ${MODULE_DIR}/flow/channel/channel_profile.f90
     ${MODULE_DIR}/flow/channel/channel_stats.f90
     ${MODULE_DIR}/flow/channel/channel_flow.f90
+    ${MODULE_DIR}/flow/airfoil/airfoil_flow.f90
     ${MODULE_DIR}/flow_case.f90
 )
 

@@ -2,6 +2,7 @@ module flow_case
     use :: flow_case_base, only: case_type
     use :: generic_flow, only: create_generic_case, GENERIC_CASE_NAME
     use :: channel_flow, only: create_channel_case, CHANNEL_CASE_NAME
+    use :: airfoil_flow, only: create_airfoil_case, AIRFOIL_CASE_NAME
     use :: case_config_helpers, only: next_config_entry, to_lower, clean_config_string
     implicit none
 
@@ -24,6 +25,8 @@ contains
         select case (trim(case_name))
         case (CHANNEL_CASE_NAME)
             call create_channel_case(flow)
+        case (AIRFOIL_CASE_NAME)
+            call create_airfoil_case(flow)
         case (GENERIC_CASE_NAME, "")
             call create_generic_case(flow)
         case default

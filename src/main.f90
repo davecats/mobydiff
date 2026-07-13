@@ -96,7 +96,7 @@ program main
     end if
     call init_block_exchange(c, blk, dns)
     call precompute_peclet_rate(dns, blk, c)
-    call init_boundary_faces(bc, blk)
+    call init_boundary_faces(bc, blk, dns)
     call init_openmp_offload(c%has_terminal)
     call enter_grid_data(g)
     call enter_boundary_data(bc)
@@ -161,7 +161,7 @@ program main
         call enter_bodyforce_data(bf)
     end if
 
-    call apply_bc(blk, bc)
+    call apply_bc(blk, bc, outflow_copy=.true.)
     call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W, VAR_P])
 
     call flow%setup_after_grid(blk, dns, g, bc, c)
@@ -231,7 +231,7 @@ program main
             else
                 call momentum(blk, dns, dt_alpha, dt_beta, dt_gamma, ibm, bf=bf)
             end if
-            call apply_bc(blk, bc)
+            call apply_bc(blk, bc, outflow_copy=.true.)
             ! Post-predictor exchange with the conservation SYNC: the cross-level
             ! PROLONG/RESTRICT write the shared 2:1 face so the two stored copies
             ! start the projection mean-consistent (avg(fine)=coarse). The
@@ -254,7 +254,7 @@ program main
             call maybe_write_field(blk, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%omega, &
                 turb%nut, sst%k, sst%omg, sst%gam, sst%ret, turb%fd)
         end if
-        call flow%after_step(blk, dns, g, c)
+        call flow%after_step(blk, dns, g, c, ibm)
 
     end do
     call stop_chron(loop_timer, loop_steps)

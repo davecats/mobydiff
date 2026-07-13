@@ -3,7 +3,8 @@ module pressure_solver
     use :: init, only: dns_type, VAR_U, VAR_V, VAR_W, VAR_P
     use :: blocks, only: block_set_type, FACE_PHYS, FACE_CLOSED, FACE_COARSE, FACE_FINE
     use :: ibmm, only: ibm_type
-    use :: boundary, only: boundary_type, apply_bc
+    use :: boundary, only: boundary_type, apply_bc, apply_scalar_bc, &
+        boundary_face_id, NFACES, PATCH_OUTLET, SCALAR_BC_NONE, SCALAR_BC_MIRROR
     use :: comm, only: comm_type, exchange_halos, exchange_scalar_halos
 
     implicit none
@@ -90,12 +91,32 @@ contains
         type(boundary_type), intent(in) :: bc
         type(comm_type), intent(inout) :: c
 
-        integer(C_INT) :: iIter
+        integer(C_INT) :: iIter, dir
         real(C_DOUBLE) :: omega
         real(C_DOUBLE) :: dd, cc, alpha, alphaPrev, beta, gamma
+        logical(C_BOOL) :: outLow(3), outHigh(3)
+        logical :: anyOutlet
+        integer(C_INT) :: phiMode(NFACES)
 
         call allocate_phi(blk)
         if (ps%cheb) call allocate_delta(blk)
+
+        ! Dirichlet-pressure outlet faces (declared [boundary] _patch = outlet).
+        ! The flags are per DOMAIN face; inside the kernels they act only where
+        ! the block's own face is FACE_PHYS (i.e. the block face IS that domain
+        ! face). phi's ghost at an outlet face is mirrored after every halo
+        ! exchange (phi_face = 0: the increment of a HELD outlet pressure), so
+        ! the projection owns and corrects the outlet face flux -- this is what
+        ! keeps the Poisson problem solvable under net prescribed inflow.
+        do dir = 1, 3
+            outLow(dir) = bc%facePatchType(boundary_face_id(int(dir), 0)) == PATCH_OUTLET
+            outHigh(dir) = bc%facePatchType(boundary_face_id(int(dir), 1)) == PATCH_OUTLET
+            phiMode(boundary_face_id(int(dir), 0)) = &
+                merge(SCALAR_BC_MIRROR, SCALAR_BC_NONE, outLow(dir))
+            phiMode(boundary_face_id(int(dir), 1)) = &
+                merge(SCALAR_BC_MIRROR, SCALAR_BC_NONE, outHigh(dir))
+        end do
+        anyOutlet = any(outLow) .or. any(outHigh)
 
         ! Chebyshev semi-iteration coefficients over [lmin, lmax].
         dd = 0.5d0*(ps%chebLmax + ps%chebLmin)
@@ -113,7 +134,7 @@ contains
         ! velocity (+ pressure on the last iteration) halos for the next
         ! divergence.
         do iIter = 1_C_INT, ps%nIter
-            call jacobi_compute_phi(blk, ibm, omega)
+            call jacobi_compute_phi(blk, ibm, omega, outLow, outHigh)
             if (ps%cheb) then
                 if (iIter == 1_C_INT) then
                     alpha = 1.0d0/dd
@@ -127,7 +148,11 @@ contains
                 call cheb_combine(blk, alpha, gamma)
             end if
             call exchange_scalar_halos(c, phi, blk, ifaceRow=.true.)
-            call jacobi_apply(ps, blk, dt_gamma, ibm)
+            ! Re-mirror the outlet phi ghosts EVERY iteration: the exchange's
+            ! tangential extension can write physical halos, so do not rely on
+            ! them staying zero.
+            if (anyOutlet) call apply_scalar_bc(blk, bc, phi, phiMode)
+            call jacobi_apply(ps, blk, dt_gamma, ibm, outLow, outHigh)
             call apply_bc(blk, bc)
             if (iIter == ps%nIter) then
                 call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W, VAR_P])
@@ -203,10 +228,11 @@ contains
     ! phi = -omega*div/denom); Chebyshev passes 1.0 so phi holds the pure
     ! diagonal-preconditioned residual z = -div/denom (the damping then comes
     ! from the Chebyshev coefficients).
-    subroutine jacobi_compute_phi(blk, ibm, omega)
+    subroutine jacobi_compute_phi(blk, ibm, omega, outLow, outHigh)
         type(block_set_type), intent(inout) :: blk
         type(ibm_type), intent(in) :: ibm
         real(C_DOUBLE), intent(in) :: omega
+        logical(C_BOOL), intent(in) :: outLow(3), outHigh(3)
 
         real(C_DOUBLE) :: denom, div
         real(C_DOUBLE) :: mu_u_i, mu_u_ip, mu_v_j, mu_v_jp, mu_w_k, mu_w_kp
@@ -217,7 +243,8 @@ contains
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do collapse(4) &
-        !$omp& map(to: omega, nx, ny, nz, blk%physLow, blk%physHigh, &
+        !$omp& map(to: omega, nx, ny, nz, outLow(1:3), outHigh(1:3), &
+        !$omp& blk%physLow, blk%physHigh, &
         !$omp& blk%d1x, blk%d1y, blk%d1z, ibm%mu) map(tofrom: phi, blk%q) &
         !$omp& private(i,ip,j,jp,k,kp,b,denom,div, &
         !$omp& mu_u_i,mu_u_ip,mu_v_j,mu_v_jp,mu_w_k,mu_w_kp)
@@ -235,13 +262,17 @@ contains
                     ! Diagonal: each face's pressure-gradient metric. face_grad
                     ! returns 0 for a pinned wall face, the coarse-fine gradient
                     ! 1/d for a 2:1 interface face (the symmetric composite stencil),
-                    ! and the regular 1/h otherwise.
-                    denom = (face_grad(blk%physLow(1,b), i == 1_C_INT, blk%d1x(i,VAR_U,b))*mu_u_i &
-                           + face_grad(blk%physHigh(1,b), i == nx, blk%d1x(ip,VAR_U,b))*mu_u_ip)*blk%d1x(i,VAR_P,b) &
-                          + (face_grad(blk%physLow(2,b), j == 1_C_INT, blk%d1y(j,VAR_V,b))*mu_v_j &
-                           + face_grad(blk%physHigh(2,b), j == ny, blk%d1y(jp,VAR_V,b))*mu_v_jp)*blk%d1y(j,VAR_P,b) &
-                          + (face_grad(blk%physLow(3,b), k == 1_C_INT, blk%d1z(k,VAR_W,b))*mu_w_k &
-                           + face_grad(blk%physHigh(3,b), k == nz, blk%d1z(kp,VAR_W,b))*mu_w_kp)*blk%d1z(k,VAR_P,b)
+                    ! and the regular 1/h otherwise. An OUTLET physical face counts
+                    ! 2*d1f (face_grad_denom): its phi ghost is MIRRORED, so the
+                    ! flux sensitivity per unit phi_i doubles -- the matching
+                    ! correction in jacobi_apply uses the regular d1f against the
+                    ! mirrored ghost. Keep the pair consistent: SPD lives there.
+                    denom = (face_grad_denom(blk%physLow(1,b), i == 1_C_INT, blk%d1x(i,VAR_U,b), outLow(1))*mu_u_i &
+                           + face_grad_denom(blk%physHigh(1,b), i == nx, blk%d1x(ip,VAR_U,b), outHigh(1))*mu_u_ip)*blk%d1x(i,VAR_P,b) &
+                          + (face_grad_denom(blk%physLow(2,b), j == 1_C_INT, blk%d1y(j,VAR_V,b), outLow(2))*mu_v_j &
+                           + face_grad_denom(blk%physHigh(2,b), j == ny, blk%d1y(jp,VAR_V,b), outHigh(2))*mu_v_jp)*blk%d1y(j,VAR_P,b) &
+                          + (face_grad_denom(blk%physLow(3,b), k == 1_C_INT, blk%d1z(k,VAR_W,b), outLow(3))*mu_w_k &
+                           + face_grad_denom(blk%physHigh(3,b), k == nz, blk%d1z(kp,VAR_W,b), outHigh(3))*mu_w_kp)*blk%d1z(k,VAR_P,b)
 
                     div = (blk%q(ip,j,k,VAR_U,b)-blk%q(i,j,k,VAR_U,b))*blk%d1x(i,VAR_P,b) &
                         + (blk%q(i,jp,k,VAR_V,b)-blk%q(i,j,k,VAR_V,b))*blk%d1y(j,VAR_P,b) &
@@ -265,11 +296,12 @@ contains
     ! no in-place race and no colouring. Only the cell's own LOW faces (1..nb)
     ! are written here; each block's high halo face is the neighbour's low face,
     ! filled by the velocity exchange. Pinned faces are left untouched.
-    subroutine jacobi_apply(ps, blk, dt_gamma, ibm)
+    subroutine jacobi_apply(ps, blk, dt_gamma, ibm, outLow, outHigh)
         type(pressure_solver_type), intent(in) :: ps
         type(block_set_type), intent(inout) :: blk
         real(C_DOUBLE), intent(in) :: dt_gamma
         type(ibm_type), intent(in) :: ibm
+        logical(C_BOOL), intent(in) :: outLow(3), outHigh(3)
 
         real(C_DOUBLE) :: idt, cf
         integer(C_INT) :: i, ip, j, jp, k, kp, b, nBlocks, nx, ny, nz
@@ -304,9 +336,17 @@ contains
         ! then this block owns it, reconstructing it from the halo phi (the coarse
         ! halo = avg of the fine increments / the fine halo = the coarse increment,
         ! both from the scalar exchange), which keeps the two sides conservative.
+        ! An OUTLET physical face (either side) is also corrected, with the
+        ! REGULAR d1f against the MIRRORED phi ghost (face_grad_corr): e.g.
+        ! q(nx+1) += (phi(nx) - (-phi(nx)))*d1f*mu = 2*phi(nx)*d1f*mu -- the
+        ! half-cell Dirichlet gradient whose 2*d1f sensitivity the denominator
+        ! already counts. The predictor never writes the outlet face, so this
+        ! correction (+ the initial value) is its entire evolution: the standard
+        ! do-nothing Dirichlet-pressure outlet.
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do collapse(4) &
-        !$omp& map(to: nx, ny, nz, blk%physLow, blk%physHigh, blk%d1x, blk%d1y, blk%d1z, ibm%mu) &
+        !$omp& map(to: nx, ny, nz, outLow(1:3), outHigh(1:3), &
+        !$omp& blk%physLow, blk%physHigh, blk%d1x, blk%d1y, blk%d1z, ibm%mu) &
         !$omp& map(tofrom: blk%q, phi) private(i,ip,j,jp,k,kp,b,cf)
 #endif
         do b = 1_C_INT, nBlocks
@@ -315,29 +355,33 @@ contains
                 do i = 1_C_INT, nx
                     ip = i + 1; jp = j + 1; kp = k + 1
 
-                    cf = face_grad(blk%physLow(1,b), i == 1_C_INT, blk%d1x(i,VAR_U,b))
+                    cf = face_grad_corr(blk%physLow(1,b), i == 1_C_INT, blk%d1x(i,VAR_U,b), outLow(1))
                     if (cf /= 0.0d0) blk%q(i,j,k,VAR_U,b) = blk%q(i,j,k,VAR_U,b) &
                         + (phi(i-1,j,k,b) - phi(i,j,k,b))*cf*ibm%mu(i,j,k,VAR_U,b)
-                    cf = face_grad(blk%physLow(2,b), j == 1_C_INT, blk%d1y(j,VAR_V,b))
+                    cf = face_grad_corr(blk%physLow(2,b), j == 1_C_INT, blk%d1y(j,VAR_V,b), outLow(2))
                     if (cf /= 0.0d0) blk%q(i,j,k,VAR_V,b) = blk%q(i,j,k,VAR_V,b) &
                         + (phi(i,j-1,k,b) - phi(i,j,k,b))*cf*ibm%mu(i,j,k,VAR_V,b)
-                    cf = face_grad(blk%physLow(3,b), k == 1_C_INT, blk%d1z(k,VAR_W,b))
+                    cf = face_grad_corr(blk%physLow(3,b), k == 1_C_INT, blk%d1z(k,VAR_W,b), outLow(3))
                     if (cf /= 0.0d0) blk%q(i,j,k,VAR_W,b) = blk%q(i,j,k,VAR_W,b) &
                         + (phi(i,j,k-1,b) - phi(i,j,k,b))*cf*ibm%mu(i,j,k,VAR_W,b)
 
-                    ! High faces: only the owned 2:1 interface ones.
-                    if (i == nx .and. is_interface(blk%physHigh(1,b))) &
+                    ! High faces: the owned 2:1 interface ones, plus an outlet
+                    ! physical face (FACE_PHYS + declared outlet).
+                    if (i == nx .and. (is_interface(blk%physHigh(1,b)) .or. &
+                        (outHigh(1) .and. blk%physHigh(1,b) == FACE_PHYS))) &
                         blk%q(ip,j,k,VAR_U,b) = blk%q(ip,j,k,VAR_U,b) &
                             + (phi(i,j,k,b) - phi(ip,j,k,b)) &
-                              *face_grad(blk%physHigh(1,b), .true., blk%d1x(ip,VAR_U,b))*ibm%mu(ip,j,k,VAR_U,b)
-                    if (j == ny .and. is_interface(blk%physHigh(2,b))) &
+                              *face_grad_corr(blk%physHigh(1,b), .true., blk%d1x(ip,VAR_U,b), outHigh(1))*ibm%mu(ip,j,k,VAR_U,b)
+                    if (j == ny .and. (is_interface(blk%physHigh(2,b)) .or. &
+                        (outHigh(2) .and. blk%physHigh(2,b) == FACE_PHYS))) &
                         blk%q(i,jp,k,VAR_V,b) = blk%q(i,jp,k,VAR_V,b) &
                             + (phi(i,j,k,b) - phi(i,jp,k,b)) &
-                              *face_grad(blk%physHigh(2,b), .true., blk%d1y(jp,VAR_V,b))*ibm%mu(i,jp,k,VAR_V,b)
-                    if (k == nz .and. is_interface(blk%physHigh(3,b))) &
+                              *face_grad_corr(blk%physHigh(2,b), .true., blk%d1y(jp,VAR_V,b), outHigh(2))*ibm%mu(i,jp,k,VAR_V,b)
+                    if (k == nz .and. (is_interface(blk%physHigh(3,b)) .or. &
+                        (outHigh(3) .and. blk%physHigh(3,b) == FACE_PHYS))) &
                         blk%q(i,j,kp,VAR_W,b) = blk%q(i,j,kp,VAR_W,b) &
                             + (phi(i,j,k,b) - phi(i,j,kp,b)) &
-                              *face_grad(blk%physHigh(3,b), .true., blk%d1z(kp,VAR_W,b))*ibm%mu(i,j,kp,VAR_W,b)
+                              *face_grad_corr(blk%physHigh(3,b), .true., blk%d1z(kp,VAR_W,b), outHigh(3))*ibm%mu(i,j,kp,VAR_W,b)
                 end do
             end do
         end do
@@ -381,5 +425,43 @@ contains
             face_grad = d1f
         end if
     end function face_grad
+
+    ! Outlet-aware metrics: the Dirichlet-pressure outlet is the ONE face kind
+    ! where the Jacobi DENOMINATOR and the velocity-face CORRECTION need
+    ! different values, because the correction reads the MIRRORED phi ghost
+    ! (phi_ghost = -phi_i, i.e. phi held at 0 ON the face):
+    !   denominator:  2*d1f  (d/dphi_i of the corrected face flux),
+    !   correction:     d1f  (applied to phi_i - phi_ghost = 2*phi_i).
+    ! The product is the same half-cell Dirichlet gradient on both sides of
+    ! the operator -- change one without the other and the projection loses
+    ! SPD at exactly this face row. Every other face kind defers to face_grad
+    ! (whose branches are validated and locked).
+    pure real(C_DOUBLE) function face_grad_denom(fk, atBnd, d1f, outlet)
+!$omp declare target
+        integer(C_INT), intent(in) :: fk
+        logical, intent(in) :: atBnd
+        real(C_DOUBLE), intent(in) :: d1f
+        logical(C_BOOL), intent(in) :: outlet
+
+        if (atBnd .and. outlet .and. fk == FACE_PHYS) then
+            face_grad_denom = 2.0d0*d1f
+        else
+            face_grad_denom = face_grad(fk, atBnd, d1f)
+        end if
+    end function face_grad_denom
+
+    pure real(C_DOUBLE) function face_grad_corr(fk, atBnd, d1f, outlet)
+!$omp declare target
+        integer(C_INT), intent(in) :: fk
+        logical, intent(in) :: atBnd
+        real(C_DOUBLE), intent(in) :: d1f
+        logical(C_BOOL), intent(in) :: outlet
+
+        if (atBnd .and. outlet .and. fk == FACE_PHYS) then
+            face_grad_corr = d1f
+        else
+            face_grad_corr = face_grad(fk, atBnd, d1f)
+        end if
+    end function face_grad_corr
 
 end module pressure_solver

@@ -593,28 +593,60 @@ immersed boundary. Phased, each phase verified before the next:
   CPU AND GPU, 7-case list); iddes 1==4 ranks EXACT; CPU vs GPU 20 steps
   EXACT (max_abs 0). NEXT (IDDES track): flat-plate inlet increment,
   transition/wall_function under iddes (hard errors until validated).
-- NEXT (user decision 2026-07-10, ahead of the profiling task): **airfoil
-  flow case** — quasi-2D IBM airfoil for RANS + γ–Re_θt validation. New
-  `[case] name = airfoil` (`src/modules/flow/airfoil/`): angle-of-attack →
-  Dirichlet inflow; freestream BCs via the SIMPLIFIED face concept (user
-  2026-07-12): `<dir>_<side>_patch` extended to wall|patch|inlet|outlet as
-  the ONE user-facing axis, `resolve_face_bcs` derives the per-variable
-  rows (outlet ⇒ internal `outflow` normal velocity + Dirichlet p) —
-  the Dirichlet-pressure outlet in the projection is the ONE new solver
-  piece, everything else is composition. Runtime stats = C_L/C_D from the
-  volume-integrated momentum equation = the exact penalization integral
-  ∫coef·u dV (mu-masked eddy-viscosity stress means turbulent stresses are
-  INCLUDED automatically; the Gauss/CV outer-border flux balance is the
-  independent A2 GATE on the steady cylinder + a mean-force decomposition
-  diagnostic — discretely identical in the time mean, penalization wins as
-  the runtime statistic: instantaneous, no cancellation, no explicit
-  turbulence terms). Phased A0 (face concept + projection outlet, dormant
-  without a declared inlet/outlet ⇒ bit-exact by construction) → A1 (case
-  module) → A2 (forces; cylinder Re 40/100 + CV cross-check gates) → A3
-  (RANS scalar inlet values keyed on PATCH_INLET + SD7003 Re 6e4
-  transition benchmark; first-order upwind kept until the measured γ-front
-  smearing says otherwise). Full handout + prompt:
-  `docs/next_session_airfoil.md`.
+- Airfoil phases A0–A2 (DONE 2026-07-12/13, branch `claude/jacobi-interface`).
+  A0, the face concept: `[boundary] <dir>_<side>_patch = wall|patch|inlet|
+  outlet` is the ONE user-facing face axis; `resolve_face_bcs`
+  (boundary.f90, the validate_patch_types slot) derives the per-variable BC
+  rows set-if-unset (explicit `_type` keys win; a contradiction with the
+  declaration is a hard config error; explicit ini `_type`/`_value` rows
+  now also beat the restart file's — config-is-authority). Outlet ⇒
+  internal BC_OUTFLOW normal velocity + Dirichlet p; `_profile = parabola`
+  gives per-point boundary values (Poiseuille inlet). A0, the projection
+  outlet (pressure_solver.f90): outlet FACE_PHYS faces enter the Jacobi
+  DENOMINATOR as 2·d1f·mu (`face_grad_denom`) while the velocity CORRECTION
+  uses d1f against the MIRRORED phi ghost (`face_grad_corr`;
+  apply_scalar_bc SCALAR_BC_MIRROR after every per-iteration phi exchange)
+  — the SPD pair; jacobi_apply corrects outlet high AND low faces.
+  LOAD-BEARING (found by the Poiseuille gate): the outflow face needs the
+  zero-gradient PREDICTOR write — `apply_bc(..., outflow_copy=.true.)`
+  post-momentum and at init/restart, OFF inside the projection loop; a
+  face touched only by phi corrections keeps its IC shape forever and the
+  run converges drift-free to a WRONG steady state (plug outlet profile,
+  O(0.2) crossflow). A1: `[case] name = airfoil`
+  (`src/modules/flow/airfoil/airfoil_flow.f90`; [case.airfoil] aoa/u_inf/
+  chord/force_sample_interval/runtime_file; x_min,y_min,y_max inlet at
+  (U∞cosα, U∞sinα, 0) + x_max outlet via patch types, set-if-unset;
+  uniform-freestream init; the case `after_step` interface gained the
+  `ibm` arg). A2: C_L/C_D = the penalization integral ∫coef·u dV per
+  component on the end-of-step field; per-block sums → global-id scatter →
+  EXACT allreduce (one contributor per entry) → ordered final sum ⇒ forces
+  BYTE-IDENTICAL across rank counts (measured; CPU vs GPU 0.0).
+  `tools/make_airfoil_stl.py` writes extruded cylinder/NACA-4-digit STLs
+  (ibmc venv gained shapely + mapbox_earcut). Gates all PASS: the standard
+  7-case suite bit-exact (nofma, max_abs 0, CPU AND GPU — every A0/A1/A2
+  branch is dormant without a declared inlet/outlet); `validation/
+  freestream/`: oblique box EXACT (0.0), in/outflow Poiseuille = periodic
+  reference to O(h²) with p linear + outlet-pinned and 5.6e-16 drift,
+  Lamb–Oseen exits (reflected fraction 5e-3), 1==4 ranks EXACT, wall-twin
+  bit-exact + contradicting key error-stops; `validation/cylinder/`:
+  empty domain C_L=C_D=0.0 EXACTLY, Re 40 C_D 1.6924±3e-5 (unbounded band
+  1.5–1.6 + ~6% 16D-Dirichlet blockage + first-order penalization
+  D_eff≈D+h), Re 100 St 0.168 from the spectral FUNDAMENTAL (the confined
+  C_L carries a comparable-power 3rd harmonic — zero-crossing counting
+  reads 3×St), mean C_D 1.448, mean C_L 2e-4; the Gauss/CV border-flux
+  cross-check reproduces the penalization C_D to 0.1% (tight box) / 2.4% /
+  6.5% (largest box) — the independent validation of the force statistic
+  AND the in/outflow faces. CAVEAT: niter=6 IBM runs accumulate a large
+  VELOCITY-NEUTRAL oscillating mode in stored pn (the channel pn-drift
+  family) — dynamics and the u-only penalization force are immune, but
+  border fluxes need a clean-p snapshot: ZERO pn in a copy of the
+  converged restart and rerun ~300 steps at niter=60 (no kick, forces hold
+  steady; restarting the POLLUTED p at niter=60 instead transients
+  violently — the accumulated spurious ∇p loses its self-consistent
+  sloppy-projection compensation — and whole-case niter=60 is ~15x cost).
+  NEXT: A3 (RANS scalar inlet values keyed on PATCH_INLET + SD7003 Re 6e4
+  transition benchmark; TVD upwind revisit only if the measured γ-front
+  smearing demands it) — `docs/next_session_airfoil.md`.
 - ALSO PENDING: **Profile + optimise** the GPU step for the 2:1-refined channel.
   The last hard profile is STALE (the reflux that was 23% is removed; the
   `MOBY_PHASETIME` timer is deleted): re-profile first with a minimal removable

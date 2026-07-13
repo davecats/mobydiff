@@ -416,7 +416,11 @@ subroutine read_restart_metadata(dns, g, bc, pressure_niter, pressure_sor, file_
     real(C_DOUBLE) :: input_cflmax, input_pecletmax, input_dtmax, input_t_final
     integer(C_INT) :: input_pressure_niter
     real(C_DOUBLE) :: input_pressure_sor
+    integer(C_INT) :: input_bc_type(VAR_U:VAR_P,1:NFACES)
+    real(C_DOUBLE) :: input_bc_value(VAR_U:VAR_P,1:NFACES)
 
+    input_bc_type = bc%faceBcType
+    input_bc_value = bc%faceBcDefaultValue
     file_nsteps = dns%nsteps
     periodic = merge(1_C_INT, 0_C_INT, bc%isPeriodic)
     ibm_enabled = merge(1_C_INT, 0_C_INT, dns%ibm_enabled)
@@ -449,6 +453,10 @@ subroutine read_restart_metadata(dns, g, bc, pressure_niter, pressure_sor, file_
     if (seen%t_final)        dns%t_final    = input_t_final
     if (seen%pressure_niter) pressure_niter = input_pressure_niter
     if (seen%pressure_sor)   pressure_sor   = input_pressure_sor
+    ! BC rows the ini set explicitly also beat the restart file's (and the
+    ! patch-type contradiction check must see the ini's values).
+    where (bc%faceBcTypeSet)  bc%faceBcType         = input_bc_type
+    where (bc%faceBcValueSet) bc%faceBcDefaultValue = input_bc_value
 
     if (dns%nsteps <= 0_C_INT) dns%nsteps = file_nsteps
     do dir = 1, 3

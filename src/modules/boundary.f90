@@ -11,13 +11,34 @@ module boundary
     integer(C_INT), parameter :: SIDE_MAX = 1_C_INT
     integer, parameter :: NFACES = 6
 
-    ! Domain-face patch types ([boundary] <dir>_<side>_patch = wall | patch).
-    ! Meaningful on non-periodic faces only. UNSET (no declaration) falls back
-    ! to the historical inference in domain_face_is_wall, so existing inis run
-    ! unchanged.
+    ! Domain-face patch types ([boundary] <dir>_<side>_patch = wall | patch |
+    ! inlet | outlet). Meaningful on non-periodic faces only. UNSET (no
+    ! declaration) falls back to the historical inference in
+    ! domain_face_is_wall, so existing inis run unchanged. The patch type is
+    ! the ONE user-facing face concept: resolve_face_bcs derives the
+    ! per-variable BC rows of every declared face from it.
     integer(C_INT), parameter :: PATCH_UNSET = 0_C_INT
     integer(C_INT), parameter :: PATCH_GENERIC = 1_C_INT
     integer(C_INT), parameter :: PATCH_WALL = 2_C_INT
+    integer(C_INT), parameter :: PATCH_INLET = 3_C_INT
+    integer(C_INT), parameter :: PATCH_OUTLET = 4_C_INT
+
+    ! Per-variable BC types (faceBcType values). DIRICHLET/NEUMANN come from
+    ! the ini (_type keys); OUTFLOW is INTERNAL-only, derived by
+    ! resolve_face_bcs for the normal velocity of an outlet face: apply_bc
+    ! skips the face write and the pressure projection owns the face.
+    integer(C_INT), parameter :: BC_DIRICHLET = 0_C_INT
+    integer(C_INT), parameter :: BC_NEUMANN = 1_C_INT
+    integer(C_INT), parameter :: BC_OUTFLOW = 2_C_INT
+
+    ! Boundary-value profiles ([boundary] <dir>_<side>_<var>_profile).
+    ! CONSTANT (default) keeps the historical face-uniform value; PARABOLA
+    ! scales it by prod over the face's NON-PERIODIC tangential directions of
+    ! 4*s*(1-s), s = coord/leng (Poiseuille-type inlet; assumes the domain
+    ! starts at 0). Evaluated once into pointBcValue at each variable's own
+    ! staggered coordinate.
+    integer(C_INT), parameter :: PROFILE_CONSTANT = 0_C_INT
+    integer(C_INT), parameter :: PROFILE_PARABOLA = 1_C_INT
 
     ! Per-face ghost modes for the generic cell-centred scalar BC applicator
     ! (apply_scalar_bc). MIRROR gives a zero face value (Dirichlet 0), COPY a
@@ -41,6 +62,16 @@ module boundary
         real(C_DOUBLE) :: faceBcDefaultValue(VAR_U:VAR_P,1:NFACES) = 0.0d0
         real(C_DOUBLE), allocatable :: pointBcValue(:,:)
 
+        ! Which rows the ini set explicitly (_type/_value keys). Config is
+        ! authority: read_restart_metadata keeps these rows over the restart
+        ! file's, resolve_face_bcs seeds only unset rows of declared faces and
+        ! hard-errors when an explicit type contradicts the declared patch.
+        logical :: faceBcTypeSet(VAR_U:VAR_P,1:NFACES) = .false.
+        logical :: faceBcValueSet(VAR_U:VAR_P,1:NFACES) = .false.
+
+        ! Value profile per row (PROFILE_*), applied when seeding pointBcValue.
+        integer(C_INT) :: faceBcProfile(VAR_U:VAR_P,1:NFACES) = PROFILE_CONSTANT
+
         ! Declared patch type per face (index = boundary_face_id).
         integer(C_INT) :: facePatchType(1:NFACES) = PATCH_UNSET
     end type boundary_type
@@ -52,9 +83,12 @@ contains
 
         call destroy_boundary_faces(bc)
         bc%isPeriodic(1:3) = .true.
-        bc%faceBcType = 0_C_INT
+        bc%faceBcType = BC_DIRICHLET
         bc%faceBcDefaultValue = 0.0d0
-        bc%faceBcType(VAR_P,:) = 1_C_INT
+        bc%faceBcType(VAR_P,:) = BC_NEUMANN
+        bc%faceBcTypeSet = .false.
+        bc%faceBcValueSet = .false.
+        bc%faceBcProfile = PROFILE_CONSTANT
         bc%facePatchType = PATCH_UNSET
     end subroutine init_bc
 
@@ -78,7 +112,7 @@ contains
         select case (bc%facePatchType(face_id))
         case (PATCH_WALL)
             is_wall = .true.
-        case (PATCH_GENERIC)
+        case (PATCH_GENERIC, PATCH_INLET, PATCH_OUTLET)
             is_wall = .false.
         case default
             is_wall = .true.
@@ -88,6 +122,62 @@ contains
             end do
         end select
     end function domain_face_is_wall
+
+    ! The declared patch type is the single face concept: derive the
+    ! per-variable BC rows of every declared face, set-if-unset (explicit
+    ! _type keys win when they agree; a direct contradiction with the
+    ! declaration is a hard config error, so the consistency constraints are
+    ! enforced by construction). PATCH_GENERIC and UNSET faces keep the raw
+    ! per-variable keys untouched -- existing inis are bit-exact by
+    ! construction. Runs with validate_patch_types: after parsing, with
+    ! periodic_* final, BEFORE the first update_boundary_values.
+    subroutine resolve_face_bcs(bc)
+        type(boundary_type), intent(inout) :: bc
+        integer :: dir, side, var, face_id
+
+        do dir = 1, 3
+            do side = 0, 1
+                face_id = boundary_face_id(dir, side)
+                select case (bc%facePatchType(face_id))
+                case (PATCH_WALL, PATCH_INLET)
+                    ! Velocity Dirichlet (wall: default 0 = no-slip; inlet:
+                    ! the _value keys or the case supply the values),
+                    ! pressure Neumann.
+                    do var = int(VAR_U), int(VAR_W)
+                        call resolve_bc_row(bc, var, face_id, BC_DIRICHLET)
+                    end do
+                    call resolve_bc_row(bc, int(VAR_P), face_id, BC_NEUMANN)
+                case (PATCH_OUTLET)
+                    ! Normal velocity: the internal outflow type (apply_bc
+                    ! skips the face; the projection owns it). OUTFLOW cannot
+                    ! be written in an ini, so ANY explicit normal type key
+                    ! contradicts the declaration. Tangential Neumann 0,
+                    ! pressure Dirichlet (default 0 -- the pinned level).
+                    do var = int(VAR_U), int(VAR_W)
+                        call resolve_bc_row(bc, var, face_id, &
+                            merge(BC_OUTFLOW, BC_NEUMANN, var == dir))
+                    end do
+                    call resolve_bc_row(bc, int(VAR_P), face_id, BC_DIRICHLET)
+                end select
+            end do
+        end do
+    end subroutine resolve_face_bcs
+
+    subroutine resolve_bc_row(bc, var, face_id, want)
+        type(boundary_type), intent(inout) :: bc
+        integer, intent(in) :: var, face_id
+        integer(C_INT), intent(in) :: want
+
+        if (bc%faceBcTypeSet(var, face_id)) then
+            if (bc%faceBcType(var, face_id) /= want) then
+                print '(a,i0,a,i0)', " error: explicit [boundary] _type key contradicts the " // &
+                    "declared patch type on face ", face_id, ", variable ", var
+                error stop "[boundary] BC type contradicts the declared patch type"
+            end if
+        else
+            bc%faceBcType(var, face_id) = want
+        end if
+    end subroutine resolve_bc_row
 
     ! [boundary] <dir>_<side>_patch is meaningful on non-periodic faces only;
     ! declaring one on a periodic direction is a config error (checked here,
@@ -106,13 +196,15 @@ contains
         end do
     end subroutine validate_patch_types
 
-    subroutine init_boundary_faces(bc, blk)
+    subroutine init_boundary_faces(bc, blk, dns)
         type(boundary_type), intent(inout) :: bc
         type(block_set_type), intent(in) :: blk
+        type(dns_type), intent(in) :: dns
         integer :: nx, ny, nz
         integer :: b, dir, side, face_id, pos, total
 
         call validate_patch_types(bc)
+        call resolve_face_bcs(bc)
 
         nx = int(blk%nb(1))
         ny = int(blk%nb(2))
@@ -149,7 +241,7 @@ contains
             end do
         end do
 
-        call update_boundary_values(bc)
+        call update_boundary_values(bc, blk, dns)
     end subroutine init_boundary_faces
 
     logical function block_face_is_physical(blk, b, dir, side)
@@ -209,8 +301,10 @@ contains
         bc%nTotal = 0_C_INT
     end subroutine destroy_boundary_faces
 
-    subroutine update_boundary_values(bc)
+    subroutine update_boundary_values(bc, blk, dns)
         type(boundary_type), intent(inout) :: bc
+        type(block_set_type), intent(in) :: blk
+        type(dns_type), intent(in) :: dns
         integer :: n, var, face_id, npts
 
         npts = int(bc%nTotal)
@@ -219,10 +313,47 @@ contains
         do n = 1, npts
             face_id = int(bc%pointFace(n))
             do var = VAR_U, VAR_P
-                bc%pointBcValue(var,n) = bc%faceBcDefaultValue(var,face_id)
+                if (bc%faceBcProfile(var,face_id) == PROFILE_PARABOLA) then
+                    bc%pointBcValue(var,n) = bc%faceBcDefaultValue(var,face_id) &
+                        *profile_shape(bc, blk, dns, n, var, boundary_face_dir(face_id))
+                else
+                    bc%pointBcValue(var,n) = bc%faceBcDefaultValue(var,face_id)
+                end if
             end do
         end do
     end subroutine update_boundary_values
+
+    ! Parabolic profile factor at boundary point n for variable var: product
+    ! over the face's non-periodic tangential directions of 4*s*(1-s), with
+    ! s the variable's own staggered coordinate normalized by the domain
+    ! length (domain assumed to start at 0). Periodic tangential directions
+    ! contribute no shape (factor 1).
+    real(C_DOUBLE) function profile_shape(bc, blk, dns, n, var, face_dir) result(fac)
+        type(boundary_type), intent(in) :: bc
+        type(block_set_type), intent(in) :: blk
+        type(dns_type), intent(in) :: dns
+        integer, intent(in) :: n, var, face_dir
+
+        integer :: d, b
+        real(C_DOUBLE) :: coord, s
+
+        b = int(bc%slot(n))
+        fac = 1.0d0
+        do d = 1, 3
+            if (d == face_dir) cycle
+            if (bc%isPeriodic(d)) cycle
+            select case (d)
+            case (1)
+                coord = blk%x(int(bc%i(n)), var, b)
+            case (2)
+                coord = blk%y(int(bc%j(n)), var, b)
+            case (3)
+                coord = blk%z(int(bc%k(n)), var, b)
+            end select
+            s = coord/dns%leng(d)
+            fac = fac*4.0d0*s*(1.0d0 - s)
+        end do
+    end function profile_shape
 
     subroutine append_boundary_face_points(bc, face_id, slot, pos, nx, ny, nz)
         type(boundary_type), intent(inout) :: bc
@@ -308,23 +439,34 @@ contains
         side = modulo(face_id - 1, 2)
     end function boundary_face_side
 
-    subroutine apply_bc(blk, bc)
+    ! outflow_copy: BC_OUTFLOW faces (the normal velocity of a declared
+    ! outlet) are written as a zero-gradient copy when .true. -- the
+    ! PREDICTOR-stage stance (post-momentum and at init/restart, where the
+    ! face would otherwise keep a stale value) -- and skipped when .false.
+    ! (inside the projection loop, which owns the face through the
+    ! Dirichlet-pressure correction and must not be stomped).
+    subroutine apply_bc(blk, bc, outflow_copy)
         type(block_set_type), intent(inout) :: blk
         type(boundary_type), intent(in) :: bc
+        logical, intent(in), optional :: outflow_copy
         integer :: n, npts, b, i, j, k, face_id, var
         integer :: dir, side
         integer :: n_dir, ghost_idx, interior_idx_dir, face_idx_dir, neighbor_idx
-        integer(C_INT) :: local_n(1:3)
+        integer(C_INT) :: local_n(1:3), ofc
         integer :: idx(3), interior_idx(3), face_idx(3)
         real(C_DOUBLE) :: dn, bc_value
 
         npts = int(bc%nTotal)
         if (npts <= 0) return
 
+        ofc = 0_C_INT
+        if (present(outflow_copy)) then
+            if (outflow_copy) ofc = 1_C_INT
+        end if
         local_n = blk%nb(1:3)
 
         !$omp target teams distribute parallel do &
-        !$omp& map(to: npts, local_n(1:3), blk%x, blk%y, blk%z, &
+        !$omp& map(to: npts, ofc, local_n(1:3), blk%x, blk%y, blk%z, &
         !$omp& bc%pointFace(1:npts), bc%slot(1:npts), bc%i(1:npts), bc%j(1:npts), bc%k(1:npts), &
         !$omp& bc%faceBcType(VAR_U:VAR_P,1:NFACES), bc%pointBcValue(VAR_U:VAR_P,1:npts)) &
         !$omp& map(tofrom: blk%q) &
@@ -373,10 +515,15 @@ contains
                     case (DIR_Z)
                         dn = blk%z(face_idx(3),var,b) - blk%z(interior_idx(3),var,b)
                     end select
-                    if (bc%faceBcType(var,face_id) == 0_C_INT) then
+                    if (bc%faceBcType(var,face_id) == BC_DIRICHLET) then
                         blk%q(face_idx(1),face_idx(2),face_idx(3),var,b) = bc_value
-                    else
+                    else if (bc%faceBcType(var,face_id) == BC_NEUMANN .or. ofc == 1_C_INT) then
                         ! Neumann data are stored as the normal derivative.
+                        ! BC_OUTFLOW reaches this write only in the
+                        ! outflow_copy (predictor-stage) call: its value is 0,
+                        ! so the face gets the zero-gradient copy; inside the
+                        ! projection loop it is skipped (the Dirichlet-p
+                        ! correction owns the face there).
                         blk%q(face_idx(1),face_idx(2),face_idx(3),var,b) = &
                             blk%q(interior_idx(1),interior_idx(2),interior_idx(3),var,b) &
                           + dn*bc_value
@@ -393,7 +540,7 @@ contains
                     case (DIR_Z)
                         dn = blk%z(face_idx(3),var,b) - blk%z(interior_idx(3),var,b)
                     end select
-                    if (bc%faceBcType(var,face_id) == 0_C_INT) then
+                    if (bc%faceBcType(var,face_id) == BC_DIRICHLET) then
                         ! Dirichlet ghost value chosen so the boundary midpoint has bc_value.
                         blk%q(face_idx(1),face_idx(2),face_idx(3),var,b) = &
                             2.0d0*bc_value &

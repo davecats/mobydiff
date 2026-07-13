@@ -5,6 +5,7 @@ module generic_flow
     use :: blocks, only: block_set_type
     use :: boundary, only: boundary_type, init_bc
     use :: pressure_solver, only: pressure_solver_type
+    use :: ibmm, only: ibm_type
     use :: comm, only: comm_type
     implicit none
 
@@ -144,12 +145,13 @@ contains
         end if
     end subroutine generic_initialise_fields
 
-    subroutine generic_after_step(this, blk, dns, g, c)
+    subroutine generic_after_step(this, blk, dns, g, c, ibm)
         class(generic_case_type), intent(inout) :: this
         type(block_set_type), intent(inout) :: blk
         type(dns_type), intent(in) :: dns
         type(grid_type), intent(in) :: g
         type(comm_type), intent(in) :: c
+        type(ibm_type), intent(in) :: ibm
     end subroutine generic_after_step
 
     subroutine generic_finalize(this, dns, g, c)

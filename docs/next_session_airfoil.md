@@ -1,5 +1,60 @@
 # Next session(s) — airfoil flow case: freestream in/outflow, lift/drag, quasi-2D RANS+transition
 
+## STATUS 2026-07-12 — A0 DONE (all gates), A1/A2 implemented, cylinder gates running
+
+- **A0 COMPLETE.** Face concept (`wall|patch|inlet|outlet`, `resolve_face_bcs`,
+  internal `outflow` type, `_profile = parabola` value profiles, explicit-key
+  contradiction = hard error) + the Dirichlet-pressure outlet in the
+  projection (`face_grad_denom` 2*d1f / `face_grad_corr` d1f-vs-mirrored-ghost
+  pair, phi SCALAR_BC_MIRROR after every per-iteration exchange, jacobi_apply
+  high- AND low-face outlet corrections). Gates in `validation/freestream/`
+  (all PASS, results in its README): standard suite bit-exact (nofma, max_abs
+  0, CPU+GPU); oblique freestream EXACT; in/outflow Poiseuille = periodic
+  reference to O(h^2), p linear + outlet-pinned, drift 5.6e-16/5k steps;
+  Lamb-Oseen exits (reflected fraction 5e-3); 1==4 ranks EXACT, CPU==GPU;
+  wall-twin exact + contradiction error-stops.
+- **AMENDMENT to §THE-gap item 5 (load-bearing, found by gate c):** skipping
+  the outflow normal write EVERYWHERE leaves the outlet face SHAPE frozen at
+  its IC (the projection correction is a smooth phi gradient) — the run
+  converges drift-free to a spurious plug-profile steady state with O(0.2)
+  crossflow. The correct split: `apply_bc(..., outflow_copy=.true.)` writes
+  the ZERO-GRADIENT copy at the predictor stage (post-momentum + init/
+  restart, which also fixes the restart hole — the face is not in the h5),
+  and the copy stays OFF inside the projection loop, whose Dirichlet-p
+  correction owns the face. This is the classical fractional-step outlet.
+- **ALSO:** explicitly-set `[boundary]` `_type`/`_value` ini rows now beat the
+  restart file's stored rows (config-is-authority, the sor precedent; needed
+  so the contradiction check sees the ini's values).
+- **A1/A2 COMPLETE (2026-07-13):** `src/modules/flow/airfoil/airfoil_flow.f90`
+  ([case.airfoil] aoa/u_inf/chord/force_sample_interval/runtime_file; patch-
+  type freestream composition; uniform init; penalization force with
+  rank-count-independent reduction: per-block sums -> global-id scatter ->
+  exact allreduce -> ordered sum), `tools/make_airfoil_stl.py` (cylinder +
+  NACA 4-digit, trimesh+shapely+mapbox_earcut in the ibmc venv),
+  `validation/cylinder/` (setup + Re 40/100 + empty + CV cross-check;
+  results in its README). Gates: empty domain C_L = C_D = 0.0 EXACTLY +
+  aoa = 5 freestream exact; Re 40 steady C_D = 1.6924 +- 2.7e-5, |C_L| 4e-4
+  (1.5-1.6 unbounded band + ~6% 16D-Dirichlet blockage + first-order
+  penalization D_eff ~ D+h); Re 100 St = 0.168 (spectral fundamental; the
+  confined C_L carries a comparable-power 3rd harmonic — zero-crossing
+  St-counting is wrong by 3x), mean C_D 1.448, mean C_L 2e-4; forces 1 vs 4
+  ranks BYTE-IDENTICAL, CPU vs GPU 0.0.
+- **Gauss/CV cross-check PASS (gate e):** border-flux C_D on the clean-p
+  steady snapshot = 1.6906 / 1.733 / 1.803 for boxes [4,9]x[6,10] /
+  [3,11]x[4,12] / [2,14]x[2,14] vs penalization 1.6924 — 0.1% / 2.4% /
+  6.5%, all within discretization error. The independent validation of
+  both the force statistic and the in/outflow faces.
+- **pn-snapshot caveat (found by the CV gate):** long IBM runs at production
+  niter = 6 accumulate a large velocity-neutral oscillating mode in stored
+  pn (std ~4e2 here; the channel pn-drift family). Forces/dynamics immune
+  (u-only), but instantaneous pn is useless for border fluxes. Clean-p
+  recipe: copy the converged restart, ZERO pn, restart with niter = 60 for
+  ~300 steps (no kick; the converged projection rebuilds the physical p in
+  a few substages, forces hold steady throughout). Do NOT restart the
+  POLLUTED p at niter = 60 (violent transient, C_L ~ O(100), dt collapse —
+  the spurious grad-p loses its self-consistent sloppy-projection
+  compensation) and do NOT run whole cases at niter = 60 (~15x cost).
+
 Branch `claude/jacobi-interface`. Goal: a second flow type `airfoil`
 (`src/modules/flow/airfoil/`) for quasi-2D (few cells in z, periodic)
 immersed-boundary airfoil runs, culminating in a RANS + γ–Re_θt transition

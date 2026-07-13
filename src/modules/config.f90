@@ -7,7 +7,8 @@ module config
     use :: les_model, only: les_type, LES_NONE, LES_SMAGORINSKY, LES_WALE
     use :: pressure_solver, only: pressure_solver_type
     use :: boundary, only: boundary_type, boundary_face_id, &
-        PATCH_GENERIC, PATCH_WALL
+        PATCH_GENERIC, PATCH_WALL, PATCH_INLET, PATCH_OUTLET, &
+        PROFILE_CONSTANT, PROFILE_PARABOLA
     use :: comm, only: comm_type
     implicit none
 
@@ -599,9 +600,10 @@ subroutine apply_boundary_value(key, value, bc, line_no)
         call read_bool(value, bc%isPeriodic(3), line_no)
     case ("x_min_patch", "x_max_patch", "y_min_patch", "y_max_patch", &
           "z_min_patch", "z_max_patch")
-        ! Domain-face patch type (T5 STEP 0): wall | patch. Meaningful on
+        ! Domain-face patch type: wall | patch | inlet | outlet. Meaningful on
         ! non-periodic faces only (validated after parsing, when periodic_*
         ! is final); absent = the historical tangential-Dirichlet inference.
+        ! resolve_face_bcs derives the per-variable BC rows from it.
         dir = boundary_direction_index(key(1:1))
         side = boundary_side_index(key(3:5))
         call read_patch_type(value, bc%facePatchType(boundary_face_id(dir, side)), line_no)
@@ -616,10 +618,14 @@ subroutine apply_boundary_value(key, value, bc, line_no)
         select case (trim(field))
         case ("type")
             call read_bc_type(value, bc%faceBcType(var,face_id), line_no)
+            bc%faceBcTypeSet(var,face_id) = .true.
         case ("value")
             call read_real(value, bc%faceBcDefaultValue(var,face_id), line_no)
+            bc%faceBcValueSet(var,face_id) = .true.
+        case ("profile")
+            call read_bc_profile(value, bc%faceBcProfile(var,face_id), line_no)
         case default
-            if (terminal_output) print *, "warning: boundary key must end in _type or _value on input line", line_no
+            if (terminal_output) print *, "warning: boundary key must end in _type, _value or _profile on input line", line_no
         end select
     end select
 end subroutine apply_boundary_value
@@ -729,12 +735,36 @@ subroutine read_patch_type(value, target, line_no)
         target = PATCH_WALL
     case ("patch", "generic")
         target = PATCH_GENERIC
+    case ("inlet")
+        target = PATCH_INLET
+    case ("outlet")
+        target = PATCH_OUTLET
     case default
-        if (terminal_output) print *, "error: patch type must be wall or patch on input line", &
+        if (terminal_output) print *, "error: patch type must be wall, patch, inlet or outlet on input line", &
             line_no, ": ", trim(value_l)
         error stop "unknown [boundary] patch type"
     end select
 end subroutine read_patch_type
+
+subroutine read_bc_profile(value, target, line_no)
+    character(len=*), intent(in) :: value
+    integer(C_INT), intent(inout) :: target
+    integer, intent(in) :: line_no
+
+    character(len=:), allocatable :: value_l
+
+    value_l = lower(clean_string(value))
+    select case (trim(value_l))
+    case ("constant")
+        target = PROFILE_CONSTANT
+    case ("parabola")
+        target = PROFILE_PARABOLA
+    case default
+        if (terminal_output) print *, "error: boundary profile must be constant or parabola on input line", &
+            line_no, ": ", trim(value_l)
+        error stop "unknown [boundary] value profile"
+    end select
+end subroutine read_bc_profile
 
 subroutine read_bc_type(value, target, line_no)
     character(len=*), intent(in) :: value
