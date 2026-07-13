@@ -417,60 +417,54 @@ quadrature on the body.
   Re in [flow] is the chord Reynolds number (U∞ = 1, c = 1 canonical).
 - git: stage explicit paths; STL/h5/png outputs stay untracked.
 
-## NEXT-SESSION PROMPT — A0 (+A1/A2 if it goes fast)
+## NEXT-SESSION PROMPT — A3 (RANS scalar inlets + SD7003 transition)
 
-> Read `docs/next_session_airfoil.md` and CLAUDE.md. Branch
-> `claude/jacobi-interface`. Implement phase A0 in two increments, gated
-> separately. INCREMENT 1 — the face concept: extend
-> `[boundary] <dir>_<side>_patch` to `wall | patch | inlet | outlet`;
-> ONE `resolve_face_bcs` in boundary.f90 (the validate_patch_types slot,
-> before the first update_boundary_values) derives the per-variable BC
-> rows set-if-unset (wall: velocity Dirichlet 0 + p Neumann; inlet:
-> velocity Dirichlet from the `_value` keys + p Neumann; outlet: normal
-> velocity = the INTERNAL `outflow` type, tangential Neumann 0,
-> p Dirichlet 0); explicit keys win but a direct contradiction with the
-> declared patch type is a hard config error; `outflow` never appears in
-> an ini. Consumers key off the patch type: domain_face_is_wall gains
-> inlet/outlet → false; the projection flags and the later RANS scalar
-> modes read PATCH_INLET/PATCH_OUTLET. INCREMENT 2 — the
-> Dirichlet-PRESSURE outlet in the projection (pressure_solver.f90),
-> the one real solver piece: PATCH_OUTLET flags into the kernels; phi
-> ghost MIRRORED at outlet faces via apply_scalar_bc after each
-> per-iteration phi exchange (do not rely on phys ghosts staying zero);
-> the Jacobi DENOMINATOR counts 2·d1f·mu at the outlet face while the
-> CORRECTION uses d1f against the mirrored ghost — keep the pair
-> consistent and commented, SPD lives there; jacobi_apply's high-face
-> branch extended to correct the outlet face (FACE_PHYS ∧ outlet),
-> mirroring the 2:1 owned-face precedent; apply_bc skips the normal
-> component of `outflow` faces only. All new branches are dormant
-> without a declared inlet/outlet: gate (a) bit-exact (nofma, max_abs 0,
-> CPU AND GPU) on min_channel / les_ibm ± refine_body / Beltrami y-slab
-> (5 steps) / turb180 / wf180_y30 / lam30t. Physics gates in a new
-> validation/freestream/: (b) uniform oblique flow through an empty box
-> with inlet/outlet faces preserved exactly, mass + divergence
-> round-off; (c) inflow/outflow Poiseuille vs the periodic reference,
-> outlet-pinned pressure level, 10k-step drift-free; (d) Lamb–Oseen
-> vortex exits, report the reflected fraction; (e) 1==4 ranks EXACT,
-> CPU vs GPU usual level; (f) a wall-declared face == the equivalent
-> per-variable-key ini bit-exact, and a contradicting explicit key
-> error-stops. THEN, if A0 gates clean: A1 (the airfoil case module:
-> [case.airfoil] aoa/u_inf/chord/force_sample_interval/runtime_file;
-> apply_defaults = x_min/y_min/y_max inlet with (U∞cosα, U∞sinα, 0) +
-> x_max outlet, set-if-unset; uniform-freestream init; quasi-2D nz = nb,
-> periodic z) and A2 (the penalization-integral force F = ∫coef·u dV per
-> component — the EXACT total force incl. the mu-masked eddy-viscosity
-> stress, see the A2 section; device reduction + allreduce in
-> after_step, C_L/C_D to the runtime file; gates: cylinder Re = 40
-> C_D ≈ 1.5, Re = 100 St ≈ 0.165, empty domain C_L = C_D = 0 exactly,
-> ranks/GPU exact, AND the Gauss/CV cross-check — outer-border momentum
-> + pressure + viscous fluxes on the converged Re = 40 snapshot
-> reproduce the penalization C_D to discretization error). Write the
-> cylinder/airfoil STL generator in tools/ (trimesh, extruded, float32).
-> WORKFLOW: one solver job at a time; sed-shortened inis for
-> bit-exactness (memory: bit-exact-gates-short). Deferred, do NOT start:
-> A3 (RANS scalar inlet values + SD7003 transition validation — its own
-> session), the TVD upwind revisit (triggered by the measured γ-front
-> smearing, not assumed), convective outlet (only if gate (d) demands
-> it), the mean-force border-decomposition diagnostic (post-A3 nicety),
-> moment coefficient, the GPU profiling task
-> (docs/next_session_profiling.md).
+> Read `docs/next_session_airfoil.md` (A3 section + STATUS) and CLAUDE.md.
+> Branch `claude/jacobi-interface`; A0–A2 are DONE and committed (12a048f) —
+> build fresh nofma reference binaries (main_ref) at HEAD before touching
+> code. Implement phase A3 in gated increments, one solver job at a time.
+> INCREMENT 0 — multi-level refine_body prerequisite gate (no new
+> features): levels > 1 are lightly exercised (les_ibm used l1 only); on a
+> small body case (the committed cylinder geometry is fine) run mobygeom
+> block-table + refine_body at 3 levels and gate uniform-flow preservation
+> across every interface level (EXACT) + the per-level dwall cross-check
+> (validation/rans_geometry machinery) before any physics.
+> INCREMENT 1 — RANS scalar inlet values (the T4 gap, hook ready):
+> rans.f90's per-scalar mode tables gain SCALAR_BC_VALUE at PATCH_INLET
+> faces and SCALAR_BC_COPY at PATCH_OUTLET — pure functions of the patch
+> type, no re-inference from velocity rows. Freestream values computed
+> once at init from `[rans] tu` / `nut_ratio`: k∞ = 1.5(tu/100·U∞)², ω∞
+> from nut_ratio, γ∞ = 1, R̃e_θt,∞ = the T4 tu-correlation value; nut
+> wall-ghost handling untouched. Gate (a): the standard 7-case suite
+> bit-exact (nofma, max_abs 0 incl. all RANS scalars, CPU AND GPU — the
+> new modes are inlet-face-gated, dormant in channels; use the
+> gate_bitexact.sh pattern, sed-shortened inis, memory:
+> bit-exact-gates-short). Gate (b): a RANS channel-with-inlet smoke case
+> holds the freestream k/ω at the inlet ghost (report_patch_types shows
+> the declared faces) and 1==4 ranks EXACT.
+> INCREMENT 2 — full-turbulent SST airfoil sanity (transition = false):
+> extend tools/make_airfoil_stl.py to read a Selig-format coordinate file
+> (SD7003 is NOT a NACA section; keep the NACA path), or start with
+> NACA 0012 at moderate Re (1e5–5e5, aoa sweep 0/4/8): gate C_L(α) slope
+> ~2π-ish and C_D magnitude vs XFOIL/literature — sanity band, not tight.
+> Wall resolution from refine_body (INCREMENT 0 must be green first);
+> resolved walls only (transition ∧ wall_function stays a hard error).
+> INCREMENT 3 — the SD7003 benchmark: Re = 6e4, α = 4°, transition =
+> true, tu ≈ 0.1%: gate on LSB presence, transition location x_t/c ≈
+> 0.5 ± 0.1, C_L/C_D within published γ–Re_θt scatter (~10–15%; compare
+> against RANS-LM results, not LES). MEASURE the γ-front chordwise
+> smearing (cells across the γ = 0.1→0.9 rise) and REPORT it — the
+> TVD/van-Leer + second-scalar-halo increment is a separate follow-up
+> triggered by that number, do NOT implement it preemptively.
+> Session landmines (from A0–A2): forces/runtime stats via the airfoil
+> case (St from the SPECTRAL FUNDAMENTAL of C_L — never zero crossings);
+> stored pn from long niter=6 IBM runs carries a big velocity-neutral
+> mode — for any border-flux diagnostic use the clean-p recipe (zero pn
+> in a restart copy, ~300 steps at niter=60); grid arithmetic BEFORE
+> running (y+₁ ≲ 1 at Re 6e4 needs Δ ≈ 1–2e-3 c ⇒ 3–4 refine_body
+> levels from the far-field base grid); quasi-2D nz = nb, z-periodic,
+> `[flow] forcing_* = 0`, Re = chord Reynolds. Deferred, do NOT start:
+> the TVD upwind increment (measurement-triggered), convective outlet,
+> the mean-force border-decomposition diagnostic, moment coefficient,
+> wall functions/IDDES under transition, the GPU profiling task
+> (docs/next_session_profiling.md). git: stage explicit paths only.
