@@ -8,7 +8,9 @@ the STL = solid, mobygeom's default.
 
   python3 make_airfoil_stl.py cylinder --xc 8 --yc 8 --d 1 --lz 0.5 --out cyl.stl
   python3 make_airfoil_stl.py naca --code 0012 --xc 8 --yc 8 --chord 1 \
-      --lz 0.5 --out sd.stl
+      --lz 0.5 --out n0012.stl
+  python3 make_airfoil_stl.py selig --file sd7003.dat --xc 8 --yc 8 --chord 1 \
+      --lz 0.5 --out sd7003.stl
 
 Run with the geometry venv (/home/davide/ibmc/bin/python: trimesh + shapely).
 """
@@ -51,10 +53,45 @@ def naca4_section(a):
     return np.column_stack([a.xc + a.chord*xs, a.yc + a.chord*ys])
 
 
+def selig_section(a):
+    """Section from a Selig-format coordinate file (one name line, then
+    normalized x y pairs TE -> upper -> LE -> lower -> TE). SD7003 and the
+    rest of the UIUC database. Optional --resample fits a periodic cubic
+    spline through the published points (LE clustering preserved via the
+    chordwise parametrization) for IBM grids finer than the file's segments;
+    default keeps the coordinates verbatim."""
+    rows = []
+    with open(a.file) as f:
+        lines = f.read().splitlines()
+    for line in lines[1:]:                       # first line is the name
+        parts = line.split()
+        if len(parts) != 2:
+            continue
+        try:
+            rows.append((float(parts[0]), float(parts[1])))
+        except ValueError:
+            continue
+    pts = np.array(rows)
+    if pts.shape[0] < 10:
+        raise SystemExit(f"{a.file}: no Selig coordinate block found")
+    if np.any(pts[:, 0] > 1.5):
+        raise SystemExit(f"{a.file}: looks like Lednicer format (point counts "
+                         "on line 2); convert to Selig ordering first")
+    # drop an exactly repeated closing TE point; shapely closes the ring
+    if np.allclose(pts[0], pts[-1]):
+        pts = pts[:-1]
+    if a.resample:
+        from scipy.interpolate import splev, splprep
+        tck, _ = splprep([pts[:, 0], pts[:, 1]], s=0.0, per=True)
+        u = np.linspace(0.0, 1.0, a.resample, endpoint=False)
+        pts = np.column_stack(splev(u, tck))
+    return np.column_stack([a.xc + a.chord*pts[:, 0], a.yc + a.chord*pts[:, 1]])
+
+
 def main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="shape", required=True)
-    for name in ("cylinder", "naca"):
+    for name in ("cylinder", "naca", "selig"):
         p = sub.add_parser(name)
         p.add_argument("--xc", type=float, required=True)
         p.add_argument("--yc", type=float, required=True)
@@ -64,13 +101,19 @@ def main():
         p.add_argument("--out", required=True)
         if name == "cylinder":
             p.add_argument("--d", type=float, required=True, help="diameter")
-        else:
+        elif name == "naca":
             p.add_argument("--code", default="0012", help="NACA 4-digit code")
             p.add_argument("--chord", type=float, default=1.0)
+        else:
+            p.add_argument("--file", required=True, help="Selig-format coordinate file")
+            p.add_argument("--chord", type=float, default=1.0)
+            p.add_argument("--resample", type=int, default=0,
+                           help="periodic-spline resample to this many points (0 = verbatim)")
     a = ap.parse_args()
 
     from shapely.geometry import Polygon
-    pts = cylinder_section(a) if a.shape == "cylinder" else naca4_section(a)
+    sections = {"cylinder": cylinder_section, "naca": naca4_section, "selig": selig_section}
+    pts = sections[a.shape](a)
     mesh = trimesh.creation.extrude_polygon(Polygon(pts), height=a.lz + 2.0*a.pad)
     mesh.apply_translation([0.0, 0.0, -a.pad])
     mesh.export(a.out)

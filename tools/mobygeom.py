@@ -1428,26 +1428,47 @@ def coeff_from_stl(args: argparse.Namespace) -> np.ndarray:
     return None if use_chunked else coef
 
 
-def window_all_solid(solid_ext: np.ndarray, nb: int, gnbt: tuple[int, int, int]) -> np.ndarray:
-    """Per-lattice-block test: every point of the one-halo dilated window solid.
+def window_solid_counts(solid_ext: np.ndarray, nb: int,
+                        gnbt: tuple[int, int, int]) -> np.ndarray:
+    """Per-lattice-block count of solid points in the one-halo dilated window.
 
     solid_ext covers extended indices -1..n+2 (cell index + 1). The dilated
     window of the block at lattice (bx,by,bz) spans cells [o, o+nb+1] with
     o = b*nb, i.e. extended slice [o+1, o+nb+3). Windows of neighbouring
-    blocks overlap, so the reduction uses a 3D integral image.
+    blocks overlap, so the reduction uses a 3D integral image — built in
+    x-lattice chunks, because the int64 cumsum at a deep refinement level's
+    full grid does not fit in memory (the airfoil L4 lattice would need
+    ~70 GB; integer arithmetic makes the chunked result identical).
     """
-    cnt = np.zeros(tuple(d + 1 for d in solid_ext.shape), dtype=np.int64)
-    cnt[1:, 1:, 1:] = solid_ext.astype(np.int64)
-    cnt = cnt.cumsum(axis=0).cumsum(axis=1).cumsum(axis=2)
-
     w = nb + 2
-    lo = [np.arange(g)*nb + 1 for g in gnbt]
-    hi = [l + w for l in lo]
-    ix0, iy0, iz0 = np.meshgrid(lo[0], lo[1], lo[2], indexing="ij")
-    ix1, iy1, iz1 = np.meshgrid(hi[0], hi[1], hi[2], indexing="ij")
-    total = (cnt[ix1, iy1, iz1] - cnt[ix0, iy1, iz1] - cnt[ix1, iy0, iz1] - cnt[ix1, iy1, iz0]
-             + cnt[ix0, iy0, iz1] + cnt[ix0, iy1, iz0] + cnt[ix1, iy0, iz0] - cnt[ix0, iy0, iz0])
-    return total == w**3
+    total = np.empty(gnbt, dtype=np.int64)
+    ny3, nz3 = solid_ext.shape[1] + 1, solid_ext.shape[2] + 1
+    rows = max(1, int((2 << 30) // (ny3*nz3*8*nb)))   # ~2 GB cnt slabs
+    lo_yz = [np.arange(g)*nb + 1 for g in gnbt[1:]]
+    hi_yz = [l + w for l in lo_yz]
+    for b0 in range(0, gnbt[0], rows):
+        b1 = min(b0 + rows, gnbt[0])
+        # extended x-cells feeding blocks b0..b1-1: [b0*nb+1 - 1, (b1-1)*nb+w]
+        x_from = b0*nb            # one layer before the first window start
+        x_to = (b1 - 1)*nb + 1 + w
+        sub = solid_ext[x_from:x_to]
+        cnt = np.zeros((sub.shape[0] + 1, ny3, nz3), dtype=np.int64)
+        cnt[1:, 1:, 1:] = sub
+        cnt = cnt.cumsum(axis=0).cumsum(axis=1).cumsum(axis=2)
+        lo_x = np.arange(b0, b1)*nb + 1 - x_from
+        hi_x = lo_x + w
+        ix0, iy0, iz0 = np.meshgrid(lo_x, lo_yz[0], lo_yz[1], indexing="ij")
+        ix1, iy1, iz1 = np.meshgrid(hi_x, hi_yz[0], hi_yz[1], indexing="ij")
+        total[b0:b1] = (cnt[ix1, iy1, iz1] - cnt[ix0, iy1, iz1]
+                        - cnt[ix1, iy0, iz1] - cnt[ix1, iy1, iz0]
+                        + cnt[ix0, iy0, iz1] + cnt[ix0, iy1, iz0]
+                        + cnt[ix1, iy0, iz0] - cnt[ix0, iy0, iz0])
+    return total
+
+
+def window_all_solid(solid_ext: np.ndarray, nb: int, gnbt: tuple[int, int, int]) -> np.ndarray:
+    """Per-lattice-block test: every point of the one-halo dilated window solid."""
+    return window_solid_counts(solid_ext, nb, gnbt) == (nb + 2)**3
 
 
 def subdivided_args(args: argparse.Namespace, level: int) -> argparse.Namespace:
@@ -1473,13 +1494,15 @@ def subdivided_args(args: argparse.Namespace, level: int) -> argparse.Namespace:
 
 
 def window_any_solid(solid_ext: np.ndarray, nb: int, gnbt: tuple[int, int, int]) -> np.ndarray:
-    return ~window_all_solid(~solid_ext, nb, gnbt)
+    return window_solid_counts(solid_ext, nb, gnbt) > 0
 
 
 def level_masks(mesh, vertices, faces, args: argparse.Namespace, nb: int,
                 levels: int) -> tuple[list[np.ndarray], list[np.ndarray]]:
     """Per-level touch/buried block masks ((gx,gy,gz) bool arrays), the file
-    counterpart of the solver's classify_block_geometry."""
+    counterpart of the solver's classify_block_geometry. One shared count
+    pass per staggered var serves anySolid/allSolid/anyFluid (any fluid =
+    the window is not all solid)."""
     touch, buried = [], []
     for l in range(levels):
         la = subdivided_args(args, l)
@@ -1487,12 +1510,14 @@ def level_masks(mesh, vertices, faces, args: argparse.Namespace, nb: int,
         anySolid = np.zeros(gnbt, dtype=bool)
         allSolid = np.ones(gnbt, dtype=bool)
         anyFluid = np.zeros(gnbt, dtype=bool)
+        w3 = (nb + 2)**3
         for var in (VAR_U, VAR_V, VAR_W, 0):
             inside_ext, _, _, _ = classify_stl_extended_grid(mesh, vertices, faces, var, la)
             solid_ext = ~inside_ext if getattr(la, "inside_is_fluid", False) else inside_ext
-            anySolid |= window_any_solid(solid_ext, nb, gnbt)
-            allSolid &= window_all_solid(solid_ext, nb, gnbt)
-            anyFluid |= window_any_solid(~solid_ext, nb, gnbt)
+            cnt = window_solid_counts(solid_ext, nb, gnbt)
+            anySolid |= cnt > 0
+            allSolid &= cnt == w3
+            anyFluid |= cnt < w3
         touch.append(anySolid & anyFluid)
         buried.append(allSolid)
     return touch, buried
