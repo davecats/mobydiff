@@ -63,6 +63,25 @@ prompt), correcting the earlier "binary mask" statement:
   the sentinel, and a calibrated smoothed-mask/Brinkman treatment stays
   the (post-A3) escalation increment if they fail.
 
+## Results (2026-07-14, gate PASS)
+
+t_final = 10 (tail-0.2 means), keep-buried coefficient file, dt = 4e-4:
+
+| alpha | C_L     | C_D    |
+|-------|---------|--------|
+| 0     | -0.0013 | 0.0186 |
+| 4     | +0.3838 | 0.0209 |
+| 8     | +0.7447 | 0.0290 |
+
+Lift slope 0.0932/deg = 85 % of 2pi (the expected Dirichlet-far-field
+blockage reduction at 12c); |C_L(0)| = 0.0013 (grid/staircase asymmetry
+negligible); C_D(0) = 0.0186 vs XFOIL fully-turbulent ~0.013-0.015 (the
+first-order penalization D_eff ~ D + h class + y+_1 ~ 2-4 resolution).
+aoa4 rerun history: the first (removed-core) run gave C_L = 0.018 — see
+the keep-buried finding above. Runs executed across three hosts (local
+RTX 3060 / istmcetus A6000 / istmcorax RTX 5090 — cc120 build dir
+build_gpu_corax).
+
 ## Workflow
 
 ```bash
