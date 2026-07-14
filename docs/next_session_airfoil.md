@@ -1,5 +1,73 @@
 # Next session(s) — airfoil flow case: freestream in/outflow, lift/drag, quasi-2D RANS+transition
 
+## STATUS 2026-07-14 — A3 increments 0-2 DONE (all gates PASS), increment 3 finishing
+
+- **INCREMENT 0 (081f387): 3-level refine_body prerequisite gates PASS**
+  (`validation/multilevel_body/`, cylinder geometry, 912 leaves
+  224/192/496): uniform oblique flow (u,v,w nonzero) EXACT (0.0 incl.
+  pn spread) across every l0-l1/l1-l2 interface on CPU 1/4 ranks
+  (byte-identical) AND GPU, via a zero-force twin (coef = 0 + burial
+  removal off); per-level dwall 3.6e-15 vs an exact prism reference.
+  FOUND+FIXED: trimesh proximity.on_surface returned dwall O(1e-6) high
+  near the quantized surface -> mobygeom dwall tiles now use
+  igl.point_mesh_squared_distance (exact, 1e-15 vs brute force);
+  rans_geometry flat gates still exactly 0.0.
+- **INCREMENT 1 (25dbffe): RANS scalar inlets DONE.** rans.f90 mode
+  tables are pure functions of the declared patch type: SCALAR_BC_VALUE
+  at PATCH_INLET (freestream values computed at init: k_inf =
+  1.5(tu/100 U_inf)^2 from the face's Dirichlet velocity magnitude,
+  omega_inf = k_inf/(nut_ratio nu) unblended, gamma_inf = 1, Ret_inf =
+  the T4 lambda=0 correlation), COPY at PATCH_OUTLET.
+  report_patch_types prints resolved type names. Gates: 7-case suite
+  bit-exact CPU+GPU (dormant in channels); SST channel-with-inlet holds
+  k_inf/omega_inf at the inlet column (0.21 %/2.3 %), 1==4 ranks EXACT
+  (`validation/rans_inlet/`).
+- **INCREMENT 2 (9e91943..afdcda0): NACA 0012 SST sanity PASS.**
+  `validation/naca0012/`: 12c x 12c x 0.1875c, base 512x512x8,
+  refine_body 5 levels (Delta = 1.465e-3 c, 19562->25418 leaves), SST
+  tu 5 / nut_ratio 10, dtmax 4e-4 (explicit eddy diffusion vs the
+  molecular-only Peclet limiter). C_L(0/4/8) = -0.0013/+0.384/+0.745 ->
+  slope 0.093/deg (85 % of 2pi, 12c-blockage class), C_D(0) = 0.0186.
+  THREE structural findings on the way:
+  1. **keep-buried is LOAD-BEARING for penalization forces** (cf68225):
+     refine_body's removed core absorbs the pressure loading through its
+     FACE_CLOSED faces with no coef bookkeeping -> first run read C_L
+     0.018 while the flow carried Gamma = -0.185 (C_L ~ 0.37). mobygeom
+     `block-table --keep-buried` zeroes the buried masks; the cylinder
+     was immune by accident (legacy file, no block_active table).
+  2. **The runs were second-order all along** (8202ded): mobygeom's
+     stl_coeff_tile_from_mesh always writes the graded sharp-interface
+     coefficients (sum((d0-d)/d)/d0^2, the analytic USE_IBM_SECONDORDER
+     formula with STL segment distances); the flag is moot for file
+     IBM. The user-observed LE "chequerboard" = the second-order
+     scheme's staircase residual (~1 % rms u fan at the nose, omega
+     40 %@2cells -> 0@40 cells, no (-1)^(i+j) correlation) + slicer
+     replication at level interfaces (slice_field.py exports a level
+     map now). Escalation if ever needed: calibrated smoothed-mask /
+     Brinkman increment (post-A3).
+  3. **SST relaminarization ambience**: with omega_inf = 37.5 the
+     ambient k decays in tau = 0.3 c/U — harmless for the
+     full-turbulent sanity gate (attached BL still lifts) but the
+     lesson fed the SD7003 design (tu 0.1 / nut_ratio 1 -> tau = 123).
+- **INCREMENT 3 (2d514ca, 50f03bd): SD7003 Re 6e4 / aoa 4 /
+  transition.** The FIRST run exposed that **gamma_sep (LM Eq. 18) is
+  REQUIRED**: separation at x/c = 0.223 (published 0.22-0.30) but the
+  detached shear layer never transitioned (near-wall k <= 5e-5, gamma
+  never rose — attached-BL Re_theta ~ 170 can't reach the tu=0.1 %
+  natural criterion ~1200; separation-induced transition IS the SD7003
+  mechanism and was the T4-deferred increment). Implemented verbatim
+  (gammaSep/kOmegaSSTLM; gamma_eff = max(gamma, gamma_sep) into
+  P_k/dkfac only; unit tests all branches): 7-case suite BIT-EXACT
+  incl. lam30t (gamma_sep exactly 0 sub-critical). check_sd7003.py
+  transition metric = near-wall k onset (gamma is 1 in the FREESTREAM —
+  a gamma-band metric on a thin BL reads the LE). gamma_sep rerun in
+  progress on istmcorax; the no-gamma_sep run gave C_L 0.586 / C_D
+  0.026 (in the published band by pressure field alone, no turbulence).
+- **Remote hosts** (memory: remote-hosts): istmcetus (2x A6000, cc86 —
+  local binary runs; pin CUDA_VISIBLE_DEVICES), istmcorax (RTX 5090,
+  cc120 — own build_gpu_corax, ~2.4x the local 3060, direct PATH
+  exports, no 25.9 modulefile). Check nvidia-smi before launching.
+
 ## STATUS 2026-07-12 — A0 DONE (all gates), A1/A2 implemented, cylinder gates running
 
 - **A0 COMPLETE.** Face concept (`wall|patch|inlet|outlet`, `resolve_face_bcs`,
