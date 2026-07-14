@@ -95,11 +95,16 @@ slice_le_new.npz / slice_fanre1000.npz / the cylinder snapshot):
 - upstream decay: cylinder Re 40 (cell-Re 1.25) ripple dies within 8
   cells (0.0038 -> 0.0004 -> 1e-5); airfoil Re 1e5 fan persists 64+
   cells (0.023 -> 0.016 -> 0.010 -> 0.005 -> 0.003);
-- the clincher: the SAME airfoil geometry + (1/Re-rescaled) coefficient
-  file at Re_c = 1000 (cell-Re 1.5, laminar, model = none) shows the
-  seed 9x smaller at 4 cells and collapsed to 0.0003 by 8 cells — the
-  fan is GONE (the 32-64-cell residual is large-scale starting
-  transient, 41 % short-wave);
+- the full 2x2 matrix (user-requested deconfounding of Re vs turbulence
+  model; upstream strip rms at 4/8/16/32/64 cells):
+  Re 1e5 + rans   0.0228 0.0160 0.0101 0.0052 0.0026  (fan)
+  Re 1e5 + none   0.0271 0.0208 0.0148 0.0100 0.0042  (fan, slightly
+                  STRONGER — the RANS ambient nut ~ 10 nu was damping it)
+  Re 1e3 + none   0.0025 0.0003 ...                    (no fan)
+  Re 1e3 + rans   0.0025 0.0003 ...                    (no fan, identical)
+  The fan correlates purely with the cell-Reynolds number and is
+  INDEPENDENT of the turbulence model (the 1e3 rows' 32-64-cell
+  residual ~0.002 is large-scale starting transient, ~41 % short-wave);
 - niter is NOT the mechanism (6 vs 12 clean-p: fan rms identical to 4
   digits; more iterations only damp the TEMPORAL ringing).
 
