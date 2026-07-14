@@ -1497,6 +1497,62 @@ def window_any_solid(solid_ext: np.ndarray, nb: int, gnbt: tuple[int, int, int])
     return window_solid_counts(solid_ext, nb, gnbt) > 0
 
 
+def classify_stl_window(mesh, vertices, faces, var: int,
+                        args: argparse.Namespace) -> tuple[np.ndarray, tuple[int, int, int]]:
+    """Classify ONLY the bbox window of the extended staggered grid and
+    return (window bool array, window offset in extended indices). The
+    full-level raster of deep refinements does not fit in memory (the
+    airfoil L5/L6 rasters are 69/550 GB as one bool array); everything
+    outside the window is fluid by the bbox argument, which the windowed
+    block-count reduction (window_solid_counts_win) encodes as zero."""
+    sx, sy, sz, shape, indices = stl_bbox_classification_window(mesh, var, args)
+    points, window_shape = stl_window_points(indices[0], indices[1], indices[2], sx, sy, sz, var, args)
+    win = np.zeros(window_shape, dtype=bool)
+    if points.shape[0]:
+        inside_flat, _ = classify_stl_points(mesh, vertices, faces, points, args)
+        win[...] = inside_flat.reshape(window_shape)
+    return win, (sx.start or 0, sy.start or 0, sz.start or 0)
+
+
+def window_solid_counts_win(win: np.ndarray, offs: tuple[int, int, int], nb: int,
+                            gnbt: tuple[int, int, int]) -> np.ndarray:
+    """window_solid_counts on a bbox-windowed solid raster: per-lattice-block
+    count of solid points in the one-halo dilated window, everything outside
+    the classification window counting as fluid (zero count). Same integer
+    arithmetic as the full-raster version (clipped inclusion-exclusion on the
+    window's integral image, built in x-lattice chunks like
+    window_solid_counts), so the resulting masks are identical."""
+    w = nb + 2
+    total = np.zeros(gnbt, dtype=np.int64)
+    ny1, nz1 = win.shape[1] + 1, win.shape[2] + 1
+    # y/z cnt-index ranges (cnt index = window row + 1), clipped
+    lo_y = np.clip(np.arange(gnbt[1])*nb + 1 - offs[1], 0, win.shape[1])
+    hi_y = np.clip(np.arange(gnbt[1])*nb + 1 - offs[1] + w, 0, win.shape[1])
+    lo_z = np.clip(np.arange(gnbt[2])*nb + 1 - offs[2], 0, win.shape[2])
+    hi_z = np.clip(np.arange(gnbt[2])*nb + 1 - offs[2] + w, 0, win.shape[2])
+    rows = max(1, int((2 << 30) // (ny1*nz1*8*nb)))   # ~2 GB cnt slabs
+    for b0 in range(0, gnbt[0], rows):
+        b1 = min(b0 + rows, gnbt[0])
+        # window rows feeding blocks b0..b1-1 (unclipped extended range)
+        x_from = np.clip(b0*nb + 1 - offs[0] - 1, 0, win.shape[0])
+        x_to = np.clip((b1 - 1)*nb + 1 + w - offs[0], 0, win.shape[0])
+        if x_to <= x_from:
+            continue   # chunk entirely outside the window: all fluid
+        sub = win[x_from:x_to]
+        cnt = np.zeros((sub.shape[0] + 1, ny1, nz1), dtype=np.int64)
+        cnt[1:, 1:, 1:] = sub
+        cnt = cnt.cumsum(axis=0).cumsum(axis=1).cumsum(axis=2)
+        lo_x = np.clip(np.arange(b0, b1)*nb + 1 - offs[0], x_from, x_to) - x_from
+        hi_x = np.clip(np.arange(b0, b1)*nb + 1 - offs[0] + w, x_from, x_to) - x_from
+        ix0, iy0, iz0 = np.meshgrid(lo_x, lo_y, lo_z, indexing="ij")
+        ix1, iy1, iz1 = np.meshgrid(hi_x, hi_y, hi_z, indexing="ij")
+        total[b0:b1] = (cnt[ix1, iy1, iz1] - cnt[ix0, iy1, iz1]
+                        - cnt[ix1, iy0, iz1] - cnt[ix1, iy1, iz0]
+                        + cnt[ix0, iy0, iz1] + cnt[ix0, iy1, iz0]
+                        + cnt[ix1, iy0, iz0] - cnt[ix0, iy0, iz0])
+    return total
+
+
 def level_masks(mesh, vertices, faces, args: argparse.Namespace, nb: int,
                 levels: int) -> tuple[list[np.ndarray], list[np.ndarray]]:
     """Per-level touch/buried block masks ((gx,gy,gz) bool arrays), the file
@@ -1504,6 +1560,7 @@ def level_masks(mesh, vertices, faces, args: argparse.Namespace, nb: int,
     pass per staggered var serves anySolid/allSolid/anyFluid (any fluid =
     the window is not all solid)."""
     touch, buried = [], []
+    inside_is_fluid = bool(getattr(args, "inside_is_fluid", False))
     for l in range(levels):
         la = subdivided_args(args, l)
         gnbt = (la.nx // nb, la.ny // nb, la.nz // nb)
@@ -1512,9 +1569,18 @@ def level_masks(mesh, vertices, faces, args: argparse.Namespace, nb: int,
         anyFluid = np.zeros(gnbt, dtype=bool)
         w3 = (nb + 2)**3
         for var in (VAR_U, VAR_V, VAR_W, 0):
-            inside_ext, _, _, _ = classify_stl_extended_grid(mesh, vertices, faces, var, la)
-            solid_ext = ~inside_ext if getattr(la, "inside_is_fluid", False) else inside_ext
-            cnt = window_solid_counts(solid_ext, nb, gnbt)
+            if inside_is_fluid:
+                # Cavity geometries: outside the bbox window is SOLID, so
+                # the windowed shortcut does not apply — full raster (only
+                # viable at shallow refinement).
+                inside_ext, _, _, _ = classify_stl_extended_grid(mesh, vertices, faces, var, la)
+                cnt = window_solid_counts(~inside_ext, nb, gnbt)
+            else:
+                # Solid-body geometries: everything outside the bbox window
+                # is fluid — classify and reduce on the window only (the
+                # full raster of deep refinements does not fit in memory).
+                win, offs = classify_stl_window(mesh, vertices, faces, var, la)
+                cnt = window_solid_counts_win(win, offs, nb, gnbt)
             anySolid |= cnt > 0
             allSolid &= cnt == w3
             anyFluid |= cnt < w3
