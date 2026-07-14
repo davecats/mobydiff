@@ -110,12 +110,34 @@ slice_le_new.npz / slice_fanre1000.npz / the cylinder snapshot):
 
 The IBM forcing is the (rough) SEED; the centred scheme at cell-Re >> 2
 is the AMPLIFIER that radiates it upstream; OpenFOAM's upwind-biased/
-limited div schemes damp the parasite. Mitigation = the NEW top-priority
-increment (above TVD, user decision 2026-07-14): candidates are a
-smoother coefficient seed (sub-cell/volume-fraction-averaged grading)
-and/or a LOCAL near-body dissipation blend in the momentum convection —
-global upwinding is off-limits (energy-conserving code), and deeper LE
-refinement does not fix it (cell-Re stays >> 2 at any affordable level).
+limited div schemes damp the parasite. Mitigation plan (user decision
+2026-07-14, above TVD): (R1) refinement ground truth, then a band-filter
+or band-dissipation correction pass. A one-sided convective-stencil
+variant was implemented and REVERTED (user decision: too invasive in the
+hottest kernel; also its first form — substituting the ADVECTING pair
+members — blew up in 1500 steps because it breaks discrete continuity of
+the advecting flux; only transported-value substitution is admissible).
+
+## R1 refinement ground truth (2026-07-15): one level collapses the fan
+
+The ring cells' local cell-Re scales QUADRATICALLY with resolution
+(cell-Re_ring ~ S Delta^2/nu ~ 60 / 7.6 / 1.9 at L4/L5/L6). Fan strip
+rms at FIXED physical distances upstream of the nose (y band
+[5.95,6.05], high-pass 5 native cells; R1 files are remove-buried:
+forces meaningless by construction, fan metric only; L5 run t_final 1.5
+on the RTX 5090, 65094 leaves):
+
+  case            0.006c   0.012c   0.023c   0.047c   0.094c  shortwave
+  L4 RANS (base)  0.0228   0.0160   0.0101   0.0052   0.0026     68 %
+  L5 RANS (R1a)   0.0015   0.0016   0.0021   0.0027   0.0025     33 %
+
+One refinement level cuts the near-nose fan 15x; the flat ~0.002
+residual is the shared large-scale transient floor, not a fan (both
+cases meet at the far strip). The parasite is effectively dead already
+at ring cell-Re ~ 7.6 — consistent with the seed (the O(Delta) staircase
+kink) and the amplifier (dispersion at high cell-Re) BOTH weakening with
+Delta. L6 (ring cell-Re ~ 1.9, 237208 leaves) runs as the final
+confirmation point.
 
 ## Workflow
 
