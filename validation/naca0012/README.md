@@ -82,6 +82,36 @@ the keep-buried finding above. Runs executed across three hosts (local
 RTX 3060 / istmcetus A6000 / istmcorax RTX 5090 — cc120 build dir
 build_gpu_corax).
 
+## LE fan root cause (2026-07-14, user OpenFOAM counter-evidence): the
+## CENTRAL-SCHEME cell-Reynolds parasite, not the staircase
+
+The user implemented the same graded IBM in OpenFOAM and saw NO fan —
+refuting "inherent staircase residual". Full diagnosis (evidence in
+slice_le_new.npz / slice_fanre1000.npz / the cylinder snapshot):
+
+- the fan's dominant ripple wavelength is 2.44 cells with 68 % of its
+  energy near the grid Nyquist — the stationary parasite of CENTRED
+  convection at high cell-Reynolds number (u Delta4/nu = 146 here);
+- upstream decay: cylinder Re 40 (cell-Re 1.25) ripple dies within 8
+  cells (0.0038 -> 0.0004 -> 1e-5); airfoil Re 1e5 fan persists 64+
+  cells (0.023 -> 0.016 -> 0.010 -> 0.005 -> 0.003);
+- the clincher: the SAME airfoil geometry + (1/Re-rescaled) coefficient
+  file at Re_c = 1000 (cell-Re 1.5, laminar, model = none) shows the
+  seed 9x smaller at 4 cells and collapsed to 0.0003 by 8 cells — the
+  fan is GONE (the 32-64-cell residual is large-scale starting
+  transient, 41 % short-wave);
+- niter is NOT the mechanism (6 vs 12 clean-p: fan rms identical to 4
+  digits; more iterations only damp the TEMPORAL ringing).
+
+The IBM forcing is the (rough) SEED; the centred scheme at cell-Re >> 2
+is the AMPLIFIER that radiates it upstream; OpenFOAM's upwind-biased/
+limited div schemes damp the parasite. Mitigation = the NEW top-priority
+increment (above TVD, user decision 2026-07-14): candidates are a
+smoother coefficient seed (sub-cell/volume-fraction-averaged grading)
+and/or a LOCAL near-body dissipation blend in the momentum convection —
+global upwinding is off-limits (energy-conserving code), and deeper LE
+refinement does not fix it (cell-Re stays >> 2 at any affordable level).
+
 ## Workflow
 
 ```bash

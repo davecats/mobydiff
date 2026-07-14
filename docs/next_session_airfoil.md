@@ -68,6 +68,35 @@
   cc120 — own build_gpu_corax, ~2.4x the local 3060, direct PATH
   exports, no 25.9 modulefile). Check nvidia-smi before launching.
 
+## NEXT (priority order, user decision 2026-07-14)
+
+1. **LE-fan mitigation (momentum side)** — NEW TOP PRIORITY, ABOVE TVD.
+   Root cause established (naca0012 README "LE fan root cause"): the fan
+   ahead of the nose is the CENTRED-convection cell-Reynolds parasite
+   (lambda = 2.4 cells, 68 % Nyquist-band energy; cell-Re = 146 at the
+   airfoil grids), seeded by the graded-IBM near-wall forcing and gone at
+   cell-Re 1.5 on the same geometry (Re_c = 1000 control) — the user's
+   OpenFOAM twin (same IBM, upwinded div schemes) shows no fan.
+   Candidate levers, to be designed as a gated increment:
+   (a) smoother coefficient seed — sub-cell/volume-fraction-averaged
+   grading in mobygeom (tooling-only, cheap to try first);
+   (b) LOCAL near-body dissipation/upwind blend in momentum convection,
+   confined to the graded ring + a few cells (solver change; must be
+   config-gated, bit-exact when off, energy budget documented);
+   global upwinding is OFF-LIMITS (energy-conserving code); deeper LE
+   levels do NOT fix it. Gates: fan strip-decay metric (naca0012
+   README tables) collapsing to the cylinder profile at Re 1e5;
+   cylinder/NACA force gates unchanged within bands; standard suite
+   bit-exact when disabled.
+2. **TVD/van-Leer + second scalar halo** — measurement-justified
+   (SD7003 transition-front smearing 104 level-4 cells = 0.152 c across
+   k = 10..1000 k_inf); expect x_t 0.427 -> toward the published
+   0.53-0.58 and C_D toward 0.021-0.023.
+3. Deferred unchanged: calibrated smoothed-mask/Brinkman (D+h bias),
+   convective outlet, mean-force border decomposition, moment
+   coefficient, wall functions/IDDES under transition, GPU profiling
+   (docs/next_session_profiling.md).
+
 ## STATUS 2026-07-12 — A0 DONE (all gates), A1/A2 implemented, cylinder gates running
 
 - **A0 COMPLETE.** Face concept (`wall|patch|inlet|outlet`, `resolve_face_bcs`,
