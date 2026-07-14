@@ -26,6 +26,10 @@ def load_window(path, names, x0, x1, y0, y1):
         i0, i1 = int(x0 / hx), int(np.ceil(x1 / hx))
         j0, j1 = int(y0 / hy), int(np.ceil(y1 / hy))
         out = {n: np.full((j1 - j0, i1 - i0), np.nan) for n in names}
+        # per-pixel refinement level: coarse cells are painted as replicated
+        # fine pixels, which makes smooth coarse gradients look blocky --
+        # read images with this map in hand (LE "checkerboard" analysis).
+        out["level"] = np.full((j1 - j0, i1 - i0), -1.0)
         kz_f = (nz * 2**lmax) // 2          # mid-z on the finest lattice
         data = {n: f[n] for n in names}
         for bid, (ox, oy, oz, lev) in enumerate(blocks):
@@ -38,12 +42,13 @@ def load_window(path, names, x0, x1, y0, y1):
             if not (bz0 <= kz_f < bz0 + nb * fac):
                 continue
             kk = (kz_f - bz0) // fac
+            gi0, gj0 = bx0, by0
+            si0 = max(i0, gi0); si1 = min(i1, gi0 + nb * fac)
+            sj0 = max(j0, gj0); sj1 = min(j1, gj0 + nb * fac)
+            out["level"][sj0 - j0:sj1 - j0, si0 - i0:si1 - i0] = float(lev)
             for n in names:
                 row = data[n][bid][kk]              # (nby, nbx) at level lev
                 rep = row.repeat(fac, axis=0).repeat(fac, axis=1)
-                gi0, gj0 = bx0, by0
-                si0 = max(i0, gi0); si1 = min(i1, gi0 + nb * fac)
-                sj0 = max(j0, gj0); sj1 = min(j1, gj0 + nb * fac)
                 out[n][sj0 - j0:sj1 - j0, si0 - i0:si1 - i0] = \
                     rep[sj0 - gj0:sj1 - gj0, si0 - gi0:si1 - gi0]
         xc = (np.arange(i0, i1) + 0.5) * hx
