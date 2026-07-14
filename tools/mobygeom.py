@@ -1687,6 +1687,13 @@ def block_table_from_stl(args: argparse.Namespace) -> None:
     touch = buried = None
     if refine_box is None:
         touch, buried = level_masks(mesh, vertices, faces, args, nb, levels)
+        if getattr(args, "keep_buried", False):
+            # Keep leaves buried inside the body (zeroed masks reach the
+            # solver, whose own builder then also removes nothing). REQUIRED
+            # for penalization-force cases: a removed core's closed faces
+            # absorb the body's pressure loading with no coef bookkeeping,
+            # so sum(coef u dV) misses most of the (pressure-dominated) lift.
+            buried = [np.zeros_like(b) for b in buried]
 
     lev, crd = build_leaf_table_py(gnbt, levels, periodic, touch, buried, refine_box, lines, nb)
     n_leaves = lev.shape[0]
@@ -2753,6 +2760,11 @@ def main(argv: list[str] | None = None) -> int:
                    help="x0 x1 y0 y1 z0 z1: box refinement instead of body-driven")
     p.add_argument("--no-dwall", action="store_true",
                    help="skip the per-leaf dwall_blocks wall-distance dataset (RANS)")
+    p.add_argument("--keep-buried", action="store_true",
+                   help="keep leaves buried inside the body (required when the "
+                        "penalization-force statistic is used: a removed core's "
+                        "closed faces absorb pressure loading outside the coef "
+                        "bookkeeping)")
     add_common_grid_args(p)
     add_stl_args(p)
     p.set_defaults(func=block_table_from_stl)

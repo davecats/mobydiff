@@ -17,8 +17,13 @@ $PY "$ROOT/tools/make_airfoil_stl.py" naca --code 0012 --xc 4.5 --yc 6.0 \
     --chord 1.0 --lz 0.1875 --out n0012.stl
 
 echo "== 3. 5-level block-table coefficient file"
+# --keep-buried is LOAD-BEARING for the forces: with the buried core
+# removed, its closed faces absorb the body's pressure loading outside the
+# coef bookkeeping and sum(coef u dV) loses the (pressure-dominated) lift —
+# measured C_L 0.018 vs the flow's actual circulation-implied 0.37 at
+# aoa = 4 (the drag, friction-dominated, stayed plausible).
 $PY "$ROOT/tools/mobygeom.py" block-table \
     --geometry n0012.stl --grid-file grid.h5 --re 1.0e5 \
-    --block-nb 8 --levels 5 --output ibm_coeff_n0012.h5
+    --block-nb 8 --levels 5 --keep-buried --output ibm_coeff_n0012.h5
 
 echo "setup done"

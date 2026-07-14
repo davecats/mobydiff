@@ -19,6 +19,22 @@ aoa = 0/4/8 in [0.06, 0.13]/deg (2pi rad = 0.1097/deg), C_D(0) in
 [0.008, 0.035] (XFOIL fully-turbulent NACA 0012 at Re 1e5: C_D0 ~
 0.012-0.015, C_L(4) ~ 0.40-0.44).
 
+## FOUND while gating (2026-07-14): penalization forces need --keep-buried
+
+The first aoa = 4 run converged STEADY to C_L = 0.018 / C_D = 0.0166 while
+the FLOW carried the full lift: box-contour circulation Gamma = -0.185
+(contour-independent) => Kutta-Joukowski C_L ~ 0.37, classic suction-side
+speedup, zero reversed flow. The A2 reduction is faithful (an independent
+numpy sum over coef*u*V reproduces the solver to all digits): the SINK
+itself is incomplete. refine_body removes leaves buried inside the body;
+their FACE_CLOSED faces are exact zero-flux walls that absorb the core
+pressure loading with NO coef bookkeeping, so sum(coef u dV) keeps only
+the thin-shell contribution — the friction-dominated drag survives, the
+pressure-dominated lift vanishes. The validated cylinder was immune by
+accident: its legacy (non-tiled) coefficient file has no block_active
+table, so all blocks were kept. Fix: `mobygeom block-table --keep-buried`
+(zeroed buried masks; the solver's own builder then keeps the core too).
+
 ## Workflow
 
 ```bash
