@@ -35,6 +35,34 @@ accident: its legacy (non-tiled) coefficient file has no block_active
 table, so all blocks were kept. Fix: `mobygeom block-table --keep-buried`
 (zeroed buried masks; the solver's own builder then keeps the core too).
 
+## LE ripple follow-up (2026-07-14): the runs ARE second-order — verified
+
+Diagnosis of the USE_IBM_SECONDORDER / coefficient-file question (user
+prompt), correcting the earlier "binary mask" statement:
+
+- `USE_IBM_SECONDORDER` guards only the ANALYTIC `set_ibm_coeff` path
+  (ibm.f90): fluid cells adjacent to the body get the graded coefficient
+  sum((d0-d)/d)/d0^2 / re per solid neighbour, d from bisection to the
+  surface — the sharp-interface second-order Laplacian correction (cf.
+  arXiv:2506.14328): the wall-distance-weighted coefficient corrects the
+  viscous stencil so the effective no-slip plane sits AT the surface.
+- mobygeom's `stl_coeff_tile_from_mesh` — shared by `stl-ibm-coeff`
+  (legacy cylinder file) and `block-table` (the A3 files) — writes the
+  SAME graded values unconditionally (`stl_segment_distances` is the STL
+  bisection analog). Verified in the files: ibm_coeff_n0012.h5 carries
+  graded cells in the whole first fluid ring (median ~4 = the half-cell
+  crossing value at Delta4, range 1.5e-2..5.4e4; 190 graded cells per LE
+  block), ibm_coeff_re40.h5 carries 920 per component. The solver reads
+  file coefficients verbatim.
+- CONCLUSION: every A3 run (and the validated cylinder) already used the
+  second-order body description; the flag is moot for file-based IBM.
+  The LE ripple fan (~1 % rms u upstream of the nose, 40 % omega
+  cell-to-cell at 2 cells decaying to 0 at 40) is the RESIDUAL of the
+  second-order scheme at a strongly curved staircase surface — no
+  regeneration or rerun warranted; the SD7003 transition gates remain
+  the sentinel, and a calibrated smoothed-mask/Brinkman treatment stays
+  the (post-A3) escalation increment if they fail.
+
 ## Workflow
 
 ```bash
