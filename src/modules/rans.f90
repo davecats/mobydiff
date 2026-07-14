@@ -138,7 +138,7 @@ module rans
     ! T4 transition correlations, public for the host-side unit tests
     ! (src/test_transition.f90).
     public :: lm_rethetac, lm_flength, lm_fonset, lm_fturb, lm_rethetat0, &
-        lm_fthetat
+        lm_fthetat, lm_gamma_sep
 
     ! SST closure constants (Menter 2003). Set 1 = inner/near-wall,
     ! set 2 = outer; blended by F1.
@@ -165,6 +165,7 @@ module rans
     ! OpenFOAM kOmegaSSTLM defaults).
     real(C_DOUBLE), parameter :: LM_CA1 = 2.0d0, LM_CA2 = 0.06d0
     real(C_DOUBLE), parameter :: LM_CE1 = 1.0d0, LM_CE2 = 50.0d0
+    real(C_DOUBLE), parameter :: LM_CS1 = 2.0d0   ! gamma_sep magnitude (LM Eq. 18)
     real(C_DOUBLE), parameter :: LM_CTHETAT = 0.03d0
     ! Diffusivity structure differs per equation (kOmegaSSTLM):
     ! gamma uses nu + nut/sigma_f; Re_thetat~ uses sigma_thetat*(nu + nut).
@@ -910,6 +911,25 @@ contains
         fon3 = max(1.0d0 - (rt/2.5d0)**3, 0.0d0)
         fon = max(fon2 - fon3, 0.0d0)
     end function lm_fonset
+
+    ! Separation-induced intermittency gamma_sep (LM2009 Eq. 18 / OpenFOAM
+    ! kOmegaSSTLM gammaSep, transcribed verbatim): lets the model transition
+    ! in a laminar separation bubble's detached shear layer, where Re_v
+    ! overshoots the attached-BL correlation (Re_v > 3.235 Re_thetac at the
+    ! same Re_theta). F_reattach = exp(-(R_T/20)^4) shuts the boost off once
+    ! the layer is turbulent; F_thetat confines it to boundary layers.
+    ! gamma_eff = max(gamma, gamma_sep); exactly 0 wherever the flow is
+    ! attached and sub-critical (Re_v below threshold), so attached channels
+    ! keep gamma_eff = gamma bit-exactly.
+    pure real(C_DOUBLE) function lm_gamma_sep(rev, rethetac, rt, fthetat) result(gs)
+!$omp declare target
+        real(C_DOUBLE), intent(in) :: rev, rethetac, rt, fthetat
+
+        real(C_DOUBLE) :: fre
+
+        fre = exp(-(rt/20.0d0)**4)
+        gs = min(LM_CS1*max(rev/(3.235d0*rethetac) - 1.0d0, 0.0d0)*fre, 2.0d0)*fthetat
+    end function lm_gamma_sep
 
     ! F_turb: disables the gamma destruction in fully turbulent regions.
     pure real(C_DOUBLE) function lm_fturb(rt) result(ft)
@@ -1802,8 +1822,16 @@ contains
                         ! destruction scaled by min(max(gamma_eff,0.1),1)
                         ! (dkfac multiplies the point-implicit denominator;
                         ! it is exactly 1.0 when transition is off, which is
-                        ! bit-exact).
-                        gameff = gv
+                        ! bit-exact). gamma_eff = max(gamma, gamma_sep): the
+                        ! separation-induced branch (LM Eq. 18) drives
+                        ! transition in detached shear layers (the SD7003
+                        ! LSB gate: without it gamma never fires at
+                        ! Re_c = 6e4 / tu = 0.1 % — attached-BL Re_theta
+                        ! stays far below the correlation threshold).
+                        ! gamma_sep is exactly 0 below its Re_v threshold,
+                        ! so sub-critical attached cases keep gamma_eff =
+                        ! gamma bit-exactly (gv in [0,1] by the clamp).
+                        gameff = max(gv, lm_gamma_sep(rev, rethetac, rt, fthetat))
                         dkfac = min(max(gameff, 0.1d0), 1.0d0)
                         pk = gameff*pk
                     end if

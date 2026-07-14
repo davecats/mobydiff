@@ -8,7 +8,7 @@
 program test_transition
     use, intrinsic :: iso_c_binding
     use :: rans, only: lm_rethetac, lm_flength, lm_fonset, lm_fturb, &
-        lm_rethetat0, lm_fthetat
+        lm_rethetat0, lm_fthetat, lm_gamma_sep
     implicit none
 
     integer :: nfail
@@ -52,6 +52,18 @@ program test_transition
     call check("fturb(0.5)", lm_fturb(0.5d0), 0.9997558891748972d0)
     call check("fturb(2)",   lm_fturb(2.0d0), 0.9394130628134758d0)
     call check("fturb(8)",   lm_fturb(8.0d0), 1.1253517471925912d-7)
+
+    ! gamma_sep (LM Eq. 18): exact 0 below the Re_v threshold, the active
+    ! branch, the clamp at 2, the F_reattach shutoff at high R_T, and the
+    ! F_thetat gate.
+    call check("gammasep sub-crit", lm_gamma_sep(500.0d0, 200.0d0, 1.0d0, 1.0d0), 0.0d0)
+    call check("gammasep active",   lm_gamma_sep(1000.0d0, 200.0d0, 1.0d0, 1.0d0), &
+        1.09118328827479d0)
+    call check("gammasep clamped",  lm_gamma_sep(5000.0d0, 200.0d0, 1.0d0, 1.0d0), 2.0d0)
+    call check("gammasep high-RT",  lm_gamma_sep(1000.0d0, 200.0d0, 30.0d0, 1.0d0), &
+        6.906922862140554d-3)
+    call check("gammasep gated",    lm_gamma_sep(1000.0d0, 200.0d0, 10.0d0, 0.5d0), &
+        0.5125391208240448d0)
 
     ! Re_thetat,eq: both Tu branches, the Tu floor (0.027), the zero-
     ! pressure-gradient closed form, and converging lambda fixed points on
