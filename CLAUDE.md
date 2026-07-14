@@ -19,15 +19,18 @@ classification tooling lives in `tools/mobygeom*`.
 ## Build and run
 
 ```bash
-module load /opt/nvidia/hpc_sdk/modulefiles/nvhpc-hpcx-cuda13/26.3
+module load toolkits/nvhpc/25.9
 ./compile.sh cpu && ./compile.sh gpu   # builds build_cpu/ and build_gpu/
 mpirun -n 1 ./build_gpu/main path/to/input.ini
 ```
 
 - ALWAYS run executables through `mpirun`, even single rank.
 - Build both CPU and GPU paths; the CPU path is the reference for debugging.
-- The Ubuntu WSL host can be unstable after an update: if commands hang or
-  fail oddly, retry before assuming a code problem.
+- Additional GPU hosts over SSH (shared filesystem, same paths): istmcetus
+  (2x A6000 cc86 — the local build_gpu binary runs; pin CUDA_VISIBLE_DEVICES
+  and check nvidia-smi first, shared machine), istmcorax (RTX 5090 cc120 —
+  own `build_gpu_corax/`; no 25.9 modulefile, export
+  PATH=/opt/Nvidia/nvhpc/Linux_x86_64/25.9/{compilers/bin,comm_libs/12.9/hpcx/latest/ompi/bin}).
 
 ## Coding conventions
 
@@ -647,6 +650,59 @@ immersed boundary. Phased, each phase verified before the next:
   NEXT: A3 (RANS scalar inlet values keyed on PATCH_INLET + SD7003 Re 6e4
   transition benchmark; TVD upwind revisit only if the measured γ-front
   smearing demands it) — `docs/next_session_airfoil.md`.
+- Airfoil phase A3 (DONE 2026-07-14, increments 0-3 all gated, branch
+  `claude/jacobi-interface`; results + findings in
+  `docs/next_session_airfoil.md` STATUS and the per-case READMEs).
+  INCREMENT 0 (081f387): 3-level refine_body gates
+  (`validation/multilevel_body/`, cylinder, 224/192/496 leaves) — uniform
+  oblique u,v,w flow EXACT (0.0 incl. pn) across every interface level on
+  CPU 1/4 ranks + GPU via a zero-force twin; per-level dwall 3.6e-15 vs an
+  exact prism reference. FIXED: trimesh proximity returned dwall O(1e-6)
+  high near quantized surfaces → mobygeom dwall tiles use igl
+  point_mesh_squared_distance (exact; flat T1 gates still 0.0).
+  INCREMENT 1 (25dbffe): RANS scalar inlets — rans.f90 ghost-mode tables
+  are pure functions of the DECLARED patch type (SCALAR_BC_VALUE at
+  PATCH_INLET with init-computed freestream values: k∞ = 1.5(tu/100 U∞)²
+  from the face velocity magnitude, ω∞ = k∞/(nut_ratio ν) unblended,
+  γ∞ = 1, R̃e_θt∞ = the T4 λ=0 correlation; COPY at PATCH_OUTLET); 7-case
+  suite bit-exact CPU+GPU (dormant in channels); inlet channel holds
+  k∞/ω∞ (0.2 %/2.3 %), 1==4 EXACT (`validation/rans_inlet/`).
+  INCREMENT 2 (…afdcda0): NACA 0012 SST sanity PASS
+  (`validation/naca0012/`: 12c×12c×0.1875c, base 512²×8, refine_body 5
+  levels, Δ=1.465e-3c, dtmax 4e-4 — explicit eddy diffusion vs the
+  molecular-only Peclet limiter): C_L(0/4/8) = −0.001/0.384/0.745, slope
+  0.093/deg (85 % of 2π, 12c-blockage class), C_D(0) 0.0186. LANDMINES
+  FOUND: (1) **penalization forces REQUIRE keep-buried files** (cf68225):
+  refine_body's removed core absorbs pressure loading through FACE_CLOSED
+  faces outside the coef bookkeeping — first run read C_L 0.018 while the
+  flow carried Γ ⇒ C_L 0.37; `mobygeom block-table --keep-buried`; the
+  cylinder was immune only via its legacy no-block_active file. (2) File
+  IBM is **second-order already**: mobygeom always writes the graded
+  sharp-interface coefficients (Σ((d0−d)/d)/d0², = the analytic
+  USE_IBM_SECONDORDER formula); LE "chequerboard" = its staircase residual
+  (~1 % rms u fan at the nose, ω 40 %@2 cells→0@40, no (−1)^(i+j) mode) +
+  slice replication at level interfaces; escalation = calibrated
+  smoothed-mask/Brinkman (post-A3). (3) mobygeom's block-mask integral
+  image now builds in 2 GB chunks (window_solid_counts; the airfoil L4
+  lattice needed ~70 GB monolithic).
+  INCREMENT 3 (2d514ca, 50f03bd): SD7003 Re 6e4 / α=4 / tu 0.1 %
+  transition benchmark PASS — after implementing **γ_sep (LM Eq. 18)**,
+  which the first run proved REQUIRED (bubble separated at x/c 0.223 but
+  the shear layer stayed laminar, k ≤ 5e-5: separation-induced transition
+  IS the SD7003 mechanism; integral C_L/C_D sat in the published band
+  anyway — field-level k/γ gates caught it). γ_eff = max(γ, γ_sep) into
+  P_k/dkfac only; unit-tested; 7-case suite BIT-EXACT incl. lam30t
+  (γ_sep exactly 0 sub-critical). Results: x_s 0.22 (pub 0.22-0.30),
+  x_t(k-onset) 0.427 (pub RANS-LM 0.53-0.58, early edge), reattachment
+  ~0.56-0.68 (pub 0.65-0.70), turbulent k 3.7e-2, C_L 0.562 / C_D 0.0267.
+  **Measured transition-front smearing: 104 level-4 cells (0.152c) across
+  k = 10→1000 k∞ — the TVD/van-Leer + second-scalar-halo increment is now
+  measurement-justified as follow-up** (do not start without a session).
+  γ = 1 in the FREESTREAM (LM convention): transition metrics must use
+  near-wall k onset, not γ bands (check_sd7003.py). Selig STLs:
+  `make_airfoil_stl.py selig` (+ --resample; SD7003 committed in
+  validation/sd7003/). Remote GPU hosts for parallel runs: see "Build and
+  run" (istmcetus/istmcorax; memory: remote-hosts).
 - ALSO PENDING: **Profile + optimise** the GPU step for the 2:1-refined channel.
   The last hard profile is STALE (the reflux that was 23% is removed; the
   `MOBY_PHASETIME` timer is deleted): re-profile first with a minimal removable

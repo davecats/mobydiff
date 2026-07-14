@@ -22,6 +22,34 @@ Windte/Radespiel, LES reference Galbraith & Visbal):
   level-4 cells) is MEASURED AND REPORTED ONLY — it is the number that
   decides the separate TVD/van-Leer + second-scalar-halo increment.
 
+## Results (2026-07-14, gate PASS — WITH gamma_sep)
+
+The FIRST run (commit 2d514ca state, saved as *_nogsep) exposed a missing
+model piece: the bubble separated at x/c = 0.223 but the detached shear
+layer NEVER transitioned (near-wall peak k = 6.6e-5 ~ laminar; gamma
+never rose) — at Re_c = 6e4 / tu = 0.1 % the attached-BL Re_theta (~170)
+cannot reach the natural-transition criterion (~1200): separation-induced
+transition IS the SD7003 mechanism, and gamma_sep (LM Eq. 18) was the
+T4-deferred increment. C_L 0.586 / C_D 0.026 sat in the published band by
+the steady pressure field alone — the integral gates alone would have
+GREEN-LIT a laminar solution; the field-level k/gamma gates caught it.
+
+With gamma_sep (50f03bd; t_final = 15, tail-0.2 means):
+
+- separation x_s/c = 0.22 (published 0.22-0.30), patchy separated region
+  to x/c ~ 0.56 with a last segment at 0.66-0.68 (published
+  reattachment 0.65-0.70); staircase Cf flicker fragments the bubble;
+- transition (near-wall k onset, 100 k_inf) x_t/c = 0.427 — inside the
+  0.5 +- 0.1 gate, at the early edge of the published RANS-LM scatter
+  (0.53-0.58), consistent with first-order-upwind front smearing;
+- peak near-wall k = 3.7e-2: genuinely turbulent reattachment;
+- C_L = 0.5616 (-6 % of 0.60), C_D = 0.0267 (+21 % of 0.022, inside the
+  +-15 %-band edge at 0.027 — the penalization D_eff ~ D + h class);
+- **transition-front chordwise smearing: 104 level-4 cells (0.152 c)
+  across k = 10 -> 1000 k_inf.** This is THE trigger number for the
+  deferred TVD/van-Leer + second-scalar-halo increment: the front is
+  wide, and the measurement now justifies that follow-up.
+
 ## Workflow
 
 ```bash
