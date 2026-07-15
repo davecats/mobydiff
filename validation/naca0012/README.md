@@ -134,10 +134,34 @@ on the RTX 5090, 65094 leaves):
 One refinement level cuts the near-nose fan 15x; the flat ~0.002
 residual is the shared large-scale transient floor, not a fan (both
 cases meet at the far strip). The parasite is effectively dead already
-at ring cell-Re ~ 7.6 — consistent with the seed (the O(Delta) staircase
-kink) and the amplifier (dispersion at high cell-Re) BOTH weakening with
-Delta. L6 (ring cell-Re ~ 1.9, 237208 leaves) runs as the final
-confirmation point.
+at ring cell-Re ~ 7.6.
+
+R1 CONTROLS (user-requested; all at t = 1.5 for fair comparison):
+
+  case                      0.006c   0.012c   0.023c   0.047c   0.094c
+  L4 dt4e-4 (t-twin)        0.0172   0.0113   0.0057   0.0022   0.0020
+  L4 dt6e-5 (dt control)    0.0179   0.0114   0.0055   0.0024   0.0021
+  L4 + fan-box (fine MEDIUM,
+    same L4 ring; box
+    4.35-4.55 x 5.92-6.08)  0.0170   0.0113   0.0053   0.0008   0.0000
+  L5 (fine ring + medium)   0.0015   0.0016   0.0021   0.0027   0.0025
+
+Verdicts: (1) dt INNOCENT — a 6.7x smaller step changes every strip by
+< 4 % (the gap to the t = 10 baseline is fan growth in time, not dt);
+(2) the near fan (<= 0.023c) is controlled by the RING SEED, not the
+medium: refining the medium alone changes nothing, refining the ring
+collapses it 11x — the cell-Peclet-of-the-medium hypothesis is refuted
+for the core fan; (3) the FAR strips were largely LEVEL-INTERFACE
+artifacts, not parasite: with the whole analysis window at one level
+they drop to exactly 0.0 (the twin's and L5's far-strip floor ~0.002
+coincides with L4->L3->L2 interfaces inside the window — the earlier
+"fan reaches 64+ cells" was partly this). (4) L6 (ring cell-Re ~ 1.9)
+BLEW UP under model = none (under-resolved DNS at Re 1e5: the fine band
+resolves real shear-layer instabilities the coarse wake cannot carry;
+RANS OOM'd at 121M cells on 49 GB) — dropped as redundant: L5 already
+sits at the transient floor. mobygeom block-table now combines
+--refine-box WITH body classification (the solver ini must carry the
+same [blocks] refine key for the builder cross-check).
 
 ## Workflow
 

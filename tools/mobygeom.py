@@ -1750,16 +1750,18 @@ def block_table_from_stl(args: argparse.Namespace) -> None:
     args._ray_intersector = None
 
     refine_box = getattr(args, "refine_box", None)
-    touch = buried = None
-    if refine_box is None:
-        touch, buried = level_masks(mesh, vertices, faces, args, nb, levels)
-        if getattr(args, "keep_buried", False):
-            # Keep leaves buried inside the body (zeroed masks reach the
-            # solver, whose own builder then also removes nothing). REQUIRED
-            # for penalization-force cases: a removed core's closed faces
-            # absorb the body's pressure loading with no coef bookkeeping,
-            # so sum(coef u dV) misses most of the (pressure-dominated) lift.
-            buried = [np.zeros_like(b) for b in buried]
+    # Body classification always runs (the command requires --geometry);
+    # --refine-box ADDS box refinement on top, mirroring the solver's
+    # combined builder ([blocks] refine + refine_body). The solver ini must
+    # carry the same [blocks] refine box or its builder cross-check errors.
+    touch, buried = level_masks(mesh, vertices, faces, args, nb, levels)
+    if getattr(args, "keep_buried", False):
+        # Keep leaves buried inside the body (zeroed masks reach the
+        # solver, whose own builder then also removes nothing). REQUIRED
+        # for penalization-force cases: a removed core's closed faces
+        # absorb the body's pressure loading with no coef bookkeeping,
+        # so sum(coef u dV) misses most of the (pressure-dominated) lift.
+        buried = [np.zeros_like(b) for b in buried]
 
     lev, crd = build_leaf_table_py(gnbt, levels, periodic, touch, buried, refine_box, lines, nb)
     n_leaves = lev.shape[0]
