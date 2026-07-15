@@ -135,3 +135,33 @@ global-3D restarts carry no layout to clash).
     better-resolved reference exactly like the validated case (bulk U
     15.90 vs uniform128 15.26, reference 15.68).
 
+
+## R2D-3 — refine_body xz + dwall + keep-buried + the y-span airfoil (PASS 2026-07-15)
+
+- mobygeom `--refine-dims xz` (block-table: masks, coef and dwall tiles
+  at anisotropic level grids, keep-buried) landed in R2D-0/1; the
+  file-based refine_body xz path was gated by unibody_xz (R2D-1).
+- **Analytic refine_body + per-level dwall in xz**: the rans_geometry
+  wavy gate rerun with refine_dims = xz (224 leaves [96, 128]):
+  max|dwall - scipy ref| = 2.35e-11 (l0) / 2.18e-11 (l1) — identical
+  accuracy to the committed xyz gates. Run: sed refine_dims = xz into
+  validation/rans_geometry/wavy_refine.ini + check_rans_geometry.py.
+- **[case.airfoil] span = y** (chord x, LIFT z, span y periodic; inlets
+  x_min/z_min/z_max, outlet x_max; forces/qref use the lift/span dims)
+  + make_airfoil_stl --span y (axis-swapped extrusion, winding
+  re-inverted; probe-verified inside = solid). 7-case suite bit-exact
+  (span = z default arithmetically untouched), CPU AND GPU.
+- **Fan bench L5-xz** (validation/naca0012/xz_l5.ini + README "R2D-3"
+  section): 6748 leaves vs 65094 L5-3D (9.6x fewer); the fan strips
+  REPRODUCE the R1a L5 ground-truth collapse identically
+  (0.0014/0.0015/0.0013/0.0021/0.0011 vs 0.0014/0.0015/0.0012/0.0022/
+  0.0011); cost 0.046 s/step on the RTX 5090 = 31% of L4-3D (0.148),
+  12% of L5-3D (0.379) — L5 LE quality below L4 cost, the phase's
+  design goal. fan_metric.py commits the R1 strip metric (reproduces
+  the committed fanbox table to 1e-4); slice_field.py gains --span y +
+  refine_dims-aware reassembly (regression-identical on the committed
+  L5 field).
+
+NEXT (the post-phase goals): the NACA AoA sweep 0/4/8 at L5-xz
+(keep-buried, xz_aoa*.ini, one host per angle) and the SD7003 rerun on
+the 2D-refined grid.

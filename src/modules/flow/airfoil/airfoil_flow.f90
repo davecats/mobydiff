@@ -29,6 +29,14 @@ module airfoil_flow
         real(C_DOUBLE) :: aoa = 0.0d0            ! angle of attack [deg]
         real(C_DOUBLE) :: u_inf = 1.0d0
         real(C_DOUBLE) :: chord = 1.0d0
+        ! [case.airfoil] span = z (default) | y: the periodic (extrusion)
+        ! direction. span = y is the xz-quadtree orientation
+        ! (docs/next_session_refine2d.md): chord along x, LIFT along z,
+        ! freestream (U cos a, 0, U sin a), inlets x_min/z_min/z_max,
+        ! outlet x_max — [blocks] refine_dims = xz then never refines the
+        ! span. liftDim/spanDim are derived at config read.
+        integer :: spanDim = 3
+        integer :: liftDim = 2
         integer :: force_sample_interval = 10
         character(len=256) :: runtime_file = "forces.txt"
         logical :: header_written = .false.
@@ -52,15 +60,17 @@ contains
         flow%name = AIRFOIL_CASE_NAME
     end subroutine create_airfoil_case
 
-    ! Freestream direction cosines from the angle of attack.
-    subroutine freestream(this, ux, uy)
+    ! Freestream direction cosines from the angle of attack: ux along the
+    ! chord (x), ul along the LIFT direction (y for span = z, z for
+    ! span = y).
+    subroutine freestream(this, ux, ul)
         class(airfoil_case_type), intent(in) :: this
-        real(C_DOUBLE), intent(out) :: ux, uy
+        real(C_DOUBLE), intent(out) :: ux, ul
         real(C_DOUBLE) :: a
 
         a = this%aoa*(4.0d0*atan(1.0d0))/180.0d0
         ux = this%u_inf*cos(a)
-        uy = this%u_inf*sin(a)
+        ul = this%u_inf*sin(a)
     end subroutine freestream
 
     subroutine airfoil_apply_defaults(this, dns, g, bc, c, ps)
@@ -71,36 +81,40 @@ contains
         type(comm_type), intent(inout) :: c
         type(pressure_solver_type), intent(inout) :: ps
 
-        real(C_DOUBLE) :: ux, uy
+        real(C_DOUBLE) :: ux, ul, vel(3)
         integer :: face_id, dir, side
 
         call set_generic_defaults(dns, g, bc, c, ps)
         this%name = AIRFOIL_CASE_NAME
-        call freestream(this, ux, uy)
+        call freestream(this, ux, ul)
+        vel = 0.0d0
+        vel(1) = ux
+        vel(this%liftDim) = ul
 
         dns%ibm_enabled = .true.
         dns%forcing = 0.0d0             ! no volume forcing in airfoil runs
-        dns%initial_velocity = [ux, uy, 0.0d0]
+        dns%initial_velocity = vel
 
         ! Freestream composition in ONE vocabulary -- patch types (the ini is
         ! parsed AFTER apply_defaults, so explicit [boundary] keys still win):
-        ! x_min, y_min, y_max Dirichlet inlets carrying (U cos a, U sin a, 0),
-        ! x_max the Dirichlet-pressure outlet; z periodic (quasi-2D, nz = nb).
-        ! Large |aoa| needs a taller domain -- the y faces are far-field
-        ! Dirichlet, the standard penalization freestream.
-        bc%isPeriodic(1) = .false.
-        bc%isPeriodic(2) = .false.
-        bc%isPeriodic(3) = .true.
-        do dir = 1, 2
+        ! x_min and both LIFT-direction faces are Dirichlet inlets carrying
+        ! (U cos a) e_x + (U sin a) e_lift, x_max the Dirichlet-pressure
+        ! outlet; the SPAN direction is periodic (quasi-2D, n_span = nb).
+        ! Large |aoa| needs a taller domain -- the lift-direction faces are
+        ! far-field Dirichlet, the standard penalization freestream.
+        bc%isPeriodic = .false.
+        bc%isPeriodic(this%spanDim) = .true.
+        do dir = 1, 3
+            if (dir == this%spanDim) cycle
             do side = 0, 1
                 face_id = boundary_face_id(dir, side)
                 if (dir == 1 .and. side == 1) then
                     bc%facePatchType(face_id) = PATCH_OUTLET
                 else
                     bc%facePatchType(face_id) = PATCH_INLET
-                    bc%faceBcDefaultValue(VAR_U,face_id) = ux
-                    bc%faceBcDefaultValue(VAR_V,face_id) = uy
-                    bc%faceBcDefaultValue(VAR_W,face_id) = 0.0d0
+                    bc%faceBcDefaultValue(VAR_U,face_id) = vel(1)
+                    bc%faceBcDefaultValue(VAR_V,face_id) = vel(2)
+                    bc%faceBcDefaultValue(VAR_W,face_id) = vel(3)
                 end if
             end do
         end do
@@ -125,12 +139,15 @@ contains
         type(boundary_type), intent(in) :: bc
         type(comm_type), intent(in) :: c
 
-        real(C_DOUBLE) :: ux, uy
+        real(C_DOUBLE) :: ux, ul, vel(3)
 
-        call freestream(this, ux, uy)
-        blk%q(:,:,:,VAR_U,:) = ux
-        blk%q(:,:,:,VAR_V,:) = uy
-        blk%q(:,:,:,VAR_W,:) = 0.0d0
+        call freestream(this, ux, ul)
+        vel = 0.0d0
+        vel(1) = ux
+        vel(this%liftDim) = ul
+        blk%q(:,:,:,VAR_U,:) = vel(1)
+        blk%q(:,:,:,VAR_V,:) = vel(2)
+        blk%q(:,:,:,VAR_W,:) = vel(3)
     end subroutine airfoil_initialise_fields
 
     ! Penalization-integral force on the body, F_d = sum coef*q*V_d over the
@@ -205,12 +222,12 @@ contains
             f = f + fbg(3*(b-1)+1:3*(b-1)+3)
         end do
 
-        ! Drag along the freestream, lift normal to it (rho = 1):
-        ! C = 2 F.e / (U_inf^2 * chord * Lz).
+        ! Drag along the freestream, lift normal to it in the chord-lift
+        ! plane (rho = 1): C = 2 F.e / (U_inf^2 * chord * L_span).
         a = this%aoa*(4.0d0*atan(1.0d0))/180.0d0
-        qref = this%u_inf**2*this%chord*dns%leng(3)
-        cd = 2.0d0*( f(1)*cos(a) + f(2)*sin(a))/qref
-        cl = 2.0d0*(-f(1)*sin(a) + f(2)*cos(a))/qref
+        qref = this%u_inf**2*this%chord*dns%leng(this%spanDim)
+        cd = 2.0d0*( f(1)*cos(a) + f(this%liftDim)*sin(a))/qref
+        cl = 2.0d0*(-f(1)*sin(a) + f(this%liftDim)*cos(a))/qref
 
         if (c%has_terminal) call append_forces(this, dns, cl, cd)
     end subroutine airfoil_after_step
@@ -308,6 +325,18 @@ contains
             if (stat == 0) this%force_sample_interval = int_value
         case ("runtime_file")
             this%runtime_file = clean_config_string(value)
+        case ("span")
+            select case (trim(to_lower(clean_config_string(value))))
+            case ("z")
+                this%spanDim = 3
+                this%liftDim = 2
+            case ("y")
+                this%spanDim = 2
+                this%liftDim = 3
+            case default
+                print *, "[case.airfoil] span must be z or y at line", line_no
+                error stop "invalid [case.airfoil] span"
+            end select
         case default
             if (terminal) print *, "warning: unknown airfoil case key on input line", line_no, ": ", trim(key)
         end select

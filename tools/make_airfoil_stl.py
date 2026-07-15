@@ -94,9 +94,16 @@ def main():
     for name in ("cylinder", "naca", "selig"):
         p = sub.add_parser(name)
         p.add_argument("--xc", type=float, required=True)
-        p.add_argument("--yc", type=float, required=True)
-        p.add_argument("--lz", type=float, required=True, help="domain Lz")
-        p.add_argument("--pad", type=float, default=0.25, help="z overhang past both faces")
+        p.add_argument("--yc", type=float, required=True,
+                       help="section-centre coordinate in the LIFT direction "
+                            "(y for --span z, z for --span y)")
+        p.add_argument("--lz", type=float, required=True,
+                       help="domain extent along the SPAN axis (Lz for --span z, "
+                            "Ly for --span y)")
+        p.add_argument("--span", choices=("z", "y"), default="z",
+                       help="extrusion (span) axis: z (default) or y (the "
+                            "xz-quadtree airfoil orientation: chord x, lift z)")
+        p.add_argument("--pad", type=float, default=0.25, help="span overhang past both faces")
         p.add_argument("--n", type=int, default=720, help="section points")
         p.add_argument("--out", required=True)
         if name == "cylinder":
@@ -116,9 +123,15 @@ def main():
     pts = sections[a.shape](a)
     mesh = trimesh.creation.extrude_polygon(Polygon(pts), height=a.lz + 2.0*a.pad)
     mesh.apply_translation([0.0, 0.0, -a.pad])
+    if a.span == "y":
+        # Section plane becomes x-z (chord x, LIFT z), span along y: swap
+        # the y and z axes. The swap mirrors the mesh, so re-invert the
+        # face winding to keep inside = solid.
+        mesh.vertices = mesh.vertices[:, [0, 2, 1]]
+        mesh.invert()
     mesh.export(a.out)
     print(f"{a.out}: {len(mesh.vertices)} vertices, watertight={mesh.is_watertight}, "
-          f"z in [{-a.pad}, {a.lz + a.pad}]")
+          f"span {a.span} in [{-a.pad}, {a.lz + a.pad}]")
 
 
 if __name__ == "__main__":

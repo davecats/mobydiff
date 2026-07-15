@@ -209,3 +209,28 @@ unknown ini keys and reproduced the twin bitwise.
 ./run_sweep.sh          # aoa 0/4/8 sequential GPU runs + check_naca.py
 ./run_sweep.sh 4        # a single angle
 ```
+
+## R2D-3 (2026-07-15): 2D refinement — L5-xz fan bench + span = y
+
+The xz-quadtree phases (docs/next_session_refine2d.md, [blocks]
+refine_dims = xz) re-orient the case: span along Y ([case.airfoil]
+span = y — chord x, LIFT z, inlets x_min/z_min/z_max, outlet x_max;
+make_airfoil_stl --span y), so the span never pays 2^L cells per level.
+xz_l5.ini = the R1a L5 ground-truth configuration (aoa 4, RANS, dt 2e-4,
+t = 1.5, remove-buried) at refine_levels = 5, refine_dims = xz:
+6748 leaves (vs 65094 L5-3D, 9.6x fewer).
+
+Fan strips (fan_metric.py — the committed reconstruction of the R1
+metric; slice_field.py --span y; values recomputed from the committed
+npz for apples-to-apples):
+
+  case            0.006c   0.012c   0.023c   0.047c   0.094c
+  L4-3D (dt twin) 0.0177   0.0111   0.0053   0.0014   0.0014
+  L5-3D  (R1a)    0.0014   0.0015   0.0012   0.0022   0.0011
+  L5-xz  (R2D-3)  0.0014   0.0015   0.0013   0.0021   0.0011
+
+The L5-xz strips REPRODUCE the R1a fan collapse identically (the
+residual is the shared transient floor). COST (all on the RTX 5090):
+L4-3D 0.148 s/step (25418 leaves), L5-3D 0.379 s/step (65094), L5-xz
+0.046 s/step (6748) — L5 ground-truth LE quality at 31% of the L4-3D
+step cost (12% of L5-3D), near-linear in the leaf count.

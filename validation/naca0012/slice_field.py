@@ -15,14 +15,25 @@ import h5py
 import numpy as np
 
 
-def load_window(path, names, x0, x1, y0, y1):
+def load_window(path, names, x0, x1, y0, y1, span="z"):
+    """Window slice at mid-SPAN. span = 'z' (default: window in x-y) or
+    'y' (the refine_dims = xz orientation: window in x-z, 'yc' returns
+    the LIFT z coordinate). Per-direction replication factors honour the
+    refine_dims attribute (absent = xyz octree)."""
     with h5py.File(path, "r") as f:
         blocks = f["blocks"][...]
         nb = int(f.attrs["block_nb_x"])
         lmax = int(blocks[:, 3].max())
         nx = int(f.attrs["nx"]); ny = int(f.attrs["ny"]); nz = int(f.attrs["nz"])
-        lx = float(f.attrs.get("lx", 12.0)); ly = float(f.attrs.get("ly", 12.0))
-        hx = lx / (nx * 2**lmax); hy = ly / (ny * 2**lmax)
+        lx = float(f.attrs.get("lx", 12.0))
+        lift_l = float(f.attrs.get("ly", 12.0)) if span == "z" else float(f.attrs.get("lz", 12.0))
+        lift_n = ny if span == "z" else nz
+        span_n = nz if span == "z" else ny
+        mask = np.asarray(f.attrs.get("refine_dims", [1, 1, 1]), dtype=np.int64)
+        m_lift = int(mask[1] if span == "z" else mask[2])
+        m_span = int(mask[2] if span == "z" else mask[1])
+        hx = lx / (nx * 2**(lmax*int(mask[0])))
+        hy = lift_l / (lift_n * 2**(lmax*m_lift))
         i0, i1 = int(x0 / hx), int(np.ceil(x1 / hx))
         j0, j1 = int(y0 / hy), int(np.ceil(y1 / hy))
         out = {n: np.full((j1 - j0, i1 - i0), np.nan) for n in names}
@@ -30,27 +41,33 @@ def load_window(path, names, x0, x1, y0, y1):
         # fine pixels, which makes smooth coarse gradients look blocky --
         # read images with this map in hand (LE "checkerboard" analysis).
         out["level"] = np.full((j1 - j0, i1 - i0), -1.0)
-        kz_f = (nz * 2**lmax) // 2          # mid-z on the finest lattice
+        ks_f = (span_n * 2**(lmax*m_span)) // 2   # mid-span, finest lattice
         data = {n: f[n] for n in names}
         for bid, (ox, oy, oz, lev) in enumerate(blocks):
-            fac = 2 ** (lmax - int(lev))
-            bx0, by0, bz0 = ox * fac, oy * fac, oz * fac
-            if bx0 >= i1 or bx0 + nb * fac <= i0:
+            fx = 2 ** ((lmax - int(lev))*int(mask[0]))
+            fy = 2 ** ((lmax - int(lev))*int(mask[1]))
+            fz = 2 ** ((lmax - int(lev))*int(mask[2]))
+            fl = fy if span == "z" else fz
+            fs = fz if span == "z" else fy
+            bx0 = ox * fx
+            bl0 = (oy * fy) if span == "z" else (oz * fz)
+            bs0 = (oz * fz) if span == "z" else (oy * fy)
+            if bx0 >= i1 or bx0 + nb * fx <= i0:
                 continue
-            if by0 >= j1 or by0 + nb * fac <= j0:
+            if bl0 >= j1 or bl0 + nb * fl <= j0:
                 continue
-            if not (bz0 <= kz_f < bz0 + nb * fac):
+            if not (bs0 <= ks_f < bs0 + nb * fs):
                 continue
-            kk = (kz_f - bz0) // fac
-            gi0, gj0 = bx0, by0
-            si0 = max(i0, gi0); si1 = min(i1, gi0 + nb * fac)
-            sj0 = max(j0, gj0); sj1 = min(j1, gj0 + nb * fac)
+            kk = (ks_f - bs0) // fs
+            si0 = max(i0, bx0); si1 = min(i1, bx0 + nb * fx)
+            sj0 = max(j0, bl0); sj1 = min(j1, bl0 + nb * fl)
             out["level"][sj0 - j0:sj1 - j0, si0 - i0:si1 - i0] = float(lev)
             for n in names:
-                row = data[n][bid][kk]              # (nby, nbx) at level lev
-                rep = row.repeat(fac, axis=0).repeat(fac, axis=1)
+                r = data[n][bid]                     # (nbz, nby, nbx)
+                row = r[kk] if span == "z" else r[:, kk, :]  # (lift, chord)
+                rep = row.repeat(fl, axis=0).repeat(fx, axis=1)
                 out[n][sj0 - j0:sj1 - j0, si0 - i0:si1 - i0] = \
-                    rep[sj0 - gj0:sj1 - gj0, si0 - gi0:si1 - gi0]
+                    rep[sj0 - bl0:sj1 - bl0, si0 - bx0:si1 - bx0]
         xc = (np.arange(i0, i1) + 0.5) * hx
         yc = (np.arange(j0, j1) + 0.5) * hy
     return out, xc, yc
@@ -62,13 +79,22 @@ def main() -> int:
     ap.add_argument("--window", type=float, nargs=4, default=[4.0, 6.5, 5.4, 6.6])
     ap.add_argument("--out", default="slice.npz")
     ap.add_argument("--re", type=float, default=1.0e5)
+    ap.add_argument("--span", choices=("z", "y"), default="z",
+                    help="span axis (y = the refine_dims xz orientation; the "
+                         "window's second pair and 'yc' are then the LIFT z)")
     a = ap.parse_args()
 
     names = ["un", "vn", "pn", "k", "omega", "nut"]
+    if a.span == "y":
+        # the lift-normal fluctuating component is w in this orientation;
+        # keep the npz key 'vn' meaning "lift-direction velocity"
+        names = ["un", "wn", "pn", "k", "omega", "nut"]
     with h5py.File(a.h5) as f:
         names = [n for n in names if n in f]
     x0, x1, y0, y1 = a.window
-    out, xc, yc = load_window(a.h5, names, x0, x1, y0, y1)
+    out, xc, yc = load_window(a.h5, names, x0, x1, y0, y1, span=a.span)
+    if a.span == "y" and "wn" in out:
+        out["vn"] = out.pop("wn")
     np.savez_compressed(a.out, xc=xc, yc=yc, **out)
     print(f"{a.out}: window [{x0},{x1}]x[{y0},{y1}], {out[names[0]].shape}, fields {names}")
 
