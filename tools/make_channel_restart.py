@@ -124,32 +124,48 @@ def morton_key(cx, cy, cz):
     return key
 
 
-def morton_sort(leaves, lmax=1):
+def morton_key2(cx, cz):
+    key = 0
+    for bit in range(21):
+        key |= ((cx >> bit) & 1) << (2*bit)
+        key |= ((cz >> bit) & 1) << (2*bit + 1)
+    return key
+
+
+def morton_sort(leaves, lmax=1, mask=(1, 1, 1)):
+    """Canonical leaf order (blocks.f90 leaf_key): 3D Morton (xyz octree)
+    or the mixed y-major form (xz quadtree: y tile in bits 42+ over the
+    2D x,z Morton key of the finest-lattice coords)."""
     def key(leaf):
         lev, cx, cy, cz = leaf
-        f = 2**(lmax - lev)
-        return morton_key(cx*f, cy*f, cz*f)
+        fx, fy, fz = (2**((lmax - lev)*m) for m in mask)
+        if all(mask):
+            return morton_key(cx*fx, cy*fy, cz*fz)
+        return ((cy*fy) << 42) | morton_key2(cx*fx, cz*fz)
     leaves.sort(key=key)
     return leaves
 
 
-def band_leaf_table(gnbt, band_rows):
+def band_leaf_table(gnbt, band_rows, mask=(1, 1, 1)):
     """(level, origin-in-level-cells) leaves: y block rows < band_rows or
-    >= gnbt[1]-band_rows refined to level 1; Morton ids on the finest
-    lattice."""
+    >= gnbt[1]-band_rows refined to level 1 (2x2x2 children, or 2x1x2 in
+    xz mode where the child keeps the parent's y tile); canonical Morton
+    ids on the finest lattice."""
     leaves = []
     for cz in range(gnbt[2]):
         for cy in range(gnbt[1]):
             for cx in range(gnbt[0]):
                 refined = cy < band_rows or cy >= gnbt[1] - band_rows
                 if refined:
-                    for sz in (0, 1):
-                        for sy in (0, 1):
-                            for sx in (0, 1):
-                                leaves.append((1, 2*cx + sx, 2*cy + sy, 2*cz + sz))
+                    for sz in range(1 + mask[2]):
+                        for sy in range(1 + mask[1]):
+                            for sx in range(1 + mask[0]):
+                                leaves.append((1, (1 + mask[0])*cx + sx,
+                                               (1 + mask[1])*cy + sy,
+                                               (1 + mask[2])*cz + sz))
                 else:
                     leaves.append((0, cx, cy, cz))
-    return morton_sort(leaves)
+    return morton_sort(leaves, mask=mask)
 
 
 def box_leaf_table(gnbt, nb, base_nodes, boxes):
@@ -227,6 +243,9 @@ def main():
                         help="patch mode: physical refine box (repeatable); "
                              "same 6 numbers as [blocks] refine in the .ini")
     parser.add_argument("--dyw-plus", type=float, default=0.5)
+    parser.add_argument("--refine-dims", choices=("xyz", "xz"), default="xyz",
+                        help="refined directions ([blocks] refine_dims): xz keeps "
+                             "the base y line at level 1 (refined/patch modes)")
     parser.add_argument("--nx", type=int, default=128, help="base grid nx (coarsen for LES-active runs)")
     parser.add_argument("--ny", type=int, default=64, help="base grid ny")
     parser.add_argument("--nz", type=int, default=128, help="base grid nz")
@@ -243,7 +262,8 @@ def main():
     base_nodes = (uniform_line(base[0], lx),
                   natural_line(base[1], ly, 16.0, args.dyw_plus),
                   uniform_line(base[2], lz))
-    fine_nodes = tuple(subdivide(n) for n in base_nodes)
+    mask = (1, 1, 1) if args.refine_dims == "xyz" else (1, 0, 1)
+    fine_nodes = tuple(subdivide(n) if m else n for n, m in zip(base_nodes, mask))
 
     # Interpolate each staggered field onto base and fine lattices.
     src_nodes = src["nodes"]
@@ -291,11 +311,12 @@ def main():
         gnbt = tuple(n//NB for n in base)
         if args.mode == "patch":
             assert args.refine_box, "patch mode requires at least one --refine-box"
+            assert args.refine_dims == "xyz", "patch mode supports xyz only"
             leaves = box_leaf_table(gnbt, NB, base_nodes, args.refine_box)
         else:
             band_rows = args.band_cells//NB
             assert band_rows*NB == args.band_cells, "band must be whole block rows"
-            leaves = band_leaf_table(gnbt, band_rows)
+            leaves = band_leaf_table(gnbt, band_rows, mask=mask)
         nleaf = len(leaves)
         blocks = np.zeros((nleaf, 4), dtype=np.int32)
         rows = {name: np.zeros((nleaf, NB, NB, NB)) for name in names}
@@ -309,6 +330,10 @@ def main():
         attrs = common_attrs(src["attrs"], base[0], base[1], base[2], args.dyw_plus)
         attrs.update({"block_nb_x": np.int32(NB), "block_nb_y": np.int32(NB),
                       "block_nb_z": np.int32(NB), "n_blocks": np.int32(nleaf)})
+        if not all(mask):
+            # xz-quadtree file variant marker (the solver restart
+            # cross-checks it against [blocks] refine_dims).
+            attrs["refine_dims"] = np.array(mask, dtype=np.int32)
         with h5py.File(args.out, "w") as h5:
             write_attrs(h5, attrs)
             h5.create_dataset("blocks", data=blocks)

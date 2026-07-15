@@ -35,20 +35,25 @@ def main():
 
     h5 = h5py.File(args.field, "r")
     lx = float(h5.attrs["lx"]); re = float(h5.attrs["re"]); t = float(h5.attrs["t_current"])
-    nx = int(h5.attrs["nx"])
+    nx = int(h5.attrs["nx"]); ny = int(h5.attrs["ny"]); nz = int(h5.attrs["nz"])
     k0 = 2.0*np.pi/lx
     nu = 1.0/re
     F = np.exp(-nu*k0*k0*t)
     blocks = h5["blocks"][...]
     nbx = int(h5.attrs["block_nb_x"]); nby = int(h5.attrs["block_nb_y"]); nbz = int(h5.attrs["block_nb_z"])
+    # Per-direction refinement mask (absent = xyz octree): an unrefined
+    # direction keeps the level-0 spacing at every level (refine_dims = xz).
+    mask = np.asarray(h5.attrs.get("refine_dims", [1, 1, 1]), dtype=np.int64)
     U = h5["un"]; V = h5["vn"]; W = h5["wn"]
 
     s2 = {"u": 0.0, "v": 0.0, "w": 0.0}; vol = 0.0
     linf = {"u": 0.0, "v": 0.0, "w": 0.0}
     for bid, (ox, oy, oz, lev) in enumerate(blocks):
-        h = lx/(nx*2**lev)
+        hx = lx/(nx*2**(lev*mask[0]))
+        hy = lx/(ny*2**(lev*mask[1]))
+        hz = lx/(nz*2**(lev*mask[2]))
         gi = ox + np.arange(nbx); gj = oy + np.arange(nby); gk = oz + np.arange(nbz)
-        xc = (gi + 0.5)*h; yc = (gj + 0.5)*h; zc = (gk + 0.5)*h   # cell centres
+        xc = (gi + 0.5)*hx; yc = (gj + 0.5)*hy; zc = (gk + 0.5)*hz   # cell centres
         # Each component is independent of its own staggered direction, so only
         # the cell-centred coordinates of the two relevant directions enter.
         sx, cx = np.sin(k0*xc), np.cos(k0*xc)   # (i,)
@@ -58,7 +63,7 @@ def main():
         exv = F*(cz[:, None, None] + sx[None, None, :])   # v = sin(kx)+cos(kz), broadcast over j
         exw = F*(sy[None, :, None] + cx[None, None, :])   # w = sin(ky)+cos(kx), broadcast over k
         eu = U[bid] - exu; ev = V[bid] - exv; ew = W[bid] - exw
-        w = h**3
+        w = hx*hy*hz
         s2["u"] += np.sum(eu**2)*w; s2["v"] += np.sum(ev**2)*w; s2["w"] += np.sum(ew**2)*w
         vol += eu.size*w
         linf["u"] = max(linf["u"], np.abs(eu).max())

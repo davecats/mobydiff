@@ -87,11 +87,11 @@ module io
             integer(C_INT) :: ierr
         end function fdm_h5_append_refine_dims
 
-        function fdm_h5_read_refine_dims(file_name, mask) &
+        function fdm_h5_read_refine_dims(file_name, mask, has_blocks) &
                 bind(C, name="fdm_h5_read_refine_dims") result(ierr)
             import :: C_CHAR, C_INT
             character(kind=C_CHAR), intent(in) :: file_name(*)
-            integer(C_INT), intent(out) :: mask(*)
+            integer(C_INT), intent(out) :: mask(*), has_blocks
             integer(C_INT) :: ierr
         end function fdm_h5_read_refine_dims
 
@@ -605,19 +605,21 @@ subroutine read_field(blk, dns, file_name, c)
     type(comm_type), intent(in) :: c
 
     character(kind=C_CHAR,len=:), allocatable :: c_file_name
-    integer(C_INT) :: ierr, file_mask(1:3)
+    integer(C_INT) :: ierr, file_mask(1:3), has_blocks
 
     c_file_name = to_c_string(file_name)
     ! The refine_dims variants store block origins in different index
-    ! spaces (xz: y origins in GLOBAL cells) — a mixed restart must be a
-    ! hard error, not a silent misplacement (the blocks-table row check
-    ! alone could alias on y-symmetric layouts).
-    ierr = fdm_h5_read_refine_dims(c_file_name, file_mask)
+    ! spaces (xz: y origins in GLOBAL cells) — a mixed BLOCK-layout
+    ! restart must be a hard error, not a silent misplacement (the
+    ! blocks-table row check alone could alias on y-symmetric layouts).
+    ! Legacy global-3D files carry no block layout: any leaf table can
+    ! slice them, so the check does not apply.
+    ierr = fdm_h5_read_refine_dims(c_file_name, file_mask, has_blocks)
     if (ierr /= 0_C_INT) then
         if (c%has_terminal) print *, "error: could not read refine_dims from: ", trim(file_name)
         error stop
     end if
-    if (any(file_mask /= dns%block_refine_mask)) then
+    if (has_blocks /= 0_C_INT .and. any(file_mask /= dns%block_refine_mask)) then
         if (c%has_terminal) print *, "restart file refine_dims mask", file_mask, &
             "does not match the configured [blocks] refine_dims", dns%block_refine_mask
         error stop "restart/config [blocks] refine_dims mismatch"

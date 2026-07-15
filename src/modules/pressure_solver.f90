@@ -94,12 +94,17 @@ contains
         integer(C_INT) :: iIter, dir
         real(C_DOUBLE) :: omega
         real(C_DOUBLE) :: dd, cc, alpha, alphaPrev, beta, gamma
-        logical(C_BOOL) :: outLow(3), outHigh(3)
+        logical(C_BOOL) :: outLow(3), outHigh(3), refd(3)
         logical :: anyOutlet
         integer(C_INT) :: phiMode(NFACES)
 
         call allocate_phi(blk)
         if (ps%cheb) call allocate_delta(blk)
+
+        ! Per-direction refinement flags ([blocks] refine_dims): a 2:1 face
+        ! normal to an unrefined direction uses the uniform gradient metric
+        ! (face_grad), all true in xyz mode.
+        refd = blk%refMask == 1_C_INT
 
         ! Dirichlet-pressure outlet faces (declared [boundary] _patch = outlet).
         ! The flags are per DOMAIN face; inside the kernels they act only where
@@ -134,7 +139,7 @@ contains
         ! velocity (+ pressure on the last iteration) halos for the next
         ! divergence.
         do iIter = 1_C_INT, ps%nIter
-            call jacobi_compute_phi(blk, ibm, omega, outLow, outHigh)
+            call jacobi_compute_phi(blk, ibm, omega, outLow, outHigh, refd)
             if (ps%cheb) then
                 if (iIter == 1_C_INT) then
                     alpha = 1.0d0/dd
@@ -152,7 +157,7 @@ contains
             ! tangential extension can write physical halos, so do not rely on
             ! them staying zero.
             if (anyOutlet) call apply_scalar_bc(blk, bc, phi, phiMode)
-            call jacobi_apply(ps, blk, dt_gamma, ibm, outLow, outHigh)
+            call jacobi_apply(ps, blk, dt_gamma, ibm, outLow, outHigh, refd)
             call apply_bc(blk, bc)
             if (iIter == ps%nIter) then
                 call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W, VAR_P])
@@ -228,11 +233,11 @@ contains
     ! phi = -omega*div/denom); Chebyshev passes 1.0 so phi holds the pure
     ! diagonal-preconditioned residual z = -div/denom (the damping then comes
     ! from the Chebyshev coefficients).
-    subroutine jacobi_compute_phi(blk, ibm, omega, outLow, outHigh)
+    subroutine jacobi_compute_phi(blk, ibm, omega, outLow, outHigh, refd)
         type(block_set_type), intent(inout) :: blk
         type(ibm_type), intent(in) :: ibm
         real(C_DOUBLE), intent(in) :: omega
-        logical(C_BOOL), intent(in) :: outLow(3), outHigh(3)
+        logical(C_BOOL), intent(in) :: outLow(3), outHigh(3), refd(3)
 
         real(C_DOUBLE) :: denom, div
         real(C_DOUBLE) :: mu_u_i, mu_u_ip, mu_v_j, mu_v_jp, mu_w_k, mu_w_kp
@@ -243,7 +248,7 @@ contains
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do collapse(4) &
-        !$omp& map(to: omega, nx, ny, nz, outLow(1:3), outHigh(1:3), &
+        !$omp& map(to: omega, nx, ny, nz, outLow(1:3), outHigh(1:3), refd(1:3), &
         !$omp& blk%physLow, blk%physHigh, &
         !$omp& blk%d1x, blk%d1y, blk%d1z, ibm%mu) map(tofrom: phi, blk%q) &
         !$omp& private(i,ip,j,jp,k,kp,b,denom,div, &
@@ -267,12 +272,12 @@ contains
                     ! flux sensitivity per unit phi_i doubles -- the matching
                     ! correction in jacobi_apply uses the regular d1f against the
                     ! mirrored ghost. Keep the pair consistent: SPD lives there.
-                    denom = (face_grad_denom(blk%physLow(1,b), i == 1_C_INT, blk%d1x(i,VAR_U,b), outLow(1))*mu_u_i &
-                           + face_grad_denom(blk%physHigh(1,b), i == nx, blk%d1x(ip,VAR_U,b), outHigh(1))*mu_u_ip)*blk%d1x(i,VAR_P,b) &
-                          + (face_grad_denom(blk%physLow(2,b), j == 1_C_INT, blk%d1y(j,VAR_V,b), outLow(2))*mu_v_j &
-                           + face_grad_denom(blk%physHigh(2,b), j == ny, blk%d1y(jp,VAR_V,b), outHigh(2))*mu_v_jp)*blk%d1y(j,VAR_P,b) &
-                          + (face_grad_denom(blk%physLow(3,b), k == 1_C_INT, blk%d1z(k,VAR_W,b), outLow(3))*mu_w_k &
-                           + face_grad_denom(blk%physHigh(3,b), k == nz, blk%d1z(kp,VAR_W,b), outHigh(3))*mu_w_kp)*blk%d1z(k,VAR_P,b)
+                    denom = (face_grad_denom(blk%physLow(1,b), i == 1_C_INT, blk%d1x(i,VAR_U,b), outLow(1), refd(1))*mu_u_i &
+                           + face_grad_denom(blk%physHigh(1,b), i == nx, blk%d1x(ip,VAR_U,b), outHigh(1), refd(1))*mu_u_ip)*blk%d1x(i,VAR_P,b) &
+                          + (face_grad_denom(blk%physLow(2,b), j == 1_C_INT, blk%d1y(j,VAR_V,b), outLow(2), refd(2))*mu_v_j &
+                           + face_grad_denom(blk%physHigh(2,b), j == ny, blk%d1y(jp,VAR_V,b), outHigh(2), refd(2))*mu_v_jp)*blk%d1y(j,VAR_P,b) &
+                          + (face_grad_denom(blk%physLow(3,b), k == 1_C_INT, blk%d1z(k,VAR_W,b), outLow(3), refd(3))*mu_w_k &
+                           + face_grad_denom(blk%physHigh(3,b), k == nz, blk%d1z(kp,VAR_W,b), outHigh(3), refd(3))*mu_w_kp)*blk%d1z(k,VAR_P,b)
 
                     div = (blk%q(ip,j,k,VAR_U,b)-blk%q(i,j,k,VAR_U,b))*blk%d1x(i,VAR_P,b) &
                         + (blk%q(i,jp,k,VAR_V,b)-blk%q(i,j,k,VAR_V,b))*blk%d1y(j,VAR_P,b) &
@@ -296,12 +301,12 @@ contains
     ! no in-place race and no colouring. Only the cell's own LOW faces (1..nb)
     ! are written here; each block's high halo face is the neighbour's low face,
     ! filled by the velocity exchange. Pinned faces are left untouched.
-    subroutine jacobi_apply(ps, blk, dt_gamma, ibm, outLow, outHigh)
+    subroutine jacobi_apply(ps, blk, dt_gamma, ibm, outLow, outHigh, refd)
         type(pressure_solver_type), intent(in) :: ps
         type(block_set_type), intent(inout) :: blk
         real(C_DOUBLE), intent(in) :: dt_gamma
         type(ibm_type), intent(in) :: ibm
-        logical(C_BOOL), intent(in) :: outLow(3), outHigh(3)
+        logical(C_BOOL), intent(in) :: outLow(3), outHigh(3), refd(3)
 
         real(C_DOUBLE) :: idt, cf
         integer(C_INT) :: i, ip, j, jp, k, kp, b, nBlocks, nx, ny, nz
@@ -345,7 +350,7 @@ contains
         ! do-nothing Dirichlet-pressure outlet.
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do collapse(4) &
-        !$omp& map(to: nx, ny, nz, outLow(1:3), outHigh(1:3), &
+        !$omp& map(to: nx, ny, nz, outLow(1:3), outHigh(1:3), refd(1:3), &
         !$omp& blk%physLow, blk%physHigh, blk%d1x, blk%d1y, blk%d1z, ibm%mu) &
         !$omp& map(tofrom: blk%q, phi) private(i,ip,j,jp,k,kp,b,cf)
 #endif
@@ -355,13 +360,13 @@ contains
                 do i = 1_C_INT, nx
                     ip = i + 1; jp = j + 1; kp = k + 1
 
-                    cf = face_grad_corr(blk%physLow(1,b), i == 1_C_INT, blk%d1x(i,VAR_U,b), outLow(1))
+                    cf = face_grad_corr(blk%physLow(1,b), i == 1_C_INT, blk%d1x(i,VAR_U,b), outLow(1), refd(1))
                     if (cf /= 0.0d0) blk%q(i,j,k,VAR_U,b) = blk%q(i,j,k,VAR_U,b) &
                         + (phi(i-1,j,k,b) - phi(i,j,k,b))*cf*ibm%mu(i,j,k,VAR_U,b)
-                    cf = face_grad_corr(blk%physLow(2,b), j == 1_C_INT, blk%d1y(j,VAR_V,b), outLow(2))
+                    cf = face_grad_corr(blk%physLow(2,b), j == 1_C_INT, blk%d1y(j,VAR_V,b), outLow(2), refd(2))
                     if (cf /= 0.0d0) blk%q(i,j,k,VAR_V,b) = blk%q(i,j,k,VAR_V,b) &
                         + (phi(i,j-1,k,b) - phi(i,j,k,b))*cf*ibm%mu(i,j,k,VAR_V,b)
-                    cf = face_grad_corr(blk%physLow(3,b), k == 1_C_INT, blk%d1z(k,VAR_W,b), outLow(3))
+                    cf = face_grad_corr(blk%physLow(3,b), k == 1_C_INT, blk%d1z(k,VAR_W,b), outLow(3), refd(3))
                     if (cf /= 0.0d0) blk%q(i,j,k,VAR_W,b) = blk%q(i,j,k,VAR_W,b) &
                         + (phi(i,j,k-1,b) - phi(i,j,k,b))*cf*ibm%mu(i,j,k,VAR_W,b)
 
@@ -371,17 +376,17 @@ contains
                         (outHigh(1) .and. blk%physHigh(1,b) == FACE_PHYS))) &
                         blk%q(ip,j,k,VAR_U,b) = blk%q(ip,j,k,VAR_U,b) &
                             + (phi(i,j,k,b) - phi(ip,j,k,b)) &
-                              *face_grad_corr(blk%physHigh(1,b), .true., blk%d1x(ip,VAR_U,b), outHigh(1))*ibm%mu(ip,j,k,VAR_U,b)
+                              *face_grad_corr(blk%physHigh(1,b), .true., blk%d1x(ip,VAR_U,b), outHigh(1), refd(1))*ibm%mu(ip,j,k,VAR_U,b)
                     if (j == ny .and. (is_interface(blk%physHigh(2,b)) .or. &
                         (outHigh(2) .and. blk%physHigh(2,b) == FACE_PHYS))) &
                         blk%q(i,jp,k,VAR_V,b) = blk%q(i,jp,k,VAR_V,b) &
                             + (phi(i,j,k,b) - phi(i,jp,k,b)) &
-                              *face_grad_corr(blk%physHigh(2,b), .true., blk%d1y(jp,VAR_V,b), outHigh(2))*ibm%mu(i,jp,k,VAR_V,b)
+                              *face_grad_corr(blk%physHigh(2,b), .true., blk%d1y(jp,VAR_V,b), outHigh(2), refd(2))*ibm%mu(i,jp,k,VAR_V,b)
                     if (k == nz .and. (is_interface(blk%physHigh(3,b)) .or. &
                         (outHigh(3) .and. blk%physHigh(3,b) == FACE_PHYS))) &
                         blk%q(i,j,kp,VAR_W,b) = blk%q(i,j,kp,VAR_W,b) &
                             + (phi(i,j,k,b) - phi(i,j,kp,b)) &
-                              *face_grad_corr(blk%physHigh(3,b), .true., blk%d1z(kp,VAR_W,b), outHigh(3))*ibm%mu(i,j,kp,VAR_W,b)
+                              *face_grad_corr(blk%physHigh(3,b), .true., blk%d1z(kp,VAR_W,b), outHigh(3), refd(3))*ibm%mu(i,j,kp,VAR_W,b)
                 end do
             end do
         end do
@@ -407,16 +412,26 @@ contains
     ! 1/d = (2/3) d1_fine = (4/3) d1_coarse -- each cell forms it from its OWN d1
     ! (FACE_COARSE => this block is fine, FACE_FINE => this block is coarse),
     ! giving the same physical 1/d on both sides (the symmetric composite stencil).
-    pure real(C_DOUBLE) function face_grad(fk, atBnd, d1f)
+    ! refined = the face's normal direction halves per level ([blocks]
+    ! refine_dims; always true in xyz mode). A 2:1 face normal to an
+    ! UNREFINED direction shares its node line on both sides (the
+    ! xz-quadtree y face): the normal gradient is the UNIFORM stencil d1f
+    ! -- only the tangential resolution (i.e. the phi ghost content:
+    ! 4-sample restrict / injection) differs. Denominator and correction
+    ! then both count the SAME d1f: the SPD pair.
+    pure real(C_DOUBLE) function face_grad(fk, atBnd, d1f, refined)
 !$omp declare target
         integer(C_INT), intent(in) :: fk
         logical, intent(in) :: atBnd
         real(C_DOUBLE), intent(in) :: d1f
+        logical(C_BOOL), intent(in) :: refined
 
         if (.not. atBnd) then
             face_grad = d1f
         else if (fk == FACE_PHYS .or. fk == FACE_CLOSED) then
             face_grad = 0.0d0
+        else if (.not. refined) then
+            face_grad = d1f
         else if (fk == FACE_COARSE) then
             face_grad = (2.0d0/3.0d0)*d1f
         else if (fk == FACE_FINE) then
@@ -436,31 +451,31 @@ contains
     ! the operator -- change one without the other and the projection loses
     ! SPD at exactly this face row. Every other face kind defers to face_grad
     ! (whose branches are validated and locked).
-    pure real(C_DOUBLE) function face_grad_denom(fk, atBnd, d1f, outlet)
+    pure real(C_DOUBLE) function face_grad_denom(fk, atBnd, d1f, outlet, refined)
 !$omp declare target
         integer(C_INT), intent(in) :: fk
         logical, intent(in) :: atBnd
         real(C_DOUBLE), intent(in) :: d1f
-        logical(C_BOOL), intent(in) :: outlet
+        logical(C_BOOL), intent(in) :: outlet, refined
 
         if (atBnd .and. outlet .and. fk == FACE_PHYS) then
             face_grad_denom = 2.0d0*d1f
         else
-            face_grad_denom = face_grad(fk, atBnd, d1f)
+            face_grad_denom = face_grad(fk, atBnd, d1f, refined)
         end if
     end function face_grad_denom
 
-    pure real(C_DOUBLE) function face_grad_corr(fk, atBnd, d1f, outlet)
+    pure real(C_DOUBLE) function face_grad_corr(fk, atBnd, d1f, outlet, refined)
 !$omp declare target
         integer(C_INT), intent(in) :: fk
         logical, intent(in) :: atBnd
         real(C_DOUBLE), intent(in) :: d1f
-        logical(C_BOOL), intent(in) :: outlet
+        logical(C_BOOL), intent(in) :: outlet, refined
 
         if (atBnd .and. outlet .and. fk == FACE_PHYS) then
             face_grad_corr = d1f
         else
-            face_grad_corr = face_grad(fk, atBnd, d1f)
+            face_grad_corr = face_grad(fk, atBnd, d1f, refined)
         end if
     end function face_grad_corr
 

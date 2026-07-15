@@ -865,14 +865,20 @@ int fdm_h5_append_refine_dims(const char *filename, const int *mask)
     return ierr != 0;
 }
 
-int fdm_h5_read_refine_dims(const char *filename, int *mask)
+/* has_blocks reports whether the file carries a block table at all:
+ * legacy global-3D restarts have no block layout, so the reader skips the
+ * refine_dims cross-check for them (any leaf table can slice a global
+ * field). */
+int fdm_h5_read_refine_dims(const char *filename, int *mask, int *has_blocks)
 {
     hid_t file;
     int ierr = 0;
 
     mask[0] = mask[1] = mask[2] = 1;
+    *has_blocks = 0;
     file = open_parallel_file(filename);
     if (file < 0) return 1;
+    *has_blocks = H5Lexists(file, "blocks", H5P_DEFAULT) > 0;
     ierr |= read_attr_int_array(file, "refine_dims", mask, 3, 0);
     ierr |= H5Fclose(file) < 0;
     return ierr != 0;

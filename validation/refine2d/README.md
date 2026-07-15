@@ -83,3 +83,55 @@ unused; non-uniform xz runs before R2D-2 are NOT validated).
   spread 0.0) on 1 CPU rank, == 4 ranks and == GPU to max_abs 0.0. Also
   exercises the file-based refine_body xz read path (anisotropic mask
   shapes + solver builder cross-check against the xz blocks table).
+
+## R2D-2 — projection y-type + physics gates (2026-07-15)
+
+Solver change: face_grad/face_grad_denom/face_grad_corr gain a
+per-direction `refined` flag ([blocks] refine_dims) — a 2:1 face normal
+to an UNREFINED direction shares its node line on both sides (the
+xz-quadtree y face), so its pressure gradient is the UNIFORM stencil
+d1f in BOTH the Jacobi denominator and the velocity-face correction
+(the SPD pair); refined directions keep the locked composite (2/3, 4/3)
+branches, xyz mode is arithmetically identical. The y-face
+reconciliation (sync + owned-face corrections + conservative restrict/
+inject ghosts) was already direction-agnostic after R2D-1. The restart
+refine_dims cross-check now applies only to BLOCK-layout files (legacy
+global-3D restarts carry no layout to clash).
+
+- Uniform gates (uniform_xz + unibody_xz) re-PASS exact.
+- **Laminar order (Beltrami patch)**: the classic laminar channel is
+  BLIND to xz-only refinement (the parabola has no x/z variation), so
+  the decaying-Beltrami exact error takes its place (bp_xz_32/64.ini:
+  central xz patch, dt halved with h). L2(vel) error 6.63e-3 (base 32)
+  -> 9.30e-4 (base 64): order 2.83. Controls on the SAME setup: uniform
+  grids 1.39e-5 / 3.47e-6 (the patch error is interface-dominated) and
+  the VALIDATED xyz octree patch 9.20e-3 -> 1.23e-3 (order 2.90): the
+  xz interface error is ~30% SMALLER than the octree's at equal base
+  resolution (one direction conforms), converging at the same order.
+  1 == 4 CPU ranks bit-exact (max_abs 0.0) with nonzero interface
+  transfers.
+- **RANS xz smoke** (rans_xz.ini: turb180 column, xz-refined wall
+  bands, k/omega scalar halos across tangentially-2:1 y faces): 50
+  steps finite and sane; 1 == 4 ranks EXACT (max_abs 0 incl. k/omega/
+  nut); CPU vs GPU round-off class on default-FMA builds (u 2.5e-14,
+  omega 9.1e-12 on its ~1e4 wall scale).
+- **Turbulent xz wall-band channel** (PASS, corax RTX 5090, ~4 h):
+  run_developed.py --refine-dims xz (IC_xz.h5 via make_channel_restart.py
+  --refine-dims xz; 6656 leaves = 512 core l0 + 6144 band l1; wall bands
+  x,z at 256-equivalent, y the SHARED stretched 64-line — the classic
+  anisotropic wall-AMR layout), transient t 0..5 + developed stats
+  t 5..25 (80k steps, niter = 6 Chebyshev throughout = the convergence-
+  unchanged evidence), analyzed by analyze_xz_channel.py vs the
+  committed campaign stats (figure xz_channel_stats.png):
+  - NO interface band: u'/v'/w'/-u'v' jump ratios at both interface
+    rows 0.995-1.039 (the y-refined campaign's reflux band was 1.56
+    excess / 0.31 kink; its VALIDATED reflux-off case sits in the same
+    <=1.04 class).
+  - Core (0.7<y<1.3, resolution identical to the uniform128 control):
+    fluctuation ratios u'/v'/w'/-u'v' = 0.976/0.972/0.956/0.978 —
+    matching the VALIDATED xyz reflux-off signature (0.978/0.949/
+    0.955/0.977, the known ~5% const-1/2 small-scale under-transmission;
+    v' is actually CLOSER to 1 in xz) with mean-U shifted toward the
+    better-resolved reference exactly like the validated case (bulk U
+    15.90 vs uniform128 15.26, reference 15.68).
+
