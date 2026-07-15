@@ -234,3 +234,26 @@ residual is the shared transient floor). COST (all on the RTX 5090):
 L4-3D 0.148 s/step (25418 leaves), L5-3D 0.379 s/step (65094), L5-xz
 0.046 s/step (6748) — L5 ground-truth LE quality at 31% of the L4-3D
 step cost (12% of L5-3D), near-linear in the leaf count.
+
+### R2D-3 follow-up: the AoA sweep at L5-xz (2026-07-15)
+
+xz_aoa{0,4,8}.ini (span y, refine_dims xz, refine_levels 5, KEEP-BURIED
+7975 leaves, dt 2e-4, t_final 10, one host per angle: RTX 5090 / A6000 /
+RTX 3060; tail-0.2 means):
+
+| alpha | L5-xz C_L | L5-xz C_D | 3D-L4 C_L | 3D-L4 C_D |
+|-------|-----------|-----------|-----------|-----------|
+| 0     | -0.0017   | 0.0169    | -0.0013   | 0.0186    |
+| 4     | +0.3939   | 0.0193    | +0.3838   | 0.0209    |
+| 8     | +0.7681   | 0.0267    | +0.7447   | 0.0290    |
+
+Lift slope 0.0962/deg = 88% of 2pi (3D-L4: 85%); |C_L(0)| = 0.0017;
+all gate bands PASS. The finer L5 surface uniformly REDUCES the drag by
+~0.002 (the first-order penalization D_eff ~ D + h bias at halved h,
+toward the XFOIL 0.013-0.015 band) and steepens the lift slope toward
+theory. Cost ~0.052 s/step on the RTX 5090 (43 min/angle) = ~35% of the
+L4-3D sweep's step cost at strictly better surface resolution. The
+transients track the 3D histories closely (same oscillation class at
+t ~ 1.7). SD7003 companion: validation/sd7003/README.md "R2D-3
+follow-up" (L4-xz == L4-3D to every checker digit; the L5 transition
+finding).

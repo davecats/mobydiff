@@ -1,5 +1,22 @@
 # Next session(s) — 2D block refinement (refine x,z only; y fixed)
 
+> **STATUS 2026-07-15: R2D-0..3 ALL DONE** (commits becbda3 / 6384aac /
+> f0ce7a7 / 9dd33c2 + the sweep/SD7003 follow-up; gates in
+> `validation/refine2d/README.md`, `validation/naca0012/README.md`
+> "R2D-3", `validation/sd7003/README.md` "R2D-3 follow-up"). Headlines:
+> the xz interface error is ~30% BELOW the octree's at equal base
+> resolution (Beltrami order 2.83); the Re_tau 180 xz wall-band channel
+> matches the validated reflux-off signature with NO interface band;
+> the L5-xz fan bench REPRODUCES the R1a collapse at 31% of the L4-3D
+> step cost (6748 vs 65094 leaves); the NACA AoA sweep at L5-xz passes
+> all bands with ~0.002 LESS drag (halved D_eff ~ D + h bias) and an
+> 88%-of-2pi slope; SD7003 L4-xz == L4-3D to every checker digit.
+> FINDING: at L5-xz the SD7003 separation-induced transition does NOT
+> fire (k stays at freestream; the first-order-upwind 104-cell gamma
+> front no longer triggers gamma_sep at the finer bubble) — the
+> TVD/van-Leer scalar-convection increment is now DOUBLY
+> measurement-justified (do it as its own session, then rerun L5-xz).
+
 User decision 2026-07-15: before the NACA AoA sweep in the new strategy,
 build ANISOTROPIC 2:1 refinement — blocks refine in x and z only, the y
 direction keeps ONE global (possibly stretched) line at all levels. The

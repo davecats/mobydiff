@@ -35,10 +35,15 @@ def main() -> int:
     ap.add_argument("h5")
     ap.add_argument("forces")
     ap.add_argument("--tail", type=float, default=0.2)
+    ap.add_argument("--span", choices=("z", "y"), default="z",
+                    help="span axis (y = the refine_dims xz orientation: the "
+                         "suction side is then above LIFT z = 6.0)")
+    ap.add_argument("--lmax", type=int, default=4,
+                    help="finest refinement level (smearing reported in its cells)")
     a = ap.parse_args()
 
     names = ["un", "k", "gamma"]
-    out, xc, yc = load_window(a.h5, names, 4.4, 5.75, 5.95, 6.35)
+    out, xc, yc = load_window(a.h5, names, 4.4, 5.75, 5.95, 6.35, span=a.span)
     u, kf, gam = out["un"], out["k"], out["gamma"]
     solid = np.isnan(u) | (np.abs(u) < 1e-25)
     k_inf = 1.5e-6   # tu = 0.1 %, U_inf = 1
@@ -79,11 +84,11 @@ def main() -> int:
         idx = np.where(k_bl >= mult * k_inf)[0]
         return xoc[idx[0]] if idx.size else np.nan
     x10, x50, x90 = cross(10.0), cross(100.0), cross(1000.0)
-    h4 = 12.0 / 512 / 16
-    width_cells = (x90 - x10) / h4 if np.isfinite(x90 - x10) else np.nan
+    hf = 12.0 / 512 / 2**a.lmax
+    width_cells = (x90 - x10) / hf if np.isfinite(x90 - x10) else np.nan
     print(f"k onset: x/c(10 k_inf) = {x10:.3f}, x_t/c(100 k_inf) = {x50:.3f}, "
           f"x/c(1000 k_inf) = {x90:.3f}")
-    print(f"transition-front chordwise smearing: {width_cells:.1f} level-4 cells "
+    print(f"transition-front chordwise smearing: {width_cells:.1f} level-{a.lmax} cells "
           f"({x90 - x10:.4f} c) [REPORT ONLY — triggers the TVD increment]")
 
     d = np.loadtxt(a.forces, skiprows=1)

@@ -57,3 +57,33 @@ With gamma_sep (50f03bd; t_final = 15, tail-0.2 means):
 mpirun -n 1 ../../build_gpu/main aoa4.ini     # ~7 h on the RTX 3060
 python3 check_sd7003.py sd7003_aoa4_*.h5 forces_aoa4.txt
 ```
+
+## R2D-3 follow-up (2026-07-15): the 2D-refined (span y, refine_dims = xz) reruns
+
+Two runs through the full span-y quadtree stack (xz_aoa4.ini = L5-xz,
+keep-buried, dt 2e-4; xz_l4.ini = the L4-xz CONTROL at the exact
+published resolution and dt; STL sd7003_spany.stl; check_sd7003.py
+--span y --lmax 4|5):
+
+- **L4-xz == L4-3D to every checker digit**: x_t/c = 0.427, front
+  smearing 104.0 level-4 cells, C_L = 0.5617 (3D 0.5616), C_D = 0.0267
+  (3D 0.0267), same LSB prints. The span-y xz path (quadtree transfers,
+  scalar halos, transition transport, penalization forces) is
+  QUANTITATIVELY EQUIVALENT to the validated 3D path at matched
+  resolution — at 3459 refined leaves vs ~21k (runs in ~28 min on the
+  RTX 5090).
+- **L5-xz FINDING — separation-induced transition does NOT fire at the
+  finer surface**: the laminar bubble is present (reversed flow x/c
+  0.25..0.55, reattachment ~0.6, gamma dips to 0.02 in the BL) and
+  C_L = 0.626 sits in the published band, but k never leaves the
+  freestream level (max 3.3 k_inf; the L4 runs reach k ~ 5e-2), so
+  C_D = 0.0281 reads laminar-high. With the L4-xz control clean, this
+  is NOT an xz defect but the Langtry-Menter model/discretization
+  interaction at finer resolution: the L4 transition was already the
+  "early edge" (x_t 0.427 vs published 0.53-0.58), and the FIRST-ORDER
+  upwind scalar convection smears the front over 104 cells = 0.152c —
+  at L5 (double the cells across the same physical bubble, halved dt)
+  the smeared gamma/Re_thetat fields no longer trigger gamma_sep at
+  all. This STRENGTHENS the already-measurement-justified TVD/van-Leer
+  scalar-convection increment (deferred, separate session): rerun the
+  L5-xz benchmark after it lands.

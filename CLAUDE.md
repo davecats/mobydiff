@@ -703,6 +703,45 @@ immersed boundary. Phased, each phase verified before the next:
   `make_airfoil_stl.py selig` (+ --resample; SD7003 committed in
   validation/sd7003/). Remote GPU hosts for parallel runs: see "Build and
   run" (istmcetus/istmcorax; memory: remote-hosts).
+- 2D block refinement R2D-0..3 (DONE 2026-07-15, commits becbda3/6384aac/
+  f0ce7a7/9dd33c2 + follow-up, branch `claude/jacobi-interface`;
+  docs/next_session_refine2d.md STATUS header, gates in
+  validation/refine2d/ + naca0012/sd7003 READMEs). `[blocks] refine_dims =
+  xyz (default octree) | xz` (quadtree: blocks refine in x,z only; y keeps
+  ONE global — possibly stretched — node line at all levels). Mechanics: a
+  per-direction mask (dns%block_refine_mask / blk%refMask) makes every
+  level scaling `2**(l*mask(d))`; 2x1x2 children; CANONICAL mixed Morton
+  ids in xz mode (y tile in key bits 42+ over the 2D x,z Morton curve —
+  mobygeom/make_channel_restart mirror it); `refine_dims` file attribute
+  (xz only, xyz files byte-identical; restart cross-checks BLOCK-layout
+  files only); exchange entries generated per-direction (x/z faces 2 fine
+  sub-entries; y faces the NEW conforming-normal type: 4 in-plane
+  sub-entries, copy form in every unrefined dim, ghost blend degenerates
+  to identity) with ZERO kernel changes — the per-dim affine gather maps
+  cover it; projection face_grad gains a per-dim `refined` flag (conforming
+  y faces use the uniform d1f in BOTH denominator and correction — the SPD
+  pair; refined dims keep the locked 2/3-4/3 composite). [case.airfoil]
+  span = z|y + make_airfoil_stl --span y re-orient the quasi-2D airfoil
+  (chord x, LIFT z, span y periodic never refined). Every phase: 7-case
+  nofma suite bit-exact CPU+GPU. Gates: mobygeom==Fortran xz tables
+  row-by-row; all-refined-xz == doubled-x,z twin bit-exact (subdivided
+  lines); uniform oblique flow EXACT (0.0 incl. pn) through 3-level xz
+  patches/body twins, 1==4 ranks, CPU==GPU; Beltrami patch order 2.83 with
+  interface error ~30% BELOW the validated octree at equal base; Re_tau 180
+  xz wall-band channel (shared stretched y line): NO interface band (jump
+  ratios <=1.04), core == the validated reflux-off signature vs uniform128;
+  analytic refine_body dwall in xz 2.3e-11; L5-xz NACA fan bench REPRODUCES
+  the R1a collapse identically at 6748 vs 65094 leaves = 0.046 s/step (31%
+  of L4-3D, 12% of L5-3D on the 5090); AoA sweep 0/4/8 at L5-xz passes all
+  bands (slope 88% of 2pi, drag ~0.002 below L4-3D — the halved D_eff~D+h
+  bias); SD7003 L4-xz == L4-3D to EVERY checker digit (x_t 0.427, smear
+  104.0 cells, C_L 0.5617/C_D 0.0267). FINDING (records the next TVD
+  motivation): at L5-xz the SD7003 separation-induced transition does NOT
+  fire — k stays at freestream, C_D reads laminar-high — the first-order
+  upwind gamma/Re_thetat front (104 cells = 0.152c) no longer triggers
+  gamma_sep at the finer bubble; the deferred TVD/van-Leer scalar
+  increment is now doubly measurement-justified (own session; then rerun
+  the L5-xz SD7003).
 - ALSO PENDING: **Profile + optimise** the GPU step for the 2:1-refined channel.
   The last hard profile is STALE (the reflux that was 23% is removed; the
   `MOBY_PHASETIME` timer is deleted): re-profile first with a minimal removable
