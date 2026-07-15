@@ -36,6 +36,7 @@ module blocks
     public :: zorder_owner, zorder_start, zorder_count
     public :: zero_closed_halos, face_kind, leaf_at, level_cells
     public :: level_cell_width, occupied_any_level
+    public :: parent_coord, child_origin
     public :: DIST_RANKBOX, DIST_ZORDER
     public :: FACE_OPEN, FACE_PHYS, FACE_CLOSED, FACE_COARSE, FACE_FINE
 

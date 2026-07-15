@@ -38,3 +38,48 @@ R2D-1.
 Run gate (b): `PY=$HOME/ibmc/bin/python bash gate_leaftable.sh`
 Run gate (c): solver on allref_xz.ini and twin_xz.ini, then
 `compare_fields.py twin_xz_5.h5 ar_xz_5.h5 un vn wn pn --tolerance 0`.
+
+## R2D-1 — exchange entries (PASS 2026-07-15)
+
+The xz-quadtree interface transfers, entirely in the entry GENERATION
+(comm.f90) — the exchange kernels are untouched (the per-dim affine
+gather-map form covers the new types with no branches):
+
+- resolve_neighbors: parent/child lattice coords via
+  parent_coord/child_origin (per-direction), PROLONG parity tq masked to
+  0 in unrefined dims, the child adjacency parity filter applied only to
+  refined dims — an x/z-normal 2:1 face is fed by 2 fine sub-entries, a
+  y-normal face by 4 (2x2 in-plane; the genuinely new type: the y line
+  CONFORMS, so the normal direction is a plain copy row and only the
+  tangential x,z resolution differs 2:1).
+- interface_boxes / entry_gather_map: every UNREFINED direction of an
+  interface entry uses the same-level copy form (full nb tangential
+  range; the adjacent source row normally). RESTRICT dst quarter offsets
+  ride the masked tq.
+- entry_blend: the covering-cell index is per-direction; at a conforming
+  y face aHalf == bHalf makes the pressure-ghost blend degenerate to 1
+  (injection at the geometrically correct location) with no special case.
+- iface_restrict_normal returns 0 for a conforming normal (the gather
+  already reads the single face-adjacent row).
+
+NOTE: the projection y-type face_grad (conforming normal metric, SPD
+pair) and the conservative y-face reconciliation arrive in R2D-2 —
+R2D-1 is gated on uniform flow ONLY (phi = 0 makes the interface metric
+unused; non-uniform xz runs before R2D-2 are NOT validated).
+
+- **Gate (a)** — 7-case nofma suite bit-exact vs R2D-0 becbda3, CPU AND
+  GPU: PASS.
+- **Uniform oblique flow** (uniform_xz.ini: 64x32x64, nb=8, central box
+  refine_levels=2 -> 472 leaves [192, 248, 32], all face orientations /
+  edges / corners at l0-l1 AND l1-l2; 32 fine-side cross-level y-face
+  adjacencies + 80 x / 80 z): (u,v,w) = (0.9397, 0.3420, 0.2) preserved
+  EXACTLY after 50 steps (max dev 0.0, pn spread 0.0) — mass residual
+  exactly zero by the same token. 1 == 4 CPU ranks max_abs 0.0;
+  CPU == GPU max_abs 0.0.
+- **Zero-force body twin** (unibody_xz.ini, the multilevel_body pattern
+  in xz mode): mobygeom block-table --refine-dims xz --levels 3 on the
+  cylinder STL (508 leaves [220, 96, 192]) + make_uniform_twin.py (now
+  refine_dims-aware); inlet/outlet BCs; uniform flow EXACT (0.0, pn
+  spread 0.0) on 1 CPU rank, == 4 ranks and == GPU to max_abs 0.0. Also
+  exercises the file-based refine_body xz read path (anisotropic mask
+  shapes + solver builder cross-check against the xz blocks table).

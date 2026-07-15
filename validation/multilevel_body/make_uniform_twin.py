@@ -34,9 +34,12 @@ def main() -> int:
         nb = int(src.attrs["block_nb"])
         levels = int(src.attrs["block_levels"])
         gnbt = tuple(int(src.attrs[a]) // nb for a in ("nx", "ny", "nz"))
+        # Per-direction refinement mask (absent = xyz octree); xz-quadtree
+        # files scale only x,z per level (docs/next_session_refine2d.md).
+        mask = np.asarray(src.attrs.get("refine_dims", [1, 1, 1]), dtype=np.int64)
         touch = []
         for l in range(levels):
-            shape_zyx = tuple(g * 2**l for g in gnbt[::-1])
+            shape_zyx = tuple(g * 2**(l * int(m)) for g, m in zip(gnbt[::-1], mask[::-1]))
             t = src[f"block_touch_l{l}"][...].reshape(shape_zyx).transpose(2, 1, 0)
             touch.append(t.astype(bool))
             dst.create_dataset(f"block_touch_l{l}", data=src[f"block_touch_l{l}"][...])
@@ -44,7 +47,8 @@ def main() -> int:
                                data=np.zeros_like(src[f"block_buried_l{l}"][...]))
         # buried=None: keep every leaf (mirrors the solver reading the
         # zeroed masks); refine_box/lines unused on the body path.
-        lev, crd = build_leaf_table_py(gnbt, levels, periodic, touch, None, None, None, nb)
+        lev, crd = build_leaf_table_py(gnbt, levels, periodic, touch, None, None, None, nb,
+                                       mask=mask)
         n = lev.shape[0]
         blocks = np.empty((n, 4), dtype=np.int32)
         blocks[:, 0:3] = (crd * nb).astype(np.int32)

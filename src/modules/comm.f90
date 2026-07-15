@@ -3,7 +3,7 @@ module comm
     use :: mpi_f08
     use :: init, only: dns_type, NVAR
     use :: blocks, only: block_set_type, DIST_ZORDER, zorder_owner, zorder_start, zorder_count, &
-        leaf_at, level_cells, level_cell_width, occupied_any_level
+        leaf_at, level_cells, level_cell_width, occupied_any_level, parent_coord, child_origin
     use :: boundary, only: boundary_type
 #ifdef USE_OPENMP_OFFLOAD
     use omp_lib
@@ -268,13 +268,14 @@ contains
                                 c%lExt(:,nLocal) = ext
                                 c%lDir(:,nLocal) = off(:,d)
                                 call entry_gather_map(opc(cand), off(:,d), tqc(:,cand), nb, &
-                                    srcLo, dstLo, c%lGA(:,nLocal), c%lGB(:,nLocal), &
+                                    int(blk%refMask), srcLo, dstLo, c%lGA(:,nLocal), c%lGB(:,nLocal), &
                                     c%lGS(:,nLocal), c%lGC(:,nLocal))
                                 c%lWp(nLocal) = entry_blend(blk, dns, int(blk%level(b)), &
                                     int(blk%origin(:,b)), off(:,d), opc(cand))
                                 c%lWpDst(nLocal) = 1.0d0 - c%lWp(nLocal)
                                 c%lNrm(nLocal) = interface_normal_dim(opc(cand), off(:,d))
-                                c%lPhiN(nLocal) = iface_restrict_normal(opc(cand), off(:,d))
+                                c%lPhiN(nLocal) = iface_restrict_normal(opc(cand), off(:,d), &
+                                    int(blk%refMask))
                                 c%lOff(nLocal) = c%lOff(nLocal-1) + pts
                             end if
                             c%nLocalPts = c%nLocalPts + pts
@@ -368,9 +369,10 @@ contains
                                     c%sDstLo(:,nSend) = dstLo
                                     c%sExt(:,nSend) = ext
                                     call entry_gather_map(opc(cand), off(:,d), tqc(:,cand), nb, &
-                                        srcLo, dstLo, c%sGA(:,nSend), c%sGB(:,nSend), &
+                                        int(blk%refMask), srcLo, dstLo, c%sGA(:,nSend), c%sGB(:,nSend), &
                                         c%sGS(:,nSend), c%sGC(:,nSend))
-                                    c%sPhiN(nSend) = iface_restrict_normal(opc(cand), off(:,d))
+                                    c%sPhiN(nSend) = iface_restrict_normal(opc(cand), off(:,d), &
+                                        int(blk%refMask))
                                     c%sOff(nSend) = c%sOff(nSend-1) + pts
                                 end if
                                 c%peerSendOff(p) = c%peerSendOff(p) + pts
@@ -565,36 +567,35 @@ contains
             return
         end if
 
-        ! R2D-0 barrier: the 2:1 transfer operators below are the octree
-        ! forms; the xz-quadtree interface types (2 sub-entries per x/z
-        ! face, tangential-2:1 y faces) arrive in R2D-1.
-        if (any(blk%refMask == 0_C_INT)) then
-            if (occupied_any_level(blk, level, cl)) then
-                error stop "[blocks] refine_dims = xz: 2:1 interfaces are not implemented yet (R2D-1)"
-            end if
-        end if
-
         ! Coarser occupant: this block is the fine side of a 2:1 interface.
-        id = int(leaf_at(blk, level - 1, cl/2))
+        ! The parity tq is meaningful only in refined directions; an
+        ! unrefined direction shares the parent's tile (parity masked to 0).
+        id = int(leaf_at(blk, level - 1, parent_coord(blk, cl)))
         if (id >= 0) then
             n = 1
             op(1) = OP_PROLONG
-            tq(:,1) = modulo(dorigin/int(blk%nb), 2)
+            tq(:,1) = modulo(dorigin/int(blk%nb), 2)*int(blk%refMask)
             call id_owner_slot(c, blk, id, owner(1), slot(1))
             return
         end if
 
-        ! Finer occupants: the children adjacent to this block across off.
-        do sz = 0, 1
-            do sy = 0, 1
-                do sx = 0, 1
+        ! Finer occupants: the children adjacent to this block across off,
+        ! in fixed child order. The adjacency parity filter applies only to
+        ! refined directions: an unrefined direction has a single child on
+        ! the parent's tile, adjacent from both sides — an xz-quadtree
+        ! y-face is fed by up to 4 (2x2 in-plane) fine sub-entries.
+        do sz = 0, int(blk%refMask(3))
+            do sy = 0, int(blk%refMask(2))
+                do sx = 0, int(blk%refMask(1))
                     sub = [sx, sy, sz]
                     do d = 1, 3
-                        if (off(d) == 1 .and. sub(d) /= 0) sub(d) = -9
-                        if (off(d) == -1 .and. sub(d) /= 1) sub(d) = -9
+                        if (blk%refMask(d) == 1_C_INT) then
+                            if (off(d) == 1 .and. sub(d) /= 0) sub(d) = -9
+                            if (off(d) == -1 .and. sub(d) /= 1) sub(d) = -9
+                        end if
                     end do
                     if (any(sub == -9)) cycle
-                    cc = 2*cl + sub
+                    cc = child_origin(blk, cl) + sub
                     id = int(leaf_at(blk, level + 1, cc))
                     if (id < 0) cycle
                     n = n + 1
@@ -629,8 +630,10 @@ contains
         if (op == OP_COPY) then
             call entry_boxes(c, blk, dns, level, dorigin, off, nb, srcLo, dstLo, ext)
         else
-            call interface_boxes(op, off, nb, srcLo, dstLo, ext)
+            call interface_boxes(op, off, nb, int(blk%refMask), srcLo, dstLo, ext)
             if (op == OP_RESTRICT) then
+                ! Fine-quarter destination offset in refined tangential
+                ! dims (tq is masked to 0 in unrefined dims: full range).
                 do d = 1, 3
                     if (off(d) == 0) dstLo(d) = tq(d)*nb(d)/2 + 1
                 end do
@@ -641,8 +644,11 @@ contains
     ! Destination box and per-dim source bases for a 2:1 interface entry.
     ! Tangential source indices follow from tq and the destination index
     ! inside the kernels; the normal-dimension base is stored in srcLo.
-    subroutine interface_boxes(op, off, nb, srcLo, dstLo, ext)
-        integer, intent(in) :: op, off(3), nb(3)
+    ! An UNREFINED direction (refine_dims mask 0) is a plain copy dim of
+    ! the interface entry — the shared line conforms — both tangentially
+    ! (full nb range) and normally (the adjacent source row).
+    subroutine interface_boxes(op, off, nb, mask, srcLo, dstLo, ext)
+        integer, intent(in) :: op, off(3), nb(3), mask(3)
         integer, intent(out) :: srcLo(3), dstLo(3), ext(3)
 
         integer :: d
@@ -656,9 +662,9 @@ contains
             case (-1)
                 dstLo(d) = 0
                 ext(d) = 1
-                srcLo(d) = merge(nb(d) - 1, nb(d), op == OP_RESTRICT)
+                srcLo(d) = merge(nb(d) - 1, nb(d), op == OP_RESTRICT .and. mask(d) == 1)
             case default
-                if (op == OP_RESTRICT) then
+                if (op == OP_RESTRICT .and. mask(d) == 1) then
                     dstLo(d) = 1          ! quarter offset added via tq in the builder
                     ext(d) = nb(d)/2
                 else
@@ -678,9 +684,12 @@ contains
     ! (ga=1), restrictions gather the two covering fine rows (ga=2
     ! tangentially, the srcLo row pair across the face), prolongations
     ! read the covering coarse row (halving shift tangentially, the
-    ! tq-dependent covering row across the face).
-    subroutine entry_gather_map(op, off, tq, nb, srcLo, dstLo, ga, gb, gs, gc)
-        integer, intent(in) :: op, off(3), tq(3), nb(3), srcLo(3), dstLo(3)
+    ! tq-dependent covering row across the face). An UNREFINED direction
+    ! (refine_dims mask 0) of an interface entry uses the copy form: the
+    ! shared line conforms, so both its tangential rows and its adjacent
+    ! normal row map index for index.
+    subroutine entry_gather_map(op, off, tq, nb, mask, srcLo, dstLo, ga, gb, gs, gc)
+        integer, intent(in) :: op, off(3), tq(3), nb(3), mask(3), srcLo(3), dstLo(3)
         integer, intent(out) :: ga(3), gb(3), gs(3), gc(3)
 
         integer :: d
@@ -688,7 +697,7 @@ contains
         do d = 1, 3
             gs(d) = 0
             gc(d) = 1
-            if (op == OP_COPY) then
+            if (op == OP_COPY .or. mask(d) == 0) then
                 ga(d) = 1
                 gb(d) = srcLo(d) - dstLo(d)
             else if (off(d) /= 0) then
@@ -750,15 +759,17 @@ contains
     ! Signed normal dim (off(d)*d) of an interface RESTRICT pure-face entry,
     ! else 0. The sign tells the phi exchange which of the two cell-centred
     ! source rows is the one touching the interface: for off=+1 the lower row
-    ! (base, no shift), for off=-1 the upper row (base + 1).
-    pure integer function iface_restrict_normal(op, off) result(sd)
-        integer, intent(in) :: op, off(3)
+    ! (base, no shift), for off=-1 the upper row (base + 1). An UNREFINED
+    ! normal direction (refine_dims mask 0) returns 0: its gather already
+    ! reads the single conforming face-adjacent row, no collapse applies.
+    pure integer function iface_restrict_normal(op, off, mask) result(sd)
+        integer, intent(in) :: op, off(3), mask(3)
         integer :: d
         sd = 0
         if (op /= OP_RESTRICT) return
         if (sum(abs(off)) /= 1) return
         do d = 1, 3
-            if (off(d) /= 0) sd = off(d)*d
+            if (off(d) /= 0 .and. mask(d) == 1) sd = off(d)*d
         end do
     end function iface_restrict_normal
 
@@ -794,9 +805,11 @@ contains
             ! Half-widths from the level node lines: fine halo cell (bHalf),
             ! its covering coarse cell (aHalf), first interior cell (cHalf).
             ! All three centres sit on the face normal; the face is a shared
-            ! node of both lines, so distances reduce to half-widths.
+            ! node of both lines, so distances reduce to half-widths. An
+            ! UNREFINED normal direction shares the line (aHalf == bHalf),
+            ! so the weight degenerates to 1 — no blend at conforming faces.
             bHalf = 0.5d0*level_cell_width(blk, d, level, g)
-            aHalf = 0.5d0*level_cell_width(blk, d, level - 1, g/2)
+            aHalf = 0.5d0*level_cell_width(blk, d, level - 1, g/(1 + int(blk%refMask(d))))
             if (off(d) == -1) then
                 cHalf = 0.5d0*level_cell_width(blk, d, level, dorigin(d))
             else
