@@ -16,8 +16,9 @@ module ibmm
     use, intrinsic :: iso_c_binding
     use :: init, only: dns_type, grid_type, VAR_U, VAR_V, VAR_W, VAR_P, &
         is_face_staggered, face_at, cell_center_at
-    use :: blocks, only: block_set_type, subdivide_node_line
+    use :: blocks, only: block_set_type, subdivide_node_line, FACE_PHYS, FACE_CLOSED
     use :: io, only: to_c_string, read_block_active, read_block_masks
+    use :: comm, only: comm_type, exchange_scalar_halos
     implicit none
 
     real(C_DOUBLE), parameter :: SOLID = 1.0d30
@@ -34,6 +35,17 @@ module ibmm
 
         real(C_DOUBLE), allocatable :: coef(:,:,:,:,:) ! (0:nb+1,...,VAR_U:VAR_W,nBlocks)
         real(C_DOUBLE), allocatable :: mu(:,:,:,:,:)
+
+        ! [ibm] band_filter: compressed list of near-body FLUID velocity
+        ! DOFs (built by init_ibm_band, one entry per DOF, mapped to the
+        ! device only when the filter is on — off allocates and maps
+        ! nothing). bandDirs bit d (0/1/2 = x/y/z) is set when BOTH +-1
+        ! same-component neighbours are fluid: the filter never reads a
+        ! solid velocity.
+        integer(C_INT) :: nBand = 0_C_INT
+        integer(C_INT), allocatable :: bandI(:), bandJ(:), bandK(:)
+        integer(C_INT), allocatable :: bandVar(:), bandBlk(:)
+        integer(C_SIGNED_CHAR), allocatable :: bandDirs(:)
 
     end type ibm_type
 
@@ -118,10 +130,184 @@ contains
         type(dns_type), intent(in)    :: dns
 
 #ifdef USE_OPENMP_OFFLOAD
+        if (allocated(ibm%bandI)) then
+            !$omp target exit data map(delete: ibm%bandI, ibm%bandJ, ibm%bandK, &
+            !$omp& ibm%bandVar, ibm%bandBlk, ibm%bandDirs)
+        end if
         !$omp target exit data map(delete: ibm%coef, ibm%mu)
         !$omp target exit data map(delete: ibm)
 #endif
     end subroutine exit_ibm_data
+
+    ! [ibm] band_filter: build the compressed near-body band list. A DOF is
+    ! in the band when a solid same-component DOF lies within band_width
+    ! cells (box distance): the solid marker is dilated band_width times by
+    ! one cell, with a halo exchange after every pass so the dilation
+    ! reaches across block boundaries exactly (the halo layer is one cell
+    ! deep). Runs on the DEVICE against the mapped coefficients (the
+    ! analytic path fills coef only there); the list itself is built on the
+    ! host and mapped once. Called only when the filter is on — off maps
+    ! and allocates nothing.
+    subroutine init_ibm_band(ibm, dns, blk, c, has_terminal)
+        type(ibm_type), intent(inout) :: ibm
+        type(dns_type), intent(in) :: dns
+        type(block_set_type), intent(in) :: blk
+        type(comm_type), intent(inout) :: c
+        logical, intent(in) :: has_terminal
+
+        real(C_DOUBLE), allocatable :: mark(:,:,:,:), tmp(:,:,:,:)
+        real(C_DOUBLE), allocatable :: solidh(:,:,:,:), markh(:,:,:,:)
+        integer(C_INT), allocatable :: bi(:), bj(:), bk(:), bv(:), bb(:)
+        integer(C_SIGNED_CHAR), allocatable :: bd(:)
+        real(C_DOUBLE) :: thresh
+        integer :: nx, ny, nz, nBlocks, var, i, j, k, b, pass, n, cap
+        integer :: dirs, istart, jstart, kstart
+        logical :: fx, fy, fz
+
+        nx = int(blk%nb(1)); ny = int(blk%nb(2)); nz = int(blk%nb(3))
+        nBlocks = int(blk%nBlocks)
+        thresh = 0.5d0*SOLID/dns%re
+
+        allocate(mark(0:nx+1,0:ny+1,0:nz+1,nBlocks), tmp(0:nx+1,0:ny+1,0:nz+1,nBlocks))
+        allocate(solidh(0:nx+1,0:ny+1,0:nz+1,nBlocks), markh(0:nx+1,0:ny+1,0:nz+1,nBlocks))
+        !$omp target enter data map(alloc: mark, tmp)
+
+        cap = 1024
+        allocate(bi(cap), bj(cap), bk(cap), bv(cap), bb(cap), bd(cap))
+        ibm%nBand = 0_C_INT
+
+        do var = VAR_U, VAR_W
+            ! solid marker (ghost-inclusive: coef carries ghost values on
+            ! both the file and the analytic path)
+            !$omp target teams distribute parallel do collapse(4) &
+            !$omp& map(to: var, thresh, nx, ny, nz, nBlocks, ibm%coef) map(tofrom: mark) &
+            !$omp& private(i,j,k,b)
+            do b = 1, nBlocks
+            do k = 0, nz+1
+                do j = 0, ny+1
+                    do i = 0, nx+1
+                        mark(i,j,k,b) = merge(1.0d0, 0.0d0, ibm%coef(i,j,k,var,b) >= thresh)
+                    end do
+                end do
+            end do
+            end do
+            !$omp end target teams distribute parallel do
+            !$omp target update from(mark)
+            solidh = mark
+
+            ! band_width one-cell dilations, exchange-interleaved so the
+            ! reach crosses block boundaries exactly
+            do pass = 1, int(dns%ibm_band_width)
+                !$omp target teams distribute parallel do collapse(4) &
+                !$omp& map(to: nx, ny, nz, nBlocks, mark) map(tofrom: tmp) &
+                !$omp& private(i,j,k,b)
+                do b = 1, nBlocks
+                do k = 1, nz
+                    do j = 1, ny
+                        do i = 1, nx
+                            tmp(i,j,k,b) = max(mark(i,j,k,b), &
+                                mark(i-1,j,k,b), mark(i+1,j,k,b), &
+                                mark(i,j-1,k,b), mark(i,j+1,k,b), &
+                                mark(i,j,k-1,b), mark(i,j,k+1,b))
+                        end do
+                    end do
+                end do
+                end do
+                !$omp end target teams distribute parallel do
+                !$omp target teams distribute parallel do collapse(4) &
+                !$omp& map(to: nx, ny, nz, nBlocks, tmp) map(tofrom: mark) &
+                !$omp& private(i,j,k,b)
+                do b = 1, nBlocks
+                do k = 1, nz
+                    do j = 1, ny
+                        do i = 1, nx
+                            mark(i,j,k,b) = tmp(i,j,k,b)
+                        end do
+                    end do
+                end do
+                end do
+                !$omp end target teams distribute parallel do
+                call exchange_scalar_halos(c, mark, blk)
+            end do
+            !$omp target update from(mark)
+            markh = mark
+
+            ! host: compressed list of fluid band DOFs, skipping faces the
+            ! predictor pins (physical/closed low faces, momentum_face_start)
+            do b = 1, nBlocks
+                istart = merge(2, 1, (blk%physLow(1,b) == FACE_PHYS .or. &
+                    blk%physLow(1,b) == FACE_CLOSED) .and. var == VAR_U)
+                jstart = merge(2, 1, (blk%physLow(2,b) == FACE_PHYS .or. &
+                    blk%physLow(2,b) == FACE_CLOSED) .and. var == VAR_V)
+                kstart = merge(2, 1, (blk%physLow(3,b) == FACE_PHYS .or. &
+                    blk%physLow(3,b) == FACE_CLOSED) .and. var == VAR_W)
+                do k = kstart, nz
+                    do j = jstart, ny
+                        do i = istart, nx
+                            if (solidh(i,j,k,b) > 0.5d0) cycle          ! solid DOF
+                            if (markh(i,j,k,b) < 0.5d0) cycle           ! not in band
+                            fx = solidh(i-1,j,k,b) < 0.5d0 .and. solidh(i+1,j,k,b) < 0.5d0
+                            fy = solidh(i,j-1,k,b) < 0.5d0 .and. solidh(i,j+1,k,b) < 0.5d0
+                            fz = solidh(i,j,k-1,b) < 0.5d0 .and. solidh(i,j,k+1,b) < 0.5d0
+                            if (.not. (fx .or. fy .or. fz)) cycle
+                            dirs = 0
+                            if (fx) dirs = dirs + 1
+                            if (fy) dirs = dirs + 2
+                            if (fz) dirs = dirs + 4
+                            if (ibm%nBand >= cap) then
+                                cap = 2*cap
+                                call grow_int(bi, cap); call grow_int(bj, cap)
+                                call grow_int(bk, cap); call grow_int(bv, cap)
+                                call grow_int(bb, cap); call grow_byte(bd, cap)
+                            end if
+                            ibm%nBand = ibm%nBand + 1_C_INT
+                            bi(ibm%nBand) = int(i, C_INT); bj(ibm%nBand) = int(j, C_INT)
+                            bk(ibm%nBand) = int(k, C_INT); bv(ibm%nBand) = int(var, C_INT)
+                            bb(ibm%nBand) = int(b, C_INT)
+                            bd(ibm%nBand) = int(dirs, C_SIGNED_CHAR)
+                        end do
+                    end do
+                end do
+            end do
+        end do
+
+        !$omp target exit data map(delete: mark, tmp)
+        deallocate(mark, tmp, solidh, markh)
+
+        allocate(ibm%bandI(max(1, int(ibm%nBand))), ibm%bandJ(max(1, int(ibm%nBand))), &
+            ibm%bandK(max(1, int(ibm%nBand))), ibm%bandVar(max(1, int(ibm%nBand))), &
+            ibm%bandBlk(max(1, int(ibm%nBand))), ibm%bandDirs(max(1, int(ibm%nBand))))
+        ibm%bandI(1:ibm%nBand) = bi(1:ibm%nBand); ibm%bandJ(1:ibm%nBand) = bj(1:ibm%nBand)
+        ibm%bandK(1:ibm%nBand) = bk(1:ibm%nBand); ibm%bandVar(1:ibm%nBand) = bv(1:ibm%nBand)
+        ibm%bandBlk(1:ibm%nBand) = bb(1:ibm%nBand); ibm%bandDirs(1:ibm%nBand) = bd(1:ibm%nBand)
+        deallocate(bi, bj, bk, bv, bb, bd)
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target enter data map(to: ibm%bandI, ibm%bandJ, ibm%bandK, &
+        !$omp& ibm%bandVar, ibm%bandBlk, ibm%bandDirs)
+#endif
+        if (has_terminal) print *, "IBM band filter: ", ibm%nBand, " band DOFs (width ", &
+            dns%ibm_band_width, ", theta ", dns%ibm_band_theta, ")"
+    end subroutine init_ibm_band
+
+    subroutine grow_int(a, cap)
+        integer(C_INT), allocatable, intent(inout) :: a(:)
+        integer, intent(in) :: cap
+        integer(C_INT), allocatable :: t(:)
+
+        allocate(t(cap))
+        t(1:size(a)) = a
+        call move_alloc(t, a)
+    end subroutine grow_int
+
+    subroutine grow_byte(a, cap)
+        integer(C_SIGNED_CHAR), allocatable, intent(inout) :: a(:)
+        integer, intent(in) :: cap
+        integer(C_SIGNED_CHAR), allocatable :: t(:)
+
+        allocate(t(cap))
+        t(1:size(a)) = a
+        call move_alloc(t, a)
+    end subroutine grow_byte
 
     subroutine read_ibm_coeff_file(ibm, dns, blk, has_terminal)
         type(ibm_type), intent(inout) :: ibm

@@ -68,9 +68,27 @@
   cc120 — own build_gpu_corax, ~2.4x the local 3060, direct PATH
   exports, no 25.9 modulefile). Check nvidia-smi before launching.
 
+## LE fan — RESOLVED (2026-07-15, user decisions)
+
+Root cause: the centred-convection cell-Re parasite seeded by the
+staircase ring (R1 pipeline: dt innocent, medium/cell-Pe refuted,
+far strips = level-interface artifacts, one-sided kernel variant
+rejected as too invasive + its advecting-substitution form blows up).
+ANSWERS: (1) **refinement is the reference answer** — one extra
+refine_body level collapses the fan 15x (ring cell-Re 60 -> 7.6);
+(2) **[ibm] band_filter** is the optional production mitigation
+(3-point low-pass on a compressed 3-cell near-body band, qs-only,
+theta <= 0.6 hard bound — 1-3theta amplification, theta=1 measured
+unstable; OFF = never called, bit-exact + zero cost, suite green).
+theta=0.5 reaches the refinement ground truth from 0.012c outward;
+COST: +3.9 % C_D on the coarse (D/h=32) cylinder — document per case.
+Full data: validation/naca0012 README (R1 + band-filter sections).
+Follow-ups if ever needed: filtered-NACA force check, width/theta
+tuning, per-DOF theta by direction count, ghost convection increment.
+
 ## NEXT (priority order, user decision 2026-07-14)
 
-1. **LE-fan mitigation (momentum side)** — NEW TOP PRIORITY, ABOVE TVD.
+1. **LE-fan mitigation (momentum side)** — DONE (see above).
    Root cause established (naca0012 README "LE fan root cause"): the fan
    ahead of the nose is the CENTRED-convection cell-Reynolds parasite
    (lambda = 2.4 cells, 68 % Nyquist-band energy; cell-Re = 146 at the

@@ -126,6 +126,10 @@ program main
         call set_ibm_coeff(dns, blk, ibm, VAR_V)
         call set_ibm_coeff(dns, blk, ibm, VAR_W)
     end if
+    ! [ibm] band_filter: near-body band list from the device coefficients
+    ! (off: nothing is built, allocated, or mapped).
+    if (dns%ibm_enabled .and. dns%ibm_band_filter) &
+        call init_ibm_band(ibm, dns, blk, c, c%has_terminal)
 
     ! A configured [rans] section builds the SST geometry state (T1: wall
     ! distance + IBM wall cells); [turbulence] model = rans additionally

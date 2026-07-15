@@ -230,6 +230,21 @@ subroutine apply_config_value(section, key, value, dns, g, turb, les, ps, bc, c,
             call read_bool(value, dns%ibm_enabled, line_no)
         case ("coeff_file")
             dns%ibm_coeff_file = clean_string(value)
+        case ("band_filter")
+            call read_bool(value, dns%ibm_band_filter, line_no)
+        case ("band_width")
+            call read_int(value, dns%ibm_band_width, line_no)
+        case ("band_theta")
+            call read_real(value, dns%ibm_band_theta, line_no)
+            ! Stability bound: band cells filtered in all three directions
+            ! have amplification 1 - 3 theta; theta >= 2/3 is unstable
+            ! (measured: theta = 1 blows up within 40 steps). 0.6 leaves a
+            ! margin.
+            if (dns%ibm_band_theta < 0.0d0 .or. dns%ibm_band_theta > 0.6d0) then
+                print *, "[ibm] band_theta must be in [0, 0.6] (3D filter", &
+                    " stability bound 2/3) at line", line_no
+                error stop
+            end if
         end select
     case ("blocks")
         select case (key_l)

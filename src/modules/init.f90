@@ -83,6 +83,17 @@ module init
         logical(C_BOOL) :: block_refine_body = .false.
         logical(C_BOOL) :: ibm_enabled = .true.
         character(len=256) :: ibm_coeff_file = ""
+        ! [ibm] band_filter: optional 3-point low-pass on the predicted
+        ! velocity in a thin near-body band (band_width cells, strength
+        ! band_theta; theta = 1 annihilates the 2-cell mode per direction).
+        ! Damps the cell-Reynolds parasite fan seeded by the staircase ring
+        ! (validation/naca0012 README "LE fan root cause"/R1: the ring SEED
+        ! controls the fan; refinement is the reference answer, the filter
+        ! the production option). A separate correction pass — OFF means the
+        ! pass is never called: bit-exact and zero cost by construction.
+        logical(C_BOOL) :: ibm_band_filter = .false.
+        integer(C_INT) :: ibm_band_width = 3_C_INT
+        real(C_DOUBLE) :: ibm_band_theta = 0.5d0
         ! [force] optional spatially-varying volumetric body force
         ! (bodyforce.f90), added to the momentum predictor on top of the
         ! constant [flow] forcing_*. Disabled -> bit-exact with no force.

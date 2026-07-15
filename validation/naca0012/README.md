@@ -163,6 +163,45 @@ sits at the transient floor. mobygeom block-table now combines
 --refine-box WITH body classification (the solver ini must carry the
 same [blocks] refine key for the builder cross-check).
 
+## Band filter ([ibm] band_filter, 2026-07-15): the production option
+
+Per the user decision (refinement = the reference answer; an optional
+near-zero-cost-when-off filter for everything else): a 3-point low-pass
+qs += (theta/4)(q_{i-1} - 2 q_i + q_{i+1}) per direction, applied ONLY on
+a compressed list of near-body fluid DOFs (band_width = 3 cells; solid
+marker from the coefficients, dilated with a halo exchange per pass so
+the band crosses block boundaries exactly; per-direction bits exclude
+any solid read — the v1 lesson; physically pinned faces skipped).
+qs-only operator splitting (NO oldrhs term), increment x mu (the A2
+force bookkeeping stays exact). OFF = the pass is never called and
+nothing is allocated or mapped: bit-exact and zero cost by construction
+(7-case suite ALL BIT-EXACT).
+
+Fan bench (L4 grid, dt 4e-4, t = 1.5, RANS; 1587456 band DOFs = 2.1 %):
+
+  case                   0.006c   0.012c   0.023c   0.047c   0.094c
+  L4 no filter           0.0172   0.0113   0.0057   0.0022   0.0020
+  L4 + filter th=0.5     0.0061   0.0025   0.0012   0.0019   0.0020
+  L5 ground truth        0.0015   0.0016   0.0021   0.0027   0.0025
+
+At/below the refinement ground truth from 0.012c outward; the 0.006c
+residual (4x the L5 floor) sits at the band edge (strip at 4 cells,
+band 3). STABILITY: cells filtered in all three directions amplify by
+1 - 3 theta => theta >= 2/3 is UNSTABLE (theta = 1.0 blew up within 40
+steps, C_L -> 1e147); config hard-errors above 0.6. COST/BIAS: les_ibm
+channel 200 steps stable (73728 band DOFs); the Re 40 cylinder
+(D/h = 32, 6912 band DOFs) pays +3.9 % C_D (1.7587 vs 1.6925 same-t) —
+the filter thickens the coarse near-wall profile; on fine-ring grids
+the bias should shrink with the band/BL ratio. RECOMMENDATION: default
+OFF; enable for LE-sensitive production runs at moderate resolution;
+prefer one more refinement level for benchmark-grade results. Follow-up
+candidates: filtered-NACA force check, width/theta tuning, per-DOF
+theta scaling by active direction count.
+
+PROCESS LESSON: remote build dirs must be rebuilt too — the first
+"filter" bench ran corax's stale binary, which silently ignored the
+unknown ini keys and reproduced the twin bitwise.
+
 ## Workflow
 
 ```bash

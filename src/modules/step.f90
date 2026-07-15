@@ -39,6 +39,45 @@ contains
         s = merge(2, 1, fk == FACE_PHYS .or. fk == FACE_CLOSED)
     end function momentum_face_start
 
+    ! [ibm] band_filter: qs_i += (theta/4)(q_{i-1} - 2 q_i + q_{i+1}) per
+    ! allowed direction, over the compressed near-body band list only
+    ! (~a few % of cells). Reads the START-of-substage field q (halos
+    ! current from the substage exchange) and never a solid value (the
+    ! direction bits exclude them); the increment is x mu so the masked
+    ! force bookkeeping (A2) stays exact. theta = 1 annihilates the 2-cell
+    ! parasite mode per direction.
+    subroutine apply_ibm_band_filter(blk, dns, ibm)
+        type(block_set_type), intent(inout) :: blk
+        type(dns_type), intent(in) :: dns
+        type(ibm_type), intent(in) :: ibm
+
+        integer :: n, i, j, k, var, b
+        integer(C_INT) :: nBand
+        real(C_DOUBLE) :: theta4, del
+
+        nBand = ibm%nBand
+        theta4 = 0.25d0*dns%ibm_band_theta
+
+        !$omp target teams distribute parallel do &
+        !$omp& map(to: nBand, theta4, blk%q, ibm%mu, ibm%bandI, ibm%bandJ, ibm%bandK, &
+        !$omp& ibm%bandVar, ibm%bandBlk, ibm%bandDirs) &
+        !$omp& map(tofrom: blk%qs) &
+        !$omp& private(n,i,j,k,var,b,del)
+        do n = 1, nBand
+            i = int(ibm%bandI(n)); j = int(ibm%bandJ(n)); k = int(ibm%bandK(n))
+            var = int(ibm%bandVar(n)); b = int(ibm%bandBlk(n))
+            del = 0.0d0
+            if (iand(int(ibm%bandDirs(n)), 1) /= 0) &
+                del = del + blk%q(i-1,j,k,var,b) - 2.0d0*blk%q(i,j,k,var,b) + blk%q(i+1,j,k,var,b)
+            if (iand(int(ibm%bandDirs(n)), 2) /= 0) &
+                del = del + blk%q(i,j-1,k,var,b) - 2.0d0*blk%q(i,j,k,var,b) + blk%q(i,j+1,k,var,b)
+            if (iand(int(ibm%bandDirs(n)), 4) /= 0) &
+                del = del + blk%q(i,j,k-1,var,b) - 2.0d0*blk%q(i,j,k,var,b) + blk%q(i,j,k+1,var,b)
+            blk%qs(i,j,k,var,b) = blk%qs(i,j,k,var,b) + theta4*del*ibm%mu(i,j,k,var,b)
+        end do
+        !$omp end target teams distribute parallel do
+    end subroutine apply_ibm_band_filter
+
     subroutine precompute_peclet_rate(dns, blk, c)
         type(dns_type), intent(inout) :: dns
         type(block_set_type), intent(in) :: blk
@@ -281,6 +320,15 @@ contains
         if (present(bf)) then
             if (bodyforce_is_enabled(bf)) call add_bodyforce_correction(blk, bf, dt_alpha, ibm)
         end if
+
+        ! [ibm] band_filter: 3-point low-pass on the predicted velocity in
+        ! the near-body band (see init_ibm_band). Applied to qs only —
+        ! operator splitting, NOT part of the RHS (no oldrhs term: the
+        ! filter is a numerical smoother, re-integrating it through the RK
+        ! memory would double-apply it). Off -> never called: bit-exact and
+        ! zero cost by construction.
+        if (dns%ibm_band_filter .and. ibm%nBand > 0_C_INT) &
+            call apply_ibm_band_filter(blk, dns, ibm)
 
         !$omp target teams distribute parallel do collapse(4) &
         !$omp& map(to: blk%qs) &
