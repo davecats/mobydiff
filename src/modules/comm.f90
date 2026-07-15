@@ -565,6 +565,15 @@ contains
             return
         end if
 
+        ! R2D-0 barrier: the 2:1 transfer operators below are the octree
+        ! forms; the xz-quadtree interface types (2 sub-entries per x/z
+        ! face, tangential-2:1 y faces) arrive in R2D-1.
+        if (any(blk%refMask == 0_C_INT)) then
+            if (occupied_any_level(blk, level, cl)) then
+                error stop "[blocks] refine_dims = xz: 2:1 interfaces are not implemented yet (R2D-1)"
+            end if
+        end if
+
         ! Coarser occupant: this block is the fine side of a 2:1 interface.
         id = int(leaf_at(blk, level - 1, cl/2))
         if (id >= 0) then

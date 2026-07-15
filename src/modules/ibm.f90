@@ -533,22 +533,37 @@ contains
         call set_ibm_geometry_defaults(ibm)
         nb = int(dns%block_nb)
 
-        nf = int(dns%globalSize)*2**(nLevels - 1)
+        ! Per-level lines follow [blocks] refine_dims: refined directions
+        ! are midpoint-subdivided, fixed ones copy the global line
+        ! (blocks.f90 build_level_lines is the solver-side counterpart).
+        nf = int(dns%globalSize)*2**((nLevels - 1)*int(dns%block_refine_mask))
         allocate(lineX(0:nf(1), nLevels), lineY(0:nf(2), nLevels), lineZ(0:nf(3), nLevels))
         lineX(0:int(dns%globalSize(1)),1) = g%xNode
         lineY(0:int(dns%globalSize(2)),1) = g%yNode
         lineZ(0:int(dns%globalSize(3)),1) = g%zNode
         do l = 2, nLevels
-            call subdivide_node_line(lineX(0:int(dns%globalSize(1))*2**(l-2), l-1), &
-                                     lineX(0:int(dns%globalSize(1))*2**(l-1), l))
-            call subdivide_node_line(lineY(0:int(dns%globalSize(2))*2**(l-2), l-1), &
-                                     lineY(0:int(dns%globalSize(2))*2**(l-1), l))
-            call subdivide_node_line(lineZ(0:int(dns%globalSize(3))*2**(l-2), l-1), &
-                                     lineZ(0:int(dns%globalSize(3))*2**(l-1), l))
+            if (dns%block_refine_mask(1) == 1_C_INT) then
+                call subdivide_node_line(lineX(0:int(dns%globalSize(1))*2**(l-2), l-1), &
+                                         lineX(0:int(dns%globalSize(1))*2**(l-1), l))
+            else
+                lineX(0:int(dns%globalSize(1)), l) = lineX(0:int(dns%globalSize(1)), 1)
+            end if
+            if (dns%block_refine_mask(2) == 1_C_INT) then
+                call subdivide_node_line(lineY(0:int(dns%globalSize(2))*2**(l-2), l-1), &
+                                         lineY(0:int(dns%globalSize(2))*2**(l-1), l))
+            else
+                lineY(0:int(dns%globalSize(2)), l) = lineY(0:int(dns%globalSize(2)), 1)
+            end if
+            if (dns%block_refine_mask(3) == 1_C_INT) then
+                call subdivide_node_line(lineZ(0:int(dns%globalSize(3))*2**(l-2), l-1), &
+                                         lineZ(0:int(dns%globalSize(3))*2**(l-1), l))
+            else
+                lineZ(0:int(dns%globalSize(3)), l) = lineZ(0:int(dns%globalSize(3)), 1)
+            end if
         end do
 
         do l = 1, nLevels
-            nl = int(dns%globalSize)*2**(l-1)
+            nl = int(dns%globalSize)*2**((l-1)*int(dns%block_refine_mask))
             nTiles = nl/nb
             raster = 0
             do gz = 0, nTiles(3) - 1
@@ -643,13 +658,15 @@ contains
         if (any(mod(dns%globalSize, dns%block_nb) /= 0_C_INT)) then
             error stop "[blocks] nb must divide the global grid in every direction"
         end if
-        allocate(touch(product(dns%globalSize/dns%block_nb)*8**dns%block_refine_levels, &
+        allocate(touch(int(product((dns%globalSize/dns%block_nb) &
+            *2**(dns%block_refine_levels*dns%block_refine_mask))), &
             dns%block_refine_levels + 1))
         allocate(buried(size(touch,1), size(touch,2)))
         if (len_trim(dns%ibm_coeff_file) > 0) then
             ! File-based geometry: masks computed by mobygeom block-table.
             do level = 0, int(dns%block_refine_levels)
-                maskCount = int(product(dns%globalSize/dns%block_nb))*(8**level)
+                maskCount = int(product((dns%globalSize/dns%block_nb) &
+                    *2**(int(level, C_INT)*dns%block_refine_mask)))
                 call read_block_masks(touch(1:maskCount, level+1), &
                     buried(1:maskCount, level+1), level, maskCount, &
                     found, dns, has_terminal)

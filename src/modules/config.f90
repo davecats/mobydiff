@@ -262,6 +262,16 @@ subroutine apply_config_value(section, key, value, dns, g, turb, les, ps, bc, c,
             call read_real6(value, dns%block_refine_box(:, dns%block_refine_nboxes), line_no)
         case ("refine_levels")
             call read_int(value, dns%block_refine_levels, line_no)
+        case ("refine_dims")
+            select case (lower(clean_string(value)))
+            case ("xyz")
+                dns%block_refine_mask = 1_C_INT
+            case ("xz")
+                dns%block_refine_mask = [1_C_INT, 0_C_INT, 1_C_INT]
+            case default
+                print *, "[blocks] refine_dims must be xyz or xz at line", line_no
+                error stop "invalid [blocks] refine_dims"
+            end select
         case ("refine_body")
             call read_bool(value, dns%block_refine_body, line_no)
         end select

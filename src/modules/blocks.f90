@@ -62,6 +62,12 @@ module blocks
         integer(C_INT) :: nBlocks = 0_C_INT
         integer(C_INT) :: nLevels = 1_C_INT
 
+        ! Per-direction refinement mask ([blocks] refine_dims): 1 = the
+        ! direction halves per level (octree default), 0 = fixed (xz
+        ! quadtree mode keeps ONE global y line at all levels). Every
+        ! level scaling below is the per-direction form 2**(l*refMask(d)).
+        integer(C_INT) :: refMask(1:3) = 1_C_INT
+
         ! Distribution of the global block table over the ranks.
         !   DIST_RANKBOX: one block per rank box; globalId == rank.
         !   DIST_ZORDER:  global lattice nTiles = globalSize/nb numbered along
@@ -145,6 +151,7 @@ contains
 
         call destroy_block_set(blk)
 
+        blk%refMask = dns%block_refine_mask
         if (dns%block_nb > 0_C_INT) then
             blk%distMode = DIST_ZORDER
             blk%nb = dns%block_nb
@@ -334,6 +341,7 @@ contains
         blk%idStart = 0_C_INT
         blk%distMode = DIST_RANKBOX
         blk%nLevels = 1_C_INT
+        blk%refMask = 1_C_INT
     end subroutine destroy_block_set
 
     ! Device mapping, mirroring enter_grid_data/enter_field_data in
@@ -374,14 +382,42 @@ contains
         refine_box_set = dns%block_refine_nboxes > 0_C_INT
     end function refine_box_set
 
-    ! Cells of the level-l global grid in direction d.
+    ! Cells of the level-l global grid in direction d (unrefined
+    ! directions keep the level-0 count, [blocks] refine_dims).
     pure integer(C_INT) function level_cells(dns, d, level) result(n)
         type(dns_type), intent(in) :: dns
         integer, intent(in) :: d
         integer(C_INT), intent(in) :: level
 
-        n = dns%globalSize(d)*int(2**int(level), C_INT)
+        n = dns%globalSize(d)*int(2**(int(level)*int(dns%block_refine_mask(d))), C_INT)
     end function level_cells
+
+    ! Level-l block lattice dimensions (per-direction 2:1 scaling).
+    pure function lattice_dims(blk, l) result(nl)
+        type(block_set_type), intent(in) :: blk
+        integer, intent(in) :: l
+        integer :: nl(3)
+
+        nl = int(blk%nTiles)*2**(l*int(blk%refMask))
+    end function lattice_dims
+
+    ! Lattice coord of the parent cell one level up / of the first child
+    ! one level down (refined directions halve/double, fixed ones map 1:1).
+    pure function parent_coord(blk, c) result(cp)
+        type(block_set_type), intent(in) :: blk
+        integer, intent(in) :: c(3)
+        integer :: cp(3)
+
+        cp = c/(1 + int(blk%refMask))
+    end function parent_coord
+
+    pure function child_origin(blk, c) result(cc)
+        type(block_set_type), intent(in) :: blk
+        integer, intent(in) :: c(3)
+        integer :: cc(3)
+
+        cc = c*(1 + int(blk%refMask))
+    end function child_origin
 
     ! Width of 0-based cell g of the level-l node line in direction d.
     function level_cell_width(blk, d, level, g) result(width)
@@ -400,30 +436,44 @@ contains
     end function level_cell_width
 
     ! Per-level node lines: level 0 is the configured grid, level l+1 the
-    ! midpoint subdivision of level l (subdivide_node_line).
+    ! midpoint subdivision of level l (subdivide_node_line). Unrefined
+    ! directions (refine_dims) carry the SAME global line in every column,
+    ! so per-level slicing and cell-width lookups stay level-indexed.
     subroutine build_level_lines(blk, dns, g)
         type(block_set_type), intent(inout) :: blk
         type(dns_type), intent(in) :: dns
         type(grid_type), intent(in) :: g
 
-        integer :: l, nf(3)
+        integer :: l, nf(3), n0(3)
 
-        nf = int(dns%globalSize)*2**(int(blk%nLevels) - 1)
+        n0 = int(dns%globalSize)
+        nf = n0*2**((int(blk%nLevels) - 1)*int(blk%refMask))
         allocate(blk%lineX(0:nf(1), blk%nLevels))
         allocate(blk%lineY(0:nf(2), blk%nLevels))
         allocate(blk%lineZ(0:nf(3), blk%nLevels))
-        blk%lineX(0:int(dns%globalSize(1)),1) = g%xNode
-        blk%lineY(0:int(dns%globalSize(2)),1) = g%yNode
-        blk%lineZ(0:int(dns%globalSize(3)),1) = g%zNode
+        blk%lineX(0:n0(1),1) = g%xNode
+        blk%lineY(0:n0(2),1) = g%yNode
+        blk%lineZ(0:n0(3),1) = g%zNode
         do l = 2, int(blk%nLevels)
-            call subdivide_node_line(blk%lineX(0:int(dns%globalSize(1))*2**(l-2), l-1), &
-                                     blk%lineX(0:int(dns%globalSize(1))*2**(l-1), l))
-            call subdivide_node_line(blk%lineY(0:int(dns%globalSize(2))*2**(l-2), l-1), &
-                                     blk%lineY(0:int(dns%globalSize(2))*2**(l-1), l))
-            call subdivide_node_line(blk%lineZ(0:int(dns%globalSize(3))*2**(l-2), l-1), &
-                                     blk%lineZ(0:int(dns%globalSize(3))*2**(l-1), l))
+            call subdivide_level_line(blk%lineX, n0(1), int(blk%refMask(1)), l)
+            call subdivide_level_line(blk%lineY, n0(2), int(blk%refMask(2)), l)
+            call subdivide_level_line(blk%lineZ, n0(3), int(blk%refMask(3)), l)
         end do
     end subroutine build_level_lines
+
+    ! Fill column l of a per-level line table: midpoint subdivision of
+    ! column l-1 for refined directions, a copy of the global line for
+    ! fixed ones.
+    subroutine subdivide_level_line(line, n0, mask, l)
+        real(C_DOUBLE), intent(inout) :: line(0:,:)
+        integer, intent(in) :: n0, mask, l
+
+        if (mask == 1) then
+            call subdivide_node_line(line(0:n0*2**(l-2), l-1), line(0:n0*2**(l-1), l))
+        else
+            line(0:n0, l) = line(0:n0, 1)
+        end if
+    end subroutine subdivide_level_line
 
     pure integer function lid_index(blk, level, c) result(idx)
         type(block_set_type), intent(in) :: blk
@@ -439,7 +489,7 @@ contains
 
         id = -1_C_INT
         if (level < 0 .or. level >= int(blk%nLevels)) return
-        if (any(c < 0) .or. any(c >= int(blk%nTiles)*2**level)) return
+        if (any(c < 0) .or. any(c >= lattice_dims(blk, level))) return
         id = blk%lidOf(lid_index(blk, level, c))
     end function leaf_at
 
@@ -459,7 +509,7 @@ contains
         ! 0 leaf placeholder (real ids assigned at the end).
         integer, parameter :: M_NONE = -1, M_SPLIT = -2, M_LEAF = 0
 
-        integer :: l, c(3), cn(3), cc(3), gx, gy, gz, i, n, id
+        integer :: l, c(3), cn(3), cc(3), gx, gy, gz, i, n, id, nl(3)
         integer :: ox, oy, oz, sx, sy, sz, lmax, round, box
         integer(int64), allocatable :: keys(:)
         integer, allocatable :: order(:), tmpLevel(:), tmpCoord(:,:)
@@ -470,7 +520,7 @@ contains
         allocate(blk%levelOffset(0:int(blk%nLevels)))
         blk%levelOffset(0) = 0_C_INT
         do l = 0, lmax
-            blk%levelOffset(l+1) = blk%levelOffset(l) + int(product(int(blk%nTiles)*2**l), C_INT)
+            blk%levelOffset(l+1) = blk%levelOffset(l) + int(product(lattice_dims(blk, l)), C_INT)
         end do
         allocate(blk%lidOf(int(blk%levelOffset(int(blk%nLevels)))))
         blk%lidOf = int(M_NONE, C_INT)
@@ -495,9 +545,10 @@ contains
         ! block buffer of strategy doc Section 4).
         do round = 1, lmax
             l = round - 1
-            do gz = 0, int(blk%nTiles(3))*2**l - 1
-                do gy = 0, int(blk%nTiles(2))*2**l - 1
-                    do gx = 0, int(blk%nTiles(1))*2**l - 1
+            nl = lattice_dims(blk, l)
+            do gz = 0, nl(3) - 1
+                do gy = 0, nl(2) - 1
+                    do gx = 0, nl(1) - 1
                         c = [gx, gy, gz]
                         if (blk%lidOf(lid_index(blk, l, c)) /= int(M_LEAF, C_INT)) cycle
                         hit = .false.
@@ -546,9 +597,10 @@ contains
         do while (changed)
             changed = .false.
             do l = 0, lmax - 2
-                do gz = 0, int(blk%nTiles(3))*2**l - 1
-                    do gy = 0, int(blk%nTiles(2))*2**l - 1
-                        do gx = 0, int(blk%nTiles(1))*2**l - 1
+                nl = lattice_dims(blk, l)
+                do gz = 0, nl(3) - 1
+                    do gy = 0, nl(2) - 1
+                        do gx = 0, nl(1) - 1
                             c = [gx, gy, gz]
                             if (blk%lidOf(lid_index(blk, l, c)) /= int(M_LEAF, C_INT)) cycle
                             outer: do oz = -1, 1
@@ -559,10 +611,10 @@ contains
                                 if (.not. wrap_lattice(blk, periodic, l, cn)) cycle
                                 if (blk%lidOf(lid_index(blk, l, cn)) /= int(M_SPLIT, C_INT)) cycle
                                 ! any split child => neighbour reaches l+2
-                                do sz = 0, 1
-                                do sy = 0, 1
-                                do sx = 0, 1
-                                    cc = 2*cn + [sx, sy, sz]
+                                do sz = 0, int(blk%refMask(3))
+                                do sy = 0, int(blk%refMask(2))
+                                do sx = 0, int(blk%refMask(1))
+                                    cc = child_origin(blk, cn) + [sx, sy, sz]
                                     if (blk%lidOf(lid_index(blk, l+1, cc)) == int(M_SPLIT, C_INT)) then
                                         call split_leaf(blk, l, c)
                                         changed = .true.
@@ -588,9 +640,10 @@ contains
         allocate(tmpLevel(n), tmpCoord(3,n), keys(n), order(n))
         i = 0
         do l = 0, lmax
-            do gz = 0, int(blk%nTiles(3))*2**l - 1
-                do gy = 0, int(blk%nTiles(2))*2**l - 1
-                    do gx = 0, int(blk%nTiles(1))*2**l - 1
+            nl = lattice_dims(blk, l)
+            do gz = 0, nl(3) - 1
+                do gy = 0, nl(2) - 1
+                    do gx = 0, nl(1) - 1
                         c = [gx, gy, gz]
                         if (blk%lidOf(lid_index(blk, l, c)) /= int(M_LEAF, C_INT)) cycle
                         if (present(buried)) then
@@ -603,7 +656,7 @@ contains
                         i = i + 1
                         tmpLevel(i) = l
                         tmpCoord(:,i) = c
-                        keys(i) = morton_key(gx*2**(lmax-l), gy*2**(lmax-l), gz*2**(lmax-l))
+                        keys(i) = leaf_key(blk, lmax, l, c)
                     end do
                 end do
             end do
@@ -636,10 +689,12 @@ contains
 
         integer :: nl(3)
 
-        nl = int(blk%nTiles)*2**l
+        nl = lattice_dims(blk, l)
         r = 1 + c(1) + nl(1)*(c(2) + nl(2)*c(3))
     end function level_raster
 
+    ! Split a leaf into its children: 2x2x2 (octree) or 2x1x2 in xz
+    ! quadtree mode, where the child keeps the parent's y tile.
     subroutine split_leaf(blk, l, c)
         type(block_set_type), intent(inout) :: blk
         integer, intent(in) :: l, c(3)
@@ -647,10 +702,10 @@ contains
         integer :: sx, sy, sz
 
         blk%lidOf(lid_index(blk, l, c)) = -2_C_INT
-        do sz = 0, 1
-            do sy = 0, 1
-                do sx = 0, 1
-                    blk%lidOf(lid_index(blk, l+1, 2*c + [sx, sy, sz])) = 0_C_INT
+        do sz = 0, int(blk%refMask(3))
+            do sy = 0, int(blk%refMask(2))
+                do sx = 0, int(blk%refMask(1))
+                    blk%lidOf(lid_index(blk, l+1, child_origin(blk, c) + [sx, sy, sz])) = 0_C_INT
                 end do
             end do
         end do
@@ -668,7 +723,7 @@ contains
 
         wrap_lattice = .true.
         do d = 1, 3
-            nl = int(blk%nTiles(d))*2**l
+            nl = int(blk%nTiles(d))*2**(l*int(blk%refMask(d)))
             if (c(d) < 0 .or. c(d) >= nl) then
                 if (.not. periodic(d)) then
                     wrap_lattice = .false.
@@ -723,14 +778,14 @@ contains
             fk = FACE_OPEN
             return
         end if
-        if (leaf_at(blk, l - 1, cl/2) >= 0_C_INT) then
+        if (leaf_at(blk, l - 1, parent_coord(blk, cl)) >= 0_C_INT) then
             fk = FACE_COARSE
             return
         end if
-        do sz = 0, 1
-            do sy = 0, 1
-                do sx = 0, 1
-                    cc = 2*cl + [sx, sy, sz]
+        do sz = 0, int(blk%refMask(3))
+            do sy = 0, int(blk%refMask(2))
+                do sx = 0, int(blk%refMask(1))
+                    cc = child_origin(blk, cl) + [sx, sy, sz]
                     if (leaf_at(blk, l + 1, cc) >= 0_C_INT) then
                         fk = FACE_FINE
                         return
@@ -752,12 +807,12 @@ contains
 
         occ = leaf_at(blk, level, cl) >= 0_C_INT
         if (occ) return
-        occ = leaf_at(blk, level - 1, cl/2) >= 0_C_INT
+        occ = leaf_at(blk, level - 1, parent_coord(blk, cl)) >= 0_C_INT
         if (occ) return
-        do sz = 0, 1
-            do sy = 0, 1
-                do sx = 0, 1
-                    if (leaf_at(blk, level + 1, 2*cl + [sx, sy, sz]) >= 0_C_INT) then
+        do sz = 0, int(blk%refMask(3))
+            do sy = 0, int(blk%refMask(2))
+                do sx = 0, int(blk%refMask(1))
+                    if (leaf_at(blk, level + 1, child_origin(blk, cl) + [sx, sy, sz]) >= 0_C_INT) then
                         occ = .true.
                         return
                     end if
@@ -817,6 +872,39 @@ contains
             key = ior(key, ishft(iand(int(gz, int64), ishft(1_int64, bit)), 2*bit + 2))
         end do
     end function morton_key
+
+    pure integer(int64) function morton2_key(gx, gz) result(key)
+        integer, intent(in) :: gx, gz
+
+        integer :: bit
+
+        key = 0_int64
+        do bit = 0, 20
+            key = ior(key, ishft(iand(int(gx, int64), ishft(1_int64, bit)), bit))
+            key = ior(key, ishft(iand(int(gz, int64), ishft(1_int64, bit)), bit + 1))
+        end do
+    end function morton2_key
+
+    ! Ordering key of a level-l leaf. xyz mode: the 3D Morton key of the
+    ! finest-lattice coords (Phase 3a, unchanged). xz quadtree mode: the
+    ! CANONICAL mixed form — y tile index in the high bits (42+) above the
+    ! 2D (x,z) Morton key of the finest-lattice coords (x even bits, z odd)
+    ! — i.e. y-major, then plane-filling in x,z. Both ends of every
+    ! exchange and mobygeom's Python mirror derive entry order from this
+    ! SAME curve.
+    pure integer(int64) function leaf_key(blk, lmax, l, c) result(key)
+        type(block_set_type), intent(in) :: blk
+        integer, intent(in) :: lmax, l, c(3)
+
+        integer :: cf(3)
+
+        cf = c*2**((lmax - l)*int(blk%refMask))
+        if (all(blk%refMask == 1_C_INT)) then
+            key = morton_key(cf(1), cf(2), cf(3))
+        else
+            key = ior(ishft(int(cf(2), int64), 42), morton2_key(cf(1), cf(3)))
+        end if
+    end function leaf_key
 
     subroutine heapsort_index(keys, order)
         integer(int64), intent(in) :: keys(:)

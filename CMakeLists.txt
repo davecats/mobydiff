@@ -46,7 +46,7 @@ set(MODULE_SOURCES
     ${MODULE_DIR}/flow_case.f90
 )
 
-set(SOLVER_TARGETS main mobygrid walldist_test transition_test)
+set(SOLVER_TARGETS main mobygrid walldist_test transition_test leaftable_test)
 
 add_executable(main ${SRC_DIR}/main.f90 ${MODULE_SOURCES})
 add_executable(mobygrid ${SRC_DIR}/mobygrid.f90 ${MODULE_SOURCES})
@@ -54,6 +54,8 @@ add_executable(mobygrid ${SRC_DIR}/mobygrid.f90 ${MODULE_SOURCES})
 add_executable(walldist_test ${SRC_DIR}/test_walldist.f90 ${MODULE_SOURCES})
 # Host-side unit test for the T4 transition correlations (rans.f90).
 add_executable(transition_test ${SRC_DIR}/test_transition.f90 ${MODULE_SOURCES})
+# Leaf-table builder dump vs mobygeom's Python mirror (R2D-0 gate b).
+add_executable(leaftable_test ${SRC_DIR}/test_leaftable.f90 ${MODULE_SOURCES})
 
 # =========================
 # Module directory

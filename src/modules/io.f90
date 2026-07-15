@@ -75,6 +75,26 @@ module io
             integer(C_INT) :: ierr
         end function fdm_h5_read_scalar
 
+        ! [blocks] refine_dims file-variant marker (xz quadtree mode): the
+        ! per-direction refinement mask attribute. Written only when the
+        ! mask is not all-ones so octree-mode files stay byte-identical;
+        ! absent on read means the octree default (1,1,1). Collective.
+        function fdm_h5_append_refine_dims(file_name, mask) &
+                bind(C, name="fdm_h5_append_refine_dims") result(ierr)
+            import :: C_CHAR, C_INT
+            character(kind=C_CHAR), intent(in) :: file_name(*)
+            integer(C_INT), intent(in) :: mask(*)
+            integer(C_INT) :: ierr
+        end function fdm_h5_append_refine_dims
+
+        function fdm_h5_read_refine_dims(file_name, mask) &
+                bind(C, name="fdm_h5_read_refine_dims") result(ierr)
+            import :: C_CHAR, C_INT
+            character(kind=C_CHAR), intent(in) :: file_name(*)
+            integer(C_INT), intent(out) :: mask(*)
+            integer(C_INT) :: ierr
+        end function fdm_h5_read_refine_dims
+
         function fdm_h5_write_grid(file_name, nx, ny, nz, lx, ly, lz, &
                 periodic, grid_distribution, grid_stretch, grid_natural_dyw_plus, grid_natural_one_sided, &
                 x_node, y_node, z_node, xu, yu, zu, xv, yv, zv, xw, yw, zw) &
@@ -266,6 +286,18 @@ subroutine write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor, n
     if (ierr /= 0_C_INT) then
         if (c%has_terminal) print *, "error: could not write HDF5 field file: ", trim(h5_file_name)
         error stop
+    end if
+
+    ! xz-quadtree file variant: mark the per-direction refinement mask so
+    ! readers (restart cross-check, compare_fields.py reassembly) scale
+    ! block origins per direction. xyz files stay byte-identical.
+    if (any(dns%block_refine_mask == 0_C_INT)) then
+        ierr = fdm_h5_append_refine_dims(c_file_name, dns%block_refine_mask)
+        if (ierr /= 0_C_INT) then
+            if (c%has_terminal) print *, "error: could not append refine_dims to: ", &
+                trim(h5_file_name)
+            error stop
+        end if
     end if
 
     ! Append the LES eddy viscosity as a "nut" dataset (only when LES is active,
@@ -573,9 +605,23 @@ subroutine read_field(blk, dns, file_name, c)
     type(comm_type), intent(in) :: c
 
     character(kind=C_CHAR,len=:), allocatable :: c_file_name
-    integer(C_INT) :: ierr
+    integer(C_INT) :: ierr, file_mask(1:3)
 
     c_file_name = to_c_string(file_name)
+    ! The refine_dims variants store block origins in different index
+    ! spaces (xz: y origins in GLOBAL cells) — a mixed restart must be a
+    ! hard error, not a silent misplacement (the blocks-table row check
+    ! alone could alias on y-symmetric layouts).
+    ierr = fdm_h5_read_refine_dims(c_file_name, file_mask)
+    if (ierr /= 0_C_INT) then
+        if (c%has_terminal) print *, "error: could not read refine_dims from: ", trim(file_name)
+        error stop
+    end if
+    if (any(file_mask /= dns%block_refine_mask)) then
+        if (c%has_terminal) print *, "restart file refine_dims mask", file_mask, &
+            "does not match the configured [blocks] refine_dims", dns%block_refine_mask
+        error stop "restart/config [blocks] refine_dims mismatch"
+    end if
     ierr = fdm_h5_read_field(c_file_name, blk%nb(1), blk%nb(2), blk%nb(3), &
         blk%nBlocks, blk%nBlocksGlobal, blk%idStart, blk%origin, &
         dns%globalSize(1), dns%globalSize(2), dns%globalSize(3), &

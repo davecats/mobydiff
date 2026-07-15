@@ -1471,18 +1471,32 @@ def window_all_solid(solid_ext: np.ndarray, nb: int, gnbt: tuple[int, int, int])
     return window_solid_counts(solid_ext, nb, gnbt) == (nb + 2)**3
 
 
+def refine_mask(args: argparse.Namespace) -> np.ndarray:
+    """--refine-dims as a per-direction mask (1 = the direction halves per
+    level, 0 = fixed), the [blocks] refine_dims counterpart."""
+    dims = getattr(args, "refine_dims", "xyz") or "xyz"
+    if dims == "xyz":
+        return np.array([1, 1, 1], dtype=np.int64)
+    if dims == "xz":
+        return np.array([1, 0, 1], dtype=np.int64)
+    raise SystemExit("--refine-dims must be xyz or xz")
+
+
 def subdivided_args(args: argparse.Namespace, level: int) -> argparse.Namespace:
     """Copy of the grid args at refinement level `level`: sizes doubled per
-    level and node lines midpoint-subdivided, matching the solver's
-    subdivide_node_line so coefficients live at identical coordinates."""
+    level and node lines midpoint-subdivided in the refined directions
+    (--refine-dims; fixed directions keep the global line), matching the
+    solver's build_level_lines so coefficients live at identical
+    coordinates."""
     finalize_grid_args(args)
     out = argparse.Namespace(**vars(args))
-    f = 2**level
-    out.nx, out.ny, out.nz = int(args.nx)*f, int(args.ny)*f, int(args.nz)*f
+    mask = refine_mask(args)
+    f = 2**(level*mask)
+    out.nx, out.ny, out.nz = int(args.nx)*int(f[0]), int(args.ny)*int(f[1]), int(args.nz)*int(f[2])
     nodes = {}
     for d in (1, 2, 3):
         line = grid_axis_nodes(d, args)
-        for _ in range(level):
+        for _ in range(level if mask[d - 1] else 0):
             fine = np.empty(2*(line.size - 1) + 1, dtype=np.float64)
             fine[0::2] = line
             fine[1::2] = 0.5*(line[:-1] + line[1:])
@@ -1598,19 +1612,42 @@ def morton_key3(c: np.ndarray) -> np.ndarray:
     return key
 
 
-def build_leaf_table_py(gnbt, levels, periodic, touch, buried, refine_box, lines, nb):
+def morton_key2(cx: np.ndarray, cz: np.ndarray) -> np.ndarray:
+    key = np.zeros(cx.shape[0], dtype=np.int64)
+    for bit in range(21):
+        key |= ((cx.astype(np.int64) >> bit) & 1) << (2*bit)
+        key |= ((cz.astype(np.int64) >> bit) & 1) << (2*bit + 1)
+    return key
+
+
+def leaf_keys(crd: np.ndarray, lev: np.ndarray, lmax: int, mask: np.ndarray) -> np.ndarray:
+    """Canonical leaf ordering keys (blocks.f90 leaf_key): the 3D Morton
+    key of the finest-lattice coords (xyz octree), or — xz quadtree — the
+    y tile index in the high bits (42+) above the 2D (x,z) Morton key."""
+    cf = crd*(2**((lmax - lev)[:, None]*mask[None, :]))
+    if mask.all():
+        return morton_key3(cf)
+    return (cf[:, 1].astype(np.int64) << 42) | morton_key2(cf[:, 0], cf[:, 2])
+
+
+def build_leaf_table_py(gnbt, levels, periodic, touch, buried, refine_box, lines, nb,
+                        mask=None):
     """Mirror of the solver's build_leaf_table: root tiling, refinement by
     body-touch (+ one-block 26-neighbour buffer) and/or physical box, 2:1
     smoothing, removal of buried leaves at every level, ids along the
-    finest-lattice Morton curve. Must stay rule-for-rule identical to
-    blocks.f90; the solver verifies the resulting table at startup."""
+    finest-lattice Morton curve (mixed y-major form in xz quadtree mode).
+    Must stay rule-for-rule identical to blocks.f90; the solver verifies
+    the resulting table at startup."""
     M_NONE, M_SPLIT, M_LEAF = -1, -2, 0
+    if mask is None:
+        mask = np.array([1, 1, 1], dtype=np.int64)
     lmax = levels - 1
-    occ = [np.full(tuple(np.array(gnbt)*2**l), M_NONE, dtype=np.int64) for l in range(levels)]
+    occ = [np.full(tuple(np.array(gnbt)*2**(l*mask)), M_NONE, dtype=np.int64)
+           for l in range(levels)]
     occ[0][:, :, :] = M_LEAF
 
     def wrap(l, c):
-        nl = np.array(gnbt)*2**l
+        nl = np.array(gnbt)*2**(l*mask)
         c = np.array(c)
         for d in range(3):
             if c[d] < 0 or c[d] >= nl[d]:
@@ -1621,11 +1658,11 @@ def build_leaf_table_py(gnbt, levels, periodic, touch, buried, refine_box, lines
 
     def split(l, c):
         occ[l][c] = M_SPLIT
-        cx, cy, cz = c
-        occ[l+1][2*cx:2*cx+2, 2*cy:2*cy+2, 2*cz:2*cz+2] = M_LEAF
+        o = np.array(c)*(1 + mask)
+        occ[l+1][o[0]:o[0]+1+mask[0], o[1]:o[1]+1+mask[1], o[2]:o[2]+1+mask[2]] = M_LEAF
 
     for l in range(lmax):
-        nl = np.array(gnbt)*2**l
+        nl = np.array(gnbt)*2**(l*mask)
         for cx in range(nl[0]):
             for cy in range(nl[1]):
                 for cz in range(nl[2]):
@@ -1663,7 +1700,7 @@ def build_leaf_table_py(gnbt, levels, periodic, touch, buried, refine_box, lines
     while changed:
         changed = False
         for l in range(lmax - 1):
-            nl = np.array(gnbt)*2**l
+            nl = np.array(gnbt)*2**(l*mask)
             for cx in range(nl[0]):
                 for cy in range(nl[1]):
                     for cz in range(nl[2]):
@@ -1678,8 +1715,10 @@ def build_leaf_table_py(gnbt, levels, periodic, touch, buried, refine_box, lines
                                     cn = wrap(l, (cx+ox, cy+oy, cz+oz))
                                     if cn is None or occ[l][cn] != M_SPLIT:
                                         continue
-                                    ch = occ[l+1][2*cn[0]:2*cn[0]+2, 2*cn[1]:2*cn[1]+2,
-                                                  2*cn[2]:2*cn[2]+2]
+                                    o = np.array(cn)*(1 + mask)
+                                    ch = occ[l+1][o[0]:o[0]+1+mask[0],
+                                                  o[1]:o[1]+1+mask[1],
+                                                  o[2]:o[2]+1+mask[2]]
                                     if (ch == M_SPLIT).any():
                                         must = True
                                         break
@@ -1700,7 +1739,7 @@ def build_leaf_table_py(gnbt, levels, periodic, touch, buried, refine_box, lines
             coords_out.append(leaf)
     lev = np.concatenate(levels_out)
     crd = np.concatenate(coords_out)
-    keys = morton_key3(crd * (2**(lmax - lev))[:, None])
+    keys = leaf_keys(crd, lev, lmax, mask)
     order = np.argsort(keys, kind="stable")
     return lev[order], crd[order]
 
@@ -1763,7 +1802,8 @@ def block_table_from_stl(args: argparse.Namespace) -> None:
         # so sum(coef u dV) misses most of the (pressure-dominated) lift.
         buried = [np.zeros_like(b) for b in buried]
 
-    lev, crd = build_leaf_table_py(gnbt, levels, periodic, touch, buried, refine_box, lines, nb)
+    lev, crd = build_leaf_table_py(gnbt, levels, periodic, touch, buried, refine_box, lines, nb,
+                                   mask=refine_mask(args))
     n_leaves = lev.shape[0]
     print(f"block table: {n_leaves} leaves, "
           f"{int((lev > 0).sum())} refined, levels {np.bincount(lev, minlength=levels)}")
@@ -1779,6 +1819,10 @@ def block_table_from_stl(args: argparse.Namespace) -> None:
         h5.attrs["re"] = float(args.re)
         h5.attrs["block_nb"] = np.int32(nb)
         h5.attrs["block_levels"] = np.int32(levels)
+        if not refine_mask(args).all():
+            # xz quadtree file variant marker (same convention as the
+            # solver's field files: absent = xyz octree).
+            h5.attrs["refine_dims"] = refine_mask(args).astype(np.int32)
         h5.attrs["convention"] = ("mobyDiff block-table coefficients: coef_blocks row id = "
                                   "(nb+2)^3 ghost window x 3 staggered vars at the leaf's level")
         blocks = np.empty((n_leaves, 4), dtype=np.int32)
@@ -2826,6 +2870,9 @@ def main(argv: list[str] | None = None) -> int:
                    help="number of levels (refine_levels + 1)")
     p.add_argument("--refine-box", type=float, nargs=6, default=None,
                    help="x0 x1 y0 y1 z0 z1: box refinement instead of body-driven")
+    p.add_argument("--refine-dims", choices=("xyz", "xz"), default="xyz",
+                   help="refined directions ([blocks] refine_dims): xyz octree "
+                        "(default) or xz quadtree (y keeps the global line)")
     p.add_argument("--no-dwall", action="store_true",
                    help="skip the per-leaf dwall_blocks wall-distance dataset (RANS)")
     p.add_argument("--keep-buried", action="store_true",

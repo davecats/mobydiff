@@ -24,41 +24,45 @@ def is_block_format(h5: h5py.File) -> bool:
 
 
 def block_geometry(h5: h5py.File):
+    """Blocks table, block size, per-direction replication factors (z,y,x
+    order) at each level, and the finest-lattice shape. The refine_dims
+    attribute (absent = xyz octree) marks the xz-quadtree variant, where y
+    never refines and block y origins are global cells already."""
     blocks = h5["blocks"][...]
     nb = (int(h5.attrs["block_nb_x"]), int(h5.attrs["block_nb_y"]), int(h5.attrs["block_nb_z"]))
     lmax = int(blocks[:, 3].max())
-    shape = tuple(int(h5.attrs[a]) * 2**lmax for a in ("nz", "ny", "nx"))
-    return blocks, nb, lmax, shape
+    mask = np.asarray(h5.attrs.get("refine_dims", [1, 1, 1]), dtype=np.int64)  # x,y,z
+    mzyx = mask[::-1]
+    shape = tuple(int(h5.attrs[a]) * 2**(lmax * int(m)) for a, m in zip(("nz", "ny", "nx"), mzyx))
+    return blocks, nb, lmax, mzyx, shape
 
 
 def load_field(h5: h5py.File, name: str) -> np.ndarray:
     if not is_block_format(h5):
         return h5[name][...]
-    blocks, nb, lmax, shape = block_geometry(h5)
+    blocks, nb, lmax, mzyx, shape = block_geometry(h5)
     arr = np.zeros(shape, dtype=np.float64)
     data = h5[name]
     for bid, (ox, oy, oz, lev) in enumerate(blocks):
-        f = 2 ** (lmax - int(lev))
+        fz, fy, fx = (2 ** ((lmax - int(lev)) * int(m)) for m in mzyx)
         row = data[bid]
-        if f > 1:
-            row = row.repeat(f, axis=0).repeat(f, axis=1).repeat(f, axis=2)
-        arr[oz * f:oz * f + nb[2] * f, oy * f:oy * f + nb[1] * f, ox * f:ox * f + nb[0] * f] = row
+        if max(fx, fy, fz) > 1:
+            row = row.repeat(fz, axis=0).repeat(fy, axis=1).repeat(fx, axis=2)
+        arr[oz * fz:oz * fz + nb[2] * fz,
+            oy * fy:oy * fy + nb[1] * fy,
+            ox * fx:ox * fx + nb[0] * fx] = row
     return arr
 
 
 def surviving_block_mask(h5: h5py.File) -> np.ndarray:
     """Boolean finest-lattice mask of cells covered by the file's block table."""
-    if is_block_format(h5):
-        blocks, nb, lmax, shape = block_geometry(h5)
-    else:
-        blocks = h5["blocks"][...]
-        nb = (int(h5.attrs["block_nb_x"]), int(h5.attrs["block_nb_y"]), int(h5.attrs["block_nb_z"]))
-        lmax = int(blocks[:, 3].max())
-        shape = tuple(int(h5.attrs[a]) * 2**lmax for a in ("nz", "ny", "nx"))
+    blocks, nb, lmax, mzyx, shape = block_geometry(h5)
     mask = np.zeros(shape, dtype=bool)
     for ox, oy, oz, lev in blocks:
-        f = 2 ** (lmax - int(lev))
-        mask[oz * f:oz * f + nb[2] * f, oy * f:oy * f + nb[1] * f, ox * f:ox * f + nb[0] * f] = True
+        fz, fy, fx = (2 ** ((lmax - int(lev)) * int(m)) for m in mzyx)
+        mask[oz * fz:oz * fz + nb[2] * fz,
+             oy * fy:oy * fy + nb[1] * fy,
+             ox * fx:ox * fx + nb[0] * fx] = True
     return mask
 
 

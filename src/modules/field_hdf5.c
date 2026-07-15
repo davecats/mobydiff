@@ -841,6 +841,43 @@ int fdm_h5_append_nut(const char *filename, int nbx, int nby, int nbz,
                                 n_blocks, n_blocks_global, id_start, nut);
 }
 
+/* [blocks] refine_dims marker of the xz-quadtree file variant: the
+ * per-direction refinement mask as a 3-int attribute. Written only when
+ * the mask is not all-ones, so octree-mode files stay byte-identical;
+ * absent on read means the octree default {1,1,1}. Collective. */
+int fdm_h5_append_refine_dims(const char *filename, const int *mask)
+{
+    hid_t plist, file;
+    int ierr = 0;
+
+    plist = H5Pcreate(H5P_FILE_ACCESS);
+    if (plist < 0) return 1;
+    if (H5Pset_fapl_mpio(plist, MPI_COMM_WORLD, MPI_INFO_NULL) < 0) {
+        H5Pclose(plist);
+        return 1;
+    }
+    file = H5Fopen(filename, H5F_ACC_RDWR, plist);
+    H5Pclose(plist);
+    if (file < 0) return 1;
+
+    ierr |= write_attr_int_array(file, "refine_dims", mask, 3);
+    ierr |= H5Fclose(file) < 0;
+    return ierr != 0;
+}
+
+int fdm_h5_read_refine_dims(const char *filename, int *mask)
+{
+    hid_t file;
+    int ierr = 0;
+
+    mask[0] = mask[1] = mask[2] = 1;
+    file = open_parallel_file(filename);
+    if (file < 0) return 1;
+    ierr |= read_attr_int_array(file, "refine_dims", mask, 3, 0);
+    ierr |= H5Fclose(file) < 0;
+    return ierr != 0;
+}
+
 /* Read a named cell-centred block-layout scalar (the RANS k/omega restart
  * datasets). *found = 0 when the dataset is absent, which is not an error:
  * the solver then reinitializes the scalar and warns (old restart files).

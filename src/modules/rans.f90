@@ -403,7 +403,7 @@ contains
         integer :: i, j, k, b, nx, ny, nz, nf(3)
         real(C_DOUBLE) :: xA(1:3)
 
-        nf = int(dns%globalSize)*2**(int(blk%nLevels) - 1)
+        nf = int(dns%globalSize)*2**((int(blk%nLevels) - 1)*int(blk%refMask))
         call build_walldist(w, isInBody, ibm, dns, &
             blk%lineX(0:nf(1), int(blk%nLevels)), &
             blk%lineY(0:nf(2), int(blk%nLevels)), &

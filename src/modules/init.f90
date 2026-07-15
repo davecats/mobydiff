@@ -77,6 +77,12 @@ module init
         integer(C_INT) :: block_refine_nboxes = 0_C_INT
         ! [blocks] refine_levels: rounds of box refinement (max level).
         integer(C_INT) :: block_refine_levels = 1_C_INT
+        ! [blocks] refine_dims = xyz (default octree) | xz (quadtree: blocks
+        ! refine in x and z only; y keeps the single global node line at all
+        ! levels). Stored as a per-direction mask (1 = the direction halves
+        ! per level, 0 = fixed) so level scalings stay per-direction
+        ! expressions; docs/next_session_refine2d.md.
+        integer(C_INT) :: block_refine_mask(1:3) = 1_C_INT
         ! [blocks] refine_body: refine blocks whose dilated region meets the
         ! immersed surface to the finest level (+1 block buffer), and remove
         ! buried blocks at every level (analytic IBM).
