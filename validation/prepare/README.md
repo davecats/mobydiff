@@ -1,4 +1,10 @@
-# moby_prepare P0 gates (docs/prepare_solve_strategy.md)
+# moby_prepare gates (docs/prepare_solve_strategy.md)
+
+Two gate groups: `run_gates.sh` (P0, analytic geometry, bit-exactness) and
+`run_gates_stl.sh` (P1, STL geometry vs mobygeom references + exact
+shift-invariance). See the P1 section at the bottom.
+
+## P0 — analytic geometry
 
 P0 splits the analytic-geometry preprocessing out of the solver init into
 the `moby_prepare` executable, with **zero new geometry code**: prepare runs
@@ -51,3 +57,40 @@ Notes:
   and cross-checks the file's blocks table row-by-row — a stale or
   differently-built case file is a hard error, exactly as for mobygeom
   files.
+
+## P1 — STL geometry (`run_gates_stl.sh`)
+
+`[ibm] stl_file` (moby_prepare input only) loads watertight binary STLs
+behind the analytic indicator signature (`geometry_stl.f90`: BVH +
+majority-vote ray-parity inside test, exact BVH point-triangle wall
+distance), so masks/coefficients/dwall flow through the SAME machinery as
+analytic bodies.
+
+| gate | reference | expectation |
+|---|---|---|
+| `flat.ini`, `flat_refine.ini` | committed mobygeom block-table files (`../rans_geometry/ibm_coeff_blocks_l{1,2}.h5`, les_ibm wall slabs) | blocks + all per-level masks IDENTICAL; coef ≤ 1e-6 rel (indicator bisection vs exact ray crossings); interior dwall ≤ 2e-9 |
+| flat solve | 1-step solve, prepared file vs committed file | fields ≤ 1e-10, ransgeom dwall/yeff ≤ 1e-9, wallcell identical |
+| `sphere.ini` | freshly generated mobygeom reference (needs the ibmc venv; skipped without it) | same identity/tolerance classes on a curved, buried-leaf body |
+| `sphere_shift.ini` | the SAME mesh float32-EXACTLY translated onto the x-periodic boundary | masks/blocks the exactly rolled copy; coef/dwall tiles bit-identical (gates the minimum-image logic with zero tolerance) |
+
+## Status 2026-07-16 (P1, CPU nofma build)
+
+All gates PASS. Measured: flat/flat_refine/sphere blocks + masks identical
+to mobygeom (incl. 768 and 56 buried leaves); coef 5.6e-9 / 2.1e-8 /
+4.0e-7 relative; interior dwall 7.5e-12 / 2.7e-11 / 1.7e-16; the shift
+gate is EXACTLY 0.0 on every dataset.
+
+Conventions found while gating (documented in geometry_stl.f90):
+- **dwall ghost cells beyond a periodic boundary**: prepare stores the
+  periodic minimum-image distance (the solver's analytic-walldist
+  convention); mobygeom stores the base-mesh distance. compare_case.py
+  compares interior cells and reports the ghost gap informationally.
+- **distance imaging rule**: a periodic dim is imaged only when the mesh
+  is narrower than the cell there — an STL spanning the full cell (the
+  padded wall slabs) is its own periodic continuation and its overhanging
+  skin is interior to the periodic union, not a wall. Membership (parity)
+  always images.
+- STL dwall uses the exact BVH point-triangle query, NOT the
+  indicator-driven walldist machinery (millions of near-surface parity
+  casts; the exact query is also what mobygeom/igl computes — interior
+  agreement to round-off).

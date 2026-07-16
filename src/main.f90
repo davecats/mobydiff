@@ -68,6 +68,15 @@ program main
     end if
     call comm_init(c, dns, bc)
 
+    ! STL geometry is prepared offline (docs/prepare_solve_strategy.md):
+    ! the solver consumes only the case file it produced.
+    if (dns%ibm_enabled .and. len_trim(dns%ibm_stl_file) > 0 &
+            .and. len_trim(dns%ibm_coeff_file) == 0) then
+        if (c%has_terminal) print *, "error: [ibm] stl_file is a moby_prepare input;", &
+            " run moby_prepare and point [ibm] coeff_file at its output"
+        error stop
+    end if
+
     if (c%has_terminal) print *, "initialising grid..."
     call init_grid(g, dns, bc%isPeriodic)
     call validate_dns_values(dns, g)
@@ -81,14 +90,15 @@ program main
         ! finest level at the surface with a one-block buffer, removing
         ! buried blocks at every level. ibmm produces the geometry masks.
         call classify_refinement_masks(blockTouch, blockBuried, blockMaskLo, &
-            blockMaskDims, dns, g, ibm, bc%isPeriodic, c%has_terminal)
+            blockMaskDims, dns, g, ibm, bc%isPeriodic, c%has_terminal, isInBody)
         call init_block_set(blk, dns, g, bc%isPeriodic, int(c%cart_size, C_INT), &
             int(c%cart_rank, C_INT), touch=blockTouch, buried=blockBuried, &
             maskLo=blockMaskLo, maskDims=blockMaskDims)
         deallocate(blockTouch, blockBuried, blockMaskLo, blockMaskDims)
     else if (dns%block_nb > 0_C_INT .and. dns%ibm_enabled .and. dns%block_remove_solid) then
         ! Solid-block removal: drop blocks buried inside the immersed body.
-        call classify_active_mask(blockActive, dns, g, ibm, bc%isPeriodic, c%has_terminal)
+        call classify_active_mask(blockActive, dns, g, ibm, bc%isPeriodic, &
+            c%has_terminal, isInBody)
         call init_block_set(blk, dns, g, bc%isPeriodic, int(c%cart_size, C_INT), &
             int(c%cart_rank, C_INT), blockActive)
         deallocate(blockActive)

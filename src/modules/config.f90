@@ -230,6 +230,8 @@ subroutine apply_config_value(section, key, value, dns, g, turb, les, ps, bc, c,
             call read_bool(value, dns%ibm_enabled, line_no)
         case ("coeff_file")
             dns%ibm_coeff_file = clean_string(value)
+        case ("stl_file")
+            dns%ibm_stl_file = clean_string(value)
         case ("band_filter")
             call read_bool(value, dns%ibm_band_filter, line_no)
         case ("band_width")

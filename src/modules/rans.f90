@@ -119,7 +119,7 @@ module rans
         domain_face_is_wall, apply_scalar_bc, PATCH_UNSET, &
         PATCH_GENERIC, PATCH_WALL, PATCH_INLET, PATCH_OUTLET, &
         SCALAR_BC_NONE, SCALAR_BC_COPY, SCALAR_BC_MIRROR, SCALAR_BC_VALUE
-    use :: ibmm, only: ibm_type, isInBody
+    use :: ibmm, only: ibm_type, isInBody, body_indicator_i
     use :: walldist, only: walldist_type, build_walldist, destroy_walldist, &
         walldist_distance
     use :: turbulence, only: turb_type, velocity_gradient_tensor, &
@@ -275,7 +275,8 @@ contains
             if (len_trim(dns%ibm_coeff_file) > 0) then
                 call read_body_distance_file(sst, dns, blk, c%has_terminal)
             else
-                call fill_body_distance_analytic(sst%dwall, dns, blk, bc, ibm, c%has_terminal)
+                call fill_body_distance_analytic(sst%dwall, dns, blk, bc, ibm, &
+                    c%has_terminal, isInBody)
             end if
         end if
         call min_in_domain_wall_distance(sst, dns, g, blk, bc)
@@ -395,13 +396,14 @@ contains
     ! the finest refinement level; queries run at each block's own
     ! (level-sliced) cell centres, so refined leaves are exact at their
     ! level for free.
-    subroutine fill_body_distance_analytic(dwall, dns, blk, bc, ibm, has_terminal)
+    subroutine fill_body_distance_analytic(dwall, dns, blk, bc, ibm, has_terminal, inside)
         real(C_DOUBLE), intent(inout) :: dwall(0:,0:,0:,1:)
         type(dns_type), intent(in) :: dns
         type(block_set_type), intent(in) :: blk
         type(boundary_type), intent(in) :: bc
         type(ibm_type), intent(in) :: ibm
         logical, intent(in) :: has_terminal
+        procedure(body_indicator_i) :: inside
 
         type(walldist_type) :: w
         integer :: i, j, k, b, nx, ny, nz, nf(3)
@@ -409,7 +411,7 @@ contains
 
         dwall = NO_WALL_DISTANCE
         nf = int(dns%globalSize)*2**((int(blk%nLevels) - 1)*int(blk%refMask))
-        call build_walldist(w, isInBody, ibm, dns, &
+        call build_walldist(w, inside, ibm, dns, &
             blk%lineX(0:nf(1), int(blk%nLevels)), &
             blk%lineY(0:nf(2), int(blk%nLevels)), &
             blk%lineZ(0:nf(3), int(blk%nLevels)), &
@@ -430,7 +432,7 @@ contains
                     xA(1) = blk%x(i, VAR_P, b)
                     xA(2) = blk%y(j, VAR_P, b)
                     xA(3) = blk%z(k, VAR_P, b)
-                    dwall(i,j,k,b) = walldist_distance(w, isInBody, ibm, dns, &
+                    dwall(i,j,k,b) = walldist_distance(w, inside, ibm, dns, &
                         xA, dns%rans_dwall_tol)
                 end do
             end do

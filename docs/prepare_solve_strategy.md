@@ -249,18 +249,49 @@ main_ref vs main bit-exact nofma CPU+GPU. Canonical prepare = the CPU
 build (a GPU-built prepare computes coefficients on the device, libm-ulp
 caveat).
 
-**P1 — STL module.**
-`geometry_stl.f90` + indicator-as-argument refactor of `classify_*`;
-prepare accepts `[ibm] stl = ...` (+ scale/translate as in mobygeom).
-*Gates*: (a) exact references first — the flat-slab channel closed form
-(les_ibm STLs, gate says 0.0 through float32 rounding) and the sphere
-(walldist_test machinery); (b) vs mobygeom on committed cases (les_ibm,
-sailplane, NACA, SD7003): `blocks` + masks byte-identical, coef/dwall to
-tight tolerance (bit-identity NOT expected — parity-vs-winding and
-bisection-vs-ray-intersector differ in ulps; watertight-mesh agreement must
-be exact in classification, i.e. masks match exactly); (c) solver
-end-to-end: physical gates (les_ibm law of the wall, NACA polar bands,
-SD7003 transition metrics) reproduced from prepare-built files.
+**P1 — STL module. DONE 2026-07-16 (gates in `validation/prepare/`,
+`run_gates_stl.sh`).**
+`src/modules/geometry_stl.f90`: watertight binary-STL bodies behind the
+analytic indicator signature — `body_indicator_i` MOVED to ibmm (walldist
+re-exports it), `classify_*`/`fill_body_distance_analytic` take the
+indicator as an argument (the solver passes `isInBody` explicitly — same
+function, now via argument), and `set_ibm_coeff_host` is the host twin of
+the device coefficient kernel over any indicator (declare-target procedure
+arguments are not portable; the twins are marked KEEP IN LOCKSTEP). The
+module: BVH (median split), majority-vote ray-parity inside test (3→11
+fixed directions, deterministic large-rotation retry on degenerate casts —
+small perturbations cannot escape the edge zone when a near-surface origin
+hits at tiny t), minimum-image periodic queries, and the EXACT BVH
+point-triangle distance for dwall (the indicator-driven walldist polish
+was pathologically slow on STL — millions of near-surface parity casts —
+and the exact query is what mobygeom/igl computes anyway: interior
+agreement to round-off). `[ibm] stl_file` (whitespace-separated file list)
+is a moby_prepare input; the solver hard-errors on it without a
+`coeff_file`.
+TWO CONVENTIONS DISCOVERED while gating (documented in geometry_stl.f90):
+(1) distance queries image a periodic dim ONLY when the mesh is narrower
+than the cell there — an STL spanning the full cell (padded wall slabs) is
+its own periodic continuation and its overhanging skin is interior to the
+periodic union, not a wall; membership (parity) always images. (2) dwall
+ghost cells beyond a periodic boundary carry the periodic minimum-image
+distance (the solver's analytic-walldist convention); mobygeom stores the
+base-mesh distance there — interior cells agree to round-off.
+*Gates (all PASS)*: flat + flat_refine vs the COMMITTED mobygeom
+block-table references — blocks and every per-level mask IDENTICAL (incl.
+768/56 buried leaves), coef 5.6e-9/2.1e-8 rel, interior dwall
+7.5e-12/2.7e-11; 1-step solve prepared-vs-committed file ≤ 1e-10 fields,
+ransgeom ≤ 1e-9, wallcell identical; sphere (curved, buried leaves,
+all-periodic) vs a generated mobygeom reference — masks identical, coef
+4.0e-7, interior dwall 1.7e-16; sphere exactly float32-translated onto the
+x-periodic boundary — masks/blocks the exactly rolled copy and coef/dwall
+tiles BIT-IDENTICAL (0.0), the zero-tolerance minimum-image gate; the P0
+analytic gates all still PASS through the refactor (22 incl. the GPU
+cross-check); 7-case suite bit-exact vs the P0 binaries CPU AND GPU.
+DEFERRED to P1b: re-gating the big committed mobygeom cases (sailplane,
+NACA, SD7003 — physical gates from prepare-built files) and the mobygeom
+retirement; prepare's per-rank-redundant classification is the P2
+parallelization target (flat_refine: 38 s at 4 ranks, dominated by
+level-1 lattice parity casts).
 
 **P2 — parallel + fast.**
 MPI split as §7; far-field shortcut; optional direct segment-intersection

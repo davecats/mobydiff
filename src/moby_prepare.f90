@@ -22,7 +22,10 @@ program moby_prepare
     use :: boundary, only: boundary_type
     use :: io, only: write_case_file
     use :: ibmm, only: ibm_type, init_ibm, enter_ibm_data, exit_ibm_data, &
-        set_ibm_coeff, classify_refinement_masks, classify_active_mask
+        set_ibm_coeff, set_ibm_coeff_host, classify_refinement_masks, &
+        classify_active_mask, isInBody, body_indicator_i
+    use :: geometry_stl, only: stl_geometry_load, stl_geometry_destroy, &
+        stl_is_in_body, stl_fill_dwall
     use :: rans, only: fill_body_distance_analytic
     use :: pressure_solver, only: pressure_solver_type
     use :: turbulence, only: turb_type
@@ -49,6 +52,9 @@ program moby_prepare
     integer(C_INT), allocatable :: blockTouch(:,:), blockBuried(:,:)
     integer(C_INT), allocatable :: blockMaskLo(:,:), blockMaskDims(:,:)
     real(C_DOUBLE), allocatable :: dwall(:,:,:,:)
+    ! The one geometry switch: every downstream stage takes the indicator.
+    procedure(body_indicator_i), pointer :: inside => null()
+    logical :: use_stl
 
     call comm_init_world(c)
     call parse_prepare_args(input_file, output_file, show_help)
@@ -68,7 +74,7 @@ program moby_prepare
     if (dns%block_nb <= 0_C_INT) &
         error stop "moby_prepare needs [blocks] nb: the case file is a block-table file"
     if (.not. dns%ibm_enabled) &
-        error stop "moby_prepare needs [ibm] enabled = true (the analytic geometry)"
+        error stop "moby_prepare needs [ibm] enabled = true (analytic or stl_file geometry)"
     if (len_trim(dns%ibm_coeff_file) > 0) &
         error stop "moby_prepare computes the coefficient file; drop [ibm] coeff_file from its input"
 
@@ -76,19 +82,30 @@ program moby_prepare
     call init_grid(g, dns, bc%isPeriodic)
     call validate_dns_values(dns, g)
 
+    ! Geometry source: the analytic isInBody, or an STL body loaded behind
+    ! the same indicator signature ([ibm] stl_file, P1).
+    use_stl = len_trim(dns%ibm_stl_file) > 0
+    if (use_stl) then
+        call stl_geometry_load(trim(dns%ibm_stl_file), dns%leng, &
+            logical(bc%isPeriodic), c%has_terminal)
+        inside => stl_is_in_body
+    else
+        inside => isInBody
+    end if
+
     ! Geometry classification + block set: the solver's init dispatch
     ! (main.f90), analytic branch. classify_* keep their masks here so they
     ! can go into the case file after the block set consumed them.
     if (c%has_terminal) print *, "classifying geometry..."
     if (dns%block_refine_body) then
         call classify_refinement_masks(blockTouch, blockBuried, blockMaskLo, &
-            blockMaskDims, dns, g, ibm, bc%isPeriodic, c%has_terminal)
+            blockMaskDims, dns, g, ibm, bc%isPeriodic, c%has_terminal, inside)
         call init_block_set(blk, dns, g, bc%isPeriodic, int(c%world_size, C_INT), &
             int(c%world_rank, C_INT), touch=blockTouch, buried=blockBuried, &
             maskLo=blockMaskLo, maskDims=blockMaskDims)
     else if (dns%block_remove_solid) then
         call classify_active_mask(blockActive, dns, g, ibm, bc%isPeriodic, &
-            c%has_terminal)
+            c%has_terminal, inside)
         call init_block_set(blk, dns, g, bc%isPeriodic, int(c%world_size, C_INT), &
             int(c%world_rank, C_INT), blockActive)
     else
@@ -96,27 +113,42 @@ program moby_prepare
             int(c%world_rank, C_INT))
     end if
 
-    ! IBM coefficients: the solver's inline analytic kernel on this rank's
-    ! leaves (on the device in offload builds; the file carries the host
-    ! copy -- prepare with the CPU build for the bit-exactness gates).
+    ! IBM coefficients on this rank's leaves. Analytic keeps the solver's
+    ! inline kernel verbatim (the P0 bit-exactness gate; on the device in
+    ! offload builds -- prepare with the CPU build for the gates); STL runs
+    ! the host twin over the indicator.
     if (c%has_terminal) print *, "computing IBM coefficients..."
     call init_ibm(ibm, blk)
-    call enter_ibm_data(ibm, dns)
-    call set_ibm_coeff(dns, blk, ibm, VAR_U)
-    call set_ibm_coeff(dns, blk, ibm, VAR_V)
-    call set_ibm_coeff(dns, blk, ibm, VAR_W)
+    if (use_stl) then
+        call set_ibm_coeff_host(dns, blk, ibm, VAR_U, inside)
+        call set_ibm_coeff_host(dns, blk, ibm, VAR_V, inside)
+        call set_ibm_coeff_host(dns, blk, ibm, VAR_W, inside)
+    else
+        call enter_ibm_data(ibm, dns)
+        call set_ibm_coeff(dns, blk, ibm, VAR_U)
+        call set_ibm_coeff(dns, blk, ibm, VAR_V)
+        call set_ibm_coeff(dns, blk, ibm, VAR_W)
 #ifdef USE_OPENMP_OFFLOAD
-    !$omp target update from(ibm%coef)
+        !$omp target update from(ibm%coef)
 #endif
+    end if
 
-    ! RANS wall distance: the raw analytic body distance, exactly what
-    ! init_rans_geometry computes inline before the domain-wall min and the
-    ! half-cell floor (those stay solve-time, applied after the file read).
+    ! RANS wall distance: the raw body distance (the domain-wall min and
+    ! half-cell floor stay solve-time, applied after the file read).
+    ! Analytic = the indicator-driven walldist machinery, exactly what
+    ! init_rans_geometry computes inline; STL = the exact BVH
+    ! point-triangle distance (the same query mobygeom's dwall_blocks
+    ! uses -- indicator bisections would cost millions of parity casts).
     if (dns%rans_configured) then
         if (c%has_terminal) print *, "computing wall distance..."
         allocate(dwall(0:int(blk%nb(1))+1, 0:int(blk%nb(2))+1, &
             0:int(blk%nb(3))+1, blk%nBlocks))
-        call fill_body_distance_analytic(dwall, dns, blk, bc, ibm, c%has_terminal)
+        if (use_stl) then
+            call stl_fill_dwall(dwall, blk)
+        else
+            call fill_body_distance_analytic(dwall, dns, blk, bc, ibm, &
+                c%has_terminal, inside)
+        end if
     end if
 
     if (c%has_terminal) print *, "writing case file: ", trim(output_file)
@@ -129,7 +161,11 @@ program moby_prepare
         print *, "run the solver with [ibm] coeff_file = ", trim(output_file)
     end if
 
-    call exit_ibm_data(ibm, dns)
+    if (use_stl) then
+        call stl_geometry_destroy()
+    else
+        call exit_ibm_data(ibm, dns)
+    end if
     call destroy_block_set(blk)
     call destroy_grid(g)
     call comm_finalize(c)

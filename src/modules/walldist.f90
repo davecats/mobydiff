@@ -39,22 +39,15 @@
 module walldist
     use, intrinsic :: iso_c_binding
     use :: init, only: dns_type, cell_center_at
-    use :: ibmm, only: ibm_type
+    ! body_indicator_i (the isInBody signature) lives in ibmm since P1 of
+    ! the prepare/solve split, shared with the classify_* routines and the
+    ! STL geometry; re-exported here for the existing consumers.
+    use :: ibmm, only: ibm_type, body_indicator_i
     implicit none
 
     private
     public :: body_indicator_i, walldist_type
     public :: build_walldist, destroy_walldist, walldist_distance
-
-    ! The indicator signature is exactly isInBody's (ibm.f90).
-    abstract interface
-        logical function body_indicator_i(xIN, ibm, dns)
-            import :: C_DOUBLE, ibm_type, dns_type
-            real(C_DOUBLE), intent(in) :: xIN(1:3)
-            type(ibm_type), intent(in) :: ibm
-            type(dns_type), intent(in) :: dns
-        end function body_indicator_i
-    end interface
 
     integer, parameter :: LEAF_SIZE = 12         ! kd-tree leaf bucket
     integer, parameter :: MAX_POLISH_LEVELS = 80

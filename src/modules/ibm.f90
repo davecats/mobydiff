@@ -50,6 +50,22 @@ module ibmm
 
     end type ibm_type
 
+    ! The one indicator signature every host-side geometry consumer takes
+    ! (walldist, the classify_* routines, moby_prepare's coefficient
+    ! tiles): exactly the analytic isInBody's. geometry_stl.f90 provides
+    ! the same signature reading its own module state, so STL and analytic
+    ! bodies flow through identical machinery. The DEVICE coefficient
+    ! kernel (set_ibm_coeff) keeps calling the concrete isInBody directly:
+    ! declare-target procedure arguments are not portable.
+    abstract interface
+        logical function body_indicator_i(xIN, ibm, dns)
+            import :: C_DOUBLE, ibm_type, dns_type
+            real(C_DOUBLE), intent(in) :: xIN(1:3)
+            type(ibm_type), intent(in) :: ibm
+            type(dns_type), intent(in) :: dns
+        end function body_indicator_i
+    end interface
+
     interface
         function fdm_h5_read_ibm_coeff_blocks(file_name, nbx, nby, nbz, n_blocks, id_start, &
                 block_origin, block_level, lx, ly, lz, re, found, coef) &
@@ -437,12 +453,13 @@ contains
     ! the block dilated by one halo cell is solid (isInBody) at cell centres
     ! and all three staggered locations. active is in x-fastest lattice
     ! raster order, 1 = keep.
-    subroutine classify_active_blocks(active, dns, g, ibm, periodic)
+    subroutine classify_active_blocks(active, dns, g, ibm, periodic, inside)
         integer(C_INT), intent(out) :: active(:)
         type(dns_type), intent(in) :: dns
         type(grid_type), intent(in) :: g
         type(ibm_type), intent(inout) :: ibm
         logical(C_BOOL), intent(in) :: periodic(1:3)
+        procedure(body_indicator_i) :: inside
 
         integer :: nb, nTiles(3), gx, gy, gz, raster, d
         integer :: i, j, k, var, o(3)
@@ -478,7 +495,7 @@ contains
                                         dns%leng(2), periodic(2), 2, var, j)
                                     xA(3) = location_coord(g%zNode, int(dns%globalSize(3)), &
                                         dns%leng(3), periodic(3), 3, var, k)
-                                    if (.not. isInBody(xA, ibm, dns)) then
+                                    if (.not. inside(xA, ibm, dns)) then
                                         buried = .false.
                                         exit outer
                                     end if
@@ -517,19 +534,20 @@ contains
     !   buried(c, l+1) = the dilated block is solid everywhere (removable)
     ! Level lines are built here by midpoint subdivision, identical to the
     ! solver's per-level metric lines.
-    subroutine classify_block_geometry(touch, buried, dns, g, ibm, periodic, nLevels)
+    subroutine classify_block_geometry(touch, buried, dns, g, ibm, periodic, nLevels, inside)
         integer(C_INT), intent(out) :: touch(:,:), buried(:,:)
         type(dns_type), intent(in) :: dns
         type(grid_type), intent(in) :: g
         type(ibm_type), intent(inout) :: ibm
         logical(C_BOOL), intent(in) :: periodic(1:3)
         integer, intent(in) :: nLevels
+        procedure(body_indicator_i) :: inside
 
         integer :: nb, l, nTiles(3), gx, gy, gz, raster, d
         integer :: i, j, k, var, o(3), nf(3), nl(3)
         real(C_DOUBLE) :: xA(3)
         real(C_DOUBLE), allocatable :: lineX(:,:), lineY(:,:), lineZ(:,:)
-        logical :: anySolid, anyFluid, inside
+        logical :: anySolid, anyFluid, isSolid
 
         call set_ibm_geometry_defaults(ibm)
         nb = int(dns%block_nb)
@@ -584,9 +602,9 @@ contains
                                             periodic(2), 2, var, j)
                                         xA(3) = location_coord(lineZ(:,l), nl(3), dns%leng(3), &
                                             periodic(3), 3, var, k)
-                                        inside = isInBody(xA, ibm, dns)
-                                        anySolid = anySolid .or. inside
-                                        anyFluid = anyFluid .or. .not. inside
+                                        isSolid = inside(xA, ibm, dns)
+                                        anySolid = anySolid .or. isSolid
+                                        anyFluid = anyFluid .or. .not. isSolid
                                         if (anySolid .and. anyFluid) exit scan
                                     end do
                                 end do
@@ -608,13 +626,14 @@ contains
     ! allocated here to the lattice size; the caller hands it to
     ! init_block_set. This is the geometry input to block-set construction,
     ! kept out of main so the construction dispatch stays thin.
-    subroutine classify_active_mask(active, dns, g, ibm, periodic, has_terminal)
+    subroutine classify_active_mask(active, dns, g, ibm, periodic, has_terminal, inside)
         integer(C_INT), allocatable, intent(out) :: active(:)
         type(dns_type), intent(in) :: dns
         type(grid_type), intent(in) :: g
         type(ibm_type), intent(inout) :: ibm
         logical(C_BOOL), intent(in) :: periodic(1:3)
         logical, intent(in) :: has_terminal
+        procedure(body_indicator_i) :: inside
 
         logical :: found
 
@@ -633,7 +652,7 @@ contains
                 active = 1_C_INT
             end if
         else
-            call classify_active_blocks(active, dns, g, ibm, periodic)
+            call classify_active_blocks(active, dns, g, ibm, periodic, inside)
         end if
     end subroutine classify_active_mask
 
@@ -643,7 +662,7 @@ contains
     ! geometry. Both arrays are allocated here for the finest lattice (one
     ! column per level); the caller hands them to init_block_set.
     subroutine classify_refinement_masks(touch, buried, maskLo, maskDims, dns, g, ibm, &
-            periodic, has_terminal)
+            periodic, has_terminal, inside)
         integer(C_INT), allocatable, intent(out) :: touch(:,:), buried(:,:)
         ! Per-level mask windows (block coords): deep-refinement rasters
         ! are stored/held windowed to the padded STL bbox; the analytic
@@ -654,6 +673,7 @@ contains
         type(ibm_type), intent(inout) :: ibm
         logical(C_BOOL), intent(in) :: periodic(1:3)
         logical, intent(in) :: has_terminal
+        procedure(body_indicator_i) :: inside
 
         integer :: level, maskCount, nLevels, maxCount
         integer(int64) :: finest
@@ -712,7 +732,7 @@ contains
             end do
             allocate(touch(int(finest), nLevels))
             allocate(buried(size(touch, 1), size(touch, 2)))
-            call classify_block_geometry(touch, buried, dns, g, ibm, periodic, nLevels)
+            call classify_block_geometry(touch, buried, dns, g, ibm, periodic, nLevels, inside)
         end if
     end subroutine classify_refinement_masks
 
@@ -788,6 +808,122 @@ contains
         !$omp end target teams distribute parallel do
 #endif
     end subroutine set_ibm_coeff
+
+    ! Host twin of set_ibm_coeff for moby_prepare's STL path: the same
+    ! graded sharp-interface arithmetic over ANY indicator (the device
+    ! kernel above keeps calling the concrete isInBody -- declare-target
+    ! procedure arguments are not portable). KEEP THE TWO IN LOCKSTEP.
+    subroutine set_ibm_coeff_host(dns, blk, ibm, var, inside)
+        type(dns_type), intent(in) :: dns
+        type(block_set_type), intent(in) :: blk
+        type(ibm_type), intent(inout) :: ibm
+        integer(C_INT), intent(in) :: var
+        procedure(body_indicator_i) :: inside
+
+        integer :: ix, iy, iz, b, nBlocks
+        integer :: ilo, ihi, jlo, jhi, klo, khi
+        real(C_DOUBLE) :: xA(1:3), xB(1:3), coeff
+        real(C_DOUBLE) :: re_inv, solid_coef
+
+        if (var < VAR_U .or. var > VAR_W) error stop "invalid IBM coefficient variable"
+
+        ilo = lbound(ibm%coef,1)
+        ihi = ubound(ibm%coef,1)
+        jlo = lbound(ibm%coef,2)
+        jhi = ubound(ibm%coef,2)
+        klo = lbound(ibm%coef,3)
+        khi = ubound(ibm%coef,3)
+        nBlocks = size(ibm%coef,5)
+
+        re_inv = 1.0d0/dns%re
+        solid_coef = SOLID*re_inv
+
+        !$omp parallel do collapse(2) private(ix,iy,iz,b,xA,xB,coeff)
+        do b = 1, nBlocks
+        do iz = klo, khi
+            do iy = jlo, jhi
+                do ix = ilo, ihi
+                    ibm%coef(ix,iy,iz,var,b) = 0.0d0
+                    if (.not. dns%ibm_enabled) cycle
+
+                    xA(1) = blk%x(ix,var,b)
+                    xA(2) = blk%y(iy,var,b)
+                    xA(3) = blk%z(iz,var,b)
+                    if (inside(xA, ibm, dns)) then
+                        ibm%coef(ix,iy,iz,var,b) = solid_coef
+#ifdef USE_IBM_SECONDORDER
+                    else
+                        coeff = 0.0d0
+
+                        xB(1) = blk%x(ix-1,var,b); xB(2) = xA(2);             xB(3) = xA(3)
+                        call add_neighbor_coeff_host(coeff, xA, xB, ibm, dns, inside)
+                        xB(1) = blk%x(ix+1,var,b); xB(2) = xA(2);             xB(3) = xA(3)
+                        call add_neighbor_coeff_host(coeff, xA, xB, ibm, dns, inside)
+                        xB(1) = xA(1);             xB(2) = blk%y(iy-1,var,b); xB(3) = xA(3)
+                        call add_neighbor_coeff_host(coeff, xA, xB, ibm, dns, inside)
+                        xB(1) = xA(1);             xB(2) = blk%y(iy+1,var,b); xB(3) = xA(3)
+                        call add_neighbor_coeff_host(coeff, xA, xB, ibm, dns, inside)
+                        xB(1) = xA(1);             xB(2) = xA(2);             xB(3) = blk%z(iz-1,var,b)
+                        call add_neighbor_coeff_host(coeff, xA, xB, ibm, dns, inside)
+                        xB(1) = xA(1);             xB(2) = xA(2);             xB(3) = blk%z(iz+1,var,b)
+                        call add_neighbor_coeff_host(coeff, xA, xB, ibm, dns, inside)
+
+                        ibm%coef(ix,iy,iz,var,b) = coeff*re_inv
+#endif
+                    end if
+                end do
+            end do
+        end do
+        end do
+        !$omp end parallel do
+    end subroutine set_ibm_coeff_host
+
+    subroutine add_neighbor_coeff_host(coeff, xA, xB, ibm, dns, inside)
+        real(C_DOUBLE), intent(inout) :: coeff
+        real(C_DOUBLE), intent(in) :: xA(1:3)
+        real(C_DOUBLE), intent(inout) :: xB(1:3)
+        type(ibm_type), intent(in) :: ibm
+        type(dns_type), intent(in) :: dns
+        procedure(body_indicator_i) :: inside
+
+        real(C_DOUBLE) :: d0, d
+
+        if (inside(xB, ibm, dns)) then
+            d0 = distance3(xA, xB)
+            call bisection_host(xA, xB, ibm, dns, inside)
+            d = distance3(xA, xB)
+            coeff = coeff + ((d0-d)/d)/d0**2
+        end if
+    end subroutine add_neighbor_coeff_host
+
+    subroutine bisection_host(xAin, xB, ibm, dns, inside)
+        real(C_DOUBLE), intent(in) :: xAin(1:3)
+        real(C_DOUBLE), intent(inout):: xB(1:3)
+        type(ibm_type), intent(in) :: ibm
+        type(dns_type), intent(in) :: dns
+        procedure(body_indicator_i) :: inside
+
+        real(C_DOUBLE) :: xA(1:3), xM(1:3)
+        logical :: la, lm
+        integer(C_INT) :: it
+
+        xA = xAin
+        xM = xA
+        la = inside(xA, ibm, dns)
+
+        do it = 1, MAX_ITER
+            xM = 0.5d0*(xA + xB)
+            if (distance3(xA, xB) < DEFAULT_TOL) exit
+
+            lm = inside(xM, ibm, dns)
+            if (lm .eqv. la) then
+                xA = xM
+            else
+                xB = xM
+            end if
+        end do
+        xB = xM
+    end subroutine bisection_host
 
     subroutine update_ibm_mu(ibm, dt_gamma)
         type(ibm_type), intent(inout) :: ibm

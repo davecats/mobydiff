@@ -24,6 +24,7 @@ set(MODULE_SOURCES
     ${MODULE_DIR}/chron.f90
     ${MODULE_DIR}/boundary.f90
     ${MODULE_DIR}/ibm.f90
+    ${MODULE_DIR}/geometry_stl.f90
     ${MODULE_DIR}/walldist.f90
     ${MODULE_DIR}/turbulence.f90
     ${MODULE_DIR}/les.f90

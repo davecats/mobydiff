@@ -92,6 +92,9 @@ module init
         logical(C_BOOL) :: block_refine_body = .false.
         logical(C_BOOL) :: ibm_enabled = .true.
         character(len=256) :: ibm_coeff_file = ""
+        ! STL geometry (moby_prepare input only; whitespace-separated list
+        ! of binary STL files). The solver rejects it without a coeff_file.
+        character(len=256) :: ibm_stl_file = ""
         ! [ibm] band_filter: optional 3-point low-pass on the predicted
         ! velocity in a thin near-body band (band_width cells, strength
         ! band_theta; theta = 1 annihilates the 2-cell mode per direction).

@@ -759,9 +759,33 @@ immersed boundary. Phased, each phase verified before the next:
   ransgeom dumps identical, prepare 1==4 ranks identical files, GPU==CPU
   from the same file at tol 0, 7-case suite bit-exact nofma CPU+GPU.
   Prepare with the CPU build (canonical; GPU build computes coef on device,
-  libm ulps). NEXT: P1 = STL module (`geometry_stl.f90`, reader + BVH +
-  ray-parity indicator through the SAME machinery), gates vs mobygeom +
-  exact slab/sphere references — see the strategy doc §8.
+  libm ulps).
+- Prepare/solve split P1 (DONE 2026-07-16, branch `claude/jacobi-interface`).
+  STL geometry in moby_prepare with zero mobygeom involvement:
+  `src/modules/geometry_stl.f90` (binary STL reader, BVH, majority-vote
+  ray-parity inside test with deterministic large-rotation degenerate
+  retries, minimum-image periodic queries, EXACT BVH point-triangle dwall)
+  behind the analytic indicator signature — `body_indicator_i` moved to
+  ibmm, `classify_*` / `fill_body_distance_analytic` take the indicator as
+  an argument (solver passes isInBody), `set_ibm_coeff_host` = host twin
+  of the device kernel (KEEP IN LOCKSTEP comment). `[ibm] stl_file` is a
+  prepare-only input (solver hard-errors without coeff_file). CONVENTIONS
+  (comments in geometry_stl.f90): distance images a periodic dim only when
+  the mesh is narrower than the cell (full-span padded slabs are their own
+  periodic continuation; their skin is not a wall); dwall ghosts beyond a
+  periodic boundary carry the minimum-image distance (walldist convention;
+  mobygeom stores base-mesh there — interiors agree to round-off). Gates
+  all PASS (`validation/prepare/run_gates_stl.sh`): flat/flat_refine vs
+  the COMMITTED mobygeom refs (blocks + every mask IDENTICAL, coef <=
+  2.1e-8 rel, interior dwall <= 2.7e-11), 1-step solve prepared-vs-
+  committed <= 1e-10; sphere vs generated mobygeom ref (masks identical,
+  coef 4e-7, dwall 1.7e-16); sphere float32-EXACTLY translated onto the
+  x-periodic boundary -> rolled masks + BIT-IDENTICAL tiles (0.0); P0
+  analytic gates 22/22 through the refactor; 7-case suite bit-exact vs
+  P0 binaries CPU+GPU. NEXT: P1b = re-gate sailplane/NACA/SD7003 from
+  prepare-built files + retire mobygeom's geometry subcommands; P2 =
+  parallelize prepare's per-rank-redundant classification (flat_refine
+  38 s at 4 ranks, level-1 lattice parity casts dominate).
 - ALSO PENDING: **Profile + optimise** the GPU step for the 2:1-refined channel.
   The last hard profile is STALE (the reflux that was 23% is removed; the
   `MOBY_PHASETIME` timer is deleted): re-profile first with a minimal removable
