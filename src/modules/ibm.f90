@@ -14,10 +14,11 @@
 
 module ibmm
     use, intrinsic :: iso_c_binding
+    use, intrinsic :: iso_fortran_env, only: int64
     use :: init, only: dns_type, grid_type, VAR_U, VAR_V, VAR_W, VAR_P, &
         is_face_staggered, face_at, cell_center_at
     use :: blocks, only: block_set_type, subdivide_node_line, FACE_PHYS, FACE_CLOSED
-    use :: io, only: to_c_string, read_block_active, read_block_masks
+    use :: io, only: to_c_string, read_block_active, read_block_masks, read_mask_window
     use :: comm, only: comm_type, exchange_scalar_halos
     implicit none
 
@@ -641,16 +642,22 @@ contains
     ! file (mobygeom block-table) or classify them from the analytic
     ! geometry. Both arrays are allocated here for the finest lattice (one
     ! column per level); the caller hands them to init_block_set.
-    subroutine classify_refinement_masks(touch, buried, dns, g, ibm, periodic, has_terminal)
+    subroutine classify_refinement_masks(touch, buried, maskLo, maskDims, dns, g, ibm, &
+            periodic, has_terminal)
         integer(C_INT), allocatable, intent(out) :: touch(:,:), buried(:,:)
+        ! Per-level mask windows (block coords): deep-refinement rasters
+        ! are stored/held windowed to the padded STL bbox; the analytic
+        ! path and legacy files use full-lattice windows.
+        integer(C_INT), allocatable, intent(out) :: maskLo(:,:), maskDims(:,:)
         type(dns_type), intent(in) :: dns
         type(grid_type), intent(in) :: g
         type(ibm_type), intent(inout) :: ibm
         logical(C_BOOL), intent(in) :: periodic(1:3)
         logical, intent(in) :: has_terminal
 
-        integer :: level, maskCount
-        logical :: found
+        integer :: level, maskCount, nLevels, maxCount
+        integer(int64) :: finest
+        logical :: found, has_win
 
         if (.not. dns%ibm_enabled) then
             error stop "[blocks] refine_body needs the IBM enabled"
@@ -658,15 +665,28 @@ contains
         if (any(mod(dns%globalSize, dns%block_nb) /= 0_C_INT)) then
             error stop "[blocks] nb must divide the global grid in every direction"
         end if
-        allocate(touch(int(product((dns%globalSize/dns%block_nb) &
-            *2**(dns%block_refine_levels*dns%block_refine_mask))), &
-            dns%block_refine_levels + 1))
-        allocate(buried(size(touch,1), size(touch,2)))
+        nLevels = int(dns%block_refine_levels) + 1
+        allocate(maskLo(3, nLevels), maskDims(3, nLevels))
         if (len_trim(dns%ibm_coeff_file) > 0) then
-            ! File-based geometry: masks computed by mobygeom block-table.
-            do level = 0, int(dns%block_refine_levels)
-                maskCount = int(product((dns%globalSize/dns%block_nb) &
-                    *2**(int(level, C_INT)*dns%block_refine_mask)))
+            ! File-based geometry: masks computed by mobygeom block-table,
+            ! WINDOWED on deep-refinement files (legacy = full rasters).
+            do level = 0, nLevels - 1
+                call read_mask_window(maskLo(:, level+1), maskDims(:, level+1), &
+                    has_win, level, dns, has_terminal)
+                if (.not. has_win) then
+                    maskLo(:, level+1) = 0_C_INT
+                    maskDims(:, level+1) = (dns%globalSize/dns%block_nb) &
+                        *2**(int(level, C_INT)*dns%block_refine_mask)
+                end if
+            end do
+            maxCount = 0
+            do level = 0, nLevels - 1
+                maxCount = max(maxCount, int(product(maskDims(:, level+1))))
+            end do
+            allocate(touch(max(1, maxCount), nLevels))
+            allocate(buried(size(touch, 1), size(touch, 2)))
+            do level = 0, nLevels - 1
+                maskCount = int(product(maskDims(:, level+1)))
                 call read_block_masks(touch(1:maskCount, level+1), &
                     buried(1:maskCount, level+1), level, maskCount, &
                     found, dns, has_terminal)
@@ -675,8 +695,24 @@ contains
                 end if
             end do
         else
-            call classify_block_geometry(touch, buried, dns, g, ibm, periodic, &
-                int(dns%block_refine_levels) + 1)
+            ! Analytic geometry: full-lattice rasters (classify_block_geometry
+            ! is not windowed) -- guard the deep-refinement case where they
+            ! no longer fit; the file path handles it.
+            finest = int(product(int((dns%globalSize/dns%block_nb) &
+                *2**(dns%block_refine_levels*dns%block_refine_mask), int64)), int64)
+            if (finest > 200000000_int64) then
+                error stop "[blocks] refine_body: analytic classification needs a " &
+                    // "dense finest lattice too large for this depth; use the " &
+                    // "mobygeom block-table file path"
+            end if
+            do level = 0, nLevels - 1
+                maskLo(:, level+1) = 0_C_INT
+                maskDims(:, level+1) = (dns%globalSize/dns%block_nb) &
+                    *2**(int(level, C_INT)*dns%block_refine_mask)
+            end do
+            allocate(touch(int(finest), nLevels))
+            allocate(buried(size(touch, 1), size(touch, 2)))
+            call classify_block_geometry(touch, buried, dns, g, ibm, periodic, nLevels)
         end if
     end subroutine classify_refinement_masks
 

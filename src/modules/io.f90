@@ -145,6 +145,18 @@ module io
             integer(C_INT) :: ierr
         end function fdm_h5_read_block_masks
 
+        ! Per-level geometry-mask window attrs (deep-refinement files store
+        ! the rasters windowed to the padded STL bbox); has_win = 0 on
+        ! legacy full-raster files.
+        function fdm_h5_read_mask_window(file_name, level, lo, dims, has_win) &
+                bind(C, name="fdm_h5_read_mask_window") result(ierr)
+            import :: C_CHAR, C_INT
+            character(kind=C_CHAR), intent(in) :: file_name(*)
+            integer(C_INT), value :: level
+            integer(C_INT), intent(out) :: lo(*), dims(*), has_win
+            integer(C_INT) :: ierr
+        end function fdm_h5_read_mask_window
+
         function fdm_h5_read_block_active(file_name, n_lattice, block_nb, found, active) &
                 bind(C, name="fdm_h5_read_block_active") result(ierr)
             import :: C_CHAR, C_INT
@@ -541,6 +553,28 @@ subroutine read_block_masks(touch, buried, level, n_raster, found, dns, has_term
     end if
     found = c_found /= 0_C_INT
 end subroutine read_block_masks
+
+! Per-level geometry-mask window (block coords) of a block-table file;
+! has_win false on legacy full-raster files.
+subroutine read_mask_window(lo, dims, has_win, level, dns, has_terminal)
+    integer(C_INT), intent(out) :: lo(3), dims(3)
+    logical, intent(out) :: has_win
+    integer, intent(in) :: level
+    type(dns_type), intent(in) :: dns
+    logical, intent(in) :: has_terminal
+
+    character(kind=C_CHAR,len=:), allocatable :: c_file_name
+    integer(C_INT) :: ierr, c_has
+
+    c_file_name = to_c_string(dns%ibm_coeff_file)
+    ierr = fdm_h5_read_mask_window(c_file_name, int(level, C_INT), lo, dims, c_has)
+    if (ierr /= 0_C_INT) then
+        if (has_terminal) print *, "error: could not read mask windows from: ", &
+            trim(dns%ibm_coeff_file)
+        error stop
+    end if
+    has_win = c_has /= 0_C_INT
+end subroutine read_mask_window
 
 ! Per-leaf wall-distance tiles from the IBM coefficient file (mobygeom
 ! block-table, dataset dwall_blocks). found is false when the file carries

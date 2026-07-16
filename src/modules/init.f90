@@ -70,10 +70,13 @@ module init
         integer(C_INT) :: block_nb = 0_C_INT
         ! [blocks] remove_solid: drop blocks buried inside the immersed body.
         logical(C_BOOL) :: block_remove_solid = .true.
-        ! [blocks] refine = x0 x1 y0 y1 z0 z1: refine blocks intersecting this
-        ! physical box (test option; lo > hi means unset).
-        ! Up to 4 refinement boxes ([blocks] refine, repeatable key).
-        real(C_DOUBLE) :: block_refine_box(6,4) = 0.0d0
+        ! [blocks] refine = x0 x1 y0 y1 z0 z1 [level]: refine blocks
+        ! intersecting this physical box to `level` (optional 7th value;
+        ! default = refine_levels, i.e. the finest). Repeatable, up to 16
+        ! boxes — nested per-level boxes build graded far-field decompositions
+        ! (concentric wake-skewed rings, tutorials/naca B11).
+        real(C_DOUBLE) :: block_refine_box(6,16) = 0.0d0
+        integer(C_INT) :: block_refine_box_level(16) = -1_C_INT
         integer(C_INT) :: block_refine_nboxes = 0_C_INT
         ! [blocks] refine_levels: rounds of box refinement (max level).
         integer(C_INT) :: block_refine_levels = 1_C_INT

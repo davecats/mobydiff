@@ -1529,64 +1529,98 @@ def classify_stl_window(mesh, vertices, faces, var: int,
 
 
 def window_solid_counts_win(win: np.ndarray, offs: tuple[int, int, int], nb: int,
-                            gnbt: tuple[int, int, int]) -> np.ndarray:
+                            gnbt: tuple[int, int, int],
+                            blk_lo: tuple[int, int, int] = (0, 0, 0),
+                            blk_dims: tuple[int, int, int] | None = None) -> np.ndarray:
     """window_solid_counts on a bbox-windowed solid raster: per-lattice-block
     count of solid points in the one-halo dilated window, everything outside
     the classification window counting as fluid (zero count). Same integer
     arithmetic as the full-raster version (clipped inclusion-exclusion on the
     window's integral image, built in x-lattice chunks like
-    window_solid_counts), so the resulting masks are identical."""
+    window_solid_counts), so the resulting masks are identical.
+    blk_lo/blk_dims restrict the OUTPUT to a block window (deep-refinement
+    lattices do not fit as dense arrays; blocks outside a padded STL bbox
+    are all-fluid by construction)."""
+    if blk_dims is None:
+        blk_dims = gnbt
     w = nb + 2
-    total = np.zeros(gnbt, dtype=np.int64)
+    total = np.zeros(blk_dims, dtype=np.int64)
     ny1, nz1 = win.shape[1] + 1, win.shape[2] + 1
+    by = blk_lo[1] + np.arange(blk_dims[1])
+    bz = blk_lo[2] + np.arange(blk_dims[2])
     # y/z cnt-index ranges (cnt index = window row + 1), clipped
-    lo_y = np.clip(np.arange(gnbt[1])*nb + 1 - offs[1], 0, win.shape[1])
-    hi_y = np.clip(np.arange(gnbt[1])*nb + 1 - offs[1] + w, 0, win.shape[1])
-    lo_z = np.clip(np.arange(gnbt[2])*nb + 1 - offs[2], 0, win.shape[2])
-    hi_z = np.clip(np.arange(gnbt[2])*nb + 1 - offs[2] + w, 0, win.shape[2])
+    lo_y = np.clip(by*nb + 1 - offs[1], 0, win.shape[1])
+    hi_y = np.clip(by*nb + 1 - offs[1] + w, 0, win.shape[1])
+    lo_z = np.clip(bz*nb + 1 - offs[2], 0, win.shape[2])
+    hi_z = np.clip(bz*nb + 1 - offs[2] + w, 0, win.shape[2])
     rows = max(1, int((2 << 30) // (ny1*nz1*8*nb)))   # ~2 GB cnt slabs
-    for b0 in range(0, gnbt[0], rows):
-        b1 = min(b0 + rows, gnbt[0])
-        # window rows feeding blocks b0..b1-1 (unclipped extended range)
-        x_from = np.clip(b0*nb + 1 - offs[0] - 1, 0, win.shape[0])
-        x_to = np.clip((b1 - 1)*nb + 1 + w - offs[0], 0, win.shape[0])
+    for b0 in range(0, blk_dims[0], rows):
+        b1 = min(b0 + rows, blk_dims[0])
+        bx = blk_lo[0] + np.arange(b0, b1)
+        # window rows feeding these blocks (unclipped extended range)
+        x_from = np.clip(bx[0]*nb + 1 - offs[0] - 1, 0, win.shape[0])
+        x_to = np.clip(bx[-1]*nb + 1 + w - offs[0], 0, win.shape[0])
         if x_to <= x_from:
             continue   # chunk entirely outside the window: all fluid
         sub = win[x_from:x_to]
         cnt = np.zeros((sub.shape[0] + 1, ny1, nz1), dtype=np.int64)
         cnt[1:, 1:, 1:] = sub
         cnt = cnt.cumsum(axis=0).cumsum(axis=1).cumsum(axis=2)
-        lo_x = np.clip(np.arange(b0, b1)*nb + 1 - offs[0], x_from, x_to) - x_from
-        hi_x = np.clip(np.arange(b0, b1)*nb + 1 - offs[0] + w, x_from, x_to) - x_from
+        lo_x = np.clip(bx*nb + 1 - offs[0], x_from, x_to) - x_from
+        hi_x = np.clip(bx*nb + 1 - offs[0] + w, x_from, x_to) - x_from
         ix0, iy0, iz0 = np.meshgrid(lo_x, lo_y, lo_z, indexing="ij")
         ix1, iy1, iz1 = np.meshgrid(hi_x, hi_y, hi_z, indexing="ij")
         total[b0:b1] = (cnt[ix1, iy1, iz1] - cnt[ix0, iy1, iz1]
-                        - cnt[ix1, iy0, iz1] - cnt[ix1, iy1, iz0]
+                        - cnt[ix1, iy1, iz0] - cnt[ix1, iy0, iz1]
                         + cnt[ix0, iy0, iz1] + cnt[ix0, iy1, iz0]
                         + cnt[ix1, iy0, iz0] - cnt[ix0, iy0, iz0])
     return total
 
 
+def touch_block_window(mesh, la, nb: int,
+                       pad_blocks: int = 2) -> tuple[np.ndarray, np.ndarray]:
+    """Block window (lo, dims) at this level that can possibly touch or
+    bury against the STL: the mesh bbox in level-l block coords, padded.
+    Unrefined (span) directions keep the full range (the extrusion
+    crosses them)."""
+    b = mesh.bounds
+    lo = np.zeros(3, dtype=np.int64)
+    hi = np.zeros(3, dtype=np.int64)
+    for d in range(3):
+        nodes = grid_axis_nodes(d + 1, la)
+        nbl = (nodes.size - 1)//nb
+        j0 = int(np.searchsorted(nodes, b[0, d], side="right") - 1)//nb
+        j1 = int(np.searchsorted(nodes, b[1, d], side="left"))//nb
+        lo[d] = max(0, j0 - pad_blocks)
+        hi[d] = min(nbl, j1 + pad_blocks + 1)
+    return lo, hi - lo
+
+
 def level_masks(mesh, vertices, faces, args: argparse.Namespace, nb: int,
-                levels: int) -> tuple[list[np.ndarray], list[np.ndarray]]:
-    """Per-level touch/buried block masks ((gx,gy,gz) bool arrays), the file
-    counterpart of the solver's classify_block_geometry. One shared count
-    pass per staggered var serves anySolid/allSolid/anyFluid (any fluid =
-    the window is not all solid)."""
-    touch, buried = [], []
+                levels: int):
+    """Per-level touch/buried block masks, WINDOWED to the padded STL bbox
+    (deep-refinement lattices do not fit as dense arrays; every block
+    outside the window is untouched/unburied by construction). Returns
+    (touch, buried, win_lo, win_dims): mask arrays have the window shape.
+    The file counterpart of the solver's classify_block_geometry."""
+    touch, buried, wlo, wdim = [], [], [], []
     inside_is_fluid = bool(getattr(args, "inside_is_fluid", False))
     for l in range(levels):
         la = subdivided_args(args, l)
         gnbt = (la.nx // nb, la.ny // nb, la.nz // nb)
-        anySolid = np.zeros(gnbt, dtype=bool)
-        allSolid = np.ones(gnbt, dtype=bool)
-        anyFluid = np.zeros(gnbt, dtype=bool)
+        if inside_is_fluid:
+            # Cavity geometries: outside the bbox window is SOLID, so the
+            # windowed shortcut does not apply — full raster (only viable
+            # at shallow refinement).
+            blo, bdim = np.zeros(3, dtype=np.int64), np.asarray(gnbt, dtype=np.int64)
+        else:
+            blo, bdim = touch_block_window(mesh, la, nb)
+        anySolid = np.zeros(tuple(bdim), dtype=bool)
+        allSolid = np.ones(tuple(bdim), dtype=bool)
+        anyFluid = np.zeros(tuple(bdim), dtype=bool)
         w3 = (nb + 2)**3
         for var in (VAR_U, VAR_V, VAR_W, 0):
             if inside_is_fluid:
-                # Cavity geometries: outside the bbox window is SOLID, so
-                # the windowed shortcut does not apply — full raster (only
-                # viable at shallow refinement).
                 inside_ext, _, _, _ = classify_stl_extended_grid(mesh, vertices, faces, var, la)
                 cnt = window_solid_counts(~inside_ext, nb, gnbt)
             else:
@@ -1594,13 +1628,16 @@ def level_masks(mesh, vertices, faces, args: argparse.Namespace, nb: int,
                 # is fluid — classify and reduce on the window only (the
                 # full raster of deep refinements does not fit in memory).
                 win, offs = classify_stl_window(mesh, vertices, faces, var, la)
-                cnt = window_solid_counts_win(win, offs, nb, gnbt)
+                cnt = window_solid_counts_win(win, offs, nb, gnbt,
+                                              blk_lo=tuple(blo), blk_dims=tuple(bdim))
             anySolid |= cnt > 0
             allSolid &= cnt == w3
             anyFluid |= cnt < w3
         touch.append(anySolid & anyFluid)
         buried.append(allSolid)
-    return touch, buried
+        wlo.append(blo)
+        wdim.append(bdim)
+    return touch, buried, wlo, wdim
 
 
 def morton_key3(c: np.ndarray) -> np.ndarray:
@@ -1630,21 +1667,114 @@ def leaf_keys(crd: np.ndarray, lev: np.ndarray, lmax: int, mask: np.ndarray) -> 
     return (cf[:, 1].astype(np.int64) << 42) | morton_key2(cf[:, 0], cf[:, 2])
 
 
+def leaf_level_windows(gnbt, levels, mask, boxes, lines, nb, touch_wlo, touch_wdim,
+                       pad=2):
+    """Per-level OCCUPANCY windows (lo, dims) of the leaf builder, in
+    level-l block coords: dense per-level lattices are impossible at deep
+    refinement (the B11 finest lattice is 7.2e9 blocks), but level-l cells
+    can only exist where level-(l-1) cells split — inside a refine box
+    targeting >= l, near the body (touch + 1-block buffer), or within the
+    2:1-smoothing spill of the finer window. Computed fine-to-coarse as
+    conservative bbox hulls, padded; the builder ASSERTS every write stays
+    inside (an undersized window fails loudly, never silently)."""
+    levels_lat = [np.array(gnbt)*2**(l*mask) for l in range(levels)]
+    lo = [None]*levels
+    hi = [None]*levels
+    # split-region hull S[l] (level-l block coords), fine to coarse
+    S_lo = [None]*levels
+    S_hi = [None]*levels
+    for l in range(levels - 2, -1, -1):
+        nl = levels_lat[l]
+        slo = np.full(3, np.iinfo(np.int64).max, dtype=np.int64)
+        shi = np.full(3, np.iinfo(np.int64).min, dtype=np.int64)
+        have = False
+        # refine boxes whose target level exceeds l split level-l cells
+        if boxes:
+            for b in boxes:
+                tgt = int(b[6]) if len(b) >= 7 else levels - 1
+                if tgt <= l:
+                    continue
+                for d in range(3):
+                    ln = lines[d][l]
+                    j0 = max(0, int(np.searchsorted(ln, b[2*d], side="right") - 1)//nb)
+                    j1 = min(int(nl[d]), int(np.searchsorted(ln, b[2*d+1], side="left"))//nb + 1)
+                    slo[d] = min(slo[d], j0)
+                    shi[d] = max(shi[d], j1)
+                have = True
+        # touch + one-block buffer splits level-l cells
+        if touch_wlo is not None:
+            tlo, tdim = touch_wlo[l], touch_wdim[l]
+            slo = np.minimum(slo, np.asarray(tlo) - 1)
+            shi = np.maximum(shi, np.asarray(tlo) + np.asarray(tdim) + 1)
+            have = True
+        # 2:1 smoothing: level-l cells within 1 block of finer splits
+        if S_lo[l+1] is not None:
+            plo = S_lo[l+1]//(1 + mask) - 1
+            phi = (S_hi[l+1] + mask)//(1 + mask) + 1
+            slo = np.minimum(slo, plo)
+            shi = np.maximum(shi, phi)
+            have = True
+        if have:
+            S_lo[l] = np.maximum(0, slo - pad)
+            S_hi[l] = np.minimum(nl, shi + pad)
+    lo[0] = np.zeros(3, dtype=np.int64)
+    hi[0] = levels_lat[0].astype(np.int64)
+    for l in range(1, levels):
+        if S_lo[l-1] is None:
+            lo[l] = np.zeros(3, dtype=np.int64)
+            hi[l] = np.zeros(3, dtype=np.int64)
+        else:
+            lo[l] = np.maximum(0, S_lo[l-1]*(1 + mask))
+            hi[l] = np.minimum(levels_lat[l], S_hi[l-1]*(1 + mask))
+    return lo, [h - l_ for l_, h in zip(lo, hi)]
+
+
 def build_leaf_table_py(gnbt, levels, periodic, touch, buried, refine_box, lines, nb,
-                        mask=None):
+                        mask=None, touch_wlo=None, touch_wdim=None):
     """Mirror of the solver's build_leaf_table: root tiling, refinement by
     body-touch (+ one-block 26-neighbour buffer) and/or physical box, 2:1
     smoothing, removal of buried leaves at every level, ids along the
     finest-lattice Morton curve (mixed y-major form in xz quadtree mode).
     Must stay rule-for-rule identical to blocks.f90; the solver verifies
-    the resulting table at startup."""
+    the resulting table at startup. All per-level lattices are WINDOWED
+    (leaf_level_windows); touch/buried may be windowed too (touch_wlo/
+    touch_wdim; None = full rasters). Returns (lev, crd, win_lo, win_dims)."""
     M_NONE, M_SPLIT, M_LEAF = -1, -2, 0
     if mask is None:
         mask = np.array([1, 1, 1], dtype=np.int64)
     lmax = levels - 1
-    occ = [np.full(tuple(np.array(gnbt)*2**(l*mask)), M_NONE, dtype=np.int64)
-           for l in range(levels)]
+    boxes = refine_box
+    if boxes and not hasattr(boxes[0], "__len__"):
+        boxes = [boxes]
+    if touch is not None and touch_wlo is None:
+        touch_wlo = [np.zeros(3, dtype=np.int64)]*levels
+        touch_wdim = [np.array(t.shape, dtype=np.int64) for t in touch]
+    wlo, wdim = leaf_level_windows(gnbt, levels, mask, boxes, lines, nb,
+                                   touch_wlo if touch is not None else None,
+                                   touch_wdim if touch is not None else None)
+    occ = [np.full(tuple(wdim[l]), M_NONE, dtype=np.int64) for l in range(levels)]
     occ[0][:, :, :] = M_LEAF
+
+    def get(l, c):
+        r = np.asarray(c) - wlo[l]
+        if (r < 0).any() or (r >= wdim[l]).any():
+            return M_NONE
+        return occ[l][tuple(r)]
+
+    def put(l, c, v):
+        r = np.asarray(c) - wlo[l]
+        assert (r >= 0).all() and (r < wdim[l]).all(), \
+            f"leaf builder window undersized at level {l}: {c} outside " \
+            f"{wlo[l]}+{wdim[l]}"
+        occ[l][tuple(r)] = v
+
+    def touch_at(l, c):
+        if touch is None:
+            return False
+        r = np.asarray(c) - touch_wlo[l]
+        if (r < 0).any() or (r >= touch_wdim[l]).any():
+            return False
+        return bool(touch[l][tuple(r)])
 
     def wrap(l, c):
         nl = np.array(gnbt)*2**(l*mask)
@@ -1657,30 +1787,32 @@ def build_leaf_table_py(gnbt, levels, periodic, touch, buried, refine_box, lines
         return tuple(c)
 
     def split(l, c):
-        occ[l][c] = M_SPLIT
+        put(l, c, M_SPLIT)
         o = np.array(c)*(1 + mask)
-        occ[l+1][o[0]:o[0]+1+mask[0], o[1]:o[1]+1+mask[1], o[2]:o[2]+1+mask[2]] = M_LEAF
+        for sx in range(1 + mask[0]):
+            for sy in range(1 + mask[1]):
+                for sz in range(1 + mask[2]):
+                    put(l+1, (o[0]+sx, o[1]+sy, o[2]+sz), M_LEAF)
 
     for l in range(lmax):
-        nl = np.array(gnbt)*2**(l*mask)
-        for cx in range(nl[0]):
-            for cy in range(nl[1]):
-                for cz in range(nl[2]):
-                    if occ[l][cx, cy, cz] != M_LEAF:
+        lvl_boxes = ([b for b in boxes if len(b) < 7 or b[6] > l]
+                     if boxes else [])
+        for cx in range(wlo[l][0], wlo[l][0] + wdim[l][0]):
+            for cy in range(wlo[l][1], wlo[l][1] + wdim[l][1]):
+                for cz in range(wlo[l][2], wlo[l][2] + wdim[l][2]):
+                    if get(l, (cx, cy, cz)) != M_LEAF:
                         continue
                     hit = False
-                    if refine_box is not None:
-                        # One box (6 floats) or a list of boxes, mirroring the
-                        # repeatable [blocks] refine key.
-                        boxes = refine_box
-                        if boxes and not hasattr(boxes[0], "__len__"):
-                            boxes = [boxes]
+                    if lvl_boxes:
+                        # An optional 7th box value is its TARGET LEVEL: it
+                        # refines only rounds below it (absent = the finest,
+                        # blocks.f90 rule).
                         lo = [lines[d][l][[cx, cy, cz][d]*nb] for d in range(3)]
                         hi = [lines[d][l][([cx, cy, cz][d]+1)*nb] for d in range(3)]
                         hit = any(all(box[2*d] < hi[d] and box[2*d+1] > lo[d]
-                                      for d in range(3)) for box in boxes)
+                                      for d in range(3)) for box in lvl_boxes)
                     if not hit and touch is not None:
-                        hit = bool(touch[l][cx, cy, cz])
+                        hit = touch_at(l, (cx, cy, cz))
                         if not hit:
                             for ox in (-1, 0, 1):
                                 for oy in (-1, 0, 1):
@@ -1688,7 +1820,7 @@ def build_leaf_table_py(gnbt, levels, periodic, touch, buried, refine_box, lines
                                         if ox == oy == oz == 0:
                                             continue
                                         cn = wrap(l, (cx+ox, cy+oy, cz+oz))
-                                        if cn is not None and touch[l][cn]:
+                                        if cn is not None and touch_at(l, cn):
                                             hit = True
                                             break
                                     if hit: break
@@ -1700,11 +1832,10 @@ def build_leaf_table_py(gnbt, levels, periodic, touch, buried, refine_box, lines
     while changed:
         changed = False
         for l in range(lmax - 1):
-            nl = np.array(gnbt)*2**(l*mask)
-            for cx in range(nl[0]):
-                for cy in range(nl[1]):
-                    for cz in range(nl[2]):
-                        if occ[l][cx, cy, cz] != M_LEAF:
+            for cx in range(wlo[l][0], wlo[l][0] + wdim[l][0]):
+                for cy in range(wlo[l][1], wlo[l][1] + wdim[l][1]):
+                    for cz in range(wlo[l][2], wlo[l][2] + wdim[l][2]):
+                        if get(l, (cx, cy, cz)) != M_LEAF:
                             continue
                         must = False
                         for ox in (-1, 0, 1):
@@ -1713,13 +1844,14 @@ def build_leaf_table_py(gnbt, levels, periodic, touch, buried, refine_box, lines
                                     if ox == oy == oz == 0:
                                         continue
                                     cn = wrap(l, (cx+ox, cy+oy, cz+oz))
-                                    if cn is None or occ[l][cn] != M_SPLIT:
+                                    if cn is None or get(l, cn) != M_SPLIT:
                                         continue
                                     o = np.array(cn)*(1 + mask)
-                                    ch = occ[l+1][o[0]:o[0]+1+mask[0],
-                                                  o[1]:o[1]+1+mask[1],
-                                                  o[2]:o[2]+1+mask[2]]
-                                    if (ch == M_SPLIT).any():
+                                    ch = [get(l+1, (o[0]+sx, o[1]+sy, o[2]+sz))
+                                          for sx in range(1 + mask[0])
+                                          for sy in range(1 + mask[1])
+                                          for sz in range(1 + mask[2])]
+                                    if M_SPLIT in ch:
                                         must = True
                                         break
                                 if must: break
@@ -1730,10 +1862,15 @@ def build_leaf_table_py(gnbt, levels, periodic, touch, buried, refine_box, lines
 
     levels_out, coords_out = [], []
     for l in range(levels):
-        leaf = np.argwhere(occ[l] == M_LEAF)
+        leaf = np.argwhere(occ[l] == M_LEAF) + wlo[l]
         if buried is not None and leaf.size:
-            keep = ~buried[l][leaf[:, 0], leaf[:, 1], leaf[:, 2]]
-            leaf = leaf[keep]
+            r = leaf - touch_wlo[l]
+            inside = ((r >= 0).all(axis=1) & (r < touch_wdim[l]).all(axis=1))
+            bur = np.zeros(leaf.shape[0], dtype=bool)
+            if inside.any():
+                ri = r[inside]
+                bur[inside] = buried[l][ri[:, 0], ri[:, 1], ri[:, 2]]
+            leaf = leaf[~bur]
         if leaf.size:
             levels_out.append(np.full(leaf.shape[0], l, dtype=np.int64))
             coords_out.append(leaf)
@@ -1741,7 +1878,26 @@ def build_leaf_table_py(gnbt, levels, periodic, touch, buried, refine_box, lines
     crd = np.concatenate(coords_out)
     keys = leaf_keys(crd, lev, lmax, mask)
     order = np.argsort(keys, kind="stable")
-    return lev[order], crd[order]
+    return lev[order], crd[order], wlo, wdim
+
+
+def init_block_tile_worker(mesh, vertices: np.ndarray, faces: np.ndarray,
+                           level_args: list, nb: int, want_dwall: bool) -> None:
+    """Read-only per-worker context for the block-table tile pool."""
+    global _BLOCK_TILE_CONTEXT
+    _BLOCK_TILE_CONTEXT = (mesh, vertices, faces, level_args, nb, want_dwall)
+
+
+def block_tile_worker(item):
+    """One near-body leaf: exact coefficient (+ dwall) ghost-window tiles."""
+    i, level, o = item
+    mesh, vertices, faces, level_args, nb, want_dwall = _BLOCK_TILE_CONTEXT
+    la = level_args[level]
+    tile = (o[0], o[0]+nb+2, o[1], o[1]+nb+2, o[2], o[2]+nb+2)
+    coef_tile, _ = stl_coeff_tile_from_mesh(mesh, vertices, faces, la, tile)
+    dw = (dwall_tile_from_mesh(vertices, faces, la, np.asarray(o), nb)
+          if want_dwall else None)
+    return i, coef_tile, dw
 
 
 def dwall_tile_from_mesh(vertices: np.ndarray, faces: np.ndarray,
@@ -1789,11 +1945,17 @@ def block_table_from_stl(args: argparse.Namespace) -> None:
     args._ray_intersector = None
 
     refine_box = getattr(args, "refine_box", None)
+    if refine_box:
+        for b in refine_box:
+            if len(b) not in (6, 7):
+                raise SystemExit("--refine-box takes 6 values or 6 + a target level")
+            if len(b) == 7 and not (1 <= b[6] <= levels - 1):
+                raise SystemExit(f"--refine-box level {b[6]} outside 1..{levels-1}")
     # Body classification always runs (the command requires --geometry);
     # --refine-box ADDS box refinement on top, mirroring the solver's
     # combined builder ([blocks] refine + refine_body). The solver ini must
     # carry the same [blocks] refine box or its builder cross-check errors.
-    touch, buried = level_masks(mesh, vertices, faces, args, nb, levels)
+    touch, buried, mwlo, mwdim = level_masks(mesh, vertices, faces, args, nb, levels)
     if getattr(args, "keep_buried", False):
         # Keep leaves buried inside the body (zeroed masks reach the
         # solver, whose own builder then also removes nothing). REQUIRED
@@ -1802,8 +1964,9 @@ def block_table_from_stl(args: argparse.Namespace) -> None:
         # so sum(coef u dV) misses most of the (pressure-dominated) lift.
         buried = [np.zeros_like(b) for b in buried]
 
-    lev, crd = build_leaf_table_py(gnbt, levels, periodic, touch, buried, refine_box, lines, nb,
-                                   mask=refine_mask(args))
+    lev, crd, lwlo, lwdim = build_leaf_table_py(
+        gnbt, levels, periodic, touch, buried, refine_box, lines, nb,
+        mask=refine_mask(args), touch_wlo=mwlo, touch_wdim=mwdim)
     n_leaves = lev.shape[0]
     print(f"block table: {n_leaves} leaves, "
           f"{int((lev > 0).sum())} refined, levels {np.bincount(lev, minlength=levels)}")
@@ -1830,29 +1993,114 @@ def block_table_from_stl(args: argparse.Namespace) -> None:
         blocks[:, 3] = lev.astype(np.int32)
         h5.create_dataset("blocks", data=blocks)
         if touch is not None:
+            # WINDOWED per-level mask rasters (x-fastest within the window)
+            # + window attrs; the deep-refinement full rasters (7.2e9
+            # blocks at B11's finest level) are unrepresentable. Legacy
+            # files without the attrs keep the full-raster meaning.
             for l in range(levels):
                 h5.create_dataset(f"block_touch_l{l}",
                                   data=touch[l].transpose(2, 1, 0).ravel().astype(np.int32))
                 h5.create_dataset(f"block_buried_l{l}",
                                   data=buried[l].transpose(2, 1, 0).ravel().astype(np.int32))
+                h5.attrs[f"mask_win_lo_l{l}"] = np.asarray(mwlo[l], dtype=np.int32)
+                h5.attrs[f"mask_win_dims_l{l}"] = np.asarray(mwdim[l], dtype=np.int32)
+                # the builder's occupancy windows: the solver adopts them
+                # verbatim (windowed lidOf) so the two builders share the
+                # exact same lattice bounds by construction.
+                h5.attrs[f"lev_win_lo_l{l}"] = np.asarray(lwlo[l], dtype=np.int32)
+                h5.attrs[f"lev_win_dims_l{l}"] = np.asarray(lwdim[l], dtype=np.int32)
         coef = h5.create_dataset("coef_blocks", shape=(n_leaves, nb+2, nb+2, nb+2, 3),
                                  dtype=np.float64, chunks=(1, nb+2, nb+2, nb+2, 3))
-        for i in range(n_leaves):
-            la = level_args[lev[i]]
-            o = crd[i]*nb
-            tile = (int(o[0]), int(o[0])+nb+2, int(o[1]), int(o[1])+nb+2,
-                    int(o[2]), int(o[2])+nb+2)
-            coef_tile, _ = stl_coeff_tile_from_mesh(mesh, vertices, faces, la, tile)
-            coef[i] = coef_tile
-        if not getattr(args, "no_dwall", False):
+        want_dwall = not getattr(args, "no_dwall", False)
+        dwall = None
+        if want_dwall:
             # Per-leaf cell-centred distance to the immersed surface for the
             # RANS wall treatment, at each leaf's level like coef_blocks
             # (ghost-inclusive (nb+2)^3 windows; the solver mins in the
             # domain-wall part and applies the half-cell floor itself).
             dwall = h5.create_dataset("dwall_blocks", shape=(n_leaves, nb+2, nb+2, nb+2),
                                       dtype=np.float64, chunks=(1, nb+2, nb+2, nb+2))
+
+        # Far-field leaf shortcut: a leaf whose ghost window (padded by 3
+        # of its own cells) misses the STL bbox in x or z has identically
+        # ZERO coefficients (the graded coefficient reaches one cell from
+        # the surface), so its coef row keeps the dataset fill value with
+        # no classification work; its dwall row still uses the EXACT igl
+        # distance, but batched over MANY leaves per query (the per-leaf
+        # cost was the AABB rebuild + call overhead, not the query). The
+        # span dim y always overlaps (the extrusion crosses the whole
+        # span). Deep-refinement far-field layouts (tutorials/naca B11:
+        # >90% far leaves) drop from hours to minutes.
+        far = np.zeros(n_leaves, dtype=bool)
+        if n_leaves:
+            bounds = mesh.bounds
             for i in range(n_leaves):
-                dwall[i] = dwall_tile_from_mesh(vertices, faces, level_args[lev[i]], crd[i]*nb, nb)
+                la = level_args[lev[i]]
+                o = crd[i]*nb
+                ext = np.zeros((3, 2))
+                for d in range(3):
+                    nodes = grid_axis_nodes(d + 1, la)
+                    n_d = nodes.size - 1
+                    lo = nodes[min(max(int(o[d]) - 1, 0), n_d)]
+                    hi = nodes[min(int(o[d]) + nb + 2, n_d)]
+                    h_d = (nodes[-1] - nodes[0])/n_d
+                    ext[d] = (lo - 3.0*h_d, hi + 3.0*h_d)
+                far[i] = (ext[0, 1] < bounds[0, 0] or ext[0, 0] > bounds[1, 0] or
+                          ext[2, 1] < bounds[0, 2] or ext[2, 0] > bounds[1, 2])
+        near_ids = np.nonzero(~far)[0]
+        print(f"tiles: {near_ids.size} near-body leaves through the STL machinery, "
+              f"{int(far.sum())} far-field leaves shortcut")
+
+        if want_dwall and far.any():
+            igl, _, _ = require_stl_tools()
+            idx = np.arange(nb + 2, dtype=np.int64)
+            far_ids = np.nonzero(far)[0]
+            w3 = (nb + 2)**3
+            chunk = max(1, 400)
+            for c0 in range(0, far_ids.size, chunk):
+                ids = far_ids[c0:c0 + chunk]
+                pts = np.empty((ids.size*w3, 3))
+                for j, i in enumerate(ids):
+                    la = level_args[lev[i]]
+                    o = crd[i]*nb
+                    ii, jj, kk = np.meshgrid(idx + int(o[0]), idx + int(o[1]),
+                                             idx + int(o[2]), indexing="ij")
+                    pts[j*w3:(j+1)*w3] = stl_points_for_indices(
+                        ii.ravel(), jj.ravel(), kk.ravel(), 0, la)
+                sq, _, _ = igl.point_mesh_squared_distance(pts, vertices, faces)
+                d = np.sqrt(sq)
+                for j, i in enumerate(ids):
+                    dwall[i] = d[j*w3:(j+1)*w3].reshape(nb+2, nb+2, nb+2)
+
+        # Near-body tiles: the exact per-leaf machinery, optionally over a
+        # worker pool (--jobs; the legacy chunked path's pattern).
+        jobs = max(1, int(getattr(args, "jobs", 1)))
+        items = [(int(i), int(lev[i]), (int(crd[i][0]*nb), int(crd[i][1]*nb),
+                                        int(crd[i][2]*nb))) for i in near_ids]
+        if jobs == 1:
+            init_block_tile_worker(mesh, vertices, faces, level_args, nb, want_dwall)
+            for item in items:
+                i, coef_tile, dw = block_tile_worker(item)
+                coef[i] = coef_tile
+                if dw is not None:
+                    dwall[i] = dw
+        else:
+            try:
+                context = multiprocessing.get_context("fork")
+            except ValueError:
+                context = multiprocessing.get_context()
+            with concurrent.futures.ProcessPoolExecutor(
+                max_workers=jobs,
+                mp_context=context,
+                initializer=init_block_tile_worker,
+                initargs=(mesh, vertices, faces, level_args, nb, want_dwall),
+            ) as pool:
+                futures = [pool.submit(block_tile_worker, item) for item in items]
+                for future in concurrent.futures.as_completed(futures):
+                    i, coef_tile, dw = future.result()
+                    coef[i] = coef_tile
+                    if dw is not None:
+                        dwall[i] = dw
     print(f"block-table coefficients written to: {output}")
 
 
@@ -2868,8 +3116,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--block-nb", type=int, required=True)
     p.add_argument("--levels", type=int, default=2,
                    help="number of levels (refine_levels + 1)")
-    p.add_argument("--refine-box", type=float, nargs=6, default=None,
-                   help="x0 x1 y0 y1 z0 z1: box refinement instead of body-driven")
+    p.add_argument("--refine-box", type=float, nargs="+", action="append", default=None,
+                   help="x0 x1 y0 y1 z0 z1 [level]: box refinement ADDED to the "
+                        "body-driven one; repeatable; the optional 7th value is "
+                        "the box's target level (default the finest)")
     p.add_argument("--refine-dims", choices=("xyz", "xz"), default="xyz",
                    help="refined directions ([blocks] refine_dims): xyz octree "
                         "(default) or xz quadtree (y keeps the global line)")

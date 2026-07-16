@@ -86,9 +86,17 @@ module blocks
         integer(C_INT), allocatable :: leafLevel(:)  ! (nBlocksGlobal), id+1
         integer(C_INT), allocatable :: leafCoord(:,:)! (3, id+1) level-l lattice coords
         ! Per-level lattice -> leaf id (or -1), x-fastest, level l starting
-        ! at levelOffset(l)+1.
+        ! at levelOffset(l)+1. Each level's map is WINDOWED to the region
+        ! its cells can occupy (winLo/winDims, level-l block coords):
+        ! dense per-level lattices are impossible at deep refinement (the
+        ! finest lattice of a y+~2 airfoil layout is ~7e9 blocks). Windows
+        ! are conservative supersets derived from the refine boxes, the
+        ! geometry-mask windows and the 2:1 smoothing spill; anything
+        ! outside a window is "no leaf".
         integer(C_INT), allocatable :: lidOf(:)
         integer(C_INT), allocatable :: levelOffset(:)     ! (0:nLevels)
+        integer(C_INT), allocatable :: winLo(:,:)         ! (3, nLevels)
+        integer(C_INT), allocatable :: winDims(:,:)       ! (3, nLevels)
 
         ! Per-level global node lines (level l in column l+1; the level-l
         ! line has globalSize*2^l + 1 nodes, allocated at the finest length).
@@ -133,7 +141,8 @@ contains
     ! ids); without it every rank owns its Cartesian box as one block.
     ! Coordinates and metrics are sliced from the global node lines via
     ! slice_grid_direction either way.
-    subroutine init_block_set(blk, dns, g, periodic, nranks, myrank, active, touch, buried)
+    subroutine init_block_set(blk, dns, g, periodic, nranks, myrank, active, touch, buried, &
+            maskLo, maskDims)
         type(block_set_type), intent(inout) :: blk
         type(dns_type), intent(in) :: dns
         type(grid_type), intent(in) :: g
@@ -145,8 +154,11 @@ contains
         integer(C_INT), intent(in), optional :: active(:)
         ! Optional per-level geometry masks (raster, level) for
         ! geometry-driven refinement: touch = dilated block straddles the
-        ! immersed surface, buried = dilated block fully solid.
+        ! immersed surface, buried = dilated block fully solid. The rasters
+        ! may be WINDOWED (maskLo/maskDims per level, x-fastest within the
+        ! window; absent = full-lattice rasters).
         integer(C_INT), intent(in), optional :: touch(:,:), buried(:,:)
+        integer(C_INT), intent(in), optional :: maskLo(:,:), maskDims(:,:)
 
         integer :: d, nRemoved
 
@@ -169,7 +181,8 @@ contains
                 blk%nLevels = 1_C_INT + max(dns%block_refine_levels, 0_C_INT)
             end if
             call build_level_lines(blk, dns, g)
-            call build_leaf_table(blk, dns, periodic, active, myrank, touch, buried)
+            call build_leaf_table(blk, dns, periodic, active, myrank, touch, buried, &
+                maskLo, maskDims)
             nRemoved = int(product(blk%nTiles)) - count_level0_leaves(blk)
             if (nRemoved > 0 .and. myrank == 0_C_INT .and. blk%nLevels == 1_C_INT) then
                 print *, "removed", nRemoved, "of", product(blk%nTiles), &
@@ -331,6 +344,8 @@ contains
         if (allocated(blk%leafCoord)) deallocate(blk%leafCoord)
         if (allocated(blk%lidOf)) deallocate(blk%lidOf)
         if (allocated(blk%levelOffset)) deallocate(blk%levelOffset)
+        if (allocated(blk%winLo)) deallocate(blk%winLo)
+        if (allocated(blk%winDims)) deallocate(blk%winDims)
         if (allocated(blk%lineX)) deallocate(blk%lineX)
         if (allocated(blk%lineY)) deallocate(blk%lineY)
         if (allocated(blk%lineZ)) deallocate(blk%lineZ)
@@ -476,14 +491,32 @@ contains
         end if
     end subroutine subdivide_level_line
 
+    ! Flat lidOf index of the level-`level` window cell c (the caller must
+    ! have checked c lies inside the window; leaf_at is the checked entry).
     pure integer function lid_index(blk, level, c) result(idx)
         type(block_set_type), intent(in) :: blk
         integer, intent(in) :: level, c(3)
 
-        idx = int(blk%levelOffset(level)) + level_raster(blk, level, c)
+        integer :: r(3), wd(3)
+
+        r = c - int(blk%winLo(:, level + 1))
+        wd = int(blk%winDims(:, level + 1))
+        idx = int(blk%levelOffset(level)) + 1 + r(1) + wd(1)*(r(2) + wd(2)*r(3))
     end function lid_index
 
-    ! Leaf id occupying the level-`level` lattice cell c, or -1.
+    ! True if the level-l lattice cell c lies inside the level's window.
+    pure logical function in_window(blk, level, c)
+        type(block_set_type), intent(in) :: blk
+        integer, intent(in) :: level, c(3)
+
+        integer :: r(3)
+
+        r = c - int(blk%winLo(:, level + 1))
+        in_window = all(r >= 0) .and. all(r < int(blk%winDims(:, level + 1)))
+    end function in_window
+
+    ! Leaf id occupying the level-`level` lattice cell c, or -1 (outside
+    ! the domain, outside the level's occupancy window, or no leaf).
     integer(C_INT) function leaf_at(blk, level, c) result(id)
         type(block_set_type), intent(in) :: blk
         integer, intent(in) :: level, c(3)
@@ -491,37 +524,57 @@ contains
         id = -1_C_INT
         if (level < 0 .or. level >= int(blk%nLevels)) return
         if (any(c < 0) .or. any(c >= lattice_dims(blk, level))) return
+        if (.not. in_window(blk, level, c)) return
         id = blk%lidOf(lid_index(blk, level, c))
     end function leaf_at
 
     ! Build the global leaf table: root tiling minus removed blocks, box
     ! refinement rounds, 2:1 smoothing over the 26-neighbourhood, then
     ! leaf ids along the Z-order curve of the finest lattice. Identical on
-    ! every rank, so the distribution needs no communication.
-    subroutine build_leaf_table(blk, dns, periodic, active, myrank, touch, buried)
+    ! every rank, so the distribution needs no communication. All
+    ! per-level lattices are WINDOWED (build_level_windows); the geometry
+    ! masks may be windowed too (maskLo/maskDims; absent = full rasters).
+    subroutine build_leaf_table(blk, dns, periodic, active, myrank, touch, buried, &
+            maskLo, maskDims)
         type(block_set_type), intent(inout) :: blk
         type(dns_type), intent(in) :: dns
         logical(C_BOOL), intent(in) :: periodic(1:3)
         integer(C_INT), intent(in), optional :: active(:)
         integer(C_INT), intent(in) :: myrank
         integer(C_INT), intent(in), optional :: touch(:,:), buried(:,:)
+        integer(C_INT), intent(in), optional :: maskLo(:,:), maskDims(:,:)
 
         ! lidOf markers during construction: -1 none/covered, -2 split,
         ! 0 leaf placeholder (real ids assigned at the end).
         integer, parameter :: M_NONE = -1, M_SPLIT = -2, M_LEAF = 0
 
-        integer :: l, c(3), cn(3), cc(3), gx, gy, gz, i, n, id, nl(3)
+        integer :: l, c(3), cn(3), cc(3), gx, gy, gz, i, n, id
         integer :: ox, oy, oz, sx, sy, sz, lmax, round, box
+        integer :: w0(3), w1(3), mLo(3, blk%nLevels), mDims(3, blk%nLevels)
         integer(int64), allocatable :: keys(:)
         integer, allocatable :: order(:), tmpLevel(:), tmpCoord(:,:)
         logical :: changed, hit
         real(C_DOUBLE) :: lo(3), hi(3)
 
         lmax = int(blk%nLevels) - 1
+
+        ! Geometry-mask windows: full lattices when not supplied (legacy
+        ! full-raster masks / the analytic path).
+        do l = 0, lmax
+            mLo(:, l+1) = 0
+            mDims(:, l+1) = lattice_dims(blk, l)
+        end do
+        if (present(maskLo)) then
+            mLo = int(maskLo(:, 1:blk%nLevels))
+            mDims = int(maskDims(:, 1:blk%nLevels))
+        end if
+
+        call build_level_windows(blk, dns, mLo, mDims)
         allocate(blk%levelOffset(0:int(blk%nLevels)))
         blk%levelOffset(0) = 0_C_INT
         do l = 0, lmax
-            blk%levelOffset(l+1) = blk%levelOffset(l) + int(product(lattice_dims(blk, l)), C_INT)
+            blk%levelOffset(l+1) = blk%levelOffset(l) &
+                + int(product(int(blk%winDims(:, l+1))), C_INT)
         end do
         allocate(blk%lidOf(int(blk%levelOffset(int(blk%nLevels)))))
         blk%lidOf = int(M_NONE, C_INT)
@@ -543,15 +596,17 @@ contains
         ! Refinement rounds: split leaves whose physical region intersects
         ! the [blocks] refine box, and (refine_body) leaves that straddle
         ! the immersed surface or 26-neighbour one that does (the >= 1
-        ! block buffer of strategy doc Section 4).
+        ! block buffer of strategy doc Section 4). Loops cover only the
+        ! per-level windows (everything outside is unrefinable).
         do round = 1, lmax
             l = round - 1
-            nl = lattice_dims(blk, l)
-            do gz = 0, nl(3) - 1
-                do gy = 0, nl(2) - 1
-                    do gx = 0, nl(1) - 1
+            w0 = int(blk%winLo(:, l+1))
+            w1 = w0 + int(blk%winDims(:, l+1)) - 1
+            do gz = w0(3), w1(3)
+                do gy = w0(2), w1(2)
+                    do gx = w0(1), w1(1)
                         c = [gx, gy, gz]
-                        if (blk%lidOf(lid_index(blk, l, c)) /= int(M_LEAF, C_INT)) cycle
+                        if (marker_at(l, c) /= M_LEAF) cycle
                         hit = .false.
                         if (refine_box_set(dns)) then
                             lo(1) = blk%lineX(c(1)*int(blk%nb(1)), l+1)
@@ -561,6 +616,10 @@ contains
                             lo(3) = blk%lineZ(c(3)*int(blk%nb(3)), l+1)
                             hi(3) = blk%lineZ((c(3)+1)*int(blk%nb(3)), l+1)
                             do box = 1, int(dns%block_refine_nboxes)
+                                ! A box refines only up to its target level
+                                ! (< 0 = the finest, today's behavior).
+                                if (dns%block_refine_box_level(box) >= 0_C_INT .and. &
+                                    int(dns%block_refine_box_level(box)) <= l) cycle
                                 hit = hit .or. &
                                   (lo(1) < dns%block_refine_box(2,box) .and. hi(1) > dns%block_refine_box(1,box) &
                               .and. lo(2) < dns%block_refine_box(4,box) .and. hi(2) > dns%block_refine_box(3,box) &
@@ -568,7 +627,7 @@ contains
                             end do
                         end if
                         if (.not. hit .and. present(touch)) then
-                            hit = touch(level_raster(blk, l, c), l+1) /= 0_C_INT
+                            hit = touch_at(l, c)
                             if (.not. hit) then
                                 buffer: do oz = -1, 1
                                 do oy = -1, 1
@@ -576,7 +635,7 @@ contains
                                     if (ox == 0 .and. oy == 0 .and. oz == 0) cycle
                                     cn = c + [ox, oy, oz]
                                     if (.not. wrap_lattice(blk, periodic, l, cn)) cycle
-                                    if (touch(level_raster(blk, l, cn), l+1) /= 0_C_INT) then
+                                    if (touch_at(l, cn)) then
                                         hit = .true.
                                         exit buffer
                                     end if
@@ -598,25 +657,26 @@ contains
         do while (changed)
             changed = .false.
             do l = 0, lmax - 2
-                nl = lattice_dims(blk, l)
-                do gz = 0, nl(3) - 1
-                    do gy = 0, nl(2) - 1
-                        do gx = 0, nl(1) - 1
+                w0 = int(blk%winLo(:, l+1))
+                w1 = w0 + int(blk%winDims(:, l+1)) - 1
+                do gz = w0(3), w1(3)
+                    do gy = w0(2), w1(2)
+                        do gx = w0(1), w1(1)
                             c = [gx, gy, gz]
-                            if (blk%lidOf(lid_index(blk, l, c)) /= int(M_LEAF, C_INT)) cycle
+                            if (marker_at(l, c) /= M_LEAF) cycle
                             outer: do oz = -1, 1
                             do oy = -1, 1
                             do ox = -1, 1
                                 if (ox == 0 .and. oy == 0 .and. oz == 0) cycle
                                 cn = c + [ox, oy, oz]
                                 if (.not. wrap_lattice(blk, periodic, l, cn)) cycle
-                                if (blk%lidOf(lid_index(blk, l, cn)) /= int(M_SPLIT, C_INT)) cycle
+                                if (marker_at(l, cn) /= M_SPLIT) cycle
                                 ! any split child => neighbour reaches l+2
                                 do sz = 0, int(blk%refMask(3))
                                 do sy = 0, int(blk%refMask(2))
                                 do sx = 0, int(blk%refMask(1))
                                     cc = child_origin(blk, cn) + [sx, sy, sz]
-                                    if (blk%lidOf(lid_index(blk, l+1, cc)) == int(M_SPLIT, C_INT)) then
+                                    if (marker_at(l+1, cc) == M_SPLIT) then
                                         call split_leaf(blk, l, c)
                                         changed = .true.
                                         exit outer
@@ -641,15 +701,16 @@ contains
         allocate(tmpLevel(n), tmpCoord(3,n), keys(n), order(n))
         i = 0
         do l = 0, lmax
-            nl = lattice_dims(blk, l)
-            do gz = 0, nl(3) - 1
-                do gy = 0, nl(2) - 1
-                    do gx = 0, nl(1) - 1
+            w0 = int(blk%winLo(:, l+1))
+            w1 = w0 + int(blk%winDims(:, l+1)) - 1
+            do gz = w0(3), w1(3)
+                do gy = w0(2), w1(2)
+                    do gx = w0(1), w1(1)
                         c = [gx, gy, gz]
-                        if (blk%lidOf(lid_index(blk, l, c)) /= int(M_LEAF, C_INT)) cycle
+                        if (marker_at(l, c) /= M_LEAF) cycle
                         if (present(buried)) then
                             ! Removal at every level (Phase 2 generalized).
-                            if (buried(level_raster(blk, l, c), l+1) /= 0_C_INT) then
+                            if (buried_at(l, c)) then
                                 blk%lidOf(lid_index(blk, l, c)) = int(M_NONE, C_INT)
                                 cycle
                             end if
@@ -682,31 +743,173 @@ contains
         end if
 
         deallocate(tmpLevel, tmpCoord, keys, order)
+
+    contains
+
+        ! Construction marker of level-l cell c (M_NONE outside the window).
+        integer function marker_at(l, c)
+            integer, intent(in) :: l, c(3)
+
+            if (.not. in_window(blk, l, c)) then
+                marker_at = M_NONE
+            else
+                marker_at = int(blk%lidOf(lid_index(blk, l, c)))
+            end if
+        end function marker_at
+
+        ! Windowed geometry-mask lookups: outside a mask window nothing is
+        ! touched/buried by construction.
+        logical function touch_at(l, c)
+            integer, intent(in) :: l, c(3)
+
+            integer :: r(3)
+
+            touch_at = .false.
+            r = c - mLo(:, l+1)
+            if (any(r < 0) .or. any(r >= mDims(:, l+1))) return
+            touch_at = touch(1 + r(1) + mDims(1, l+1)*(r(2) + mDims(2, l+1)*r(3)), &
+                l+1) /= 0_C_INT
+        end function touch_at
+
+        logical function buried_at(l, c)
+            integer, intent(in) :: l, c(3)
+
+            integer :: r(3)
+
+            buried_at = .false.
+            r = c - mLo(:, l+1)
+            if (any(r < 0) .or. any(r >= mDims(:, l+1))) return
+            buried_at = buried(1 + r(1) + mDims(1, l+1)*(r(2) + mDims(2, l+1)*r(3)), &
+                l+1) /= 0_C_INT
+        end function buried_at
+
     end subroutine build_leaf_table
 
-    pure integer function level_raster(blk, l, c) result(r)
+    ! Per-level occupancy windows: level-l cells can only exist where
+    ! level-(l-1) cells split — inside a refine box targeting a level
+    ! above l, near the body (geometry-mask windows + the 1-block touch
+    ! buffer), or within the 2:1-smoothing spill of the finer window.
+    ! Conservative bbox hulls computed fine-to-coarse and padded; the
+    ! builder's split writes hard-error outside them (split_leaf), so an
+    ! undersized window fails loudly, never silently.
+    subroutine build_level_windows(blk, dns, mLo, mDims)
+        type(block_set_type), intent(inout) :: blk
+        type(dns_type), intent(in) :: dns
+        integer, intent(in) :: mLo(:,:), mDims(:,:)
+
+        integer, parameter :: PAD = 2
+
+        integer :: l, lmax, d, box, nl(3), j0, j1
+        integer :: sLo(3, blk%nLevels), sHi(3, blk%nLevels)
+        logical :: have(blk%nLevels)
+        real(C_DOUBLE) :: xline
+
+        lmax = int(blk%nLevels) - 1
+        allocate(blk%winLo(3, blk%nLevels), blk%winDims(3, blk%nLevels))
+
+        ! Split-region hulls S(l) (level-l block coords), fine to coarse.
+        have = .false.
+        do l = lmax - 1, 0, -1
+            nl = lattice_dims(blk, l)
+            sLo(:, l+1) = huge(1)/2
+            sHi(:, l+1) = -huge(1)/2
+            do box = 1, int(dns%block_refine_nboxes)
+                if (dns%block_refine_box_level(box) >= 0_C_INT .and. &
+                    int(dns%block_refine_box_level(box)) <= l) cycle
+                do d = 1, 3
+                    ! block range intersecting the box at this level
+                    j0 = 0
+                    do while (j0 < nl(d) - 1)
+                        xline = level_node(blk, d, l, (j0 + 1)*int(blk%nb(d)))
+                        if (xline > dns%block_refine_box(2*d - 1, box)) exit
+                        j0 = j0 + 1
+                    end do
+                    j1 = nl(d)
+                    do while (j1 > j0 + 1)
+                        xline = level_node(blk, d, l, (j1 - 1)*int(blk%nb(d)))
+                        if (xline < dns%block_refine_box(2*d, box)) exit
+                        j1 = j1 - 1
+                    end do
+                    sLo(d, l+1) = min(sLo(d, l+1), j0)
+                    sHi(d, l+1) = max(sHi(d, l+1), j1)
+                end do
+                have(l+1) = .true.
+            end do
+            if (dns%block_refine_body) then
+                ! touch + one-block buffer splits level-l cells
+                sLo(:, l+1) = min(sLo(:, l+1), mLo(:, l+1) - 1)
+                sHi(:, l+1) = max(sHi(:, l+1), mLo(:, l+1) + mDims(:, l+1) + 1)
+                have(l+1) = .true.
+            end if
+            if (l + 2 <= int(blk%nLevels)) then
+                if (have(l+2)) then
+                    ! 2:1 smoothing: within 1 block of the finer split hull
+                    sLo(:, l+1) = min(sLo(:, l+1), &
+                        sLo(:, l+2)/(1 + int(blk%refMask)) - 1)
+                    sHi(:, l+1) = max(sHi(:, l+1), &
+                        (sHi(:, l+2) + int(blk%refMask))/(1 + int(blk%refMask)) + 1)
+                end if
+            end if
+            if (have(l+1)) then
+                sLo(:, l+1) = max(0, sLo(:, l+1) - PAD)
+                sHi(:, l+1) = min(nl, sHi(:, l+1) + PAD)
+            end if
+        end do
+
+        ! W(0) = the full root lattice; W(l) = children of S(l-1).
+        blk%winLo(:, 1) = 0_C_INT
+        blk%winDims(:, 1) = int(lattice_dims(blk, 0), C_INT)
+        do l = 1, lmax
+            nl = lattice_dims(blk, l)
+            if (.not. have(l)) then
+                blk%winLo(:, l+1) = 0_C_INT
+                blk%winDims(:, l+1) = 0_C_INT
+            else
+                blk%winLo(:, l+1) = int(max(0, sLo(:, l)*(1 + int(blk%refMask))), C_INT)
+                blk%winDims(:, l+1) = int(min(nl, sHi(:, l)*(1 + int(blk%refMask))), C_INT) &
+                    - blk%winLo(:, l+1)
+            end if
+        end do
+    end subroutine build_level_windows
+
+    ! Node coordinate g of the level-l line in direction d.
+    function level_node(blk, d, l, g) result(x)
         type(block_set_type), intent(in) :: blk
-        integer, intent(in) :: l, c(3)
+        integer, intent(in) :: d, l, g
+        real(C_DOUBLE) :: x
 
-        integer :: nl(3)
-
-        nl = lattice_dims(blk, l)
-        r = 1 + c(1) + nl(1)*(c(2) + nl(2)*c(3))
-    end function level_raster
+        select case (d)
+        case (1)
+            x = blk%lineX(g, l + 1)
+        case (2)
+            x = blk%lineY(g, l + 1)
+        case default
+            x = blk%lineZ(g, l + 1)
+        end select
+    end function level_node
 
     ! Split a leaf into its children: 2x2x2 (octree) or 2x1x2 in xz
-    ! quadtree mode, where the child keeps the parent's y tile.
+    ! quadtree mode, where the child keeps the parent's y tile. Writes
+    ! outside the child level's occupancy window are a hard error (the
+    ! windows are conservative by construction; failing loudly beats a
+    ! silently corrupt table).
     subroutine split_leaf(blk, l, c)
         type(block_set_type), intent(inout) :: blk
         integer, intent(in) :: l, c(3)
 
-        integer :: sx, sy, sz
+        integer :: sx, sy, sz, cc(3)
 
         blk%lidOf(lid_index(blk, l, c)) = -2_C_INT
         do sz = 0, int(blk%refMask(3))
             do sy = 0, int(blk%refMask(2))
                 do sx = 0, int(blk%refMask(1))
-                    blk%lidOf(lid_index(blk, l+1, child_origin(blk, c) + [sx, sy, sz])) = 0_C_INT
+                    cc = child_origin(blk, c) + [sx, sy, sz]
+                    if (.not. in_window(blk, l+1, cc)) then
+                        print *, "level", l+1, "cell", cc, "window", &
+                            blk%winLo(:, l+2), "+", blk%winDims(:, l+2)
+                        error stop "leaf builder occupancy window undersized"
+                    end if
+                    blk%lidOf(lid_index(blk, l+1, cc)) = 0_C_INT
                 end do
             end do
         end do

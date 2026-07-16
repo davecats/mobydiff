@@ -253,13 +253,16 @@ subroutine apply_config_value(section, key, value, dns, g, turb, les, ps, bc, c,
         case ("remove_solid")
             call read_bool(value, dns%block_remove_solid, line_no)
         case ("refine")
-            ! Repeatable: each occurrence adds one refinement box.
+            ! Repeatable: each occurrence adds one refinement box. An
+            ! optional 7th value is the box's TARGET LEVEL (blocks inside
+            ! refine only up to it); absent = refine_levels, the finest.
             if (dns%block_refine_nboxes >= int(size(dns%block_refine_box, 2), C_INT)) then
                 print *, "too many [blocks] refine boxes at line", line_no
                 error stop "too many refinement boxes"
             end if
             dns%block_refine_nboxes = dns%block_refine_nboxes + 1_C_INT
-            call read_real6(value, dns%block_refine_box(:, dns%block_refine_nboxes), line_no)
+            call read_refine_box(value, dns%block_refine_box(:, dns%block_refine_nboxes), &
+                dns%block_refine_box_level(dns%block_refine_nboxes), line_no)
         case ("refine_levels")
             call read_int(value, dns%block_refine_levels, line_no)
         case ("refine_dims")
@@ -415,6 +418,9 @@ subroutine validate_dns_values(dns, g)
     if (dns%block_nb > 0_C_INT) then
         if (dns%block_nb < 4_C_INT) error stop "block size nb must be at least 4"
         if (mod(dns%block_nb, 2_C_INT) /= 0_C_INT) error stop "block size nb must be even (red-black)"
+        if (any(dns%block_refine_box_level(1:dns%block_refine_nboxes) > dns%block_refine_levels)) then
+            error stop "[blocks] refine box level exceeds refine_levels"
+        end if
     end if
     if (any(g%distribution < GRID_UNIFORM) .or. any(g%distribution > GRID_NATURAL)) then
         error stop "invalid grid distribution"
@@ -978,6 +984,31 @@ subroutine read_real6(value, target, line_no)
         if (terminal_output) print *, "warning: could not parse six real values on input line", line_no
     end if
 end subroutine read_real6
+
+! One [blocks] refine box: six reals, optionally followed by the box's
+! target refinement level (default -1 = the finest, resolved in the leaf
+! builder).
+subroutine read_refine_box(value, box, level, line_no)
+    character(len=*), intent(in) :: value
+    real(C_DOUBLE), intent(inout) :: box(1:6)
+    integer(C_INT), intent(inout) :: level
+    integer, intent(in) :: line_no
+    integer :: stat
+    real(C_DOUBLE) :: parsed7(7)
+
+    read(value, *, iostat=stat) parsed7
+    if (stat == 0) then
+        box = parsed7(1:6)
+        level = int(parsed7(7), C_INT)
+        if (level < 1_C_INT) then
+            print *, "[blocks] refine box level must be >= 1 at line", line_no
+            error stop "invalid refine box level"
+        end if
+    else
+        level = -1_C_INT
+        call read_real6(value, box, line_no)
+    end if
+end subroutine read_refine_box
 
 subroutine read_integer3(value, target, line_no)
     character(len=*), intent(in) :: value

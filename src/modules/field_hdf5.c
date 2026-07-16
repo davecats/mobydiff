@@ -869,6 +869,35 @@ int fdm_h5_append_refine_dims(const char *filename, const int *mask)
  * legacy global-3D restarts have no block layout, so the reader skips the
  * refine_dims cross-check for them (any leaf table can slice a global
  * field). */
+/* Per-level geometry-mask WINDOW attributes of a block-table coefficient
+ * file (mask_win_lo_l{level} / mask_win_dims_l{level}, level-l block
+ * coords): deep-refinement mask rasters are stored windowed to the
+ * padded STL bbox. *has_win = 0 on legacy full-raster files. */
+int fdm_h5_read_mask_window(const char *filename, int level,
+                            int *lo, int *dims, int *has_win)
+{
+    hid_t file;
+    char name[64];
+    htri_t exists;
+    int ierr = 0;
+
+    *has_win = 0;
+    lo[0] = lo[1] = lo[2] = 0;
+    dims[0] = dims[1] = dims[2] = 0;
+    file = open_parallel_file(filename);
+    if (file < 0) return 1;
+    snprintf(name, sizeof(name), "mask_win_lo_l%d", level);
+    exists = H5Aexists(file, name);
+    if (exists > 0) {
+        ierr |= read_attr_int_array(file, name, lo, 3, 1);
+        snprintf(name, sizeof(name), "mask_win_dims_l%d", level);
+        ierr |= read_attr_int_array(file, name, dims, 3, 1);
+        if (!ierr) *has_win = 1;
+    }
+    ierr |= H5Fclose(file) < 0;
+    return ierr != 0;
+}
+
 int fdm_h5_read_refine_dims(const char *filename, int *mask, int *has_blocks)
 {
     hid_t file;

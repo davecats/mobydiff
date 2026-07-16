@@ -37,18 +37,33 @@ def main() -> int:
         # Per-direction refinement mask (absent = xyz octree); xz-quadtree
         # files scale only x,z per level (docs/next_session_refine2d.md).
         mask = np.asarray(src.attrs.get("refine_dims", [1, 1, 1]), dtype=np.int64)
-        touch = []
+        touch, mwlo, mwdim = [], [], []
         for l in range(levels):
-            shape_zyx = tuple(g * 2**(l * int(m)) for g, m in zip(gnbt[::-1], mask[::-1]))
+            if f"mask_win_lo_l{l}" in src.attrs:
+                lo = np.asarray(src.attrs[f"mask_win_lo_l{l}"], dtype=np.int64)
+                dims = np.asarray(src.attrs[f"mask_win_dims_l{l}"], dtype=np.int64)
+                dst.attrs[f"mask_win_lo_l{l}"] = src.attrs[f"mask_win_lo_l{l}"]
+                dst.attrs[f"mask_win_dims_l{l}"] = src.attrs[f"mask_win_dims_l{l}"]
+                if f"lev_win_lo_l{l}" in src.attrs:
+                    dst.attrs[f"lev_win_lo_l{l}"] = src.attrs[f"lev_win_lo_l{l}"]
+                    dst.attrs[f"lev_win_dims_l{l}"] = src.attrs[f"lev_win_dims_l{l}"]
+            else:
+                lo = np.zeros(3, dtype=np.int64)
+                dims = np.array([g * 2**(l * int(m)) for g, m in zip(gnbt, mask)],
+                                dtype=np.int64)
+            shape_zyx = tuple(int(d) for d in dims[::-1])
             t = src[f"block_touch_l{l}"][...].reshape(shape_zyx).transpose(2, 1, 0)
             touch.append(t.astype(bool))
+            mwlo.append(lo)
+            mwdim.append(dims)
             dst.create_dataset(f"block_touch_l{l}", data=src[f"block_touch_l{l}"][...])
             dst.create_dataset(f"block_buried_l{l}",
                                data=np.zeros_like(src[f"block_buried_l{l}"][...]))
         # buried=None: keep every leaf (mirrors the solver reading the
         # zeroed masks); refine_box/lines unused on the body path.
-        lev, crd = build_leaf_table_py(gnbt, levels, periodic, touch, None, None, None, nb,
-                                       mask=mask)
+        lev, crd, _, _ = build_leaf_table_py(gnbt, levels, periodic, touch, None, None,
+                                             None, nb, mask=mask,
+                                             touch_wlo=mwlo, touch_wdim=mwdim)
         n = lev.shape[0]
         blocks = np.empty((n, 4), dtype=np.int32)
         blocks[:, 0:3] = (crd * nb).astype(np.int32)

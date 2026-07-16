@@ -49,6 +49,7 @@ program main
     type(comm_type) :: c
     integer(C_INT), allocatable :: blockActive(:)
     integer(C_INT), allocatable :: blockTouch(:,:), blockBuried(:,:)
+    integer(C_INT), allocatable :: blockMaskLo(:,:), blockMaskDims(:,:)
 
     call comm_init_world(c)
     call splash(c%has_terminal)
@@ -79,11 +80,12 @@ program main
         ! Geometry-driven refinement (analytic or file IBM): refine to the
         ! finest level at the surface with a one-block buffer, removing
         ! buried blocks at every level. ibmm produces the geometry masks.
-        call classify_refinement_masks(blockTouch, blockBuried, dns, g, ibm, &
-            bc%isPeriodic, c%has_terminal)
+        call classify_refinement_masks(blockTouch, blockBuried, blockMaskLo, &
+            blockMaskDims, dns, g, ibm, bc%isPeriodic, c%has_terminal)
         call init_block_set(blk, dns, g, bc%isPeriodic, int(c%cart_size, C_INT), &
-            int(c%cart_rank, C_INT), touch=blockTouch, buried=blockBuried)
-        deallocate(blockTouch, blockBuried)
+            int(c%cart_rank, C_INT), touch=blockTouch, buried=blockBuried, &
+            maskLo=blockMaskLo, maskDims=blockMaskDims)
+        deallocate(blockTouch, blockBuried, blockMaskLo, blockMaskDims)
     else if (dns%block_nb > 0_C_INT .and. dns%ibm_enabled .and. dns%block_remove_solid) then
         ! Solid-block removal: drop blocks buried inside the immersed body.
         call classify_active_mask(blockActive, dns, g, ibm, bc%isPeriodic, c%has_terminal)
