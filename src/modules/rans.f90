@@ -131,6 +131,10 @@ module rans
     private
     public :: sst_type
     public :: init_rans_geometry, destroy_rans_geometry
+    ! moby_prepare hook: the raw analytic body distance exactly as
+    ! init_rans_geometry computes it before the domain-wall min and the
+    ! half-cell floor -- what a case file's dwall_blocks tiles carry.
+    public :: fill_body_distance_analytic
     public :: enter_rans_data, exit_rans_data
     public :: write_rans_geometry
     public :: init_rans_transport, rans_prepare, rans_substage
@@ -271,7 +275,7 @@ contains
             if (len_trim(dns%ibm_coeff_file) > 0) then
                 call read_body_distance_file(sst, dns, blk, c%has_terminal)
             else
-                call fill_body_distance_analytic(sst, dns, blk, bc, ibm, c%has_terminal)
+                call fill_body_distance_analytic(sst%dwall, dns, blk, bc, ibm, c%has_terminal)
             end if
         end if
         call min_in_domain_wall_distance(sst, dns, g, blk, bc)
@@ -391,8 +395,8 @@ contains
     ! the finest refinement level; queries run at each block's own
     ! (level-sliced) cell centres, so refined leaves are exact at their
     ! level for free.
-    subroutine fill_body_distance_analytic(sst, dns, blk, bc, ibm, has_terminal)
-        type(sst_type), intent(inout) :: sst
+    subroutine fill_body_distance_analytic(dwall, dns, blk, bc, ibm, has_terminal)
+        real(C_DOUBLE), intent(inout) :: dwall(0:,0:,0:,1:)
         type(dns_type), intent(in) :: dns
         type(block_set_type), intent(in) :: blk
         type(boundary_type), intent(in) :: bc
@@ -403,6 +407,7 @@ contains
         integer :: i, j, k, b, nx, ny, nz, nf(3)
         real(C_DOUBLE) :: xA(1:3)
 
+        dwall = NO_WALL_DISTANCE
         nf = int(dns%globalSize)*2**((int(blk%nLevels) - 1)*int(blk%refMask))
         call build_walldist(w, isInBody, ibm, dns, &
             blk%lineX(0:nf(1), int(blk%nLevels)), &
@@ -425,7 +430,7 @@ contains
                     xA(1) = blk%x(i, VAR_P, b)
                     xA(2) = blk%y(j, VAR_P, b)
                     xA(3) = blk%z(k, VAR_P, b)
-                    sst%dwall(i,j,k,b) = walldist_distance(w, isInBody, ibm, dns, &
+                    dwall(i,j,k,b) = walldist_distance(w, isInBody, ibm, dns, &
                         xA, dns%rans_dwall_tol)
                 end do
             end do

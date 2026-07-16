@@ -204,6 +204,20 @@ subroutine init_grid(g, dns, periodic)
         g%subdivided(3))
 end subroutine init_grid
 
+! Serial preprocessing tools (mobygrid, moby_prepare) run without the MPI
+! Cartesian decomposition; give dns the whole-grid local size it would
+! otherwise get from comm_init.
+subroutine set_serial_local_size(dns)
+    type(dns_type), intent(inout) :: dns
+    integer :: dir
+
+    do dir = 1, 3
+        dns%localSize(dir,0) = 1_C_INT
+        dns%localSize(dir,1) = dns%globalSize(dir)
+        dns%localSize(dir,2) = dns%globalSize(dir)
+    end do
+end subroutine set_serial_local_size
+
 subroutine destroy_grid(g)
     type(grid_type), intent(inout) :: g
 

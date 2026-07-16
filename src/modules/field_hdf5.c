@@ -1603,6 +1603,248 @@ int fdm_h5_read_ibm_coeff(const char *filename, int nbx, int nby, int nbz,
     return ierr != 0 || status < 0;
 }
 
+/*
+ * Case-file writers (moby_prepare, docs/prepare_solve_strategy.md P0): the
+ * preprocessing output IS the block-table coefficient file the solver
+ * already reads through the fdm_h5_read_* functions above, so each writer
+ * below is the exact inverse of its reader (dataset names, shapes, index
+ * order, attributes). All functions are collective over MPI_COMM_WORLD;
+ * per-leaf datasets are written as independent contiguous row ranges,
+ * lattice-global rasters once by the rank called with write_data = 1.
+ */
+
+static hid_t open_parallel_rdwr(const char *filename)
+{
+    hid_t plist = H5Pcreate(H5P_FILE_ACCESS);
+    hid_t file;
+
+    if (plist < 0) return -1;
+    if (H5Pset_fapl_mpio(plist, MPI_COMM_WORLD, MPI_INFO_NULL) < 0) {
+        H5Pclose(plist);
+        return -1;
+    }
+    file = H5Fopen(filename, H5F_ACC_RDWR, plist);
+    H5Pclose(plist);
+    return file;
+}
+
+/* Create the case file: the header attributes every reader checks plus the
+ * blocks leaf table. refine_mask follows the fdm_h5_append_refine_dims
+ * convention (written only when not all-ones). */
+int fdm_h5_case_create(const char *filename,
+                       int nx, int ny, int nz,
+                       double lx, double ly, double lz, double re,
+                       int block_nb, int block_levels, const int *refine_mask,
+                       int n_blocks_global, int id_start, int n_blocks,
+                       const int *block_origin, const int *block_level)
+{
+    hid_t file;
+    int ierr = 0;
+
+    if (n_blocks < 1 || n_blocks_global < 1) return 1;
+
+    file = create_parallel_file(filename);
+    if (file < 0) return 1;
+
+    ierr |= write_attr_int(file, "nx", nx);
+    ierr |= write_attr_int(file, "ny", ny);
+    ierr |= write_attr_int(file, "nz", nz);
+    ierr |= write_attr_double(file, "lx", lx);
+    ierr |= write_attr_double(file, "ly", ly);
+    ierr |= write_attr_double(file, "lz", lz);
+    ierr |= write_attr_double(file, "re", re);
+    ierr |= write_attr_int(file, "block_nb", block_nb);
+    ierr |= write_attr_int(file, "block_levels", block_levels);
+    if (refine_mask[0] != 1 || refine_mask[1] != 1 || refine_mask[2] != 1) {
+        ierr |= write_attr_int_array(file, "refine_dims", refine_mask, 3);
+    }
+
+    ierr |= write_block_table(file, n_blocks_global, id_start, n_blocks,
+                              block_origin, block_level);
+
+    ierr |= H5Fclose(file) < 0;
+    return ierr != 0;
+}
+
+/* One lattice-global int raster (block_active, block_touch_l*, ...):
+ * collectively created, written by the write_data rank only. */
+static int case_append_raster(const char *filename, const char *name,
+                              int n_raster, const int *values, int write_data)
+{
+    hsize_t dims[1] = {(hsize_t)n_raster};
+    hid_t file = -1, space = -1, dset = -1, xfer = -1;
+    int ierr = 0;
+
+    file = open_parallel_rdwr(filename);
+    if (file < 0) return 1;
+
+    space = H5Screate_simple(1, dims, NULL);
+    dset = space >= 0 ? H5Dcreate2(file, name, H5T_NATIVE_INT, space,
+                                   H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT) : -1;
+    xfer = H5Pcreate(H5P_DATASET_XFER);
+    if (space < 0 || dset < 0 || xfer < 0) {
+        ierr = 1;
+    } else if (write_data) {
+        H5Pset_dxpl_mpio(xfer, H5FD_MPIO_INDEPENDENT);
+        ierr |= H5Dwrite(dset, H5T_NATIVE_INT, H5S_ALL, H5S_ALL, xfer, values) < 0;
+    }
+
+    if (xfer >= 0) H5Pclose(xfer);
+    if (dset >= 0) H5Dclose(dset);
+    if (space >= 0) H5Sclose(space);
+    ierr |= H5Fclose(file) < 0;
+    return ierr != 0;
+}
+
+int fdm_h5_case_append_masks(const char *filename, int level, int n_raster,
+                             const int *touch, const int *buried, int write_data)
+{
+    char name[64];
+    int ierr = 0;
+
+    snprintf(name, sizeof(name), "block_touch_l%d", level);
+    ierr |= case_append_raster(filename, name, n_raster, touch, write_data);
+    snprintf(name, sizeof(name), "block_buried_l%d", level);
+    ierr |= case_append_raster(filename, name, n_raster, buried, write_data);
+    return ierr != 0;
+}
+
+int fdm_h5_case_append_active(const char *filename, int n_lattice,
+                              const int *active, int write_data)
+{
+    return case_append_raster(filename, "block_active", n_lattice,
+                              active, write_data);
+}
+
+/* coef_blocks: (n_blocks_global, nb+2, nb+2, nb+2, 3) ghost-inclusive
+ * per-leaf staggered-coefficient tiles; the transpose is the exact inverse
+ * of fdm_h5_read_ibm_coeff_blocks. */
+int fdm_h5_case_append_coef(const char *filename, int nbx, int nby, int nbz,
+                            int n_blocks, int n_blocks_global, int id_start,
+                            const double *coef)
+{
+    const size_t ni = (size_t)nbx + 2;
+    const size_t nj = (size_t)nby + 2;
+    const size_t nk = (size_t)nbz + 2;
+    const size_t n = ni*nj*nk*3;
+    hsize_t global_dims[5] = {(hsize_t)n_blocks_global, ni, nj, nk, 3};
+    hsize_t local_dims[5] = {(hsize_t)n_blocks, ni, nj, nk, 3};
+    hsize_t start[5] = {(hsize_t)id_start, 0, 0, 0, 0};
+    hid_t file = -1, file_space = -1, mem_space = -1, dset = -1, xfer = -1;
+    double *buffer = NULL;
+    int ierr = 0;
+
+    if (nbx < 1 || nby < 1 || nbz < 1 || n_blocks < 1) return 1;
+
+    file = open_parallel_rdwr(filename);
+    if (file < 0) return 1;
+
+    buffer = (double *)malloc((size_t)n_blocks*n*sizeof(double));
+    if (buffer == NULL) {
+        H5Fclose(file);
+        return 1;
+    }
+    for (int b = 0; b < n_blocks; ++b) {
+        const double *block_coef = coef + (size_t)b*n;
+        double *row = buffer + (size_t)b*n;
+        for (size_t v = 0; v < 3; ++v) {
+            for (size_t k = 0; k < nk; ++k) {
+                for (size_t j = 0; j < nj; ++j) {
+                    for (size_t i = 0; i < ni; ++i) {
+                        size_t h5_idx = (((i*nj) + j)*nk + k)*3 + v;
+                        row[h5_idx] = block_coef[linear_fortran4(i, j, k, v, ni, nj, nk)];
+                    }
+                }
+            }
+        }
+    }
+
+    file_space = H5Screate_simple(5, global_dims, NULL);
+    dset = file_space >= 0 ? H5Dcreate2(file, "coef_blocks", H5T_NATIVE_DOUBLE,
+                                        file_space, H5P_DEFAULT, H5P_DEFAULT,
+                                        H5P_DEFAULT) : -1;
+    mem_space = H5Screate_simple(5, local_dims, NULL);
+    xfer = H5Pcreate(H5P_DATASET_XFER);
+    if (file_space < 0 || dset < 0 || mem_space < 0 || xfer < 0 ||
+        H5Sselect_hyperslab(file_space, H5S_SELECT_SET, start, NULL, local_dims, NULL) < 0) {
+        ierr = 1;
+    } else {
+        H5Pset_dxpl_mpio(xfer, H5FD_MPIO_INDEPENDENT);
+        ierr |= H5Dwrite(dset, H5T_NATIVE_DOUBLE, mem_space, file_space, xfer, buffer) < 0;
+    }
+
+    if (xfer >= 0) H5Pclose(xfer);
+    if (mem_space >= 0) H5Sclose(mem_space);
+    if (dset >= 0) H5Dclose(dset);
+    if (file_space >= 0) H5Sclose(file_space);
+    free(buffer);
+    ierr |= H5Fclose(file) < 0;
+    return ierr != 0;
+}
+
+/* dwall_blocks: (n_blocks_global, nb+2, nb+2, nb+2) ghost-inclusive
+ * cell-centred raw body-distance tiles; inverse of
+ * fdm_h5_read_dwall_blocks. */
+int fdm_h5_case_append_dwall(const char *filename, int nbx, int nby, int nbz,
+                             int n_blocks, int n_blocks_global, int id_start,
+                             const double *dwall)
+{
+    const size_t ni = (size_t)nbx + 2;
+    const size_t nj = (size_t)nby + 2;
+    const size_t nk = (size_t)nbz + 2;
+    const size_t n = ni*nj*nk;
+    hsize_t global_dims[4] = {(hsize_t)n_blocks_global, ni, nj, nk};
+    hsize_t local_dims[4] = {(hsize_t)n_blocks, ni, nj, nk};
+    hsize_t start[4] = {(hsize_t)id_start, 0, 0, 0};
+    hid_t file = -1, file_space = -1, mem_space = -1, dset = -1, xfer = -1;
+    double *buffer = NULL;
+    int ierr = 0;
+
+    if (nbx < 1 || nby < 1 || nbz < 1 || n_blocks < 1) return 1;
+
+    file = open_parallel_rdwr(filename);
+    if (file < 0) return 1;
+
+    buffer = (double *)malloc((size_t)n_blocks*n*sizeof(double));
+    if (buffer == NULL) {
+        H5Fclose(file);
+        return 1;
+    }
+    for (int b = 0; b < n_blocks; ++b) {
+        const double *block_dwall = dwall + (size_t)b*n;
+        double *row = buffer + (size_t)b*n;
+        for (size_t k = 0; k < nk; ++k) {
+            for (size_t j = 0; j < nj; ++j) {
+                for (size_t i = 0; i < ni; ++i) {
+                    row[(i*nj + j)*nk + k] = block_dwall[linear_fortran(i, j, k, ni, nj)];
+                }
+            }
+        }
+    }
+
+    file_space = H5Screate_simple(4, global_dims, NULL);
+    dset = file_space >= 0 ? H5Dcreate2(file, "dwall_blocks", H5T_NATIVE_DOUBLE,
+                                        file_space, H5P_DEFAULT, H5P_DEFAULT,
+                                        H5P_DEFAULT) : -1;
+    mem_space = H5Screate_simple(4, local_dims, NULL);
+    xfer = H5Pcreate(H5P_DATASET_XFER);
+    if (file_space < 0 || dset < 0 || mem_space < 0 || xfer < 0 ||
+        H5Sselect_hyperslab(file_space, H5S_SELECT_SET, start, NULL, local_dims, NULL) < 0) {
+        ierr = 1;
+    } else {
+        H5Pset_dxpl_mpio(xfer, H5FD_MPIO_INDEPENDENT);
+        ierr |= H5Dwrite(dset, H5T_NATIVE_DOUBLE, mem_space, file_space, xfer, buffer) < 0;
+    }
+
+    if (xfer >= 0) H5Pclose(xfer);
+    if (mem_space >= 0) H5Sclose(mem_space);
+    if (dset >= 0) H5Dclose(dset);
+    if (file_space >= 0) H5Sclose(file_space);
+    free(buffer);
+    ierr |= H5Fclose(file) < 0;
+    return ierr != 0;
+}
+
 static int write_dataset1(hid_t file, const char *name, hsize_t n, const double *values)
 {
     hid_t space = -1;

@@ -1,6 +1,6 @@
 program mobygrid
     use, intrinsic :: iso_c_binding, only: C_INT
-    use :: init, only: dns_type, grid_type, init_grid, destroy_grid
+    use :: init, only: dns_type, grid_type, init_grid, destroy_grid, set_serial_local_size
     use :: blocks, only: block_set_type, init_block_set, destroy_block_set
     use :: flow_case, only: case_type, create_flow_case
     use :: config, only: config_seen_type, read_runtime_config, has_restart_file, validate_dns_values
@@ -115,16 +115,5 @@ contains
         print '(A)', "usage: mobygrid [input.ini] [grid.h5]"
         print '(A)', "       mobygrid --input input.ini --output grid.h5"
     end subroutine print_usage
-
-    subroutine set_serial_local_size(dns)
-        type(dns_type), intent(inout) :: dns
-        integer :: dir
-
-        do dir = 1, 3
-            dns%localSize(dir,0) = 1_C_INT
-            dns%localSize(dir,1) = dns%globalSize(dir)
-            dns%localSize(dir,2) = dns%globalSize(dir)
-        end do
-    end subroutine set_serial_local_size
 
 end program mobygrid

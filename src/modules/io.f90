@@ -193,6 +193,63 @@ module io
             integer(C_INT) :: ierr
         end function fdm_h5_write_rans_geometry
 
+        ! Case-file writers (moby_prepare): the exact inverses of the
+        ! fdm_h5_read_* coefficient-file readers above. Collective over
+        ! MPI_COMM_WORLD; write_data selects the one rank writing the
+        ! lattice-global rasters.
+        function fdm_h5_case_create(file_name, nx, ny, nz, lx, ly, lz, re, &
+                block_nb, block_levels, refine_mask, &
+                n_blocks_global, id_start, n_blocks, block_origin, block_level) &
+                bind(C, name="fdm_h5_case_create") result(ierr)
+            import :: C_CHAR, C_INT, C_DOUBLE
+            character(kind=C_CHAR), intent(in) :: file_name(*)
+            integer(C_INT), value :: nx, ny, nz
+            real(C_DOUBLE), value :: lx, ly, lz, re
+            integer(C_INT), value :: block_nb, block_levels
+            integer(C_INT), intent(in) :: refine_mask(*)
+            integer(C_INT), value :: n_blocks_global, id_start, n_blocks
+            integer(C_INT), intent(in) :: block_origin(*), block_level(*)
+            integer(C_INT) :: ierr
+        end function fdm_h5_case_create
+
+        function fdm_h5_case_append_masks(file_name, level, n_raster, touch, buried, &
+                write_data) bind(C, name="fdm_h5_case_append_masks") result(ierr)
+            import :: C_CHAR, C_INT
+            character(kind=C_CHAR), intent(in) :: file_name(*)
+            integer(C_INT), value :: level, n_raster, write_data
+            integer(C_INT), intent(in) :: touch(*), buried(*)
+            integer(C_INT) :: ierr
+        end function fdm_h5_case_append_masks
+
+        function fdm_h5_case_append_active(file_name, n_lattice, active, write_data) &
+                bind(C, name="fdm_h5_case_append_active") result(ierr)
+            import :: C_CHAR, C_INT
+            character(kind=C_CHAR), intent(in) :: file_name(*)
+            integer(C_INT), value :: n_lattice, write_data
+            integer(C_INT), intent(in) :: active(*)
+            integer(C_INT) :: ierr
+        end function fdm_h5_case_append_active
+
+        function fdm_h5_case_append_coef(file_name, nbx, nby, nbz, n_blocks, &
+                n_blocks_global, id_start, coef) &
+                bind(C, name="fdm_h5_case_append_coef") result(ierr)
+            import :: C_CHAR, C_INT, C_DOUBLE
+            character(kind=C_CHAR), intent(in) :: file_name(*)
+            integer(C_INT), value :: nbx, nby, nbz, n_blocks, n_blocks_global, id_start
+            real(C_DOUBLE), intent(in) :: coef(*)
+            integer(C_INT) :: ierr
+        end function fdm_h5_case_append_coef
+
+        function fdm_h5_case_append_dwall(file_name, nbx, nby, nbz, n_blocks, &
+                n_blocks_global, id_start, dwall) &
+                bind(C, name="fdm_h5_case_append_dwall") result(ierr)
+            import :: C_CHAR, C_INT, C_DOUBLE
+            character(kind=C_CHAR), intent(in) :: file_name(*)
+            integer(C_INT), value :: nbx, nby, nbz, n_blocks, n_blocks_global, id_start
+            real(C_DOUBLE), intent(in) :: dwall(*)
+            integer(C_INT) :: ierr
+        end function fdm_h5_case_append_dwall
+
         function fdm_h5_read_field(file_name, nbx, nby, nbz, n_blocks, &
                 n_blocks_global, id_start, block_origin, &
                 global_nx, global_ny, global_nz, q) &
@@ -630,6 +687,77 @@ subroutine write_rans_geometry_file(file_name, blk, dwall, yeff, wallcell, &
         error stop
     end if
 end subroutine write_rans_geometry_file
+
+! moby_prepare output (docs/prepare_solve_strategy.md P0): one case file in
+! the block-table coefficient-file format the solver reads via [ibm]
+! coeff_file -- header attributes + blocks leaf table + coef_blocks, plus
+! the per-level refinement masks (refine_body), block_active (remove_solid)
+! and dwall_blocks ([rans]). Parallel HDF5: all ranks enter together; each
+! rank writes its own contiguous leaf-row range, rank 0 the lattice-global
+! rasters (full rasters, no window attrs -- the analytic convention).
+subroutine write_case_file(file_name, blk, dns, c, coef, has_terminal, &
+        touch, buried, maskDims, active, dwall)
+    character(len=*), intent(in) :: file_name
+    type(block_set_type), intent(in) :: blk
+    type(dns_type), intent(in) :: dns
+    type(comm_type), intent(in) :: c
+    real(C_DOUBLE), intent(in) :: coef(*)
+    logical, intent(in) :: has_terminal
+    integer(C_INT), intent(in), optional :: touch(:,:), buried(:,:), maskDims(:,:)
+    integer(C_INT), intent(in), optional :: active(:)
+    real(C_DOUBLE), intent(in), optional :: dwall(:,:,:,:)
+
+    character(kind=C_CHAR,len=:), allocatable :: c_file_name
+    integer(C_INT) :: ierr, write_data, n_raster
+    integer :: level
+
+    c_file_name = to_c_string(file_name)
+    ! has_terminal in comm_type is world rank 0 -- the one raster writer.
+    write_data = merge(1_C_INT, 0_C_INT, c%has_terminal)
+
+    ierr = fdm_h5_case_create(c_file_name, &
+        dns%globalSize(1), dns%globalSize(2), dns%globalSize(3), &
+        dns%leng(1), dns%leng(2), dns%leng(3), dns%re, &
+        dns%block_nb, blk%nLevels - 1_C_INT, dns%block_refine_mask, &
+        blk%nBlocksGlobal, blk%idStart, blk%nBlocks, blk%origin, blk%level)
+    call check_case_write(ierr, "create", file_name, has_terminal)
+
+    if (present(touch)) then
+        do level = 0, int(blk%nLevels) - 1
+            n_raster = product(maskDims(:, level+1))
+            ierr = fdm_h5_case_append_masks(c_file_name, int(level, C_INT), &
+                n_raster, touch(1:n_raster, level+1), buried(1:n_raster, level+1), &
+                write_data)
+            call check_case_write(ierr, "refinement masks", file_name, has_terminal)
+        end do
+    end if
+    if (present(active)) then
+        ierr = fdm_h5_case_append_active(c_file_name, int(size(active), C_INT), &
+            active, write_data)
+        call check_case_write(ierr, "block_active", file_name, has_terminal)
+    end if
+
+    ierr = fdm_h5_case_append_coef(c_file_name, blk%nb(1), blk%nb(2), blk%nb(3), &
+        blk%nBlocks, blk%nBlocksGlobal, blk%idStart, coef)
+    call check_case_write(ierr, "coef_blocks", file_name, has_terminal)
+
+    if (present(dwall)) then
+        ierr = fdm_h5_case_append_dwall(c_file_name, blk%nb(1), blk%nb(2), blk%nb(3), &
+            blk%nBlocks, blk%nBlocksGlobal, blk%idStart, dwall)
+        call check_case_write(ierr, "dwall_blocks", file_name, has_terminal)
+    end if
+end subroutine write_case_file
+
+subroutine check_case_write(ierr, what, file_name, has_terminal)
+    integer(C_INT), intent(in) :: ierr
+    character(len=*), intent(in) :: what, file_name
+    logical, intent(in) :: has_terminal
+
+    if (ierr == 0_C_INT) return
+    if (has_terminal) print *, "error: could not write ", what, &
+        " to case file: ", trim(file_name)
+    error stop
+end subroutine check_case_write
 
 subroutine read_field(blk, dns, file_name, c)
     ! Parallel HDF5 call: all MPI ranks must enter this routine together.

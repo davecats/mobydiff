@@ -742,6 +742,26 @@ immersed boundary. Phased, each phase verified before the next:
   gamma_sep at the finer bubble; the deferred TVD/van-Leer scalar
   increment is now doubly measurement-justified (own session; then rerun
   the L5-xz SD7003).
+- Prepare/solve split P0 (DONE 2026-07-16, branch `claude/jacobi-interface`).
+  Strategy in `docs/prepare_solve_strategy.md` (AMPHIBIOUS-style two-step,
+  gated P0-P3; read it first): consolidate mobygrid+mobygeom into ONE
+  MPI-parallel Fortran preprocessor reusing the solver's own init kernels;
+  the case file IS the block-table coefficient file (`[ibm] coeff_file`).
+  P0 = analytic geometry, zero new geometry code: `src/moby_prepare.f90`
+  (CMake `moby_prepare`; `moby_prepare case.ini case.h5`) runs classify_* /
+  init_block_set (Z-order world split) / set_ibm_coeff /
+  fill_body_distance_analytic (now public, array-arg) and writes via
+  `write_case_file` (io.f90) + `fdm_h5_case_*` (field_hdf5.c), each writer
+  the exact inverse of its reader (blocks + coef_blocks + masks +
+  block_active + dwall_blocks). Solver solve path UNCHANGED. Gates all PASS
+  (`validation/prepare/`): wavy / wavy_refine / wavysolid (1150/125000 =
+  the Phase-2 count) solve-from-file bit-exact (max_abs 0) vs inline,
+  ransgeom dumps identical, prepare 1==4 ranks identical files, GPU==CPU
+  from the same file at tol 0, 7-case suite bit-exact nofma CPU+GPU.
+  Prepare with the CPU build (canonical; GPU build computes coef on device,
+  libm ulps). NEXT: P1 = STL module (`geometry_stl.f90`, reader + BVH +
+  ray-parity indicator through the SAME machinery), gates vs mobygeom +
+  exact slab/sphere references — see the strategy doc §8.
 - ALSO PENDING: **Profile + optimise** the GPU step for the 2:1-refined channel.
   The last hard profile is STALE (the reflux that was 23% is removed; the
   `MOBY_PHASETIME` timer is deleted): re-profile first with a minimal removable
