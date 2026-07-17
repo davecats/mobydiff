@@ -25,35 +25,27 @@ by `(17.288649999032064, 0.0, 4.150549)`. This places the full mirrored STL at
 the centre of the corresponding full domain, while the solver only uses the
 positive-`y` half.
 
-Generate the IBM coefficients with:
+Generate the IBM coefficients with moby_prepare (prepare/solve split,
+`docs/prepare_solve_strategy.md` — a `[blocks] nb = 10` block layout plus
+the STL declaration replace the retired mobygrid+mobygeom pipeline):
 
 ```bash
-cd /home/davide/Codes/FDM/tutorials/sailplane
-../../build_cpu/mobygrid input.ini sailplane_grid.h5
-/home/davide/ibmc/bin/python ../../tools/mobygeom.py stl-ibm-coeff \
-  --geometry "FRUE V0 ohneRundung.stl" \
-  --output sailplane_ibm_coeff.h5 \
-  --grid-file sailplane_grid.h5 \
-  --re 1.0e5 \
-  --scale 0.001 \
-  --translate 17.288649999032064 0.0 4.150549 \
-  --check-fluid-points fluid_points.txt \
-  --jobs 2 \
-  --tile-size 32 36 16
+cd tutorials/sailplane
+# prep_blocks.ini = input.ini with:
+#   [blocks] nb = 10
+#   [ibm] stl_file = "FRUE V0 ohneRundung.stl"
+#         stl_scale = 0.001
+#         stl_translate = 17.288649999032064 0.0 4.150549
+mpirun -n 2 ../../build_cpu/moby_prepare prep_blocks.ini sailplane_case.h5
+# solve with [blocks] nb = 10 and [ibm] coeff_file = sailplane_case.h5
 ```
 
-If the grid changes in `input.ini`, rerun `mobygrid` and regenerate
-`sailplane_ibm_coeff.h5`. The coefficient generator reads `nx`, `ny`, `nz`,
-`lx`, `ly`, `lz`, periodicity, and the exact solver node coordinates from
-`sailplane_grid.h5`.
-
-`mobygeom.py` uses padded bounding-box culling for external STL bodies by
-default, so only the grid points near the transformed sailplane are classified.
-The fluid probe file is used as a fail-fast validation check. Use
-`--fluid-points fluid_points.txt` only for an additional expensive ambiguous
-winding repair pass, and add `--fluid-ray-scope all` only when deliberately
-debugging the older full ray-vote path. Use `--no-bbox-cull` only for debugging
-against the older full-grid path.
+The committed `sailplane_ibm_coeff.h5` (legacy mobygeom global layout,
+usable without `[blocks] nb`) remains for the original one-step tutorial;
+a 1-step solve from the prepared case file is bit-exact against it
+(validation/prepare/run_gates_big.sh). If the grid changes in `input.ini`,
+rerun moby_prepare. The retired mobygeom cross-check can read the grid
+straight from the case file (`--grid-file sailplane_case.h5`).
 
 The tutorial is currently sized as a large one-step smoke case for the 6 GB
 Quadro RTX 3000 in this workstation. It is intentionally kept a little below

@@ -21,7 +21,7 @@ print_build_summary() {
     echo "Build summary: ${name}"
     echo "========================================"
     echo "Build directory       : ${build_dir}"
-    echo "Executable            : ${build_dir}/main"
+    echo "Executables           : ${build_dir}/moby_solve (+ main symlink), ${build_dir}/moby_prepare"
     echo "Fortran compiler      : $(cache_value "$build_dir" CMAKE_Fortran_COMPILER)"
     echo "C compiler            : $(cache_value "$build_dir" CMAKE_C_COMPILER)"
     echo "Pressure solver       : red-black SOR"

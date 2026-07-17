@@ -47,13 +47,18 @@ set(MODULE_SOURCES
     ${MODULE_DIR}/flow_case.f90
 )
 
-set(SOLVER_TARGETS main mobygrid moby_prepare walldist_test transition_test leaftable_test)
+set(SOLVER_TARGETS moby_solve moby_prepare walldist_test transition_test leaftable_test)
 
-add_executable(main ${SRC_DIR}/main.f90 ${MODULE_SOURCES})
-add_executable(mobygrid ${SRC_DIR}/mobygrid.f90 ${MODULE_SOURCES})
-# Offline preparation step: writes the block-table case file for a solve
-# with [ibm] coeff_file (docs/prepare_solve_strategy.md).
+# The prepare/solve pair (docs/prepare_solve_strategy.md): moby_prepare
+# writes the block-table case file, moby_solve runs it ([ibm] coeff_file).
+# mobygrid was absorbed in P3 -- the case file carries the grid datasets.
+add_executable(moby_solve ${SRC_DIR}/moby_solve.f90 ${MODULE_SOURCES})
 add_executable(moby_prepare ${SRC_DIR}/moby_prepare.f90 ${MODULE_SOURCES})
+# Compatibility name: every committed script/tutorial launches "main"
+# (rm first -- older build dirs hold a regular file of that name).
+add_custom_command(TARGET moby_solve POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E rm -f ${CMAKE_BINARY_DIR}/main
+    COMMAND ${CMAKE_COMMAND} -E create_symlink moby_solve ${CMAKE_BINARY_DIR}/main)
 # Gate driver for the geometry-agnostic wall distance (IDDES T1b gate b).
 add_executable(walldist_test ${SRC_DIR}/test_walldist.f90 ${MODULE_SOURCES})
 # Host-side unit test for the T4 transition correlations (rans.f90).

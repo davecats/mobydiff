@@ -355,16 +355,30 @@ into a later increment if such a case materializes) and the direct
 segment-intersection crossing query (pure perf, behind the same
 interface).
 
-**P3 — retire and rename.**
-`main.f90` → `moby_solve.f90` (pure rename; compile.sh/module docs
-updated). `mobygrid.f90` deleted (absorbed; the case file carries the
-grid). mobygeom's geometry subcommands (`stl-ibm-coeff`, `block-active`,
-`block-table` and `build_leaf_table_py` + Morton mirrors) get a RETIRED
-header and survive only as the independent cross-implementation reference
-for prepare's validation suite (the same role scipy kept for walldist);
-STL generators/checkers (`make-*-stl`, watertightness tests) stay live.
-*Gates*: 7-case suite bit-exact through the rename; tutorial READMEs
-updated to the two-step flow.
+**P3 — retire and rename. DONE 2026-07-17.**
+`main.f90` → `moby_solve.f90` (pure rename — `program moby_solve`, CMake
+target `moby_solve`; the build keeps a `main` SYMLINK because dozens of
+committed scripts/tutorials launch "main"). `mobygrid.f90` DELETED and its
+function absorbed: `write_case_file` appends the node lines plus the
+mobygrid-format attributes (`fdm_h5_case_append_grid`; mobygeom needs
+`mobygrid_format = 1`, `{x,y,z}_nodes` and validates the grid attrs when
+present — the `/staggered` inspection group was never read), so a
+prepared case file serves directly as the retired mobygeom's
+`--grid-file` (verified: mobygeom parses nx/ny/nz/periodicity from a case
+file; the sphere gate generates its reference that way). The dead
+`write_grid_export`/`fdm_h5_write_grid` writers went with it; legacy
+mobygrid-written grid files (the committed les_ibm `grid.h5`) stay
+readable. The production preprocessing paths consolidated: the
+naca0012/sd7003 `setup.sh` now run moby_prepare (the venv survives only
+for STL GENERATION — make_airfoil_stl needs shapely/mapbox_earcut);
+`run_gates_big.sh` generates its mobygeom references from the case files;
+the sailplane tutorial README documents the prepare flow. mobygeom's
+retirement headers were already placed in P1b.
+*Gates (all PASS)*: 7-case suite bit-exact (nofma) vs the P2 binaries CPU
+AND GPU through the rename (the suite drives the `main` symlink); P0
+22/22 and P1 16/16 re-runs — the sphere gate now exercises
+mobygeom-reads-the-case-file; the case files gain only the grid datasets
+(readers ignore them; the 1==4-rank identity gates confirm).
 
 ## 9. Risks and open questions
 

@@ -159,7 +159,7 @@ program moby_prepare
     end if
 
     if (c%has_terminal) print *, "writing case file: ", trim(output_file)
-    call write_case_file(output_file, blk, dns, c, ibm%coef, c%has_terminal, &
+    call write_case_file(output_file, blk, dns, g, bc, c, ibm%coef, c%has_terminal, &
         touch=blockTouch, buried=blockBuried, maskDims=blockMaskDims, &
         active=blockActive, dwall=dwall)
     if (c%has_terminal) then

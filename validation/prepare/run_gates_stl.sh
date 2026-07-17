@@ -65,7 +65,7 @@ EOF
 
 # ---- sphere vs mobygeom + exact shift-invariance ------------------------
 if [ -x "$PYG" ] && "$PYG" -c "import igl, trimesh" >/dev/null 2>&1; then
-    rm -f sphere.stl sphere_shift.stl sphere_grid.h5 sphere_ref.h5 sphere_case.h5 spheres_case.h5
+    rm -f sphere.stl sphere_shift.stl sphere_ref.h5 sphere_case.h5 spheres_case.h5
     check "sphere: STL" "$PYG" ../../tools/mobygeom.py make-sphere-stl \
         --output sphere.stl --center 0.5 0.5 0.5 --radius 0.2
     check "sphere: shifted STL (exact)" $PY - <<'EOF'
@@ -83,11 +83,12 @@ for t in range(n):
 with open('sphere_shift.stl','wb') as f:
     f.write(bytes(data))
 EOF
-    check "sphere: mobygrid" mpirun -n 1 "$BUILD/mobygrid" sphere.ini sphere_grid.h5
-    check "sphere: mobygeom reference" "$PYG" ../../tools/mobygeom.py block-table \
-        --geometry sphere.stl --grid-file sphere_grid.h5 --re 100 \
-        --block-nb 8 --levels 2 --output sphere_ref.h5 --jobs 8
     check "sphere: prepare" mpirun -n 4 --oversubscribe "$BUILD/moby_prepare" sphere.ini sphere_case.h5
+    # The case file IS the grid file (P3, mobygrid absorbed): mobygeom
+    # reads the node lines + mobygrid-format attrs straight from it.
+    check "sphere: mobygeom reference (grid from the case file)" "$PYG" ../../tools/mobygeom.py block-table \
+        --geometry sphere.stl --grid-file sphere_case.h5 --re 100 \
+        --block-nb 8 --levels 2 --output sphere_ref.h5 --jobs 8
     check "sphere: vs mobygeom" $PY compare_case.py sphere_case.h5 sphere_ref.h5
     check "sphere_shift: prepare" mpirun -n 4 --oversubscribe "$BUILD/moby_prepare" sphere_shift.ini spheres_case.h5
     check "sphere_shift: exact roll of centred case" $PY shift_check.py sphere_case.h5 spheres_case.h5 32

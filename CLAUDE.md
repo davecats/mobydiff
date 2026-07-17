@@ -12,16 +12,20 @@ accel = chebyshev`; on the `claude/jacobi-interface` branch — it replaced the
 old coupled red-black SOR projection, which could not make the 2:1 interface
 operators consistent), volume-penalization immersed boundary method (IBM),
 optional LES. Fortran + MPI (3D Cartesian decomposition, 26-neighbour halos) with
-OpenMP target offload for GPU. Entry points: `src/main.f90` (solver) and
-`src/mobygrid.f90` (serial grid/preprocessing tool). Geometry
-classification tooling lives in `tools/mobygeom*`.
+OpenMP target offload for GPU. Entry points: `src/moby_solve.f90` (the
+solver; the build keeps a `main` symlink for the older scripts) and
+`src/moby_prepare.f90` (the MPI-parallel preprocessor writing the case
+file, `docs/prepare_solve_strategy.md`). `tools/mobygeom*` is the RETIRED
+Python preprocessor, kept as the cross-implementation validation
+reference.
 
 ## Build and run
 
 ```bash
 module load toolkits/nvhpc/25.9
 ./compile.sh cpu && ./compile.sh gpu   # builds build_cpu/ and build_gpu/
-mpirun -n 1 ./build_gpu/main path/to/input.ini
+mpirun -n 4 ./build_cpu/moby_prepare case.ini case.h5   # file-geometry cases
+mpirun -n 1 ./build_gpu/moby_solve path/to/input.ini    # main is a symlink
 ```
 
 - ALWAYS run executables through `mpirun`, even single rank.
@@ -825,8 +829,24 @@ immersed boundary. Phased, each phase verified before the next:
   exercise the split+merge directly). Timing at 4 ranks x 4 threads:
   NACA L5 prepare 7m13s -> 3m56s, flat_refine 38s -> 22.6s. Still
   redundant per rank (cheap, documented): leaf-table build, STL load/BVH,
-  the analytic walldist cloud. NEXT: P3 = rename main->moby_solve, absorb
-  mobygrid, grid datasets into the case file.
+  the analytic walldist cloud.
+- Prepare/solve split P3 (DONE 2026-07-17, branch `claude/jacobi-interface`).
+  Retire and rename, completing the split: `main.f90` -> `moby_solve.f90`
+  (CMake target `moby_solve`; the build keeps a `main` SYMLINK -- committed
+  scripts/tutorials launch "main"). `mobygrid.f90` DELETED, absorbed into
+  the case file: write_case_file appends the node lines + mobygrid-format
+  attrs (`fdm_h5_case_append_grid`), so a prepared case file serves
+  directly as the retired mobygeom's --grid-file (sphere gate generates
+  its reference that way; legacy mobygrid grid files stay readable; the
+  dead write_grid_export/fdm_h5_write_grid deleted). Production
+  preprocessing consolidated: naca0012/sd7003 setup.sh run moby_prepare
+  (venv only for STL generation), run_gates_big.sh references read the
+  grid from case files, sailplane README documents the prepare flow.
+  Gates all PASS: 7-case suite bit-exact (nofma, via the main symlink) vs
+  the P2 binaries CPU AND GPU; P0 22/22 + P1 16/16 re-runs. The
+  prepare/solve split (P0-P3) is COMPLETE: one Fortran executable pair,
+  one case-file contract, mobygeom/mobygrid retired to validation
+  references.
 - ALSO PENDING: **Profile + optimise** the GPU step for the 2:1-refined channel.
   The last hard profile is STALE (the reflux that was 23% is removed; the
   `MOBY_PHASETIME` timer is deleted): re-profile first with a minimal removable

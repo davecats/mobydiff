@@ -3,7 +3,7 @@
 !      (*) second-order IBM in space, then in time
 
 
-program main
+program moby_solve
     use :: init
     use :: blocks, only: block_set_type, init_block_set, destroy_block_set, &
         enter_block_data, exit_block_data, zero_closed_halos, &
@@ -302,4 +302,4 @@ program main
     call destroy_grid(g)
     call destroy_boundary_faces(bc)
     call comm_finalize(c)
-end program main
+end program moby_solve

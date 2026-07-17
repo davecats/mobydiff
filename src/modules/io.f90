@@ -95,22 +95,21 @@ module io
             integer(C_INT) :: ierr
         end function fdm_h5_read_refine_dims
 
-        function fdm_h5_write_grid(file_name, nx, ny, nz, lx, ly, lz, &
-                periodic, grid_distribution, grid_stretch, grid_natural_dyw_plus, grid_natural_one_sided, &
-                x_node, y_node, z_node, xu, yu, zu, xv, yv, zv, xw, yw, zw) &
-                bind(C, name="fdm_h5_write_grid") result(ierr)
+        ! Grid datasets in the case file (P3, mobygrid absorbed): node
+        ! lines + the mobygrid-format attributes, so the case file doubles
+        ! as the --grid-file of the retired mobygeom reference tooling.
+        function fdm_h5_case_append_grid(file_name, nx, ny, nz, &
+                periodic, grid_distribution, grid_stretch, grid_natural_dyw_plus, &
+                grid_natural_one_sided, x_node, y_node, z_node, write_data) &
+                bind(C, name="fdm_h5_case_append_grid") result(ierr)
             import :: C_CHAR, C_INT, C_DOUBLE
             character(kind=C_CHAR), intent(in) :: file_name(*)
-            integer(C_INT), value :: nx, ny, nz
-            real(C_DOUBLE), value :: lx, ly, lz
+            integer(C_INT), value :: nx, ny, nz, write_data
             integer(C_INT), intent(in) :: periodic(*), grid_distribution(*), grid_natural_one_sided(*)
             real(C_DOUBLE), intent(in) :: grid_stretch(*), grid_natural_dyw_plus(*)
             real(C_DOUBLE), intent(in) :: x_node(*), y_node(*), z_node(*)
-            real(C_DOUBLE), intent(in) :: xu(*), yu(*), zu(*)
-            real(C_DOUBLE), intent(in) :: xv(*), yv(*), zv(*)
-            real(C_DOUBLE), intent(in) :: xw(*), yw(*), zw(*)
             integer(C_INT) :: ierr
-        end function fdm_h5_write_grid
+        end function fdm_h5_case_append_grid
 
         function fdm_h5_read_metadata(file_name, global_nx, global_ny, global_nz, &
                 step, nsteps, lx, ly, lz, re, dt, t_final, t_current, cfl, &
@@ -458,45 +457,6 @@ subroutine read_scalar_field(blk, name, file_name, s, found, has_terminal)
     found = ifound /= 0_C_INT
 end subroutine read_scalar_field
 
-subroutine write_grid_export(dns, g, blk, bc, file_name, has_terminal)
-    ! Serial preprocessing path (mobygrid): the single block covers the whole
-    ! grid, so its slot-1 staggered coordinates are the global ones.
-    type(dns_type), intent(in) :: dns
-    type(grid_type), intent(in) :: g
-    type(block_set_type), intent(in) :: blk
-    type(boundary_type), intent(in) :: bc
-    character(len=*), intent(in) :: file_name
-    logical, intent(in), optional :: has_terminal
-
-    character(kind=C_CHAR,len=:), allocatable :: c_file_name
-    integer(C_INT) :: ierr
-    integer(C_INT) :: nx, ny, nz
-    integer(C_INT) :: periodic(1:3)
-    integer(C_INT) :: natural_one_sided(1:3)
-    logical :: terminal
-
-    terminal = .true.
-    if (present(has_terminal)) terminal = has_terminal
-
-    nx = dns%globalSize(1)
-    ny = dns%globalSize(2)
-    nz = dns%globalSize(3)
-    periodic = merge(1_C_INT, 0_C_INT, bc%isPeriodic)
-    natural_one_sided = merge(1_C_INT, 0_C_INT, g%natural_one_sided)
-
-    c_file_name = to_c_string(file_name)
-    ierr = fdm_h5_write_grid(c_file_name, nx, ny, nz, dns%leng(1), dns%leng(2), dns%leng(3), &
-        periodic, g%distribution(1:3), g%stretch(1:3), g%natural_dyw_plus(1:3), natural_one_sided, &
-        g%xNode(0:int(nx)), g%yNode(0:int(ny)), g%zNode(0:int(nz)), &
-        blk%x(0:int(nx)+1,VAR_U,1), blk%y(0:int(ny)+1,VAR_U,1), blk%z(0:int(nz)+1,VAR_U,1), &
-        blk%x(0:int(nx)+1,VAR_V,1), blk%y(0:int(ny)+1,VAR_V,1), blk%z(0:int(nz)+1,VAR_V,1), &
-        blk%x(0:int(nx)+1,VAR_W,1), blk%y(0:int(ny)+1,VAR_W,1), blk%z(0:int(nz)+1,VAR_W,1))
-    if (ierr /= 0_C_INT) then
-        if (terminal) print *, "error: could not write HDF5 grid file: ", trim(file_name)
-        error stop
-    end if
-end subroutine write_grid_export
-
 subroutine read_restart_metadata(dns, g, bc, pressure_niter, pressure_sor, file_name, c, seen)
     type(dns_type), intent(inout) :: dns
     type(grid_type), intent(inout) :: g
@@ -695,11 +655,13 @@ end subroutine write_rans_geometry_file
 ! and dwall_blocks ([rans]). Parallel HDF5: all ranks enter together; each
 ! rank writes its own contiguous leaf-row range, rank 0 the lattice-global
 ! rasters (full rasters, no window attrs -- the analytic convention).
-subroutine write_case_file(file_name, blk, dns, c, coef, has_terminal, &
+subroutine write_case_file(file_name, blk, dns, g, bc, c, coef, has_terminal, &
         touch, buried, maskDims, active, dwall)
     character(len=*), intent(in) :: file_name
     type(block_set_type), intent(in) :: blk
     type(dns_type), intent(in) :: dns
+    type(grid_type), intent(in) :: g
+    type(boundary_type), intent(in) :: bc
     type(comm_type), intent(in) :: c
     real(C_DOUBLE), intent(in) :: coef(*)
     logical, intent(in) :: has_terminal
@@ -709,6 +671,7 @@ subroutine write_case_file(file_name, blk, dns, c, coef, has_terminal, &
 
     character(kind=C_CHAR,len=:), allocatable :: c_file_name
     integer(C_INT) :: ierr, write_data, n_raster
+    integer(C_INT) :: periodic(1:3), natural_one_sided(1:3)
     integer :: level
 
     c_file_name = to_c_string(file_name)
@@ -721,6 +684,18 @@ subroutine write_case_file(file_name, blk, dns, c, coef, has_terminal, &
         dns%block_nb, blk%nLevels - 1_C_INT, dns%block_refine_mask, &
         blk%nBlocksGlobal, blk%idStart, blk%nBlocks, blk%origin, blk%level)
     call check_case_write(ierr, "create", file_name, has_terminal)
+
+    ! Grid datasets (P3): the node lines + mobygrid-format attributes, so
+    ! the case file replaces the retired mobygrid's grid handshake.
+    periodic = merge(1_C_INT, 0_C_INT, bc%isPeriodic)
+    natural_one_sided = merge(1_C_INT, 0_C_INT, g%natural_one_sided)
+    ierr = fdm_h5_case_append_grid(c_file_name, &
+        dns%globalSize(1), dns%globalSize(2), dns%globalSize(3), &
+        periodic, g%distribution(1:3), g%stretch(1:3), g%natural_dyw_plus(1:3), &
+        natural_one_sided, g%xNode(0:int(dns%globalSize(1))), &
+        g%yNode(0:int(dns%globalSize(2))), g%zNode(0:int(dns%globalSize(3))), &
+        write_data)
+    call check_case_write(ierr, "grid datasets", file_name, has_terminal)
 
     if (present(touch)) then
         do level = 0, int(blk%nLevels) - 1

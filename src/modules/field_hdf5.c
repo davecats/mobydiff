@@ -572,81 +572,6 @@ static int write_coord_dataset(hid_t file, const char *name, int n, int rank, co
     return status < 0;
 }
 
-static int create_group(hid_t file, const char *name)
-{
-    hid_t group = H5Gcreate2(file, name, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
-    if (group < 0) return 1;
-    return H5Gclose(group) < 0;
-}
-
-static int write_grid_staggered_coords(hid_t file, const char *var_name,
-                                       int nx, int ny, int nz,
-                                       const double *x, const double *y, const double *z)
-{
-    char group_name[64];
-    char dataset_name[96];
-    int ierr = 0;
-
-    snprintf(group_name, sizeof(group_name), "staggered/%s", var_name);
-    ierr |= create_group(file, group_name);
-
-    snprintf(dataset_name, sizeof(dataset_name), "staggered/%s/x", var_name);
-    ierr |= write_coord_dataset(file, dataset_name, nx + 2, 0, x);
-    snprintf(dataset_name, sizeof(dataset_name), "staggered/%s/y", var_name);
-    ierr |= write_coord_dataset(file, dataset_name, ny + 2, 0, y);
-    snprintf(dataset_name, sizeof(dataset_name), "staggered/%s/z", var_name);
-    ierr |= write_coord_dataset(file, dataset_name, nz + 2, 0, z);
-
-    return ierr != 0;
-}
-
-int fdm_h5_write_grid(const char *filename, int nx, int ny, int nz,
-                      double lx, double ly, double lz,
-                      const int *periodic, const int *grid_distribution,
-                      const double *grid_stretch, const double *grid_natural_dyw_plus,
-                      const int *grid_natural_one_sided,
-                      const double *x_node, const double *y_node, const double *z_node,
-                      const double *xu, const double *yu, const double *zu,
-                      const double *xv, const double *yv, const double *zv,
-                      const double *xw, const double *yw, const double *zw)
-{
-    hid_t file;
-    int ierr = 0;
-    int staggered_counts[3] = {nx + 2, ny + 2, nz + 2};
-
-    if (nx < 1 || ny < 1 || nz < 1) return 1;
-
-    file = create_serial_file(filename);
-    if (file < 0) return 1;
-
-    ierr |= write_attr_int(file, "mobygrid_format", 1);
-    ierr |= write_attr_int(file, "nx", nx);
-    ierr |= write_attr_int(file, "ny", ny);
-    ierr |= write_attr_int(file, "nz", nz);
-    ierr |= write_attr_double(file, "lx", lx);
-    ierr |= write_attr_double(file, "ly", ly);
-    ierr |= write_attr_double(file, "lz", lz);
-    ierr |= write_attr_int(file, "parallel_hdf5", 0);
-    ierr |= write_attr_int_array(file, "periodic", periodic, 3);
-    ierr |= write_attr_int_array(file, "grid_distribution", grid_distribution, 3);
-    ierr |= write_attr_double_array(file, "grid_stretch", grid_stretch, 3);
-    ierr |= write_attr_double_array(file, "grid_natural_dyw_plus", grid_natural_dyw_plus, 3);
-    ierr |= write_attr_int_array(file, "grid_natural_one_sided", grid_natural_one_sided, 3);
-    ierr |= write_attr_int_array(file, "staggered_counts", staggered_counts, 3);
-
-    ierr |= write_coord_dataset(file, "x_nodes", nx + 1, 0, x_node);
-    ierr |= write_coord_dataset(file, "y_nodes", ny + 1, 0, y_node);
-    ierr |= write_coord_dataset(file, "z_nodes", nz + 1, 0, z_node);
-
-    ierr |= create_group(file, "staggered");
-    ierr |= write_grid_staggered_coords(file, "u", nx, ny, nz, xu, yu, zu);
-    ierr |= write_grid_staggered_coords(file, "v", nx, ny, nz, xv, yv, zv);
-    ierr |= write_grid_staggered_coords(file, "w", nx, ny, nz, xw, yw, zw);
-
-    ierr |= H5Fclose(file) < 0;
-    return ierr != 0;
-}
-
 static int read_global_dataset_blocks(hid_t file, hid_t dset, hid_t file_space,
                                       int nbx, int nby, int nbz,
                                       int n_blocks, const int *block_origin,
@@ -1778,6 +1703,64 @@ int fdm_h5_case_append_coef(const char *filename, int nbx, int nby, int nbz,
     if (dset >= 0) H5Dclose(dset);
     if (file_space >= 0) H5Sclose(file_space);
     free(buffer);
+    ierr |= H5Fclose(file) < 0;
+    return ierr != 0;
+}
+
+/* Grid datasets in the case file (P3, mobygrid absorbed): the node lines
+ * plus the mobygrid-format attributes, so the case file doubles as the
+ * --grid-file of the retired mobygeom reference tooling (which needs
+ * mobygrid_format = 1, {x,y,z}_nodes and validates the grid attributes
+ * when present; the /staggered inspection group was never read).
+ * Collective open/creates; data written by the write_data rank. */
+static int append_dline(hid_t file, const char *name, int n,
+                        const double *values, int write_data)
+{
+    hsize_t dims[1] = {(hsize_t)n};
+    hid_t space = -1, dset = -1, xfer = -1;
+    int ierr = 0;
+
+    space = H5Screate_simple(1, dims, NULL);
+    dset = space >= 0 ? H5Dcreate2(file, name, H5T_NATIVE_DOUBLE, space,
+                                   H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT) : -1;
+    xfer = H5Pcreate(H5P_DATASET_XFER);
+    if (space < 0 || dset < 0 || xfer < 0) {
+        ierr = 1;
+    } else if (write_data) {
+        H5Pset_dxpl_mpio(xfer, H5FD_MPIO_INDEPENDENT);
+        ierr |= H5Dwrite(dset, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, xfer, values) < 0;
+    }
+    if (xfer >= 0) H5Pclose(xfer);
+    if (dset >= 0) H5Dclose(dset);
+    if (space >= 0) H5Sclose(space);
+    return ierr != 0;
+}
+
+int fdm_h5_case_append_grid(const char *filename, int nx, int ny, int nz,
+                            const int *periodic, const int *grid_distribution,
+                            const double *grid_stretch,
+                            const double *grid_natural_dyw_plus,
+                            const int *grid_natural_one_sided,
+                            const double *x_node, const double *y_node,
+                            const double *z_node, int write_data)
+{
+    hid_t file;
+    int ierr = 0;
+
+    file = open_parallel_rdwr(filename);
+    if (file < 0) return 1;
+
+    ierr |= write_attr_int(file, "mobygrid_format", 1);
+    ierr |= write_attr_int_array(file, "periodic", periodic, 3);
+    ierr |= write_attr_int_array(file, "grid_distribution", grid_distribution, 3);
+    ierr |= write_attr_double_array(file, "grid_stretch", grid_stretch, 3);
+    ierr |= write_attr_double_array(file, "grid_natural_dyw_plus", grid_natural_dyw_plus, 3);
+    ierr |= write_attr_int_array(file, "grid_natural_one_sided", grid_natural_one_sided, 3);
+
+    ierr |= append_dline(file, "x_nodes", nx + 1, x_node, write_data);
+    ierr |= append_dline(file, "y_nodes", ny + 1, y_node, write_data);
+    ierr |= append_dline(file, "z_nodes", nz + 1, z_node, write_data);
+
     ierr |= H5Fclose(file) < 0;
     return ierr != 0;
 }

@@ -19,15 +19,20 @@ staggered coordinates as the solver.
 
 ## Grid Export
 
-Build the solver tools, then export the grid from the same `input.ini` used by
-the simulation:
+The `mobygrid` executable was absorbed by the prepare/solve split (P3):
+`moby_prepare` writes the node lines and the mobygrid-format attributes
+into every case file, so a prepared case file serves directly as
+`--grid-file`:
 
 ```bash
-./build_cpu/mobygrid input.ini grid.h5
+mpirun -n 4 ./build_cpu/moby_prepare case.ini case.h5
+# mobygeom cross-checks read the grid straight from it:
+#   --grid-file case.h5
 ```
 
-The grid file contains `/x_nodes`, `/y_nodes`, `/z_nodes`, grid metadata, and
-inspection datasets under `/staggered/{u,v,w}/{x,y,z}`.
+Legacy `mobygrid`-written grid files (e.g. the committed
+`validation/channel_interface/les_ibm/grid.h5`) remain readable; they
+contain `/x_nodes`, `/y_nodes`, `/z_nodes` and the grid metadata.
 
 ## Coefficient Generation
 
