@@ -782,10 +782,34 @@ immersed boundary. Phased, each phase verified before the next:
   coef 4e-7, dwall 1.7e-16); sphere float32-EXACTLY translated onto the
   x-periodic boundary -> rolled masks + BIT-IDENTICAL tiles (0.0); P0
   analytic gates 22/22 through the refactor; 7-case suite bit-exact vs
-  P0 binaries CPU+GPU. NEXT: P1b = re-gate sailplane/NACA/SD7003 from
-  prepare-built files + retire mobygeom's geometry subcommands; P2 =
-  parallelize prepare's per-rank-redundant classification (flat_refine
-  38 s at 4 ranks, level-1 lattice parity casts dominate).
+  P0 binaries CPU+GPU.
+- Prepare/solve split P1b (DONE 2026-07-17, branch `claude/jacobi-interface`).
+  The big committed geometries from prepare-built files + mobygeom
+  retirement (gates `validation/prepare/run_gates_big.sh`, status table in
+  its README). Features the cases demanded: repeatable `[ibm] stl_file`
+  (paths with spaces), `stl_scale`/`stl_translate` (float64 v*scale+t,
+  mobygeom order), ASCII STL parsed straight to float64 (trimesh
+  rounding), `[blocks] keep_buried` (zeroes buried masks in the analytic
+  classify branch; LOAD-BEARING for penalization forces), solid-possible
+  bbox cull (`stl_cull_box` -> optional cullLo/cullHi in classify_*) +
+  OpenMP lattice loops (L5 airfoil level-4 lattice = 1.7e7 blocks).
+  Gates all PASS: NACA-0012 L5 / SD7003 L5 (keep_buried+dwall) /
+  sailplane (ASCII 55k-tri CAD, transform, nb=10) vs regenerated mobygeom
+  refs - leaf tables + every mask level IDENTICAL, ZERO classification
+  flips (76M/72M/93M points), graded coef in the near-grazing envelope
+  (<=1.2e-4/6.2e-5/1.2e-3 rel; 16320/11680/2 outliers - ((d0-d)/d)/d0^2
+  blows up relatively as d->d0, mu unaffected), interior dwall <=1.3e-10;
+  200-step GPU solves prepared-vs-mobygeom <=1.5e-7 fields / 8-digit
+  C_L,C_D; sailplane 1-step vs the COMMITTED legacy file BIT-EXACT.
+  Prepare outruns mobygeom (SD7003 L5: 5m18s vs 6m49s at --jobs 16).
+  mobygeom geometry subcommands RETIRED (README_mobygeom + docstring),
+  kept as the cross-implementation reference. LANDMINE:
+  tools/compare_fields.py reassembles block-table snapshots onto the
+  FINEST lattice (69 GB at L5) -> OOM-killed (can take the whole session
+  with it); use the chunked validation/prepare/compare_snapshots.py for
+  deep-refinement snapshots. NEXT: P2 = parallelize prepare's
+  per-rank-redundant classification; P3 = rename main->moby_solve, absorb
+  mobygrid, grid datasets into the case file.
 - ALSO PENDING: **Profile + optimise** the GPU step for the 2:1-refined channel.
   The last hard profile is STALE (the reflux that was 23% is removed; the
   `MOBY_PHASETIME` timer is deleted): re-profile first with a minimal removable

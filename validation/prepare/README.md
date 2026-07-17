@@ -94,3 +94,36 @@ Conventions found while gating (documented in geometry_stl.f90):
   indicator-driven walldist machinery (millions of near-surface parity
   casts; the exact query is also what mobygeom/igl computes — interior
   agreement to round-off).
+
+## P1b — the big committed geometries (`run_gates_big.sh`)
+
+The production airfoil/sailplane cases re-gated from prepare-built files
+(P1b additions: repeatable `[ibm] stl_file` for paths with spaces,
+`stl_scale`/`stl_translate` = mobygeom's float64 `v*scale + translate`,
+ASCII STL parsing straight to float64 like trimesh, `[blocks] keep_buried`
+= mobygeom's `--keep-buried`, a solid-possible bbox cull + OpenMP in the
+classify loops — the L5 airfoil lattices are 1.7e7 blocks).
+
+Status 2026-07-17, all PASS (references regenerated with the retired
+mobygeom, `--jobs 16`):
+
+| case | identity gates | tolerance gates | solve gate |
+|---|---|---|---|
+| NACA 0012 L5 (`validation/naca0012`, keep_buried + dwall) | 25418 leaves + all 5 mask levels identical, 0 classification flips /76M | graded coef ≤ 1.2e-4 (16320 grazing cells of 76M), interior dwall 1.3e-10 | 200 GPU steps: fields ≤ 1.5e-7, forces 8-digit |
+| SD7003 L5 (`validation/sd7003`) | 23836 leaves + masks identical, 0 flips /72M | coef ≤ 6.2e-5 (11680 grazing), dwall 1.1e-10 | 200 GPU steps: fields ≤ 1.2e-7 |
+| sailplane (`tutorials/sailplane`, ASCII 55k-tri CAD mesh + scale/translate, nb=10) | 18000 leaves identical, 0 flips /93M | graded coef ≤ 1.2e-3 (2 grazing cells of 93M) | 1 step vs the COMMITTED legacy file: BIT-EXACT (max_abs 0) |
+
+Timing: prepare beats mobygeom on the same case (SD7003 L5: 5m18s at 4
+ranks x 4 threads vs 6m49s at `--jobs 16`); NACA L5 prepare 7m13s.
+
+Notes:
+- Graded-coefficient outliers are NEAR-GRAZING crossings: `((d0-d)/d)/d0²`
+  has exploding relative sensitivity as d→d0 while the absolute value
+  stays negligible (`mu` unaffected); the compare gates classification
+  flips (must be 0) separately from the graded tolerance.
+- Deep-refinement snapshots must be compared with `compare_snapshots.py`
+  (chunked per-block): `tools/compare_fields.py` reassembles onto the
+  finest lattice — 69 GB for the L5 airfoil grid — and gets OOM-killed.
+- mobygeom's geometry subcommands are RETIRED for production
+  (tools/README_mobygeom.md) and survive as the reference implementation
+  these gates compare against.

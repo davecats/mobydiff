@@ -25,7 +25,7 @@ program moby_prepare
         set_ibm_coeff, set_ibm_coeff_host, classify_refinement_masks, &
         classify_active_mask, isInBody, body_indicator_i
     use :: geometry_stl, only: stl_geometry_load, stl_geometry_destroy, &
-        stl_is_in_body, stl_fill_dwall
+        stl_is_in_body, stl_fill_dwall, stl_cull_box
     use :: rans, only: fill_body_distance_analytic
     use :: pressure_solver, only: pressure_solver_type
     use :: turbulence, only: turb_type
@@ -55,6 +55,9 @@ program moby_prepare
     ! The one geometry switch: every downstream stage takes the indicator.
     procedure(body_indicator_i), pointer :: inside => null()
     logical :: use_stl
+    ! Solid-possible box for classification culling (allocated for STL
+    ! only; unallocated stays absent in the classify calls).
+    real(C_DOUBLE), allocatable :: cullLo(:), cullHi(:)
 
     call comm_init_world(c)
     call parse_prepare_args(input_file, output_file, show_help)
@@ -84,11 +87,14 @@ program moby_prepare
 
     ! Geometry source: the analytic isInBody, or an STL body loaded behind
     ! the same indicator signature ([ibm] stl_file, P1).
-    use_stl = len_trim(dns%ibm_stl_file) > 0
+    use_stl = dns%ibm_stl_count > 0_C_INT
     if (use_stl) then
-        call stl_geometry_load(trim(dns%ibm_stl_file), dns%leng, &
+        call stl_geometry_load(dns%ibm_stl_file(1:dns%ibm_stl_count), &
+            dns%ibm_stl_scale, dns%ibm_stl_translate, dns%leng, &
             logical(bc%isPeriodic), c%has_terminal)
         inside => stl_is_in_body
+        allocate(cullLo(3), cullHi(3))
+        call stl_cull_box(cullLo, cullHi)
     else
         inside => isInBody
     end if
@@ -99,13 +105,14 @@ program moby_prepare
     if (c%has_terminal) print *, "classifying geometry..."
     if (dns%block_refine_body) then
         call classify_refinement_masks(blockTouch, blockBuried, blockMaskLo, &
-            blockMaskDims, dns, g, ibm, bc%isPeriodic, c%has_terminal, inside)
+            blockMaskDims, dns, g, ibm, bc%isPeriodic, c%has_terminal, inside, &
+            cullLo, cullHi)
         call init_block_set(blk, dns, g, bc%isPeriodic, int(c%world_size, C_INT), &
             int(c%world_rank, C_INT), touch=blockTouch, buried=blockBuried, &
             maskLo=blockMaskLo, maskDims=blockMaskDims)
     else if (dns%block_remove_solid) then
         call classify_active_mask(blockActive, dns, g, ibm, bc%isPeriodic, &
-            c%has_terminal, inside)
+            c%has_terminal, inside, cullLo, cullHi)
         call init_block_set(blk, dns, g, bc%isPeriodic, int(c%world_size, C_INT), &
             int(c%world_rank, C_INT), blockActive)
     else

@@ -70,7 +70,7 @@ program main
 
     ! STL geometry is prepared offline (docs/prepare_solve_strategy.md):
     ! the solver consumes only the case file it produced.
-    if (dns%ibm_enabled .and. len_trim(dns%ibm_stl_file) > 0 &
+    if (dns%ibm_enabled .and. dns%ibm_stl_count > 0_C_INT &
             .and. len_trim(dns%ibm_coeff_file) == 0) then
         if (c%has_terminal) print *, "error: [ibm] stl_file is a moby_prepare input;", &
             " run moby_prepare and point [ibm] coeff_file at its output"

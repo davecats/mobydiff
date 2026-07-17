@@ -1,5 +1,17 @@
 # mobyGeom STL-to-IBM Utility
 
+**RETIRED FOR PRODUCTION (prepare/solve split P1b, 2026-07-16,
+`docs/prepare_solve_strategy.md`).** The geometry subcommands below
+(`stl-ibm-coeff`, `block-active`, `block-table`) are superseded by the
+MPI-parallel Fortran preprocessor: `moby_prepare case.ini case.h5` with
+`[ibm] stl_file` (one line per STL, `stl_scale`/`stl_translate` for
+transforms, `[blocks] keep_buried` replacing `--keep-buried`) — no venv,
+no separate mobygrid handshake, identical file contract. mobygeom is KEPT
+working as the independent cross-implementation reference: the
+`validation/prepare/` gates compare moby_prepare's output against it.
+The STL generators/checkers (`make-*-stl`, watertightness tests) stay in
+normal use.
+
 `mobygeom.py` generates static IBM coefficient fields from STL triangle meshes.
 The grid definition always comes from a Fortran-generated `mobygrid` HDF5 file,
 so the preprocessor uses the same node lines, stretching, periodicity, and

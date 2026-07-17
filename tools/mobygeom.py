@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 """External geometry-to-IBM coefficient utility for mobyDiff.
 
+RETIRED FOR PRODUCTION (prepare/solve split P1b): the geometry subcommands
+(stl-ibm-coeff, block-active, block-table) are superseded by the Fortran
+moby_prepare executable ([ibm] stl_file; see docs/prepare_solve_strategy.md
+and tools/README_mobygeom.md). Kept working as the independent
+cross-implementation reference for the validation/prepare/ gates; the STL
+generators and checkers remain in normal use.
+
 The Python front-end owns STL mesh classification, HDF5 output, and analytic tests.
 Grid coordinates are imported from a mobygrid HDF5 file written by the Fortran solver setup.
 """

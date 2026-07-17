@@ -453,13 +453,17 @@ contains
     ! the block dilated by one halo cell is solid (isInBody) at cell centres
     ! and all three staggered locations. active is in x-fastest lattice
     ! raster order, 1 = keep.
-    subroutine classify_active_blocks(active, dns, g, ibm, periodic, inside)
+    subroutine classify_active_blocks(active, dns, g, ibm, periodic, inside, &
+            cullLo, cullHi)
         integer(C_INT), intent(out) :: active(:)
         type(dns_type), intent(in) :: dns
         type(grid_type), intent(in) :: g
         type(ibm_type), intent(inout) :: ibm
         logical(C_BOOL), intent(in) :: periodic(1:3)
         procedure(body_indicator_i) :: inside
+        ! Optional solid-possible box (moby_prepare's STL bbox): a block
+        ! whose dilated bounds miss it is fluid without any indicator call.
+        real(C_DOUBLE), intent(in), optional :: cullLo(3), cullHi(3)
 
         integer :: nb, nTiles(3), gx, gy, gz, raster, d
         integer :: i, j, k, var, o(3)
@@ -477,12 +481,19 @@ contains
         end do
         if (size(active) /= product(nTiles)) error stop "block active mask size mismatch"
 
-        raster = 0
+        !$omp parallel do collapse(2) private(gx,gy,gz,raster,o,buried,i,j,k,var,xA)
         do gz = 0, nTiles(3) - 1
             do gy = 0, nTiles(2) - 1
                 do gx = 0, nTiles(1) - 1
-                    raster = raster + 1
+                    raster = 1 + gx + nTiles(1)*(gy + nTiles(2)*gz)
                     o = [gx, gy, gz]*nb
+                    if (present(cullLo)) then
+                        if (block_outside_box(g%xNode, g%yNode, g%zNode, &
+                                int(dns%globalSize), o, nb, cullLo, cullHi)) then
+                            active(raster) = 1_C_INT
+                            cycle
+                        end if
+                    end if
                     buried = .true.
                     outer: do var = int(VAR_U), int(VAR_P)
                         ! Dilated window: 1-based cell indices o .. o+nb+1.
@@ -507,7 +518,52 @@ contains
                 end do
             end do
         end do
+        !$omp end parallel do
     end subroutine classify_active_blocks
+
+    ! Conservative physical bounds test of a dilated lattice block against
+    ! the solid-possible box: every sample the classification visits
+    ! (dilated window, all staggerings, clamped/mirrored halo coordinates)
+    ! lies within two local spacings of the node span, so a disjoint block
+    ! cannot contain solid.
+    logical function block_outside_box(nodeX, nodeY, nodeZ, n, o, nb, lo, hi) &
+            result(outside)
+        real(C_DOUBLE), intent(in) :: nodeX(0:), nodeY(0:), nodeZ(0:)
+        integer, intent(in) :: n(3), o(3), nb
+        real(C_DOUBLE), intent(in) :: lo(3), hi(3)
+
+        real(C_DOUBLE) :: blo, bhi
+        integer :: d
+
+        outside = .false.
+        do d = 1, 3
+            select case (d)
+            case (1)
+                call block_span(nodeX, n(1), o(1), nb, blo, bhi)
+            case (2)
+                call block_span(nodeY, n(2), o(2), nb, blo, bhi)
+            case default
+                call block_span(nodeZ, n(3), o(3), nb, blo, bhi)
+            end select
+            if (bhi < lo(d) .or. blo > hi(d)) then
+                outside = .true.
+                return
+            end if
+        end do
+    end function block_outside_box
+
+    subroutine block_span(node, n, o, nb, blo, bhi)
+        real(C_DOUBLE), intent(in) :: node(0:)
+        integer, intent(in) :: n, o, nb
+        real(C_DOUBLE), intent(out) :: blo, bhi
+
+        integer :: lo1, hi1
+
+        lo1 = max(o - 1, 0)
+        hi1 = min(o + nb + 2, n)
+        blo = node(lo1) - 2.0d0*(node(min(lo1 + 1, n)) - node(lo1))
+        bhi = node(hi1) + 2.0d0*(node(hi1) - node(max(hi1 - 1, 0)))
+    end subroutine block_span
 
     ! Coordinate of variable `var` at 1-based cell index `idx` along direction
     ! `dir`, matching slice_grid_direction's staggering. `n` is the cell count
@@ -534,7 +590,8 @@ contains
     !   buried(c, l+1) = the dilated block is solid everywhere (removable)
     ! Level lines are built here by midpoint subdivision, identical to the
     ! solver's per-level metric lines.
-    subroutine classify_block_geometry(touch, buried, dns, g, ibm, periodic, nLevels, inside)
+    subroutine classify_block_geometry(touch, buried, dns, g, ibm, periodic, nLevels, &
+            inside, cullLo, cullHi)
         integer(C_INT), intent(out) :: touch(:,:), buried(:,:)
         type(dns_type), intent(in) :: dns
         type(grid_type), intent(in) :: g
@@ -542,6 +599,11 @@ contains
         logical(C_BOOL), intent(in) :: periodic(1:3)
         integer, intent(in) :: nLevels
         procedure(body_indicator_i) :: inside
+        ! Optional solid-possible box (moby_prepare's STL bbox): blocks
+        ! whose dilated bounds miss it are fluid without indicator calls --
+        ! deep lattices are mostly far field, and each far block otherwise
+        ! costs a full (nb+2)^3 x 4-staggering scan.
+        real(C_DOUBLE), intent(in), optional :: cullLo(3), cullHi(3)
 
         integer :: nb, l, nTiles(3), gx, gy, gz, raster, d
         integer :: i, j, k, var, o(3), nf(3), nl(3)
@@ -584,12 +646,21 @@ contains
         do l = 1, nLevels
             nl = int(dns%globalSize)*2**((l-1)*int(dns%block_refine_mask))
             nTiles = nl/nb
-            raster = 0
+            !$omp parallel do collapse(2) &
+            !$omp& private(gx,gy,gz,raster,o,anySolid,anyFluid,isSolid,i,j,k,var,xA)
             do gz = 0, nTiles(3) - 1
                 do gy = 0, nTiles(2) - 1
                     do gx = 0, nTiles(1) - 1
-                        raster = raster + 1
+                        raster = 1 + gx + nTiles(1)*(gy + nTiles(2)*gz)
                         o = [gx, gy, gz]*nb
+                        if (present(cullLo)) then
+                            if (block_outside_box(lineX(:,l), lineY(:,l), lineZ(:,l), &
+                                    nl, o, nb, cullLo, cullHi)) then
+                                touch(raster, l) = 0_C_INT
+                                buried(raster, l) = 0_C_INT
+                                cycle
+                            end if
+                        end if
                         anySolid = .false.
                         anyFluid = .false.
                         scan: do var = int(VAR_U), int(VAR_P)
@@ -615,6 +686,7 @@ contains
                     end do
                 end do
             end do
+            !$omp end parallel do
         end do
 
         deallocate(lineX, lineY, lineZ)
@@ -626,7 +698,8 @@ contains
     ! allocated here to the lattice size; the caller hands it to
     ! init_block_set. This is the geometry input to block-set construction,
     ! kept out of main so the construction dispatch stays thin.
-    subroutine classify_active_mask(active, dns, g, ibm, periodic, has_terminal, inside)
+    subroutine classify_active_mask(active, dns, g, ibm, periodic, has_terminal, inside, &
+            cullLo, cullHi)
         integer(C_INT), allocatable, intent(out) :: active(:)
         type(dns_type), intent(in) :: dns
         type(grid_type), intent(in) :: g
@@ -634,6 +707,7 @@ contains
         logical(C_BOOL), intent(in) :: periodic(1:3)
         logical, intent(in) :: has_terminal
         procedure(body_indicator_i) :: inside
+        real(C_DOUBLE), intent(in), optional :: cullLo(3), cullHi(3)
 
         logical :: found
 
@@ -652,7 +726,8 @@ contains
                 active = 1_C_INT
             end if
         else
-            call classify_active_blocks(active, dns, g, ibm, periodic, inside)
+            call classify_active_blocks(active, dns, g, ibm, periodic, inside, &
+                cullLo, cullHi)
         end if
     end subroutine classify_active_mask
 
@@ -662,7 +737,7 @@ contains
     ! geometry. Both arrays are allocated here for the finest lattice (one
     ! column per level); the caller hands them to init_block_set.
     subroutine classify_refinement_masks(touch, buried, maskLo, maskDims, dns, g, ibm, &
-            periodic, has_terminal, inside)
+            periodic, has_terminal, inside, cullLo, cullHi)
         integer(C_INT), allocatable, intent(out) :: touch(:,:), buried(:,:)
         ! Per-level mask windows (block coords): deep-refinement rasters
         ! are stored/held windowed to the padded STL bbox; the analytic
@@ -674,6 +749,7 @@ contains
         logical(C_BOOL), intent(in) :: periodic(1:3)
         logical, intent(in) :: has_terminal
         procedure(body_indicator_i) :: inside
+        real(C_DOUBLE), intent(in), optional :: cullLo(3), cullHi(3)
 
         integer :: level, maskCount, nLevels, maxCount
         integer(int64) :: finest
@@ -732,7 +808,15 @@ contains
             end do
             allocate(touch(int(finest), nLevels))
             allocate(buried(size(touch, 1), size(touch, 2)))
-            call classify_block_geometry(touch, buried, dns, g, ibm, periodic, nLevels, inside)
+            call classify_block_geometry(touch, buried, dns, g, ibm, periodic, nLevels, &
+                inside, cullLo, cullHi)
+            ! [blocks] keep_buried: never remove buried blocks. LOAD-BEARING
+            ! for penalization forces -- a removed solid core absorbs the
+            ! body's pressure loading through its closed faces outside the
+            ! coef bookkeeping (validation/naca0012/README.md; mobygeom's
+            ! --keep-buried writes zeroed masks the same way). File-based
+            ! masks are read verbatim above: the file is authority there.
+            if (dns%block_keep_buried) buried = 0_C_INT
         end if
     end subroutine classify_refinement_masks
 

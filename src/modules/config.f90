@@ -231,7 +231,25 @@ subroutine apply_config_value(section, key, value, dns, g, turb, les, ps, bc, c,
         case ("coeff_file")
             dns%ibm_coeff_file = clean_string(value)
         case ("stl_file")
-            dns%ibm_stl_file = clean_string(value)
+            ! Repeatable: one STL path per occurrence (paths may contain
+            ! spaces). moby_prepare input only.
+            if (dns%ibm_stl_count >= int(size(dns%ibm_stl_file), C_INT)) then
+                print *, "too many [ibm] stl_file entries at line", line_no
+                error stop
+            end if
+            dns%ibm_stl_count = dns%ibm_stl_count + 1_C_INT
+            dns%ibm_stl_file(dns%ibm_stl_count) = clean_string(value)
+        case ("stl_scale")
+            call read_real(value, dns%ibm_stl_scale, line_no)
+        case ("stl_translate")
+            block
+                integer :: ios
+                read(value, *, iostat=ios) dns%ibm_stl_translate
+                if (ios /= 0) then
+                    print *, "[ibm] stl_translate needs three reals at line", line_no
+                    error stop
+                end if
+            end block
         case ("band_filter")
             call read_bool(value, dns%ibm_band_filter, line_no)
         case ("band_width")
@@ -279,6 +297,8 @@ subroutine apply_config_value(section, key, value, dns, g, turb, les, ps, bc, c,
             end select
         case ("refine_body")
             call read_bool(value, dns%block_refine_body, line_no)
+        case ("keep_buried")
+            call read_bool(value, dns%block_keep_buried, line_no)
         end select
     case ("force")
         select case (key_l)

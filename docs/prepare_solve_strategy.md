@@ -293,6 +293,40 @@ retirement; prepare's per-rank-redundant classification is the P2
 parallelization target (flat_refine: 38 s at 4 ranks, dominated by
 level-1 lattice parity casts).
 
+**P1b — the big committed geometries + mobygeom retirement. DONE
+2026-07-17 (gates in `validation/prepare/run_gates_big.sh`, status table
+in `validation/prepare/README.md`).**
+Additions driven by the production cases: repeatable `[ibm] stl_file`
+(one path per line — the sailplane STL has spaces), `stl_scale` /
+`stl_translate` (float64 `v*scale + translate`, mobygeom's convention and
+order), ASCII STL parsing (decimal → float64 directly, the trimesh
+rounding, so ASCII geometries agree bitwise), `[blocks] keep_buried`
+(mobygeom's `--keep-buried`; zeroes the buried masks in the ANALYTIC
+branch of classify_refinement_masks — file masks stay authoritative), and
+classification performance for deep lattices: a conservative
+solid-possible bbox cull (`stl_cull_box` + optional `cullLo/cullHi`
+through the classify routines) plus OpenMP on the lattice loops with
+closed-form raster indexing (the L5 airfoil level-4 lattice is 1.7e7
+blocks; an uncontrolled scan is hours, culled+threaded it is minutes).
+*Gates (all PASS)*: NACA 0012 L5 and SD7003 L5 (keep_buried + dwall) and
+the sailplane (ASCII 55k-triangle CAD mesh, scale+translate, nb=10) vs
+freshly generated mobygeom references — leaf tables and every mask level
+IDENTICAL, ZERO solid-classification flips (76M/72M/93M staggered
+points), graded coef within the near-grazing envelope (≤1.2e-4 /
+6.2e-5 / 1.2e-3 rel with 16320 / 11680 / 2 outlier cells — `((d0-d)/d)/d0²`
+relative sensitivity explodes as d→d0 while `mu` is unaffected), interior
+dwall ≤ 1.3e-10; 200-step GPU solves from prepared vs mobygeom files
+agree to ≤1.5e-7 in fields and 8 digits in C_L/C_D through the impulsive
+transient; the sailplane 1-step solve vs the COMMITTED legacy file is
+BIT-EXACT. Prepare now outruns mobygeom on the same case (SD7003 L5:
+5m18s vs 6m49s at --jobs 16). mobygeom's geometry subcommands carry
+RETIRED headers (tools/README_mobygeom.md + module docstring) and remain
+the cross-implementation reference for these gates.
+TOOLING LANDMINE fixed: `tools/compare_fields.py` reassembles block-table
+snapshots onto the FINEST lattice (69 GB for the L5 airfoil grid) and
+gets OOM-killed — deep-refinement snapshots compare with the chunked
+`validation/prepare/compare_snapshots.py`.
+
 **P2 — parallel + fast.**
 MPI split as §7; far-field shortcut; optional direct segment-intersection
 and exact-distance queries; OpenMP threading inside ranks if profiles ask.

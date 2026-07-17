@@ -90,11 +90,21 @@ module init
         ! immersed surface to the finest level (+1 block buffer), and remove
         ! buried blocks at every level (analytic IBM).
         logical(C_BOOL) :: block_refine_body = .false.
+        ! Keep buried refine_body blocks (mobygeom --keep-buried):
+        ! LOAD-BEARING for penalization forces -- a removed solid core
+        ! absorbs the body's pressure loading through its closed faces
+        ! outside the coef bookkeeping (validation/naca0012/README.md).
+        logical(C_BOOL) :: block_keep_buried = .false.
         logical(C_BOOL) :: ibm_enabled = .true.
         character(len=256) :: ibm_coeff_file = ""
-        ! STL geometry (moby_prepare input only; whitespace-separated list
-        ! of binary STL files). The solver rejects it without a coeff_file.
-        character(len=256) :: ibm_stl_file = ""
+        ! STL geometry (moby_prepare input only; the solver rejects it
+        ! without a coeff_file). stl_file is repeatable -- one binary STL
+        ! path per occurrence, so paths may contain spaces. The optional
+        ! transform is v*scale + translate (mobygeom's convention).
+        character(len=256) :: ibm_stl_file(8) = ""
+        integer(C_INT) :: ibm_stl_count = 0_C_INT
+        real(C_DOUBLE) :: ibm_stl_scale = 1.0d0
+        real(C_DOUBLE) :: ibm_stl_translate(3) = 0.0d0
         ! [ibm] band_filter: optional 3-point low-pass on the predicted
         ! velocity in a thin near-body band (band_width cells, strength
         ! band_theta; theta = 1 annihilates the 2-cell mode per direction).

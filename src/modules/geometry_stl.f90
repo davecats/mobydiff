@@ -45,7 +45,7 @@ module geometry_stl
 
     private
     public :: stl_geometry_load, stl_geometry_destroy, stl_geometry_loaded
-    public :: stl_is_in_body, stl_fill_dwall
+    public :: stl_is_in_body, stl_fill_dwall, stl_cull_box
 
     integer, parameter :: BVH_LEAF = 4        ! max triangles per leaf
     integer, parameter :: MAX_ATTEMPTS = 32   ! degenerate-ray retries
@@ -92,43 +92,39 @@ contains
         stl_geometry_loaded = nTri > 0
     end function stl_geometry_loaded
 
-    ! Load one or more binary STL files (whitespace-separated list, the
-    ! [ibm] stl_file value) and build the BVH. lengIn/periodicIn give the
-    ! domain topology for minimum-image queries.
-    subroutine stl_geometry_load(files, lengIn, periodicIn, has_terminal)
-        character(len=*), intent(in) :: files
+    ! Load one or more binary STL files ([ibm] stl_file, one path per
+    ! occurrence) and build the BVH. The optional transform is
+    ! v*scale + translate on the float64-widened vertices (mobygeom's
+    ! convention and operation order, so transformed geometries agree
+    ! bitwise). lengIn/periodicIn give the domain topology for
+    ! minimum-image queries.
+    subroutine stl_geometry_load(files, scale, translate, lengIn, periodicIn, &
+            has_terminal)
+        character(len=*), intent(in) :: files(:)
+        real(C_DOUBLE), intent(in) :: scale, translate(3)
         real(C_DOUBLE), intent(in) :: lengIn(3)
         logical, intent(in) :: periodicIn(3)
         logical, intent(in) :: has_terminal
 
-        integer :: pos, n, total, offset
-        character(len=len(files)+1) :: rest
+        integer :: f, n, total, offset, pos
 
         call stl_geometry_destroy()
         leng = lengIn
         isPeriodic = periodicIn
 
-        ! Pass 1: count triangles over the file list (rest always ends in
-        ! a blank, so index() finds every token's end).
         total = 0
-        rest = adjustl(files)
-        do while (len_trim(rest) > 0)
-            pos = index(rest, " ")
-            call stl_count_triangles(rest(1:pos-1), n)
+        do f = 1, size(files)
+            call stl_count_triangles(trim(files(f)), n)
             total = total + n
-            rest = adjustl(rest(pos:))
         end do
         if (total == 0) error stop "stl_file: no triangles found"
 
         allocate(triV0(3, total), triE1(3, total), triE2(3, total), triArea2(total))
 
-        ! Pass 2: read them.
         offset = 0
-        rest = adjustl(files)
-        do while (len_trim(rest) > 0)
-            pos = index(rest, " ")
-            call stl_read_triangles(rest(1:pos-1), offset, has_terminal)
-            rest = adjustl(rest(pos:))
+        do f = 1, size(files)
+            call stl_read_triangles(trim(files(f)), scale, translate, offset, &
+                has_terminal)
         end do
         ! Drop exactly-degenerate triangles (zero area): they poison both
         ! the parity det scale and the distance query's edge divisions.
@@ -174,9 +170,11 @@ contains
 
     ! Binary STL: 80-byte header, uint32 triangle count, then 50 bytes per
     ! triangle (float32 normal + 3 float32 vertices + uint16 attribute).
-    subroutine stl_count_triangles(file_name, n)
+    ! ASCII STL ("solid" header, size not matching binary) is parsed by
+    ! keyword; its decimal vertices go straight to float64 -- the same
+    ! rounding trimesh/numpy give mobygeom, so the two see one geometry.
+    logical function stl_is_ascii(file_name) result(is_ascii)
         character(len=*), intent(in) :: file_name
-        integer, intent(out) :: n
 
         integer :: unit, ios
         integer(C_INT32_T) :: count32
@@ -190,52 +188,133 @@ contains
             error stop
         end if
         inquire(unit=unit, size=file_size)
-        read(unit, pos=1) head
-        read(unit, pos=81) count32
+        head = ""
+        count32 = 0
+        if (file_size >= 84_C_INT64_T) then
+            read(unit, pos=1) head
+            read(unit, pos=81) count32
+        end if
         close(unit)
 
-        n = int(count32)
-        if (file_size /= 84_C_INT64_T + 50_C_INT64_T*int(n, C_INT64_T)) then
-            if (head == "solid") then
-                print *, "error: ASCII STL is not supported, convert to binary: ", &
-                    trim(file_name)
-            else
-                print *, "error: corrupt binary STL (size mismatch): ", trim(file_name)
-            end if
+        if (file_size == 84_C_INT64_T + 50_C_INT64_T*int(count32, C_INT64_T)) then
+            is_ascii = .false.
+        else if (head == "solid") then
+            is_ascii = .true.
+        else
+            print *, "error: corrupt binary STL (size mismatch): ", trim(file_name)
             error stop
+        end if
+    end function stl_is_ascii
+
+    subroutine stl_count_triangles(file_name, n)
+        character(len=*), intent(in) :: file_name
+        integer, intent(out) :: n
+
+        integer :: unit, ios
+        integer(C_INT32_T) :: count32
+        character(len=64) :: line
+
+        if (stl_is_ascii(file_name)) then
+            n = 0
+            open(newunit=unit, file=trim(file_name), status="old", action="read")
+            do
+                read(unit, '(A)', iostat=ios) line
+                if (ios /= 0) exit
+                line = adjustl(line)
+                if (line(1:6) == "facet ") n = n + 1
+            end do
+            close(unit)
+        else
+            open(newunit=unit, file=trim(file_name), access="stream", &
+                form="unformatted", status="old", action="read")
+            read(unit, pos=81) count32
+            close(unit)
+            n = int(count32)
         end if
     end subroutine stl_count_triangles
 
-    subroutine stl_read_triangles(file_name, offset, has_terminal)
+    subroutine stl_read_triangles(file_name, scale, translate, offset, has_terminal)
         character(len=*), intent(in) :: file_name
+        real(C_DOUBLE), intent(in) :: scale, translate(3)
         integer, intent(inout) :: offset
         logical, intent(in) :: has_terminal
 
-        integer :: unit, i, n
+        integer :: unit, i, n, ios, nv
         integer(C_INT32_T) :: count32
         real(C_FLOAT) :: rec(12)
         integer(C_INT16_T) :: attr
         real(C_DOUBLE) :: v(3,3)
+        character(len=256) :: line
 
-        open(newunit=unit, file=trim(file_name), access="stream", &
-            form="unformatted", status="old", action="read")
-        read(unit, pos=81) count32
-        n = int(count32)
-        do i = 1, n
-            read(unit) rec, attr
-            ! rec(1:3) is the stored normal -- parity casting never needs
-            ! it. float32 -> float64 widening is exact.
-            v(:,1) = real(rec(4:6), C_DOUBLE)
-            v(:,2) = real(rec(7:9), C_DOUBLE)
-            v(:,3) = real(rec(10:12), C_DOUBLE)
-            triV0(:, offset+i) = v(:,1)
-            triE1(:, offset+i) = v(:,2) - v(:,1)
-            triE2(:, offset+i) = v(:,3) - v(:,1)
-        end do
-        close(unit)
+        n = 0
+        if (stl_is_ascii(file_name)) then
+            open(newunit=unit, file=trim(file_name), status="old", action="read")
+            nv = 0
+            do
+                read(unit, '(A)', iostat=ios) line
+                if (ios /= 0) exit
+                line = adjustl(line)
+                if (line(1:7) /= "vertex ") cycle
+                nv = nv + 1
+                read(line(8:), *, iostat=ios) v(:, nv)
+                if (ios /= 0) then
+                    print *, "error: bad ASCII STL vertex in: ", trim(file_name)
+                    error stop
+                end if
+                if (nv == 3) then
+                    n = n + 1
+                    call store_triangle(offset + n, v, scale, translate)
+                    nv = 0
+                end if
+            end do
+            close(unit)
+            if (nv /= 0) error stop "ASCII STL: vertex count not a multiple of 3"
+        else
+            open(newunit=unit, file=trim(file_name), access="stream", &
+                form="unformatted", status="old", action="read")
+            read(unit, pos=81) count32
+            n = int(count32)
+            do i = 1, n
+                read(unit) rec, attr
+                ! rec(1:3) is the stored normal -- parity casting never
+                ! needs it. float32 -> float64 widening is exact.
+                v(:,1) = real(rec(4:6), C_DOUBLE)
+                v(:,2) = real(rec(7:9), C_DOUBLE)
+                v(:,3) = real(rec(10:12), C_DOUBLE)
+                call store_triangle(offset + i, v, scale, translate)
+            end do
+            close(unit)
+        end if
         if (has_terminal) print '(3A,I0,A)', " STL file ", trim(file_name), ": ", n, " triangles"
         offset = offset + n
     end subroutine stl_read_triangles
+
+    ! The transform runs in float64 on the widened/parsed vertices --
+    ! mobygeom's convention and operation order (v*scale + translate).
+    subroutine store_triangle(t, v, scale, translate)
+        integer, intent(in) :: t
+        real(C_DOUBLE), intent(in) :: v(3,3), scale, translate(3)
+
+        real(C_DOUBLE) :: w(3,3)
+
+        w(:,1) = v(:,1)*scale + translate
+        w(:,2) = v(:,2)*scale + translate
+        w(:,3) = v(:,3)*scale + translate
+        triV0(:, t) = w(:,1)
+        triE1(:, t) = w(:,2) - w(:,1)
+        triE2(:, t) = w(:,3) - w(:,1)
+    end subroutine store_triangle
+
+    ! Conservative solid-possible box for classification culling: a point
+    ! outside it cannot be inside the body through ANY image the indicator
+    ! tests (in imaged periodic dims the box widens by +-L, the hull of
+    ! the image intervals).
+    subroutine stl_cull_box(lo, hi)
+        real(C_DOUBLE), intent(out) :: lo(3), hi(3)
+
+        lo = bbLo - bbPad - merge(leng, [0.0d0, 0.0d0, 0.0d0], imageDim)
+        hi = bbHi + bbPad + merge(leng, [0.0d0, 0.0d0, 0.0d0], imageDim)
+    end subroutine stl_cull_box
 
     ! Fixed ray directions (find-inside.cpl's table), normalized. The
     ! first three decide unanimous points; disagreement escalates to the

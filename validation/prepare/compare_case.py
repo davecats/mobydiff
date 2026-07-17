@@ -93,11 +93,23 @@ def main():
             else:
                 print("block_active: identical")
 
-        # coefficient tiles: relative agreement.
+        # coefficient tiles. The solid/fluid CLASSIFICATION must agree
+        # exactly (parity vs winding number on a clean mesh); the graded
+        # values agree to the bisection tolerance except at near-grazing
+        # crossings, where ((d0-d)/d)/d0^2 has exploding relative
+        # sensitivity while the absolute value stays negligible -- their
+        # count is reported.
         c, r = cand["coef_blocks"][...], ref["coef_blocks"][...]
-        rel = np.max(np.abs(c - r) / (np.abs(r) + 1.0))
-        print(f"coef_blocks: max |dc|/(|c|+1) = {rel:.3e} (tol {args.coef_tol:.1e})")
-        if rel > args.coef_tol:
+        solid = 0.5e30 / float(ref.attrs["re"])
+        flips = int(np.sum((c >= solid) != (r >= solid)))
+        rel_all = np.abs(c - r) / (np.abs(r) + 1.0)
+        graded = ~((c >= solid) | (r >= solid))
+        rel = float(np.max(np.where(graded, rel_all, 0.0)))
+        outliers = int(np.sum(np.where(graded, rel_all, 0.0) > 1.0e-6))
+        print(f"coef_blocks: classification flips = {flips}; graded max"
+              f" |dc|/(|c|+1) = {rel:.3e} (tol {args.coef_tol:.1e},"
+              f" {outliers} cells > 1e-6 of {c.size})")
+        if flips > 0 or rel > args.coef_tol:
             ok = False
 
         if "dwall_blocks" in ref and "dwall_blocks" in cand:
