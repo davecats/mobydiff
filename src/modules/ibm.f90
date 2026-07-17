@@ -19,7 +19,7 @@ module ibmm
         is_face_staggered, face_at, cell_center_at
     use :: blocks, only: block_set_type, subdivide_node_line, FACE_PHYS, FACE_CLOSED
     use :: io, only: to_c_string, read_block_active, read_block_masks, read_mask_window
-    use :: comm, only: comm_type, exchange_scalar_halos
+    use :: comm, only: comm_type, exchange_scalar_halos, comm_allreduce_max_int
     implicit none
 
     real(C_DOUBLE), parameter :: SOLID = 1.0d30
@@ -454,7 +454,7 @@ contains
     ! and all three staggered locations. active is in x-fastest lattice
     ! raster order, 1 = keep.
     subroutine classify_active_blocks(active, dns, g, ibm, periodic, inside, &
-            cullLo, cullHi)
+            cullLo, cullHi, nsplit, isplit)
         integer(C_INT), intent(out) :: active(:)
         type(dns_type), intent(in) :: dns
         type(grid_type), intent(in) :: g
@@ -464,9 +464,15 @@ contains
         ! Optional solid-possible box (moby_prepare's STL bbox): a block
         ! whose dilated bounds miss it is fluid without any indicator call.
         real(C_DOUBLE), intent(in), optional :: cullLo(3), cullHi(3)
+        ! Optional rank split (P2): this rank classifies the contiguous
+        ! flattened-raster range [nRaster*isplit/nsplit, +next); everything
+        ! else stays 0, so the caller's elementwise-MAX merge over the
+        ! ranks reconstructs the full raster exactly (only the owner can
+        ! write a 1).
+        integer, intent(in), optional :: nsplit, isplit
 
         integer :: nb, nTiles(3), gx, gy, gz, raster, d
-        integer :: i, j, k, var, o(3)
+        integer :: i, j, k, var, o(3), r, r0, r1, nRaster
         real(C_DOUBLE) :: xA(3)
         logical :: buried
 
@@ -479,44 +485,52 @@ contains
             end if
             nTiles(d) = int(dns%globalSize(d))/nb
         end do
-        if (size(active) /= product(nTiles)) error stop "block active mask size mismatch"
+        nRaster = product(nTiles)
+        if (size(active) /= nRaster) error stop "block active mask size mismatch"
 
-        !$omp parallel do collapse(2) private(gx,gy,gz,raster,o,buried,i,j,k,var,xA)
-        do gz = 0, nTiles(3) - 1
-            do gy = 0, nTiles(2) - 1
-                do gx = 0, nTiles(1) - 1
-                    raster = 1 + gx + nTiles(1)*(gy + nTiles(2)*gz)
-                    o = [gx, gy, gz]*nb
-                    if (present(cullLo)) then
-                        if (block_outside_box(g%xNode, g%yNode, g%zNode, &
-                                int(dns%globalSize), o, nb, cullLo, cullHi)) then
-                            active(raster) = 1_C_INT
-                            cycle
-                        end if
-                    end if
-                    buried = .true.
-                    outer: do var = int(VAR_U), int(VAR_P)
-                        ! Dilated window: 1-based cell indices o .. o+nb+1.
-                        do k = o(3), o(3) + nb + 1
-                            do j = o(2), o(2) + nb + 1
-                                do i = o(1), o(1) + nb + 1
-                                    xA(1) = location_coord(g%xNode, int(dns%globalSize(1)), &
-                                        dns%leng(1), periodic(1), 1, var, i)
-                                    xA(2) = location_coord(g%yNode, int(dns%globalSize(2)), &
-                                        dns%leng(2), periodic(2), 2, var, j)
-                                    xA(3) = location_coord(g%zNode, int(dns%globalSize(3)), &
-                                        dns%leng(3), periodic(3), 3, var, k)
-                                    if (.not. inside(xA, ibm, dns)) then
-                                        buried = .false.
-                                        exit outer
-                                    end if
-                                end do
-                            end do
+        active = 0_C_INT
+        r0 = 0
+        r1 = nRaster
+        if (present(nsplit)) then
+            r0 = int((int(nRaster, int64)*isplit)/nsplit)
+            r1 = int((int(nRaster, int64)*(isplit + 1))/nsplit)
+        end if
+
+        !$omp parallel do private(r,gx,gy,gz,raster,o,buried,i,j,k,var,xA)
+        do r = r0, r1 - 1
+            gx = mod(r, nTiles(1))
+            gy = mod(r/nTiles(1), nTiles(2))
+            gz = r/(nTiles(1)*nTiles(2))
+            raster = r + 1
+            o = [gx, gy, gz]*nb
+            if (present(cullLo)) then
+                if (block_outside_box(g%xNode, g%yNode, g%zNode, &
+                        int(dns%globalSize), o, nb, cullLo, cullHi)) then
+                    active(raster) = 1_C_INT
+                    cycle
+                end if
+            end if
+            buried = .true.
+            outer: do var = int(VAR_U), int(VAR_P)
+                ! Dilated window: 1-based cell indices o .. o+nb+1.
+                do k = o(3), o(3) + nb + 1
+                    do j = o(2), o(2) + nb + 1
+                        do i = o(1), o(1) + nb + 1
+                            xA(1) = location_coord(g%xNode, int(dns%globalSize(1)), &
+                                dns%leng(1), periodic(1), 1, var, i)
+                            xA(2) = location_coord(g%yNode, int(dns%globalSize(2)), &
+                                dns%leng(2), periodic(2), 2, var, j)
+                            xA(3) = location_coord(g%zNode, int(dns%globalSize(3)), &
+                                dns%leng(3), periodic(3), 3, var, k)
+                            if (.not. inside(xA, ibm, dns)) then
+                                buried = .false.
+                                exit outer
+                            end if
                         end do
-                    end do outer
-                    active(raster) = merge(0_C_INT, 1_C_INT, buried)
+                    end do
                 end do
-            end do
+            end do outer
+            active(raster) = merge(0_C_INT, 1_C_INT, buried)
         end do
         !$omp end parallel do
     end subroutine classify_active_blocks
@@ -591,7 +605,7 @@ contains
     ! Level lines are built here by midpoint subdivision, identical to the
     ! solver's per-level metric lines.
     subroutine classify_block_geometry(touch, buried, dns, g, ibm, periodic, nLevels, &
-            inside, cullLo, cullHi)
+            inside, cullLo, cullHi, nsplit, isplit)
         integer(C_INT), intent(out) :: touch(:,:), buried(:,:)
         type(dns_type), intent(in) :: dns
         type(grid_type), intent(in) :: g
@@ -604,9 +618,13 @@ contains
         ! deep lattices are mostly far field, and each far block otherwise
         ! costs a full (nb+2)^3 x 4-staggering scan.
         real(C_DOUBLE), intent(in), optional :: cullLo(3), cullHi(3)
+        ! Optional rank split (P2): this rank classifies a contiguous
+        ! flattened-raster range per level; the rest stays 0 for the
+        ! caller's elementwise-MAX merge over the ranks.
+        integer, intent(in), optional :: nsplit, isplit
 
         integer :: nb, l, nTiles(3), gx, gy, gz, raster, d
-        integer :: i, j, k, var, o(3), nf(3), nl(3)
+        integer :: i, j, k, var, o(3), nf(3), nl(3), r, r0, r1, nRaster
         real(C_DOUBLE) :: xA(3)
         real(C_DOUBLE), allocatable :: lineX(:,:), lineY(:,:), lineZ(:,:)
         logical :: anySolid, anyFluid, isSolid
@@ -646,45 +664,49 @@ contains
         do l = 1, nLevels
             nl = int(dns%globalSize)*2**((l-1)*int(dns%block_refine_mask))
             nTiles = nl/nb
-            !$omp parallel do collapse(2) &
-            !$omp& private(gx,gy,gz,raster,o,anySolid,anyFluid,isSolid,i,j,k,var,xA)
-            do gz = 0, nTiles(3) - 1
-                do gy = 0, nTiles(2) - 1
-                    do gx = 0, nTiles(1) - 1
-                        raster = 1 + gx + nTiles(1)*(gy + nTiles(2)*gz)
-                        o = [gx, gy, gz]*nb
-                        if (present(cullLo)) then
-                            if (block_outside_box(lineX(:,l), lineY(:,l), lineZ(:,l), &
-                                    nl, o, nb, cullLo, cullHi)) then
-                                touch(raster, l) = 0_C_INT
-                                buried(raster, l) = 0_C_INT
-                                cycle
-                            end if
-                        end if
-                        anySolid = .false.
-                        anyFluid = .false.
-                        scan: do var = int(VAR_U), int(VAR_P)
-                            do k = o(3), o(3) + nb + 1
-                                do j = o(2), o(2) + nb + 1
-                                    do i = o(1), o(1) + nb + 1
-                                        xA(1) = location_coord(lineX(:,l), nl(1), dns%leng(1), &
-                                            periodic(1), 1, var, i)
-                                        xA(2) = location_coord(lineY(:,l), nl(2), dns%leng(2), &
-                                            periodic(2), 2, var, j)
-                                        xA(3) = location_coord(lineZ(:,l), nl(3), dns%leng(3), &
-                                            periodic(3), 3, var, k)
-                                        isSolid = inside(xA, ibm, dns)
-                                        anySolid = anySolid .or. isSolid
-                                        anyFluid = anyFluid .or. .not. isSolid
-                                        if (anySolid .and. anyFluid) exit scan
-                                    end do
-                                end do
+            nRaster = product(nTiles)
+            touch(:, l) = 0_C_INT
+            buried(:, l) = 0_C_INT
+            r0 = 0
+            r1 = nRaster
+            if (present(nsplit)) then
+                r0 = int((int(nRaster, int64)*isplit)/nsplit)
+                r1 = int((int(nRaster, int64)*(isplit + 1))/nsplit)
+            end if
+            !$omp parallel do &
+            !$omp& private(r,gx,gy,gz,raster,o,anySolid,anyFluid,isSolid,i,j,k,var,xA)
+            do r = r0, r1 - 1
+                gx = mod(r, nTiles(1))
+                gy = mod(r/nTiles(1), nTiles(2))
+                gz = r/(nTiles(1)*nTiles(2))
+                raster = r + 1
+                o = [gx, gy, gz]*nb
+                if (present(cullLo)) then
+                    if (block_outside_box(lineX(:,l), lineY(:,l), lineZ(:,l), &
+                            nl, o, nb, cullLo, cullHi)) cycle
+                end if
+                anySolid = .false.
+                anyFluid = .false.
+                scan: do var = int(VAR_U), int(VAR_P)
+                    do k = o(3), o(3) + nb + 1
+                        do j = o(2), o(2) + nb + 1
+                            do i = o(1), o(1) + nb + 1
+                                xA(1) = location_coord(lineX(:,l), nl(1), dns%leng(1), &
+                                    periodic(1), 1, var, i)
+                                xA(2) = location_coord(lineY(:,l), nl(2), dns%leng(2), &
+                                    periodic(2), 2, var, j)
+                                xA(3) = location_coord(lineZ(:,l), nl(3), dns%leng(3), &
+                                    periodic(3), 3, var, k)
+                                isSolid = inside(xA, ibm, dns)
+                                anySolid = anySolid .or. isSolid
+                                anyFluid = anyFluid .or. .not. isSolid
+                                if (anySolid .and. anyFluid) exit scan
                             end do
-                        end do scan
-                        touch(raster, l) = merge(1_C_INT, 0_C_INT, anySolid .and. anyFluid)
-                        buried(raster, l) = merge(1_C_INT, 0_C_INT, anySolid .and. .not. anyFluid)
+                        end do
                     end do
-                end do
+                end do scan
+                touch(raster, l) = merge(1_C_INT, 0_C_INT, anySolid .and. anyFluid)
+                buried(raster, l) = merge(1_C_INT, 0_C_INT, anySolid .and. .not. anyFluid)
             end do
             !$omp end parallel do
         end do
@@ -699,7 +721,7 @@ contains
     ! init_block_set. This is the geometry input to block-set construction,
     ! kept out of main so the construction dispatch stays thin.
     subroutine classify_active_mask(active, dns, g, ibm, periodic, has_terminal, inside, &
-            cullLo, cullHi)
+            cullLo, cullHi, c)
         integer(C_INT), allocatable, intent(out) :: active(:)
         type(dns_type), intent(in) :: dns
         type(grid_type), intent(in) :: g
@@ -708,6 +730,10 @@ contains
         logical, intent(in) :: has_terminal
         procedure(body_indicator_i) :: inside
         real(C_DOUBLE), intent(in), optional :: cullLo(3), cullHi(3)
+        ! Optional communicator (P2): the analytic classification is split
+        ! over the world ranks and merged exactly (elementwise MAX) --
+        ! bit-identical to the redundant single-rank scan.
+        type(comm_type), intent(in), optional :: c
 
         logical :: found
 
@@ -725,6 +751,10 @@ contains
                     "coefficient file has no block_active table; keeping all blocks"
                 active = 1_C_INT
             end if
+        else if (present(c)) then
+            call classify_active_blocks(active, dns, g, ibm, periodic, inside, &
+                cullLo, cullHi, nsplit=c%world_size, isplit=c%world_rank)
+            call comm_allreduce_max_int(c, active)
         else
             call classify_active_blocks(active, dns, g, ibm, periodic, inside, &
                 cullLo, cullHi)
@@ -737,7 +767,7 @@ contains
     ! geometry. Both arrays are allocated here for the finest lattice (one
     ! column per level); the caller hands them to init_block_set.
     subroutine classify_refinement_masks(touch, buried, maskLo, maskDims, dns, g, ibm, &
-            periodic, has_terminal, inside, cullLo, cullHi)
+            periodic, has_terminal, inside, cullLo, cullHi, c)
         integer(C_INT), allocatable, intent(out) :: touch(:,:), buried(:,:)
         ! Per-level mask windows (block coords): deep-refinement rasters
         ! are stored/held windowed to the padded STL bbox; the analytic
@@ -750,6 +780,10 @@ contains
         logical, intent(in) :: has_terminal
         procedure(body_indicator_i) :: inside
         real(C_DOUBLE), intent(in), optional :: cullLo(3), cullHi(3)
+        ! Optional communicator (P2): the analytic classification is split
+        ! over the world ranks and merged exactly (elementwise MAX) --
+        ! bit-identical to the redundant single-rank scan.
+        type(comm_type), intent(in), optional :: c
 
         integer :: level, maskCount, nLevels, maxCount
         integer(int64) :: finest
@@ -808,8 +842,17 @@ contains
             end do
             allocate(touch(int(finest), nLevels))
             allocate(buried(size(touch, 1), size(touch, 2)))
-            call classify_block_geometry(touch, buried, dns, g, ibm, periodic, nLevels, &
-                inside, cullLo, cullHi)
+            if (present(c)) then
+                call classify_block_geometry(touch, buried, dns, g, ibm, periodic, nLevels, &
+                    inside, cullLo, cullHi, nsplit=c%world_size, isplit=c%world_rank)
+                do level = 0, nLevels - 1
+                    call comm_allreduce_max_int(c, touch(:, level+1))
+                    call comm_allreduce_max_int(c, buried(:, level+1))
+                end do
+            else
+                call classify_block_geometry(touch, buried, dns, g, ibm, periodic, nLevels, &
+                    inside, cullLo, cullHi)
+            end if
             ! [blocks] keep_buried: never remove buried blocks. LOAD-BEARING
             ! for penalization forces -- a removed solid core absorbs the
             ! body's pressure loading through its closed faces outside the

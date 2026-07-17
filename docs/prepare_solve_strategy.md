@@ -327,12 +327,33 @@ snapshots onto the FINEST lattice (69 GB for the L5 airfoil grid) and
 gets OOM-killed — deep-refinement snapshots compare with the chunked
 `validation/prepare/compare_snapshots.py`.
 
-**P2 — parallel + fast.**
-MPI split as §7; far-field shortcut; optional direct segment-intersection
-and exact-distance queries; OpenMP threading inside ranks if profiles ask.
-*Gates*: 1==N ranks byte-identical output; timing vs mobygeom on the
-NACA/B11 deep-refinement cases (target: minutes on one node where mobygeom
-needed hours serial-Python).
+**P2 — parallel + fast. DONE 2026-07-17.**
+The last redundant heavy stage — geometry classification — is rank-split:
+`classify_active_blocks` / `classify_block_geometry` take an optional
+(nsplit, isplit) and classify only a contiguous flattened-raster range
+(loops restructured to closed-form raster decode, unchanged cell
+arithmetic), everything else staying 0; the wrappers merge with an
+elementwise integer MAX (`comm_allreduce_max_int`, MPI_COMM_WORLD — the
+split is world-rank indexed and prepare has no Cartesian topology). Only
+the owning rank can write a 1, so the merge is EXACT: identical masks on
+any rank count. Both moby_prepare AND the solver's inline analytic path
+pass their communicator (main.f90), so analytic refine_body init
+parallelizes too. Earlier P1/P1b items already covered the rest of the
+original P2 list: leaf-parallel coef/dwall tiles + row-range writes (P0),
+the exact BVH distance (P1), the bbox cull + OpenMP threading (P1b).
+*Gates (all PASS)*: NACA L5 P2 case file dataset-IDENTICAL (h5same) to
+the P1b one; flat_refine identical to the committed mobygeom reference;
+the full battery (7-case suite CPU+GPU vs the P1b binaries, P0 22-gate +
+P1 16-gate re-runs — the 1==4-rank identity gates exercise the
+split+merge directly). Timing at 4 ranks x 4 threads: NACA L5 prepare
+7m13s -> 3m56s, flat_refine 38s -> 22.6s; classification now scales with
+ranks x threads. STILL REDUNDANT per rank (cheap, documented): the leaf
+table build (as in the solver), STL load/BVH (seconds), the analytic
+walldist cloud. Deferred: windowed mask STORAGE (the dense-raster memory
+cap bites only at 3D L6-class lattices, e.g. the B11 7.2e9 case — fold
+into a later increment if such a case materializes) and the direct
+segment-intersection crossing query (pure perf, behind the same
+interface).
 
 **P3 — retire and rename.**
 `main.f90` → `moby_solve.f90` (pure rename; compile.sh/module docs

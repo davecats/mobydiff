@@ -807,8 +807,25 @@ immersed boundary. Phased, each phase verified before the next:
   tools/compare_fields.py reassembles block-table snapshots onto the
   FINEST lattice (69 GB at L5) -> OOM-killed (can take the whole session
   with it); use the chunked validation/prepare/compare_snapshots.py for
-  deep-refinement snapshots. NEXT: P2 = parallelize prepare's
-  per-rank-redundant classification; P3 = rename main->moby_solve, absorb
+  deep-refinement snapshots.
+- Prepare/solve split P2 (DONE 2026-07-17, branch `claude/jacobi-interface`).
+  Rank-split geometry classification, the last redundant heavy prepare
+  stage: classify_active_blocks / classify_block_geometry take optional
+  (nsplit, isplit) and classify a contiguous flattened-raster range
+  (closed-form raster decode, unchanged cell arithmetic); the wrappers
+  merge with an elementwise integer MAX (`comm_allreduce_max_int`,
+  MPI_COMM_WORLD -- world-rank indexed, prepare has no Cartesian
+  topology). Only the owner can write a 1 => the merge is EXACT and masks
+  are identical on any rank count. moby_prepare AND the solver's inline
+  analytic path (main.f90) pass their communicator, so analytic
+  refine_body init parallelizes too. Gates all PASS: NACA L5 P2 case file
+  dataset-IDENTICAL (h5same) to P1b's; flat_refine identical to the
+  committed mobygeom reference; 7-case suite bit-exact vs P1b binaries
+  CPU+GPU; P0 22/22 + P1 16/16 re-runs (their 1==4-rank identity gates
+  exercise the split+merge directly). Timing at 4 ranks x 4 threads:
+  NACA L5 prepare 7m13s -> 3m56s, flat_refine 38s -> 22.6s. Still
+  redundant per rank (cheap, documented): leaf-table build, STL load/BVH,
+  the analytic walldist cloud. NEXT: P3 = rename main->moby_solve, absorb
   mobygrid, grid datasets into the case file.
 - ALSO PENDING: **Profile + optimise** the GPU step for the 2:1-refined channel.
   The last hard profile is STALE (the reflux that was 23% is removed; the

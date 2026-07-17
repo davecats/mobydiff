@@ -137,7 +137,7 @@ module comm
     end type comm_type
 
     public :: comm_init_world, comm_init, comm_finalize
-    public :: comm_allreduce_max, comm_allreduce_sum
+    public :: comm_allreduce_max, comm_allreduce_sum, comm_allreduce_max_int
     public :: init_block_exchange
     public :: start_halo_exchange, finish_halo_exchange, exchange_halos, exchange_scalar_halos
 
@@ -1037,6 +1037,21 @@ contains
 
         call MPI_Allreduce(MPI_IN_PLACE, values, size(values), MPI_DOUBLE_PRECISION, MPI_SUM, c%cart_comm, ierr)
     end subroutine comm_allreduce_sum
+
+    ! Elementwise MAX merge of an integer raster over ALL ranks. Runs on
+    ! MPI_COMM_WORLD (not the Cartesian communicator): the rank-split
+    ! classification (prepare/solve split P2) is indexed by world rank,
+    ! and moby_prepare never builds a Cartesian topology.
+    subroutine comm_allreduce_max_int(c, values)
+        type(comm_type), intent(in) :: c
+        integer(C_INT), intent(inout) :: values(:)
+
+        integer :: ierr
+
+        if (c%world_size <= 1) return
+        call MPI_Allreduce(MPI_IN_PLACE, values, size(values), MPI_INTEGER, &
+            MPI_MAX, MPI_COMM_WORLD, ierr)
+    end subroutine comm_allreduce_max_int
 
     subroutine start_halo_exchange(c, blk, vars)
         type(comm_type), intent(inout) :: c

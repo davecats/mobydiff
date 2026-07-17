@@ -106,13 +106,13 @@ program moby_prepare
     if (dns%block_refine_body) then
         call classify_refinement_masks(blockTouch, blockBuried, blockMaskLo, &
             blockMaskDims, dns, g, ibm, bc%isPeriodic, c%has_terminal, inside, &
-            cullLo, cullHi)
+            cullLo, cullHi, c)
         call init_block_set(blk, dns, g, bc%isPeriodic, int(c%world_size, C_INT), &
             int(c%world_rank, C_INT), touch=blockTouch, buried=blockBuried, &
             maskLo=blockMaskLo, maskDims=blockMaskDims)
     else if (dns%block_remove_solid) then
         call classify_active_mask(blockActive, dns, g, ibm, bc%isPeriodic, &
-            c%has_terminal, inside, cullLo, cullHi)
+            c%has_terminal, inside, cullLo, cullHi, c)
         call init_block_set(blk, dns, g, bc%isPeriodic, int(c%world_size, C_INT), &
             int(c%world_rank, C_INT), blockActive)
     else
