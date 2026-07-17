@@ -605,7 +605,7 @@ contains
     ! Level lines are built here by midpoint subdivision, identical to the
     ! solver's per-level metric lines.
     subroutine classify_block_geometry(touch, buried, dns, g, ibm, periodic, nLevels, &
-            inside, cullLo, cullHi, nsplit, isplit)
+            inside, cullLo, cullHi, nsplit, isplit, winLo, winDims)
         integer(C_INT), intent(out) :: touch(:,:), buried(:,:)
         type(dns_type), intent(in) :: dns
         type(grid_type), intent(in) :: g
@@ -622,9 +622,16 @@ contains
         ! flattened-raster range per level; the rest stays 0 for the
         ! caller's elementwise-MAX merge over the ranks.
         integer, intent(in), optional :: nsplit, isplit
+        ! Optional per-level mask WINDOWS (3, nLevels; block coords): the
+        ! rasters are then window-local (x-fastest within the window) --
+        ! deep-refinement lattices (the y+~2 quadtrees) cannot be held
+        ! dense. Everything outside a window is fluid by construction
+        ! (the windows contain the padded cull box).
+        integer(C_INT), intent(in), optional :: winLo(:,:), winDims(:,:)
 
         integer :: nb, l, nTiles(3), gx, gy, gz, raster, d
         integer :: i, j, k, var, o(3), nf(3), nl(3), r, r0, r1, nRaster
+        integer :: wLo(3), wDims(3)
         real(C_DOUBLE) :: xA(3)
         real(C_DOUBLE), allocatable :: lineX(:,:), lineY(:,:), lineZ(:,:)
         logical :: anySolid, anyFluid, isSolid
@@ -664,7 +671,13 @@ contains
         do l = 1, nLevels
             nl = int(dns%globalSize)*2**((l-1)*int(dns%block_refine_mask))
             nTiles = nl/nb
-            nRaster = product(nTiles)
+            wLo = 0
+            wDims = nTiles
+            if (present(winLo)) then
+                wLo = int(winLo(:, l))
+                wDims = int(winDims(:, l))
+            end if
+            nRaster = product(wDims)
             touch(:, l) = 0_C_INT
             buried(:, l) = 0_C_INT
             r0 = 0
@@ -676,9 +689,9 @@ contains
             !$omp parallel do &
             !$omp& private(r,gx,gy,gz,raster,o,anySolid,anyFluid,isSolid,i,j,k,var,xA)
             do r = r0, r1 - 1
-                gx = mod(r, nTiles(1))
-                gy = mod(r/nTiles(1), nTiles(2))
-                gz = r/(nTiles(1)*nTiles(2))
+                gx = wLo(1) + mod(r, wDims(1))
+                gy = wLo(2) + mod(r/wDims(1), wDims(2))
+                gz = wLo(3) + r/(wDims(1)*wDims(2))
                 raster = r + 1
                 o = [gx, gy, gz]*nb
                 if (present(cullLo)) then
@@ -825,33 +838,48 @@ contains
                 end if
             end do
         else
-            ! Analytic geometry: full-lattice rasters (classify_block_geometry
-            ! is not windowed) -- guard the deep-refinement case where they
-            ! no longer fit; the file path handles it.
-            finest = int(product(int((dns%globalSize/dns%block_nb) &
-                *2**(dns%block_refine_levels*dns%block_refine_mask), int64)), int64)
-            if (finest > 200000000_int64) then
-                error stop "[blocks] refine_body: analytic classification needs a " &
-                    // "dense finest lattice too large for this depth; use the " &
-                    // "mobygeom block-table file path"
-            end if
+            ! Indicator-driven geometry (moby_prepare STL / the solver's
+            ! inline analytic path). Per-level full lattices when they fit;
+            ! LEVELS ABOVE THE THRESHOLD go WINDOWED to the padded cull box
+            ! (the deep y+~2 quadtree lattices reach billions of blocks --
+            ! undenseable). Without a cull box (pure analytic bodies have
+            ! no bbox) deep lattices remain a hard error.
             do level = 0, nLevels - 1
                 maskLo(:, level+1) = 0_C_INT
                 maskDims(:, level+1) = (dns%globalSize/dns%block_nb) &
                     *2**(int(level, C_INT)*dns%block_refine_mask)
+                if (product(int(maskDims(:, level+1), int64)) > 16000000_int64) then
+                    if (.not. present(cullLo)) then
+                        error stop "[blocks] refine_body: per-level mask lattice too " &
+                            // "large to hold dense and no geometry bbox to window " &
+                            // "to (analytic body); reduce refine_levels"
+                    end if
+                    call mask_window_from_cull(maskLo(:, level+1), maskDims(:, level+1), &
+                        dns, g, level, cullLo, cullHi, periodic)
+                end if
             end do
-            allocate(touch(int(finest), nLevels))
+            maxCount = 0
+            do level = 0, nLevels - 1
+                finest = product(int(maskDims(:, level+1), int64))
+                if (finest > int(huge(1_C_INT), int64)) then
+                    error stop "[blocks] refine_body: windowed mask raster still too large"
+                end if
+                maxCount = max(maxCount, int(finest))
+            end do
+            allocate(touch(max(1, maxCount), nLevels))
             allocate(buried(size(touch, 1), size(touch, 2)))
             if (present(c)) then
                 call classify_block_geometry(touch, buried, dns, g, ibm, periodic, nLevels, &
-                    inside, cullLo, cullHi, nsplit=c%world_size, isplit=c%world_rank)
+                    inside, cullLo, cullHi, nsplit=c%world_size, isplit=c%world_rank, &
+                    winLo=maskLo, winDims=maskDims)
                 do level = 0, nLevels - 1
-                    call comm_allreduce_max_int(c, touch(:, level+1))
-                    call comm_allreduce_max_int(c, buried(:, level+1))
+                    maskCount = int(product(maskDims(:, level+1)))
+                    call comm_allreduce_max_int(c, touch(1:maskCount, level+1))
+                    call comm_allreduce_max_int(c, buried(1:maskCount, level+1))
                 end do
             else
                 call classify_block_geometry(touch, buried, dns, g, ibm, periodic, nLevels, &
-                    inside, cullLo, cullHi)
+                    inside, cullLo, cullHi, winLo=maskLo, winDims=maskDims)
             end if
             ! [blocks] keep_buried: never remove buried blocks. LOAD-BEARING
             ! for penalization forces -- a removed solid core absorbs the
@@ -862,6 +890,77 @@ contains
             if (dns%block_keep_buried) buried = 0_C_INT
         end if
     end subroutine classify_refinement_masks
+
+    ! Conservative per-level mask window from the geometry cull box: the
+    ! block range whose dilated span (block_span: +-2 cells) can intersect
+    ! [cullLo, cullHi], bracketed on the BASE node lines (level-l cells
+    ! subdivide base cells exactly, so base-cell brackets scale to level
+    ! blocks without building the level line), padded by 4 blocks. If the
+    ! padded range crosses the domain in a PERIODIC dim (a body on/over
+    ! the boundary), the window falls back to the full range there.
+    subroutine mask_window_from_cull(lo, dims, dns, g, level, cullLo, cullHi, periodic)
+        integer(C_INT), intent(out) :: lo(3), dims(3)
+        type(dns_type), intent(in) :: dns
+        type(grid_type), intent(in) :: g
+        integer, intent(in) :: level
+        real(C_DOUBLE), intent(in) :: cullLo(3), cullHi(3)
+        logical(C_BOOL), intent(in) :: periodic(1:3)
+
+        integer :: d, nb, nT, lscale, ib0, ib1, j0, j1, n0, i
+        real(C_DOUBLE) :: x
+
+        nb = int(dns%block_nb)
+        do d = 1, 3
+            lscale = 2**(level*int(dns%block_refine_mask(d)))
+            n0 = int(dns%globalSize(d))
+            nT = n0*lscale/nb
+            ! base-cell bracket of the cull range (linear scan; base lines
+            ! are short and this runs once per level)
+            ib0 = n0 - 1
+            ib1 = 0
+            do i = 0, n0 - 1
+                x = base_node(g, d, i + 1)
+                if (x >= cullLo(d)) then
+                    ib0 = i
+                    exit
+                end if
+            end do
+            do i = n0 - 1, 0, -1
+                x = base_node(g, d, i)
+                if (x <= cullHi(d)) then
+                    ib1 = i
+                    exit
+                end if
+            end do
+            j0 = (ib0*lscale)/nb - 4
+            j1 = ((ib1 + 1)*lscale + nb - 1)/nb + 4
+            if ((j0 < 0 .or. j1 > nT) .and. periodic(d)) then
+                lo(d) = 0_C_INT
+                dims(d) = int(nT, C_INT)
+            else
+                j0 = max(0, j0)
+                j1 = min(nT, j1)
+                lo(d) = int(j0, C_INT)
+                dims(d) = int(max(0, j1 - j0), C_INT)
+            end if
+        end do
+    end subroutine mask_window_from_cull
+
+    ! Base node line value i in direction d.
+    function base_node(g, d, i) result(x)
+        type(grid_type), intent(in) :: g
+        integer, intent(in) :: d, i
+        real(C_DOUBLE) :: x
+
+        select case (d)
+        case (1)
+            x = g%xNode(i)
+        case (2)
+            x = g%yNode(i)
+        case default
+            x = g%zNode(i)
+        end select
+    end function base_node
 
     subroutine set_ibm_coeff(dns, blk, ibm, var)
         type(dns_type), intent(in) :: dns

@@ -220,6 +220,15 @@ module io
             integer(C_INT) :: ierr
         end function fdm_h5_case_append_masks
 
+        function fdm_h5_case_append_mask_window(file_name, level, lo, dims) &
+                bind(C, name="fdm_h5_case_append_mask_window") result(ierr)
+            import :: C_CHAR, C_INT
+            character(kind=C_CHAR), intent(in) :: file_name(*)
+            integer(C_INT), value :: level
+            integer(C_INT), intent(in) :: lo(*), dims(*)
+            integer(C_INT) :: ierr
+        end function fdm_h5_case_append_mask_window
+
         function fdm_h5_case_append_active(file_name, n_lattice, active, write_data) &
                 bind(C, name="fdm_h5_case_append_active") result(ierr)
             import :: C_CHAR, C_INT
@@ -656,7 +665,7 @@ end subroutine write_rans_geometry_file
 ! rank writes its own contiguous leaf-row range, rank 0 the lattice-global
 ! rasters (full rasters, no window attrs -- the analytic convention).
 subroutine write_case_file(file_name, blk, dns, g, bc, c, coef, has_terminal, &
-        touch, buried, maskDims, active, dwall)
+        touch, buried, maskDims, active, dwall, maskLo)
     character(len=*), intent(in) :: file_name
     type(block_set_type), intent(in) :: blk
     type(dns_type), intent(in) :: dns
@@ -668,6 +677,10 @@ subroutine write_case_file(file_name, blk, dns, g, bc, c, coef, has_terminal, &
     integer(C_INT), intent(in), optional :: touch(:,:), buried(:,:), maskDims(:,:)
     integer(C_INT), intent(in), optional :: active(:)
     real(C_DOUBLE), intent(in), optional :: dwall(:,:,:,:)
+    ! Per-level mask window origins (deep-refinement WINDOWED rasters):
+    ! window attrs are written for any level whose raster does not cover
+    ! the full lattice, so the readers reconstruct placement.
+    integer(C_INT), intent(in), optional :: maskLo(:,:)
 
     character(kind=C_CHAR,len=:), allocatable :: c_file_name
     integer(C_INT) :: ierr, write_data, n_raster
@@ -704,6 +717,16 @@ subroutine write_case_file(file_name, blk, dns, g, bc, c, coef, has_terminal, &
                 n_raster, touch(1:n_raster, level+1), buried(1:n_raster, level+1), &
                 write_data)
             call check_case_write(ierr, "refinement masks", file_name, has_terminal)
+            if (present(maskLo)) then
+                ! full-lattice rasters keep the legacy attr-free layout
+                if (any(maskLo(:, level+1) /= 0_C_INT) .or. &
+                    any(maskDims(:, level+1) /= (dns%globalSize/dns%block_nb) &
+                        *2**(int(level, C_INT)*dns%block_refine_mask))) then
+                    ierr = fdm_h5_case_append_mask_window(c_file_name, &
+                        int(level, C_INT), maskLo(:, level+1), maskDims(:, level+1))
+                    call check_case_write(ierr, "mask windows", file_name, has_terminal)
+                end if
+            end if
         end do
     end if
     if (present(active)) then

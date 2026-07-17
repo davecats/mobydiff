@@ -161,7 +161,7 @@ program moby_prepare
     if (c%has_terminal) print *, "writing case file: ", trim(output_file)
     call write_case_file(output_file, blk, dns, g, bc, c, ibm%coef, c%has_terminal, &
         touch=blockTouch, buried=blockBuried, maskDims=blockMaskDims, &
-        active=blockActive, dwall=dwall)
+        active=blockActive, dwall=dwall, maskLo=blockMaskLo)
     if (c%has_terminal) then
         print *, "case file written:", blk%nBlocksGlobal, "leaves,", &
             int(blk%nLevels) - 1, "refinement level(s)"

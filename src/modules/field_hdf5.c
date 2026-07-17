@@ -1634,6 +1634,33 @@ int fdm_h5_case_append_masks(const char *filename, int level, int n_raster,
     return ierr != 0;
 }
 
+/* WINDOWED per-level mask attributes (deep-refinement case files: the
+ * rasters cover only the window; the reader treats absent attrs as full
+ * rasters). Collective like the other case appends. */
+int fdm_h5_case_append_mask_window(const char *filename, int level,
+                                   const int *lo, const int *dims)
+{
+    hid_t plist, file;
+    char name[64];
+    int ierr = 0;
+
+    plist = H5Pcreate(H5P_FILE_ACCESS);
+    if (plist < 0) return 1;
+    if (H5Pset_fapl_mpio(plist, MPI_COMM_WORLD, MPI_INFO_NULL) < 0) {
+        H5Pclose(plist);
+        return 1;
+    }
+    file = H5Fopen(filename, H5F_ACC_RDWR, plist);
+    H5Pclose(plist);
+    if (file < 0) return 1;
+    snprintf(name, sizeof(name), "mask_win_lo_l%d", level);
+    ierr |= write_attr_int_array(file, name, lo, 3);
+    snprintf(name, sizeof(name), "mask_win_dims_l%d", level);
+    ierr |= write_attr_int_array(file, name, dims, 3);
+    ierr |= H5Fclose(file) < 0;
+    return ierr != 0;
+}
+
 int fdm_h5_case_append_active(const char *filename, int n_lattice,
                               const int *active, int write_data)
 {
