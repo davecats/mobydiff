@@ -45,8 +45,11 @@ import h5py
 import numpy as np
 from scipy.spatial import cKDTree
 
-XLE, ZLE = 4.5, 6.0          # LE position in the chord-lift plane
+XLE, ZLE = 50.0, 48.0        # LE position in the chord-lift plane (--nose)
 CHORD = 1.0
+# far-upstream p_inf box relative to the nose (must lie on level 0)
+PBOX_DX = (-12.0, -10.0)
+PBOX_DZ = (-0.5, 0.5)
 
 
 def naca0012_polyline(n=4096):
@@ -92,11 +95,13 @@ def load_fine_plane(path):
                 h0x = lx/nx; h0z = lz/nz
                 xc0 = (ox + 0.5 + np.arange(nb))*h0x
                 zc0 = (oz + 0.5 + np.arange(nb))*h0z
-                if xc0[0] > 1.8 or xc0[-1] < 0.8 or zc0[0] > 6.5 or zc0[-1] < 5.5:
+                px0, px1 = XLE + PBOX_DX[0], XLE + PBOX_DX[1]
+                pz0, pz1 = ZLE + PBOX_DZ[0], ZLE + PBOX_DZ[1]
+                if xc0[0] > px1 or xc0[-1] < px0 or zc0[0] > pz1 or zc0[-1] < pz0:
                     continue
                 pm = P[bid].mean(axis=1)      # span average -> (z, x)
-                sel_x = (xc0 > 0.8) & (xc0 < 1.8)
-                sel_z = (zc0 > 5.5) & (zc0 < 6.5)
+                sel_x = (xc0 > px0) & (xc0 < px1)
+                sel_z = (zc0 > pz0) & (zc0 < pz1)
                 if sel_x.any() and sel_z.any():
                     p_far += float(pm[np.ix_(sel_z, sel_x)].sum())
                     n_far += int(sel_x.sum()*sel_z.sum())
@@ -132,8 +137,12 @@ def main():
     ap.add_argument("--dmax-cp", type=float, default=4.0,
                     help="Cp extrapolation depth in fine cells")
     ap.add_argument("--re", type=float, default=4.0e5)
+    ap.add_argument("--nose", type=float, nargs=2, default=[50.0, 48.0],
+                    help="LE position (x z) in the chord-lift plane")
     ap.add_argument("--plot", default=None)
     a = ap.parse_args()
+    global XLE, ZLE
+    XLE, ZLE = a.nose
 
     x, z, u, w, p, p_inf, h = load_fine_plane(a.h5)
     nu = 1.0/a.re
