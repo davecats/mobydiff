@@ -149,6 +149,15 @@ module init
         logical(C_BOOL) :: rans_transition = .false.
         real(C_DOUBLE) :: rans_tu = 5.0d0
         real(C_DOUBLE) :: rans_nut_ratio = 10.0d0
+        ! [rans] ambient_sustain: add the Rumsey (2007) freestream-sustaining
+        ! sources S_k = beta* k_inf omega_inf, S_omega = beta omega_inf^2 to
+        ! the SST transport, making (k_inf, omega_inf) an exact fixed point:
+        ! the ambient turbulence no longer free-decays on the way to the
+        ! body, so a CONTROLLED tu arrives at ANY small nut_ratio (large
+        ! nut_ratio ambients break the explicit eddy-diffusion dt bound in
+        ! fine cells -- the C10 blow-up). k_inf/omega_inf from [rans] tu /
+        ! nut_ratio and |initial_velocity| (must be nonzero when enabled).
+        logical(C_BOOL) :: rans_ambient_sustain = .false.
         character(len=256) :: field_prefix = ""
         integer :: field_interval = 0
         character(len=256) :: restart_file = ""

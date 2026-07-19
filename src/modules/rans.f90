@@ -209,6 +209,12 @@ module rans
 
         ! T2 transport state (allocated only for [turbulence] model = rans).
         logical(C_BOOL) :: transport_built = .false.
+        ! [rans] ambient_sustain precomputed sources (0 when off):
+        ! ambKW = beta* k_inf omega_inf (k source), ambW2 = omega_inf^2
+        ! (multiplied by the LOCAL blended beta in-kernel, so the ambient
+        ! state is a fixed point for any F1). Rumsey AIAA-2007-nnnn idiom.
+        real(C_DOUBLE) :: ambKW = 0.0d0
+        real(C_DOUBLE) :: ambW2 = 0.0d0
         real(C_DOUBLE), allocatable :: k(:,:,:,:), omg(:,:,:,:)      ! (0:nb+1,...)
         real(C_DOUBLE), allocatable :: ks(:,:,:,:), omgs(:,:,:,:)    ! substage scratch
         real(C_DOUBLE), allocatable :: koldrhs(:,:,:,:), omgoldrhs(:,:,:,:)
@@ -658,7 +664,7 @@ contains
         logical, intent(in) :: has_terminal
 
         integer :: i, j, k, b, nx, ny, nz, dir, side, face_id
-        real(C_DOUBLE) :: umag2, uc, vc, wc, tu_frac, nu, kin, uinf2
+        real(C_DOUBLE) :: umag2, uc, vc, wc, tu_frac, nu, kin, uinf2, hmin
         logical :: found_k, found_omg, found_gam, found_ret
 
         if (.not. sst%geometry_built) error stop "RANS transport needs the geometry state"
@@ -783,6 +789,49 @@ contains
         end do
         sst%koldrhs = 0.0d0
         sst%omgoldrhs = 0.0d0
+
+        ! [rans] ambient_sustain: precompute the freestream-sustaining
+        ! sources from the same tu/nut_ratio convention as the inlet values,
+        ! at the configured freestream speed. Guards: the freestream must be
+        ! nonzero, and large-nut_ratio ambients are the explicit
+        ! eddy-diffusion blow-up mode the sustain exists to avoid.
+        sst%ambKW = 0.0d0
+        sst%ambW2 = 0.0d0
+        if (dns%rans_ambient_sustain) then
+            uinf2 = sum(dns%initial_velocity**2)
+            if (uinf2 <= 0.0d0) then
+                error stop "[rans] ambient_sustain needs a nonzero freestream " &
+                    // "([flow] initial_u/v/w or the case's freestream)"
+            end if
+            kin = max(1.5d0*tu_frac*tu_frac*uinf2, 1.0d-10)
+            sst%ambKW = SST_BETA_STAR*kin*max(kin/(dns%rans_nut_ratio*nu), OMEGA_MIN)
+            sst%ambW2 = max(kin/(dns%rans_nut_ratio*nu), OMEGA_MIN)**2
+            if (has_terminal) print '(a,es12.4,a,es12.4)', &
+                " [rans] ambient sustain on: k_inf =", kin, &
+                "  nut_inf/nu =", dns%rans_nut_ratio
+        end if
+
+        ! Explicit-eddy-diffusion dt safety WARNING (print-only): the
+        ! adaptive Peclet limiter is molecular-only, so an ambient
+        ! nut_ratio*nu viscosity in the FINEST cells silently violates the
+        ! explicit bound when dtmax is set for the developed state (the C10
+        ! aoa0 blow-up, 2026-07-19: nut_ratio = 1000 at dt = 1e-4 vs a
+        ! ~1e-5 bound -> destroyed by t = 0.09).
+        hmin = huge(1.0d0)
+        do b = 1, int(blk%nBlocks)
+            hmin = min(hmin, 1.0d0/maxval(blk%d1x(1:nx, VAR_P, b)), &
+                       1.0d0/maxval(blk%d1y(1:ny, VAR_P, b)), &
+                       1.0d0/maxval(blk%d1z(1:nz, VAR_P, b)))
+        end do
+        if (dns%dtmax > hmin*hmin/(6.0d0*nu*(1.0d0 + dns%rans_nut_ratio))) then
+            if (has_terminal) print '(a,es10.2,a,es10.2,a)', &
+                " WARNING: dtmax ", dns%dtmax, &
+                " exceeds the explicit eddy-diffusion bound ~", &
+                hmin*hmin/(6.0d0*nu*(1.0d0 + dns%rans_nut_ratio)), &
+                " for the AMBIENT nut in the finest cells (Peclet limiter is" &
+                // " molecular-only) -- expect early blow-up if the ambient" &
+                // " reaches them"
+        end if
 
         ! Restarted runs carry k/omega in the restart file (T2 snapshots
         ! append them); absent datasets (older restarts) keep the tu/
@@ -1425,7 +1474,7 @@ contains
         real(C_DOUBLE) :: conv_k, conv_w, diff_k, diff_w
         real(C_DOUBLE) :: fw, fe, dcoef
         real(C_DOUBLE) :: rhsk, rhsw, knew, wnew
-        real(C_DOUBLE) :: solid_threshold
+        real(C_DOUBLE) :: solid_threshold, ambKW, ambW2
         real(C_DOUBLE) :: yplus, nutw, uc, vc, wc, un, ut1, ut2, ut3, magut
         real(C_DOUBLE) :: gv, rv, omgmag, usmag, dusds, rt, rev, tuloc
         real(C_DOUBLE) :: ret0, rethetac, flength, fonset, fturbv, fthetat
@@ -1442,6 +1491,8 @@ contains
         nu = 1.0d0/dns%re
         dtsub = dt_alpha + dt_beta
         solid_threshold = SOLID_FACE_THRESHOLD
+        ambKW = sst%ambKW
+        ambW2 = sst%ambW2
         wallfn = dns%rans_wall_treatment == 1_C_INT
         transition = dns%rans_transition
         iddes = turb%model == TURB_IDDES
@@ -1450,7 +1501,7 @@ contains
 
         !$omp target teams distribute parallel do collapse(4) &
         !$omp& map(to: nu, dtsub, dt_alpha, dt_beta, solid_threshold, wallfn, transition, iddes, &
-        !$omp& iddesclip, &
+        !$omp& iddesclip, ambKW, ambW2, &
         !$omp& sst%k, sst%omg, sst%gam, sst%ret, sst%yeff, sst%wallcell, sst%domwall, sst%wnorm, &
         !$omp& blk%q, blk%d1x, blk%d1y, blk%d1z, ibm%coef, &
         !$omp& turb%nut, turb%fd, turb%fe, turb%delta, &
@@ -1861,6 +1912,16 @@ contains
                     rhsk = pk - conv_k + diff_k
                     rhsw = alpha_b*s2 - conv_w + diff_w &
                          + min(max(cross, 0.0d0), wv/max(dtsub, 1.0d-30))
+                    if (ambKW > 0.0d0) then
+                        ! [rans] ambient_sustain (Rumsey): freestream-
+                        ! destruction-cancelling sources; (k_inf, omega_inf)
+                        ! is an EXACT fixed point of the point-implicit
+                        ! update below for any F1 (the omega source uses the
+                        ! local blended beta). Off => this branch never
+                        ! executes and the arithmetic is untouched.
+                        rhsk = rhsk + ambKW
+                        rhsw = rhsw + beta_b*ambW2
+                    end if
 
                     if (iddes) then
                         ! T5: the k-destruction length l_hyb = fd (1 + fe)
