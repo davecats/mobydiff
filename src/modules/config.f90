@@ -8,7 +8,7 @@ module config
     use :: pressure_solver, only: pressure_solver_type
     use :: boundary, only: boundary_type, boundary_face_id, &
         PATCH_GENERIC, PATCH_WALL, PATCH_INLET, PATCH_OUTLET, &
-        PROFILE_CONSTANT, PROFILE_PARABOLA
+        PROFILE_CONSTANT, PROFILE_PARABOLA, PROFILE_BLASIUS
     use :: comm, only: comm_type
     implicit none
 
@@ -612,6 +612,10 @@ subroutine apply_grid_axis_value(section, key, value, dns, g, seen, line_no)
         call read_real(value, g%stretch(dir), line_no)
     case ("natural_dyw_plus", "dyw_plus", "dy_wall_plus", "dyw+")
         call read_real(value, g%natural_dyw_plus(dir), line_no)
+    case ("one_sided", "natural_one_sided")
+        ! Natural distribution: cluster at the low end only (boundary layer)
+        ! instead of symmetrically at both ends (channel).
+        call read_bool(value, g%natural_one_sided(dir), line_no)
     case ("subdivided")
         call read_bool(value, g%subdivided(dir), line_no)
     case ("n")
@@ -662,6 +666,9 @@ subroutine apply_boundary_value(key, value, bc, line_no)
         dir = boundary_direction_index(key(1:1))
         side = boundary_side_index(key(3:5))
         call read_patch_type(value, bc%facePatchType(boundary_face_id(dir, side)), line_no)
+    case ("blasius_theta")
+        ! Inlet momentum thickness of the blasius value profile.
+        call read_real(value, bc%blasiusTheta, line_no)
     case default
         call parse_boundary_key(key, dir, side, var, field)
         if (dir == 0 .or. side < 0 .or. var < 0) then
@@ -814,8 +821,10 @@ subroutine read_bc_profile(value, target, line_no)
         target = PROFILE_CONSTANT
     case ("parabola")
         target = PROFILE_PARABOLA
+    case ("blasius")
+        target = PROFILE_BLASIUS
     case default
-        if (terminal_output) print *, "error: boundary profile must be constant or parabola on input line", &
+        if (terminal_output) print *, "error: boundary profile must be constant, parabola or blasius on input line", &
             line_no, ": ", trim(value_l)
         error stop "unknown [boundary] value profile"
     end select

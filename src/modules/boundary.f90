@@ -35,10 +35,17 @@ module boundary
     ! CONSTANT (default) keeps the historical face-uniform value; PARABOLA
     ! scales it by prod over the face's NON-PERIODIC tangential directions of
     ! 4*s*(1-s), s = coord/leng (Poiseuille-type inlet; assumes the domain
-    ! starts at 0). Evaluated once into pointBcValue at each variable's own
-    ! staggered coordinate.
+    ! starts at 0). BLASIUS is the laminar flat-plate boundary-layer inlet:
+    ! valid on x faces for u and v only, wall at y = 0, similarity variable
+    ! eta = beta*y/theta with theta = [boundary] blasius_theta the inlet
+    ! momentum thickness and beta = 2 f''(0) the Blasius momentum-thickness
+    ! constant; u = value*f'(eta), v = value*beta*(eta f' - f)/(2 Re_theta)
+    ! (the entrainment velocity), with the _value key of EVERY blasius row
+    ! set to U_inf and Re_theta = U_inf*theta/nu from [flow] re. Evaluated
+    ! once into pointBcValue at each variable's own staggered coordinate.
     integer(C_INT), parameter :: PROFILE_CONSTANT = 0_C_INT
     integer(C_INT), parameter :: PROFILE_PARABOLA = 1_C_INT
+    integer(C_INT), parameter :: PROFILE_BLASIUS = 2_C_INT
 
     ! Per-face ghost modes for the generic cell-centred scalar BC applicator
     ! (apply_scalar_bc). MIRROR gives a zero face value (Dirichlet 0), COPY a
@@ -74,6 +81,15 @@ module boundary
 
         ! Declared patch type per face (index = boundary_face_id).
         integer(C_INT) :: facePatchType(1:NFACES) = PATCH_UNSET
+
+        ! Blasius profile state: inlet momentum thickness ([boundary]
+        ! blasius_theta) and the f/f' similarity table (uniform eta step
+        ! blasH, shooting-solved on first use; blasBeta = 2 f''(0) is the
+        ! momentum-thickness constant, blasDisp = eta_max - f(eta_max) the
+        ! displacement constant used beyond the table).
+        real(C_DOUBLE) :: blasiusTheta = 1.0d0
+        real(C_DOUBLE) :: blasH = 0.0d0, blasBeta = 0.0d0, blasDisp = 0.0d0
+        real(C_DOUBLE), allocatable :: blasF(:), blasFp(:)
     end type boundary_type
 
 contains
@@ -310,10 +326,12 @@ contains
         npts = int(bc%nTotal)
         if (npts <= 0) return
 
+        if (any(bc%faceBcProfile == PROFILE_BLASIUS)) call prepare_blasius_profile(bc)
+
         do n = 1, npts
             face_id = int(bc%pointFace(n))
             do var = VAR_U, VAR_P
-                if (bc%faceBcProfile(var,face_id) == PROFILE_PARABOLA) then
+                if (bc%faceBcProfile(var,face_id) /= PROFILE_CONSTANT) then
                     bc%pointBcValue(var,n) = bc%faceBcDefaultValue(var,face_id) &
                         *profile_shape(bc, blk, dns, n, var, boundary_face_dir(face_id))
                 else
@@ -323,36 +341,159 @@ contains
         end do
     end subroutine update_boundary_values
 
-    ! Parabolic profile factor at boundary point n for variable var: product
-    ! over the face's non-periodic tangential directions of 4*s*(1-s), with
-    ! s the variable's own staggered coordinate normalized by the domain
-    ! length (domain assumed to start at 0). Periodic tangential directions
-    ! contribute no shape (factor 1).
+    ! Validate the blasius rows (x faces, u and v only) and build the
+    ! similarity table once. Host-only init path.
+    subroutine prepare_blasius_profile(bc)
+        type(boundary_type), intent(inout) :: bc
+        integer :: var, face_id
+
+        do face_id = 1, NFACES
+            do var = VAR_U, VAR_P
+                if (bc%faceBcProfile(var,face_id) /= PROFILE_BLASIUS) cycle
+                if (boundary_face_dir(face_id) /= DIR_X .or. &
+                    (var /= VAR_U .and. var /= VAR_V)) then
+                    error stop "[boundary] blasius profile is supported on x faces for u and v only"
+                end if
+            end do
+        end do
+        if (.not. allocated(bc%blasFp)) call build_blasius_table(bc)
+    end subroutine prepare_blasius_profile
+
+    ! Solve the Blasius equation f''' = -f f''/2 (eta = y sqrt(U/(nu x)))
+    ! by RK4 + secant shooting on f'(inf) = 1, tabulating f and f' on a
+    ! uniform eta grid. beta = 2 f''(0) is exact by the momentum integral.
+    subroutine build_blasius_table(bc)
+        type(boundary_type), intent(inout) :: bc
+
+        real(C_DOUBLE), parameter :: ETA_MAX = 12.0d0
+        integer, parameter :: NTAB = 12000
+        real(C_DOUBLE) :: fpp0, fpp0_prev, err, err_prev, fpp0_next
+        integer :: it, ntop
+
+        bc%blasH = ETA_MAX/real(NTAB, C_DOUBLE)
+        allocate(bc%blasF(0:NTAB), bc%blasFp(0:NTAB))
+
+        fpp0_prev = 0.33d0
+        fpp0 = 0.34d0
+        err_prev = blasius_integrate(bc, fpp0_prev, NTAB)
+        do it = 1, 50
+            err = blasius_integrate(bc, fpp0, NTAB)
+            if (abs(err) < 1.0d-13 .or. err == err_prev) exit
+            fpp0_next = fpp0 - err*(fpp0 - fpp0_prev)/(err - err_prev)
+            fpp0_prev = fpp0
+            err_prev = err
+            fpp0 = fpp0_next
+        end do
+
+        ntop = NTAB
+        bc%blasBeta = 2.0d0*fpp0
+        bc%blasDisp = ETA_MAX - bc%blasF(ntop)
+    end subroutine build_blasius_table
+
+    ! One RK4 integration of the Blasius system from eta = 0 with f''(0) =
+    ! fpp0, filling the f/f' tables; returns f'(eta_max) - 1 (the shooting
+    ! residual).
+    real(C_DOUBLE) function blasius_integrate(bc, fpp0, ntab) result(err)
+        type(boundary_type), intent(inout) :: bc
+        real(C_DOUBLE), intent(in) :: fpp0
+        integer, intent(in) :: ntab
+
+        real(C_DOUBLE) :: y(3), k1(3), k2(3), k3(3), k4(3), h
+        integer :: i
+
+        h = bc%blasH
+        y = [0.0d0, 0.0d0, fpp0]
+        bc%blasF(0) = 0.0d0
+        bc%blasFp(0) = 0.0d0
+        do i = 1, ntab
+            k1 = blasius_rhs(y)
+            k2 = blasius_rhs(y + 0.5d0*h*k1)
+            k3 = blasius_rhs(y + 0.5d0*h*k2)
+            k4 = blasius_rhs(y + h*k3)
+            y = y + h*(k1 + 2.0d0*k2 + 2.0d0*k3 + k4)/6.0d0
+            bc%blasF(i) = y(1)
+            bc%blasFp(i) = y(2)
+        end do
+        err = y(2) - 1.0d0
+    end function blasius_integrate
+
+    pure function blasius_rhs(y) result(dy)
+        real(C_DOUBLE), intent(in) :: y(3)
+        real(C_DOUBLE) :: dy(3)
+
+        dy = [y(2), y(3), -0.5d0*y(1)*y(3)]
+    end function blasius_rhs
+
+    ! Linearly interpolated f and f' at eta; beyond the table f' = 1 and
+    ! f = eta - blasDisp (the outer asymptote).
+    subroutine blasius_lookup(bc, eta, f, fp)
+        type(boundary_type), intent(in) :: bc
+        real(C_DOUBLE), intent(in) :: eta
+        real(C_DOUBLE), intent(out) :: f, fp
+
+        integer :: i, ntop
+        real(C_DOUBLE) :: s
+
+        ntop = ubound(bc%blasFp, 1)
+        s = eta/bc%blasH
+        if (s >= real(ntop, C_DOUBLE)) then
+            f = eta - bc%blasDisp
+            fp = 1.0d0
+            return
+        end if
+        i = int(s)
+        s = s - real(i, C_DOUBLE)
+        f = (1.0d0 - s)*bc%blasF(i) + s*bc%blasF(i+1)
+        fp = (1.0d0 - s)*bc%blasFp(i) + s*bc%blasFp(i+1)
+    end subroutine blasius_lookup
+
+    ! Profile factor at boundary point n for variable var.
+    ! PARABOLA: product over the face's non-periodic tangential directions
+    ! of 4*s*(1-s), with s the variable's own staggered coordinate
+    ! normalized by the domain length (domain assumed to start at 0);
+    ! periodic tangential directions contribute no shape (factor 1).
+    ! BLASIUS: u = f'(eta), v = beta*(eta f' - f)/(2 Re_theta) at
+    ! eta = beta*y/theta (see the PROFILE_* comment; the row value is U_inf,
+    ! Re_theta = U_inf*theta*re with U_inf read from the face's u row).
     real(C_DOUBLE) function profile_shape(bc, blk, dns, n, var, face_dir) result(fac)
         type(boundary_type), intent(in) :: bc
         type(block_set_type), intent(in) :: blk
         type(dns_type), intent(in) :: dns
         integer, intent(in) :: n, var, face_dir
 
-        integer :: d, b
-        real(C_DOUBLE) :: coord, s
+        integer :: d, b, face_id
+        real(C_DOUBLE) :: coord, s, eta, f, fp, re_theta
 
         b = int(bc%slot(n))
+        face_id = int(bc%pointFace(n))
         fac = 1.0d0
-        do d = 1, 3
-            if (d == face_dir) cycle
-            if (bc%isPeriodic(d)) cycle
-            select case (d)
-            case (1)
-                coord = blk%x(int(bc%i(n)), var, b)
-            case (2)
-                coord = blk%y(int(bc%j(n)), var, b)
-            case (3)
-                coord = blk%z(int(bc%k(n)), var, b)
-            end select
-            s = coord/dns%leng(d)
-            fac = fac*4.0d0*s*(1.0d0 - s)
-        end do
+
+        select case (bc%faceBcProfile(var,face_id))
+        case (PROFILE_PARABOLA)
+            do d = 1, 3
+                if (d == face_dir) cycle
+                if (bc%isPeriodic(d)) cycle
+                select case (d)
+                case (1)
+                    coord = blk%x(int(bc%i(n)), var, b)
+                case (2)
+                    coord = blk%y(int(bc%j(n)), var, b)
+                case (3)
+                    coord = blk%z(int(bc%k(n)), var, b)
+                end select
+                s = coord/dns%leng(d)
+                fac = fac*4.0d0*s*(1.0d0 - s)
+            end do
+        case (PROFILE_BLASIUS)
+            eta = bc%blasBeta*blk%y(int(bc%j(n)), var, b)/bc%blasiusTheta
+            call blasius_lookup(bc, eta, f, fp)
+            if (var == VAR_U) then
+                fac = fp
+            else
+                re_theta = bc%faceBcDefaultValue(VAR_U,face_id)*bc%blasiusTheta*dns%re
+                fac = bc%blasBeta*(eta*fp - f)/(2.0d0*re_theta)
+            end if
+        end select
     end function profile_shape
 
     subroutine append_boundary_face_points(bc, face_id, slot, pos, nx, ny, nz)

@@ -847,6 +847,29 @@ immersed boundary. Phased, each phase verified before the next:
   prepare/solve split (P0-P3) is COMPLETE: one Fortran executable pair,
   one case-file contract, mobygeom/mobygrid retired to validation
   references.
+- Boundary layer B0 — laminar Blasius precursor (DONE 2026-07-19, branch
+  `boundaryLayer` off claude/jacobi-interface; docs/next_session_boundary_layer.md).
+  `[boundary] <x-face>_<u|v>_profile = blasius` (+`blasius_theta`; value key =
+  U_inf, shooting-solved table in boundary.f90, outer asymptote beyond eta=12)
+  and the `[grid.<d>] one_sided` key for the natural distribution (flag existed,
+  key did not; NOT in snapshot attrs — restart inis keep [grid.y]).
+  `tutorials/turbulentBoundaryLayer/`: Re_theta,in=100, 400x100x4 theta units,
+  inlet(Blasius u+v)/outlet/wall/outlet(top) faces; flow = template.ini mint ->
+  make_blasius_ic.py analytic IC -> blasius2d.ini -> compare_blasius.py
+  (independent ODE; stations <= 0.7, the last 15% is the outlet zone). Gates
+  PASS: theta <= 1.13%, H <= 0.34%, du/Ue <= 2.4e-3, in-layer dv <= 6.6e-2,
+  steady to 6e-4; top entrainment ~9-19% below Blasius aloft (p=0 top, info).
+  Dormant-path bit-exact vs 94a9249 (pois_io 200 steps, max_abs 0).
+  FINDING (open, solver-level): **chebyshev + niter=6 + Dirichlet-p outlets +
+  dt~0.5 is unstable on long steady runs** — 2-dx pressure mode from
+  round-off, e-fold ~36 t.u., IC-independent, saturates at O(1) divergence;
+  STABLE controls: plain Jacobi niter=6, chebyshev niter=60, chebyshev
+  dtmax=0.25 (free-slip top still rings => the x outlet alone suffices).
+  A per-step resonance: the sign-oscillating 6-term Chebyshev residual
+  polynomial against the momentum/BC map (the A2 velocity-neutral pn family
+  gone velocity-active through outlet faces); dt detunes it. The case ships
+  accel-off. Latent risk for long chebyshev+outlet runs (cylinder/naca
+  horizons were too short to show it).
 - ALSO PENDING: **Profile + optimise** the GPU step for the 2:1-refined channel.
   The last hard profile is STALE (the reflux that was 23% is removed; the
   `MOBY_PHASETIME` timer is deleted): re-profile first with a minimal removable
