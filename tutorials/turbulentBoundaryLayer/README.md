@@ -4,17 +4,29 @@ Zero-pressure-gradient flat-plate boundary layer. This first stage is the
 quasi-2D **laminar Blasius** case that validates the inflow/outflow setup;
 the turbulent 3D extension builds on it.
 
-Two variants of the **top** boundary condition live in subdirectories,
+Three variants of the **top** boundary condition live in subdirectories,
 sharing all of the physics, grid, and the Python tooling in this parent
 directory:
 
-- **`topbc_outlet/`** — the top is an outlet (zero-gradient velocity +
-  Dirichlet p = 0): the displacement-driven entrainment simply leaves. The
-  entrainment aloft then runs a few % below Blasius (finite-height bias).
-- **`topbc_displacement/`** — the top is a displacement boundary: Neumann u
-  and p (zero gradient) with the wall-normal v **prescribed** from the
-  x-varying Blasius entrainment. The exact far-field entrainment is imposed
-  rather than left to an outlet, so the aloft deficit is removed.
+- **`topbc_outlet/`** — outlet: zero-gradient velocity + **Dirichlet p = 0**.
+  The entrainment simply leaves; the Dirichlet p pins the freestream to ZPG.
+- **`topbc_displacement/`** — Neumann u and p, v **prescribed** from the
+  x-varying Blasius entrainment.
+- **`topbc_dirichletuv/`** — full Blasius velocity Dirichlet (u = U_inf AND
+  v = entrainment), Neumann p.
+
+Key result (details + mechanism in each subdir's README): **the freestream
+is governed by the top PRESSURE, not by imposing velocity there.**
+
+| top BC              | p on top   | U_e     | theta match | note |
+|---------------------|------------|---------|-------------|------|
+| outlet              | Dirichlet 0| 1.0000  | **1.1%**    | ZPG pinned; entrainment ~9% low aloft |
+| displacement        | Neumann    | 1.011   | 9%          | favorable dp/dx drifts the edge velocity |
+| dirichletuv         | Neumann    | 1.004*  | 26%         | dp/dx persists -> interior freestream bump |
+
+*top-face value; the interior freestream overshoots to ~1.010. Only the
+outlet top (Dirichlet p) reproduces Blasius; both Neumann-p tops leak a
+weak favorable dp/dx (~-4e-5) that the velocity conditions cannot cancel.
 
 Each subdirectory has its own `blasius2d.ini`, `template.ini`, README and
 result figures; the executables and scripts are referenced from the parent.
@@ -40,7 +52,7 @@ so the flow stays steady laminar.
 - `x_max`: **outlet** (zero-gradient velocity, Dirichlet p = 0) — the single
   compliant boundary + pressure pin in both cases.
 - `y_min`: no-slip **wall** (the plate).
-- `y_max`: the variant (see the subdirectories).
+- `y_max`: the variant (see the subdirectories and the table above).
 - `z`: periodic (quasi-2D, 4 cells).
 
 The `blasius` value profile also covers the **top (y) face** for v: it

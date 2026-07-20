@@ -61,9 +61,13 @@ So there is a real tradeoff: prescribing the entrainment v imposes the
 exact wall-normal velocity but, with Neumann pressure and Neumann u, does
 NOT pin the freestream velocity to U_inf; the outlet top instead pins the
 freestream (ZPG, U_e = const, theta within 1.1%) at the cost of a
-self-selected entrainment ~9% under Blasius aloft. To get BOTH, pin the
-edge velocity as well -- u = U_inf (Dirichlet) at the top instead of
-Neumann -- which is a natural follow-up variant.
+self-selected entrainment ~9% under Blasius aloft. Pinning the edge
+velocity as well (u = U_inf Dirichlet, the `../topbc_dirichletuv` variant)
+does NOT recover ZPG: the favorable dp/dx comes from the Neumann-p top, so
+pinning u only converts the drift into an interior freestream bump (worse).
+Reproducing Blasius cleanly needs the top PRESSURE pinned -- i.e. the
+outlet top -- so the true "pin both" would be a Dirichlet-p top plus a
+prescribed v, not a velocity-only top.
 
 ## Figures
 
