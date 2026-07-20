@@ -4,7 +4,7 @@ Zero-pressure-gradient flat-plate boundary layer. This first stage is the
 quasi-2D **laminar Blasius** case that validates the inflow/outflow setup;
 the turbulent 3D extension builds on it.
 
-Three variants of the **top** boundary condition live in subdirectories,
+Four variants of the **top** boundary condition live in subdirectories,
 sharing all of the physics, grid, and the Python tooling in this parent
 directory:
 
@@ -14,19 +14,28 @@ directory:
   x-varying Blasius entrainment.
 - **`topbc_dirichletuv/`** — full Blasius velocity Dirichlet (u = U_inf AND
   v = entrainment), Neumann p.
+- **`topbc_diricletvp/`** — Dirichlet p = 0 AND prescribed v (an attempt to
+  pin ZPG and impose the entrainment at once). Over-specified: the Dirichlet
+  p is a no-op, so it is bit-identical to `topbc_displacement`.
 
 Key result (details + mechanism in each subdir's README): **the freestream
-is governed by the top PRESSURE, not by imposing velocity there.**
+is governed by the top PRESSURE, not by imposing velocity there**, and the
+pressure pin lives in the `outlet` machinery (which frees v) -- you cannot
+get it from `p_type = dirichlet` on a velocity-prescribed face.
 
 | top BC              | p on top   | U_e     | theta match | note |
 |---------------------|------------|---------|-------------|------|
 | outlet              | Dirichlet 0| 1.0000  | **1.1%**    | ZPG pinned; entrainment ~9% low aloft |
 | displacement        | Neumann    | 1.011   | 9%          | favorable dp/dx drifts the edge velocity |
 | dirichletuv         | Neumann    | 1.004*  | 26%         | dp/dx persists -> interior freestream bump |
+| diricletvp          | Dirichlet† | 1.011   | 9%          | Dirichlet p is a no-op == displacement |
 
-*top-face value; the interior freestream overshoots to ~1.010. Only the
-outlet top (Dirichlet p) reproduces Blasius; both Neumann-p tops leak a
-weak favorable dp/dx (~-4e-5) that the velocity conditions cannot cancel.
+*top-face value; the interior freestream overshoots to ~1.010.
+†the Dirichlet p is ignored by the projection on a non-outlet face (the pin
+requires the `outlet` patch), so the field is bit-identical (max_abs 0) to
+the displacement case. Only the outlet top (Dirichlet p via the outlet
+machinery) reproduces Blasius; the Neumann-effective-p tops leak a weak
+favorable dp/dx (~-4e-5) that the velocity conditions cannot cancel.
 
 Each subdirectory has its own `blasius2d.ini`, `template.ini`, README and
 result figures; the executables and scripts are referenced from the parent.
