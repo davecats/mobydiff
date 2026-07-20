@@ -80,4 +80,36 @@ fluctuation marker w_rms(x) (transition location), and the mean U⁺(y⁺)
 profile against the log law. NOTE: a single snapshot is only z-averaged;
 converged statistics need time-averaging over many snapshots (production).
 
-[Smoke result + figure filled in after the validation run.]
+## Smoke validation result
+
+`smoke.ini` (256×96×64, `trip_amp = 0.15`) run from the Blasius IC. The trip
+triggers transition and a turbulent boundary layer establishes and spreads
+downstream at ≈U∞ (snapshots, z-averaged):
+
+| t (step) | turbulent region (w_rms ≳ 3%) |
+|----------|-------------------------------|
+| 45 (1500)  | x ≈ 15–40 (trip disturbance holding, not decaying) |
+| 90 (3000)  | x ≈ 20–70 |
+| 135 (4500) | x ≈ 20–120, front near the outlet |
+
+At t = 135 (`smoke.png`, `check_turbulent.py smoke_4500.h5`):
+
+- **shape factor H drops from the laminar 2.59 to ≈1.5** in the transitioned
+  region (x = 47–79) — the turbulent signature;
+- **c_f tracks the turbulent correlation** 0.024 Re_θ^(−1/4): e.g. at
+  x = 79, c_f = 5.6e-3 vs 5.5e-3;
+- w_rms shows the trip spike (x ≈ 15) then a sustained ≈3.5% turbulent
+  plateau (x = 20–105), decaying to 0 where the front has not yet arrived;
+- the mean U⁺(y⁺) at x = 64 has the viscous sublayer (U⁺ = y⁺) turning
+  toward the log region.
+
+The run stays stable (u ∈ [−0.07, 1.36]) throughout. The mild under-log and
+the U⁺ ≈ 17 plateau are the expected low-Re (Re_θ ≈ 360) + single-snapshot
+(z-average only, no time averaging) behavior — they tighten with time/
+spanwise averaging over many snapshots at the production resolution.
+
+**This validates the setup end-to-end** (Blasius inlet, trip, transition,
+turbulent BL, ZPG outlet top). Converged turbulence statistics — a smooth
+c_f(Re_θ), a mean profile on the log law, second-order stats — require the
+production `zpg.ini` run over several flow-throughs with time+spanwise
+averaging.
