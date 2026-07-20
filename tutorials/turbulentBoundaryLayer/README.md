@@ -56,6 +56,22 @@ Starting from the analytic Blasius field means the run only has to HOLD
 the solution — the gate then measures pure discretization + BC error, and
 the impulsive-start transient (many flow-throughs of washout) is skipped.
 
+## Convergence
+
+`check_convergence.py conv_*.h5 --plot convergence.png` verifies the run
+reached a steady state rather than still developing. Run from the IC with
+frequent output (`field_interval = 200`) and it reports, per consecutive
+snapshot pair, the field drift RATE max|u(t2)-u(t1)|/(t2-t1) and the
+mid-domain theta error + interior max|div|. Evidence (t = 3000, double
+the production horizon): the drift rate falls ~10x (3e-5 -> 2.5e-6) over
+the first ~500 t.u. and then plateaus; the theta error oscillates in a
+fixed +/-1% band with no trend (identical at t = 1000 and t = 3000);
+divergence stays flat at ~5e-5. The clincher: the single-step drift rate
+(2.9e-5/t.u.) is ~10x the 100-t.u.-window rate (2.9e-6/t.u.) — the
+per-step changes cancel over long windows, i.e. a stationary residual,
+not monotone development. So the ~500 t.u. relaxation lands on the
+discretization floor and holds.
+
 `compare_blasius.py` solves the Blasius ODE independently (RK4 + secant
 shooting; beware np.interp clamping — beyond the table it must follow the
 asymptote f = eta - 1.7208, which is what `blasius_eval` does) and, at
