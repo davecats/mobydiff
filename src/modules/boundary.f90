@@ -35,14 +35,17 @@ module boundary
     ! CONSTANT (default) keeps the historical face-uniform value; PARABOLA
     ! scales it by prod over the face's NON-PERIODIC tangential directions of
     ! 4*s*(1-s), s = coord/leng (Poiseuille-type inlet; assumes the domain
-    ! starts at 0). BLASIUS is the laminar flat-plate boundary-layer inlet:
-    ! valid on x faces for u and v only, wall at y = 0, similarity variable
-    ! eta = beta*y/theta with theta = [boundary] blasius_theta the inlet
-    ! momentum thickness and beta = 2 f''(0) the Blasius momentum-thickness
-    ! constant; u = value*f'(eta), v = value*beta*(eta f' - f)/(2 Re_theta)
-    ! (the entrainment velocity), with the _value key of EVERY blasius row
-    ! set to U_inf and Re_theta = U_inf*theta/nu from [flow] re. Evaluated
-    ! once into pointBcValue at each variable's own staggered coordinate.
+    ! starts at 0). BLASIUS is the laminar flat-plate boundary layer, wall
+    ! at y = 0, similarity variable eta = beta*y/theta(x) with theta =
+    ! [boundary] blasius_theta the inlet momentum thickness and
+    ! beta = 2 f''(0) the Blasius momentum-thickness constant. On an x FACE
+    ! (inlet, station x = 0): u = value*f'(eta), v = value*beta*(eta f' -
+    ! f)/(2 Re_theta) (the entrainment velocity). On a y FACE (top
+    ! displacement BC): the v component only, the x-varying entrainment at
+    ! the domain top y = leng(2), station x + x_v (x_v = Re_theta*theta/
+    ! beta^2). The _value key of every blasius row is U_inf and
+    ! Re_theta = U_inf*theta/nu from [flow] re. Evaluated once into
+    ! pointBcValue at each variable's own staggered coordinate.
     integer(C_INT), parameter :: PROFILE_CONSTANT = 0_C_INT
     integer(C_INT), parameter :: PROFILE_PARABOLA = 1_C_INT
     integer(C_INT), parameter :: PROFILE_BLASIUS = 2_C_INT
@@ -341,18 +344,22 @@ contains
         end do
     end subroutine update_boundary_values
 
-    ! Validate the blasius rows (x faces, u and v only) and build the
-    ! similarity table once. Host-only init path.
+    ! Validate the blasius rows and build the similarity table once.
+    ! Allowed: an x face (inlet) for u and v; a y face (top displacement)
+    ! for v only. Host-only init path.
     subroutine prepare_blasius_profile(bc)
         type(boundary_type), intent(inout) :: bc
-        integer :: var, face_id
+        integer :: var, face_id, fdir
+        logical :: ok
 
         do face_id = 1, NFACES
             do var = VAR_U, VAR_P
                 if (bc%faceBcProfile(var,face_id) /= PROFILE_BLASIUS) cycle
-                if (boundary_face_dir(face_id) /= DIR_X .or. &
-                    (var /= VAR_U .and. var /= VAR_V)) then
-                    error stop "[boundary] blasius profile is supported on x faces for u and v only"
+                fdir = boundary_face_dir(face_id)
+                ok = (fdir == DIR_X .and. (var == VAR_U .or. var == VAR_V)) .or. &
+                     (fdir == DIR_Y .and. var == VAR_V)
+                if (.not. ok) then
+                    error stop "[boundary] blasius profile: x faces (u,v) or y faces (v) only"
                 end if
             end do
         end do
@@ -485,13 +492,31 @@ contains
                 fac = fac*4.0d0*s*(1.0d0 - s)
             end do
         case (PROFILE_BLASIUS)
-            eta = bc%blasBeta*blk%y(int(bc%j(n)), var, b)/bc%blasiusTheta
-            call blasius_lookup(bc, eta, f, fp)
-            if (var == VAR_U) then
-                fac = fp
+            if (face_dir == DIR_X) then
+                ! Inlet (x face): u = f'(eta), v = the entrainment component,
+                ! eta = beta*y/theta_in (the station is x = 0). Re_theta from
+                ! the face's u-row value = U_inf.
+                eta = bc%blasBeta*blk%y(int(bc%j(n)), var, b)/bc%blasiusTheta
+                call blasius_lookup(bc, eta, f, fp)
+                if (var == VAR_U) then
+                    fac = fp
+                else
+                    re_theta = bc%faceBcDefaultValue(VAR_U,face_id)*bc%blasiusTheta*dns%re
+                    fac = bc%blasBeta*(eta*fp - f)/(2.0d0*re_theta)
+                end if
             else
-                re_theta = bc%faceBcDefaultValue(VAR_U,face_id)*bc%blasiusTheta*dns%re
-                fac = bc%blasBeta*(eta*fp - f)/(2.0d0*re_theta)
+                ! Top (y face) displacement BC: the x-varying Blasius
+                ! entrainment v at the domain top y = leng(2). Similarity
+                ! station x + x_v with x_v = Re_theta,in*theta/beta^2;
+                ! eta = y_top*sqrt(Re_theta,in/(theta*(x+x_v))); Re_theta,in
+                ! from the v-row value = U_inf. v/U_inf =
+                ! 0.5*sqrt(theta/(Re_theta,in*(x+x_v)))*(eta f' - f).
+                re_theta = bc%faceBcDefaultValue(VAR_V,face_id)*bc%blasiusTheta*dns%re
+                coord = blk%x(int(bc%i(n)), var, b) &
+                      + re_theta*bc%blasiusTheta/(bc%blasBeta*bc%blasBeta)   ! x + x_v
+                eta = dns%leng(2)*sqrt(re_theta/(bc%blasiusTheta*coord))
+                call blasius_lookup(bc, eta, f, fp)
+                fac = 0.5d0*sqrt(bc%blasiusTheta/(re_theta*coord))*(eta*fp - f)
             end if
         end select
     end function profile_shape

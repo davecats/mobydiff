@@ -16,13 +16,14 @@ face included), v[..,j] at y_node[j], cell centres elsewhere. p is left at
 the template value (Blasius has uniform p; the outlet pins the level).
 """
 import argparse
+import os
 import shutil
 import sys
 
 import h5py
 import numpy as np
 
-sys.path.insert(0, ".")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from compare_blasius import solve_blasius, blasius_eval  # noqa: E402
 
 BETA = 0.664114672
