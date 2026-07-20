@@ -43,7 +43,14 @@ mpirun -n 4 ../../build_cpu/moby_solve template.ini   # mint template_1.h5
 python3 make_blasius_ic.py                            # -> IC_blasius.h5
 mpirun -n 4 ../../build_cpu/moby_solve blasius2d.ini  # restarts from the IC
 python3 compare_blasius.py blasius2d_4001.h5 --plot blasius.png
+python3 plot_fields.py blasius2d_4001.h5              # -> blasius2d.png
 ```
+
+`plot_fields.py` draws the z-averaged u, v, p fields over the x-y plane
+(`blasius2d.png`; y clipped to `--ymax`, default 40): the growing layer in
+u, the positive entrainment in v (strongest near the inlet), and the
+near-flat p (O(1e-2), the ZPG signature) with the mild drop to the pinned
+outlet.
 
 Starting from the analytic Blasius field means the run only has to HOLD
 the solution — the gate then measures pure discretization + BC error, and
