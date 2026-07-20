@@ -149,7 +149,7 @@ def main():
         worst["H"] = max(worst["H"], abs(H_err))
         worst["du"] = max(worst["du"], du)
         worst["dv"] = max(worst["dv"], dv)
-        plots.append((x, x_tot, ue, up, eta_u))
+        plots.append((x, x_tot, ue, up, eta_u, eta_v, vp / vscale))
         print(f"{frac:6.2f} {x:8.1f} {ue:7.4f} {theta:8.4f} {th_err:8.2f} {H:7.4f} "
               f"{H_err:7.2f} {du:9.2e} {dv:9.2e} {v_top:+8.3f}")
 
@@ -162,18 +162,25 @@ def main():
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
-        fig, ax = plt.subplots(1, 2, figsize=(10, 4))
-        for x, x_tot, ue, up, eta_u in plots:
+        fig, ax = plt.subplots(1, 3, figsize=(14, 4))
+        for x, x_tot, ue, up, eta_u, eta_v, vsim in plots:
             ax[0].plot(up / ue, eta_u, ".", ms=3, label=f"x={x:.0f}")
         ax[0].plot(fp_b, eta_b, "k-", lw=1, label="Blasius")
         ax[0].set_xlabel("u/Ue"); ax[0].set_ylabel(r"$\eta$"); ax[0].set_ylim(0, 8)
         ax[0].legend(fontsize=7)
+        # v similarity form: v / (0.5 sqrt(nu Ue / x)) = eta f' - f
+        for x, x_tot, ue, up, eta_u, eta_v, vsim in plots:
+            ax[1].plot(vsim, eta_v, ".", ms=3, label=f"x={x:.0f}")
+        ax[1].plot(eta_b*fp_b - f_b, eta_b, "k-", lw=1, label="Blasius")
+        ax[1].set_xlabel(r"$v\,/\,\frac{1}{2}\sqrt{\nu U_e/x}$")
+        ax[1].set_ylabel(r"$\eta$"); ax[1].set_ylim(0, 8); ax[1].set_xlim(0, 2)
+        ax[1].legend(fontsize=7)
         xs = np.array([p[0] for p in plots])
         th_meas = [np.sum((p[3]/p[2])*(1-p[3]/p[2])*dy) for p in plots]
         xfine = np.linspace(0, lx, 200)
-        ax[1].plot(xs, th_meas, "o", label="measured")
-        ax[1].plot(xfine, beta*np.sqrt(nu*(xfine + x_v)), "k-", lw=1, label="Blasius")
-        ax[1].set_xlabel("x"); ax[1].set_ylabel(r"$\theta$"); ax[1].legend(fontsize=8)
+        ax[2].plot(xs, th_meas, "o", label="measured")
+        ax[2].plot(xfine, beta*np.sqrt(nu*(xfine + x_v)), "k-", lw=1, label="Blasius")
+        ax[2].set_xlabel("x"); ax[2].set_ylabel(r"$\theta$"); ax[2].legend(fontsize=8)
         fig.tight_layout()
         fig.savefig(a.plot, dpi=150)
         print("wrote", a.plot)
