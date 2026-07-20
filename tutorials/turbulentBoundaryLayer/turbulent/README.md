@@ -86,27 +86,31 @@ converged statistics need time-averaging over many snapshots (production).
 triggers transition and a turbulent boundary layer establishes and spreads
 downstream at ≈U∞ (snapshots, z-averaged):
 
+The turbulent front convects downstream at ≈U∞ and fills the box:
+
 | t (step) | turbulent region (w_rms ≳ 3%) |
 |----------|-------------------------------|
 | 45 (1500)  | x ≈ 15–40 (trip disturbance holding, not decaying) |
 | 90 (3000)  | x ≈ 20–70 |
 | 135 (4500) | x ≈ 20–120, front near the outlet |
+| 180 (6000) | x ≈ 20–150 — **whole domain turbulent** |
 
-At t = 135 (`smoke.png`, `check_turbulent.py smoke_4500.h5`):
+At t = 180 (`smoke.png`, `check_turbulent.py smoke_6000.h5`), once the box is
+filled:
 
-- **shape factor H drops from the laminar 2.59 to ≈1.5** in the transitioned
-  region (x = 47–79) — the turbulent signature;
-- **c_f tracks the turbulent correlation** 0.024 Re_θ^(−1/4): e.g. at
-  x = 79, c_f = 5.6e-3 vs 5.5e-3;
-- w_rms shows the trip spike (x ≈ 15) then a sustained ≈3.5% turbulent
-  plateau (x = 20–105), decaying to 0 where the front has not yet arrived;
-- the mean U⁺(y⁺) at x = 64 has the viscous sublayer (U⁺ = y⁺) turning
-  toward the log region.
+- **shape factor H drops from the laminar 2.59 to ≈1.5** across the turbulent
+  region (x = 47–79: H = 1.52, 1.48) — the turbulent signature;
+- **c_f tracks the turbulent correlation** 0.024 Re_θ^(−1/4) (≈6–8e-3
+  measured vs ≈5.5e-3) over x ≈ 20–100;
+- w_rms shows the trip spike (x ≈ 15) then a sustained ≈3% turbulent plateau
+  across the whole box (x = 20–150);
+- the mean U⁺(y⁺) at x = 96 has the viscous sublayer (U⁺ = y⁺), crosses the
+  log law near y⁺ ≈ 40, and reaches U⁺ ≈ 19.5.
 
-The run stays stable (u ∈ [−0.07, 1.36]) throughout. The mild under-log and
-the U⁺ ≈ 17 plateau are the expected low-Re (Re_θ ≈ 360) + single-snapshot
-(z-average only, no time averaging) behavior — they tighten with time/
-spanwise averaging over many snapshots at the production resolution.
+The run stays stable (u ∈ [−0.08, 1.30]) throughout. The instantaneous c_f
+scatter and the U⁺ overshoot/plateau are the expected low-Re (Re_θ ≈ 360–420)
++ single-snapshot (z-average only, no time averaging) behavior — they tighten
+with time/spanwise averaging over many snapshots at the production resolution.
 
 **This validates the setup end-to-end** (Blasius inlet, trip, transition,
 turbulent BL, ZPG outlet top). Converged turbulence statistics — a smooth
