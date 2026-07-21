@@ -2063,3 +2063,72 @@ int fdm_h5_read_channel_stats(const char *filename, int nwall, int nstat,
     ierr |= H5Fclose(file) < 0;
     return ierr != 0;
 }
+
+/* Boundary-layer statistics: profiles on the global (x,y) plane, averaged
+ * in the spanwise (z) direction and time. The stat tables are stored as
+ * (nx*ny, nstat) with the (x,y) cell flattened y-fastest (row = (gx-1)*ny +
+ * gy), reusing the 1D/2D helpers. Serial write from rank 0 (the caller has
+ * already allreduce-summed the accumulators). */
+int fdm_h5_write_bl_stats(const char *filename, int nx, int ny, int nstat,
+                          int step, double t_current, double re,
+                          const double *xcoord, const double *ycoord,
+                          const double *profile, const double *raw_sum,
+                          const double *count)
+{
+    hid_t file;
+    int npt = nx*ny;
+    int ierr = 0;
+
+    if (nx < 1 || ny < 1 || nstat < 1) return 1;
+
+    file = H5Fcreate(filename, H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
+    if (file < 0) return 1;
+
+    ierr |= write_attr_int(file, "nx", nx);
+    ierr |= write_attr_int(file, "ny", ny);
+    ierr |= write_attr_int(file, "nstat", nstat);
+    ierr |= write_attr_int(file, "sample_weighting", 1);
+    ierr |= write_attr_int(file, "step", step);
+    ierr |= write_attr_double(file, "t_current", t_current);
+    ierr |= write_attr_double(file, "re", re);
+    ierr |= write_dataset1(file, "xcoord", (hsize_t)nx, xcoord);
+    ierr |= write_dataset1(file, "ycoord", (hsize_t)ny, ycoord);
+    ierr |= write_dataset1(file, "count", (hsize_t)npt, count);
+    ierr |= write_dataset2_fortran(file, "profile", npt, nstat, profile);
+    ierr |= write_dataset2_fortran(file, "raw_sum", npt, nstat, raw_sum);
+
+    ierr |= H5Fclose(file) < 0;
+    return ierr != 0;
+}
+
+int fdm_h5_read_bl_stats(const char *filename, int nx, int ny, int nstat,
+                         int *step, double *t_current,
+                         double *raw_sum, double *count)
+{
+    hid_t file;
+    int file_nx = nx, file_ny = ny, file_nstat = nstat;
+    int sample_weighting = 0;
+    int npt = nx*ny;
+    int ierr = 0;
+
+    file = H5Fopen(filename, H5F_ACC_RDONLY, H5P_DEFAULT);
+    if (file < 0) return 1;
+
+    ierr |= read_attr_int(file, "nx", &file_nx, 1);
+    ierr |= read_attr_int(file, "ny", &file_ny, 1);
+    ierr |= read_attr_int(file, "nstat", &file_nstat, 1);
+    ierr |= read_attr_int(file, "sample_weighting", &sample_weighting, 1);
+    ierr |= read_attr_int(file, "step", step, 1);
+    ierr |= read_attr_double(file, "t_current", t_current, 1);
+
+    if (file_nx != nx || file_ny != ny || file_nstat != nstat || sample_weighting != 1) {
+        H5Fclose(file);
+        return 1;
+    }
+
+    ierr |= read_dataset1(file, "count", (hsize_t)npt, count);
+    ierr |= read_dataset2_fortran(file, "raw_sum", npt, nstat, raw_sum);
+
+    ierr |= H5Fclose(file) < 0;
+    return ierr != 0;
+}

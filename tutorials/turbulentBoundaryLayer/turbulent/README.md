@@ -41,6 +41,54 @@ l⁺ = ν/u_τ ≈ 0.046 δ*): Δx⁺ ≈ 8.5, Δz⁺ ≈ 3.6, Δy⁺_wall ≈ 0
 Δy_top ≈ 0.54 δ* by one-sided natural stretching. Production grid
 (`zpg.ini`): 1280 × 256 × 192 = 63 M cells.
 
+## The `boundaryLayer` flow case (recommended setup)
+
+`bl.ini` runs the SAME physics through the dedicated **`[case] name =
+boundaryLayer`** flow case (`src/modules/flow/boundaryLayer/`), which — like
+the `channel` and `airfoil` cases — moves the defaults into the solver so the
+ini only carries the grid, Reynolds number and time stepping:
+
+- **BCs** (set-if-unset, explicit `[boundary]` keys still win): Blasius inlet
+  (u + entrainment v, `blasius_theta = 1/H`), Dirichlet-p outlet at `x_max`
+  and the top, no-slip wall, spanwise-periodic z.
+- **grid.y**: one-sided wall-clustered `natural` stretching.
+- **trip forcing**: the Schlatter & Örlü trip is enabled by default from the
+  case (`[force]` still overrides); tune via `[case.boundaryLayer]`
+  `trip_amp/x0/lx/ly/ts/nmodes/seed`.
+- **initial field**: the Blasius similarity field (shooting solve in the
+  case), so no external IC step is needed.
+
+`[case.boundaryLayer]` keys: `u_inf`, `theta_in`, `jb`/`dyw_plus` (grid),
+the `trip_*` knobs, and the statistics/runtime intervals below.
+
+### Statistics and runtime output
+
+The case computes turbulence statistics as **profiles of (x, y) averaged in
+the spanwise direction and in time** (the boundary layer is inhomogeneous in
+x, unlike the channel) — `bl_stats.h5`, datasets `profile`/`raw_sum`/`count`
+(nx·ny, nstat=10: u,v,w,uu,vv,ww,uv,uw,vw,p) + `xcoord`/`ycoord`. Controlled
+by `stats_sample_interval` / `stats_write_interval`; restart-continued from
+an existing file. Post-process with `bl_stats.py` (c_f(Re_θ), U⁺(y⁺),
+Reynolds stresses).
+
+Every `runtime_interval` steps the case prints (and appends to
+`runtime_file`) the health line requested for this case:
+
+```
+iteration  time  L2_div  global_div  Linf_vel  CFL  Peclet  wall_seconds_per_step
+```
+
+`L2_div` is the volume-weighted rms divergence, `global_div` the net
+(integral) divergence = the instantaneous mass-flux imbalance the outlet
+passes, `Linf_vel` the max velocity magnitude. Verified CPU==GPU (runtime
+line bit-identical) and rank-independent (stats CPU-4rank vs GPU-1rank match
+to ~1e-13); the disabled/other cases stay bit-exact.
+
+```bash
+mpirun -n 4 ../../../build_cpu/moby_solve bl.ini    # everything from the case
+python3 bl_stats.py bl_stats.h5 --plot bl_stats.png
+```
+
 ## The trip forcing (Schlatter & Örlü 2012)
 
 Implemented as `[force] type = trip` (`src/modules/bodyforce.f90`). A random

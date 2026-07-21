@@ -3,6 +3,7 @@ module flow_case
     use :: generic_flow, only: create_generic_case, GENERIC_CASE_NAME
     use :: channel_flow, only: create_channel_case, CHANNEL_CASE_NAME
     use :: airfoil_flow, only: create_airfoil_case, AIRFOIL_CASE_NAME
+    use :: boundarylayer_flow, only: create_boundarylayer_case, BL_CASE_NAME
     use :: case_config_helpers, only: next_config_entry, to_lower, clean_config_string
     implicit none
 
@@ -27,6 +28,8 @@ contains
             call create_channel_case(flow)
         case (AIRFOIL_CASE_NAME)
             call create_airfoil_case(flow)
+        case (BL_CASE_NAME)
+            call create_boundarylayer_case(flow)
         case (GENERIC_CASE_NAME, "")
             call create_generic_case(flow)
         case default
