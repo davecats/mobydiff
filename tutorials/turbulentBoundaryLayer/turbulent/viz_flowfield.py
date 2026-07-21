@@ -55,16 +55,20 @@ def main():
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    # Turbulent pressure fluctuation p' = p - <p>_z (spanwise mean removed):
-    # this strips both the ZPG offset and the large-scale velocity-neutral
-    # pressure mode (the projection pn-drift), leaving the turbulent structure
-    # -- the low-pressure cores of the near-wall vortices.
-    p = p - p.mean(axis=0, keepdims=True)
+    # Spanwise-mean pressure <p>_z (the large-scale structure, incl. the ZPG
+    # offset and the velocity-neutral pn-drift), and the turbulent
+    # fluctuation p' = p - <p>_z (the low-pressure cores of the near-wall
+    # vortices). Centre <p>_z on its own mean so the diverging map reads.
+    pmean_z = p.mean(axis=0)                        # (ny, nx)
+    p = p - pmean_z[np.newaxis, :, :]              # p' (nz, ny, nx)
+    pmean_z = pmean_z - pmean_z.mean()
 
-    fig, ax = plt.subplots(5, 1, figsize=(15, 16))
+    fig, ax = plt.subplots(6, 1, figsize=(15, 19))
 
     def side(axis, field, cmap, label, title, vmin=None, vmax=None):
-        f2 = field[zmid, :jmax, :]
+        # field is a full (nz,ny,nx) volume (mid-span slice) or a 2D (ny,nx)
+        # spanwise-averaged field.
+        f2 = field[zmid, :jmax, :] if field.ndim == 3 else field[:jmax, :]
         if vmin is None:
             lim = np.percentile(np.abs(f2), 99)
             vmin, vmax = -lim, lim
@@ -91,14 +95,19 @@ def main():
     side(ax[3], p, "RdBu_r", "p'",
          "turbulent pressure fluctuation p' = p − ⟨p⟩_z — mid-span x-y plane")
 
-    # (E) near-wall streaks: u' = u - <u>_z in an x-z plane at y+ ~ 12
+    # (E) spanwise-mean pressure <p>_z (side): the large-scale structure /
+    # velocity-neutral pn-drift that p' removes
+    side(ax[4], pmean_z, "RdBu_r", "⟨p⟩_z",
+         "spanwise-mean pressure ⟨p⟩_z − mean (the large-scale / pn-drift mode)")
+
+    # (F) near-wall streaks: u' = u - <u>_z in an x-z plane at y+ ~ 12
     up = u[:, jwall, :] - Um[jwall, :]
     lim = np.percentile(np.abs(up), 99)
-    pc = ax[4].pcolormesh(xc, zc, up, cmap="RdBu_r", vmin=-lim, vmax=lim,
+    pc = ax[5].pcolormesh(xc, zc, up, cmap="RdBu_r", vmin=-lim, vmax=lim,
                           shading="auto", rasterized=True)
-    fig.colorbar(pc, ax=ax[4], pad=0.01, label="u'")
-    ax[4].set_ylabel("z"); ax[4].set_xlabel("x"); ax[4].set_aspect("equal")
-    ax[4].set_title(f"near-wall streaks: u' in the x-z plane at y⁺≈{yplus_plane:.0f} "
+    fig.colorbar(pc, ax=ax[5], pad=0.01, label="u'")
+    ax[5].set_ylabel("z"); ax[5].set_xlabel("x"); ax[5].set_aspect("equal")
+    ax[5].set_title(f"near-wall streaks: u' in the x-z plane at y⁺≈{yplus_plane:.0f} "
                     f"(elongated low/high-speed streaks)")
 
     fig.tight_layout()
