@@ -1,7 +1,7 @@
 module config
     use, intrinsic :: iso_c_binding
     use :: init, only: dns_type, grid_type, VAR_U, VAR_V, VAR_W, VAR_P, &
-        GRID_UNIFORM, GRID_COSINE, GRID_TANH, GRID_NATURAL, config_seen_type
+        GRID_UNIFORM, GRID_COSINE, GRID_TANH, GRID_NATURAL, GRID_BLAYER, config_seen_type
     use :: turbulence, only: turb_type, TURB_NONE, TURB_LES, TURB_RANS, TURB_IDDES, &
         IDDES_DELTA_CBRT, IDDES_DELTA_IDDES
     use :: les_model, only: les_type, LES_NONE, LES_SMAGORINSKY, LES_WALE
@@ -458,7 +458,7 @@ subroutine validate_dns_values(dns, g)
             error stop "[blocks] refine box level exceeds refine_levels"
         end if
     end if
-    if (any(g%distribution < GRID_UNIFORM) .or. any(g%distribution > GRID_NATURAL)) then
+    if (any(g%distribution < GRID_UNIFORM) .or. any(g%distribution > GRID_BLAYER)) then
         error stop "invalid grid distribution"
     end if
     if (any(g%stretch < 0.0d0)) error stop "grid stretch values must be non-negative"
@@ -630,6 +630,10 @@ subroutine apply_grid_axis_value(section, key, value, dns, g, seen, line_no)
         ! Natural distribution: cluster at the low end only (boundary layer)
         ! instead of symmetrically at both ends (channel).
         call read_bool(value, g%natural_one_sided(dir), line_no)
+    case ("outer_height", "natural_outer_height", "resolved_height")
+        ! GRID_BLAYER: physical height of the wall-resolved region (above it
+        ! the grid coarsens geometrically to the domain top).
+        call read_real(value, g%natural_outer_height(dir), line_no)
     case ("subdivided")
         call read_bool(value, g%subdivided(dir), line_no)
     case ("n")
@@ -887,6 +891,8 @@ subroutine read_grid_distribution(value, target, line_no)
         target = GRID_TANH
     case ("natural", "pirozzoli_orlandi", "pirozzoli-orlandi", "po")
         target = GRID_NATURAL
+    case ("blayer", "boundary_layer", "boundarylayer")
+        target = GRID_BLAYER
     case default
         if (terminal_output) print *, "warning: unknown grid distribution on input line", line_no, ": ", trim(value_l)
     end select

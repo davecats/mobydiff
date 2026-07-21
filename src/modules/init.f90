@@ -12,6 +12,7 @@ module init
     integer(C_INT), parameter :: GRID_COSINE  = 2_C_INT
     integer(C_INT), parameter :: GRID_TANH    = 3_C_INT
     integer(C_INT), parameter :: GRID_NATURAL = 4_C_INT
+    integer(C_INT), parameter :: GRID_BLAYER  = 5_C_INT
     integer(C_INT), parameter :: CFL_COURANT = 1_C_INT
     integer(C_INT), parameter :: CFL_PECLET  = 2_C_INT
     integer(C_INT), parameter :: NCFL = 2_C_INT
@@ -186,6 +187,12 @@ module init
         real(C_DOUBLE) :: stretch(1:3) = 0.0d0
         real(C_DOUBLE) :: natural_dyw_plus(1:3) = 0.05d0
         logical(C_BOOL) :: natural_one_sided(1:3) = .false.
+        ! GRID_BLAYER only: the physical height of the wall-resolved (turbulent
+        ! boundary-layer) region. The natural wall clustering is calibrated to
+        ! [0, outer_height]; above it the grid coarsens geometrically to the
+        ! domain top. 0 => unused (the natural distribution, when selected,
+        ! spreads over the whole domain as before -- the channel behaviour).
+        real(C_DOUBLE) :: natural_outer_height(1:3) = 0.0d0
         real(C_DOUBLE), allocatable :: xNode(:), yNode(:), zNode(:)
     end type grid_type
 
@@ -226,13 +233,13 @@ subroutine init_grid(g, dns, periodic)
 
     call build_node_line(g%xNode, dns%globalSize(1), dns%leng(1), &
         g%distribution(1), g%stretch(1), g%natural_one_sided(1), g%natural_dyw_plus(1), &
-        g%subdivided(1))
+        g%natural_outer_height(1), g%subdivided(1))
     call build_node_line(g%yNode, dns%globalSize(2), dns%leng(2), &
         g%distribution(2), g%stretch(2), g%natural_one_sided(2), g%natural_dyw_plus(2), &
-        g%subdivided(2))
+        g%natural_outer_height(2), g%subdivided(2))
     call build_node_line(g%zNode, dns%globalSize(3), dns%leng(3), &
         g%distribution(3), g%stretch(3), g%natural_one_sided(3), g%natural_dyw_plus(3), &
-        g%subdivided(3))
+        g%natural_outer_height(3), g%subdivided(3))
 end subroutine init_grid
 
 ! moby_prepare runs without the MPI Cartesian decomposition; give dns the
@@ -257,10 +264,10 @@ subroutine destroy_grid(g)
 end subroutine destroy_grid
 
 recursive subroutine build_node_line(node, nGlobal, length, distribution, stretch, &
-        natural_one_sided, natural_dyw_plus, subdivided)
+        natural_one_sided, natural_dyw_plus, natural_outer_height, subdivided)
     real(C_DOUBLE), intent(inout) :: node(0:)
     integer(C_INT), intent(in) :: nGlobal, distribution
-    real(C_DOUBLE), intent(in) :: length, stretch, natural_dyw_plus
+    real(C_DOUBLE), intent(in) :: length, stretch, natural_dyw_plus, natural_outer_height
     logical(C_BOOL), intent(in) :: natural_one_sided
     logical(C_BOOL), intent(in), optional :: subdivided
 
@@ -276,7 +283,7 @@ recursive subroutine build_node_line(node, nGlobal, length, distribution, stretc
             if (mod(n, 2) /= 0) error stop "subdivided grid needs an even point count"
             allocate(coarse(0:n/2))
             call build_node_line(coarse, int(n/2, C_INT), length, distribution, stretch, &
-                natural_one_sided, natural_dyw_plus)
+                natural_one_sided, natural_dyw_plus, natural_outer_height)
             do i = 0, n/2 - 1
                 node(2*i) = coarse(i)
                 node(2*i+1) = 0.5d0*(coarse(i) + coarse(i+1))
@@ -285,6 +292,14 @@ recursive subroutine build_node_line(node, nGlobal, length, distribution, stretc
             return
         end if
     end if
+
+    ! Boundary-layer grid: wall-clustered in [0, outer_height], coarsening
+    ! geometrically above (built as a whole line; falls back to the plain
+    ! natural distribution if no clean split exists).
+    if (distribution == GRID_BLAYER) then
+        if (build_blayer_line(node, n, length, stretch, natural_dyw_plus, natural_outer_height)) return
+    end if
+
     do i = 0, n
         s = real(i, C_DOUBLE) / real(n, C_DOUBLE)
         node(i) = distribution_coordinate(s, length, distribution, stretch, &
@@ -293,6 +308,87 @@ recursive subroutine build_node_line(node, nGlobal, length, distribution, stretc
     node(0) = 0.0d0
     node(n) = length
 end subroutine build_node_line
+
+! Two-region boundary-layer node line: one-sided natural wall clustering over
+! [0, h] (h = outer_height) using n_in points, then a geometric stretch over
+! [h, length] using the remaining points, C1-matched at h. n_in is the LARGEST
+! split for which the freestream geometric growth ratio stays <= BLAYER_RMAX,
+! i.e. the most wall resolution the freestream budget allows. Returns .false.
+! (caller falls back to the plain natural line) if h is not a usable interior
+! height or no split works. GRID_NATURAL is untouched -> the channel is
+! unaffected.
+logical function build_blayer_line(node, n, length, jb, dyw, h) result(ok)
+    real(C_DOUBLE), intent(inout) :: node(0:)
+    integer, intent(in) :: n
+    real(C_DOUBLE), intent(in) :: length, jb, dyw, h
+
+    real(C_DOUBLE), parameter :: BLAYER_RMAX = 1.2d0   ! max freestream growth ratio
+    integer :: n_in, n_out, i
+    real(C_DOUBLE) :: dy_edge, r
+    logical :: found
+
+    ok = .false.
+    if (h <= 0.0d0 .or. h >= 0.9d0*length .or. n < 16) return
+
+    found = .false.
+    do n_in = n - 2, max(8, n/5), -1
+        n_out = n - n_in
+        ! Last inner spacing of the natural one-sided line over [0, h].
+        dy_edge = h - natural_channel_coordinate(real(n_in - 1, C_DOUBLE)/real(n_in, C_DOUBLE), &
+            h, jb, .true._C_BOOL, dyw, n_in)
+        if (dy_edge <= 0.0d0) cycle
+        call solve_geom_ratio(dy_edge, n_out, length - h, r, found)
+        if (found .and. r <= BLAYER_RMAX) exit
+        found = .false.
+    end do
+    if (.not. found) return
+
+    ! Inner: natural one-sided over [0, h].
+    do i = 0, n_in
+        node(i) = natural_channel_coordinate(real(i, C_DOUBLE)/real(n_in, C_DOUBLE), &
+            h, jb, .true._C_BOOL, dyw, n_in)
+    end do
+    node(0) = 0.0d0
+    node(n_in) = h
+    ! Outer: geometric [h, length], first spacing dy_edge, ratio r.
+    do i = 1, n_out
+        node(n_in + i) = h + dy_edge*(r**i - 1.0d0)/(r - 1.0d0)
+    end do
+    node(n) = length
+    ok = .true.
+end function build_blayer_line
+
+! Solve dy*(r^m - 1)/(r - 1) = span for the geometric ratio r > 1 (bisection).
+! found = .false. if even the uniform spacing (r->1) already overshoots span
+! (no expansion solution: too many outer points for the region).
+subroutine solve_geom_ratio(dy, m, span, r, found)
+    real(C_DOUBLE), intent(in) :: dy, span
+    integer, intent(in) :: m
+    real(C_DOUBLE), intent(out) :: r
+    logical, intent(out) :: found
+
+    real(C_DOUBLE) :: lo, hi, mid
+    integer :: it
+
+    found = .false.
+    r = 1.0d0
+    if (m < 1 .or. dy <= 0.0d0 .or. span <= 0.0d0) return
+    if (dy*real(m, C_DOUBLE) >= span) return    ! uniform already overshoots
+
+    lo = 1.0d0 + 1.0d-9
+    hi = 3.0d0
+    if (dy*(hi**m - 1.0d0)/(hi - 1.0d0) < span) return   ! even r=3 undershoots
+    do it = 1, 100
+        mid = 0.5d0*(lo + hi)
+        if (dy*(mid**m - 1.0d0)/(mid - 1.0d0) > span) then
+            hi = mid
+        else
+            lo = mid
+        end if
+    end do
+    r = 0.5d0*(lo + hi)
+    found = .true.
+end subroutine solve_geom_ratio
 
 ! Sample the local, variable-staggered coordinates and the second-order
 ! finite-difference metrics for a window of nLocal cells starting at the

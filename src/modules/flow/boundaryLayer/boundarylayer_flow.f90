@@ -13,7 +13,7 @@ module boundarylayer_flow
     use, intrinsic :: iso_c_binding
     use :: flow_case_base, only: case_type
     use :: generic_flow, only: set_generic_defaults
-    use :: init, only: dns_type, grid_type, VAR_U, VAR_V, VAR_W, GRID_NATURAL
+    use :: init, only: dns_type, grid_type, VAR_U, VAR_V, VAR_W, GRID_BLAYER
     use :: blocks, only: block_set_type
     use :: boundary, only: boundary_type, boundary_face_id, &
         PATCH_INLET, PATCH_OUTLET, PATCH_WALL, PROFILE_BLASIUS
@@ -39,9 +39,14 @@ module boundarylayer_flow
         ! nondimensionalized by the inflow displacement thickness delta*_0 = 1
         ! (the Skote convention), [flow] re is Re_delta*,0.
         real(C_DOUBLE) :: theta_in = 1.0d0/BLASIUS_H
-        ! One-sided natural grid (wall clustering).
+        ! One-sided wall-clustered grid. GRID_BLAYER resolves the turbulent
+        ! layer [0, resolved_height] with natural clustering and coarsens the
+        ! freestream above it (the domain is far taller than the boundary
+        ! layer, so a plain natural line would waste most points aloft).
+        ! resolved_height should be ~2-3x the outlet delta99.
         real(C_DOUBLE) :: natural_blend_index = 45.0d0
         real(C_DOUBLE) :: dyw_plus = 0.15d0
+        real(C_DOUBLE) :: resolved_height = 30.0d0
         ! Trip forcing defaults (mirror the [force] trip_* keys; written into
         ! dns in apply_defaults, still overridable by an explicit [force]).
         logical :: trip_enabled = .true.
@@ -108,11 +113,13 @@ contains
         bc%facePatchType(wall)   = PATCH_WALL     ! no-slip plate
         bc%facePatchType(top)    = PATCH_OUTLET   ! displacement entrainment leaves
 
-        ! One-sided natural stretching, wall-clustered.
-        g%distribution(WALL_DIR) = GRID_NATURAL
+        ! Boundary-layer grid: natural wall clustering resolving
+        ! [0, resolved_height], geometric coarsening in the freestream above.
+        g%distribution(WALL_DIR) = GRID_BLAYER
         g%natural_one_sided(WALL_DIR) = .true.
         g%stretch(WALL_DIR) = this%natural_blend_index
         g%natural_dyw_plus(WALL_DIR) = this%dyw_plus
+        g%natural_outer_height(WALL_DIR) = this%resolved_height
 
         ! Trip forcing (Schlatter & Orlu): write the case defaults into the
         ! [force] dns fields; an explicit [force] section still overrides.
@@ -223,6 +230,9 @@ contains
         case ("dyw_plus")
             read(value, *, iostat=stat) real_value
             if (stat == 0) this%dyw_plus = real_value
+        case ("resolved_height", "outer_height")
+            read(value, *, iostat=stat) real_value
+            if (stat == 0) this%resolved_height = real_value
         case ("trip_enabled")
             if (read_bool(value, bool_value)) this%trip_enabled = bool_value
         case ("trip_x0")
