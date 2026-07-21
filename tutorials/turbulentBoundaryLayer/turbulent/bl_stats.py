@@ -2,12 +2,15 @@
 """Post-process boundaryLayer statistics (bl_stats.h5): (x,y) profiles
 averaged in span + time.
 
-  bl_stats.py bl_stats.h5 [--plot out.png] [--station 0.6]
+  bl_stats.py bl_stats.h5 [--plot out.png] [--retheta 450]
 
-Reports, vs streamwise x: Re_theta(x), shape factor H(x), skin friction
-c_f(x) = 2 nu (dU/dy)_wall / U_e^2 vs the turbulent correlation
-0.024 Re_theta^-1/4; and at a chosen station the mean U+(y+) vs the log law
-plus the Reynolds stresses u'v', u'_rms, v'_rms, w'_rms.
+Six-panel figure:
+  top:    c_f(Re_theta) vs 0.024 Re_theta^-1/4;  shape factor H(Re_theta)
+  middle: diagnostic function Xi = y+ dU+/dy+ (log-law indicator -> 1/kappa)
+          and the mean U+(y+), both at Re_theta = --retheta
+  bottom: Reynolds stresses at Re_theta = --retheta; Clauser pressure-gradient
+          parameter beta(Re_theta) = (delta*/tau_w) dp_e/dx = -(delta*/tau_w)
+          U_e dU_e/dx (~0 for a ZPG layer)
 
 Stats layout (see boundarylayer_stats.f90): profile[nx*ny, nstat] flattened
 y-fastest; nstat = [u,v,w,uu,vv,ww,uv,uw,vw,p]. These are the time+span
@@ -27,7 +30,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("h5")
     ap.add_argument("--plot", default=None)
-    ap.add_argument("--station", type=float, default=0.6)
+    ap.add_argument("--retheta", type=float, default=450.0,
+                    help="Re_theta of the station for the profile panels")
     a = ap.parse_args()
 
     with h5py.File(a.h5, "r") as f:
@@ -61,38 +65,83 @@ def main():
         i = int(frac * (nx - 1))
         print(f"{x[i]:7.1f} {reth[i]:9.1f} {H[i]:6.3f} {cf[i]:10.3e} {cf_corr[i]:10.3e}")
 
+    # Clauser pressure-gradient parameter beta = (delta*/tau_w) dp_e/dx, with
+    # dp_e/dx = -U_e dU_e/dx (rho = 1). U_e(x) is noisy at short averaging, so
+    # smooth it before differentiating; ~0 for a ZPG layer.
+    Ue_s = np.convolve(Ue, np.ones(21) / 21, mode="same")
+    dUedx = np.gradient(Ue_s, x)
+    beta = -(dstar / np.maximum(tauw, 1e-30)) * Ue * dUedx
+
+    # station nearest the requested Re_theta (only where the BL is turbulent)
+    i0 = np.searchsorted(reth, 250)                       # skip transition
+    i = i0 + int(np.argmin(np.abs(reth[i0:] - a.retheta)))
+    utau = np.sqrt(abs(tauw[i]))
+    yp = y * utau / nu
+    Up = Um[i] / utau
+    # diagnostic (indicator) function Xi = y+ dU+/dy+ = y dU/dy / u_tau
+    dUdy = np.gradient(Um[i], y)
+    Xi = y * dUdy / utau
+    print(f"profile station: x={x[i]:.0f}, Re_theta={reth[i]:.0f} (target {a.retheta:.0f})")
+
     if a.plot:
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
-        fig, ax = plt.subplots(1, 3, figsize=(15, 4))
-        ax[0].plot(reth, cf, label="measured")
-        ax[0].plot(reth, cf_corr, "k--", label=r"$0.024\,Re_\theta^{-1/4}$")
-        ax[0].set_xlabel(r"$Re_\theta$"); ax[0].set_ylabel(r"$c_f$")
-        ax[0].set_ylim(0, 0.008); ax[0].legend(); ax[0].set_title("skin friction")
+        fig, ax = plt.subplots(3, 2, figsize=(13, 13))
+        rt = f"$Re_\\theta={reth[i]:.0f}$"
 
-        i = int(a.station * (nx - 1))
-        utau = np.sqrt(abs(tauw[i]))
-        yp = y * utau / nu
-        ax[1].semilogx(yp, Um[i] / utau, ".", ms=4, label=f"x={x[i]:.0f}")
+        # (0,0) c_f(Re_theta)
+        m = reth > 250
+        ax[0, 0].plot(reth[m], cf[m], label="measured")
+        ax[0, 0].plot(reth[m], cf_corr[m], "k--", label=r"$0.024\,Re_\theta^{-1/4}$")
+        ax[0, 0].set_xlabel(r"$Re_\theta$"); ax[0, 0].set_ylabel(r"$c_f$")
+        ax[0, 0].set_ylim(0, 0.006); ax[0, 0].legend(); ax[0, 0].set_title("skin friction")
+
+        # (0,1) H(Re_theta)
+        ax[0, 1].plot(reth[m], H[m])
+        ax[0, 1].axhline(1.4, ls=":", c="grey", label="H≈1.4 (high-Re TBL)")
+        ax[0, 1].set_xlabel(r"$Re_\theta$"); ax[0, 1].set_ylabel("H")
+        ax[0, 1].set_ylim(1.2, 1.9); ax[0, 1].legend(); ax[0, 1].set_title("shape factor")
+
+        # (1,0) diagnostic function Xi = y+ dU+/dy+
+        ax[1, 0].semilogx(yp, Xi, ".", ms=4)
+        ax[1, 0].axhline(1.0 / KAPPA, ls="--", c="k", label=r"$1/\kappa$")
+        ax[1, 0].set_xlabel(r"$y^+$"); ax[1, 0].set_ylabel(r"$\Xi=y^+\,dU^+/dy^+$")
+        ax[1, 0].set_xlim(1, None); ax[1, 0].set_ylim(0, 5); ax[1, 0].legend()
+        ax[1, 0].set_title(f"diagnostic function ({rt})")
+
+        # (1,1) mean profile U+(y+)
+        ax[1, 1].semilogx(yp, Up, ".", ms=4, label="DNS")
         yl = np.logspace(0, np.log10(yp.max()), 50)
-        ax[1].semilogx(yl, np.log(yl) / KAPPA + B, "k--", label="log law")
-        ax[1].semilogx(yl[yl < 12], yl[yl < 12], "k:", label=r"$U^+=y^+$")
-        ax[1].set_xlabel(r"$y^+$"); ax[1].set_ylabel(r"$U^+$")
-        ax[1].set_xlim(1, None); ax[1].legend(); ax[1].set_title("mean profile")
+        ax[1, 1].semilogx(yl, np.log(yl) / KAPPA + B, "k--", label="log law")
+        ax[1, 1].semilogx(yl[yl < 12], yl[yl < 12], "k:", label=r"$U^+=y^+$")
+        ax[1, 1].set_xlabel(r"$y^+$"); ax[1, 1].set_ylabel(r"$U^+$")
+        ax[1, 1].set_xlim(1, None); ax[1, 1].legend()
+        ax[1, 1].set_title(f"mean profile ({rt})")
 
-        # Reynolds stresses (fluctuation = <ab> - <a><b>), in wall units
+        # (2,0) Reynolds stresses (fluctuations, wall units)
         uu = prof[i, :, UU] - prof[i, :, U] ** 2
         vv = prof[i, :, VV] - prof[i, :, V] ** 2
         ww = prof[i, :, WW] - prof[i, :, W] ** 2
         uv = prof[i, :, UV] - prof[i, :, U] * prof[i, :, V]
-        ax[2].plot(yp, np.sqrt(np.maximum(uu, 0)) / utau, label=r"$u'_{rms}$")
-        ax[2].plot(yp, np.sqrt(np.maximum(vv, 0)) / utau, label=r"$v'_{rms}$")
-        ax[2].plot(yp, np.sqrt(np.maximum(ww, 0)) / utau, label=r"$w'_{rms}$")
-        ax[2].plot(yp, -uv / utau ** 2, label=r"$-u'v'$")
-        ax[2].set_xlabel(r"$y^+$"); ax[2].set_xlim(0, min(yp.max(), 300))
-        ax[2].legend(); ax[2].set_title("Reynolds stresses")
-        fig.tight_layout(); fig.savefig(a.plot, dpi=150)
+        ax[2, 0].plot(yp, np.sqrt(np.maximum(uu, 0)) / utau, label=r"$u'_{rms}$")
+        ax[2, 0].plot(yp, np.sqrt(np.maximum(vv, 0)) / utau, label=r"$v'_{rms}$")
+        ax[2, 0].plot(yp, np.sqrt(np.maximum(ww, 0)) / utau, label=r"$w'_{rms}$")
+        ax[2, 0].plot(yp, -uv / utau ** 2, label=r"$-\overline{u'v'}$")
+        ax[2, 0].set_xlabel(r"$y^+$"); ax[2, 0].set_xlim(0, min(yp.max(), 400))
+        ax[2, 0].legend(); ax[2, 0].set_title(f"Reynolds stresses ({rt})")
+
+        # (2,1) Clauser beta(Re_theta); exclude the outlet region where the
+        # edge-velocity gradient (hence beta) is corrupted by the outflow BC
+        mb = m & (x < 0.9 * x[-1])
+        ax[2, 1].plot(reth[mb], beta[mb])
+        ax[2, 1].axhline(0.0, ls="--", c="k", label=r"$\beta=0$ (ZPG)")
+        ax[2, 1].set_xlabel(r"$Re_\theta$"); ax[2, 1].set_ylabel(r"$\beta$")
+        ax[2, 1].set_ylim(-0.5, 0.5); ax[2, 1].legend()
+        ax[2, 1].set_title("Clauser pressure-gradient parameter")
+
+        fig.suptitle(f"boundaryLayer statistics — t={t:.0f}, Re_δ*,0={re:.0f}", y=1.0)
+        fig.tight_layout(); fig.savefig(a.plot, dpi=140)
         print("wrote", a.plot)
 
 
