@@ -6,8 +6,9 @@ averaged in span + time.
 
 Six-panel figure:
   top:    c_f(Re_theta) vs 0.024 Re_theta^-1/4;  shape factor H(Re_theta)
-  middle: diagnostic function Xi = y+ dU+/dy+ (log-law indicator -> 1/kappa)
-          and the mean U+(y+), both at Re_theta = --retheta
+  middle: Alfredsson diagnostic plot u'/U vs U/U_inf (with the linear fit
+          u'/U = 0.286 - 0.255 U/U_inf) and the mean U+(y+), both at
+          Re_theta = --retheta
   bottom: Reynolds stresses at Re_theta = --retheta; Clauser pressure-gradient
           parameter beta(Re_theta) = (delta*/tau_w) dp_e/dx = -(delta*/tau_w)
           U_e dU_e/dx (~0 for a ZPG layer)
@@ -78,9 +79,6 @@ def main():
     utau = np.sqrt(abs(tauw[i]))
     yp = y * utau / nu
     Up = Um[i] / utau
-    # diagnostic (indicator) function Xi = y+ dU+/dy+ = y dU/dy / u_tau
-    dUdy = np.gradient(Um[i], y)
-    Xi = y * dUdy / utau
     print(f"profile station: x={x[i]:.0f}, Re_theta={reth[i]:.0f} (target {a.retheta:.0f})")
 
     if a.plot:
@@ -90,25 +88,31 @@ def main():
         fig, ax = plt.subplots(3, 2, figsize=(13, 13))
         rt = f"$Re_\\theta={reth[i]:.0f}$"
 
-        # (0,0) c_f(Re_theta)
-        m = reth > 250
+        m = reth > 250          # turbulent range (skip transition)
+
+        # (0,0) c_f(Re_theta): zoom on the turbulent band
         ax[0, 0].plot(reth[m], cf[m], label="measured")
         ax[0, 0].plot(reth[m], cf_corr[m], "k--", label=r"$0.024\,Re_\theta^{-1/4}$")
         ax[0, 0].set_xlabel(r"$Re_\theta$"); ax[0, 0].set_ylabel(r"$c_f$")
-        ax[0, 0].set_ylim(0, 0.006); ax[0, 0].legend(); ax[0, 0].set_title("skin friction")
+        ax[0, 0].set_ylim(0.003, 0.006); ax[0, 0].legend(); ax[0, 0].set_title("skin friction")
 
-        # (0,1) H(Re_theta)
+        # (0,1) H(Re_theta): zoom on the turbulent plateau
         ax[0, 1].plot(reth[m], H[m])
-        ax[0, 1].axhline(1.4, ls=":", c="grey", label="H≈1.4 (high-Re TBL)")
+        ax[0, 1].axhline(1.4, ls=":", c="grey", label="H→1.4 (high-Re TBL)")
         ax[0, 1].set_xlabel(r"$Re_\theta$"); ax[0, 1].set_ylabel("H")
-        ax[0, 1].set_ylim(1.2, 1.9); ax[0, 1].legend(); ax[0, 1].set_title("shape factor")
+        ax[0, 1].set_ylim(1.35, 1.75); ax[0, 1].legend(); ax[0, 1].set_title("shape factor")
 
-        # (1,0) diagnostic function Xi = y+ dU+/dy+
-        ax[1, 0].semilogx(yp, Xi, ".", ms=4)
-        ax[1, 0].axhline(1.0 / KAPPA, ls="--", c="k", label=r"$1/\kappa$")
-        ax[1, 0].set_xlabel(r"$y^+$"); ax[1, 0].set_ylabel(r"$\Xi=y^+\,dU^+/dy^+$")
-        ax[1, 0].set_xlim(1, None); ax[1, 0].set_ylim(0, 5); ax[1, 0].legend()
-        ax[1, 0].set_title(f"diagnostic function ({rt})")
+        # (1,0) Alfredsson diagnostic plot: u'/U vs U/U_inf, with the linear fit
+        Uinf = Ue[i]
+        urms = np.sqrt(np.maximum(prof[i, :, UU] - prof[i, :, U] ** 2, 0.0))
+        good = Um[i] > 0.15 * Uinf                       # drop the near-wall U->0 divergence
+        ax[1, 0].plot(Um[i][good] / Uinf, urms[good] / Um[i][good], ".", ms=4, label="DNS")
+        xl = np.linspace(0.15, 1.0, 50)
+        ax[1, 0].plot(xl, 0.286 - 0.255 * xl, "k--",
+                      label=r"$0.286-0.255\,U/U_\infty$")
+        ax[1, 0].set_xlabel(r"$U/U_\infty$"); ax[1, 0].set_ylabel(r"$u'/U$")
+        ax[1, 0].set_xlim(0.15, 1.0); ax[1, 0].set_ylim(0, 0.3); ax[1, 0].legend()
+        ax[1, 0].set_title(f"diagnostic plot ({rt})")
 
         # (1,1) mean profile U+(y+)
         ax[1, 1].semilogx(yp, Up, ".", ms=4, label="DNS")
@@ -116,7 +120,7 @@ def main():
         ax[1, 1].semilogx(yl, np.log(yl) / KAPPA + B, "k--", label="log law")
         ax[1, 1].semilogx(yl[yl < 12], yl[yl < 12], "k:", label=r"$U^+=y^+$")
         ax[1, 1].set_xlabel(r"$y^+$"); ax[1, 1].set_ylabel(r"$U^+$")
-        ax[1, 1].set_xlim(1, None); ax[1, 1].legend()
+        ax[1, 1].set_xlim(1, None); ax[1, 1].set_ylim(0, 25); ax[1, 1].legend()
         ax[1, 1].set_title(f"mean profile ({rt})")
 
         # (2,0) Reynolds stresses (fluctuations, wall units)
@@ -129,7 +133,8 @@ def main():
         ax[2, 0].plot(yp, np.sqrt(np.maximum(ww, 0)) / utau, label=r"$w'_{rms}$")
         ax[2, 0].plot(yp, -uv / utau ** 2, label=r"$-\overline{u'v'}$")
         ax[2, 0].set_xlabel(r"$y^+$"); ax[2, 0].set_xlim(0, min(yp.max(), 400))
-        ax[2, 0].legend(); ax[2, 0].set_title(f"Reynolds stresses ({rt})")
+        ax[2, 0].set_ylim(0, 3.0); ax[2, 0].legend()
+        ax[2, 0].set_title(f"Reynolds stresses ({rt})")
 
         # (2,1) Clauser beta(Re_theta); exclude the outlet region where the
         # edge-velocity gradient (hence beta) is corrupted by the outflow BC
@@ -137,7 +142,7 @@ def main():
         ax[2, 1].plot(reth[mb], beta[mb])
         ax[2, 1].axhline(0.0, ls="--", c="k", label=r"$\beta=0$ (ZPG)")
         ax[2, 1].set_xlabel(r"$Re_\theta$"); ax[2, 1].set_ylabel(r"$\beta$")
-        ax[2, 1].set_ylim(-0.5, 0.5); ax[2, 1].legend()
+        ax[2, 1].set_ylim(-0.3, 0.3); ax[2, 1].legend()
         ax[2, 1].set_title("Clauser pressure-gradient parameter")
 
         fig.suptitle(f"boundaryLayer statistics — t={t:.0f}, Re_δ*,0={re:.0f}", y=1.0)
