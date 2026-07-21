@@ -129,11 +129,18 @@ def main():
     ap.add_argument("--boxes", type=float, nargs="+", default=[1.5, 2.5, 4.0])
     ap.add_argument("--re", type=float, default=4.0e5)
     ap.add_argument("--nose", type=float, nargs=2, default=[50.0, 48.0])
+    ap.add_argument("--aoa", type=float, default=0.0,
+                    help="angle of attack in degrees: rotate the body-axis "
+                         "(Fx, Fz) force into wind axes (drag along the "
+                         "freestream, lift normal to it)")
     a = ap.parse_args()
+    ca, sa = np.cos(np.radians(a.aoa)), np.sin(np.radians(a.aoa))
     for path in a.h5:
         print(f"== {path}")
         for m in a.boxes:
-            cd, cl = cv_force(path, a.nose, m, a.re)
+            fx, fz = cv_force(path, a.nose, m, a.re)
+            cd = fx*ca + fz*sa      # wind axes
+            cl = fz*ca - fx*sa
             print(f"  CV margin {m:4.1f} c: C_D = {cd:+.5f}   C_L = {cl:+.5f}")
 
 

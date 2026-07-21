@@ -66,28 +66,54 @@ def read_generic_polar(path):
     return np.array(rows)
 
 
+def read_cv_polar(path):
+    """cv_polar_raw.txt rows 'alpha C_D C_L' (several samples per alpha:
+    boxes x snapshots, wind axes already). Returns per-alpha mean and
+    half-spread."""
+    raw = np.loadtxt(path)
+    rows = []
+    for al in np.unique(raw[:, 0]):
+        s = raw[raw[:, 0] == al]
+        rows.append((al, s[:, 2].mean(), s[:, 1].mean(),
+                     0.5*(s[:, 2].max() - s[:, 2].min()),
+                     0.5*(s[:, 1].max() - s[:, 1].min())))
+    return rows
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--tail", type=float, default=0.2)
     ap.add_argument("--out", default="polars.png")
-    ap.add_argument("--xfoil", default=None)
+    ap.add_argument("--cv", default="cv_polar_raw.txt",
+                    help="wind-axis CV force samples 'alpha C_D C_L' "
+                         "(the authoritative statistic; falls back to the "
+                         "penalization forces_aoa*.txt if absent)")
+    ap.add_argument("--xfoil", action="append", default=[],
+                    help="XFOIL polar (PACC dump or plain 'alpha CL CD'); "
+                         "repeatable")
     ap.add_argument("--openfoam", default=None)
     a = ap.parse_args()
 
     here = os.path.dirname(os.path.abspath(__file__))
     rows = []
-    for p in sorted(glob.glob(os.path.join(here, "forces_aoa*.txt"))):
-        m = re.search(r"forces_aoa(m?\d+)\.txt$", p)
-        if not m:
-            continue
-        alpha = float(m.group(1).replace("m", "-"))
-        cl, cd, scl, scd = read_forces(p, a.tail)
-        rows.append((alpha, cl, cd, scl, scd))
-        conv = "" if scl < 5e-3 else "   <-- tail rms high, check convergence"
-        print(f"alpha {alpha:+5.1f}: C_L = {cl:+.4f} (rms {scl:.1e})  "
-              f"C_D = {cd:.4f} (rms {scd:.1e}){conv}")
+    if a.cv and os.path.exists(os.path.join(here, a.cv)):
+        rows = read_cv_polar(os.path.join(here, a.cv))
+        for al, cl, cd, dcl, dcd in rows:
+            print(f"alpha {al:+5.1f}: C_L = {cl:+.4f} (+-{dcl:.4f})  "
+                  f"C_D = {cd:.4f} (+-{dcd:.4f})   [CV wind-axis]")
+    else:
+        for p in sorted(glob.glob(os.path.join(here, "forces_aoa*.txt"))):
+            m = re.search(r"forces_aoa(m?\d+)\.txt$", p)
+            if not m:
+                continue
+            alpha = float(m.group(1).replace("m", "-"))
+            cl, cd, scl, scd = read_forces(p, a.tail)
+            rows.append((alpha, cl, cd, scl, scd))
+            conv = "" if scl < 5e-3 else "   <-- tail rms high, check convergence"
+            print(f"alpha {alpha:+5.1f}: C_L = {cl:+.4f} (rms {scl:.1e})  "
+                  f"C_D = {cd:.4f} (rms {scd:.1e}){conv}")
     if not rows:
-        raise SystemExit("no forces_aoa*.txt found -- run the sweep first")
+        raise SystemExit("no CV polar and no forces_aoa*.txt -- run the sweep")
     rows.sort()
     pol = np.array(rows)
     if pol.shape[0] >= 2:
@@ -103,12 +129,18 @@ def main():
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 4.5))
     ax1.errorbar(pol[:, 0], pol[:, 1], yerr=pol[:, 3], marker="o",
-                 label="mobydiff (L6-xz IBM)", zorder=3)
-    ax2.plot(pol[:, 2], pol[:, 1], marker="o", label="mobydiff (L6-xz IBM)", zorder=3)
-    if a.xfoil:
-        xf = read_xfoil_polar(a.xfoil)
-        ax1.plot(xf[:, 0], xf[:, 1], "s--", ms=4, label="XFOIL")
-        ax2.plot(xf[:, 2], xf[:, 1], "s--", ms=4, label="XFOIL")
+                 label="mobydiff (C10 IBM, CV)", zorder=3)
+    ax2.errorbar(pol[:, 2], pol[:, 1], xerr=pol[:, 4], marker="o",
+                 label="mobydiff (C10 IBM, CV)", zorder=3)
+    for xfp in a.xfoil:
+        try:
+            xf = read_xfoil_polar(xfp)
+        except SystemExit:
+            xf = read_generic_polar(xfp)
+        lab = os.path.basename(xfp).replace(".dat", "").replace(".txt", "")
+        # generic files are alpha CL CD; PACC dumps alpha CL CD too
+        ax1.plot(xf[:, 0], xf[:, 1], "s--", ms=4, label=lab)
+        ax2.plot(xf[:, 2], xf[:, 1], "s--", ms=4, label=lab)
     if a.openfoam:
         of = read_generic_polar(a.openfoam)
         ax1.plot(of[:, 0], of[:, 1], "^:", ms=5, label="OpenFOAM")

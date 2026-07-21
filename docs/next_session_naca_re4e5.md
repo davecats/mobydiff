@@ -1,8 +1,36 @@
-# NACA 0012 Re 4e5 campaign — PAUSED 2026-07-16 (fan/interface observations + state)
+# NACA 0012 Re 4e5 campaign — COMPLETE 2026-07-21 (C10 sweep done; results below)
 
-Paused by user decision pending a simplification/improvement of the
-geometric preparation. Everything below is committed; no simulations or
-generations are running on any host.
+STATUS (2026-07-21): the campaign RESUMED on the prepare/solve-split code
+(moby_prepare built ibm_coeff_c10.h5 in 4m26s, 10615 leaves / 5.4M cells)
+and the FULL C10 sweep (alpha = -2..5, Re 4e5, SST + `[rans]
+ambient_sustain`, tu = 5 % / nut_ratio = 10, dt = 1e-4, 150k steps to
+t = 15 per angle) COMPLETED across istmcorax (5/4/3/2), istmcetus GPU1
+(1/-1) and the local 3060 (-2); aoa0 ran first as the verification.
+KEY FIX on resume: the original nut_ratio = 1000 ambient DESTROYED the
+first aoa0 (explicit eddy-diffusion dt bound ~1e-5 vs dt 5e-5; zombied at
+dt 1e-8) — the Rumsey ambient-sustain sources (commit 94a9249) make
+(k_inf, omega_inf) an exact fixed point so tu = 5 % arrives at the body
+(measured EXACTLY 5.00 % at 2c upstream) with nut_inf = 10 nu only.
+aoa0 gates ALL PASS: CV forces box-independent (C_D 0.01185/0.01187/
+0.01240 at 1.5/2.5/4c), C_L(0) = -0.0003, NO interface artifacts (the R1
+fan is GONE at the C10 interface distances; striping probe at distant
+interfaces at/below the quiet-band floor; band_filter stays OFF), only
+the surface-attached LE staircase jaggedness in Cf at x/c < 0.05 remains.
+RESULTS (tutorials/naca: polars_c10.png, polar_mobydiff.dat,
+cv_polar_raw.txt, cpcf_c10_aoa*_{cp,cf}.dat; XFOIL refs
+xfoil_re4e5_n{1,9}.dat — the Debian xfoil FPE-crashes on any second
+viscous point and on PACC: run ONE ALFA PER PROCESS and parse stdout):
+C_L antisymmetric to 0.3 % (+-2: 0.1804/-0.1810); slope 0.0884/deg = 81 %
+of 2pi (XFOIL n1: 0.108/deg); C_L(5) = 0.432+-0.022 vs XFOIL-n1 0.533
+(-19 %, deficit grows with alpha); C_D(0) = 0.0128+-0.0018 vs n1 0.0104.
+Suspected deficit drivers (unproven, next investigation): y+ 2.7-4.1
+resolved-wall under-resolution (T3: first cells below y+ 30 carry the
+10-19 % log-line error class), LE staircase suction-peak smearing
+(measured peak -1.58 at alpha 5 vs XFOIL ~ -1.75), first-order scalar
+upwind transition front. Compare against the user's OpenFOAM SST data
+(plot_polars.py --openfoam) before touching anything.
+
+The pre-resume pause notes (fan analysis, R1 history) follow unchanged.
 
 ## The fan question: is it a 2:1-interface problem?
 
