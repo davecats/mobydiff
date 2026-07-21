@@ -34,12 +34,49 @@ The top is raised to 100 δ*₀ (vs Skote's 30) since the free wall-normal
 - `y_min`: no-slip **wall** (the plate); `y_max`: **outlet** (top).
 - `z`: periodic (spanwise homogeneous).
 
-## Resolution
+## Resolution and the wall-normal grid
 
 Standard second-order-FD DNS at the turbulent end (Re_θ ≈ 700,
-l⁺ = ν/u_τ ≈ 0.046 δ*): Δx⁺ ≈ 8.5, Δz⁺ ≈ 3.6, Δy⁺_wall ≈ 0.3 growing to
-Δy_top ≈ 0.54 δ* by one-sided natural stretching. Production grid
-(`zpg.ini`): 1280 × 256 × 192 = 63 M cells.
+l⁺ = ν/u_τ ≈ 0.046 δ*): Δx⁺ ≈ 8.5, Δz⁺ ≈ 3.6, Δy⁺_wall ≈ 0.2.
+
+**Wall-normal grid — `blayer` (two-region).** A plain `natural`
+(Pirozzoli-Orlandi) line assumes the turbulent wall layer fills the whole
+domain (true for a channel). Here the domain is 100 δ*₀ tall but the
+boundary layer only reaches δ99 ≈ 8–10 δ* at the outlet, so a plain natural
+line put **~65% of the wall-normal points in the quiescent freestream** and
+under-resolved the BL. The `boundaryLayer` case therefore uses the
+**`blayer`** grid: natural wall clustering over `[0, resolved_height]` (the
+turbulent region, ~2–3× δ99_max) then a geometric coarsening to the top
+(growth ratio ≤ 1.2). At the same ny it roughly **doubles** the BL
+resolution, or lets ny be ~halved for the same resolution.
+
+Production grid (`blayer`, resolved_height = 30): **1280 × 160 × 192 =
+39.3 M cells** (ny = 160 gives 72 points below y = 10 δ* and Δy_wall ≈
+0.010 — *more* BL resolution than the old plain-natural 1280 × 256 × 192 =
+63 M grid, at 38% fewer cells).
+
+## Production cost estimate (RTX 5090)
+
+Measured on the **RTX 5090** (istmcorax, the fastest machine available), with
+the current code and the full 39.3 M-cell production grid: **1.43 s/step**
+(36 ns/cell/step). The trip forcing's per-substage host fill + full-field
+device copy is a ~15–20 % overhead (an on-device trip would speed this up;
+it is why the 5090 is only ~1.8× the local RTX 3060 here rather than the
+~2.4× core-solver ratio).
+
+A converged run needs the transition/wash-out transient plus a
+time+span-averaging window; at dt ≈ 0.018 (near-wall Peclet limit) one
+domain flow-through (L_x/U∞ = 500 t.u.) is ~28 000 steps:
+
+| campaign | flow-throughs | steps | wall-clock (1 RTX 5090) |
+|----------|---------------|-------|-------------------------|
+| lean     | 3 + 10        | 360 k | ~6.0 days |
+| nominal  | 3 + 12        | 415 k | ~6.9 days |
+| thorough | 3 + 17        | 555 k | ~9.2 days |
+
+So **~6–9 days on a single RTX 5090** (the old 63 M grid would be ~11 days —
+the `blayer` grid saves ~40 %). This parallelizes across ranks/GPUs
+(istmcetus's 2× A6000, the local 3060) for proportionally less wall-clock.
 
 ## The `boundaryLayer` flow case (recommended setup)
 
