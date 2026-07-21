@@ -27,8 +27,22 @@ Suspected deficit drivers (unproven, next investigation): y+ 2.7-4.1
 resolved-wall under-resolution (T3: first cells below y+ 30 carry the
 10-19 % log-line error class), LE staircase suction-peak smearing
 (measured peak -1.58 at alpha 5 vs XFOIL ~ -1.75), first-order scalar
-upwind transition front. Compare against the user's OpenFOAM SST data
-(plot_polars.py --openfoam) before touching anything.
+upwind transition front.
+OPENFOAM REFERENCE (compared 2026-07-21, tutorials/naca/
+compare_openfoam.py + cpcf_vs_openfoam_aoa5.png; case
+~/auswertung/20251027_MA_JannikWeber/run: simpleFoam kOmegaSST OF7,
+alpha 5, Re 4e5, 48400-cell body-fixed 2D mesh, wall y+ avg 1.31,
+decaying inlet turbulence tuned to Tu ~ 7 % at the LE): Cl = 0.5142,
+Cd = 0.01339 — close to XFOIL n1 (0.533/0.0124). vs mobydiff C10
+(0.432 +- 0.022 / 0.0157 +- 0.003): C_L -16 %, C_D +17 %. Surface
+comparison: Cp SHAPES agree, deficit is the suction-side loading in
+x/c < 0.4 (peak -1.59 vs -1.78, -11 %); pressure side matches; Cf
+midchord levels agree (~0.0075) BUT OF shows a pseudo-laminar nose dip
+(Cf ~ 0.002 at x/c 0.05-0.1, transition at ~0.12) while C10 is
+turbulent from the staircase LE, and aft of x/c 0.4 the C10 suction Cf
+sags below OF (thicker decelerated BL); TE separation onset 0.96 (C10)
+vs 0.996 (OF). All consistent with the y+ 3-4 wall under-resolution +
+LE staircase smearing hypothesis — the OF case resolves y+ 1.3.
 
 The pre-resume pause notes (fan analysis, R1 history) follow unchanged.
 
