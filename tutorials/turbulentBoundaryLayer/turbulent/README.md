@@ -39,6 +39,17 @@ The top is raised to 100 δ*₀ (vs Skote's 30) since the free wall-normal
 Standard second-order-FD DNS at the turbulent end (Re_θ ≈ 700,
 l⁺ = ν/u_τ ≈ 0.046 δ*): Δx⁺ ≈ 8.5, Δz⁺ ≈ 3.6, Δy⁺_wall ≈ 0.2.
 
+**Why nx = 1280, not Skote's 640.** Skote's ZPG (Table 2.3) uses 640 points
+in x — but his code is **pseudo-spectral** (Fourier in x/z), which resolves
+far more per point than mobydiff's **2nd-order finite differences**. His 640
+Fourier modes over L_x = 600 δ* are a collocation Δx⁺ ≈ 14 (spectral is
+accurate there); mobydiff at the same 640 (over L_x = 500) would be Δx⁺ ≈ 17,
+which is *under-resolved* for 2nd-order FD (which needs Δx⁺ ≈ 6–10). So
+nx = 1280 (Δx⁺ ≈ 8.5) is the FD-equivalent of Skote's spectral grid — the
+factor ~2 is exactly the spectral-vs-2nd-order resolving-power gap, not
+over-specification. nx = 1024 (Δx⁺ ≈ 10.6) is an acceptable coarser end that
+would trim ~20 % of the cost.
+
 **Wall-normal grid — `blayer` (two-region).** A plain `natural`
 (Pirozzoli-Orlandi) line assumes the turbulent wall layer fills the whole
 domain (true for a channel). Here the domain is 100 δ*₀ tall but the
@@ -58,11 +69,12 @@ Production grid (`blayer`, resolved_height = 30): **1280 × 160 × 192 =
 ## Production cost estimate (RTX 5090)
 
 Measured on the **RTX 5090** (istmcorax, the fastest machine available), with
-the current code and the full 39.3 M-cell production grid: **1.43 s/step**
-(36 ns/cell/step). The trip forcing's per-substage host fill + full-field
-device copy is a ~15–20 % overhead (an on-device trip would speed this up;
-it is why the 5090 is only ~1.8× the local RTX 3060 here rather than the
-~2.4× core-solver ratio).
+the current code and the full 39.3 M-cell production grid: **0.183 s/step**
+(4.7 ns/cell/step — bandwidth-bound core solver). The trip forcing is
+computed **on the device** (only its small spanwise coefficients cross the
+PCIe bus, not the whole force field every substage); that alone was a 7.8×
+speedup over the earlier host-fill trip (1.43 s/step), which was ~85 % serial
+host loop + H2D copy at production scale.
 
 A converged run needs the transition/wash-out transient plus a
 time+span-averaging window; at dt ≈ 0.018 (near-wall Peclet limit) one
@@ -70,13 +82,15 @@ domain flow-through (L_x/U∞ = 500 t.u.) is ~28 000 steps:
 
 | campaign | flow-throughs | steps | wall-clock (1 RTX 5090) |
 |----------|---------------|-------|-------------------------|
-| lean     | 3 + 10        | 360 k | ~6.0 days |
-| nominal  | 3 + 12        | 415 k | ~6.9 days |
-| thorough | 3 + 17        | 555 k | ~9.2 days |
+| lean     | 3 + 10        | 360 k | ~18 h |
+| nominal  | 3 + 12        | 415 k | ~21 h |
+| thorough | 3 + 17        | 555 k | ~28 h |
 
-So **~6–9 days on a single RTX 5090** (the old 63 M grid would be ~11 days —
-the `blayer` grid saves ~40 %). This parallelizes across ranks/GPUs
-(istmcetus's 2× A6000, the local 3060) for proportionally less wall-clock.
+So **~1 day on a single RTX 5090** for a converged campaign (the `blayer`
+grid, 39.3 M vs the old plain-natural 63 M, and the on-device trip together
+brought this down from the ~7-day host-fill estimate). It parallelizes
+further across ranks/GPUs (istmcetus's 2× A6000) for proportionally less
+wall-clock.
 
 ## The `boundaryLayer` flow case (recommended setup)
 

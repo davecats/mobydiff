@@ -206,22 +206,6 @@ contains
         end if
     end subroutine trip_gen_coeffs
 
-    ! Evaluate a spanwise random function g(z) = sum_n a_n cos(2 pi n z/Lz)
-    ! + b_n sin(2 pi n z/Lz) (period Lz, unit rms by construction).
-    real(C_DOUBLE) function trip_geval(bf, a, b, z) result(g)
-        type(bodyforce_type), intent(in) :: bf
-        real(C_DOUBLE), intent(in) :: a(:), b(:), z
-        real(C_DOUBLE) :: w, arg
-        integer :: n
-
-        w = 8.0d0*atan(1.0d0)/bf%trip_lz        ! 2*pi/Lz
-        g = 0.0d0
-        do n = 1, size(a)
-            arg = w*real(n, C_DOUBLE)*z
-            g = g + a(n)*cos(arg) + b(n)*sin(arg)
-        end do
-    end function trip_geval
-
     subroutine destroy_bodyforce(bf)
         type(bodyforce_type), intent(inout) :: bf
 
@@ -321,8 +305,8 @@ contains
         ! profile/file are already filled at init.
         if (.not. bodyforce_is_enabled(bf)) return
         if (bf%source == SRC_TRIP) then
+            ! fill_trip fills bf%f directly on the device (no host copy).
             call fill_trip(bf, blk, t)
-            call bodyforce_update_to_device(bf)
             return
         end if
         if (bf%source /= SRC_CUSTOM) return
@@ -348,19 +332,21 @@ contains
         call bodyforce_update_to_device(bf)
     end subroutine update_bodyforce
 
-    ! Fill f with the Schlatter & Orlu trip force on the wall-normal (v)
-    ! component at the current time t (host-side; caller maps to the device).
-    ! Advances the random walk so g_k / g_{k+1} bracket t, then writes
-    !   f_v = amp * exp(-((x-x0)/lx)^2 - (y/ly)^2) * g(z,t)
-    ! at each v-face; u and w components stay zero.
+    ! Schlatter & Orlu trip force on the wall-normal (v) component at time t:
+    !   f_v = amp * exp(-((x-x0)/lx)^2 - (y/ly)^2) * g(z,t).
+    ! The random walk (regenerating the nmodes spanwise coefficients each ts)
+    ! is advanced on the HOST -- cheap and rare (once per ts ~ hundreds of
+    ! steps) -- and the FIELD is filled by a device kernel (fill_trip_kernel):
+    ! only the small coefficient arrays cross to the device, not the whole
+    ! force field every substage. No host-side full-field loop, no H2D copy of
+    ! f. The arithmetic matches the old host fill exactly (CPU bit-exact).
     subroutine fill_trip(bf, blk, t)
         type(bodyforce_type), intent(inout) :: bf
         type(block_set_type), intent(in) :: blk
         real(C_DOUBLE), intent(in) :: t
 
-        integer :: i, j, k, b, nx, ny, nz
         integer(C_INT) :: kidx
-        real(C_DOUBLE) :: p, bstep, x, y, z, env, gz, ex
+        real(C_DOUBLE) :: p, bstep
 
         ! Advance the walk until g_k / g_{k+1} bracket [k*ts, (k+1)*ts] ∋ t.
         kidx = int(floor(t/bf%trip_ts), C_INT)
@@ -374,31 +360,68 @@ contains
         p = t/bf%trip_ts - real(kidx, C_DOUBLE)
         bstep = p*p*(3.0d0 - 2.0d0*p)        ! 3p^2 - 2p^3, C^1 smooth step
 
+        call fill_trip_kernel(bf, blk, bstep, bf%trip_ak, bf%trip_bk, &
+            bf%trip_akp1, bf%trip_bkp1)
+    end subroutine fill_trip
+
+    ! Device kernel: fill bf%f's v-component from the (small) coefficient
+    ! arrays, evaluating the Gaussian envelope and the spanwise Fourier sum
+    ! per cell. bf%f and blk%{x,y,z} are already device-resident; only the
+    ! coefficients + scalars cross. On the CPU build this is a plain loop.
+    subroutine fill_trip_kernel(bf, blk, bstep, ak, bk, akp1, bkp1)
+        type(bodyforce_type), intent(inout) :: bf
+        type(block_set_type), intent(in) :: blk
+        real(C_DOUBLE), intent(in) :: bstep, ak(:), bk(:), akp1(:), bkp1(:)
+
+        integer :: i, j, k, b, m, nx, ny, nz, nBlocks, nm
+        real(C_DOUBLE) :: x, y, z, ex, env, arg, w, gk, gkp1
+        real(C_DOUBLE) :: amp, x0, lx, ly
+
         nx = int(blk%nb(1)); ny = int(blk%nb(2)); nz = int(blk%nb(3))
-        do b = 1, int(blk%nBlocks)
-            do k = 1, nz
-                do j = 1, ny
-                    do i = 1, nx
-                        bf%f(i,j,k,VAR_U,b) = 0.0d0
-                        bf%f(i,j,k,VAR_W,b) = 0.0d0
-                        ! v (VAR_V) lives at blk%{x,y,z}(:,VAR_V,b).
-                        x = blk%x(i, VAR_V, b)
-                        y = blk%y(j, VAR_V, b)
-                        z = blk%z(k, VAR_V, b)
-                        ex = -((x - bf%trip_x0)/bf%trip_lx)**2 - (y/bf%trip_ly)**2
-                        if (ex < -50.0d0) then
-                            bf%f(i,j,k,VAR_V,b) = 0.0d0
-                            cycle
-                        end if
+        nBlocks = int(blk%nBlocks)
+        nm = int(bf%trip_nmodes)
+        amp = bf%trip_amp; x0 = bf%trip_x0; lx = bf%trip_lx; ly = bf%trip_ly
+        w = 8.0d0*atan(1.0d0)/bf%trip_lz         ! 2*pi/Lz
+
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target teams distribute parallel do collapse(4) &
+        !$omp& map(to: bstep, amp, x0, lx, ly, w, nm, nx, ny, nz, &
+        !$omp& ak(1:nm), bk(1:nm), akp1(1:nm), bkp1(1:nm), blk%x, blk%y, blk%z) &
+        !$omp& map(to: bf%f) &
+        !$omp& private(i,j,k,b,m,x,y,z,ex,env,arg,gk,gkp1)
+#endif
+        do b = 1, nBlocks
+        do k = 1, nz
+            do j = 1, ny
+                do i = 1, nx
+                    bf%f(i,j,k,VAR_U,b) = 0.0d0
+                    bf%f(i,j,k,VAR_W,b) = 0.0d0
+                    ! v (VAR_V) lives at blk%{x,y,z}(:,VAR_V,b).
+                    x = blk%x(i, VAR_V, b)
+                    y = blk%y(j, VAR_V, b)
+                    z = blk%z(k, VAR_V, b)
+                    ex = -((x - x0)/lx)**2 - (y/ly)**2
+                    if (ex < -50.0d0) then
+                        bf%f(i,j,k,VAR_V,b) = 0.0d0
+                    else
                         env = exp(ex)
-                        gz = (1.0d0 - bstep)*trip_geval(bf, bf%trip_ak,   bf%trip_bk,   z) &
-                           +          bstep *trip_geval(bf, bf%trip_akp1, bf%trip_bkp1, z)
-                        bf%f(i,j,k,VAR_V,b) = bf%trip_amp*env*gz
-                    end do
+                        gk = 0.0d0; gkp1 = 0.0d0
+                        do m = 1, nm
+                            arg = w*real(m, C_DOUBLE)*z
+                            gk   = gk   + ak(m)  *cos(arg) + bk(m)  *sin(arg)
+                            gkp1 = gkp1 + akp1(m)*cos(arg) + bkp1(m)*sin(arg)
+                        end do
+                        bf%f(i,j,k,VAR_V,b) = amp*env* &
+                            ((1.0d0 - bstep)*gk + bstep*gkp1)
+                    end if
                 end do
             end do
         end do
-    end subroutine fill_trip
+        end do
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp end target teams distribute parallel do
+#endif
+    end subroutine fill_trip_kernel
 
     ! Fill f from a named analytic profile at each component's staggered
     ! coordinate. Host-side; the caller maps f to the device afterwards.
