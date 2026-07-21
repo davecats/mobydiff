@@ -142,7 +142,7 @@ def main():
         ax[2, 1].plot(reth[mb], beta[mb])
         ax[2, 1].axhline(0.0, ls="--", c="k", label=r"$\beta=0$ (ZPG)")
         ax[2, 1].set_xlabel(r"$Re_\theta$"); ax[2, 1].set_ylabel(r"$\beta$")
-        ax[2, 1].set_ylim(-0.3, 0.3); ax[2, 1].legend()
+        ax[2, 1].set_ylim(-0.001, 0.001); ax[2, 1].legend()
         ax[2, 1].set_title("Clauser pressure-gradient parameter")
 
         fig.suptitle(f"boundaryLayer statistics — t={t:.0f}, Re_δ*,0={re:.0f}", y=1.0)
