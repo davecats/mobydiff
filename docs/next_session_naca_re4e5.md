@@ -43,6 +43,27 @@ turbulent from the staircase LE, and aft of x/c 0.4 the C10 suction Cf
 sags below OF (thicker decelerated BL); TE separation onset 0.96 (C10)
 vs 0.996 (OF). All consistent with the y+ 3-4 wall under-resolution +
 LE staircase smearing hypothesis — the OF case resolves y+ 1.3.
+L11 RESOLUTION STUDY (2026-07-22, aoa 5 only): .prep_c11.ini ->
+ibm_coeff_c11.h5 (refine_levels = 11, 16042 leaves / 8.2M cells,
+Delta11 = c/6144, y+ ~ 1.4-2.1); IC INTERPOLATED from the converged L10
+field (interp_restart.py, t = 15 carried, zero uncovered cells), run
+t = 15..20 at dt = 5e-5 on cetus GPU1 (0.45 s/step). VERDICT: the wall
+resolution was the DRAG driver, not the lift driver — C_D 0.0157 ->
+0.0126 +- 0.002 (now matches OF 0.0134 / XFOIL-n1 0.0124 within CV
+scatter); C_L 0.432 -> 0.445 +- 0.024 (deficit vs OF -16 % -> -13 %);
+Cp_min -1.59 -> -1.61 vs OF -1.78 (the suction peak BARELY moved ->
+the remaining lift gap is NOT wall resolution; LE staircase smearing is
+the prime suspect); TE separation onset 0.959 -> 0.983 (OF 0.996).
+NOTE OF's transition is FORCED (fvOptions: k = 0 for x < 0.09c both
+sides + k-source 2e-5 trip strips at x = 0.10-0.12c hugging the
+surface) — a matching [rans] k-pin/trip increment is the agreed next
+step (dormant-off bit-exact gate) before attacking the staircase.
+OOM LANDMINE FIXED (cv_forces.py): cv_force painted the WHOLE control
+box on the finest lattice (~200 GB at L11 margin 4c; the machine has
+62 GB) — repeatedly OOM-killed the post-processing. Now paints four
+thin border strips (161 MB peak, C10 values reproduced EXACTLY).
+plot_c10_turb_fields.py windows carry the same risk at L11+ depths:
+estimate cells x 6 x 8 B before choosing a window.
 
 The pre-resume pause notes (fan analysis, R1 history) follow unchanged.
 

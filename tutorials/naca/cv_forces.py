@@ -74,52 +74,77 @@ def load_plane(path, x0, x1, z0, z1, span_y=True):
     return xc, zc, u, w, out["pn"], out.get("nut"), hx, hz
 
 
+def finest_spacing(path):
+    with h5py.File(path, "r") as f:
+        blocks = f["blocks"][...]
+        mask = np.asarray(f.attrs.get("refine_dims", [1, 1, 1]), dtype=np.int64)
+        lmax = int(blocks[:, 3].max())
+        hx = float(f.attrs["lx"])/(int(f.attrs["nx"])*2**(lmax*int(mask[0])))
+        hz = float(f.attrs["lz"])/(int(f.attrs["nz"])*2**(lmax*int(mask[2])))
+    return hx, hz
+
+
+def border_strip(path, span_y, x0, x1, z0, z1):
+    """Painted fields + central-difference gradients on a THIN strip.
+    The border integral only needs the border lines: painting the whole
+    control box on the finest lattice is an OOM landmine (a 4c-margin
+    box at Delta = c/6144 is ~55000^2 cells x 8 arrays ~ 200 GB); four
+    strips of a few cells are ~20 MB total at any depth."""
+    xc, zc, u, w, p, nut, hx, hz = load_plane(path, x0, x1, z0, z1, span_y)
+    dudx = np.gradient(u, xc, axis=1); dudz = np.gradient(u, zc, axis=0)
+    dwdx = np.gradient(w, xc, axis=1); dwdz = np.gradient(w, zc, axis=0)
+    return dict(xc=xc, zc=zc, u=u, w=w, p=p, nut=nut, hx=hx, hz=hz,
+                dudx=dudx, dudz=dudz, dwdx=dwdx, dwdz=dwdz)
+
+
 def cv_force(path, nose, margin, re, span_y=True):
     x0 = nose[0] - margin
     x1 = nose[0] + 1.0 + margin
     z0 = nose[1] - margin
     z1 = nose[1] + margin
-    pad = 0.15*margin
-    xc, zc, u, w, p, nut, hx, hz = load_plane(path, x0-pad, x1+pad, z0-pad, z1+pad,
-                                              span_y)
     nu = 1.0/re
-    nueff = nu + (nut if nut is not None else 0.0)
+    hx, hz = finest_spacing(path)
+    sx, sz = 4.0*hx, 4.0*hz          # strip half-width: stencil + snap slack
 
-    # gradients on the painted lattice (borders sit inside one level, so
-    # central differences on the uniform paint are consistent there)
-    dudx = np.gradient(u, xc, axis=1); dudz = np.gradient(u, zc, axis=0)
-    dwdx = np.gradient(w, xc, axis=1); dwdz = np.gradient(w, zc, axis=0)
-
-    def line(vals, x=None, z=None):
-        """Sample a field row/column nearest to the requested border."""
+    def line(S, vals, x=None, z=None):
+        """Sample a strip row/column nearest to the requested border."""
         if x is not None:
-            i = int(np.argmin(np.abs(xc - x)))
-            return vals[:, i]
-        j = int(np.argmin(np.abs(zc - z)))
-        return vals[j, :]
+            i = int(np.argmin(np.abs(S["xc"] - x)))
+            return S[vals][:, i]
+        j = int(np.argmin(np.abs(S["zc"] - z)))
+        return S[vals][j, :]
+
+    W = border_strip(path, span_y, x0-sx, x0+sx, z0-sz, z1+sz)
+    E = border_strip(path, span_y, x1-sx, x1+sx, z0-sz, z1+sz)
+    S_ = border_strip(path, span_y, x0-sx, x1+sx, z0-sz, z0+sz)
+    N = border_strip(path, span_y, x0-sx, x1+sx, z1-sz, z1+sz)
 
     # p_inf: upstream border mean far from the wake
-    p_inf = float(np.nanmean(line(p, x=x0)))
+    p_inf = float(np.nanmean(line(W, "p", x=x0)))
 
     Fx = Fz = 0.0
-    zin = (zc >= z0) & (zc <= z1)
-    xin = (xc >= x0) & (xc <= x1)
     # west (n = -x) and east (n = +x)
-    for xb, sgn in ((x0, -1.0), (x1, +1.0)):
-        uu, ww, pp = line(u, x=xb)[zin], line(w, x=xb)[zin], line(p, x=xb)[zin]
-        ne = line(nueff, x=xb)[zin] if nut is not None else nu
-        txx = 2.0*ne*line(dudx, x=xb)[zin]
-        txz = ne*(line(dudz, x=xb)[zin] + line(dwdx, x=xb)[zin])
-        Fx -= sgn*np.nansum((uu*uu + (pp - p_inf) - txx))*hz
-        Fz -= sgn*np.nansum((uu*ww - txz))*hz
+    for St, xb, sgn in ((W, x0, -1.0), (E, x1, +1.0)):
+        zin = (St["zc"] >= z0) & (St["zc"] <= z1)
+        uu = line(St, "u", x=xb)[zin]
+        ww = line(St, "w", x=xb)[zin]
+        pp = line(St, "p", x=xb)[zin]
+        ne = (nu + line(St, "nut", x=xb)[zin]) if St["nut"] is not None else nu
+        txx = 2.0*ne*line(St, "dudx", x=xb)[zin]
+        txz = ne*(line(St, "dudz", x=xb)[zin] + line(St, "dwdx", x=xb)[zin])
+        Fx -= sgn*np.nansum((uu*uu + (pp - p_inf) - txx))*St["hz"]
+        Fz -= sgn*np.nansum((uu*ww - txz))*St["hz"]
     # south (n = -z) and north (n = +z)
-    for zb, sgn in ((z0, -1.0), (z1, +1.0)):
-        uu, ww, pp = line(u, z=zb)[xin], line(w, z=zb)[xin], line(p, z=zb)[xin]
-        ne = line(nueff, z=zb)[xin] if nut is not None else nu
-        tzz = 2.0*ne*line(dwdz, z=zb)[xin]
-        txz = ne*(line(dudz, z=zb)[xin] + line(dwdx, z=zb)[xin])
-        Fx -= sgn*np.nansum((ww*uu - txz))*hx
-        Fz -= sgn*np.nansum((ww*ww + (pp - p_inf) - tzz))*hx
+    for St, zb, sgn in ((S_, z0, -1.0), (N, z1, +1.0)):
+        xin = (St["xc"] >= x0) & (St["xc"] <= x1)
+        uu = line(St, "u", z=zb)[xin]
+        ww = line(St, "w", z=zb)[xin]
+        pp = line(St, "p", z=zb)[xin]
+        ne = (nu + line(St, "nut", z=zb)[xin]) if St["nut"] is not None else nu
+        tzz = 2.0*ne*line(St, "dwdz", z=zb)[xin]
+        txz = ne*(line(St, "dudz", z=zb)[xin] + line(St, "dwdx", z=zb)[xin])
+        Fx -= sgn*np.nansum((ww*uu - txz))*St["hx"]
+        Fz -= sgn*np.nansum((ww*ww + (pp - p_inf) - tzz))*St["hx"]
     return 2.0*Fx, 2.0*Fz     # C_D, C_L (q = 0.5, c = 1, unit span)
 
 
