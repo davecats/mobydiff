@@ -560,6 +560,39 @@ subroutine apply_rans_value(key, value, dns, line_no)
         call read_real(value, dns%rans_nut_ratio, line_no)
     case ("ambient_sustain")
         call read_bool(value, dns%rans_ambient_sustain, line_no)
+    case ("kpin_box")
+        ! Repeatable: x0 x1 y0 y1 z0 z1 (k pinned to 0 inside).
+        if (dns%rans_n_kpin >= int(size(dns%rans_kpin_box, 2), C_INT)) then
+            if (terminal_output) print *, "too many [rans] kpin_box entries at line", line_no
+            error stop "too many [rans] kpin_box entries"
+        end if
+        dns%rans_n_kpin = dns%rans_n_kpin + 1_C_INT
+        block
+            integer :: ios
+            read(value, *, iostat=ios) dns%rans_kpin_box(:, dns%rans_n_kpin)
+            if (ios /= 0) then
+                if (terminal_output) print *, "error: [rans] kpin_box needs 6 reals", &
+                    " (x0 x1 y0 y1 z0 z1) on input line", line_no
+                error stop "invalid [rans] kpin_box"
+            end if
+        end block
+    case ("ktrip_box")
+        ! Repeatable: x0 x1 y0 y1 z0 z1 rate (volumetric k source in
+        ! fluid cells inside; rate in k per time unit).
+        if (dns%rans_n_ktrip >= int(size(dns%rans_ktrip_box, 2), C_INT)) then
+            if (terminal_output) print *, "too many [rans] ktrip_box entries at line", line_no
+            error stop "too many [rans] ktrip_box entries"
+        end if
+        dns%rans_n_ktrip = dns%rans_n_ktrip + 1_C_INT
+        block
+            integer :: ios
+            read(value, *, iostat=ios) dns%rans_ktrip_box(:, dns%rans_n_ktrip)
+            if (ios /= 0) then
+                if (terminal_output) print *, "error: [rans] ktrip_box needs 7 reals", &
+                    " (x0 x1 y0 y1 z0 z1 rate) on input line", line_no
+                error stop "invalid [rans] ktrip_box"
+            end if
+        end block
     case ("dump_geometry")
         call read_bool(value, dns%rans_dump_geometry, line_no)
     case ("dwall_tol")
