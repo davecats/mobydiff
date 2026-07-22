@@ -54,6 +54,13 @@ module init
         real(C_DOUBLE) :: peclet_rate = 0.0d0
         real(C_DOUBLE) :: dtmax = 0.0d0
         real(C_DOUBLE) :: forcing(1:3) = 0.0d0
+        ! [flow] convection = skew: skew-symmetric momentum convection,
+        ! conv_skew = conv_div - 1/2 phi (div u_adv)|stencil — discretely
+        ! energy-neutral for ANY advecting field (the divergence form is
+        ! neutral only for exactly divergence-free advection, a premise
+        ! the incremental projection and 2:1 interface halos never grant;
+        ! the C11 v1 interface instability, docs/next_session_skew_convection.md).
+        logical(C_BOOL) :: conv_skew = .false.
         ! [flow] initial_u/v/w: uniform initial velocity (generic case).
         real(C_DOUBLE) :: initial_velocity(1:3) = 0.0d0
         real(C_DOUBLE) :: initial_noise = 0.0d0
