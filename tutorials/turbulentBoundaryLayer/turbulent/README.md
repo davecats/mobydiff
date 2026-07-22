@@ -9,6 +9,31 @@ spatially developing turbulent BL. Setup follows the ZPG case of
 
 with the trip forcing of Schlatter & Örlü (2012) implemented in the solver.
 
+## Production DNS — result (`final_stats.png`)
+
+The full production run completed on the RTX 5090: phase 1 (transition +
+wash-out, 100k steps to t=2000) then phase 2 (`production_stats.ini`,
+niter=12, 200k steps) accumulating **~4000 t.u. ≈ 8 flow-throughs** of span
++time averaging (to t=6000). The converged statistics (`final_stats.png`,
+`bl_stats.py`) reproduce a canonical ZPG turbulent boundary layer over
+Re_θ ≈ 350–700:
+
+- **c_f(Re_θ)** on the 0.024 Re_θ^(−1/4) correlation (~4–5% low, within the
+  correlation scatter); **shape factor H ≈ 1.54–1.56** (correct for these
+  moderate Re_θ, → 1.4 only asymptotically);
+- **mean U⁺(y⁺)** a clean law of the wall — viscous sublayer, log region on
+  U⁺ = ln(y⁺)/0.41 + 5, wake to U⁺ ≈ 19.5 (at Re_θ = 450);
+- **Alfredsson diagnostic plot** u′/U vs U/U∞ collapsing onto
+  0.286 − 0.255·U/U∞ in the outer layer;
+- **Reynolds stresses** with the near-wall u′_rms peak ≈ 2.6, w′ > v′, and
+  −u′v′ ≈ 0.85;
+- **Clauser β ≈ 0** (to < 0.001) — confirming the zero-pressure-gradient
+  condition.
+
+`final_stats.png` is the converged result; `provisional_stats.png` was the
+live-updating figure during the run. See `flowfield.png` for the
+instantaneous field (streaks, ejections/sweeps, pressure eddies).
+
 ## Nondimensionalization and domain
 
 Lengths by the **inflow displacement thickness** δ*₀ = 1, velocity by
