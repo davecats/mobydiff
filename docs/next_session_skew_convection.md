@@ -96,4 +96,22 @@ with skew as the only path; update CLAUDE.md + this doc STATUS.
 
 ## Status
 
-- S0 code: IN PROGRESS (this session).
+- S0 (2026-07-22, commit 57bd1e3): DONE — kernel branch + toggle,
+  dormant 7-case nofma suite bit-exact 14/14 CPU AND GPU.
+- S1 gates 1, 2, 4 (2026-07-22): PASS.
+  1. Uniform oblique flow, 3-level refine_body layout, skew ON: EXACT (0.0).
+  2. KE audit (Beltrami xz patch, Re 1e12, 500 steps): div +2.3e-1
+     KE and ACCELERATING; skew bounded +1.2e-2 (~3e-5 rel), no trend
+     (residual = RK3 temporal truncation; dt-scaling check pending).
+  4. ACCEPTANCE: the v1 forced-laminar case (full-nose kpin, nut = 0 on
+     the interfaces, NO stabilisation) with skew ran its full 5,500-step
+     window cleanly — dt never collapsed (t reached 15.274; every div
+     variant stalled at 15.12-15.13 by ~153,000), end forces the healthy
+     trip signature (C_L 1.6e-3, C_D 9.4e-3), and the seed-point probe
+     shows NO anchored mode: field deltas O(1e-2) DECREASING with
+     wandering locations vs the div twin's fixed-point 0.30 -> 9.5 ->
+     blow-up. The interface energy source is gone, not delayed.
+- PENDING: v1 full t = 20 confirmation (launch next); instrumented
+  G_conv <= 0 rerun (rebase diag/v1-terms onto 57bd1e3); gate 3
+  Beltrami order; gate 5 rank/GPU identity; S2 physics battery;
+  S3 lockdown.
