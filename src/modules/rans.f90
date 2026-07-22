@@ -879,7 +879,8 @@ contains
         ! near-wall BL; sourcing k in solid/wall-marker cells would fight
         ! their constraints). Pinned cells zero k here too, so the IC /
         ! restart state enters the first substage already constrained.
-        if (dns%rans_n_kpin > 0 .or. dns%rans_n_ktrip > 0) then
+        if (dns%rans_n_kpin > 0 .or. dns%rans_n_ktrip > 0 .or. &
+            dns%rans_n_kpin_dwall > 0) then
             allocate(sst%kfix(nx,ny,nz,blk%nBlocks))
             allocate(sst%ktriprate(nx,ny,nz,blk%nBlocks))
             sst%kfix = 0_C_SIGNED_CHAR
@@ -904,6 +905,15 @@ contains
                                     npin = npin + 1.0d0
                                 end if
                             end do
+                            do nb_ = 1, int(dns%rans_n_kpin_dwall)
+                                if (xc >= dns%rans_kpin_dwall(1,nb_) .and. &
+                                    xc <= dns%rans_kpin_dwall(2,nb_) .and. &
+                                    sst%dwall(i,j,k,b) < dns%rans_kpin_dwall(3,nb_)) then
+                                    sst%kfix(i,j,k,b) = 1_C_SIGNED_CHAR
+                                    sst%k(i,j,k,b) = 0.0d0
+                                    npin = npin + 1.0d0
+                                end if
+                            end do
                             if (sst%wallcell(i,j,k,b) /= WALL_CELL_FLUID) cycle
                             do nb_ = 1, int(dns%rans_n_ktrip)
                                 if (xc >= dns%rans_ktrip_box(1,nb_) .and. xc <= dns%rans_ktrip_box(2,nb_) .and. &
@@ -918,7 +928,7 @@ contains
                     end do
                 end do
                 end do
-                sst%has_kpin = dns%rans_n_kpin > 0
+                sst%has_kpin = dns%rans_n_kpin > 0 .or. dns%rans_n_kpin_dwall > 0
                 sst%has_ktrip = dns%rans_n_ktrip > 0
                 if (has_terminal) print '(a,i0,a,i0,a)', &
                     " [rans] k constraint boxes: ", int(npin), " pinned cells, ", &

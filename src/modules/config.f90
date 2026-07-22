@@ -576,6 +576,23 @@ subroutine apply_rans_value(key, value, dns, line_no)
                 error stop "invalid [rans] kpin_box"
             end if
         end block
+    case ("kpin_dwall")
+        ! Repeatable: x0 x1 dmax (k pinned to 0 where x in [x0,x1] and
+        ! wall distance < dmax — surface-following laminar band).
+        if (dns%rans_n_kpin_dwall >= int(size(dns%rans_kpin_dwall, 2), C_INT)) then
+            if (terminal_output) print *, "too many [rans] kpin_dwall entries at line", line_no
+            error stop "too many [rans] kpin_dwall entries"
+        end if
+        dns%rans_n_kpin_dwall = dns%rans_n_kpin_dwall + 1_C_INT
+        block
+            integer :: ios
+            read(value, *, iostat=ios) dns%rans_kpin_dwall(:, dns%rans_n_kpin_dwall)
+            if (ios /= 0) then
+                if (terminal_output) print *, "error: [rans] kpin_dwall needs 3 reals", &
+                    " (x0 x1 dmax) on input line", line_no
+                error stop "invalid [rans] kpin_dwall"
+            end if
+        end block
     case ("ktrip_box")
         ! Repeatable: x0 x1 y0 y1 z0 z1 rate (volumetric k source in
         ! fluid cells inside; rate in k per time unit).

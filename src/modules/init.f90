@@ -169,6 +169,14 @@ module init
         integer(C_INT) :: rans_n_ktrip = 0_C_INT
         real(C_DOUBLE) :: rans_kpin_box(6, 8) = 0.0d0
         real(C_DOUBLE) :: rans_ktrip_box(7, 8) = 0.0d0
+        ! kpin_dwall = x0 x1 dmax: pin k = 0 in cells with x in [x0, x1]
+        ! AND wall distance < dmax — a surface-following laminar band.
+        ! Motivated by the C11 v1 blow-up (2026-07-22): a box pin spanning
+        ! the freestream zeroes nut ON the 2:1 interface cascade and the
+        ! undamped coarse-owns interface mode grows without bound; the
+        ! dwall band keeps every interface in ambient-damped fluid.
+        integer(C_INT) :: rans_n_kpin_dwall = 0_C_INT
+        real(C_DOUBLE) :: rans_kpin_dwall(3, 8) = 0.0d0
         character(len=256) :: field_prefix = ""
         integer :: field_interval = 0
         character(len=256) :: restart_file = ""
