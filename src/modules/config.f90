@@ -141,6 +141,21 @@ subroutine apply_config_value(section, key, value, dns, g, turb, les, ps, bc, c,
         case ("re")
             call read_real(value, dns%re, line_no)
             seen%re = .true.
+        case ("convection")
+            ! divergence (default) | skew: skew-symmetric momentum
+            ! convection, energy-neutral for ANY advecting field
+            ! (docs/next_session_skew_convection.md). VALIDATION-phase
+            ! toggle: locks to skew and disappears after phase S3.
+            select case (trim(lower(clean_string(value))))
+            case ("skew", "skew-symmetric", "skewsymmetric")
+                dns%conv_skew = .true.
+            case ("divergence", "div", "")
+                dns%conv_skew = .false.
+            case default
+                if (terminal_output) print *, "error: unknown [flow] convection on line", &
+                    line_no
+                error stop "unknown [flow] convection form"
+            end select
         case ("forcing_x")
             call read_real(value, dns%forcing(1), line_no)
             seen%forcing(1) = .true.
