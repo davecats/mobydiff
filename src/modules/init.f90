@@ -13,6 +13,7 @@ module init
     integer(C_INT), parameter :: GRID_TANH    = 3_C_INT
     integer(C_INT), parameter :: GRID_NATURAL = 4_C_INT
     integer(C_INT), parameter :: GRID_BLAYER  = 5_C_INT
+    integer(C_INT), parameter :: GRID_GEOMETRIC = 6_C_INT
     integer(C_INT), parameter :: CFL_COURANT = 1_C_INT
     integer(C_INT), parameter :: CFL_PECLET  = 2_C_INT
     integer(C_INT), parameter :: NCFL = 2_C_INT
@@ -482,6 +483,18 @@ real(C_DOUBLE) function distribution_coordinate(s, length, distribution, stretch
     case (GRID_TANH)
         a = max(stretch, 1.0d-12)
         x = 0.5d0 * length * (1.0d0 + tanh(a*(2.0d0*s - 1.0d0))/tanh(a))
+    case (GRID_GEOMETRIC)
+        ! One-sided geometric stretch: cells grow by a constant ratio from
+        ! the low end (x=0), so spacing is finest at the inlet and coarsest
+        ! at x=length. `stretch` = the last/first cell-width ratio R (>=1;
+        ! R=1 => uniform). Used in x for the boundary layer: as u_tau falls
+        ! downstream (l+ grows), a growing dx holds dx+ roughly constant.
+        if (stretch <= 1.0d0 + 1.0d-12) then
+            x = length*s
+        else
+            a = stretch**(1.0d0/real(n - 1, C_DOUBLE))     ! per-cell growth ratio
+            x = length * (a**(s*real(n, C_DOUBLE)) - 1.0d0) / (a**real(n, C_DOUBLE) - 1.0d0)
+        end if
     case (GRID_NATURAL)
         x = natural_channel_coordinate(s, length, stretch, natural_one_sided, natural_dyw_plus, n)
     case default

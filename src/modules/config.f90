@@ -1,7 +1,7 @@
 module config
     use, intrinsic :: iso_c_binding
     use :: init, only: dns_type, grid_type, VAR_U, VAR_V, VAR_W, VAR_P, &
-        GRID_UNIFORM, GRID_COSINE, GRID_TANH, GRID_NATURAL, GRID_BLAYER, config_seen_type
+        GRID_UNIFORM, GRID_COSINE, GRID_TANH, GRID_NATURAL, GRID_BLAYER, GRID_GEOMETRIC, config_seen_type
     use :: turbulence, only: turb_type, TURB_NONE, TURB_LES, TURB_RANS, TURB_IDDES, &
         IDDES_DELTA_CBRT, IDDES_DELTA_IDDES
     use :: les_model, only: les_type, LES_NONE, LES_SMAGORINSKY, LES_WALE
@@ -473,7 +473,7 @@ subroutine validate_dns_values(dns, g)
             error stop "[blocks] refine box level exceeds refine_levels"
         end if
     end if
-    if (any(g%distribution < GRID_UNIFORM) .or. any(g%distribution > GRID_BLAYER)) then
+    if (any(g%distribution < GRID_UNIFORM) .or. any(g%distribution > GRID_GEOMETRIC)) then
         error stop "invalid grid distribution"
     end if
     if (any(g%stretch < 0.0d0)) error stop "grid stretch values must be non-negative"
@@ -908,6 +908,8 @@ subroutine read_grid_distribution(value, target, line_no)
         target = GRID_NATURAL
     case ("blayer", "boundary_layer", "boundarylayer")
         target = GRID_BLAYER
+    case ("geometric", "geom")
+        target = GRID_GEOMETRIC
     case default
         if (terminal_output) print *, "warning: unknown grid distribution on input line", line_no, ": ", trim(value_l)
     end select
