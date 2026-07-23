@@ -847,6 +847,27 @@ immersed boundary. Phased, each phase verified before the next:
   prepare/solve split (P0-P3) is COMPLETE: one Fortran executable pair,
   one case-file contract, mobygeom/mobygrid retired to validation
   references.
+- Skew-symmetric convection — PRODUCTION FORM (S0-S3 DONE 2026-07-22/23,
+  branch `claude/jacobi-interface`; full trail in
+  `docs/next_session_skew_convection.md`). The momentum convection is
+  HARDWIRED skew-symmetric: conv_skew = conv_div - 1/2 phi (div u_adv)|stencil,
+  built in-kernel from the SAME advecting pair-sums as the divergence fluxes
+  (+3.4 % s/step). WHY: divergence-form convection is energy-neutral only
+  under exact discrete divergence-freedom, which the incremental projection
+  and the 2:1 interface const-1/2 halos never grant — the C11 v1
+  forced-laminar case exposed an interface-anchored 2-Delta mode (coarse-owns
+  faces, growth ~160/t.u.) whose driver was CONVECTION (instrumented
+  per-substage attribution: G_corr ~ 0, niter/accel irrelevant, G_conv 2-5x
+  diffusion; under skew G_conv ~ +-1e-4). Gates: uniform-through-patch EXACT,
+  inviscid KE audit (div secular/accelerating, skew bounded), Beltrami order
+  2.73, v1 stable to t = 20, ranks/GPU EXACT, channel/LES/RANS statistics
+  reproduce the validated signatures (interface jumps within 0.007, core rms
+  deficits equal or SMALLER), C11 polar point inside CV scatter. The [flow]
+  convection toggle is REMOVED (stale key error-stops); divergence form
+  recoverable from history (57bd1e3 ff). ALSO: cv_forces.py is flux-exact
+  finite-volume now (borders snapped to faces, native-level staggered fluxes,
+  uniform twin ~1e-14, 44 MB at any depth; box scatter is the d/dt term, not
+  sampling).
 - ALSO PENDING: **Profile + optimise** the GPU step for the 2:1-refined channel.
   The last hard profile is STALE (the reflux that was 23% is removed; the
   `MOBY_PHASETIME` timer is deleted): re-profile first with a minimal removable

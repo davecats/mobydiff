@@ -150,8 +150,19 @@ with skew as the only path; update CLAUDE.md + this doc STATUS.
   -<u'v'> peak +1.5 % vs uniform ref (div: +1.2 %), U+ core 18.38, and
   the const-1/2 core rms deficits are EQUAL OR SMALLER under skew
   (v' -9.5 % vs -10.9 %) — skew is marginally less dissipative.
-- PENDING: S2 gate 7 (LES/LES-IBM), gate 9 (polar spot-check);
-  S3 lockdown (flip default, remove toggle, update CLAUDE.md).
+- S2 gates 7 + 9 (2026-07-23): PASS. Gate 7 LES with skew: band
+  ratios u/v/w/nut 0.99-1.03 at face/edge/corner (the standing
+  0.98-1.03 class, no band); core LES/reference ratios reproduce the
+  documented WALE signature (U +0.7/+3.2 %, -<u'v'> within 1 %, the
+  u' +5 % / v' w' -10 % coarse-LES bias). Gate 9 production C11 aoa5:
+  skew 0.4439 +- 0.028 / 0.0127 vs div 0.4452 +- 0.026 / 0.0126
+  (flux-exact cv_forces) — inside the CV scatter.
+- S3 LOCKDOWN (2026-07-23): skew HARDWIRED (the kernel corrections are
+  unconditional; dns%conv_skew and the [flow] convection key removed —
+  a stale key now error-stops pointing here; divergence recoverable
+  from 57bd1e3^..lockdown). run_developed.py --skew retired. S3 suite:
+  toggle-binary-with-convection=skew refs vs lockdown binaries,
+  tolerance 0.
 - OPEN QUESTION (user, 2026-07-23): the remaining -13 % lift deficit vs
   OpenFOAM — geometry RULED OUT (both codes use the identical -0.1036
   closed-TE NACA0012; OF's NACA0012.obj matches to 6.6e-8); staircase

@@ -135,7 +135,7 @@ contains
         real(C_DOUBLE) :: mu_u, mu_v, mu_w
         real(C_DOUBLE) :: ire
         real(C_DOUBLE) :: forcing(1:3)
-        logical :: use_eddy_viscosity, skew
+        logical :: use_eddy_viscosity
 
         nx = int(blk%nb(1))
         ny = int(blk%nb(2))
@@ -143,7 +143,6 @@ contains
         nBlocks = int(blk%nBlocks)
         ire = 1.0d0/dns%re
         forcing = dns%forcing
-        skew = logical(dns%conv_skew)
         use_eddy_viscosity = .false.
         if (present(turb)) use_eddy_viscosity = turbulence_is_enabled(turb) .and. allocated(turb%nut)
 
@@ -152,7 +151,7 @@ contains
         ! its own physLow mask.
         !$omp target teams distribute parallel do collapse(4) &
         !$omp& map(to: dt_alpha, dt_beta, dt_gamma, &
-        !$omp& ire, forcing(1:3), skew, &
+        !$omp& ire, forcing(1:3), &
         !$omp& blk%physLow, blk%d1x, blk%d1y, blk%d1z, &
         !$omp& blk%lapXm, blk%lapX0, blk%lapXp, blk%lapYm, blk%lapY0, blk%lapYp, &
         !$omp& blk%lapZm, blk%lapZ0, blk%lapZp, blk%q, ibm%mu) &
@@ -211,20 +210,23 @@ contains
                                      +(uw_p-uw_m)*blk%d1z(k,VAR_U,b)) &
                             + forcing(VAR_U) &
                             + ire*(diff_ux + diff_uy + diff_uz) )
-                        if (skew) then
-                            ! Skew-symmetric convection: conv_skew =
-                            ! conv_div - 1/2 u (div u_adv)|stencil, the
-                            ! stencil divergence built from the SAME
-                            ! advecting pair-sums as the fluxes above
-                            ! (rhs carries -conv, hence +0.25).
-                            rhsu = rhsu + 0.25d0*blk%q(i,j,k,VAR_U,b)*( &
+                        ! Skew-symmetric convection (the PRODUCTION form,
+                        ! docs/next_session_skew_convection.md S3): conv_skew =
+                        ! conv_div - 1/2 u (div u_adv)|stencil, the stencil
+                        ! divergence built from the SAME advecting pair-sums
+                        ! as the fluxes above (rhs carries -conv, hence
+                        ! +0.25). Energy-neutral for ANY advecting field —
+                        ! the divergence form is neutral only under exact
+                        ! discrete divergence-freedom, which the incremental
+                        ! projection and 2:1 interface halos never grant
+                        ! (the C11 v1 interface instability).
+                        rhsu = rhsu + 0.25d0*blk%q(i,j,k,VAR_U,b)*( &
                                 ( blk%q(i,j,k,VAR_U,b)+blk%q(ip,j,k,VAR_U,b) &
                                  -blk%q(im,j,k,VAR_U,b)-blk%q(i,j,k,VAR_U,b))*blk%d1x(i,VAR_U,b) &
                                +( blk%q(im,jp,k,VAR_V,b)+blk%q(i,jp,k,VAR_V,b) &
                                  -blk%q(im,j,k,VAR_V,b)-blk%q(i,j,k,VAR_V,b))*blk%d1y(j,VAR_U,b) &
                                +( blk%q(im,j,kp,VAR_W,b)+blk%q(i,j,kp,VAR_W,b) &
                                  -blk%q(im,j,k,VAR_W,b)-blk%q(i,j,k,VAR_W,b))*blk%d1z(k,VAR_U,b))
-                        end if
 
                         blk%qs(i,j,k,VAR_U,b) = blk%q(i,j,k,VAR_U,b) + dt_alpha*rhsu &
                             + dt_beta*blk%oldrhs(i,j,k,VAR_U,b) - dt_gamma*dpx
@@ -267,15 +269,13 @@ contains
                                     +(vw_p-vw_m)*blk%d1z(k,VAR_V,b)) &
                             + forcing(VAR_V) &
                             + ire*(diff_vx + diff_vy + diff_vz) )
-                        if (skew) then
-                            rhsv = rhsv + 0.25d0*blk%q(i,j,k,VAR_V,b)*( &
+                        rhsv = rhsv + 0.25d0*blk%q(i,j,k,VAR_V,b)*( &
                                 ( blk%q(ip,jm,k,VAR_U,b)+blk%q(ip,j,k,VAR_U,b) &
                                  -blk%q(i,jm,k,VAR_U,b)-blk%q(i,j,k,VAR_U,b))*blk%d1x(i,VAR_V,b) &
                                +( blk%q(i,j,k,VAR_V,b)+blk%q(i,jp,k,VAR_V,b) &
                                  -blk%q(i,jm,k,VAR_V,b)-blk%q(i,j,k,VAR_V,b))*blk%d1y(j,VAR_V,b) &
                                +( blk%q(i,jm,kp,VAR_W,b)+blk%q(i,j,kp,VAR_W,b) &
                                  -blk%q(i,jm,k,VAR_W,b)-blk%q(i,j,k,VAR_W,b))*blk%d1z(k,VAR_V,b))
-                        end if
 
                         blk%qs(i,j,k,VAR_V,b) = blk%q(i,j,k,VAR_V,b) + dt_alpha*rhsv &
                             + dt_beta*blk%oldrhs(i,j,k,VAR_V,b) - dt_gamma*dpy
@@ -318,15 +318,13 @@ contains
                                      +(ww_p-ww_m)*blk%d1z(k,VAR_W,b)) &
                             + forcing(VAR_W) &
                             + ire*(diff_wx + diff_wy + diff_wz) )
-                        if (skew) then
-                            rhsw = rhsw + 0.25d0*blk%q(i,j,k,VAR_W,b)*( &
+                        rhsw = rhsw + 0.25d0*blk%q(i,j,k,VAR_W,b)*( &
                                 ( blk%q(ip,j,km,VAR_U,b)+blk%q(ip,j,k,VAR_U,b) &
                                  -blk%q(i,j,km,VAR_U,b)-blk%q(i,j,k,VAR_U,b))*blk%d1x(i,VAR_W,b) &
                                +( blk%q(i,jp,km,VAR_V,b)+blk%q(i,jp,k,VAR_V,b) &
                                  -blk%q(i,j,km,VAR_V,b)-blk%q(i,j,k,VAR_V,b))*blk%d1y(j,VAR_W,b) &
                                +( blk%q(i,j,k,VAR_W,b)+blk%q(i,j,kp,VAR_W,b) &
                                  -blk%q(i,j,km,VAR_W,b)-blk%q(i,j,k,VAR_W,b))*blk%d1z(k,VAR_W,b))
-                        end if
 
                         blk%qs(i,j,k,VAR_W,b) = blk%q(i,j,k,VAR_W,b) + dt_alpha*rhsw &
                             + dt_beta*blk%oldrhs(i,j,k,VAR_W,b) - dt_gamma*dpz
