@@ -7,8 +7,9 @@ Two-leg driver (mirrors validation/channel_interface/run_validation.sh, in Pytho
   2. statistics leg (t = T_TRANSIENT .. T_TRANSIENT+T_AVERAGE) -- statistics ON,
      accumulated FRESH into channel_stats.h5 (+ _l1) in its own directory.
 
-The energy-conserving constant-1/2 interface is the default. Pass --skew to also
-add the skew band correction (interface_skew = true). Decomposition splits x
+The energy-conserving constant-1/2 interface is the default. Pass --skew to run
+with [flow] convection = skew (the S2 gate, docs/next_session_skew_convection.md;
+the old interface_skew band toggle was removed in the lockdown). Decomposition splits x
 (dims = N 1 1) so the y wall-bands stay whole on each rank (see README.md).
 
 Usage:
@@ -62,7 +63,7 @@ def main():
     ap.add_argument("--arch", default="gpu", choices=["gpu", "cpu", "gpu_corax"],
                     help="binary build dir suffix (gpu_corax = the cc120 build on istmcorax)")
     ap.add_argument("--ranks", type=int, default=2)
-    ap.add_argument("--skew", action="store_true", help="also add interface_skew = true")
+    ap.add_argument("--skew", action="store_true", help="[flow] convection = skew")
     ap.add_argument("--no-reflux", action="store_true",
                     help="set momentum_reflux = false (the reflux is the u'/v' band source -- "
                          "see docs/next_session_edges_les.md)")
@@ -80,7 +81,7 @@ def main():
     xz = a.refine_dims == "xz"
     name = a.name or ("xz" if xz else "noreflux" if a.no_reflux else "skew" if a.skew else "default")
     t_end = a.t_transient + a.t_average
-    skew_sub = [(r"^; interface_skew.*$", "interface_skew = true")] if a.skew else []
+    skew_sub = [(r"^re = ", "convection = skew\nre = ")] if a.skew else []
     reflux_sub = [(r"^momentum_reflux = .*$", "momentum_reflux = false")] if a.no_reflux else []
     # xz quadtree: the wall bands refine in x,z only (the IC leaf table and
     # the solver builder must agree, so the IC is refine_dims-specific).

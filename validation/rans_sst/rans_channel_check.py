@@ -154,7 +154,9 @@ def check_loglaw(yc, prof, re, tol, wall_lo, wall_hi, uplus_center=None,
     rel = np.abs(up[log_range] - ref)/ref
     print("log region y+ in [%.0f, %.0f], %d points; max |U+ - loglaw|/loglaw = %.3f (tol %g)"
           % (yp[log_range].min(), yp[log_range].max(), log_range.sum(), rel.max(), tol))
-    trapz = getattr(np, "trapezoid", np.trapz)   # numpy < 2 compatibility
+    # numpy < 2 compatibility (getattr's default is evaluated eagerly —
+    # np.trapz raises under numpy 2, so branch instead)
+    trapz = np.trapezoid if hasattr(np, "trapezoid") else np.trapz
     print(f"U+ centreline = {up[-1]:.2f}, bulk U+ = {trapz(up, yp/(u_tau*re)):.2f}")
     for name in ("k", "om", "nut"):
         if prof[name] is not None:
