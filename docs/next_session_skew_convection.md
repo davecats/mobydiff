@@ -118,6 +118,14 @@ with skew as the only path; update CLAUDE.md + this doc STATUS.
   full t = 20 confirmation COMPLETE (100k steps, forces steady to six
   digits at the trip signature); wall-time +3.4% (0.461 vs 0.446
   s/step, C11 on the A6000) — gate 10 within budget for this case.
-- PENDING: instrumented G_conv rerun under skew (in flight; expect
-  ~0 in the band); S2 physics battery (channel/LES/RANS stats, C10/C11
-  polar spot-check); S3 lockdown.
+- Instrumented G_conv rerun under skew (2026-07-23): CLOSED. Same
+  instrumentation, window and case as the div attribution: |p'| stays
+  O(1) (0.5 -> 1.3, transient adjustment; div twin: 3.2 -> 1200),
+  G_pred is now NEGATIVE (1e-5..1e-4 damping), G_conv scatters about
+  ZERO (+-1e-4, mixed sign — five orders below the div twin's +2..+6
+  per substage), G_corr ~ 1e-7. The convective energy production at
+  the interface is measurably eliminated. (Dumps deleted, 2x 11.6 GB;
+  regenerate via the diag/v1-terms worktree + MOBY_DIAG_TERMS.)
+- PENDING: S2 physics battery (channel/LES/RANS stats under skew,
+  C10/C11 polar spot-check); S3 lockdown (flip default, remove toggle,
+  update CLAUDE.md).
