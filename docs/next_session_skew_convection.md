@@ -126,6 +126,23 @@ with skew as the only path; update CLAUDE.md + this doc STATUS.
   per substage), G_corr ~ 1e-7. The convective energy production at
   the interface is measurably eliminated. (Dumps deleted, 2x 11.6 GB;
   regenerate via the diag/v1-terms worktree + MOBY_DIAG_TERMS.)
-- PENDING: S2 physics battery (channel/LES/RANS stats under skew,
-  C10/C11 polar spot-check); S3 lockdown (flip default, remove toggle,
-  update CLAUDE.md).
+- S2 gate 8 (2026-07-23): turb180 with skew PASS (loglaw 4.9 % of
+  tol 6 %, U+ centreline 18.16 vs DNS 18.20 — the T2 class).
+- v1-skew vs OpenFOAM (2026-07-23, tutorials/naca: cpcf_c11skew_vs_
+  openfoam.png, fields_c11skew_{zoom,nose}.png): with the transition
+  treatment MATCHED (stable forced-laminar 0-0.09c + trip), CV forces
+  C_L 0.449 +- 0.021 / C_D 0.0130 +- 0.0015 vs OF 0.5142 / 0.0134 —
+  C_D now agrees; the Cf laminar dip + trip-jump structure tracks OF
+  (dip shallower, 0.005 vs 0.002: the staircase adds friction in the
+  laminar zone; pressure-side staircase Cf spike ~0.016 at x/c 0.03);
+  Cp peak -1.62 vs -1.78 and C_L -13 % PERSIST with transition matched
+  and wall resolution matched -> the LE staircase suction-peak
+  smearing is now ISOLATED as the dominant remaining lift-deficit
+  driver (the post-A3 smoothed-mask/Brinkman escalation is the lever).
+- WHEN GATE 6 LANDS (user note 2026-07-23): produce the standard
+  visualisation of the developed interface-channel results (mean U /
+  RMS profiles + interface-band cross-sections, plot_channel_stats.py
+  + plot_interface_validation.py) alongside the pass/fail numbers.
+- PENDING: S2 gates 6 (running), 7 (LES/LES-IBM), 9 (polar
+  spot-check); S3 lockdown (flip default, remove toggle, update
+  CLAUDE.md).
