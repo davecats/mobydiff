@@ -143,6 +143,20 @@ with skew as the only path; update CLAUDE.md + this doc STATUS.
   visualisation of the developed interface-channel results (mean U /
   RMS profiles + interface-band cross-sections, plot_channel_stats.py
   + plot_interface_validation.py) alongside the pass/fail numbers.
-- PENDING: S2 gates 6 (running), 7 (LES/LES-IBM), 9 (polar
-  spot-check); S3 lockdown (flip default, remove toggle, update
-  CLAUDE.md).
+- S2 gate 6 (2026-07-23): PASS. Developed interface channel t = 5..25
+  with skew (developed/runs/skew_conv, gate6_skew_stats.png): interface
+  jump ratios within 0.007 of the validated div-refluxoff signature on
+  every component (u' 0.849/1.170 vs 0.853/1.169 etc.), NO new band,
+  -<u'v'> peak +1.5 % vs uniform ref (div: +1.2 %), U+ core 18.38, and
+  the const-1/2 core rms deficits are EQUAL OR SMALLER under skew
+  (v' -9.5 % vs -10.9 %) — skew is marginally less dissipative.
+- PENDING: S2 gate 7 (LES/LES-IBM), gate 9 (polar spot-check);
+  S3 lockdown (flip default, remove toggle, update CLAUDE.md).
+- OPEN QUESTION (user, 2026-07-23): the remaining -13 % lift deficit vs
+  OpenFOAM — geometry RULED OUT (both codes use the identical -0.1036
+  closed-TE NACA0012; OF's NACA0012.obj matches to 6.6e-8); staircase
+  WEAKENED (L10->L11 barely moved the peak). Prime suspect now: the
+  sustained ambient nut = 10 nu acting on the outer suction-peak flow
+  (OF's ambient is decayed/pinned). Discriminator ready to run: v1-skew
+  restart with ambient sustain off / nut_ratio 1 for 1-2 chord times,
+  watch Cp_min.
