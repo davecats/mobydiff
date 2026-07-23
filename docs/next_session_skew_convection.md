@@ -111,7 +111,13 @@ with skew as the only path; update CLAUDE.md + this doc STATUS.
      shows NO anchored mode: field deltas O(1e-2) DECREASING with
      wandering locations vs the div twin's fixed-point 0.30 -> 9.5 ->
      blow-up. The interface energy source is gone, not delayed.
-- PENDING: v1 full t = 20 confirmation (launch next); instrumented
-  G_conv <= 0 rerun (rebase diag/v1-terms onto 57bd1e3); gate 3
-  Beltrami order; gate 5 rank/GPU identity; S2 physics battery;
-  S3 lockdown.
+- S1 COMPLETE (2026-07-23): gate 3 Beltrami xz-patch order with skew =
+  2.73 (32^3 vel-L2 5.484e-3 -> 64^3 8.268e-4; validated class
+  2.7-2.9); gate 5 with skew: 1 == 4 ranks EXACT and CPU == GPU EXACT
+  (max_abs 0.0, all four fields, the multilevel uniform layout); v1
+  full t = 20 confirmation COMPLETE (100k steps, forces steady to six
+  digits at the trip signature); wall-time +3.4% (0.461 vs 0.446
+  s/step, C11 on the A6000) — gate 10 within budget for this case.
+- PENDING: instrumented G_conv rerun under skew (in flight; expect
+  ~0 in the band); S2 physics battery (channel/LES/RANS stats, C10/C11
+  polar spot-check); S3 lockdown.
