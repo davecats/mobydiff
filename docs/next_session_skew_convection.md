@@ -171,3 +171,19 @@ with skew as the only path; update CLAUDE.md + this doc STATUS.
   (OF's ambient is decayed/pinned). Discriminator ready to run: v1-skew
   restart with ambient sustain off / nut_ratio 1 for 1-2 chord times,
   watch Cp_min.
+
+## Ambient discriminator (2026-07-24, VERDICT: ambient nut is a REAL driver)
+
+v1-skew continued t = 20..23 with ambient_sustain OFF and the restart's
+freestream k rescaled so nut_amb = 1.09 nu (the OpenFOAM inlet level;
+6.1M cells), decaying further: C_L 0.449 -> 0.477 +- 0.013 (the -13 %
+deficit vs OF 0.5142 shrinks to -7 %), Cp_min -1.619 -> -1.695 (half
+the peak gap to OF -1.780 recovered) — the sustained nut = 10 nu on
+the OUTER/mid-chord loading region (NOT the peak: the v1 pin box had
+nut = 0 there already, the user's observation) suppresses ~half the
+lift discrepancy. Still trending at t = 23: extension to t = 26 in
+flight (3060). IMPLICATION for the campaign: rerun the polar with a
+low-nut ambient (sustain at nut_ratio ~ 1, keeping tu for transition
+control — the sustain fixed point works at any nut_ratio and the dt
+bound RELAXES) before attacking anything else in the wall
+representation.
