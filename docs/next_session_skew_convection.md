@@ -181,9 +181,16 @@ deficit vs OF 0.5142 shrinks to -7 %), Cp_min -1.619 -> -1.695 (half
 the peak gap to OF -1.780 recovered) — the sustained nut = 10 nu on
 the OUTER/mid-chord loading region (NOT the peak: the v1 pin box had
 nut = 0 there already, the user's observation) suppresses ~half the
-lift discrepancy. Still trending at t = 23: extension to t = 26 in
-flight (3060). IMPLICATION for the campaign: rerun the polar with a
-low-nut ambient (sustain at nut_ratio ~ 1, keeping tu for transition
-control — the sustain fixed point works at any nut_ratio and the dt
-bound RELAXES) before attacking anything else in the wall
-representation.
+lift discrepancy. EXTENSION to t = 26 (2026-07-25): the gap CLOSES. C_L
+0.493 (t 24.5) -> 0.502 (t 25.5) -> 0.506 +- 0.005 (t 26, increments
+halving -> asymptote ~0.51); Cp_min -1.744. vs OpenFOAM 0.5142 /
+-1.780: the lift agrees within ~1.6 % and the peak within 2 %. FINAL
+DEFICIT DECOMPOSITION for the aoa-5 benchmark: wall resolution (y+ 3-4
+-> 1.5-2) fixed the DRAG; the sustained ambient nut = 10 nu was
+essentially the ENTIRE lift gap (outer/mid-chord loading suppression);
+geometry, transition treatment, staircase, pressure iterations:
+measured out (the SST coefficients are IDENTICAL to OF's printed dict,
+c1 limiter and nut clip included; their run also has decayControl
+false). CAMPAIGN FIX: sustain at nut_ratio ~ 1 (tu 5 % kept for
+transition control; the dt bound relaxes) — rerun the polar with that
+before any wall-representation work.
