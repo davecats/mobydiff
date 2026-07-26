@@ -86,8 +86,9 @@ def load_fine_plane(path):
         hx = lx/(nx*2**(lmax*int(mask[0])))
         hz = lz/(nz*2**(lmax*int(mask[2])))
         U, W, P = f["un"], f["wn"], f["pn"]
+        K = f["k"] if "k" in f else None
 
-        xs, zs, us, ws, ps = [], [], [], [], []
+        xs, zs, us, ws, ps, ks = [], [], [], [], [], []
         p_far, n_far = 0.0, 0
         for bid, (ox, oy, oz, lev) in enumerate(blocks):
             if lev == 0:
@@ -117,13 +118,16 @@ def load_fine_plane(path):
             u = U[bid][...].mean(axis=1)      # (z, x) span-averaged
             w = W[bid][...].mean(axis=1)
             p = P[bid][...].mean(axis=1)
+            kk = K[bid][...].mean(axis=1) if K is not None else np.zeros_like(u) + np.nan
             Z, X = np.meshgrid(zc, xc, indexing="ij")
             xs.append(X.ravel()); zs.append(Z.ravel())
             us.append(u.ravel()); ws.append(w.ravel()); ps.append(p.ravel())
+            ks.append(kk.ravel())
     if n_far == 0:
         raise SystemExit("no level-0 far-field box found for p_inf")
     return (np.concatenate(xs), np.concatenate(zs), np.concatenate(us),
-            np.concatenate(ws), np.concatenate(ps), p_far/n_far, hx)
+            np.concatenate(ws), np.concatenate(ps), np.concatenate(ks),
+            p_far/n_far, hx)
 
 
 def main():
@@ -144,7 +148,7 @@ def main():
     global XLE, ZLE
     XLE, ZLE = a.nose
 
-    x, z, u, w, p, p_inf, h = load_fine_plane(a.h5)
+    x, z, u, w, p, kfield, p_inf, h = load_fine_plane(a.h5)
     nu = 1.0/a.re
     fluid = (np.abs(u) + np.abs(w)) > 1e-20
     print(f"{a.h5}: {x.size} finest-level cells near the section "
@@ -160,19 +164,20 @@ def main():
     dx = np.column_stack([x[near], z[near]]) - pts[ci]
     dn = np.einsum("ij,ij->i", dx, nrm[ci])          # signed normal distance
     ut = (u[near]*tng[ci, 0] + w[near]*tng[ci, 1])   # tangential velocity
+    kn = kfield[near]
     # TE-ward sign: tangent with positive x component on both sides
     sgn = np.where(tng[ci, 0] >= 0.0, 1.0, -1.0)
     ut *= sgn
     pn = p[near]
     ok = dn > 0.05*h                                  # outside the surface
-    ci, dn, ut, pn = ci[ok], dn[ok], ut[ok], pn[ok]
+    ci, dn, ut, pn, kn = ci[ok], dn[ok], ut[ok], pn[ok], kn[ok]
 
     # station = arc bin over the polyline index
     nst = a.stations
     bins = np.linspace(0, pts.shape[0], nst + 1).astype(int)
     st_of = np.searchsorted(bins, ci, side="right") - 1
 
-    out = {k: np.full(nst, np.nan) for k in ("cf", "cp", "xoc", "up", "ncf", "ncp")}
+    out = {k: np.full(nst, np.nan) for k in ("cf", "cp", "xoc", "up", "ncf", "ncp", "d0")}
     for s in range(nst):
         sel = st_of == s
         mid = (bins[s] + min(bins[s+1], pts.shape[0] - 1))//2
@@ -180,24 +185,72 @@ def main():
         out["up"][s] = 1.0 if upper[mid] else 0.0
         if not sel.any():
             continue
-        d, v, q = dn[sel], ut[sel], pn[sel]
-        # ---- Cf: through-origin weighted LS (u_t(0) = 0 exact) ----
+        d, v, q, kv = dn[sel], ut[sel], pn[sel], kn[sel]
+        # ---- Cf: d0-gated HYBRID estimator ----
+        # (1) the ORIGINAL anchored through-origin fit (u_t(0) = 0 at
+        # the analytic polyline, d+ <= 5 iteration) — kept verbatim: it
+        # is exact where the discrete wall coincides with the polyline.
+        # (2) a robust free-intercept fit u_t = g (d - d0) over a
+        # deeper range, which MEASURES the local effective-wall offset
+        # d0 (staircase/penalization penetration: ~ -1.2 h at the nose
+        # vs ~ -0.3 h mid-chord) and reads the slope from the effective
+        # wall. Blend by |d0|: anchored where the wall is where the
+        # polyline says (mid-chord), free-intercept where it is not
+        # (the nose — anchoring at the wrong wall was the laminar-zone
+        # Cf spike/jitter).
         m = d <= a.dmax_cf*h
+        g_anc = np.nan
         for _ in range(3):
             if m.sum() < 2:
                 break
             wgt = 1.0/d[m]
-            g = float(np.sum(wgt*v[m]*d[m])/np.sum(wgt*d[m]**2))
-            utau = np.sqrt(nu*abs(g)) if g != 0.0 else 0.0
+            g_anc = float(np.sum(wgt*v[m]*d[m])/np.sum(wgt*d[m]**2))
+            utau = np.sqrt(nu*abs(g_anc)) if g_anc != 0.0 else 0.0
             m2 = m & (d*utau/nu <= 5.0) if utau > 0 else m
             if m2.sum() == m.sum() or m2.sum() < 2:
                 break
             m = m2
-        if m.sum() >= 2:
-            wgt = 1.0/d[m]
-            g = float(np.sum(wgt*v[m]*d[m])/np.sum(wgt*d[m]**2))
-            out["cf"][s] = 2.0*nu*g
-            out["ncf"][s] = m.sum()
+        n_anc = m.sum()
+        mf = (d <= 1.6*a.dmax_cf*h) & (d >= 0.75*h)
+        g_free = np.nan
+        d0 = 0.0
+        for _ in range(4):
+            if mf.sum() < 4:
+                break
+            wgt = 1.0/d[mf]
+            Sw = wgt.sum(); Sd = np.sum(wgt*d[mf]); Sv = np.sum(wgt*v[mf])
+            Sdd = np.sum(wgt*d[mf]**2); Sdv = np.sum(wgt*d[mf]*v[mf])
+            det = Sw*Sdd - Sd*Sd
+            if det <= 0.0:
+                break
+            g_free = (Sw*Sdv - Sd*Sv)/det
+            c0 = (Sdd*Sv - Sd*Sdv)/det
+            d0 = -c0/g_free if g_free != 0.0 else 0.0
+            r = v[mf] - (g_free*d[mf] + c0)
+            sig = np.std(r)
+            if sig > 0 and np.any(np.abs(r) > 2.5*sig):
+                keep = np.abs(r) <= 2.5*sig
+                idx = np.nonzero(mf)[0]
+                mf = np.zeros_like(mf); mf[idx[keep]] = True
+                continue
+            break
+        if n_anc >= 2 and np.isfinite(g_anc):
+            cf_val = 2.0*nu*g_anc
+            # LAMINAR gate: the free-intercept branch is valid (and
+            # needed) only where the profile is laminar — linear over
+            # the whole fit depth, and the effective-wall offset is the
+            # dominant error (the nose staircase). Turbulent stations
+            # keep the ORIGINAL anchored estimator verbatim (at y+ > 5
+            # samples the free fit aliases buffer-layer curvature into
+            # d0). k < 1e-4 U^2 near the wall = laminar (pinned/decayed
+            # zones are ~0; turbulent BL carries ~1e-2). No-RANS
+            # snapshots have no k dataset -> NaN -> always anchored.
+            kmed = np.nanmedian(kv[d <= 1.6*a.dmax_cf*h]) if kv.size else np.nan
+            if np.isfinite(g_free) and np.isfinite(kmed) and kmed < 1.0e-4:
+                cf_val = 2.0*nu*g_free
+                out["d0"][s] = d0
+            out["cf"][s] = cf_val
+            out["ncf"][s] = n_anc
         # ---- Cp: linear wall extrapolation ----
         mc = d <= a.dmax_cp*h
         if mc.sum() >= 3:
