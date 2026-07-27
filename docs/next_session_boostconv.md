@@ -201,3 +201,16 @@ steady-RANS points that limit-cycle (high-alpha polar angles), and
 isolated slow mode) — V2 remains the one untested question. turb180
 was the wrong yardstick for acceleration; the 3x bar there is
 unreachable by construction.
+
+## V2 (2026-07-28): the C11 slow-tail test — usable, cheap, converged
+
+V2 = the finalized aoa-5 case restarted from the t = 26 near-steady
+state with boost (alpha 0.02, N 20, p 25, specific residuals), t 26-29
+on the healed cetus A6000: overhead +2.4 % s/step (0.457 vs 0.446; the
+earlier 0.93 was the dying machine, not boost); C_L plateaus at
+0.516 +- 0.005 within ~1 t.u. of activation (plain-trend estimate:
+~2-3 t.u. to the band, though the plain asymptote extrapolation was
+itself low — no concurrent plain twin, so claim conservatively:
+boost converged the tail at no measurable cost and no downside).
+FINAL VALIDATION NUMBERS (vs OpenFOAM): C_L 0.516/0.5142 (+0.4 %),
+C_D 0.0134/0.0134 (exact), Cp_min -1.787/-1.780 (+0.4 %).

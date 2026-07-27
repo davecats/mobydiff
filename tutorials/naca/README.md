@@ -36,19 +36,25 @@ simpleFoam kOmegaSST reference (48400-cell O-mesh, wall y+ 1.3).
    docs/next_session_naca_re4e5.md.
 3. mpirun -n 1 ../../build_gpu/moby_solve c11_aoa5.ini
 
-## Validation results (t = 26 state, commit 2ec6e46 figures)
+## Validation results (CONVERGED, t = 29; V2 run, stationary t 27-29)
 
-|                | mobydiff (IBM) | OpenFOAM (body-fitted) |
-|----------------|----------------|------------------------|
-| C_L (CV)       | 0.506 +- 0.005 (asymptoting ~0.51) | 0.5142 |
-| C_D (CV)       | ~0.013 settled | 0.0134 |
-| Cp_min (depth-converged) | -1.763 | -1.780 |
-| TE separation  | x/c 0.986      | 0.996 |
+|                | mobydiff (IBM) | OpenFOAM (body-fitted) | delta |
+|----------------|----------------|------------------------|-------|
+| C_L (CV)       | 0.516 +- 0.005 | 0.5142                 | +0.4 % |
+| C_D (CV)       | 0.0134 +- 0.0004 | 0.0134               | exact |
+| Cp_min (depth-converged) | -1.787 | -1.780               | +0.4 % |
+| TE separation  | x/c ~0.99      | 0.996                  | -- |
+
+(The earlier t = 26 numbers -- C_L 0.506, Cp_min -1.763 -- were the
+still-converging circulation; the peak followed the circulation-scaling
+prediction exactly. Converged state: c11_v2_430013.h5. The final leg
+ran WITH the BoostConv accelerator: [rans] boostconv alpha 0.02, N 20,
+p 25; overhead +2.4 % s/step; plateau reached within ~1 t.u. of
+activation.)
 
 - Cp curves overlay within extraction accuracy on BOTH sides
-  (cpcf_c11_final_vs_openfoam.png); the residual peak gap is the
-  still-converging circulation (scaling our peak by the remaining C_L
-  ratio lands on theirs).
+  (cpcf_c11_final_vs_openfoam.png); at full convergence the peak and
+  both coefficients MATCH OpenFOAM within the extraction/CV accuracy.
 - Cf: laminar dip + trip-jump structure aligned with OF; the laminar
   zone carries a 1.5-1.7x Thwaites excess = staircase roughness (step
   height ~15 % of the laminar delta) — the known first-order-IBM
