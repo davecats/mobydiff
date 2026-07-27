@@ -618,6 +618,14 @@ subroutine apply_rans_value(key, value, dns, line_no)
                 error stop "invalid [rans] ktrip_box"
             end if
         end block
+    case ("boostconv")
+        call read_bool(value, dns%rans_boostconv, line_no)
+    case ("boostconv_interval")
+        call read_int(value, dns%rans_boostconv_interval, line_no)
+    case ("boostconv_capacity")
+        call read_int(value, dns%rans_boostconv_capacity, line_no)
+    case ("boostconv_tau")
+        call read_real(value, dns%rans_boostconv_tau, line_no)
     case ("dump_geometry")
         call read_bool(value, dns%rans_dump_geometry, line_no)
     case ("dwall_tol")

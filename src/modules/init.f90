@@ -177,6 +177,12 @@ module init
         ! dwall band keeps every interface in ambient-damped fluid.
         integer(C_INT) :: rans_n_kpin_dwall = 0_C_INT
         real(C_DOUBLE) :: rans_kpin_dwall(3, 8) = 0.0d0
+        ! [rans] boostconv: steady-state residual-recombination
+        ! accelerator (docs/next_session_boostconv.md); RANS-only.
+        logical(C_BOOL) :: rans_boostconv = .false.
+        integer(C_INT) :: rans_boostconv_interval = 25_C_INT
+        integer(C_INT) :: rans_boostconv_capacity = 10_C_INT
+        real(C_DOUBLE) :: rans_boostconv_tau = 1.0d-8
         character(len=256) :: field_prefix = ""
         integer :: field_interval = 0
         character(len=256) :: restart_file = ""

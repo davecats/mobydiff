@@ -32,6 +32,7 @@ set(MODULE_SOURCES
     ${MODULE_DIR}/gpu_runtime.f90
     ${MODULE_DIR}/field_hdf5.c
     ${MODULE_DIR}/io.f90
+    ${MODULE_DIR}/boostconv.f90
     ${MODULE_DIR}/rans.f90
     ${MODULE_DIR}/bodyforce.f90
     ${MODULE_DIR}/comm.f90

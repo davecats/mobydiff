@@ -118,14 +118,18 @@ module rans
     use :: boundary, only: boundary_type, boundary_face_id, NFACES, &
         domain_face_is_wall, apply_scalar_bc, PATCH_UNSET, &
         PATCH_GENERIC, PATCH_WALL, PATCH_INLET, PATCH_OUTLET, &
-        SCALAR_BC_NONE, SCALAR_BC_COPY, SCALAR_BC_MIRROR, SCALAR_BC_VALUE
+        SCALAR_BC_NONE, SCALAR_BC_COPY, SCALAR_BC_MIRROR, SCALAR_BC_VALUE, &
+        apply_bc
     use :: ibmm, only: ibm_type, isInBody, body_indicator_i
     use :: walldist, only: walldist_type, build_walldist, destroy_walldist, &
         walldist_distance
     use :: turbulence, only: turb_type, velocity_gradient_tensor, &
         TURB_IDDES, IDDES_CDES1, IDDES_CDES2, iddes_k_sink_coeff
     use :: io, only: read_dwall_blocks, write_rans_geometry_file, read_scalar_field
-    use :: comm, only: comm_type, comm_allreduce_sum, exchange_scalar_halos
+    use :: comm, only: comm_type, comm_allreduce_sum, exchange_scalar_halos, &
+        exchange_halos
+    use :: boostconv, only: boostconv_type, boostconv_init, &
+        enter_boostconv_data, boostconv_apply
     implicit none
 
     private
@@ -136,6 +140,7 @@ module rans
     ! half-cell floor -- what a case file's dwall_blocks tiles carry.
     public :: fill_body_distance_analytic
     public :: enter_rans_data, exit_rans_data
+    public :: init_boostconv_rans, boostconv_rans
     public :: write_rans_geometry
     public :: init_rans_transport, rans_prepare, rans_substage
     public :: rans_set_constrained_cells
@@ -2064,5 +2069,123 @@ contains
         end do
         !$omp end target teams distribute parallel do
     end subroutine rans_transport_kernel
+
+    ! ------------------------------------------------------------------
+    ! BoostConv steady-state accelerator, RANS-facing side
+    ! (docs/next_session_boostconv.md): pack u,v,w,p,k,omega interiors
+    ! into the accelerator's flat work vector, hand it one activation,
+    ! unpack, and run the same state hygiene a restart read gets. The
+    ! generic algorithm lives in boostconv.f90 and is physics-blind.
+
+    subroutine init_boostconv_rans(bcv, blk, dns, has_terminal)
+        type(boostconv_type), intent(inout) :: bcv
+        type(block_set_type), intent(in) :: blk
+        type(dns_type), intent(in) :: dns
+        logical, intent(in) :: has_terminal
+
+        integer(C_INT) :: nDof
+
+        nDof = 6_C_INT*blk%nb(1)*blk%nb(2)*blk%nb(3)*blk%nBlocks
+        call boostconv_init(bcv, nDof, 6_C_INT, dns%rans_boostconv_capacity, &
+            dns%rans_boostconv_interval, dns%rans_boostconv_tau)
+        call enter_boostconv_data(bcv)
+        if (has_terminal) print '(a,i0,a,i0,a,i0,a,es8.1)', &
+            " [boostconv] on: nDof = ", nDof, "  N = ", bcv%capacity, &
+            "  interval = ", bcv%interval, "  tau = ", bcv%tau
+    end subroutine init_boostconv_rans
+
+    ! Pack (dir = 0) / unpack (dir = 1) between the solver state and the
+    ! flat vector: variable-major blocks u, v, w, p, k, omega; interiors
+    ! only (halos are re-exchanged after unpack).
+    subroutine boostconv_pack(bcv, sst, blk, dir)
+        type(boostconv_type), intent(inout) :: bcv
+        type(sst_type), intent(inout) :: sst
+        type(block_set_type), intent(inout) :: blk
+        integer, intent(in) :: dir
+
+        integer :: i, j, k, b, v, nx, ny, nz, nBlocks, idx, cellsPerVar
+
+        nx = int(blk%nb(1)); ny = int(blk%nb(2)); nz = int(blk%nb(3))
+        nBlocks = int(blk%nBlocks)
+        cellsPerVar = nx*ny*nz*nBlocks
+
+        !$omp target teams distribute parallel do collapse(4) &
+        !$omp& map(to: nx, ny, nz, nBlocks, cellsPerVar, dir) &
+        !$omp& map(tofrom: bcv%xwork, blk%q, sst%k, sst%omg) &
+        !$omp& private(i, j, k, b, v, idx)
+        do b = 1, nBlocks
+        do k = 1, nz
+            do j = 1, ny
+                do i = 1, nx
+                    idx = (((b-1)*nz + (k-1))*ny + (j-1))*nx + i
+                    if (dir == 0) then
+                        bcv%xwork(idx)                = blk%q(i,j,k,VAR_U,b)
+                        bcv%xwork(idx +   cellsPerVar) = blk%q(i,j,k,VAR_V,b)
+                        bcv%xwork(idx + 2*cellsPerVar) = blk%q(i,j,k,VAR_W,b)
+                        bcv%xwork(idx + 3*cellsPerVar) = blk%q(i,j,k,VAR_P,b)
+                        bcv%xwork(idx + 4*cellsPerVar) = sst%k(i,j,k,b)
+                        bcv%xwork(idx + 5*cellsPerVar) = sst%omg(i,j,k,b)
+                    else
+                        blk%q(i,j,k,VAR_U,b) = bcv%xwork(idx)
+                        blk%q(i,j,k,VAR_V,b) = bcv%xwork(idx +   cellsPerVar)
+                        blk%q(i,j,k,VAR_W,b) = bcv%xwork(idx + 2*cellsPerVar)
+                        blk%q(i,j,k,VAR_P,b) = bcv%xwork(idx + 3*cellsPerVar)
+                        sst%k(i,j,k,b)   = max(bcv%xwork(idx + 4*cellsPerVar), 0.0d0)
+                        sst%omg(i,j,k,b) = max(bcv%xwork(idx + 5*cellsPerVar), OMEGA_MIN)
+                    end if
+                end do
+            end do
+        end do
+        end do
+        !$omp end target teams distribute parallel do
+    end subroutine boostconv_pack
+
+    subroutine boostconv_rans(bcv, sst, blk, dns, bc, c, has_terminal)
+        type(boostconv_type), intent(inout) :: bcv
+        type(sst_type), intent(inout) :: sst
+        type(block_set_type), intent(inout) :: blk
+        type(dns_type), intent(in) :: dns
+        type(boundary_type), intent(in) :: bc
+        type(comm_type), intent(inout) :: c
+        logical, intent(in) :: has_terminal
+
+        integer :: v, i, lo, hi
+        real(C_DOUBLE) :: svar(6), part, sums(7)
+
+        call boostconv_pack(bcv, sst, blk, 0)
+
+        ! dynamic per-activation RMS scales (global, per variable)
+        do v = 1, 6
+            lo = (v-1)*int(bcv%varLen) + 1
+            hi = v*int(bcv%varLen)
+            part = 0.0d0
+            !$omp target teams distribute parallel do reduction(+:part) &
+            !$omp& map(to: lo, hi) map(tofrom: part) private(i)
+            do i = lo, hi
+                part = part + bcv%xwork(i)*bcv%xwork(i)
+            end do
+            !$omp end target teams distribute parallel do
+            sums(v) = part
+        end do
+        sums(7) = real(bcv%varLen, C_DOUBLE)
+        call comm_allreduce_sum(c, sums)
+        do v = 1, 6
+            svar(v) = max(sqrt(sums(v)/max(sums(7), 1.0d0)), 1.0d-12)
+        end do
+
+        call boostconv_apply(bcv, bcv%xwork, svar, c, has_terminal)
+
+        call boostconv_pack(bcv, sst, blk, 1)
+
+        ! state hygiene, exactly the restart-read path: fresh halos for
+        ! velocity (conservation sync) and p, scalar halos + ghosts, BCs;
+        ! the constrained-cell pinning runs at the next substage start.
+        call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W], syncface=.true.)
+        call exchange_halos(c, blk, [VAR_P])
+        call apply_bc(blk, bc, outflow_copy=.true.)
+        call rans_apply_scalar_bcs(sst, dns, blk, bc)
+        call exchange_scalar_halos(c, sst%k, blk)
+        call exchange_scalar_halos(c, sst%omg, blk)
+    end subroutine boostconv_rans
 
 end module rans

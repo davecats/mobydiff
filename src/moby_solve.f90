@@ -21,6 +21,7 @@ program moby_solve
     use :: turbulence
     use :: les_model
     use :: rans
+    use :: boostconv, only: boostconv_type
     use :: bodyforce
     use :: comm, only: comm_type, comm_init_world, comm_init, comm_finalize, &
         init_block_exchange, exchange_halos, exchange_scalar_halos, &
@@ -45,6 +46,7 @@ program moby_solve
     type(sst_type) :: sst
     type(profiler_type) :: turb_prof
     type(bodyforce_type) :: bf
+    type(boostconv_type) :: bcv
     type(config_seen_type) :: config_seen
     type(comm_type) :: c
     integer(C_INT), allocatable :: blockActive(:)
@@ -159,6 +161,12 @@ program moby_solve
         if (turb%model == TURB_RANS .or. turb%model == TURB_IDDES) &
             call init_rans_transport(sst, dns, blk, bc, ibm, c%has_terminal)
         call enter_rans_data(sst)
+        ! [rans] boostconv: steady-state accelerator (RANS transport only)
+        if (dns%rans_boostconv) then
+            if (turb%model /= TURB_RANS) &
+                error stop "[rans] boostconv requires [turbulence] model = rans"
+            call init_boostconv_rans(bcv, blk, dns, c%has_terminal)
+        end if
         if (dns%rans_dump_geometry) call write_rans_geometry(sst, blk, dns, c)
     end if
 
@@ -261,6 +269,14 @@ program moby_solve
             call pressure_projection(ps, blk, dns, dt_gamma, ibm, bc, c)
 
         end do
+
+        ! BoostConv activation (end of step, every interval-th step):
+        ! replaces the state by the recombined one; the following steps
+        ! absorb it like a restart (halos/BCs refreshed inside).
+        if (dns%rans_boostconv) then
+            if (mod(int(dns%step_current), int(bcv%interval)) == 0) &
+                call boostconv_rans(bcv, sst, blk, dns, bc, c, c%has_terminal)
+        end if
 
         if (turbulence_is_enabled(turb)) then
             call update_timestep_limits(blk, dns, c, turb)
