@@ -169,3 +169,35 @@ iteration (pseudo-time smoother) instead of the raw explicit map;
 (C) optionally still try V2 on the C11 airfoil (its circulation mode
 is ~5x slower than turb180's: rho_25 ~ 0.9988 — the slow-mode gap is
 larger, but the explicit-cloud objection stands); one 16 h cetus run.
+
+## UPDATE (2026-07-28): Dicholkar package in; alpha sweep verdict
+
+Implemented after reading boostconv2.pdf (Dicholkar, Zahle & Sorensen,
+JWEIA 2022 — BoostConv + SIMPLE-like RANS + k-omega SST airfoils to
+Re 1e7; their headline finding = our V1: the ORIGINAL alpha = 1 method
+is not robust on turbulent RANS):
+- [rans] boostconv_alpha (default 0.02): xi = r + alpha W c (their
+  relaxation; convergence valley at 0.01-0.05).
+- [rans] boostconv_start: delayed activation (their 3000-iteration
+  warm-up; we used 4000 on turb180).
+- SPECIFIC-RESIDUAL formulation (user suggestion): the basis stores
+  r/(elapsed pseudo-time), the update rescales by the current elapsed
+  time — identical under pinned dt, well-posed under adaptive dt.
+
+turb180 alpha sweep (p = 25, N = 20, tau 1e-3, start 4000; plain
+baseline 1e-3/1e-5/1e-10 at 16k/44k/116k):
+  alpha 0.005: 0.96-0.98x, final 4.8e-12
+  alpha 0.02 : 0.88-0.91x, final 4.7e-11  (first machine-class boosted run)
+  alpha 0.05 : 0.76-0.80x, final 7.3e-10
+Monotone: alpha -> 0 recovers plain; no alpha accelerates turb180.
+
+CONCLUSION: the Dicholkar modification delivers exactly what the paper
+claims — ROBUSTNESS (converging where alpha = 1 fails), NOT speedup of
+already-converging cases; their gains are convergence where the plain
+solver LIMIT-CYCLES (post-stall polars, shedding cylinders). For us
+the method's value proposition is therefore: (i) stabilizing
+steady-RANS points that limit-cycle (high-alpha polar angles), and
+(ii) possibly the C11 circulation tail (rho_25 ~ 0.9988, a genuinely
+isolated slow mode) — V2 remains the one untested question. turb180
+was the wrong yardstick for acceleration; the 3x bar there is
+unreachable by construction.

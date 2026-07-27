@@ -2091,11 +2091,13 @@ contains
 
         nDof = 6_C_INT*blk%nb(1)*blk%nb(2)*blk%nb(3)*blk%nBlocks
         call boostconv_init(bcv, nDof, 6_C_INT, dns%rans_boostconv_capacity, &
-            dns%rans_boostconv_interval, dns%rans_boostconv_tau)
+            dns%rans_boostconv_interval, dns%rans_boostconv_tau, &
+            dns%rans_boostconv_alpha)
         call enter_boostconv_data(bcv)
-        if (has_terminal) print '(a,i0,a,i0,a,i0,a,es8.1)', &
+        if (has_terminal) print '(a,i0,a,i0,a,i0,a,es8.1,a,f6.3)', &
             " [boostconv] on: nDof = ", nDof, "  N = ", bcv%capacity, &
-            "  interval = ", bcv%interval, "  tau = ", bcv%tau
+            "  interval = ", bcv%interval, "  tau = ", bcv%tau, &
+            "  alpha = ", bcv%alpha
     end subroutine init_boostconv_rans
 
     ! Pack (dir = 0) / unpack (dir = 1) between the solver state and the
@@ -2177,7 +2179,7 @@ contains
             svar(v) = max(sqrt(sums(v)/max(sums(7), 1.0d0)), 1.0d-12)
         end do
 
-        call boostconv_apply(bcv, bcv%xwork, svar, c, has_terminal)
+        call boostconv_apply(bcv, bcv%xwork, svar, dns%t_current, c, has_terminal)
 
         call boostconv_pack(bcv, sst, blk, 1)
 

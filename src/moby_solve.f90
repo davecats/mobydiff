@@ -274,7 +274,8 @@ program moby_solve
         ! replaces the state by the recombined one; the following steps
         ! absorb it like a restart (halos/BCs refreshed inside).
         if (dns%rans_boostconv) then
-            if (mod(int(dns%step_current), int(bcv%interval)) == 0) &
+            if (dns%step_current >= dns%rans_boostconv_start .and. &
+                mod(int(dns%step_current), int(bcv%interval)) == 0) &
                 call boostconv_rans(bcv, sst, blk, dns, bc, c, c%has_terminal)
         end if
 

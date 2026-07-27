@@ -183,6 +183,8 @@ module init
         integer(C_INT) :: rans_boostconv_interval = 25_C_INT
         integer(C_INT) :: rans_boostconv_capacity = 10_C_INT
         real(C_DOUBLE) :: rans_boostconv_tau = 1.0d-3
+        real(C_DOUBLE) :: rans_boostconv_alpha = 0.02d0
+        integer(C_INT) :: rans_boostconv_start = 0_C_INT
         character(len=256) :: field_prefix = ""
         integer :: field_interval = 0
         character(len=256) :: restart_file = ""

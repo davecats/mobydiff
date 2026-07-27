@@ -40,6 +40,16 @@ module boostconv
         integer(C_INT) :: capacity = 10      ! N: stored directions
         integer(C_INT) :: interval = 25      ! p: solver steps per activation
         real(C_DOUBLE) :: tau = 1.0d-3       ! rank guard
+        ! Dicholkar et al. 2022 relaxation: xi = r + alpha W c. alpha = 1
+        ! is the ORIGINAL BoostConv, which lacks robustness on turbulent
+        ! RANS (their finding AND our V1a-e); the convergence valley sits
+        ! at alpha ~ 0.01-0.05 (gradient-descent step-size reading).
+        real(C_DOUBLE) :: alpha = 0.02d0
+        ! specific-residual formulation (user 2026-07-27): the basis
+        ! stores r/(elapsed pseudo-time) so secant pairs stay consistent
+        ! under adaptive dt; the update rescales by the CURRENT elapsed
+        ! time. With constant dt this is algebraically identical.
+        real(C_DOUBLE) :: tprev = -1.0d0
         integer(C_INT) :: nDof = 0
         integer(C_INT) :: nVar = 0
         integer(C_INT) :: varLen = 0         ! nDof/nVar
@@ -60,10 +70,10 @@ module boostconv
 
 contains
 
-    subroutine boostconv_init(bc, nDof, nVar, capacity, interval, tau)
+    subroutine boostconv_init(bc, nDof, nVar, capacity, interval, tau, alpha)
         type(boostconv_type), intent(inout) :: bc
         integer(C_INT), intent(in) :: nDof, nVar, capacity, interval
-        real(C_DOUBLE), intent(in) :: tau
+        real(C_DOUBLE), intent(in) :: tau, alpha
 
         bc%nDof = nDof
         bc%nVar = nVar
@@ -71,6 +81,7 @@ contains
         bc%capacity = capacity
         bc%interval = interval
         bc%tau = tau
+        bc%alpha = alpha
         allocate(bc%xwork(nDof))
         allocate(bc%xprev(nDof), bc%rprev(nDof), bc%xiprev(nDof))
         allocate(bc%rcur(nDof), bc%xicur(nDof))
@@ -139,15 +150,16 @@ contains
     ! state (device); svar the caller's per-variable scales (host).
     ! On return x holds the boosted state (unchanged on the first two
     ! activations, which only prime the history).
-    subroutine boostconv_apply(bc, x, svar, c, has_terminal)
+    subroutine boostconv_apply(bc, x, svar, tnow, c, has_terminal)
         type(boostconv_type), intent(inout) :: bc
         real(C_DOUBLE), intent(inout) :: x(:)
         real(C_DOUBLE), intent(in) :: svar(:)
+        real(C_DOUBLE), intent(in) :: tnow
         type(comm_type), intent(in) :: c
         logical, intent(in) :: has_terminal
 
         integer :: i, j, m, n
-        real(C_DOUBLE) :: rnorm, vnorm, qn, gc, gs, t1, t2
+        real(C_DOUBLE) :: rnorm, vnorm, qn, gc, gs, t1, t2, dtef
         real(C_DOUBLE), allocatable :: cvec(:), qtv(:)
 
         n = int(bc%nDof)
@@ -165,14 +177,18 @@ contains
 
         if (bc%nActive == 0) then
             call dcopy_dev(x, bc%xprev, n)
+            bc%tprev = tnow
             bc%nActive = 1
             return
         end if
+        dtef = max(tnow - bc%tprev, 1.0d-300)
+        bc%tprev = tnow
 
         ! residual over the last interval: r = x - xprev
-        !$omp target teams distribute parallel do private(i)
+        t1 = 1.0d0/dtef
+        !$omp target teams distribute parallel do map(to: t1) private(i)
         do i = 1, n
-            bc%rcur(i) = x(i) - bc%xprev(i)
+            bc%rcur(i) = t1*(x(i) - bc%xprev(i))
         end do
         !$omp end target teams distribute parallel do
 
@@ -269,7 +285,7 @@ contains
                 cvec(j) = cvec(j)/bc%Rmat(j, j)
             end do
             do j = 1, m
-                call colaxpy_dev(bc%xicur, bc%W, j, cvec(j), n)
+                call colaxpy_dev(bc%xicur, bc%W, j, bc%alpha*cvec(j), n)
             end do
         end if
 
@@ -288,10 +304,11 @@ contains
                 " [boostconv] correction capped, |xi|/|r| was ", t1/max(rnorm, 1.0d-300)
         end if
 
-        ! overwrite the state: x = xprev + xi; roll the history
-        !$omp target teams distribute parallel do private(i)
+        ! overwrite the state: x = xprev + dtef*xi (specific residual
+        ! rescaled by the CURRENT elapsed pseudo-time); roll the history
+        !$omp target teams distribute parallel do map(to: dtef) private(i)
         do i = 1, n
-            x(i) = bc%xprev(i) + bc%xicur(i)
+            x(i) = bc%xprev(i) + dtef*bc%xicur(i)
         end do
         !$omp end target teams distribute parallel do
         call dcopy_dev(bc%rcur, bc%rprev, n)
