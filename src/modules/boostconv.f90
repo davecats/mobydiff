@@ -39,7 +39,7 @@ module boostconv
         logical(C_BOOL) :: enabled = .false.
         integer(C_INT) :: capacity = 10      ! N: stored directions
         integer(C_INT) :: interval = 25      ! p: solver steps per activation
-        real(C_DOUBLE) :: tau = 1.0d-8       ! rank guard
+        real(C_DOUBLE) :: tau = 1.0d-3       ! rank guard
         integer(C_INT) :: nDof = 0
         integer(C_INT) :: nVar = 0
         integer(C_INT) :: varLen = 0         ! nDof/nVar
@@ -152,18 +152,12 @@ contains
 
         n = int(bc%nDof)
 
-        ! dynamic scaling: weights from the CURRENT scales; a > 20 %
-        ! drift from the basis scales invalidates the stored QR -> flush.
-        if (bc%nCols > 0) then
-            do j = 1, int(bc%nVar)
-                if (abs(svar(j)/bc%svar0(j) - 1.0d0) > 0.2d0) then
-                    if (has_terminal) print '(a)', &
-                        " [boostconv] scale drift > 20% -- basis flushed"
-                    bc%nCols = 0
-                    exit
-                end if
-            end do
-        end if
+        ! dynamic-at-initialization scaling: the metric (per-variable
+        ! weights) is captured when the basis is (re)started and FROZEN
+        ! while it lives — an incrementally-updated QR cannot survive a
+        ! metric change, and flushing on drift (the first attempt)
+        ! thrashed the basis into uselessness during transients (V1).
+        ! The growth guard below refreshes the metric when it flushes.
         if (bc%nCols == 0) bc%svar0 = svar
         do j = 1, int(bc%nVar)
             bc%wvar(j) = 1.0d0/max(bc%svar0(j)**2, 1.0d-30)
@@ -277,6 +271,21 @@ contains
             do j = 1, m
                 call colaxpy_dev(bc%xicur, bc%W, j, cvec(j), n)
             end do
+        end if
+
+        ! SAFEGUARD (standard Anderson damping): a near-degenerate basis
+        ! can produce wild extrapolations; cap ||xi|| at 10 ||r|| by
+        ! rescaling the recombination part (xi -> r + s (xi - r)).
+        t1 = sqrt(max(bdot(bc, bc%xicur, bc%xicur, c), 0.0d0))
+        if (t1 > 10.0d0*rnorm .and. t1 > 0.0d0) then
+            t2 = 10.0d0*rnorm/t1
+            !$omp target teams distribute parallel do map(to: t2) private(i)
+            do i = 1, n
+                bc%xicur(i) = bc%rcur(i) + t2*(bc%xicur(i) - bc%rcur(i))
+            end do
+            !$omp end target teams distribute parallel do
+            if (has_terminal) print '(a,es9.2)', &
+                " [boostconv] correction capped, |xi|/|r| was ", t1/max(rnorm, 1.0d-300)
         end if
 
         ! overwrite the state: x = xprev + xi; roll the history

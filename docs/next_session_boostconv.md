@@ -129,3 +129,43 @@ A6000); V2 one cetus run. No solver-kernel risk.
    scales (strictly reproducible)?
 3. V2 acceptance threshold: is >= 3x steps-to-converged-C_L the right
    bar to justify running the polar with boost?
+
+## STATUS — V1 NEGATIVE (2026-07-27): BoostConv loses to plain marching here
+
+Five configurations on turb180 (baseline: plain marching reaches the
+fixed point GEOMETRICALLY, dist 1e-3/1e-5/1e-10 at 16k/44k/116k steps;
+per-25-step contraction ~0.9935):
+
+| config | result |
+|---|---|
+| V1a p=25 N=10, 6-var pack, drift-flush metric | plateau 8.8e-5; metric thrash (35 flushes) |
+| V1b p=25 N=10, NO p in pack, frozen metric | plateau 1.5e-4, 156 growth flushes |
+| V1c + tau 1e-3 + ||xi|| cap | IDENTICAL to V1b (guards never trigger) |
+| V1d 6-var pack (pn = projection MEMORY, must be packed), pinned dt | best: converges, but 2.7x SLOWER than plain |
+| V1e paper-faithful p=1, N=20 | worst: 0.25-0.29x, 8244 guard events |
+
+The ALGORITHM is verified correct: a rule-for-rule Python mirror on a
+stiff linear fixed point (rho = 0.999) converges 1e-10 in ~100 its
+where plain iteration stalls — textbook BoostConv (scratchpad
+bc_unit.py, reproduced in this doc's history).
+
+DIAGNOSIS: mismatch between BoostConv's premises and an EXPLICIT
+time-marching map. Phi_p (p RK3 steps at CFL ~0.8) carries a large
+cloud of marginally-damped, strongly non-normal fast modes; every
+recombination kick excites the cloud, the secant pairs sample healing
+transients rather than the smooth slow-mode response, and the
+correction quality collapses (guards fire massively at p = 1).
+Published BoostConv successes ride heavily-damped implicit /
+pseudo-compressibility inner iterations. Fixes that helped but could
+not flip the sign: pack pn (the incremental projection makes it state
+MEMORY), freeze the scaling metric per basis, pin dt (map autonomy),
+tau/cap safeguards. Also documented: k-floor at unpack corrupts secant
+pairs at near-wall cells (bounded, secondary).
+
+DECISION (user, pending): (A) keep the module dormant-gated as-is
+(V0 bit-exact 14/14; zero solver risk) and run polars unaccelerated;
+(B) research direction — wrap BoostConv around a damped INNER
+iteration (pseudo-time smoother) instead of the raw explicit map;
+(C) optionally still try V2 on the C11 airfoil (its circulation mode
+is ~5x slower than turb180's: rho_25 ~ 0.9988 — the slow-mode gap is
+larger, but the explicit-cloud objection stands); one 16 h cetus run.

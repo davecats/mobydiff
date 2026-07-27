@@ -2072,7 +2072,11 @@ contains
 
     ! ------------------------------------------------------------------
     ! BoostConv steady-state accelerator, RANS-facing side
-    ! (docs/next_session_boostconv.md): pack u,v,w,p,k,omega interiors
+    ! (docs/next_session_boostconv.md): pack u,v,w,k,omega interiors
+    ! (p IS part of the packed state: the incremental projection makes
+    ! the accumulated pn genuine solver MEMORY — the predictor drives
+    ! with -dt grad pn — so excluding it breaks the fixed-point map;
+    ! measured in V1b/c as systematic post-boost residual growth)
     ! into the accelerator's flat work vector, hand it one activation,
     ! unpack, and run the same state hygiene a restart read gets. The
     ! generic algorithm lives in boostconv.f90 and is physics-blind.
@@ -2181,7 +2185,6 @@ contains
         ! velocity (conservation sync) and p, scalar halos + ghosts, BCs;
         ! the constrained-cell pinning runs at the next substage start.
         call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W], syncface=.true.)
-        call exchange_halos(c, blk, [VAR_P])
         call apply_bc(blk, bc, outflow_copy=.true.)
         call rans_apply_scalar_bcs(sst, dns, blk, bc)
         call exchange_scalar_halos(c, sst%k, blk)
