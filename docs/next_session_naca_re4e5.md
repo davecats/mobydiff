@@ -193,3 +193,35 @@ exactly the "interface-artifact test bed" geometry.
    seed-fan needs damping — R1: 3-5x at ~2 % cost).
 3. Then the sweep (one host per angle) + polars + Cp/Cf vs XFOIL and
    OpenFOAM.
+
+## CORRECTED aoa-5 findings (2026-07-27, user-driven checks; commit 2ec6e46)
+
+Supersedes the earlier "LE staircase suction-peak smearing dominates"
+attribution:
+- Cp SUCTION PEAK: the apparent gap to OpenFOAM was 55 % EXTRACTION
+  ARTIFACT — the shallow default extrapolation depth read staircase
+  step-wake pressure pockets on the suction side (absent on the
+  pressure side: low u, weak pockets — the user's tell). Depth sweep
+  2/4/8/12/16 h: -1.737/-1.744/-1.759/-1.763/-1.7634, CONVERGED at
+  -1.763 vs OF -1.780 -> residual physical gap 0.017 (1.0 %).
+  surface_cp_cf.py dmax_cp default is now 12 h.
+- Cf LAMINAR ZONE: k-gated hybrid estimator (laminar stations use a
+  robust free-intercept fit — the effective wall sits at d0 ~ -1.2 h
+  at the nose; turbulent stations keep the anchored fit verbatim).
+  The remaining excess is the FIELD's: measured Cf = 1.5-1.7x Thwaites
+  driven by our own U_e (7.4 vs 6.1 e-3 at x/c 0.05) — staircase
+  ROUGHNESS (step height ~15 % of the laminar delta) genuinely
+  elevates laminar wall shear. Lever: smoothed-mask/2nd-order IBM.
+- OMEGA/U STRIPES (pressure side): NOT a distributed staircase fan and
+  NOT dynamically relevant — per-level PLATEAU STEPS of the decayed
+  ambient omega across the horizontal 2:1 lines (excess ON the lines
+  <= 0.08 dex; per-level truncation of the decaying transport, seeded
+  by the jagged wall-cell omega BC) plus u-streak content confined
+  NEAR interfaces (strictly mid-level rms 2.9e-4). k ~ 0 there ->
+  nut ~ 0 either way. band_filter was tried and REVERTED (user:
+  unquantified near-wall cost; ask before requeuing).
+State of the aoa-5 benchmark vs OpenFOAM after all corrections:
+C_L 0.506+ (asymptoting ~0.51) vs 0.5142; converged Cp_min -1.763 vs
+-1.780; Cf laminar 1.5-1.7x (staircase roughness), turbulent matched;
+transition structure matched. The UNSUSTAINED OF-ambient polar
+(8 angles, unfiltered, k-gated extraction) is running on cetus.

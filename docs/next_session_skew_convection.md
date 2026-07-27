@@ -136,9 +136,10 @@ with skew as the only path; update CLAUDE.md + this doc STATUS.
   (dip shallower, 0.005 vs 0.002: the staircase adds friction in the
   laminar zone; pressure-side staircase Cf spike ~0.016 at x/c 0.03);
   Cp peak -1.62 vs -1.78 and C_L -13 % PERSIST with transition matched
-  and wall resolution matched -> the LE staircase suction-peak
-  smearing is now ISOLATED as the dominant remaining lift-deficit
-  driver (the post-A3 smoothed-mask/Brinkman escalation is the lever).
+  and wall resolution matched -> the residual peak gap was later
+  shown to be 55 % EXTRACTION artifact (depth-converged Cp_min -1.763
+  vs OF -1.780, 1.0 % physical; see next_session_naca_re4e5.md
+  CORRECTED findings 2026-07-27).
 - WHEN GATE 6 LANDS (user note 2026-07-23): produce the standard
   visualisation of the developed interface-channel results (mean U /
   RMS profiles + interface-band cross-sections, plot_channel_stats.py
