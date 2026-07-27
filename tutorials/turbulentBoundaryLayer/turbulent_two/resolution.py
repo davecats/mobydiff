@@ -74,10 +74,9 @@ def main():
     ax.plot(reth[m], dzp[m], label=r"$\Delta z^+$")
     ax.plot(reth[m], dyp_max[m], label=r"$\Delta y^+_{max}$ (within $\delta_{99}$)")
     ax.plot(reth[m], dyp_min[m], label=r"$\Delta y^+_{min}$ (wall)")
-    for yv, lbl in [(0.5, None)]:
-        pass
     ax.set_xlabel(r"$Re_\theta$"); ax.set_ylabel(r"grid spacing in wall units")
-    ax.set_title(f"DNS resolution vs $Re_\\theta$  (1280×{ny}×192, $Re_{{\\delta^*,0}}$={re:.0f})")
+    nxg, nzg = len(xnode) - 1, len(znode) - 1
+    ax.set_title(f"DNS resolution vs $Re_\\theta$  ({nxg}×{ny}×{nzg}, $Re_{{\\delta^*,0}}$={re:.0f})")
     ax.legend(); ax.grid(alpha=0.3); ax.set_ylim(0, None)
     fig.tight_layout(); fig.savefig(a.out, dpi=150)
     print("wrote", a.out)
