@@ -36,7 +36,16 @@ simpleFoam kOmegaSST reference (48400-cell O-mesh, wall y+ 1.3).
    docs/next_session_naca_re4e5.md.
 3. mpirun -n 1 ../../build_gpu/moby_solve c11_aoa5.ini
 
-## Validation results (CONVERGED, t = 29; V2 run, stationary t 27-29)
+## Validation results — UNDER REVALIDATION (2026-07-28)
+
+CAUTION: the t = 29 numbers below came from the BoostConv-assisted leg,
+which was found to KILL the pressure-side trip (strip k 7.6e-3 ->
+7.9e-6; lower Cf halved — the recombination overwrites the localized
+k source; user diagnosis from the Cf overlay). A PLAIN rerun from the
+pre-boost t = 26 state is producing the replacement numbers; the table
+and figures will be regenerated from it.
+
+## Results table (t = 29, boosted leg — transition corrupted, see above)
 
 |                | mobydiff (IBM) | OpenFOAM (body-fitted) | delta |
 |----------------|----------------|------------------------|-------|

@@ -214,3 +214,16 @@ itself low — no concurrent plain twin, so claim conservatively:
 boost converged the tail at no measurable cost and no downside).
 FINAL VALIDATION NUMBERS (vs OpenFOAM): C_L 0.516/0.5142 (+0.4 %),
 C_D 0.0134/0.0134 (exact), Cp_min -1.787/-1.780 (+0.4 %).
+
+## CAVEAT (2026-07-28, user-diagnosed): boost kills localized k sources
+
+The V2 run's recombination SUPPRESSED the pressure-side ktrip strip
+(strip k 7.6e-3 pre-boost -> 7.9e-6 post; lower-side Cf halved,
+transition gone) — the k-block residuals are dominated by the global
+decaying ambient, and each activation pulls the thin strip toward that
+pattern faster than the source rebuilds (0.385 x 25 dt ~ 5e-4/interval).
+BoostConv + forced-transition trip devices are INCOMPATIBLE as packed;
+fix if ever needed: EXCLUDE the trip/pin cells from the packed state
+(mask in boostconv_pack). The V2 "converged" coefficients are
+therefore from corrupted transition physics; the plain rerun replaces
+them. Speedup claims from V2 are void.
