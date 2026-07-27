@@ -1,10 +1,19 @@
 # turbulent_finewall — Δy⁺_max=4 variant of turbulent_two
 
-Identical to `../turbulent_two` **except the wall-normal grid is refined** so the
-largest cell within the boundary layer is **Δy⁺_max ≈ 4** (ny 176 → **256**;
-measured Δy⁺_max 6.2 → 3.9, Δy⁺_wall 0.22 → 0.12). x and z grids unchanged
-(2048×192, geometric x). 2048×256×192 = 100.7 M cells. Same trip (0.15), skew
-convection, niter=12.
+Identical to `../turbulent_two` **except the OUTER boundary layer is refined** so
+the largest cell within the layer is **Δy⁺_max ≈ 3.85** (ny 176 → **256**). x and
+z grids unchanged (2048×192, geometric x). 2048×256×192 = 100.7 M cells. Same trip
+(0.15), skew convection, niter=12.
+
+**Key: the wall spacing is held fixed, so there is no Peclet penalty.** The
+diffusive/Peclet stability limit dt ≲ pecletmax·min(Δy²)/ν is set by the
+*smallest* cell (the wall cell). The wall resolution was already good, so we keep
+it: `dyw_plus` is raised 0.15 → **0.28** as ny grows, which holds Δy⁺_wall at
+0.226 (turbulent_two: 0.218) and the wall cell at Δy=1.07e-2 (was 1.03e-2). The
+Peclet dt limit stays 0.0257 ≥ dtmax, so **dt = 0.02, unchanged** — the extra
+points only refine the outer BL (Δy⁺_max 6.2 → 3.85), which is the resolution we
+actually need. (An earlier version refined the wall too, dropping dt to 0.0074 —
+fixed.)
 
 **IC:** the developed `../turbulent_two/production_p2_250000.h5` field
 **interpolated onto the finer y-grid** → `restart_interp.h5`, built by
