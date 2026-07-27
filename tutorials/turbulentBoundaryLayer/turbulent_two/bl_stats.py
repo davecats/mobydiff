@@ -164,26 +164,28 @@ def main():
         RC = "C3"                                         # reference colour
 
         m = reth > 250          # turbulent range (skip transition)
+        mt = reth > 150         # include the transition/overshoot for the c_f, H trends
         if ref is not None:
             sr = (ref["reth"] >= 250) & (ref["reth"] <= reth[m].max())
+            srt = (ref["reth"] >= 150) & (ref["reth"] <= reth[mt].max())
         rlab = ref["name"] if ref else None
         rlab_rt = (f"{ref['name']} (Re$_\\theta$={rp['reth']:.0f})" if ref else None)
 
-        # (0,0) c_f(Re_theta): zoom on the turbulent band
-        ax[0, 0].plot(reth[m], cf[m], label="measured")
+        # (0,0) c_f(Re_theta): full development incl. the transition overshoot
+        ax[0, 0].plot(reth[mt], cf[mt], label="measured")
         if ref is not None:
-            ax[0, 0].plot(ref["reth"][sr], ref["cf"][sr], "-", c=RC, lw=1.3, label=rlab)
-        ax[0, 0].plot(reth[m], cf_corr[m], "k--", label=r"$0.024\,Re_\theta^{-1/4}$")
+            ax[0, 0].plot(ref["reth"][srt], ref["cf"][srt], "-", c=RC, lw=1.3, label=rlab)
+        ax[0, 0].plot(reth[mt], cf_corr[mt], "k--", label=r"$0.024\,Re_\theta^{-1/4}$")
         ax[0, 0].set_xlabel(r"$Re_\theta$"); ax[0, 0].set_ylabel(r"$c_f$")
-        ax[0, 0].set_ylim(0.003, 0.006); ax[0, 0].legend(); ax[0, 0].set_title("skin friction")
+        ax[0, 0].set_ylim(0.002, 0.019); ax[0, 0].legend(); ax[0, 0].set_title("skin friction (with transition)")
 
-        # (0,1) H(Re_theta): zoom on the turbulent plateau
-        ax[0, 1].plot(reth[m], H[m], label="measured")
+        # (0,1) H(Re_theta): from the laminar inlet (H~2.59) through transition
+        ax[0, 1].plot(reth[mt], H[mt], label="measured")
         if ref is not None:
-            ax[0, 1].plot(ref["reth"][sr], ref["H"][sr], "-", c=RC, lw=1.3, label=rlab)
+            ax[0, 1].plot(ref["reth"][srt], ref["H"][srt], "-", c=RC, lw=1.3, label=rlab)
         ax[0, 1].axhline(1.4, ls=":", c="grey", label="H→1.4 (high-Re TBL)")
         ax[0, 1].set_xlabel(r"$Re_\theta$"); ax[0, 1].set_ylabel("H")
-        ax[0, 1].set_ylim(1.35, 1.75); ax[0, 1].legend(); ax[0, 1].set_title("shape factor")
+        ax[0, 1].set_ylim(1.35, 2.7); ax[0, 1].legend(); ax[0, 1].set_title("shape factor (with transition)")
 
         # (1,0) Alfredsson diagnostic plot: u'/U vs U/U_inf, with the linear fit
         Uinf = Ue[i]

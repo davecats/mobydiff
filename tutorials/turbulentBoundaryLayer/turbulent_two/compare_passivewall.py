@@ -97,18 +97,18 @@ def main():
     import matplotlib.pyplot as plt
     fig, ax = plt.subplots(2, 2, figsize=(13, 10))
 
-    m = reth > 300
-    sr = (reth_rt >= 300) & (reth_rt <= reth[m].max())
+    m = reth > 150          # include the transition/overshoot
+    sr = (reth_rt >= 150) & (reth_rt <= reth[m].max())
     ax[0, 0].plot(reth[m], cf[m], label="this work")
     ax[0, 0].plot(reth_rt[sr], cf_rt[sr], "-", c="C3", lw=1.3, label="SIMSON")
     ax[0, 0].plot(reth[m], 0.024 * reth[m] ** -0.25, "k--", label=r"$0.024\,Re_\theta^{-1/4}$")
     ax[0, 0].set_xlabel(r"$Re_\theta$"); ax[0, 0].set_ylabel(r"$c_f$")
-    ax[0, 0].set_ylim(0.003, 0.006); ax[0, 0].legend(); ax[0, 0].set_title("skin friction")
+    ax[0, 0].set_ylim(0.002, 0.019); ax[0, 0].legend(); ax[0, 0].set_title("skin friction (with transition)")
 
     ax[0, 1].plot(reth[m], H[m], label="this work")
     ax[0, 1].plot(reth_rt[sr], H_rt[sr], "-", c="C3", lw=1.3, label="SIMSON")
     ax[0, 1].set_xlabel(r"$Re_\theta$"); ax[0, 1].set_ylabel("H")
-    ax[0, 1].set_ylim(1.35, 1.75); ax[0, 1].legend(); ax[0, 1].set_title("shape factor")
+    ax[0, 1].set_ylim(1.35, 2.7); ax[0, 1].legend(); ax[0, 1].set_title("shape factor (with transition)")
 
     ax[1, 0].semilogx(yp_r, Up_r, "-", c="C3", lw=1.5, label=f"SIMSON (Re$_\\theta$={R['reth'][jr]:.0f})")
     ax[1, 0].semilogx(yp, Up, "o", ms=3, mfc="none", label=f"this work (Re$_\\theta$={reth[i]:.0f})")
