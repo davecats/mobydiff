@@ -72,7 +72,7 @@ def main():
     for ax in (ax1, ax2):
         ax.grid(alpha=0.3); ax.legend(fontsize=8)
     fig.suptitle(r"NACA 0012, Re = 4e5, $\alpha$ = 5$^\circ$: "
-                 "mobydiff C10 IBM (SST, tu 5%) vs OpenFOAM kOmegaSST")
+                 "mobydiff C11 IBM (SST, OF-matched ambient+transition) vs OpenFOAM kOmegaSST")
     fig.tight_layout()
     fig.savefig(a.out, dpi=150)
     print(f"wrote {a.out}")
