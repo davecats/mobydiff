@@ -79,15 +79,30 @@ phase 2 ≈ 19–24 h; ~1.2–1.4 days total. Chebyshev + niter 8/12 was stable
 on the `../turbulent` run at this dt; keep niter ≥ 8 (the Chebyshev +
 Dirichlet-p-outlet 2Δx resonance shows up only at niter = 6 / large dt).
 
-## Analysis (scripts copied from `../turbulent`)
+## Analysis
 
 ```bash
-python3 bl_stats.py production_stats.h5 --plot final_stats.png --retheta 450
-python3 compare_spectral.py       production_stats.h5   # U+, c_f(Re_θ), H(Re_θ) vs the .mat
+python3 bl_stats.py production_stats.h5 --plot first_stats.png --retheta 677
+                                        # 6-panel; SIMSON overlaid on every panel
+python3 compare_passivewall.py    production_stats.h5   # c_f/H trends + U+ + Reynolds stresses vs SIMSON
+python3 compare_spectral.py       production_stats.h5   # U+, c_f, H vs tbl_uncontrolled.mat (mean only)
 python3 compare_schlatter_orlu.py production_stats.h5   # vs the KTH Re_θ=677 profile
-python3 resolution.py  production_stats.h5 production_p2_150000.h5   # Δx+/Δz+/Δy+ vs Re_θ
-python3 viz_flowfield.py production_p2_150000.h5        # instantaneous fields
+python3 dpdx.py        production_stats.h5              # <p>_yz(x), d<p>_yz/dx (ZPG diagnostic)
+python3 resolution.py  production_stats.h5 production_p2_200000.h5   # Δx+/Δz+/Δy+ vs Re_θ
+python3 viz_flowfield.py production_p2_200000.h5        # instantaneous fields
 ```
 
-The reference data (`tbl_uncontrolled.mat`, `ref_schlatter_orlu_Re670.prof`)
-are symlinked from `../turbulent`.
+Reference data:
+- **`passivewall.hdf5`** — SIMSON spectral ZPG-TBL DNS (Schmitt/KIT; Re_δ*,0=450,
+  same as this case; trip at x=10; passive-scalar wall). Carries mean profiles
+  AND Reynolds stresses over the full x-development, so it is the primary
+  reference (`bl_stats.py --ref`, `compare_passivewall.py`). **Not committed**
+  (~99 MB) — keep it in this directory locally.
+- `tbl_uncontrolled.mat`, `ref_schlatter_orlu_Re670.prof` — symlinked from
+  `../turbulent` (mean-only spectral and the KTH Re_θ=677 profile).
+
+The c_f offset vs the SIMSON reference is ~−4.6% at Re_θ=677 and shrinks
+downstream (−8% near the trip → −3.6% at Re_θ=880): a tripping/development-history
+effect (our trip is at x=15 vs SIMSON's x=10), not resolution or a Re_θ bias.
+The Reynolds stresses match to ~2% (u'/v'/w'/−u'v' peaks 2.68/1.00/1.30/0.88
+vs 2.63/1.02/1.30/0.88).
