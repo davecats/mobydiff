@@ -138,7 +138,7 @@ def main():
                     help="arc stations around the section")
     ap.add_argument("--dmax-cf", type=float, default=2.5,
                     help="Cf fit depth in fine cells (before the d+ <= 5 cut)")
-    ap.add_argument("--dmax-cp", type=float, default=4.0,
+    ap.add_argument("--dmax-cp", type=float, default=12.0,
                     help="Cp extrapolation depth in fine cells")
     ap.add_argument("--re", type=float, default=4.0e5)
     ap.add_argument("--nose", type=float, nargs=2, default=[50.0, 48.0],
