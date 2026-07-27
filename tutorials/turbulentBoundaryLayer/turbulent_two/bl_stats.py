@@ -13,11 +13,17 @@ Six-panel figure:
           parameter beta(Re_theta) = (delta*/tau_w) dp_e/dx = -(delta*/tau_w)
           U_e dU_e/dx (~0 for a ZPG layer)
 
+With --spectral (default tbl_uncontrolled.mat) the in-house spectral ZPG-TBL
+DNS is overlaid on the three mean-flow panels it can populate: c_f(Re_theta),
+H(Re_theta) and U+(y+). The spectral set stores only mean U+ profiles, so the
+diagnostic-plot / Reynolds-stress / Clauser-beta panels have no counterpart.
+
 Stats layout (see boundarylayer_stats.f90): profile[nx*ny, nstat] flattened
 y-fastest; nstat = [u,v,w,uu,vv,ww,uv,uw,vw,p]. These are the time+span
 means, so unlike a single snapshot they converge to true statistics.
 """
 import argparse
+import os
 import sys
 
 import h5py
@@ -27,13 +33,39 @@ U, V, W, UU, VV, WW, UV, UW, VW, P = range(10)
 KAPPA, B = 0.41, 5.0
 
 
+def load_spectral(path):
+    """In-house spectral ZPG-TBL DNS (tbl_uncontrolled.mat): mean U+(y+) at
+    many streamwise stations + u_tau/Re_theta. Returns Re_theta-sorted trends
+    c_f = 2/Ue+^2 and H = int(1-U/Ue)dy+ / int(U/Ue)(1-U/Ue)dy+ (both from the
+    U+ profiles alone), plus the raw profiles for a matched-Re_theta lookup.
+    The set has NO fluctuation data, so only the mean-flow panels get an
+    overlay. Returns None if the file is absent (scipy optional)."""
+    if not os.path.exists(path):
+        return None
+    import scipy.io as sio
+    m = sio.loadmat(path)
+    ret = m["re_theta"].ravel()
+    Up, yp = m["u_mean"], m["y_plus"]           # U+ = U/u_tau ; y+
+    Ue = Up[:, -1]
+    cf = 2.0 / Ue ** 2
+    f = Up / Ue[:, None]
+    H = np.array([np.trapz(1 - f[i], yp[i]) / np.trapz(f[i] * (1 - f[i]), yp[i])
+                  for i in range(len(ret))])
+    o = np.argsort(ret)
+    return dict(reth=ret[o], cf=cf[o], H=H[o], Up=Up, yp=yp, reth_raw=ret)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("h5")
     ap.add_argument("--plot", default=None)
     ap.add_argument("--retheta", type=float, default=450.0,
                     help="Re_theta of the station for the profile panels")
+    ap.add_argument("--spectral", default="tbl_uncontrolled.mat",
+                    help="in-house spectral DNS .mat to overlay on the mean-flow "
+                         "panels (c_f, H, U+); '' disables")
     a = ap.parse_args()
+    spec = load_spectral(a.spectral) if a.spectral else None
 
     with h5py.File(a.h5, "r") as f:
         nx, ny = int(f.attrs["nx"]), int(f.attrs["ny"])
@@ -90,14 +122,24 @@ def main():
 
         m = reth > 250          # turbulent range (skip transition)
 
+        # spectral trends clipped to our turbulent Re_theta range
+        if spec is not None:
+            sr = (spec["reth"] >= 250) & (spec["reth"] <= reth[m].max())
+
         # (0,0) c_f(Re_theta): zoom on the turbulent band
         ax[0, 0].plot(reth[m], cf[m], label="measured")
+        if spec is not None:
+            ax[0, 0].plot(spec["reth"][sr], spec["cf"][sr], "-", c="C3", lw=1.3,
+                          label="spectral DNS")
         ax[0, 0].plot(reth[m], cf_corr[m], "k--", label=r"$0.024\,Re_\theta^{-1/4}$")
         ax[0, 0].set_xlabel(r"$Re_\theta$"); ax[0, 0].set_ylabel(r"$c_f$")
         ax[0, 0].set_ylim(0.003, 0.006); ax[0, 0].legend(); ax[0, 0].set_title("skin friction")
 
         # (0,1) H(Re_theta): zoom on the turbulent plateau
-        ax[0, 1].plot(reth[m], H[m])
+        ax[0, 1].plot(reth[m], H[m], label="measured")
+        if spec is not None:
+            ax[0, 1].plot(spec["reth"][sr], spec["H"][sr], "-", c="C3", lw=1.3,
+                          label="spectral DNS")
         ax[0, 1].axhline(1.4, ls=":", c="grey", label="H→1.4 (high-Re TBL)")
         ax[0, 1].set_xlabel(r"$Re_\theta$"); ax[0, 1].set_ylabel("H")
         ax[0, 1].set_ylim(1.35, 1.75); ax[0, 1].legend(); ax[0, 1].set_title("shape factor")
@@ -116,6 +158,10 @@ def main():
 
         # (1,1) mean profile U+(y+)
         ax[1, 1].semilogx(yp, Up, ".", ms=4, label="DNS")
+        if spec is not None:
+            js = int(np.argmin(np.abs(spec["reth_raw"] - reth[i])))
+            ax[1, 1].semilogx(spec["yp"][js], spec["Up"][js], "-", c="C3", lw=1.3,
+                              label=f"spectral DNS (Re$_\\theta$={spec['reth_raw'][js]:.0f})")
         yl = np.logspace(0, np.log10(yp.max()), 50)
         ax[1, 1].semilogx(yl, np.log(yl) / KAPPA + B, "k--", label="log law")
         ax[1, 1].semilogx(yl[yl < 12], yl[yl < 12], "k:", label=r"$U^+=y^+$")
