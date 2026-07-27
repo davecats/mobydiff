@@ -1,73 +1,69 @@
-# NACA 0012 polar sweep at Re_c = 4e5 (fully-turbulent SST, L6-xz IBM)
+# NACA 0012 validation case — alpha = 5 deg, Re_c = 4e5, vs OpenFOAM
 
-Production polar for comparison against XFOIL and OpenFOAM RANS: aoa =
--2, -1, 0, 1, 2, 3, 4, 5 at Re = 4e5, on the R2D 2D-refinement stack
-(docs/next_session_refine2d.md): span along y (`[case.airfoil] span =
-y`: chord x, LIFT z), `[blocks] refine_dims = xz`, `refine_levels = 6`.
+The finalized validation case of the Re 4e5 campaign
+(docs/next_session_naca_re4e5.md carries the full investigation trail):
+a NACA 0012 at 5 degrees incidence, chord Re 4e5, k-omega SST with the
+OpenFOAM-matched configuration, compared against a body-fitted
+simpleFoam kOmegaSST reference (48400-cell O-mesh, wall y+ 1.3).
 
-Physics/resolution choices (see naca_base.ini comments):
+## Configuration (c11_aoa5.ini)
 
-- **L6 surface Delta = 3.66e-4 c -> y+_1 ~ 2-3** at the turbulent
-  midchord (cf ~ 4e-3 at Re 4e5): resolved-wall SST, credible Cf. The
-  same grid in 3D octree mode would be ~121 M cells (it OOM'd a 49 GB
-  A6000 at Re 1e5); the xz quadtree makes it ~15 k blocks.
-- **Fully turbulent** (`[rans] transition` off): matches XFOIL run
-  fully-turbulent (or with forced transition at the LE) and avoids the
-  gamma-Re_thetat fine-grid unreliability documented in
-  validation/sd7003 ("R2D-3 follow-up").
-- **Keep-buried coefficients**: load-bearing for the penalization
-  C_L/C_D (validation/naca0012 README).
-- **12c box, Dirichlet far field**: costs ~10-15 % of the 2pi lift
-  slope (blockage); compare slopes with that in mind, or compare
-  against XFOIL shifted by the measured ratio.
+- Grid: 128c x 96c chord-lift domain, nose at (50, 48), span y
+  (0.1875c, ny 8), [blocks] refine_dims = xz, 11 levels: base c/3,
+  finest c/6144 (first-cell y+ 1.4-2.1), concentric wake-skewed
+  per-level boxes + refine_body wall bands. 16042 leaves, 8.2M cells.
+- Momentum convection: skew-symmetric (the production form, hardwired;
+  docs/next_session_skew_convection.md).
+- Turbulence: SST, resolved wall. Ambient MATCHES OpenFOAM: NO sustain
+  (their decayControl false), inlet k/omega = their inlet pair
+  (tu 21.35 %, nut_ratio 1.0936 -> nut_in = 1.09 nu, free decay).
+- Forced transition MATCHES OpenFOAM's fvOptions: [rans] kpin_box
+  (k = 0 for x < LE + 0.09c) + two ktrip_box strips at x/c 0.10-0.12
+  (rate 0.385 = their 2e-5 absolute over their set volume).
+- dt = dtmax = 5e-5 (CFL at the finest band), niter 18 chebyshev.
 
-## Run
+## Running it
 
-```bash
-PY=$HOME/ibmc/bin/python ./setup.sh   # STL + grid.h5 + L7-xz block table
-# one host per queue, e.g. (cetus NEEDS the login shell -l):
-ssh istmcorax 'setsid bash -l tutorials/naca/run_sweep.sh corax -2 -1 0 1 &'
-ssh istmcetus 'setsid bash -l tutorials/naca/run_sweep.sh cetus 2 3 &'
-setsid bash run_sweep.sh local 4 5 &
-```
+1. Geometry/case file (4-7 min, CPU build):
+   mpirun -n 4 --oversubscribe ../../build_cpu/moby_prepare .prep_c11.ini ibm_coeff_c11.h5
+2. Either restart from a converged state (c11_aoa5ab_370013.h5 if you
+   have it; any converged snapshot works via [restart] file = ...) and
+   run a few t.u., or from scratch with the STAGED protocol (3-4x
+   cheaper than all-fine): run the same physics on the L10 twin
+   (refine_levels 10, dt 1e-4) to t ~ 12, then
+   tools/../tutorials/naca/interp_restart.py onto the L11 layout and
+   finish here (t ~ 5 more). See the cost notes in
+   docs/next_session_naca_re4e5.md.
+3. mpirun -n 1 ../../build_gpu/moby_solve c11_aoa5.ini
 
-~50 min/angle on the RTX 5090 (t_final = 10 at dt = 1e-4), ~2x that on
-the A6000 / RTX 3060.
+## Validation results (t = 26 state, commit 2ec6e46 figures)
 
-## Polars
+|                | mobydiff (IBM) | OpenFOAM (body-fitted) |
+|----------------|----------------|------------------------|
+| C_L (CV)       | 0.506 +- 0.005 (asymptoting ~0.51) | 0.5142 |
+| C_D (CV)       | ~0.013 settled | 0.0134 |
+| Cp_min (depth-converged) | -1.763 | -1.780 |
+| TE separation  | x/c 0.986      | 0.996 |
 
-```bash
-python3 plot_polars.py --xfoil xfoil_polar.txt --openfoam of_polar.csv
-# -> polars.png (C_L-alpha + C_L-C_D), polar_mobydiff.dat
-```
+- Cp curves overlay within extraction accuracy on BOTH sides
+  (cpcf_c11_final_vs_openfoam.png); the residual peak gap is the
+  still-converging circulation (scaling our peak by the remaining C_L
+  ratio lands on theirs).
+- Cf: laminar dip + trip-jump structure aligned with OF; the laminar
+  zone carries a 1.5-1.7x Thwaites excess = staircase roughness (step
+  height ~15 % of the laminar delta) — the known first-order-IBM
+  signature; turbulent zone matches.
+- Extraction: surface_cp_cf.py (k-gated hybrid Cf estimator, Cp
+  extrapolation depth 12h — the converged depth), cv_forces.py
+  (flux-exact finite-volume borders, wind axes via --aoa 5),
+  compare_openfoam.py for the overlay.
 
-XFOIL reference (fully turbulent, matching this setup):
-`xfoil -> naca 0012 -> oper -> visc 4e5 -> vpar (xtr 0.01 0.01) ->
-pacc -> aseq -2 5 1` and save the polar dump.
+## References on disk
 
-## Surface Cp / Cf
-
-```bash
-python3 surface_cp_cf.py naca_aoa4_100000.h5 --plot cpcf_aoa4.png
-python3 plot_cp_cf.py cpcf_naca_aoa4_100000.npz \
-    --xfoil-cp cpx_a4.txt --of-cp of_cp_a4.csv --of-cf of_cf_a4.csv
-```
-
-- **Cf** is a least-squares wall gradient over NEAR-WALL FLUID CELLS
-  ONLY, constrained through the origin by the EXACT immersed no-slip
-  condition u_t(0) = 0 (no solid/forced value enters): span-averaged
-  tangential velocities of cells within 2.5 fine cells of the analytic
-  section are fitted as u_t = g d (weights 1/d), then re-restricted to
-  d+ <= 5 with u_tau = sqrt(nu g) so only the viscous sublayer feeds
-  the fit. Cf = 2 nu g, signed TE-ward (negative = reversed flow).
-- **Cp** is a least-squares linear WALL EXTRAPOLATION of the same
-  cells' pressure to d = 0 (keeps dp/dn ~ 0 where the BL approximation
-  holds, still captures the finite normal gradient at the curved LE);
-  p_inf from a level-0 far-upstream box. A pure zero-gradient
-  (nearest-cell) Cp is the degenerate < 3-cell fallback.
-- Outputs: `cpcf_*.npz` + XFOIL-comparable `*_cp.dat` / `*_cf.dat`
-  (x/c value; upper block then lower).
-
-External reference formats accepted: XFOIL CPWR (x [y] Cp) and CF
-dumps; OpenFOAM as any '#'-commented CSV/whitespace table with x/c in
-column 1 and the value in the last column.
+- OpenFOAM case: ~/auswertung/20251027_MA_JannikWeber/run (their
+  printed kOmegaSST coefficient dict is IDENTICAL to ours, c1 limiter
+  and nut clip included).
+- XFOIL polars: xfoil_re4e5_n{1,9}.dat (Debian xfoil SIGFPEs on any
+  second viscous point: one ALFA per process, parse stdout).
+- BoostConv steady-state accelerator study (module committed, gated):
+  docs/next_session_boostconv.md.
