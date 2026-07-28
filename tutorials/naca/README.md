@@ -36,30 +36,25 @@ simpleFoam kOmegaSST reference (48400-cell O-mesh, wall y+ 1.3).
    docs/next_session_naca_re4e5.md.
 3. mpirun -n 1 ../../build_gpu/moby_solve c11_aoa5.ini
 
-## Validation results — UNDER REVALIDATION (2026-07-28)
+## Validation results (CONVERGED, plain run, t = 30; stationary t 29-30)
 
-CAUTION: the t = 29 numbers below came from the BoostConv-assisted leg,
-which was found to KILL the pressure-side trip (strip k 7.6e-3 ->
-7.9e-6; lower Cf halved — the recombination overwrites the localized
-k source; user diagnosis from the Cf overlay). A PLAIN rerun from the
-pre-boost t = 26 state is producing the replacement numbers; the table
-and figures will be regenerated from it.
+|                | mobydiff C11 | mobydiff C10 (cheap) | OpenFOAM |
+|----------------|--------------|----------------------|----------|
+| C_L (CV)       | 0.514 +- 0.009 | 0.519 +- 0.002     | 0.5142 |
+| C_D (CV)       | 0.0130 +- 0.0007 | 0.0158 +- 0.0006 | 0.0134 |
+| Cp_min         | -1.796       | -1.820               | -1.780 |
+| trip (both sides) | yes       | yes                  | (fvOptions) |
 
-## Results table (t = 29, boosted leg — transition corrupted, see above)
-
-|                | mobydiff (IBM) | OpenFOAM (body-fitted) | delta |
-|----------------|----------------|------------------------|-------|
-| C_L (CV)       | 0.516 +- 0.005 | 0.5142                 | +0.4 % |
-| C_D (CV)       | 0.0134 +- 0.0004 | 0.0134               | exact |
-| Cp_min (depth-converged) | -1.787 | -1.780               | +0.4 % |
-| TE separation  | x/c ~0.99      | 0.996                  | -- |
-
-(The earlier t = 26 numbers -- C_L 0.506, Cp_min -1.763 -- were the
-still-converging circulation; the peak followed the circulation-scaling
-prediction exactly. Converged state: c11_v2_430013.h5. The final leg
-ran WITH the BoostConv accelerator: [rans] boostconv alpha 0.02, N 20,
-p 25; overhead +2.4 % s/step; plateau reached within ~1 t.u. of
-activation.)
+Converged state: c11_aoa5_450013.h5 (plain marching; the BoostConv-
+assisted leg was DISCARDED — the recombination suppressed the
+pressure-side trip; docs/next_session_boostconv.md CAVEAT).
+C10 VARIANT (c10_aoa5.ini, refine_levels 10, dt 1e-4, ~5x cheaper):
+sufficient for LIFT and Cp (1-2 %); NOT for drag (+18 %, the y+ 3-4
+resolved-wall penalty — L11 or wall functions needed when C_D is a
+target). POST-PROCESSING NOTE: when t_final is not an exact step
+multiple, the final write's dt-clipped micro-step inflates the stored
+pn scale — extract pressure-based quantities from regular-cadence
+snapshots.
 
 - Cp curves overlay within extraction accuracy on BOTH sides
   (cpcf_c11_final_vs_openfoam.png); at full convergence the peak and
