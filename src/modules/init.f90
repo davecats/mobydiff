@@ -131,6 +131,15 @@ module init
         real(C_DOUBLE) :: force_wavenumber(1:3) = 0.0d0
         integer(C_INT) :: force_dir = 1_C_INT
         character(len=256) :: force_file = ""
+        ! [force] type = trip: the Schlatter & Orlu (2012) random wall-normal
+        ! trip forcing that triggers laminar->turbulent transition (see
+        ! bodyforce.f90). x0/lx/ly place the streamwise+wall-normal Gaussian
+        ! envelope; amp is the force amplitude; ts the temporal scale of the
+        ! smooth-step random walk; nmodes the spanwise Fourier modes; seed the
+        ! deterministic RNG seed.
+        real(C_DOUBLE) :: trip_x0 = 0.0d0, trip_lx = 4.0d0, trip_ly = 1.0d0
+        real(C_DOUBLE) :: trip_amp = 0.0d0, trip_ts = 4.0d0
+        integer(C_INT) :: trip_nmodes = 16_C_INT, trip_seed = 1_C_INT
         ! [rans] section (rans.f90). In the T1 increment the section's mere
         ! presence builds the SST geometry state (wall distance + IBM wall
         ! cells) at init so it can be validated before any RANS transport
