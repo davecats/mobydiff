@@ -553,8 +553,9 @@ contains
         integer :: w0(3), w1(3), mLo(3, blk%nLevels), mDims(3, blk%nLevels)
         integer(int64), allocatable :: keys(:)
         integer, allocatable :: order(:), tmpLevel(:), tmpCoord(:,:)
-        logical :: changed, hit
+        logical :: changed, hit, need_bounds
         real(C_DOUBLE) :: lo(3), hi(3)
+        integer :: body_cap
 
         lmax = int(blk%nLevels) - 1
 
@@ -608,13 +609,17 @@ contains
                         c = [gx, gy, gz]
                         if (marker_at(l, c) /= M_LEAF) cycle
                         hit = .false.
-                        if (refine_box_set(dns)) then
+                        need_bounds = refine_box_set(dns) .or. &
+                            (present(touch) .and. dns%block_refine_body_nboxes > 0_C_INT)
+                        if (need_bounds) then
                             lo(1) = blk%lineX(c(1)*int(blk%nb(1)), l+1)
                             hi(1) = blk%lineX((c(1)+1)*int(blk%nb(1)), l+1)
                             lo(2) = blk%lineY(c(2)*int(blk%nb(2)), l+1)
                             hi(2) = blk%lineY((c(2)+1)*int(blk%nb(2)), l+1)
                             lo(3) = blk%lineZ(c(3)*int(blk%nb(3)), l+1)
                             hi(3) = blk%lineZ((c(3)+1)*int(blk%nb(3)), l+1)
+                        end if
+                        if (refine_box_set(dns)) then
                             do box = 1, int(dns%block_refine_nboxes)
                                 ! A box refines only up to its target level
                                 ! (< 0 = the finest, today's behavior).
@@ -626,7 +631,24 @@ contains
                               .and. lo(3) < dns%block_refine_box(6,box) .and. hi(3) > dns%block_refine_box(5,box))
                             end do
                         end if
-                        if (.not. hit .and. present(touch)) then
+                        ! Body-driven refinement, capped: refine_body_levels
+                        ! (default refine_levels = lmax, so `l < body_cap`
+                        ! is always true and the original behaviour stands
+                        ! bit for bit), raised to a refine_body_box's level
+                        ! inside that box. The touch+buffer test below still
+                        ! selects the blocks, so only the surface BAND
+                        ! refines, not the box volume.
+                        body_cap = int(dns%block_refine_levels)
+                        if (dns%block_refine_body_levels >= 0_C_INT) &
+                            body_cap = int(dns%block_refine_body_levels)
+                        do box = 1, int(dns%block_refine_body_nboxes)
+                            if (lo(1) < dns%block_refine_body_box(2,box) .and. hi(1) > dns%block_refine_body_box(1,box) &
+                          .and. lo(2) < dns%block_refine_body_box(4,box) .and. hi(2) > dns%block_refine_body_box(3,box) &
+                          .and. lo(3) < dns%block_refine_body_box(6,box) .and. hi(3) > dns%block_refine_body_box(5,box)) then
+                                body_cap = max(body_cap, int(dns%block_refine_body_box_level(box)))
+                            end if
+                        end do
+                        if (.not. hit .and. present(touch) .and. l < body_cap) then
                             hit = touch_at(l, c)
                             if (.not. hit) then
                                 buffer: do oz = -1, 1

@@ -212,6 +212,21 @@ attribution:
   driven by our own U_e (7.4 vs 6.1 e-3 at x/c 0.05) — staircase
   ROUGHNESS (step height ~15 % of the laminar delta) genuinely
   elevates laminar wall shear. Lever: smoothed-mask/2nd-order IBM.
+  **SUPERSEDED 2026-07-29 — the free-intercept branch was WRONG and is
+  deleted.** Its fit window (0.75-4 h) lies outside the 1-3 cell nose
+  BL, so it fitted the saturated outer profile: the "measured" d0 ran
+  to -10 h..-60 h and Cf came out up to 20x LOW on the pressure side
+  (0.04-0.3x OF for x/c < 0.1) and ~2-3x low at the nose. There is no
+  effective-wall offset to correct: a cubic free fit through cells
+  OUTSIDE the penalization band crosses zero at -0.6h..+0.3h at every
+  station, i.e. the graded penalization holds no-slip on the analytic
+  surface to sub-cell accuracy. The estimator is now anchored
+  u_t = g d + c d^2 over band-excluded cells (`--coef`), with the
+  velocities de-staggered and equal-arc stations; the laminar excess
+  is then 2-3.2x OF on the SUCTION side only (pressure side within
+  25 % throughout), concentrated under the adverse gradient aft of the
+  peak. Lever unchanged: smoothed-mask/2nd-order IBM. Full account in
+  tutorials/naca/rans/README.md.
 - OMEGA/U STRIPES (pressure side): NOT a distributed staircase fan and
   NOT dynamically relevant — per-level PLATEAU STEPS of the decayed
   ambient omega across the horizontal 2:1 lines (excess ON the lines

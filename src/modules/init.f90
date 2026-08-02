@@ -90,6 +90,22 @@ module init
         ! immersed surface to the finest level (+1 block buffer), and remove
         ! buried blocks at every level (analytic IBM).
         logical(C_BOOL) :: block_refine_body = .false.
+        ! [blocks] refine_body_levels: CAP on the body-driven refinement
+        ! (< 0 = refine_levels, i.e. the whole surface band goes to the
+        ! finest level -- the original behaviour). Cap it below
+        ! refine_levels and the extra levels reach the wall only inside a
+        ! refine_body_box, so a thin band can be refined where the
+        ! boundary layer needs it without paying for the whole surface.
+        integer(C_INT) :: block_refine_body_levels = -1_C_INT
+        ! [blocks] refine_body_box = x0 x1 y0 y1 z0 z1 level: inside this
+        ! physical box the body cap is RAISED to `level`. Unlike `refine`,
+        ! which fills its whole volume, this only lifts the cap -- the
+        ! touch+buffer test still decides, so the refinement follows the
+        ! surface. (Filling the NACA nose box volumetrically at one extra
+        ! level costs ~12700 leaves; the band costs ~1000.) Repeatable.
+        real(C_DOUBLE) :: block_refine_body_box(6,16) = 0.0d0
+        integer(C_INT) :: block_refine_body_box_level(16) = -1_C_INT
+        integer(C_INT) :: block_refine_body_nboxes = 0_C_INT
         ! Keep buried refine_body blocks (mobygeom --keep-buried):
         ! LOAD-BEARING for penalization forces -- a removed solid core
         ! absorbs the body's pressure loading through its closed faces
