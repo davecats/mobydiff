@@ -64,15 +64,10 @@ exactly where the adverse gradient aft of the suction peak makes it
 matter. Transition also completes somewhat downstream of OpenFOAM's
 (first-order upwind smears the k front).
 
-![fields](assets/figures/fields_c11_final_zoom.png)
-![nose closeup](assets/figures/fields_c11_final_nose.png)
-
 ## Running the case
 
     ./run_case.sh restart    # continue the PRODUCTION case from the shipped
                              # converged state c11_nose_640000.h5 (t = 34.75)
-    ./run_case.sh base       # the level-11 baseline (needs its own state,
-                             # c11_aoa5_450013.h5 - not shipped)
     ./run_case.sh scratch    # full reproduction: L10 -> L11 -> nose band
     ./postprocess.sh         # forces/Cp/Cf + the OpenFOAM overlay; the case
                              # is detected from the snapshot name
@@ -86,6 +81,11 @@ unit, and stage 3 alone is ~42 h. `moby_prepare` for the nose case is
 ~40 min at 20 ranks — give it MANY RANKS, not threads: the CPU build has
 no OpenMP so the classify pragmas are inert, and the geometry
 classification is the whole cost.
+
+The prepared IBM coefficient file is an OUTPUT, not shipped: both
+run_case.sh and postprocess.sh regenerate it with moby_prepare when
+absent, so the FIRST invocation of either costs ~40 min before it does
+anything else.
 
 ALWAYS post-process a REGULAR-CADENCE snapshot. The last snapshot a run
 writes sits on a dt-clipped micro-step, which inflates the stored
@@ -142,7 +142,7 @@ ini runs without `keep_buried`, so the buried blocks carrying much of
 that force are removed and the per-station integral scatters over
 0.04-4.6x OpenFOAM. It would need a keep-buried case file.
 
-### The default estimator, and two cross-checks (postProcess/cf_crosscheck.py)
+### The default estimator, and how it was cross-checked
 
 All three rest on what the scheme actually does at the wall. The IBM
 coefficient is assembled (ibm.f90 `add_neighbor_coeff`) as
@@ -212,8 +212,6 @@ Cf/OpenFOAM, level-11-everywhere -> nose band:
 | 0.069 (outside the band) | 2.46 -> 1.39 | 1.26 -> 1.29 |
 | > 0.10 | unchanged | unchanged |
 
-![nose refinement](assets/figures/cf_nose_refinement.png)
-
 **This CORRECTS the attribution below.** The suction-side laminar
 excess (2-3.3x at x/c 0.013-0.09) was written up as the FIELD's, caused
 by staircase roughness, with a smoothed-mask IBM as the lever. The
@@ -249,13 +247,12 @@ level-11 case within the scatter, as expected since the integral loads
 are pressure-dominated and Cp barely moved. The spread is the CV d/dt
 term, not sampling error.
 
-Reproduce: `moby_prepare .prep_c11_nose.ini
+Reproduce (`./run_case.sh scratch` does all of it): `moby_prepare .prep_c11_nose.ini
 assets/geometry/ibm_coeff_c11_nose.h5` (~40 min at 20 ranks — use MANY
 ranks, the CPU build has no OpenMP so the classify pragmas are inert
 and it is MPI-parallel only), `interp_restart.py <state>
-<case> .restart_nose.h5`, `moby_solve c11_aoa5_nose.ini`. Extraction
-needs `--levels 2` (the surface spans levels 11 and 12);
-`postProcess/plot_nose_comparison.py` draws the figure.
+<case> .restart_nose.h5`, `moby_solve c11_aoa5_nose.ini`. The extraction
+auto-detects that the surface spans levels 11 and 12.
 
 ### Why the LE reads 0.6x OpenFOAM: resolution, not extraction
 
@@ -293,45 +290,35 @@ y+ 3-4), and the fix is a finer wall band at the nose, not a better
 estimator. Cp is unaffected, as expected for a far-field-driven
 quantity: stagnation +1.0011 vs +1.0044, peak -1.775 vs -1.780.
 
-![three Cf estimators vs OpenFOAM](assets/figures/cf_crosscheck.png)
-
-Read the figure this way: on the full-chord panels the four curves are
-one line aft of x/c 0.13 — the turbulent side of the case is settled.
-The leading-edge panels carry the whole story: the three mobydiff
-estimators track each other (so the extraction is not the variable)
-while OpenFOAM separates from all three between x/c 0.013 and 0.09 on
-the suction side only. The pressure-side LE panel is the control — same
-grid, same staircase, same estimators, and there the four agree. The
-default (blue) and the viscous integral (green) are nearly
-indistinguishable; where the orange fit departs from both, it is the
-fit's depth compromise showing.
+The two cross-check estimators were implemented in
+`postProcess/cf_crosscheck.py` and run on the level-11 baseline; both
+that script and the baseline data it needs were removed when this
+directory was reduced to the nose case. Recover them from git history
+at commit 8f2242d if the check has to be repeated — the numbers above
+are what it produced.
 
 ## Layout
 
 Main folder: the inis — `c11_aoa5_nose.ini` / `.prep_c11_nose.ini`
-(PRODUCTION) and `c11_aoa5.ini` / `.prep_c11.ini` (baseline) — the
+(PRODUCTION) and `c11_aoa5.ini` / `.prep_c11.ini` (the level-11 stage
+of the from-scratch protocol, not a case to run on its own) — the
 shipped converged state `c11_nose_640000.h5`, this README,
 `run_case.sh` (re-run) + `interp_restart.py` (its level-change helper),
 and `postprocess.sh` (regenerate the statistics/figures). Everything
 else lives under `assets/` and `postProcess/`:
 
 - postProcess/ — the post-processing scripts (cv_forces.py,
-  surface_cp_cf.py, compare_openfoam.py, cf_crosscheck.py,
-  plot_nose_comparison.py) driven by postprocess.sh.
-- assets/geometry/ — the airfoil STL (n0012_b11.stl) and the prepared
-  IBM coefficient case files (ibm_coeff_c11_nose.h5 production,
-  ibm_coeff_c11.h5 baseline; both regenerated by moby_prepare from the
-  STL if absent).
-- assets/referenceStats/ — the extracted surface statistics,
-  cpcf_c11_nose_final{.npz,_cp.dat,_cf.dat} (production) and
-  cpcf_c11_aoa5_final{...} (baseline), which postprocess.sh regenerates,
-  plus the cf_crosscheck npz.
-- assets/figures/ — the figures shown above, plus the baseline's own
-  cpcf_c11_aoa5_final.png / cpcf_c11_final_vs_openfoam.png, which
-  `./postprocess.sh c11_aoa5_450013.h5` regenerates.
-- assets/xfoil/ — xfoil_re4e5_n{1,9}.dat XFOIL polars (Ncrit 9 and
-  Ncrit 1) for context. (The Debian xfoil build SIGFPEs on any second
-  viscous point in a session: run one ALFA per process and parse stdout.)
+  surface_cp_cf.py, compare_openfoam.py) driven by postprocess.sh.
+- assets/geometry/ — the airfoil STL (n0012_b11.stl), the only geometry
+  INPUT. The prepared IBM coefficient case files are outputs:
+  run_case.sh and postprocess.sh regenerate them with moby_prepare when
+  absent (~40 min for the nose case at 20 ranks).
+- assets/referenceStats/ — the extracted surface statistics
+  cpcf_c11_nose_final{.npz,_cp.dat,_cf.dat}, which postprocess.sh
+  regenerates.
+- assets/figures/ — the OpenFOAM overlay shown above, plus
+  cpcf_c11_nose_final.png (the raw Cp/Cf panels); both are written
+  by postprocess.sh.
 - assets/openfoam/dictionaries/ — the OpenFOAM case's dictionaries
   (fvOptions with the transition constraints, globalVariables,
   turbulence/transport properties, fvSchemes/fvSolution, controlDict,

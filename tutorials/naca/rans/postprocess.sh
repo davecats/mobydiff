@@ -19,12 +19,14 @@
 #   assets/referenceStats/cpcf_<case>_final{.npz,_cp.dat,_cf.dat}
 #   assets/figures/cpcf_<case>_final.png
 #   assets/figures/cpcf_<case>_vs_openfoam.png
-#   assets/figures/cf_crosscheck.png          (baseline only, see below)
 #
 # Prerequisites: python with numpy/h5py/scipy/matplotlib.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
+ROOT=$HERE/../../..
 PY=${PY:-python3}
+MPIRUN=${MPIRUN:-mpirun}
+NRANK=${NRANK:-20}
 cd "$HERE"
 
 SNAP=${1:-}
@@ -34,9 +36,20 @@ fi
 [ -n "$SNAP" ] && [ -f "$SNAP" ] || { echo "no snapshot found (pass one explicitly)"; exit 1; }
 
 case "$(basename "$SNAP")" in
-c11_nose_*) COEF=assets/geometry/ibm_coeff_c11_nose.h5; LEVELS=2; TAG=c11_nose ;;
-*)          COEF=assets/geometry/ibm_coeff_c11.h5;      LEVELS=1; TAG=c11_aoa5 ;;
+c11_nose_*) COEF=assets/geometry/ibm_coeff_c11_nose.h5; PREP=.prep_c11_nose.ini
+            LEVELS=2; TAG=c11_nose ;;
+*)          COEF=assets/geometry/ibm_coeff_c11.h5;      PREP=.prep_c11.ini
+            LEVELS=1; TAG=c11_aoa5 ;;
 esac
+
+# The coefficient file is an OUTPUT of moby_prepare, not shipped: the Cf
+# estimator needs its tiles to find the penalization band, so regenerate it
+# on demand. Only the first post-processing run pays this.
+if [ ! -f "$COEF" ]; then
+    echo "== $COEF absent — regenerating (~40 min at $NRANK ranks)"
+    $MPIRUN -n "$NRANK" --oversubscribe --bind-to none \
+        "$ROOT/build_cpu/moby_prepare" "$PREP" "$COEF"
+fi
 # per-case figure names, so a baseline run never overwrites the production ones
 case "$TAG" in
 c11_nose)   FIG=assets/figures/cpcf_c11_nose_final.png
@@ -55,20 +68,7 @@ $PY postProcess/surface_cp_cf.py "$SNAP" --coef "$COEF" \
 $PY postProcess/compare_openfoam.py --npz "$NPZ" \
     --out "$FIGOF"
 
-# Two independent Cf estimators, as a check that the wall-gradient measurement
-# is measuring the field and not itself. Single-level surfaces only -- it is a
-# validation tool, and the three-estimator agreement was established on the
-# level-11 baseline.
-if [ "$LEVELS" = "1" ]; then
-    $PY postProcess/cf_crosscheck.py "$SNAP" --coef "$COEF" --npz "$NPZ" \
-        --plot assets/figures/cf_crosscheck.png
-    mv -f cf_crosscheck_*.npz assets/referenceStats/
-else
-    echo "== skipping cf_crosscheck.py (single-level surfaces only)"
-fi
-
 if [ "$LEVELS" = "2" ]; then
-    $PY postProcess/plot_nose_comparison.py
     echo "== targets (nose-refined, t = 34.75): C_L 0.520 +- 0.005 (OF 0.5142),"
     echo "   C_D 0.0128 +- 0.0008 (OF 0.0134), Cp_min -1.7686 (OF -1.7797)"
 else

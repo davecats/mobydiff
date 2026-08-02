@@ -6,9 +6,9 @@
 #                           (t = 34.75) — minutes to hours, for verification.
 #   ./run_case.sh scratch   full reproduction: staged L10 -> L11 -> nose band.
 #                           Days on one GPU; see the README timings.
-#   ./run_case.sh base      the level-11-everywhere BASELINE (c11_aoa5.ini),
-#                           the "before" of the nose-refinement comparison.
-#                           Needs its own converged state c11_aoa5_450013.h5.
+#
+# c11_aoa5.ini / .prep_c11.ini are the level-11 stage of that protocol; they
+# are inputs to `scratch`, not a case to run on their own.
 #
 # Post-processing (forces / Cp / Cf + the OpenFOAM overlay): ./postprocess.sh
 #
@@ -27,7 +27,6 @@ cd "$HERE"
 COEF_BASE=assets/geometry/ibm_coeff_c11.h5
 COEF_NOSE=assets/geometry/ibm_coeff_c11_nose.h5
 STATE_NOSE=c11_nose_640000.h5
-STATE_BASE=c11_aoa5_450013.h5
 
 prepare() {  # $1 = prep ini, $2 = output case file
     [ -f "$2" ] && { echo "== $2 exists, skipping prepare"; return; }
@@ -42,13 +41,6 @@ restart)
     [ -f "$STATE_NOSE" ] || { echo "no $STATE_NOSE; use '$0 scratch'"; exit 1; }
     echo "== restarting the nose-refined case from $STATE_NOSE"
     sed "s|^file = .*|file = $STATE_NOSE|" c11_aoa5_nose.ini > .run.ini
-    $MPIRUN -n 1 "$ROOT/build_gpu/moby_solve" .run.ini
-    ;;
-base)
-    prepare .prep_c11.ini "$COEF_BASE"
-    [ -f "$STATE_BASE" ] || { echo "no $STATE_BASE (not shipped); use '$0 scratch'"; exit 1; }
-    echo "== restarting the level-11 baseline from $STATE_BASE"
-    sed "s|^file = .*|file = $STATE_BASE|" c11_aoa5.ini > .run.ini
     $MPIRUN -n 1 "$ROOT/build_gpu/moby_solve" .run.ini
     ;;
 scratch)
@@ -82,5 +74,5 @@ scratch)
     $MPIRUN -n 1 "$ROOT/build_gpu/moby_solve" c11_aoa5_nose.ini
     ;;
 *)
-    echo "usage: $0 [restart|base|scratch]  (post-processing: ./postprocess.sh)"; exit 1;;
+    echo "usage: $0 [restart|scratch]  (post-processing: ./postprocess.sh)"; exit 1;;
 esac
