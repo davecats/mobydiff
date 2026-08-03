@@ -900,6 +900,17 @@ immersed boundary. Phased, each phase verified before the next:
   tangential velocity on the cell's low tangential face — a half-cell
   collocation offset worth ~0.2 % in C_D; the naca/sd7003/cylinder
   published force numbers predate both changes and are annotated as such.
+  STEADY-STATE STOP: `[case.airfoil] steady_tol` (+ `steady_samples`,
+  default 3) ends the run and writes the final field once the budget's own
+  unsteady term, in coefficient units `|2 dmom/dt|/qref` (larger component),
+  stays below the tolerance. It rides an ALLREDUCED quantity so every rank
+  stops at the same step, and a case signals it through the new
+  `case_type%stop_requested` — moby_solve leaves via the normal loop exit,
+  so the unconditional post-loop `write_field` saves the state. Gated both
+  ways: steady Re 40 stops itself at t = 105.4 (tol 1e-3, measure 9.3e-4,
+  ~2900 steps saved), shedding Re 100 never gets within a decade of it (min
+  3.1e-2 over 99 samples — each component's d/dt crosses zero twice per
+  period but the two are out of phase, so their max never vanishes).
 - ALSO PENDING: **Profile + optimise** the GPU step for the 2:1-refined channel.
   The last hard profile is STALE (the reflux that was 23% is removed; the
   `MOBY_PHASETIME` timer is deleted): re-profile first with a minimal removable

@@ -290,6 +290,9 @@ program moby_solve
                 turb%nut, sst%k, sst%omg, sst%gam, sst%ret, turb%fd)
         end if
         call flow%after_step(blk, dns, g, c, ibm, turb)
+        ! A case may end the run early (airfoil: steady state reached). Leave
+        ! through the normal exit so the post-loop write_field saves the state.
+        if (flow%stop_requested) exit
 
     end do
     call stop_chron(loop_timer, loop_steps)

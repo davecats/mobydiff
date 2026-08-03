@@ -63,6 +63,8 @@ direction is periodic. Explicit `[boundary]` keys still win.
 | `span` | `z` or `y` | `z` | Periodic (extrusion) direction. `z`: chord x, lift y. `y`: chord x, lift z — the orientation for `[blocks] refine_dims = xz`, which then never refines the span. |
 | `force_sample_interval` | int | 10 | Steps between force samples. `0` (or negative) disables forces entirely — the only way to run without `cv_box`. |
 | `cv_box` | 4 reals | — | **Required** unless forces are disabled: `c0 c1 l0 l1`, the control volume for the force budget, in physical coordinates along the chord and lift axes (the span is always the full periodic extent). See below. |
+| `steady_tol` | real | 0.0 (off) | Stop the run once the flow is steady — see below. |
+| `steady_samples` | int | 3 | Consecutive qualifying samples `steady_tol` needs before stopping. |
 | `runtime_file` | string | `forces.txt` | Where `iteration time cl cd` is appended. |
 
 ### Forces: the control-volume momentum budget
@@ -111,6 +113,34 @@ Two things to know before trusting the numbers:
   reported without it; it is also the term that limits accuracy on rapidly
   varying flows (on the shedding Re 100 cylinder the sampled C_L tracks
   the reference to ~20 % of its amplitude, with the mean C_D within 0.12 %).
+
+### Stopping at steady state
+
+`steady_tol > 0` ends the run as soon as the flow stops changing, writes the
+final field (the usual end-of-run snapshot) and returns. The criterion is the
+budget's own unsteady term, expressed in the units of the reported
+coefficients:
+
+```
+|2 · d/dt ∫_V u dV| / (U∞² c L_span)   componentwise, take the larger
+```
+
+so `steady_tol` reads like a C_L/C_D increment — `1e-4` means the unsteady
+term no longer moves the fourth digit of the coefficients. It is only
+testable once that term exists, i.e. from the SECOND force sample onward, and
+it must hold for `steady_samples` consecutive samples (default 3). The run of
+samples matters: in an oscillating flow each component's d/dt passes through
+zero twice per period, and a single-sample test could stop a perfectly
+unsteady run at a turning point. Taking the larger of the two components
+already guards against this — they are out of phase, so on the shedding Re 100
+cylinder the measure never falls below 3e-2 — but the consecutive-sample
+requirement is the cheap insurance.
+
+The decision is taken from an allreduced quantity, so every rank stops at the
+same step. Choosing the tolerance: watch the coefficient trace first, then set
+it near the residual wobble you are willing to accept. On the steady Re 40
+cylinder `steady_tol = 1e-3` stopped the run at t = 105.4 instead of the
+configured t_final = 120.
 
 There is no alternative force statistic. The penalization integral
 `F = ∫ coef·u dV` this case used to report was removed: it is exact

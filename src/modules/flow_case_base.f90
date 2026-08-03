@@ -12,6 +12,13 @@ module flow_case_base
 
     type, abstract, public :: case_type
         character(len=64) :: name = "generic"
+        ! A case may ask the solver to stop early from after_step (e.g. the
+        ! airfoil case when its steady-state criterion is met). The main loop
+        ! leaves through its normal exit, so the unconditional post-loop
+        ! write_field saves the final state. MUST be set identically on every
+        ! rank -- decide it from an already-reduced quantity, never from
+        ! rank-local data, or the ranks deadlock.
+        logical :: stop_requested = .false.
     contains
         procedure(case_read_config), deferred :: read_config
         procedure(case_apply_defaults), deferred :: apply_defaults

@@ -82,6 +82,25 @@ Gates (python3 check_cylinder.py ...):
   0.0 on this case. Re-verified 2026-08-03 for the control-volume budget on
   both `empty.ini` and the Re 40 case.
 
+## Steady-state stop (`[case.airfoil] steady_tol`)
+
+The budget's unsteady term doubles as a convergence monitor: `steady_tol`
+stops the run, and writes the final field, once `|2 dmom/dt| / qref` (the
+unsteady term in coefficient units, larger of the two components) stays below
+the tolerance for `steady_samples` consecutive samples.
+
+Exercised here 2026-08-03, both directions:
+
+- Re 40 (steady), clean-p restart, `steady_tol = 1e-3`: stopped itself after
+  779 steps at t = 105.4 with the measure at 9.3e-4, against a configured
+  `t_final = 120` — about 2900 steps saved — and wrote the final snapshot.
+- Re 100 (shedding) must NOT trigger, and does not come close: over 99
+  samples spanning ~0.84 shedding periods the measure ranges 3.1e-2 to 5.7
+  (median 0.89), never dipping below even `1e-2`. Each component's d/dt does
+  cross zero twice per period, but the two are out of phase, so taking the
+  larger of them never vanishes; the consecutive-sample requirement is a
+  second line of defence.
+
 ## Clean-p protocol (REQUIRED for control-volume forces on a long run)
 
 Long IBM runs at production niter = 6 accumulate a large VELOCITY-NEUTRAL

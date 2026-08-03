@@ -64,6 +64,19 @@ module airfoil_flow
         real(C_DOUBLE) :: mom_prev(2) = 0.0d0
         real(C_DOUBLE) :: t_prev = 0.0d0
         logical :: have_prev = .false.
+        ! [case.airfoil] steady_tol: stop the run once the flow is steady.
+        ! The measure is the unsteady term of the budget expressed in the
+        ! SAME units as the reported coefficients, |2 dmom/dt| / qref, so
+        ! the threshold is read like a C_L/C_D increment (1e-4 = the
+        ! unsteady term no longer moves the fourth digit). 0 disables it.
+        ! It is only testable once d/dt exists, i.e. from the second sample.
+        real(C_DOUBLE) :: steady_tol = 0.0d0
+        ! Consecutive qualifying samples required. An oscillating flow's
+        ! dmom/dt passes through ZERO twice per shedding period, so a
+        ! single-sample test would stop a perfectly unsteady run at a
+        ! turning point; requiring a run of samples rejects that.
+        integer :: steady_samples = 3
+        integer :: steady_hits = 0
     contains
         procedure :: read_config => airfoil_read_config
         procedure :: apply_defaults => airfoil_apply_defaults
@@ -331,13 +344,13 @@ contains
         real(C_DOUBLE) :: c0, c1, l0, l1, nu, tol, coord, sgn
         real(C_DOUBLE) :: lc, cc, dA, un, pf, ut, nue, dundn, dundt, dutdn
         real(C_DOUBLE) :: tnn, tnt, fn, ft, dl2, wcp, wcm, vol
-        real(C_DOUBLE) :: sC, sL, fC_, fL_
+        real(C_DOUBLE) :: sC, sL, fC_, fL_, unsteady
         ! plain local copy: mapping a component of the polymorphic `this`
         ! into a target region is not portable
         real(C_DOUBLE) :: box(4)
         integer(C_INT) :: i, j, k, b, m, ii, nbx, nby, nbz, nBlocks, ib, varL
         integer(C_INT) :: dj, dk
-        logical :: spanY, hasNut
+        logical :: spanY, hasNut, have_dmdt
 
         nbx = blk%nb(1); nby = blk%nb(2); nbz = blk%nb(3)
         nBlocks = blk%nBlocks
@@ -512,7 +525,8 @@ contains
         fl = acc(4)
 
         dmdt = 0.0d0
-        if (this%have_prev .and. dns%t_current > this%t_prev) then
+        have_dmdt = this%have_prev .and. dns%t_current > this%t_prev
+        if (have_dmdt) then
             dmdt(1) = (acc(1) - this%mom_prev(1))/(dns%t_current - this%t_prev)
             dmdt(2) = (acc(2) - this%mom_prev(2))/(dns%t_current - this%t_prev)
         end if
@@ -531,6 +545,27 @@ contains
         cl = 2.0d0*(-fc*sin(a) + fl*cos(a))/qref
 
         if (c%has_terminal) call append_forces(this, dns, cl, cd)
+
+        ! Steady-state stop. The measure is the unsteady term in the same
+        ! units as the reported coefficients, so `steady_tol` reads like a
+        ! C_L/C_D increment. dmdt comes out of an exact allreduce, so every
+        ! rank decides identically -- this must stay OUTSIDE has_terminal or
+        ! the ranks part company at the loop exit.
+        if (this%steady_tol > 0.0d0 .and. have_dmdt) then
+            unsteady = 2.0d0*max(abs(dmdt(1)), abs(dmdt(2)))/qref
+            if (unsteady < this%steady_tol) then
+                this%steady_hits = this%steady_hits + 1
+            else
+                this%steady_hits = 0
+            end if
+            if (this%steady_hits >= this%steady_samples) then
+                this%stop_requested = .true.
+                if (c%has_terminal) write(*,'(A,ES12.4,A,I0,A,ES12.4,A)') &
+                    " airfoil: steady state reached (|2 dmom/dt|/qref =", unsteady, &
+                    " over ", this%steady_samples, " samples, tol ", this%steady_tol, &
+                    "); writing the final field and stopping"
+            end if
+        end if
     end subroutine cv_forces
 
     ! Pass 1 of the CV budget: p_inf, the area-weighted mean face pressure of
@@ -726,6 +761,20 @@ contains
                     error stop "invalid [case.airfoil] cv_box"
                 end if
             end block
+        case ("steady_tol")
+            ! stop once |2 dmom/dt|/qref (the unsteady term in coefficient
+            ! units) stays below this for steady_samples consecutive samples
+            read(value, *, iostat=stat) real_value
+            if (stat == 0) this%steady_tol = real_value
+        case ("steady_samples")
+            read(value, *, iostat=stat) int_value
+            if (stat == 0) then
+                if (int_value < 1) then
+                    print *, "[case.airfoil] steady_samples must be >= 1 at line", line_no
+                    error stop "invalid [case.airfoil] steady_samples"
+                end if
+                this%steady_samples = int_value
+            end if
         case ("runtime_file")
             this%runtime_file = clean_config_string(value)
         case ("span")
