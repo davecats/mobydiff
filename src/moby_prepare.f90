@@ -19,6 +19,7 @@ program moby_prepare
     use :: blocks, only: block_set_type, init_block_set, destroy_block_set
     use :: flow_case, only: case_type, create_flow_case
     use :: config, only: config_seen_type, read_runtime_config, validate_dns_values
+    use :: scalar, only: scalar_type, destroy_scalar
     use :: boundary, only: boundary_type
     use :: io, only: write_case_file
     use :: ibmm, only: ibm_type, init_ibm, enter_ibm_data, exit_ibm_data, &
@@ -58,6 +59,7 @@ program moby_prepare
     ! Solid-possible box for classification culling (allocated for STL
     ! only; unallocated stays absent in the classify calls).
     real(C_DOUBLE), allocatable :: cullLo(:), cullHi(:)
+    type(scalar_type) :: sc
 
     call comm_init_world(c)
     call parse_prepare_args(input_file, output_file, show_help)
@@ -71,7 +73,9 @@ program moby_prepare
     if (c%has_terminal) print *, "reading input data: ", trim(input_file)
     call create_flow_case(flow, input_file, c%has_terminal)
     call flow%apply_defaults(dns, g, bc, c, ps)
-    call read_runtime_config(dns, g, turb, les, ps, bc, c, input_file, &
+    ! Scalars are parsed but unused here: the cell-centred IBM coefficients
+    ! they need (coef_p_blocks) are increment S3.
+    call read_runtime_config(dns, g, turb, les, ps, bc, sc, c, input_file, &
         c%has_terminal, config_seen)
 
     if (dns%block_nb <= 0_C_INT) &
@@ -175,6 +179,7 @@ program moby_prepare
     end if
     call destroy_block_set(blk)
     call destroy_grid(g)
+    call destroy_scalar(sc)
     call comm_finalize(c)
 
 contains

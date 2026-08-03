@@ -22,6 +22,7 @@ program moby_solve
     use :: les_model
     use :: rans
     use :: bodyforce
+    use :: scalar
     use :: comm, only: comm_type, comm_init_world, comm_init, comm_finalize, &
         init_block_exchange, exchange_halos, exchange_scalar_halos, &
         comm_allreduce_sum, comm_allreduce_max
@@ -45,6 +46,7 @@ program moby_solve
     type(sst_type) :: sst
     type(profiler_type) :: turb_prof
     type(bodyforce_type) :: bf
+    type(scalar_type) :: sc
     type(config_seen_type) :: config_seen
     type(comm_type) :: c
     integer(C_INT), allocatable :: blockActive(:)
@@ -61,7 +63,7 @@ program moby_solve
     if (c%has_terminal) print *, "reading input data..."
     call create_flow_case(flow, input_file, c%has_terminal)
     call flow%apply_defaults(dns, g, bc, c, ps)
-    call read_runtime_config(dns, g, turb, les, ps, bc, c, input_file, c%has_terminal, config_seen)
+    call read_runtime_config(dns, g, turb, les, ps, bc, sc, c, input_file, c%has_terminal, config_seen)
     if (has_restart_file(dns)) then
         if (c%has_terminal) print *, "reading restart metadata: ", trim(dns%restart_file)
         call read_restart_metadata(dns, g, bc, ps%nIter, ps%omega, dns%restart_file, c, config_seen)
@@ -109,8 +111,11 @@ program moby_solve
             int(c%cart_rank, C_INT))
     end if
     call init_block_exchange(c, blk, dns)
-    call precompute_peclet_rate(dns, blk, c)
+    call precompute_peclet_rate(dns, blk, c, sc)
     call init_boundary_faces(bc, blk, dns)
+    ! Passive scalars ([scalar], scalar.f90): patch-derived boundary rows and
+    ! the diffusion metric tables. A no-op when no scalar is configured.
+    call init_scalar(sc, blk, bc, c%has_terminal)
     call init_openmp_offload(c%has_terminal)
     call enter_grid_data(g)
     call enter_boundary_data(bc)
@@ -119,10 +124,14 @@ program moby_solve
     if (.not. has_restart_file(dns)) then
         call flow%initialise_fields(blk, dns, g, bc, c)
     end if
+    ! Scalar initial condition, ALWAYS: a restart file that carries the
+    ! scalar's dataset overwrites it below, an absent one keeps these values.
+    call init_scalar_fields(sc, dns, blk)
     call enter_block_data(blk)
+    call enter_scalar_data(sc)
     if (has_restart_file(dns)) then
         if (c%has_terminal) print *, "reading restart fields: ", trim(dns%restart_file)
-        call read_field(blk, dns, dns%restart_file, c)
+        call read_field(blk, dns, dns%restart_file, c, scalar_names(sc))
     end if
     call zero_closed_halos(blk)
 
@@ -181,6 +190,8 @@ program moby_solve
 
     call apply_bc(blk, bc, outflow_copy=.true.)
     call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W, VAR_P])
+    ! Scalar ghosts + halos for the first substage's stencil (no-op off).
+    call scalar_sync(sc, blk, bc, c)
 
     call flow%setup_after_grid(blk, dns, g, bc, c)
     ! Every producer fills the same turb%nut; the consumer chain (exchange,
@@ -223,6 +234,18 @@ program moby_solve
             dt_beta  = dns%dt*rk_beta(rkStage)
             dt_gamma = dns%dt*rk_gamma(rkStage)
 
+            ! Passive-scalar transport, OUTSIDE the projection. Called BEFORE
+            ! momentum: it must read the START-of-substage q -- the velocity
+            ! the momentum predictor itself advects with, divergence-free to
+            ! the projection tolerance, and with halos current from the
+            ! previous substage. (momentum() ends by copying qs -> q, and the
+            ! velocity halos are only refreshed by the exchange AFTER it, so
+            ! calling this after momentum would advect the scalar with the
+            ! non-solenoidal predicted velocity AND stale halo values. See
+            ! docs/next_session_scalar.md, STATUS/S1.) The two kernels touch
+            ! disjoint qs/oldrhs slots, so the order is otherwise free.
+            call scalar_transport(sc, blk, dns, dt_alpha, dt_beta)
+
             ! Predictor: advance tentative staggered velocities, then enforce solid/body constraints.
             call update_ibm_mu(ibm, dt_gamma)
             ! Body force: refresh the (custom) force for this substage; profile
@@ -260,6 +283,10 @@ program moby_solve
             ! Projection: solve for pressure correction and project tentative velocities.
             call pressure_projection(ps, blk, dns, dt_gamma, ibm, bc, c)
 
+            ! Scalar substage tail: qs -> q, physical ghosts, one batched
+            ! halo exchange over the scalar variables (no-op off).
+            call scalar_finish(sc, blk, bc, c)
+
         end do
 
         if (turbulence_is_enabled(turb)) then
@@ -270,7 +297,7 @@ program moby_solve
 
         if (dns%field_interval > 0) then
             call maybe_write_field(blk, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%omega, &
-                turb%nut, sst%k, sst%omg, sst%gam, sst%ret, turb%fd)
+                turb%nut, sst%k, sst%omg, sst%gam, sst%ret, turb%fd, scalar_names(sc))
         end if
         call flow%after_step(blk, dns, g, c, ibm)
 
@@ -284,10 +311,12 @@ program moby_solve
     end if
 
     call write_field(blk, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%omega, &
-        turb%nut, sst%k, sst%omg, sst%gam, sst%ret, turb%fd)
+        turb%nut, sst%k, sst%omg, sst%gam, sst%ret, turb%fd, scalar_names(sc))
 
     ! Release device-side data before the host allocatables go out of scope.
     call flow%finalize(dns, g, c)
+    call exit_scalar_data(sc)
+    call destroy_scalar(sc)
     if (dns%force_enabled) call exit_bodyforce_data(bf)
     call destroy_bodyforce(bf)
     if (turbulence_is_enabled(turb)) call exit_turbulence_data(turb)

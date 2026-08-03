@@ -21,6 +21,7 @@ module step
     use :: turbulence, only: turb_type, turbulence_is_enabled, TURB_PROF_SGS
     use :: chron, only: profiler_type, wall_seconds, profiler_add
     use :: bodyforce, only: bodyforce_type, bodyforce_is_enabled
+    use :: scalar, only: scalar_type, scalars_enabled, scalar_min_pr
     implicit none
 
     real(C_DOUBLE), parameter :: rk_alpha(3) = [64.0d0/120.0d0,  50.0d0/120.0d0,  90.0d0/120.0d0]
@@ -78,10 +79,14 @@ contains
         !$omp end target teams distribute parallel do
     end subroutine apply_ibm_band_filter
 
-    subroutine precompute_peclet_rate(dns, blk, c)
+    subroutine precompute_peclet_rate(dns, blk, c, sc)
         type(dns_type), intent(inout) :: dns
         type(block_set_type), intent(in) :: blk
         type(comm_type), intent(in) :: c
+        ! Passive scalars: the binding molecular diffusivity is
+        ! 1/(Re Pr_min), so a Pr < 1 scalar tightens the explicit limit.
+        ! Absent / no scalars leaves the rate exactly as before.
+        type(scalar_type), intent(in), optional :: sc
 
         integer :: i, b, nx, ny, nz
         real(C_DOUBLE) :: ire, local_rate(1)
@@ -90,6 +95,9 @@ contains
         ny = int(blk%nb(2))
         nz = int(blk%nb(3))
         ire = 1.0d0/dns%re
+        if (present(sc)) then
+            if (scalars_enabled(sc)) ire = ire*max(1.0d0, 1.0d0/scalar_min_pr(sc))
+        end if
 
         local_rate = 0.0d0
         do b = 1, int(blk%nBlocks)

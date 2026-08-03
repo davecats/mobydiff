@@ -7,6 +7,12 @@
 #error "field_hdf5.c requires HDF5 built with parallel MPI-IO support"
 #endif
 
+/* Field-variable name table (fdm_h5_write_field / fdm_h5_read_field): the
+ * Fortran side packs n_var NUL-terminated names of this fixed stride, so the
+ * variable count is a runtime value (u,v,w,p plus the passive scalars,
+ * docs/next_session_scalar.md) instead of the hardcoded 4. */
+#define FDM_VAR_NAME_LEN 32
+
 static size_t linear_fortran(size_t i, size_t j, size_t k, size_t ni, size_t nj)
 {
     return i + ni*(j + nj*k);
@@ -659,16 +665,18 @@ int fdm_h5_write_field(const char *filename, int nbx, int nby, int nbz,
                        const int *grid_distribution, const double *grid_stretch,
                        const double *grid_natural_dyw_plus,
                        const double *x_node, const double *y_node, const double *z_node,
+                       int n_var, const char *var_names,
                        const double *q)
 {
-    /* q is the solver's (0:nb+1,0:nb+1,0:nb+1, 4 vars, n_blocks) array. */
+    /* q is the solver's (0:nb+1,0:nb+1,0:nb+1, n_var, n_blocks) array;
+     * var_names holds n_var NUL-terminated names of stride FDM_VAR_NAME_LEN
+     * ("un","vn","wn","pn" plus one per passive scalar). */
     const size_t var_stride = (size_t)(nbx + 2)*(size_t)(nby + 2)*(size_t)(nbz + 2);
-    const size_t block_stride = var_stride*4;
-    static const char *var_name[4] = {"un", "vn", "wn", "pn"};
+    const size_t block_stride = var_stride*(size_t)n_var;
     hid_t file;
     int ierr = 0;
 
-    if (nbx < 1 || nby < 1 || nbz < 1 || n_blocks < 1) return 1;
+    if (nbx < 1 || nby < 1 || nbz < 1 || n_blocks < 1 || n_var < 1) return 1;
 
     file = create_parallel_file(filename);
     if (file < 0) return 1;
@@ -711,8 +719,9 @@ int fdm_h5_write_field(const char *filename, int nbx, int nby, int nbz,
     ierr |= write_block_table(file, n_blocks_global, id_start, n_blocks,
                               block_origin, block_level);
 
-    for (int v = 0; v < 4; ++v) {
-        ierr |= write_block_dataset(file, var_name[v], nbx, nby, nbz,
+    for (int v = 0; v < n_var; ++v) {
+        ierr |= write_block_dataset(file, var_names + (size_t)v*FDM_VAR_NAME_LEN,
+                                    nbx, nby, nbz,
                                     n_blocks, n_blocks_global, id_start,
                                     q + (size_t)v*var_stride, block_stride);
     }
@@ -992,32 +1001,40 @@ int fdm_h5_read_metadata(const char *filename,
     return ierr != 0;
 }
 
+/* found[v] = 0 marks a dataset the file does not carry; the caller decides
+ * whether that is fatal (u,v,w,p) or a reinitialise-and-warn (a scalar added
+ * after the restart file was written -- the RANS named-scalar precedent). */
 int fdm_h5_read_field(const char *filename, int nbx, int nby, int nbz,
                       int n_blocks, int n_blocks_global, int id_start,
                       const int *block_origin,
                       int global_nx, int global_ny, int global_nz,
+                      int n_var, const char *var_names, int *found,
                       double *q)
 {
     const size_t var_stride = (size_t)(nbx + 2)*(size_t)(nby + 2)*(size_t)(nbz + 2);
-    const size_t block_stride = var_stride*4;
-    static const char *var_name[4] = {"un", "vn", "wn", "pn"};
+    const size_t block_stride = var_stride*(size_t)n_var;
     hid_t file;
     int ierr = 0;
 
-    if (nbx < 1 || nby < 1 || nbz < 1 || n_blocks < 1) return 1;
+    if (nbx < 1 || nby < 1 || nbz < 1 || n_blocks < 1 || n_var < 1) return 1;
 
     file = open_parallel_file(filename);
     if (file < 0) return 1;
 
-    for (int v = 0; v < 4; ++v) {
-        hid_t dset = H5Dopen2(file, var_name[v], H5P_DEFAULT);
+    for (int v = 0; v < n_var; ++v) {
+        const char *name = var_names + (size_t)v*FDM_VAR_NAME_LEN;
+        hid_t dset;
         hid_t file_space = -1;
         int ndims = 0;
 
+        found[v] = 0;
+        if (H5Lexists(file, name, H5P_DEFAULT) <= 0) continue;
+        dset = H5Dopen2(file, name, H5P_DEFAULT);
         if (dset < 0) {
             ierr = 1;
             break;
         }
+        found[v] = 1;
         file_space = H5Dget_space(dset);
         if (file_space < 0) {
             H5Dclose(dset);

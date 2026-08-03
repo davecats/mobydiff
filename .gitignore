@@ -104,3 +104,5 @@ validation/channel_interface/les/runs/
 !validation/channel_interface/les/*.png
 !validation/channel_interface/les_ibm/*.png
 !validation/channel_interface/les_ibm/*.h5
+# passive-scalar bit-exactness suite scratch (validation/scalar/run_bitexact.sh)
+.bx_*

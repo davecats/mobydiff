@@ -128,9 +128,13 @@ module blocks
         real(C_DOUBLE), allocatable :: lapZm(:,:,:), lapZ0(:,:,:), lapZp(:,:,:)
 
         ! Flow state with one halo cell per side (second-order stencils).
-        real(C_DOUBLE), allocatable :: q(:,:,:,:,:)      ! (0:nb+1,...,NVAR,nBlocks)
-        real(C_DOUBLE), allocatable :: qs(:,:,:,:,:)     ! (0:nb+1,...,NVEL,nBlocks)
-        real(C_DOUBLE), allocatable :: oldrhs(:,:,:,:,:) ! (1:nb,...,NVEL,nBlocks)
+        ! The variable extent is u,v,w,p plus dns%nScalar passive scalars
+        ! (docs/next_session_scalar.md): q holds NVAR + nScalar variables,
+        ! the substage scratch NVEL + nScalar (p has no scratch plane), so
+        ! scalar `is` is q slot VAR_S0+is and qs/oldrhs slot SCR_S0+is.
+        real(C_DOUBLE), allocatable :: q(:,:,:,:,:)      ! (0:nb+1,...,NVAR+nScalar,nBlocks)
+        real(C_DOUBLE), allocatable :: qs(:,:,:,:,:)     ! (0:nb+1,...,NVEL+nScalar,nBlocks)
+        real(C_DOUBLE), allocatable :: oldrhs(:,:,:,:,:) ! (1:nb,...,NVEL+nScalar,nBlocks)
     end type block_set_type
 
 contains
@@ -202,7 +206,7 @@ contains
 
         call build_block_metadata(blk, dns, periodic)
         call build_block_metrics(blk, dns, g, periodic)
-        call allocate_flow_state(blk)
+        call allocate_flow_state(blk, dns)
     end subroutine init_block_set
 
     ! Allocate and fill this rank's per-block metadata: global id, refinement
@@ -295,19 +299,28 @@ contains
         end do
     end subroutine build_block_metrics
 
-    ! Allocate the flow state (one halo cell per side) and zero it.
-    subroutine allocate_flow_state(blk)
+    ! Allocate the flow state (one halo cell per side) and zero it. The
+    ! variable extent carries dns%nScalar passive scalars on top of u,v,w,p
+    ! (q) and u,v,w (the substage scratch); nScalar = 0 gives the historical
+    ! shapes exactly.
+    subroutine allocate_flow_state(blk, dns)
         type(block_set_type), intent(inout) :: blk
+        type(dns_type), intent(in) :: dns
 
-        integer :: nx, ny, nz
+        ! NOTE the names: a local called nVar would SHADOW the NVAR
+        ! parameter (Fortran is case-insensitive), silently allocating a
+        ! zero-size variable dimension.
+        integer :: nx, ny, nz, nQ, nScr
 
         nx = int(blk%nb(1))
         ny = int(blk%nb(2))
         nz = int(blk%nb(3))
+        nQ = int(NVAR) + int(dns%nScalar)
+        nScr = int(NVEL) + int(dns%nScalar)
 
-        allocate(blk%q(0:nx+1,0:ny+1,0:nz+1,NVAR,blk%nBlocks))
-        allocate(blk%qs(0:nx+1,0:ny+1,0:nz+1,NVEL,blk%nBlocks))
-        allocate(blk%oldrhs(1:nx,1:ny,1:nz,NVEL,blk%nBlocks))
+        allocate(blk%q(0:nx+1,0:ny+1,0:nz+1,nQ,blk%nBlocks))
+        allocate(blk%qs(0:nx+1,0:ny+1,0:nz+1,nScr,blk%nBlocks))
+        allocate(blk%oldrhs(1:nx,1:ny,1:nz,nScr,blk%nBlocks))
         blk%q = 0.0d0
         blk%qs = 0.0d0
         blk%oldrhs = 0.0d0

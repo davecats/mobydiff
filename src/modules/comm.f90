@@ -1,7 +1,7 @@
 module comm
     use, intrinsic :: iso_c_binding
     use :: mpi_f08
-    use :: init, only: dns_type, NVAR
+    use :: init, only: dns_type
     use :: blocks, only: block_set_type, DIST_ZORDER, zorder_owner, zorder_start, zorder_count, &
         leaf_at, level_cells, level_cell_width, occupied_any_level, parent_coord, child_origin
     use :: boundary, only: boundary_type
@@ -114,7 +114,10 @@ module comm
         real(C_DOUBLE), allocatable :: recvbuf(:,:)
 
         type(MPI_Request), allocatable :: request(:)       ! (2*nPeers)
-        integer(C_INT) :: activeVars(NVAR) = 0_C_INT
+        ! Variables carried by the current exchange. Sized dns%nVar =
+        ! NVAR + nScalar (init_block_exchange): passive scalars are extra
+        ! q variables and ride the SAME entries and messages as u,v,w,p.
+        integer(C_INT), allocatable :: activeVars(:)
         integer :: nActiveVars = 0
         ! When true, the exchange touches only the same-level COPY prefix
         ! of the entry lists, leaving interface ghosts and face copies
@@ -448,10 +451,16 @@ contains
             end do
         end do
 
+        ! Buffers must hold every variable an exchange can carry, scalars
+        ! included -- sizing them with NVAR would silently truncate scalar
+        ! halos.
+        if (allocated(c%activeVars)) deallocate(c%activeVars)
+        allocate(c%activeVars(int(dns%nVar)))
+        c%activeVars = 0_C_INT
         maxCount = 1
         do p = 1, c%nPeers
-            maxCount = max(maxCount, (c%peerSendOff(p) - c%peerSendOff(p-1))*int(NVAR))
-            maxCount = max(maxCount, (c%peerRecvOff(p) - c%peerRecvOff(p-1))*int(NVAR))
+            maxCount = max(maxCount, (c%peerSendOff(p) - c%peerSendOff(p-1))*int(dns%nVar))
+            maxCount = max(maxCount, (c%peerRecvOff(p) - c%peerRecvOff(p-1))*int(dns%nVar))
         end do
         c%maxBufferCount = maxCount
         allocate(c%sendbuf(c%maxBufferCount, max(1, c%nPeers)))
@@ -1626,12 +1635,14 @@ contains
 
         integer :: n
 
-        if (size(vars) > NVAR) error stop "too many halo variables requested"
+        if (.not. allocated(c%activeVars)) error stop "halo exchange entries have not been built"
+        if (size(vars) > size(c%activeVars)) error stop "too many halo variables requested"
 
         c%activeVars = 0_C_INT
         c%nActiveVars = size(vars)
         do n = 1, c%nActiveVars
-            if (vars(n) < 1_C_INT .or. vars(n) > NVAR) error stop "invalid halo variable requested"
+            if (vars(n) < 1_C_INT .or. int(vars(n)) > size(c%activeVars)) &
+                error stop "invalid halo variable requested"
             c%activeVars(n) = vars(n)
         end do
     end subroutine set_active_vars

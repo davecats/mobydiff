@@ -1,6 +1,6 @@
 module boundary
     use, intrinsic :: iso_c_binding
-    use :: init, only: dns_type, VAR_U, VAR_V, VAR_W, VAR_P
+    use :: init, only: dns_type, VAR_U, VAR_V, VAR_W, VAR_P, VAR_S0
     use :: blocks, only: block_set_type, FACE_PHYS
     implicit none
 
@@ -789,5 +789,87 @@ contains
         end do
         !$omp end target teams distribute parallel do
     end subroutine apply_scalar_bc
+
+    ! Physical-boundary ghosts of the passive scalars stored IN blk%q
+    ! (scalar `is` at VAR_S0+is). This is apply_bc's cell-centred branch,
+    ! var-indexed over the scalars instead of VAR_U:VAR_P, over the SAME
+    ! boundary point lists: Dirichlet via the ghost mirror
+    ! (ghost = 2 value - interior), Neumann via ghost = interior + dn value.
+    !
+    ! Deliberately a TWIN of apply_bc rather than an extension of its
+    ! `do var = VAR_U, VAR_P` loop: apply_bc runs nIter times per substage
+    ! INSIDE the projection loop and is bit-exactness-critical, while the
+    ! scalars are touched once per substage, outside it. (The generic
+    ! apply_scalar_bc above takes a standalone s(0:,0:,0:,1:) array and
+    ! cannot portably be fed a strided q slice under OpenMP target mapping.)
+    subroutine apply_scalar_bc_q(blk, bc, nScalar, bcType, bcValue)
+        type(block_set_type), intent(inout) :: blk
+        type(boundary_type), intent(in) :: bc
+        integer, intent(in) :: nScalar
+        integer(C_INT), intent(in) :: bcType(:,:)      ! (nScalar, NFACES)
+        real(C_DOUBLE), intent(in) :: bcValue(:,:)
+
+        integer :: n, npts, b, i, j, k, face_id, is, var, dir, side
+        integer :: ghost_idx, interior_idx_dir, ns
+        integer :: gi(3), ii(3)
+        integer(C_INT) :: local_n(1:3)
+        real(C_DOUBLE) :: dn
+
+        npts = int(bc%nTotal)
+        ns = nScalar
+        if (npts <= 0 .or. ns <= 0) return
+        local_n = blk%nb(1:3)
+
+        !$omp target teams distribute parallel do &
+        !$omp& map(to: npts, ns, local_n(1:3), blk%x, blk%y, blk%z, &
+        !$omp& bc%pointFace(1:npts), bc%slot(1:npts), bc%i(1:npts), bc%j(1:npts), bc%k(1:npts), &
+        !$omp& bcType, bcValue) &
+        !$omp& map(tofrom: blk%q) &
+        !$omp& private(n,b,i,j,k,face_id,is,var,dir,side,ghost_idx,interior_idx_dir,gi,ii,dn)
+        do n = 1, npts
+            face_id = int(bc%pointFace(n))
+            b = int(bc%slot(n))
+            dir = (face_id + 1)/2
+            side = modulo(face_id - 1, 2)
+            i = int(bc%i(n))
+            j = int(bc%j(n))
+            k = int(bc%k(n))
+
+            if (side == SIDE_MIN) then
+                ghost_idx = 0
+                interior_idx_dir = 1
+            else
+                ghost_idx = int(local_n(dir)) + 1
+                interior_idx_dir = int(local_n(dir))
+            end if
+            gi = [i, j, k]
+            ii = gi
+            gi(dir) = ghost_idx
+            ii(dir) = interior_idx_dir
+
+            ! The scalar sits at the pressure point, so its ghost distance is
+            ! the VAR_P column's.
+            select case (dir)
+            case (DIR_X)
+                dn = blk%x(gi(1),VAR_P,b) - blk%x(ii(1),VAR_P,b)
+            case (DIR_Y)
+                dn = blk%y(gi(2),VAR_P,b) - blk%y(ii(2),VAR_P,b)
+            case default
+                dn = blk%z(gi(3),VAR_P,b) - blk%z(ii(3),VAR_P,b)
+            end select
+
+            do is = 1, ns
+                var = int(VAR_S0) + is
+                if (bcType(is,face_id) == BC_DIRICHLET) then
+                    blk%q(gi(1),gi(2),gi(3),var,b) = 2.0d0*bcValue(is,face_id) &
+                        - blk%q(ii(1),ii(2),ii(3),var,b)
+                else
+                    blk%q(gi(1),gi(2),gi(3),var,b) = blk%q(ii(1),ii(2),ii(3),var,b) &
+                        + dn*bcValue(is,face_id)
+                end if
+            end do
+        end do
+        !$omp end target teams distribute parallel do
+    end subroutine apply_scalar_bc_q
 
 end module boundary

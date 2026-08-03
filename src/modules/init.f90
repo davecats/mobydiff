@@ -8,6 +8,12 @@ module init
     integer(C_INT), parameter :: VAR_P = 4_C_INT
     integer(C_INT), parameter :: NVEL = 3_C_INT
     integer(C_INT), parameter :: NVAR = 4_C_INT
+    ! Passive scalars are extra variables of blk%q (docs/next_session_scalar.md):
+    ! scalar `is` lives at VAR_S0 + is in q and at SCR_S0 + is in the substage
+    ! scratch qs / oldrhs. LANDMINE: the two offsets DIFFER (pressure has no
+    ! scratch plane), so a scalar's q index is never its qs index.
+    integer(C_INT), parameter :: VAR_S0 = NVAR
+    integer(C_INT), parameter :: SCR_S0 = NVEL
     integer(C_INT), parameter :: GRID_UNIFORM = 1_C_INT
     integer(C_INT), parameter :: GRID_COSINE  = 2_C_INT
     integer(C_INT), parameter :: GRID_TANH    = 3_C_INT
@@ -176,6 +182,12 @@ module init
         ! fine cells -- the C10 blow-up). k_inf/omega_inf from [rans] tu /
         ! nut_ratio and |initial_velocity| (must be nonzero when enabled).
         logical(C_BOOL) :: rans_ambient_sustain = .false.
+        ! Passive scalars ([scalar] / [scalar.N], scalar.f90). Only the two
+        ! counts live here -- everything per-scalar lives in scalar_type, so
+        ! dns_type stays a fixed-size value type with no scalar-count bound.
+        ! nScalar = 0 reproduces every allocation shape exactly.
+        integer(C_INT) :: nScalar = 0_C_INT
+        integer(C_INT) :: nVar = NVAR
         character(len=256) :: field_prefix = ""
         integer :: field_interval = 0
         character(len=256) :: restart_file = ""
