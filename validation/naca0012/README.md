@@ -1,5 +1,22 @@
 # A3 INCREMENT 2 — NACA 0012 full-turbulent SST sanity (Re_c = 1e5)
 
+> **UPDATE 2026-08-03 — the runtime force statistic changed.** The
+> penalization integral this page quotes was REMOVED from the solver; the
+> airfoil case now reports the CONTROL-VOLUME momentum budget over
+> `[case.airfoil] cv_box` (`docs/configuration.md`, `validation/cylinder`).
+> Every ini here gained a `cv_box` of margin 1.5c around the profile, which
+> is what `postProcess/cv_forces.py --boxes 1.5` integrates. The numbers
+> below were produced with the penalization statistic and have NOT been
+> regenerated — expect small shifts (on the Re 40 cylinder the two agree to
+> 0.7 %), and note that the budget reads the STORED pressure, so a long run
+> needs the clean-p protocol in `validation/cylinder/README.md`.
+> `--keep-buried` STAYS. It was originally load-bearing because of the
+> penalization integral (see below), and the control-volume budget no longer
+> needs it — but the buried interior is wanted for future moving boundaries
+> and for solving the heat equation inside the solid, so keep writing the
+> coefficients with it.
+
+
 Quasi-2D airfoil case through the full A0-A2 + A3 stack: `[case] name =
 airfoil` freestream composition (inlets x_min/y_min/y_max at the aoa
 angle, outlet x_max), file-based IBM from an extruded NACA 0012 STL,

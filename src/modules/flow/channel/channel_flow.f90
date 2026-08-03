@@ -1,6 +1,7 @@
 module channel_flow
     use, intrinsic :: iso_c_binding
     use :: flow_case_base, only: case_type
+    use :: turbulence, only: turb_type
     use :: generic_flow, only: set_generic_defaults
     use :: init, only: dns_type, grid_type, VAR_U, VAR_V, VAR_W, VAR_P, GRID_NATURAL
     use :: blocks, only: block_set_type
@@ -95,13 +96,14 @@ contains
             this%large_disturbance_amplitude, this%small_noise_amplitude)
     end subroutine channel_initialise_fields
 
-    subroutine channel_after_step(this, blk, dns, g, c, ibm)
+    subroutine channel_after_step(this, blk, dns, g, c, ibm, turb)
         class(channel_case_type), intent(inout) :: this
         type(block_set_type), intent(inout) :: blk
         type(dns_type), intent(in) :: dns
         type(grid_type), intent(in) :: g
         type(comm_type), intent(in) :: c
         type(ibm_type), intent(in) :: ibm
+        type(turb_type), intent(in) :: turb
 
         call this%stats%after_step(blk, dns, g, c)
     end subroutine channel_after_step

@@ -93,7 +93,13 @@ incremental pn and corrupts every pressure-based quantity; that is why
 the shipped state is step 640000 (t = 34.75) and not 650013 (t = 35).
 
 Post-processing notes (scripts in postProcess/): cv_forces.py computes
-flux-exact control-volume forces in wind axes (--aoa); surface_cp_cf.py
+flux-exact control-volume forces in wind axes (--aoa) — the same budget
+the solver now reports at runtime through `[case.airfoil] cv_box`, so a
+converged run needs no post-processing for C_L/C_D. FIXED 2026-08-03: its
+tangential velocity was read on the cell's low tangential face, a half-cell
+collocation offset that biased C_D by ~0.2 % (it moved the Re 40 cylinder
+from 1.7069 to 1.7040 against a runtime 1.70387); the C_L/C_D table above
+predates the fix and shifts by about that much. surface_cp_cf.py
 extracts Cp (linear wall
 extrapolation, converged depth 12 cells) and Cf; pressure-based
 quantities should be read from regular-cadence snapshots (a dt-clipped

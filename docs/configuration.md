@@ -30,7 +30,7 @@ Everything else is optional and falls back to the defaults listed below. If
 
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
-| `name` | string | `generic` | Flow case: `channel` (honours `[case.channel]`) or `generic`. |
+| `name` | string | `generic` | Flow case: `channel` (honours `[case.channel]`), `airfoil` (honours `[case.airfoil]`) or `generic`. |
 
 ## `[case.channel]` — channel-case parameters
 
@@ -47,6 +47,76 @@ Only read when `[case] name = channel`.
 | `stats_write_interval` | int | -1 (off) | Steps between statistics writes. |
 | `stats_file` | string | `channel_stats.h5` | HDF5 statistics output. |
 | `runtime_file` | string | `runtimedata.txt` | Runtime log file. |
+
+## `[case.airfoil]` — quasi-2D immersed-body case (airfoil, cylinder, …)
+
+Only read when `[case] name = airfoil`. The case composes its own far field
+from patch types: `x_min` and both lift-direction faces become Dirichlet
+inlets carrying the freestream, `x_max` a pressure outlet, and the span
+direction is periodic. Explicit `[boundary]` keys still win.
+
+| Key | Type | Default | Meaning |
+|-----|------|---------|---------|
+| `aoa` | real | 0.0 | Angle of attack [deg]. Sets the inlet freestream `(U cos α, U sin α)` in the chord–lift plane and the wind axes the reported coefficients use. |
+| `u_inf` | real | 1.0 | Freestream speed. |
+| `chord` | real | 1.0 | Reference chord for the coefficients. |
+| `span` | `z` or `y` | `z` | Periodic (extrusion) direction. `z`: chord x, lift y. `y`: chord x, lift z — the orientation for `[blocks] refine_dims = xz`, which then never refines the span. |
+| `force_sample_interval` | int | 10 | Steps between force samples. `0` (or negative) disables forces entirely — the only way to run without `cv_box`. |
+| `cv_box` | 4 reals | — | **Required** unless forces are disabled: `c0 c1 l0 l1`, the control volume for the force budget, in physical coordinates along the chord and lift axes (the span is always the full periodic extent). See below. |
+| `runtime_file` | string | `forces.txt` | Where `iteration time cl cd` is appended. |
+
+### Forces: the control-volume momentum budget
+
+`C_L`/`C_D` come from a momentum balance over the box, never from the body:
+
+```
+F = - d/dt ∫_V u dV - ∮_S [ u (u·n) + (p - p_∞) n - τ·n ] dS
+τ = (ν + ν_t)(∇u + ∇uᵀ)
+```
+
+Only the four lateral borders are integrated — the box spans the full
+periodic extent, so the two span faces cancel. Choosing the box:
+
+- **It must enclose the body**, with the borders in reasonably clean flow.
+  A margin of ~1.5 chords is a good default and matches
+  `tutorials/naca/rans/postProcess/cv_forces.py --boxes 1.5`, the offline
+  twin of this statistic.
+- **Tighter is more accurate.** Longer borders accumulate more collocation
+  and gradient error: on the Re 40 cylinder the same converged field reads
+  C_D = 1.698 / 1.704 / 1.726 / 1.765 for margins from 1.5 D out to 6 D.
+- Borders are **snapped at setup** to a face of the coarsest level they
+  cross (a coarse node is a node at every finer level), so a border never
+  lands on a fine-only face and the box stays closed. The snapped box is
+  printed at startup — check it.
+- Each physical face is integrated exactly once, by the block on its east
+  side at that block's own level, so a border may cross a 2:1 interface
+  freely. A uniform flow through the box integrates to zero to round-off
+  (exactly zero when no border coincides with a block boundary).
+- The reported force is **independent of the rank count and of CPU vs GPU
+  by construction** (per-block partials scattered into the global block
+  table, exact allreduce, ordered final sum).
+
+Two things to know before trusting the numbers:
+
+- **The budget reads the stored pressure**, which accumulates a large
+  velocity-neutral drift over long runs at production `[pressure] niter`
+  (the same mode as the known channel `pn` drift). Dynamics are unaffected,
+  but a polluted `pn` destroys this statistic — on a 20 000-step Re 40
+  cylinder run it returned `C_D = 261`. From a *converged* pressure the
+  budget holds: 2000 steps at `niter = 6` kept C_D to ±0.001. If a long run's
+  forces look wrong, re-converge the pressure (zero `pn`, restart at high
+  `niter` for a few hundred steps) before believing them.
+- **The unsteady term is differenced between consecutive samples.** At the
+  first sample after a start or restart it is unknown and the budget is
+  reported without it; it is also the term that limits accuracy on rapidly
+  varying flows (on the shedding Re 100 cylinder the sampled C_L tracks
+  the reference to ~20 % of its amplitude, with the mean C_D within 0.12 %).
+
+There is no alternative force statistic. The penalization integral
+`F = ∫ coef·u dV` this case used to report was removed: it is exact
+bookkeeping only while the solid interior is present, and production runs
+remove the buried core (`[blocks] remove_solid`, the default), which puts
+its share of the pressure-dominated loading outside that bookkeeping.
 
 ## `[grid]` — global grid size and domain
 

@@ -868,6 +868,38 @@ immersed boundary. Phased, each phase verified before the next:
   finite-volume now (borders snapped to faces, native-level staggered fluxes,
   uniform twin ~1e-14, 44 MB at any depth; box scatter is the d/dt term, not
   sampling).
+- Runtime CONTROL-VOLUME forces, penalization integral REMOVED (DONE
+  2026-08-03, branch `claude/jacobi-interface`; trail in
+  `docs/next_session_cv_forces.md`, keys in `docs/configuration.md`). The
+  airfoil case's C_L/C_D is now the momentum budget `F = -d/dt int_V u dV -
+  oint_S [u(u.n) + (p-p_inf)n - tau.n] dS` over `[case.airfoil] cv_box`
+  (four lateral borders; the span faces cancel). It never touches the body,
+  so it is indifferent to `[blocks] remove_solid` — which is why it
+  REPLACED `penalization_forces` outright (that integral under-reads once
+  refine_body removes the buried core). `cv_box` is REQUIRED unless
+  `force_sample_interval = 0`; the error lives in `setup_after_grid`, which
+  moby_prepare never calls. Borders snap at setup to a face of the COARSEST
+  level they cross and only interior faces (i = 1..nb) are integrated, so
+  each physical face is counted once by its east-side block at its own
+  level and a border may cross a 2:1 interface. LOAD-BEARING: `p_inf` (the
+  area-weighted mean of the upstream border) must be subtracted PER FACE —
+  a first `cv_pinf` reduction pass exists for exactly that. Analytically a
+  constant cancels on a closed box, but the stored pn carries the run's
+  projection drift (O(1e3) vs a force O(0.2)) and the assembled-signed-area
+  form returned C_D = 261. THE STATISTIC READS THE STORED PRESSURE: from a
+  converged p it holds (2000 steps at niter = 6 kept C_D to +-0.001), but a
+  20k-step niter=6 run poisons it — the drift mode is spatially varying, so
+  no reference subtraction rescues it; re-converge p (README recipe).
+  Gates: Re 40 cylinder runtime C_D 1.70387475 reproduced to NINE digits
+  per border by an independent reassembled-plane evaluation; uniform flow
+  8.7e-16 (block-aligned box) / EXACTLY 0 (interior faces); 1 vs 4 ranks
+  byte-identical, CPU == GPU; Re 100 shedding exercises the unsteady term
+  (mean C_D within 0.12 % of penalization; without the term C_L's mean
+  flips sign); 8-case bit-exact suite (7 standard + `cylinder_empty`)
+  max_abs 0 CPU AND GPU. ALSO FIXED: `postProcess/cv_forces.py` sampled the
+  tangential velocity on the cell's low tangential face — a half-cell
+  collocation offset worth ~0.2 % in C_D; the naca/sd7003/cylinder
+  published force numbers predate both changes and are annotated as such.
 - ALSO PENDING: **Profile + optimise** the GPU step for the 2:1-refined channel.
   The last hard profile is STALE (the reflux that was 23% is removed; the
   `MOBY_PHASETIME` timer is deleted): re-profile first with a minimal removable

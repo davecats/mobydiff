@@ -1,6 +1,7 @@
 module generic_flow
     use, intrinsic :: iso_c_binding
     use :: flow_case_base, only: case_type
+    use :: turbulence, only: turb_type
     use :: init, only: dns_type, grid_type, GRID_UNIFORM
     use :: blocks, only: block_set_type
     use :: boundary, only: boundary_type, init_bc
@@ -145,13 +146,14 @@ contains
         end if
     end subroutine generic_initialise_fields
 
-    subroutine generic_after_step(this, blk, dns, g, c, ibm)
+    subroutine generic_after_step(this, blk, dns, g, c, ibm, turb)
         class(generic_case_type), intent(inout) :: this
         type(block_set_type), intent(inout) :: blk
         type(dns_type), intent(in) :: dns
         type(grid_type), intent(in) :: g
         type(comm_type), intent(in) :: c
         type(ibm_type), intent(in) :: ibm
+        type(turb_type), intent(in) :: turb
     end subroutine generic_after_step
 
     subroutine generic_finalize(this, dns, g, c)

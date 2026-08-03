@@ -1,5 +1,22 @@
 # A3 INCREMENT 3 — SD7003 transition benchmark (Re_c = 6e4, aoa = 4)
 
+> **UPDATE 2026-08-03 — the runtime force statistic changed.** The
+> penalization integral this page quotes was REMOVED from the solver; the
+> airfoil case now reports the CONTROL-VOLUME momentum budget over
+> `[case.airfoil] cv_box` (`docs/configuration.md`, `validation/cylinder`).
+> Every ini here gained a `cv_box` of margin 1.5c around the profile, which
+> is what `postProcess/cv_forces.py --boxes 1.5` integrates. The numbers
+> below were produced with the penalization statistic and have NOT been
+> regenerated — expect small shifts (on the Re 40 cylinder the two agree to
+> 0.7 %), and note that the budget reads the STORED pressure, so a long run
+> needs the clean-p protocol in `validation/cylinder/README.md`.
+> `--keep-buried` STAYS. It was originally load-bearing because of the
+> penalization integral (see below), and the control-volume budget no longer
+> needs it — but the buried interior is wanted for future moving boundaries
+> and for solving the heat equation inside the solid, so keep writing the
+> coefficients with it.
+
+
 The gamma-Re_thetat transition model on the standard low-Re LSB benchmark,
 through the full airfoil stack (freestream composition, file IBM from the
 UIUC Selig coordinates spline-resampled to 720 points, 5-level

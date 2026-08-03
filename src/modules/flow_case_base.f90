@@ -4,6 +4,7 @@ module flow_case_base
     use :: boundary, only: boundary_type
     use :: pressure_solver, only: pressure_solver_type
     use :: ibmm, only: ibm_type
+    use :: turbulence, only: turb_type
     use :: comm, only: comm_type
     implicit none
 
@@ -58,14 +59,18 @@ module flow_case_base
             type(comm_type), intent(in) :: c
         end subroutine case_initialise_fields
 
-        subroutine case_after_step(this, blk, dns, g, c, ibm)
-            import :: case_type, block_set_type, dns_type, grid_type, comm_type, ibm_type
+        subroutine case_after_step(this, blk, dns, g, c, ibm, turb)
+            import :: case_type, block_set_type, dns_type, grid_type, comm_type, ibm_type, turb_type
             class(case_type), intent(inout) :: this
             type(block_set_type), intent(inout) :: blk
             type(dns_type), intent(in) :: dns
             type(grid_type), intent(in) :: g
             type(comm_type), intent(in) :: c
             type(ibm_type), intent(in) :: ibm
+            ! turb%nut: the CV momentum budget needs the EFFECTIVE viscosity
+            ! on its border faces (the wake crossing the downstream border
+            ! carries a large eddy viscosity).
+            type(turb_type), intent(in) :: turb
         end subroutine case_after_step
 
         subroutine case_finalize(this, dns, g, c)

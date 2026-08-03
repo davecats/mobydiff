@@ -214,20 +214,35 @@ def cv_force(path, nose, margin, re, span_y=True, verbose=False):
                 """M[tangential t, normal n] respecting axis order (l, c)."""
                 return M[t, n] if ax == "c" else M[n, t]
 
+            def Tc(t, n):
+                """Tangential velocity at the TANGENTIAL CENTRE of cell t.
+                It is stored on that cell's low tangential face, so reading
+                A(T, t, n) directly leaves a half-cell collocation offset —
+                a first-order error in every term carrying u_t, and on the
+                lift borders it feeds straight into the drag (it biased
+                C_D by 0.17 % and C_L by 2e-3 on the Re 40 cylinder).
+                The solver's runtime budget averages all four surrounding
+                faces; this reproduces it, except on the block's last row
+                where the neighbour block's face is out of reach and a
+                second-order one-sided estimate stands in."""
+                if t + 1 <= nb - 1:
+                    return 0.5*(A(T, t, n) + A(T, t+1, n))
+                return 1.5*A(T, t, n) - 0.5*A(T, t-1, n)
+
             for t in rows:
                 i = iloc - 1           # 0-based normal index of face/cell east
                 u_n = A(U, t, i)
                 # neighbours along the normal (cells i-1 | i share the face)
                 if i >= 1:
                     p_face = 0.5*(A(P, t, i-1) + A(P, t, i))
-                    ut_face = 0.5*(A(T, t, i-1) + A(T, t, i))
+                    ut_face = 0.5*(Tc(t, i-1) + Tc(t, i))
                     nue = nu + (0.5*(A(NUT, t, i-1) + A(NUT, t, i)) if NUT is not None else 0.0)
-                    dut_dn = (A(T, t, i) - A(T, t, i-1))/hn
+                    dut_dn = (Tc(t, i) - Tc(t, i-1))/hn
                 else:
                     p_face = 1.5*A(P, t, 0) - 0.5*A(P, t, 1)
-                    ut_face = 1.5*A(T, t, 0) - 0.5*A(T, t, 1)
+                    ut_face = 1.5*Tc(t, 0) - 0.5*Tc(t, 1)
                     nue = nu + (max(1.5*A(NUT, t, 0) - 0.5*A(NUT, t, 1), 0.0) if NUT is not None else 0.0)
-                    dut_dn = (A(T, t, 1) - A(T, t, 0))/hn
+                    dut_dn = (Tc(t, 1) - Tc(t, 0))/hn
                 # normal-velocity gradients at the face (native spacing)
                 if 1 <= i <= nb - 2:
                     dun_dn = (A(U, t, i+1) - A(U, t, i-1))/(2.0*hn)
@@ -276,6 +291,8 @@ def main():
     ap.add_argument("--boxes", type=float, nargs="+", default=[1.5, 2.5, 4.0])
     ap.add_argument("--re", type=float, default=4.0e5)
     ap.add_argument("--nose", type=float, nargs=2, default=[50.0, 48.0])
+    ap.add_argument("--span-z", action="store_true",
+                    help="span is z (lift = y); default is span y (lift = z)")
     ap.add_argument("--aoa", type=float, default=0.0,
                     help="angle of attack in degrees: rotate the body-axis "
                          "(Fx, Fz) force into wind axes (drag along the "
@@ -285,7 +302,7 @@ def main():
     for path in a.h5:
         print(f"== {path}")
         for m in a.boxes:
-            fx, fz = cv_force(path, a.nose, m, a.re)
+            fx, fz = cv_force(path, a.nose, m, a.re, span_y=not a.span_z)
             cd = fx*ca + fz*sa      # wind axes
             cl = fz*ca - fx*sa
             print(f"  CV margin {m:4.1f} c: C_D = {cd:+.5f}   C_L = {cl:+.5f}")

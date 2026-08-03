@@ -289,7 +289,7 @@ program moby_solve
             call maybe_write_field(blk, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%omega, &
                 turb%nut, sst%k, sst%omg, sst%gam, sst%ret, turb%fd)
         end if
-        call flow%after_step(blk, dns, g, c, ibm)
+        call flow%after_step(blk, dns, g, c, ibm, turb)
 
     end do
     call stop_chron(loop_timer, loop_steps)
