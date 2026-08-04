@@ -374,9 +374,14 @@ subroutine apply_config_value(section, key, value, dns, g, turb, les, ps, bc, sc
     case ("boundary")
         call apply_boundary_value(key_l, value, bc, line_no)
     case ("scalar")
-        ! Passive scalars: [scalar] holds only `count`, the per-scalar keys
-        ! live in the numbered [scalar.N] sections (the [grid.x] pattern).
-        call apply_scalar_config(0, key_l, lower(clean_string(value)), sc, line_no, terminal_output)
+        ! Passive scalars: [scalar] holds `count` and the statistics keys, the
+        ! per-scalar keys live in the numbered [scalar.N] sections (the
+        ! [grid.x] pattern). File names keep their case, like [scalar.N] name.
+        if (key_l == "stats_file" .or. key_l == "heat_file") then
+            call apply_scalar_config(0, key_l, clean_string(value), sc, line_no, terminal_output)
+        else
+            call apply_scalar_config(0, key_l, lower(clean_string(value)), sc, line_no, terminal_output)
+        end if
     case default
         scalar_index = scalar_section_index(section_l)
         if (scalar_index > 0) then

@@ -1,17 +1,19 @@
-# Passive scalars — S0/S1/S2/S3 gates
+# Passive scalars — S0/S1/S2/S3/S4 gates
 
 Gates for increments **S0** (layout, config, io, halos, BCs — the scalar is
 carried but not advanced), **S1** (the transport kernel, molecular diffusivity
 only), **S2** (the turbulent closure `D_face = 1/(Re Pr) + nut/Pr_t`,
-constant `Pr_t` or Kays–Crawford) and **S3** (the immersed body: cell-centred
-coefficients, both wall modes, `coef_p_blocks`) of
-`docs/next_session_scalar.md`.
+constant `Pr_t` or Kays–Crawford), **S3** (the immersed body: cell-centred
+coefficients, both wall modes, `coef_p_blocks`) and **S4** (in-solver
+statistics + tooling: `scalar_stats.f90`, `tools/scalar_stats.py`,
+`compare_fields.py` dataset discovery) of `docs/next_session_scalar.md`.
 
 ```bash
 ./compile_nofma.sh cpu && ./compile_nofma.sh gpu   # bit-exactness builds
 ./run_gates.sh    [uniform|conserve|conduction|wave|pr|det|restart]   # S1
 ./run_gates_s2.sh [kays|wferr|sst|les|band|det]                       # S2
 ./run_gates_s3.sh [solid|conserve|prep|missing|refine|det|cyl]        # S3
+./run_gates_s4.sh [stats|accum|plane|levels|restart|det|noeffect|heat|adia|cyl|tools]
 REF=<pre-change nofma binary> MODE=cpu RANKS=4 ./run_bitexact.sh      # count = 0
 REF=<S1 nofma binary>         MODE=cpu          ./run_bitexact_s1.sh  # turbulence off
 REF=<S2 nofma binary>         MODE=cpu          ./run_bitexact_s3.sh  # no body
@@ -62,6 +64,20 @@ holds the three analyses (`channel`, `band`, `rans`).
 | `ibmwavyr.ini` | (q) the same body under `refine_body` (2 levels): the cell-centred coefficients must be evaluated at EACH LEAF'S OWN LEVEL. Checked level by level against the same independent transcription, plus solve-from-file == inline analytic at tolerance 0. Conservation is deliberately NOT gated here — across a 2:1 interface the flux form telescopes only approximately (see the S1 note at the end). |
 | `ibmwavy.ini` (nofma) | (r) determinism on a scalar + IBM case: 1 rank == 4 ranks and CPU == GPU at tolerance 0, through the ANALYTIC path and again through the FILE path (`coef_p_blocks` read on both sides). |
 | `cylheat.ini` | (s) **heated cylinder, Re 40, Pr 0.71** — the quantitative body gate. Geometry, grid and far field are `../cylinder/cyl_re40.ini` verbatim (D = 1 at (6.0, 8.02) in a 16 × 16 × 0.25 box, uniform h = 1/32), restarted from that campaign's converged steady field, so only the thermal problem is new: an isothermal body (`theta = 1`) in a `theta = 0` freestream. The Nusselt number is measured TWICE from the same snapshot — from the penalization integral `Q = ∫coef_p (1 − θ)/Pr dV`, and from the Gauss/CV border flux of `(u θ − D_th ∇θ)·n` through a box in the fluid (the A2 cross-check method). The two share nothing but the `theta` field. Unlike the momentum cross-check this one never touches the pressure, so the `niter = 6` pn-drift caveat of `../cylinder/README.md` does not apply. |
+
+## S4 gate cases (statistics and tooling)
+
+| ini | gate |
+|---|---|
+| `s4stats.ini` | (t) (t2) (t3) (t4) (t5) (t6) the IN-SOLVER statistics. The case is `turbles.ini` (the S2 developed LES channel, 64×48×64 WALE at Re_τ 180, so `nut` is genuinely active) restarted from one of that campaign's mid-run snapshots, with TWO scalars differing ONLY in the `Pr_t` model (`theta` constant, `theta_kc` Kays–Crawford): one run gates the multi-scalar column layout AND the correlation branch of the statistics kernel's face diffusivity. THE GATE: the solver samples the END-OF-STEP field and the snapshot IS the end-of-step field, so `check_scalar_stats.py`, recomputing the same seven columns from the snapshots the same run wrote, must reproduce the solver's rows to ROUND-OFF — there is no statistical tolerance to hide in. Run with one sample (t), with four accumulated samples (t2), in the `plane` layout (t3), across a restart (t4, the accumulators must continue from the file), on 1 vs 4 ranks and CPU vs GPU (t5, a tolerance — atomics and the allreduce reorder the sums), and against a statistics-OFF twin whose fields must be bit-identical (t6). |
+| `turbslab.ini` + statistics | (t3b) the 2:1 wall-band-refined case: the row tables are PER LEVEL (the `channel_stats` `lvlOff` layout), so the run writes one file per level. `check_scalar_stats.py rows` accumulates straight from the leaves — no global box — and therefore gates the level split that `profile` cannot reach; the face-flux columns stay gated at single level, where the halo values a snapshot does not carry are not needed. |
+| `ibmwavy.ini` + `heat_interval` | (u) (u2) the immersed body's HEAT RELEASE. The runtime samples are compared with `check_scalar_ibm.py surface` — the cancellation-free pair (staircase interface flux + graded-cell penalization) that S3 validated against the full energy budget — on the very snapshots the same run wrote, and then the physics is closed with the SOLVER's own `Q`: with no boundary flux anywhere, `½[Q(t₁)+Q(t₂)] = d/dt ∫θ dV`. (u2) is the positive control on the other wall mode: the seeded `phi` (`2 + sin(k·x)`, manifestly non-zero) is `adiabatic`, so its heat columns must be EXACTLY zero — no penalization is applied and every body face is masked, and any non-zero number would be a flux the solver never applied. |
+| `cylheat.ini` + `heat_interval` | (u3) the heated cylinder's RUNTIME Nusselt number: 20 steps from the S3 campaign's converged `t = 120` field, so the number is directly comparable with the S3 post-processed 3.3655 and with Churchill–Bernstein's 3.35. |
+| (tooling) | (v) `compare_fields.py` with no dataset arguments discovers the datasets present in BOTH files (canonical `un vn wn pn` first, then the scalars / `nut` / the RANS variables alphabetically), and `tools/scalar_stats.py` reads the files this session wrote. |
+
+`check_scalar_stats.py` holds the five analyses (`profile`, `plane`, `rows`,
+`heat`, `diff`); `tools/scalar_stats.py` is the production reader (mean profile, rms,
+turbulent flux, wall flux → `theta_tau` / Nusselt; the body heat → Nusselt).
 
 `check_scalar_ibm.py` holds the five analyses (`solid`, `conserve`, `coefp`,
 `nusselt`, `cv`); `run_bitexact_s3.sh` is the "scalar WITHOUT a body is
@@ -598,6 +614,156 @@ rejection reproduce identically. The three turbulent-channel CAMPAIGNS
 steps — because `run_bitexact_s3.sh` proves the stronger statement on the
 very same inis: the S3 binary reproduces the S2 binary's fields at
 TOLERANCE 0, so no statistic derived from them can have moved.
+
+## Results — S4 (2026-08-04, branch `scalar`) — ALL PASS
+
+Local runs (RTX 3060 GPU — shared with an unrelated job throughout — and
+nvhpc 25.9 CPU builds). `./run_gates_s4.sh [group]`.
+
+**(t) (t2) the in-solver rows ARE the snapshot's rows** (`s4stats.ini`, the S2
+LES channel + two scalars, `check_scalar_stats.py profile`; the deviation is
+the summation order alone — the solver reduces with atomics over 64×64 cells
+per row, the checker with numpy):
+
+```
+ONE sample  (step 67610):    theta 2.881e-14, theta_kc 2.780e-14  (worst of 7 columns)
+FOUR samples (67610..67640): theta 2.596e-14, theta_kc 2.683e-14
+   columns: <s>  <s^2>  <u_c s>  <v s>|lo  J|lo  <v s>|hi  J|hi
+```
+
+`theta_kc` is the same scalar with `prt_model = kays`, so the SECOND column
+block also exercises the Kays–Crawford branch of the statistics kernel's face
+diffusivity in-kernel, and the pair gates the multi-scalar column layout.
+
+**(t3) the plane (boundary-layer) layout**, same case, `stats_layout = plane`
+(3072 rows of the global 64 × 48 plane): worst deviation **4.8e-16** /
+4.5e-16 (`theta` / `theta_kc`) — smaller than the profile layout's because a row is one z line, not a
+whole x-z plane. It is gated on the CHANNEL deliberately: the layout is chosen
+by `[scalar] stats_layout`, not by the flow case, so a boundary-layer campaign
+would exercise the same kernel far more slowly, and the plane statistics of a
+channel are perfectly well defined (x-inhomogeneous rows, z averaged).
+
+**(t3b) the 2:1 wall-band refined case** (`turbslab.ini` + statistics): the
+row tables are PER LEVEL, so the run writes `s4slab.h5` (level 0) and
+`s4slab_l1.h5`. Checked with `check_scalar_stats.py rows`, which accumulates
+straight from the leaves (no global box) and therefore reaches what `profile`
+cannot:
+
+```
+level 0: 16 of 48 rows covered (the unrefined core),   worst 2.563e-14
+level 1: 64 of 96 rows covered (the two wall bands),   worst 2.122e-13
+```
+
+**(t4) restart continuation** — 2 samples, restart, 2 more samples, versus one
+40-step run over the same four sample steps:
+
+```
+count / raw_sum / profile:  max|a - b|/max|a| = 0.000e+00   (EXACT)
+(and the FIELDS of the restarted run are bit-identical to the continuous one)
+```
+
+**(t5) determinism of the statistics** (a tolerance, not an equality: the
+sampling kernel reduces with atomics and the write reduces across ranks):
+
+```
+1 rank vs 4 ranks   2.346e-14
+CPU vs GPU          9.383e-16
+```
+
+**(t6) the statistics do not touch the solution** — statistics ON vs OFF,
+same binary, `un vn wn pn nut theta theta_kc`: **max_abs 0** on every dataset.
+
+**(u) the body heat release: the solver reproduces the validated Python form**
+(`ibmwavy.ini` + `heat_interval`, 20 samples over 200 steps, against
+`check_scalar_ibm.py surface` on the very snapshots the same run wrote):
+
+```
+worst relative deviation over all samples and both terms:  2.8e-15
+energy budget with the SOLVER's own Q (10-step window):
+   1/2[Q(t1) + Q(t2)] = 8.5104733941e-02
+   d/dt int theta dV  = 8.5066583783e-02      rel 4.5e-04
+```
+
+The second block is the physics: the wavy case has no boundary flux at all, so
+the heat the body releases must be the rate at which the domain stores it, and
+it is — to the trapezoid's `O(dt²)`, the same 4e-4 class as the S3 Python
+measurement. (The runtime file is written at `ES24.16` for exactly this
+comparison: `ES16.8` put a 1e-9 floor under it.)
+
+**(u2) an adiabatic scalar exchanges nothing — the positive control**: the
+seeded `phi` spans **1.004815 … 2.995185** (manifestly non-zero) and its three heat
+columns read **0.000e+00** exactly. No penalization is applied and every body
+face is masked, so any other number would be a flux the solver never applied.
+
+**(u3) heated cylinder Re 40, Pr 0.71: the RUNTIME Nusselt number** (20 steps
+from the S3 campaign's converged `t = 120` field):
+
+```
+staircase/Lz 1.739023e-01 + graded/Lz 1.983667e-01 = Q/Lz 3.722690e-01
+Nu = 3.3653     (S3, post-processed at t = 120: 3.3655; Churchill-Bernstein 3.35)
+solver vs check_scalar_ibm.py surface on the same snapshot:  1.3e-15
+```
+
+**(v) tooling.** `compare_fields.py` with no dataset arguments discovers
+`un vn wn pn nut theta theta_kc` on a scalar+LES snapshot (canonical
+variables first, the rest alphabetically; the `blocks` table and the node
+lines drop out because they do not have `un`'s rank), and
+`tools/scalar_stats.py profile` reads the statistics files this session
+wrote:
+
+```
+wall flux: y_min +5.088135e-02   y_max +4.885805e-02  -> theta_tau = 0.049870
+total flux J(y): max|J - J_wall|/theta_tau = 0.139        (FOUR samples over
+   0.02 t.u.; the S2 10-snapshot average over 3.6 t.u. of the same case reads
+   0.033 -- this is the statistical noise of a short window, not an error)
+Nusselt (q_w H / (D dT), H = 2, dT = 2) = 6.50
+```
+
+**`[scalar] count = 0` bit-exactness, S4 vs the S3 binaries**
+(`run_bitexact.sh`, nofma, 7-case suite, every dataset at tolerance 0):
+
+```
+CPU, 4 ranks: min_channel les_ibm les_ibm_refine beltrami_yslab turb180 wf180_y30 lam30t
+              -> ALL PASS, max_abs = 0 on un/vn/wn/pn (+ nut, k, omega, gamma, rethetat)
+GPU, 1 rank:  same 7 cases -> ALL PASS, max_abs = 0
+```
+
+**Scalar runs vs the S3 binaries** (`run_bitexact_s3.sh`, nofma, tolerance 0)
+— the S1 + S2 + S3 scalar cases, i.e. the cheap sharp form of "every earlier
+gate still reads the same number": with the statistics intervals off (the
+default) nothing is allocated and no kernel is called, so the S3 arithmetic
+survives byte for byte.
+
+```
+CPU, 1 rank: uniform3 det conduction prsweep conserve turbles turbslab turbsst detles
+             -> ALL PASS (9/9), max_abs = 0 on un/vn/wn/pn, nut, k, omega and every scalar
+```
+
+The S4 statistics are therefore bit-exact-by-construction on TWO counts: the
+`[scalar] count = 0` suite above (no scalar at all) and this one (scalars, no
+statistics). The third — statistics ON leaving the fields untouched — is
+gate (t6).
+
+**Earlier increments re-run with the S4 binary** — the same numbers as the
+tables above, to every digit:
+
+- `run_gates.sh` (S1, all seven groups): `cond_lin` L2 = 0.000000e+00;
+  `cond_16/32/64` 2.814767e-03 / 7.054808e-04 / 1.764823e-04;
+  `wave16/32/64` 1.554700e-02 / 3.909091e-03 / 9.786703e-04; Pr 0.1/1/10
+  max|s − series| 9.995e-06 / 1.415e-04 / 1.584e-03 with wall-flux ratios
+  1.001092 / 1.000366 / 1.004115; restart present/absent as before.
+  NOTE the `det` group must be given the **nofma** binaries
+  (`BIN=../../build_cpu_nofma/moby_solve GBIN=../../build_gpu_nofma/moby_solve`):
+  it compares CPU vs GPU at tolerance 0, and with the default FMA-contracted
+  builds it reads ~1e-14 on the velocities and 6.7e-16 on the scalar — the
+  documented contraction difference, not a regression. On the nofma pair:
+  1 rank == 4 ranks and CPU == GPU both **max_abs 0**.
+- `run_gates_s3.sh` (the body gates, all groups except the expensive `cyl`
+  campaign): **19/19 PASS**.
+- `run_gates_s2.sh kays` (`scalar_test: ALL PASS`, 29 tabulated values) and
+  `wferr` (the wall-function rejection) reproduce identically. The three
+  turbulent-channel CAMPAIGNS are not re-run wholesale — `run_bitexact_s3.sh`
+  proves the stronger statement on the very same inis (tolerance 0).
 
 ## Notes and limitations
 

@@ -1,10 +1,69 @@
 # Passive scalars (branch `scalar`) — implementation plan
 
-STATUS: **S0 + S1 + S2 + S3 LANDED AND GATED (S0–S2 2026-08-03, S3
-2026-08-04, branch `scalar`).** S4 (statistics + tooling) and S5 (thermal wall
-function, TVD scalar convection, Boussinesq) are NOT started.
+STATUS: **S0 + S1 + S2 + S3 + S4 LANDED AND GATED (S0–S2 2026-08-03, S3 and
+S4 2026-08-04, branch `scalar`).** S5 (thermal wall function, TVD scalar
+convection, Boussinesq) is NOT started.
 
 What landed (the plan below is unchanged except where noted):
+
+- **S4** — statistics and tooling. New `src/modules/scalar_stats.f90` owning
+  `scalar_stats_type`: per-row accumulators of SEVEN columns per scalar —
+  `<s>`, `<s²>`, `<u_c s>` and, on the cell's LOW and HIGH y face, the
+  convective flux `<v s>` and the TOTAL flux `J = <v s − D ∂s/∂y>` built with
+  the TRANSPORT KERNEL's own face diffusivity (`1/(Re Pr) + ν_t/Pr_t(face)`,
+  the same `eddy_diffusivity`, the same FACE_CLOSED / adiabatic-body masks).
+  rms is `sqrt(<s²> − <s>²)`, the resolved turbulent flux is the convective
+  column, and a WALL row's `J` is the exact discrete wall flux — which is what
+  makes `theta_tau` and the Nusselt number exact rather than reconstructed.
+  Plus the immersed body's HEAT RELEASE in the cancellation-free form, and
+  `tools/compare_fields.py` dataset discovery.
+  - **DEVIATION from §9 (deliberate): the statistics are a SOLVER-LEVEL
+    facility driven by `[scalar]` keys and called from `moby_solve.f90`, not a
+    case component "alongside channel_stats.f90".** The case `after_step`
+    interface carries neither `sc` (Pr, Pr_t, the wall modes) nor `turb%nut`,
+    and the same statistics have to serve the channel, the boundary layer AND
+    body cases (the heated cylinder runs the `airfoil` case). Extending the
+    case interface would have touched every case for no gain. What IS taken
+    from `channel_stats`/`bl_stats` is their row machinery, verbatim: the
+    per-level `lvlOff` tables and the `(x,y)` y-fastest flattening, and their
+    HDF5 writers/readers — so S4 adds NO new C code and the existing readers
+    work (`nstat` = 7·nScalar; stat `s` of scalar `is` is column
+    `7(is−1)+s`).
+  - Config, all in `[scalar]`, all off by default:
+    `stats_sample_interval`, `stats_write_interval`, `stats_file`,
+    `stats_layout = profile|plane`, `heat_interval`, `heat_file`.
+    `profile` = wall-normal rows x-z averaged, one file per refinement level
+    (`name.h5`, `name_l1.h5`, …) — the channel form; `plane` = rows of the
+    global `(x,y)` plane z averaged — the boundary-layer form. Accumulators
+    continue from the file on restart (the `channel_stats` recipe).
+  - **The Nusselt/heat diagnostic uses the cancellation-free form the S3
+    FINDING forced**: `heat_interval` writes, per scalar, the flux across
+    every staircase face separating a solid cell from a fluid one PLUS the
+    penalization delivered into the graded fluid cells — never
+    `∫coef_p (s_body − s) dV` alone, which sees only ~63 % of the heat. Each
+    interior face is visited once, as the LOW face of the cell that owns it,
+    so blocks and ranks never double count; FACE_CLOSED faces are skipped and
+    lose nothing (both their sides are solid by the removal criterion). An
+    `adiabatic` scalar reports EXACTLY zero — it exchanges nothing with the
+    body by construction — which the gate checks as a positive control on a
+    manifestly non-zero field.
+  - `tools/scalar_stats.py` (NEW) is the production reader: `profile`
+    (mean/rms/turbulent flux, both wall fluxes, `theta_tau`, the total-flux
+    constancy, Nusselt), `plane` (per-station wall flux and `Nu_x`), `heat`
+    (the runtime file → Nusselt, with a literature band).
+    `tools/compare_fields.py` with no dataset arguments now compares the
+    datasets present in BOTH files (rank-of-`un` selects field datasets, so
+    the `blocks` table and the node lines drop out; canonical `un vn wn pn`
+    first, then scalars/`nut`/RANS variables alphabetically).
+  - **Bit-exactness is again by construction**: with the intervals off (the
+    default) nothing is allocated and no kernel is called; the only edits to
+    existing files are the `[scalar]` key handlers, two `use` lines and three
+    call sites in `moby_solve.f90`. Gated both ways — `run_bitexact.sh` /
+    `run_bitexact_s3.sh` at max_abs 0, AND a statistics-ON vs statistics-OFF
+    twin whose fields are bit-identical.
+  - The runtime heat file is written at FULL double precision (`ES24.16`):
+    `ES16.8` put a 1e-9 floor under the comparison with the independent
+    Python transcription, which agrees to 1.9e-15 once the digits are there.
 
 - **S3** — the immersed body. `ibm%coef` gains its cell-centred (VAR_P)
   column ONLY when `[scalar]` is configured (`init_ibm(ibm, blk,
@@ -148,6 +207,34 @@ What landed (the plan below is unchanged except where noted):
     S2/S1 = 0.9998 (CPU 4 ranks) and 1.0038 (GPU), both inside the noise floor
     of the `count = 0` control (0.9962 / 1.0068), whose code path is
     identical. Numbers in `validation/scalar/README.md`.
+
+S4 gates (all in `validation/scalar/`, README records the commands and
+numbers; `run_gates_s4.sh [stats|accum|plane|levels|restart|det|noeffect|heat|adia|cyl|tools]`):
+
+| gate | result |
+|---|---|
+| the solver's rows vs the SNAPSHOT's rows, all seven columns, one sample (LES channel, 2 scalars) | **2.9e-14** / 2.8e-14 (constant `Pr_t` / Kays) |
+| the same, four accumulated samples | **2.6e-14** / 2.7e-14 |
+| the `plane` (boundary-layer) layout | **4.8e-16** / 4.5e-16 |
+| the 2:1 wall-band case: per-LEVEL row tables (16/48 core rows, 64/96 band rows) | **2.6e-14** (level 0), **2.1e-13** (level 1) |
+| restart continuation: 2 + 2 samples == one 40-step run | **0.000e+00** (and the fields are bit-identical) |
+| statistics 1 rank == 4 ranks / CPU == GPU (atomics + allreduce reorder the sums) | 2.3e-14 / 9.4e-16 |
+| statistics ON vs OFF: the fields | max_abs **0** |
+| body heat release vs `check_scalar_ibm.py surface` (20 samples, both terms) | **2.8e-15** |
+| the same, energy budget with the SOLVER's own `Q` (10-step window) | **4.5e-04** |
+| an `adiabatic` scalar's heat columns, on a manifestly non-zero field | **0.000e+00** exactly |
+| heated cylinder Re 40: the RUNTIME Nusselt number | **3.3653** (S3 post-processed 3.3655, Churchill–Bernstein 3.35) |
+| `compare_fields.py` with no dataset arguments | discovers `un vn wn pn nut theta theta_kc` |
+| `[scalar] count = 0` vs the S3 binaries, 7-case suite, nofma | max_abs **0**, CPU **and** GPU |
+| the S1 + S2 + S3 scalar cases vs the S3 binaries, nofma | max_abs **0** |
+| every S1 / S3 gate re-run with the S4 binary (19/19 body gates; `scalar_test` ALL PASS) | identical numbers to every digit |
+
+LANDMINE for the re-runs: `run_gates.sh`'s `det` group compares CPU vs GPU at
+TOLERANCE 0, so it must be given the nofma binaries
+(`BIN=…/build_cpu_nofma/moby_solve GBIN=…/build_gpu_nofma/moby_solve`).
+With the default FMA-contracted builds it reports ~1e-14 on the velocities and
+6.7e-16 on the scalar and the suite ends in "FAILURES" — the documented
+contraction difference (README S0/S1 (f)), not a regression.
 
 S3 gates (all in `validation/scalar/`, README records the commands and
 numbers; `run_gates_s3.sh [solid|conserve|balance|prep|missing|refine|det|cyl]`):
@@ -760,9 +847,53 @@ Boussinesq buoyancy via the body-force custom hook.
 
 ---
 
-## 12. Next-session prompt (S4 — statistics and tooling)
+## 12. Next-session prompt (S5 — thermal wall function, TVD, Boussinesq)
 
-Paste this to start the next implementation session.
+Paste this to start the next implementation session. S5 is THREE independent
+increments; do ONE per session.
+
+> Implement increment **S5a/S5b/S5c** of `docs/next_session_scalar.md` (pick
+> one) on branch `scalar` — read the doc in full first: its STATUS header
+> records exactly what S0–S4 landed, every deviation, every finding and every
+> gate number; also read the "Active work" section of CLAUDE.md for the
+> project conventions, and `validation/scalar/README.md` for the gate
+> machinery you inherit.
+>
+> S0–S4 are DONE and gated: scalars are extra variables of `blk%q`, the fused
+> `scalar_transport` kernel carries central/skew convection, the turbulent
+> closure `1/(Re Pr) + nut/Pr_t` (constant or Kays–Crawford) and BOTH
+> immersed-body wall modes, `moby_prepare` writes `coef_p_blocks`, and
+> `scalar_stats.f90` accumulates the channel/boundary-layer statistics and the
+> body heat release while the solver runs.
+>
+> - **S5a — thermal wall function.** `[rans] wall_treatment = wall_function`
+>   together with `[scalar]` is currently a HARD CONFIG ERROR
+>   (`validate_turbulence_values`); lift it by adding the Kader/Jayatilleke
+>   P-function to the scalar's wall treatment, mirroring T3's momentum wall
+>   functions (`rans.f90`: the wall-cell `nut` and the `omega` blend are the
+>   pattern, and the T3 gates in `validation/rans_sst/` are the shape of the
+>   validation). Gate against the resolved-wall scalar channel the way T3
+>   gated `wf180_y30` against `turb180`, and keep the resolved path bit-exact.
+> - **S5b — TVD/van-Leer scalar convection.** Shared with the RANS scalars
+>   (`rans.f90`'s documented first-order-upwind deviation) and blocked by the
+>   SINGLE halo layer — a second upwind cell is needed and a block-edge
+>   fallback would break the nb/rank-independence that Phase 1 established.
+>   The measured motivation is in CLAUDE.md (the SD7003 γ front, 104 level-4
+>   cells) — this increment is about the halo, not about the scalars.
+> - **S5c — Boussinesq buoyancy.** The hook is `bodyforce.f90`'s `custom`
+>   path reading `q(...,VAR_S0+is,...)`; the design note is §3 of this plan.
+>   Deliberately out of scope until someone needs it.
+>
+> Conventions that are not negotiable: build both paths with the module
+> loaded; always `mpirun`; save the S4 nofma binaries outside the tree BEFORE
+> touching any source; `run_bitexact.sh` / `run_bitexact_s3.sh` must stay at
+> max_abs 0; re-run `run_gates.sh`, `run_gates_s2.sh`, `run_gates_s3.sh` and
+> `run_gates_s4.sh`; new gates in `validation/scalar/` with a README block;
+> never declare an increment done with a failing build or an ungated result.
+
+---
+
+### Historical: the S4 prompt (consumed 2026-08-04)
 
 > Implement increment **S4** of `docs/next_session_scalar.md` — passive-scalar
 > STATISTICS AND TOOLING — on branch `scalar` (read the doc in full first: its

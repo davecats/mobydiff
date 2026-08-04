@@ -36,6 +36,7 @@ set(MODULE_SOURCES
     ${MODULE_DIR}/bodyforce.f90
     ${MODULE_DIR}/comm.f90
     ${MODULE_DIR}/scalar.f90
+    ${MODULE_DIR}/scalar_stats.f90
     ${MODULE_DIR}/step.f90
     ${MODULE_DIR}/pressure_solver.f90
     ${MODULE_DIR}/flow_case_base.f90

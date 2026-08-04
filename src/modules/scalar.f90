@@ -49,6 +49,11 @@ module scalar
     ! Immersed-body wall modes ([scalar.N] ibm_wall); used from S3.
     integer(C_INT), parameter, public :: SC_IBM_DIRICHLET = 0_C_INT
     integer(C_INT), parameter, public :: SC_IBM_ADIABATIC = 1_C_INT
+    ! Statistics layouts ([scalar] stats_layout, increment S4): wall-normal
+    ! rows x-z averaged (the channel form) or rows of the global (x,y) plane
+    ! z averaged (the boundary-layer form). See scalar_stats.f90.
+    integer(C_INT), parameter, public :: SC_LAYOUT_PROFILE = 0_C_INT
+    integer(C_INT), parameter, public :: SC_LAYOUT_PLANE = 1_C_INT
 
     integer, parameter :: SC_NAME_LEN = 32
 
@@ -83,6 +88,17 @@ module scalar
         character(len=SC_NAME_LEN), allocatable :: name(:)
         logical, allocatable :: sectionSeen(:)
         integer(C_INT) :: countKey = -1_C_INT    ! [scalar] count, -1 = unset
+        ! Host-only statistics configuration ([scalar], increment S4). It is
+        ! parsed here so ONE section configures everything about the scalars;
+        ! the accumulator itself lives in scalar_stats.f90 (which uses this
+        ! module, hence no state of its own can live in scalar_type). All
+        ! intervals off by default: nothing in scalar_stats runs unless asked.
+        integer(C_INT) :: statsLayout = SC_LAYOUT_PROFILE
+        integer(C_INT) :: statsSample = -1_C_INT
+        integer(C_INT) :: statsWrite = -1_C_INT
+        integer(C_INT) :: heatInterval = -1_C_INT
+        character(len=256) :: statsFile = "scalar_stats.h5"
+        character(len=256) :: heatFile = "scalar_heat.txt"
     end type scalar_type
 
     public :: scalars_enabled, scalar_count
@@ -90,7 +106,7 @@ module scalar
     public :: init_scalar, init_scalar_fields, enter_scalar_data, exit_scalar_data
     public :: scalar_sync, scalar_finish, scalar_transport
     public :: scalar_names, scalar_min_pr, scalar_min_prt
-    public :: scalar_section_index, prt_kays
+    public :: scalar_section_index, prt_kays, eddy_diffusivity
 
 contains
 
@@ -245,6 +261,28 @@ contains
                 if (is < 0) error stop "[scalar] count must be non-negative"
                 sc%countKey = int(is, C_INT)
                 call scalar_grow(sc, is)
+            ! Statistics (increment S4, scalar_stats.f90). Off unless asked.
+            case ("stats_sample_interval")
+                sc%statsSample = read_int_value(value, key, line_no)
+            case ("stats_write_interval")
+                sc%statsWrite = read_int_value(value, key, line_no)
+            case ("stats_file")
+                sc%statsFile = trim(value)
+            case ("stats_layout")
+                select case (trim(value))
+                case ("profile", "channel")
+                    sc%statsLayout = SC_LAYOUT_PROFILE
+                case ("plane", "boundary_layer", "xy")
+                    sc%statsLayout = SC_LAYOUT_PLANE
+                case default
+                    if (terminal) print *, "error: [scalar] stats_layout must be profile or", &
+                        " plane, input line", line_no
+                    error stop "unknown [scalar] stats_layout"
+                end select
+            case ("heat_interval")
+                sc%heatInterval = read_int_value(value, key, line_no)
+            case ("heat_file")
+                sc%heatFile = trim(value)
             case default
                 if (terminal) print *, "warning: unknown [scalar] key on input line", &
                     line_no, ": ", trim(key)

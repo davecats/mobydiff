@@ -23,6 +23,8 @@ program moby_solve
     use :: rans
     use :: bodyforce
     use :: scalar
+    use :: scalar_stats, only: scalar_stats_type, scalar_stats_setup, &
+        scalar_stats_after_step, scalar_stats_finalize
     use :: comm, only: comm_type, comm_init_world, comm_init, comm_finalize, &
         init_block_exchange, exchange_halos, exchange_scalar_halos, &
         comm_allreduce_sum, comm_allreduce_max
@@ -47,6 +49,7 @@ program moby_solve
     type(profiler_type) :: turb_prof
     type(bodyforce_type) :: bf
     type(scalar_type) :: sc
+    type(scalar_stats_type) :: sstats
     type(config_seen_type) :: config_seen
     type(comm_type) :: c
     integer(C_INT), allocatable :: blockActive(:)
@@ -198,6 +201,12 @@ program moby_solve
     call scalar_sync(sc, blk, bc, c)
 
     call flow%setup_after_grid(blk, dns, g, bc, c)
+    ! Passive-scalar statistics ([scalar] stats_*/heat_*, scalar_stats.f90).
+    ! A solver-level facility rather than a case component: the same
+    ! statistics serve the channel, the boundary layer and body cases, and
+    ! the case after_step interface carries neither sc nor turb. Off by
+    ! default -- no accumulator is allocated and no kernel is called.
+    call scalar_stats_setup(sstats, sc, blk, dns, g, c)
     ! Every producer fills the same turb%nut; the consumer chain (exchange,
     ! dt limits) is model-agnostic.
     if (turbulence_is_enabled(turb)) then
@@ -309,6 +318,8 @@ program moby_solve
                 turb%nut, sst%k, sst%omg, sst%gam, sst%ret, turb%fd, scalar_names(sc))
         end if
         call flow%after_step(blk, dns, g, c, ibm)
+        ! Scalar profiles/rms/fluxes and the body heat release (no-op off).
+        call scalar_stats_after_step(sstats, sc, blk, dns, turb, ibm, c)
 
     end do
     call stop_chron(loop_timer, loop_steps)
@@ -324,6 +335,7 @@ program moby_solve
 
     ! Release device-side data before the host allocatables go out of scope.
     call flow%finalize(dns, g, c)
+    call scalar_stats_finalize(sstats, dns, c)
     call exit_scalar_data(sc)
     call destroy_scalar(sc)
     if (dns%force_enabled) call exit_bodyforce_data(bf)
