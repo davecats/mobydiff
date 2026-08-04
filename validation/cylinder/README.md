@@ -68,3 +68,25 @@ Note: the penalization force is the TOTAL force (pressure + friction
 combined; modeled turbulent stress included automatically through the
 mu-masked eddy-viscosity correction) — the split needs surface integration,
 which is not planned.
+
+LANDMINE IF THE BODY EVER MOVES (found 2026-08-04, from the passive-scalar
+S3 increment; comment in `airfoil_flow.f90`). `F = ∫coef·u dV` measures the
+solid-cell momentum sink correctly ONLY because `u_body = 0`. The
+penalization drives `u` toward `u_body` with `mu = 1/(1 + dt_gamma·coef) ~
+1e-25`, so the stored velocity is `mu·û ~ 1e-26` — carried faithfully,
+because floats have unlimited relative precision near zero, and `coef·u` is
+O(1).
+
+For a MOVING or ROTATING body the expression becomes `coef·(u_body − u)`
+and it silently collapses: `u` is stored as `u_body` **to the last bit**
+(the correction `mu·û` lands far below the ulp of a non-zero `u_body`), so
+the difference is identically 0 and the entire solid-cell contribution
+vanishes. S3 hit exactly this with a Dirichlet scalar body value of 1 and
+lost **37 % (wavy wall) to 47 % (this cylinder)** of the heat release — and
+the miss fraction is geometry-dependent, so it cannot be calibrated away.
+Note the trap is invisible: the number converges smoothly and looks
+plausible. The replacement measurement is the staircase solid/fluid face
+flux plus the GRADED near-body cells, where neither factor is degenerate
+(`validation/scalar/check_scalar_ibm.py surface`; validated there by a
+discrete energy budget closing to 3.9e-4 and by this same Gauss/CV
+cross-check to 0.90 %).

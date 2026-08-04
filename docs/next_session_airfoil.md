@@ -217,6 +217,21 @@ everything after is case-level composition.
   `q_final = mu·q_unmasked` exactly, so `coef·q_final =
   (q_unmasked − q_final)/dt_γ` — the penalization force density is exact
   in the discrete bookkeeping. A2 builds on this identity.
+  **That identity is exact in EXACT arithmetic but survives in FLOATING
+  POINT only because `u_body = 0`** (found 2026-08-04 via the passive-scalar
+  S3 increment; comment in `airfoil_flow.f90`, `validation/cylinder/
+  README.md`). `q_final = mu·q_unmasked ~ 1e-26` is carried faithfully
+  because floats have unlimited relative precision near zero. For a MOVING
+  or ROTATING body the force density is `coef·(u_body − q_final)`, and
+  `q_final` is stored as `u_body` **to the last bit** — the correction lands
+  below the ulp of a non-zero `u_body` — so the difference is identically 0
+  and the entire solid-cell contribution vanishes SILENTLY (the number stays
+  smooth and plausible). S3 measured the analogous loss for a Dirichlet
+  scalar at 37 % (wavy wall) to 47 % (the A2 cylinder), geometry-dependent
+  and therefore not calibratable. Anyone adding body motion must switch to
+  the staircase solid/fluid face flux + graded near-body cells
+  (`validation/scalar/check_scalar_ibm.py surface`, validated by a discrete
+  energy budget to 3.9e-4 and by the Gauss/CV cross-check to 0.90 %).
 - **The T4/T5 inlet gaps, already itemized** (docs/next_session_iddes.md
   T4 entry): patch classification exists; the RANS scalars lack inlet
   ghost VALUES; first-order upwind was kept with channel-front evidence

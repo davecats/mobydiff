@@ -246,15 +246,30 @@ module io
             integer(C_INT) :: ierr
         end function fdm_h5_case_append_active
 
+        ! n_comp = the coefficient array's component extent (3, or 4 when
+        ! the case declares passive scalars): coef_blocks always holds the
+        ! three staggered components, coef_p_blocks the cell-centred one.
         function fdm_h5_case_append_coef(file_name, nbx, nby, nbz, n_blocks, &
-                n_blocks_global, id_start, coef) &
+                n_blocks_global, id_start, n_comp, coef) &
                 bind(C, name="fdm_h5_case_append_coef") result(ierr)
             import :: C_CHAR, C_INT, C_DOUBLE
             character(kind=C_CHAR), intent(in) :: file_name(*)
             integer(C_INT), value :: nbx, nby, nbz, n_blocks, n_blocks_global, id_start
+            integer(C_INT), value :: n_comp
             real(C_DOUBLE), intent(in) :: coef(*)
             integer(C_INT) :: ierr
         end function fdm_h5_case_append_coef
+
+        function fdm_h5_case_append_coef_p(file_name, nbx, nby, nbz, n_blocks, &
+                n_blocks_global, id_start, n_comp, coef) &
+                bind(C, name="fdm_h5_case_append_coef_p") result(ierr)
+            import :: C_CHAR, C_INT, C_DOUBLE
+            character(kind=C_CHAR), intent(in) :: file_name(*)
+            integer(C_INT), value :: nbx, nby, nbz, n_blocks, n_blocks_global, id_start
+            integer(C_INT), value :: n_comp
+            real(C_DOUBLE), intent(in) :: coef(*)
+            integer(C_INT) :: ierr
+        end function fdm_h5_case_append_coef_p
 
         function fdm_h5_case_append_dwall(file_name, nbx, nby, nbz, n_blocks, &
                 n_blocks_global, id_start, dwall) &
@@ -711,7 +726,7 @@ end subroutine write_rans_geometry_file
 ! and dwall_blocks ([rans]). Parallel HDF5: all ranks enter together; each
 ! rank writes its own contiguous leaf-row range, rank 0 the lattice-global
 ! rasters (full rasters, no window attrs -- the analytic convention).
-subroutine write_case_file(file_name, blk, dns, g, bc, c, coef, has_terminal, &
+subroutine write_case_file(file_name, blk, dns, g, bc, c, coef, nCoefComp, has_terminal, &
         touch, buried, maskDims, active, dwall, maskLo)
     character(len=*), intent(in) :: file_name
     type(block_set_type), intent(in) :: blk
@@ -720,6 +735,11 @@ subroutine write_case_file(file_name, blk, dns, g, bc, c, coef, has_terminal, &
     type(boundary_type), intent(in) :: bc
     type(comm_type), intent(in) :: c
     real(C_DOUBLE), intent(in) :: coef(*)
+    ! Component extent of coef: 3, or 4 when the case declares passive
+    ! scalars, in which case the cell-centred column is written as the
+    ! separate OPTIONAL coef_p_blocks dataset (increment S3) and every
+    ! other dataset in the file is untouched.
+    integer(C_INT), intent(in) :: nCoefComp
     logical, intent(in) :: has_terminal
     integer(C_INT), intent(in), optional :: touch(:,:), buried(:,:), maskDims(:,:)
     integer(C_INT), intent(in), optional :: active(:)
@@ -783,8 +803,14 @@ subroutine write_case_file(file_name, blk, dns, g, bc, c, coef, has_terminal, &
     end if
 
     ierr = fdm_h5_case_append_coef(c_file_name, blk%nb(1), blk%nb(2), blk%nb(3), &
-        blk%nBlocks, blk%nBlocksGlobal, blk%idStart, coef)
+        blk%nBlocks, blk%nBlocksGlobal, blk%idStart, nCoefComp, coef)
     call check_case_write(ierr, "coef_blocks", file_name, has_terminal)
+
+    if (nCoefComp > 3_C_INT) then
+        ierr = fdm_h5_case_append_coef_p(c_file_name, blk%nb(1), blk%nb(2), blk%nb(3), &
+            blk%nBlocks, blk%nBlocksGlobal, blk%idStart, nCoefComp, coef)
+        call check_case_write(ierr, "coef_p_blocks", file_name, has_terminal)
+    end if
 
     if (present(dwall)) then
         ierr = fdm_h5_case_append_dwall(c_file_name, blk%nb(1), blk%nb(2), blk%nb(3), &

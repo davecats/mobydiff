@@ -762,19 +762,42 @@ contains
     ! Smagorinsky), RANS (SST) and IDDES all write, so a single code path
     ! serves all three models (increment S2). Pr_t is the per-scalar constant
     ! or the Kays-Crawford correlation, selected by [scalar.N] prt_model.
-    ! Immersed-body coefficients are still increment S3.
+    !
+    ! Immersed body (increment S3), per scalar via [scalar.N] ibm_wall:
+    !   * dirichlet -- volume penalization toward [scalar.N] ibm_value with
+    !     the implicit factor mu_s = 1/(1 + dt_gamma coef_p/Pr) formed inline
+    !     (ibm.f90's implicit form, so no dt restriction; no mu array per
+    !     scalar). The stored coefficient carries the 1/Re scaling, so
+    !     coef_p/Pr is exactly the scalar's own 1/(Re Pr) -- ONE cell-centred
+    !     coefficient array serves every scalar, each with its own Pr. Inside
+    !     the body coef_p = SOLID/Re, so mu_s -> 0 and the cell holds
+    !     ibm_value. Diffusive fluxes are NOT masked: the solid cell holds
+    !     the wall value and delivers the flux. First-order/staircase, like
+    !     the velocity penalization.
+    !   * adiabatic -- no penalization; instead BOTH the convective and the
+    !     diffusive flux are masked on each of the six p-cell faces whose
+    !     staggered velocity coefficient is solid (the solw/sole/... test
+    !     rans.f90 uses for k). The mask is symmetric across a face, so the
+    !     flux form still telescopes and the fluid conserves sum(s dV)
+    !     exactly.
+    ! With no immersed body (useIbm off) neither branch is taken and the
+    ! arithmetic is the S2 kernel's, byte for byte.
     !
     ! The nut ghost cells follow the momentum SGS convention: the halo
     ! exchange fills them across block and rank boundaries, and they stay at
     ! zero on a physical face (a resolved wall has nu_t -> 0 there anyway;
     ! the T3 wall functions write the wall-cell value into the no-slip
     ! ghosts, which this reads for free).
-    subroutine scalar_transport(sc, blk, dns, turb, dt_alpha, dt_beta)
+    subroutine scalar_transport(sc, blk, dns, turb, coef, dt_alpha, dt_beta, dt_gamma)
         type(scalar_type), intent(in) :: sc
         type(block_set_type), intent(inout) :: blk
         type(dns_type), intent(in) :: dns
         type(turb_type), intent(in) :: turb
-        real(C_DOUBLE), intent(in) :: dt_alpha, dt_beta
+        ! ibm%coef: with scalars on it always carries the cell-centred VAR_P
+        ! column (init_ibm), so there is no dummy-array case here -- the
+        ! body is switched off by dns%ibm_enabled alone.
+        real(C_DOUBLE), intent(in) :: coef(0:,0:,0:,1:,1:)
+        real(C_DOUBLE), intent(in) :: dt_alpha, dt_beta, dt_gamma
 
         if (.not. scalars_enabled(sc)) return
 
@@ -782,27 +805,37 @@ contains
         ! the 1-cell dummy and switch the eddy term off, which makes the
         ! arithmetic byte-identical to the molecular-only (S1) kernel.
         if (turbulence_is_enabled(turb) .and. allocated(turb%nut)) then
-            call scalar_transport_kernel(sc, blk, dns, dt_alpha, dt_beta, turb%nut, .true.)
+            call scalar_transport_kernel(sc, blk, dns, dt_alpha, dt_beta, dt_gamma, &
+                turb%nut, .true., coef)
         else
-            call scalar_transport_kernel(sc, blk, dns, dt_alpha, dt_beta, sc%nutNone, .false.)
+            call scalar_transport_kernel(sc, blk, dns, dt_alpha, dt_beta, dt_gamma, &
+                sc%nutNone, .false., coef)
         end if
     end subroutine scalar_transport
 
-    subroutine scalar_transport_kernel(sc, blk, dns, dt_alpha, dt_beta, nut, useNut)
+    subroutine scalar_transport_kernel(sc, blk, dns, dt_alpha, dt_beta, dt_gamma, &
+            nut, useNut, coef)
         type(scalar_type), intent(in) :: sc
         type(block_set_type), intent(inout) :: blk
         type(dns_type), intent(in) :: dns
-        real(C_DOUBLE), intent(in) :: dt_alpha, dt_beta
+        real(C_DOUBLE), intent(in) :: dt_alpha, dt_beta, dt_gamma
         real(C_DOUBLE), intent(in) :: nut(0:,0:,0:,1:)
         logical, intent(in) :: useNut
+        real(C_DOUBLE), intent(in) :: coef(0:,0:,0:,1:,1:)
+
+        ! The solid-coefficient test the SGS and RANS kernels use (les.f90,
+        ! rans.f90's SOLID_FACE_THRESHOLD): SOLID/Re is 1e30/Re.
+        real(C_DOUBLE), parameter :: SOLID_FACE_THRESHOLD = 1.0d20
 
         integer :: i, j, k, b, is, nx, ny, nz, nBlocks, nScal, var, scr
         real(C_DOUBLE) :: ire, re, uw, ue, vs, vn, wb, wt, divu
-        real(C_DOUBLE) :: s0, conv, diff, rhs, dm, fw, fe
+        real(C_DOUBLE) :: s0, conv, diff, rhs, dm, fw, fe, ss, mus, ipr
         real(C_DOUBLE) :: ntw, nte, nts, ntn, ntb, ntt
         real(C_DOUBLE) :: dxw, dxe, dys, dyn, dzb, dzt
-        logical :: skew
+        logical :: skew, useIbm, adiab
         logical :: clw, cle, cls, cln, clb, clt
+        logical :: solw, sole, sols, soln, solb, solt
+        logical :: mw, me, ms, mn, mb, mt
 
         nx = int(blk%nb(1))
         ny = int(blk%nb(2))
@@ -812,14 +845,19 @@ contains
         re = dns%re
         ire = 1.0d0/re
         skew = logical(dns%conv_skew)
+        useIbm = logical(dns%ibm_enabled)
 
         !$omp target teams distribute parallel do collapse(4) &
-        !$omp& map(to: ire, re, dt_alpha, dt_beta, skew, useNut, nScal, nx, ny, nz, &
-        !$omp& blk%q, blk%d1x, blk%d1y, blk%d1z, blk%physLow, blk%physHigh, nut, &
-        !$omp& sc%pr, sc%prt, sc%prtModel, sc%source, sc%invDx, sc%invDy, sc%invDz) &
+        !$omp& map(to: ire, re, dt_alpha, dt_beta, dt_gamma, skew, useNut, useIbm, &
+        !$omp& nScal, nx, ny, nz, &
+        !$omp& blk%q, blk%d1x, blk%d1y, blk%d1z, blk%physLow, blk%physHigh, nut, coef, &
+        !$omp& sc%pr, sc%prt, sc%prtModel, sc%source, sc%invDx, sc%invDy, sc%invDz, &
+        !$omp& sc%ibmMode, sc%ibmValue) &
         !$omp& map(tofrom: blk%qs, blk%oldrhs) &
         !$omp& private(i,j,k,b,is,var,scr,uw,ue,vs,vn,wb,wt,divu, &
-        !$omp& s0,conv,diff,rhs,dm,fw,fe,clw,cle,cls,cln,clb,clt, &
+        !$omp& s0,conv,diff,rhs,dm,fw,fe,ss,mus,ipr,adiab, &
+        !$omp& clw,cle,cls,cln,clb,clt,solw,sole,sols,soln,solb,solt, &
+        !$omp& mw,me,ms,mn,mb,mt, &
         !$omp& ntw,nte,nts,ntn,ntb,ntt,dxw,dxe,dys,dyn,dzb,dzt)
         do b = 1, nBlocks
         do k = 1, nz
@@ -850,6 +888,20 @@ contains
                     clb = k == 1  .and. blk%physLow(3,b)  == FACE_CLOSED
                     clt = k == nz .and. blk%physHigh(3,b) == FACE_CLOSED
 
+                    ! Solid staggered faces of this p cell (adiabatic body
+                    ! mode only; scalar-independent, so hoisted out of the
+                    ! scalar loop). rans.f90's test for k, verbatim.
+                    solw = .false.; sole = .false.; sols = .false.
+                    soln = .false.; solb = .false.; solt = .false.
+                    if (useIbm) then
+                        solw = abs(coef(i,  j,  k,  VAR_U,b)) > SOLID_FACE_THRESHOLD
+                        sole = abs(coef(i+1,j,  k,  VAR_U,b)) > SOLID_FACE_THRESHOLD
+                        sols = abs(coef(i,  j,  k,  VAR_V,b)) > SOLID_FACE_THRESHOLD
+                        soln = abs(coef(i,  j+1,k,  VAR_V,b)) > SOLID_FACE_THRESHOLD
+                        solb = abs(coef(i,  j,  k,  VAR_W,b)) > SOLID_FACE_THRESHOLD
+                        solt = abs(coef(i,  j,  k+1,VAR_W,b)) > SOLID_FACE_THRESHOLD
+                    end if
+
                     ! Face eddy viscosities: the same 1/2 (L + R) average the
                     ! momentum SGS correction uses for its face-normal terms.
                     ! Scalar-independent, so they are hoisted out of the
@@ -870,12 +922,37 @@ contains
                         scr = SCR_S0 + is
                         s0 = blk%q(i,j,k,var,b)
 
-                        conv = (ue*0.5d0*(s0 + blk%q(i+1,j,k,var,b)) &
-                              - uw*0.5d0*(blk%q(i-1,j,k,var,b) + s0))*blk%d1x(i,VAR_P,b) &
-                             + (vn*0.5d0*(s0 + blk%q(i,j+1,k,var,b)) &
-                              - vs*0.5d0*(blk%q(i,j-1,k,var,b) + s0))*blk%d1y(j,VAR_P,b) &
-                             + (wt*0.5d0*(s0 + blk%q(i,j,k+1,var,b)) &
-                              - wb*0.5d0*(blk%q(i,j,k-1,var,b) + s0))*blk%d1z(k,VAR_P,b)
+                        ! An adiabatic body seals this cell's solid faces:
+                        ! convective AND diffusive flux masked. Every other
+                        ! configuration leaves adiab .false., so the six
+                        ! masks below collapse to the FACE_CLOSED flags and
+                        ! the S2 expressions are reproduced exactly.
+                        adiab = useIbm .and. sc%ibmMode(is) == SC_IBM_ADIABATIC
+                        mw = clw .or. (adiab .and. solw)
+                        me = cle .or. (adiab .and. sole)
+                        ms = cls .or. (adiab .and. sols)
+                        mn = cln .or. (adiab .and. soln)
+                        mb = clb .or. (adiab .and. solb)
+                        mt = clt .or. (adiab .and. solt)
+
+                        if (adiab) then
+                            conv = (merge(0.0d0, ue*0.5d0*(s0 + blk%q(i+1,j,k,var,b)), me) &
+                                  - merge(0.0d0, uw*0.5d0*(blk%q(i-1,j,k,var,b) + s0), mw)) &
+                                    *blk%d1x(i,VAR_P,b) &
+                                 + (merge(0.0d0, vn*0.5d0*(s0 + blk%q(i,j+1,k,var,b)), mn) &
+                                  - merge(0.0d0, vs*0.5d0*(blk%q(i,j-1,k,var,b) + s0), ms)) &
+                                    *blk%d1y(j,VAR_P,b) &
+                                 + (merge(0.0d0, wt*0.5d0*(s0 + blk%q(i,j,k+1,var,b)), mt) &
+                                  - merge(0.0d0, wb*0.5d0*(blk%q(i,j,k-1,var,b) + s0), mb)) &
+                                    *blk%d1z(k,VAR_P,b)
+                        else
+                            conv = (ue*0.5d0*(s0 + blk%q(i+1,j,k,var,b)) &
+                                  - uw*0.5d0*(blk%q(i-1,j,k,var,b) + s0))*blk%d1x(i,VAR_P,b) &
+                                 + (vn*0.5d0*(s0 + blk%q(i,j+1,k,var,b)) &
+                                  - vs*0.5d0*(blk%q(i,j-1,k,var,b) + s0))*blk%d1y(j,VAR_P,b) &
+                                 + (wt*0.5d0*(s0 + blk%q(i,j,k+1,var,b)) &
+                                  - wb*0.5d0*(blk%q(i,j,k-1,var,b) + s0))*blk%d1z(k,VAR_P,b)
+                        end if
                         if (skew) conv = conv - s0*divu
 
                         ! Molecular diffusivity + the eddy part on each face.
@@ -900,24 +977,32 @@ contains
                         end if
 
                         fw = merge(0.0d0, dxw*(s0 - blk%q(i-1,j,k,var,b)) &
-                            *sc%invDx(i,b), clw)
+                            *sc%invDx(i,b), mw)
                         fe = merge(0.0d0, dxe*(blk%q(i+1,j,k,var,b) - s0) &
-                            *sc%invDx(i+1,b), cle)
+                            *sc%invDx(i+1,b), me)
                         diff = (fe - fw)*blk%d1x(i,VAR_P,b)
                         fw = merge(0.0d0, dys*(s0 - blk%q(i,j-1,k,var,b)) &
-                            *sc%invDy(j,b), cls)
+                            *sc%invDy(j,b), ms)
                         fe = merge(0.0d0, dyn*(blk%q(i,j+1,k,var,b) - s0) &
-                            *sc%invDy(j+1,b), cln)
+                            *sc%invDy(j+1,b), mn)
                         diff = diff + (fe - fw)*blk%d1y(j,VAR_P,b)
                         fw = merge(0.0d0, dzb*(s0 - blk%q(i,j,k-1,var,b)) &
-                            *sc%invDz(k,b), clb)
+                            *sc%invDz(k,b), mb)
                         fe = merge(0.0d0, dzt*(blk%q(i,j,k+1,var,b) - s0) &
-                            *sc%invDz(k+1,b), clt)
+                            *sc%invDz(k+1,b), mt)
                         diff = diff + (fe - fw)*blk%d1z(k,VAR_P,b)
 
                         rhs = -conv + diff + sc%source(is)
-                        blk%qs(i,j,k,scr,b) = s0 + dt_alpha*rhs &
-                            + dt_beta*blk%oldrhs(i,j,k,scr,b)
+                        ss = s0 + dt_alpha*rhs + dt_beta*blk%oldrhs(i,j,k,scr,b)
+                        ! Implicit volume penalization toward the body value
+                        ! (dirichlet mode). oldrhs keeps the UNpenalized rhs,
+                        ! exactly as the momentum predictor does with mu.
+                        if (useIbm .and. .not. adiab) then
+                            ipr = 1.0d0/sc%pr(is)
+                            mus = 1.0d0/(1.0d0 + dt_gamma*coef(i,j,k,VAR_P,b)*ipr)
+                            ss = ss*mus + (1.0d0 - mus)*sc%ibmValue(is)
+                        end if
+                        blk%qs(i,j,k,scr,b) = ss
                         blk%oldrhs(i,j,k,scr,b) = rhs
                     end do
                 end do

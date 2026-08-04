@@ -34,7 +34,13 @@ module ibmm
         real(C_DOUBLE) :: amp_x, phase_x
         real(C_DOUBLE) :: amp_z, phase_z
 
-        real(C_DOUBLE), allocatable :: coef(:,:,:,:,:) ! (0:nb+1,...,VAR_U:VAR_W,nBlocks)
+        ! (0:nb+1,...,VAR_U:VAR_W,nBlocks), or VAR_U:VAR_P when passive
+        ! scalars are on: they sit at the PRESSURE point and need their own
+        ! cell-centred coefficient column (increment S3). mu keeps
+        ! VAR_U:VAR_W -- the scalar penalization factor is Prandtl-dependent
+        ! (mu_s = 1/(1 + dt_gamma coef_p/Pr)) and is formed inline per
+        ! scalar, so a VAR_P mu plane would be dead memory.
+        real(C_DOUBLE), allocatable :: coef(:,:,:,:,:)
         real(C_DOUBLE), allocatable :: mu(:,:,:,:,:)
 
         ! [ibm] band_filter: compressed list of near-body FLUID velocity
@@ -67,28 +73,47 @@ module ibmm
     end interface
 
     interface
+        ! n_comp = the DESTINATION array's component extent (3, or 4 with
+        ! the cell-centred scalar column): the datasets themselves are
+        ! unchanged -- coef_blocks always carries the three staggered
+        ! components, coef_p_blocks the one cell-centred component.
         function fdm_h5_read_ibm_coeff_blocks(file_name, nbx, nby, nbz, n_blocks, id_start, &
-                block_origin, block_level, lx, ly, lz, re, found, coef) &
+                block_origin, block_level, lx, ly, lz, re, n_comp, found, coef) &
                 bind(C, name="fdm_h5_read_ibm_coeff_blocks") result(ierr)
             import :: C_CHAR, C_INT, C_DOUBLE
             character(kind=C_CHAR), intent(in) :: file_name(*)
             integer(C_INT), value :: nbx, nby, nbz, n_blocks, id_start
             integer(C_INT), intent(in) :: block_origin(*), block_level(*)
             real(C_DOUBLE), value :: lx, ly, lz, re
+            integer(C_INT), value :: n_comp
             integer(C_INT), intent(out) :: found
             real(C_DOUBLE), intent(inout) :: coef(*)
             integer(C_INT) :: ierr
         end function fdm_h5_read_ibm_coeff_blocks
 
+        function fdm_h5_read_ibm_coeff_p_blocks(file_name, nbx, nby, nbz, n_blocks, &
+                id_start, block_origin, block_level, n_comp, found, coef) &
+                bind(C, name="fdm_h5_read_ibm_coeff_p_blocks") result(ierr)
+            import :: C_CHAR, C_INT, C_DOUBLE
+            character(kind=C_CHAR), intent(in) :: file_name(*)
+            integer(C_INT), value :: nbx, nby, nbz, n_blocks, id_start
+            integer(C_INT), intent(in) :: block_origin(*), block_level(*)
+            integer(C_INT), value :: n_comp
+            integer(C_INT), intent(out) :: found
+            real(C_DOUBLE), intent(inout) :: coef(*)
+            integer(C_INT) :: ierr
+        end function fdm_h5_read_ibm_coeff_p_blocks
+
         function fdm_h5_read_ibm_coeff(file_name, nbx, nby, nbz, n_blocks, block_origin, &
                 global_nx, global_ny, global_nz, &
-                lx, ly, lz, re, coef) bind(C, name="fdm_h5_read_ibm_coeff") result(ierr)
+                lx, ly, lz, re, n_comp, coef) bind(C, name="fdm_h5_read_ibm_coeff") result(ierr)
             import :: C_CHAR, C_INT, C_DOUBLE
             character(kind=C_CHAR), intent(in) :: file_name(*)
             integer(C_INT), value :: nbx, nby, nbz, n_blocks
             integer(C_INT), intent(in) :: block_origin(*)
             integer(C_INT), value :: global_nx, global_ny, global_nz
             real(C_DOUBLE), value :: lx, ly, lz, re
+            integer(C_INT), value :: n_comp
             real(C_DOUBLE), intent(inout) :: coef(*)
             integer(C_INT) :: ierr
         end function fdm_h5_read_ibm_coeff
@@ -115,10 +140,14 @@ contains
         ibm%phase_z = 0.0d0
     end subroutine set_ibm_geometry_defaults
 
-    subroutine init_ibm(ibm, blk)
+    ! cell_centred (= "passive scalars are configured") adds the VAR_P
+    ! coefficient column; without it every existing case keeps exactly its
+    ! current memory footprint and its current case-file layout.
+    subroutine init_ibm(ibm, blk, cell_centred)
         type(ibm_type), intent(inout) :: ibm
         type(block_set_type), intent(in) :: blk
-        integer :: nx, ny, nz
+        logical, intent(in), optional :: cell_centred
+        integer :: nx, ny, nz, varHi
 
         nx = int(blk%nb(1))
         ny = int(blk%nb(2))
@@ -126,7 +155,12 @@ contains
 
         call set_ibm_geometry_defaults(ibm)
 
-        allocate(ibm%coef(0:nx+1,0:ny+1,0:nz+1,VAR_U:VAR_W,blk%nBlocks))
+        varHi = VAR_W
+        if (present(cell_centred)) then
+            if (cell_centred) varHi = VAR_P
+        end if
+
+        allocate(ibm%coef(0:nx+1,0:ny+1,0:nz+1,VAR_U:varHi,blk%nBlocks))
         allocate(ibm%mu(0:nx+1,0:ny+1,0:nz+1,VAR_U:VAR_W,blk%nBlocks))
         ibm%coef = 0.0d0
         ibm%mu = 1.0d0
@@ -333,19 +367,20 @@ contains
         logical, intent(in) :: has_terminal
 
         character(kind=C_CHAR,len=:), allocatable :: c_file_name
-        integer(C_INT) :: ierr
+        integer(C_INT) :: ierr, n_comp
 
         integer(C_INT) :: found
 
         if (len_trim(dns%ibm_coeff_file) == 0) return
         if (has_terminal) print *, "reading IBM coefficients: ", trim(dns%ibm_coeff_file)
 
+        n_comp = int(ubound(ibm%coef,4) - lbound(ibm%coef,4) + 1, C_INT)
         c_file_name = to_c_string(dns%ibm_coeff_file)
         ! Block-table layout first (refined runs); fall back to the legacy
         ! global ghost-layer layout, which holds level-0 data only.
         ierr = fdm_h5_read_ibm_coeff_blocks(c_file_name, blk%nb(1), blk%nb(2), blk%nb(3), &
             blk%nBlocks, blk%idStart, blk%origin, blk%level, &
-            dns%leng(1), dns%leng(2), dns%leng(3), dns%re, found, ibm%coef)
+            dns%leng(1), dns%leng(2), dns%leng(3), dns%re, n_comp, found, ibm%coef)
         if (ierr == 2_C_INT) then
             if (has_terminal) print *, "error: coefficient file block table does not match", &
                 " the solver's leaf table (stale file?): ", trim(dns%ibm_coeff_file)
@@ -355,22 +390,63 @@ contains
             if (has_terminal) print *, "error: could not read IBM coefficient file: ", trim(dns%ibm_coeff_file)
             error stop
         end if
-        if (found /= 0_C_INT) return
+        if (found /= 0_C_INT) then
+            call read_ibm_coeff_p(ibm, dns, blk, c_file_name, n_comp, has_terminal)
+            return
+        end if
 
         if (any(blk%level(1:blk%nBlocks) /= 0_C_INT)) then
             if (has_terminal) print *, "error: legacy coefficient file needs single-level blocks;", &
                 " regenerate with mobygeom block-table"
             error stop
         end if
+        if (n_comp > 3_C_INT) then
+            if (has_terminal) print *, "error: [scalar] needs cell-centred IBM coefficients,", &
+                " which the legacy coefficient-file layout cannot carry;", &
+                " re-run moby_prepare with [scalar]: ", trim(dns%ibm_coeff_file)
+            error stop
+        end if
         ierr = fdm_h5_read_ibm_coeff(c_file_name, blk%nb(1), blk%nb(2), blk%nb(3), &
             blk%nBlocks, blk%origin, &
             dns%globalSize(1), dns%globalSize(2), dns%globalSize(3), &
-            dns%leng(1), dns%leng(2), dns%leng(3), dns%re, ibm%coef)
+            dns%leng(1), dns%leng(2), dns%leng(3), dns%re, n_comp, ibm%coef)
         if (ierr /= 0_C_INT) then
             if (has_terminal) print *, "error: could not read IBM coefficient file: ", trim(dns%ibm_coeff_file)
             error stop
         end if
     end subroutine read_ibm_coeff_file
+
+    ! The cell-centred (pressure-position) coefficient tiles the passive
+    ! scalars penalise with (increment S3): the OPTIONAL coef_p_blocks
+    ! dataset moby_prepare writes when its ini declares [scalar]. A no-op
+    ! without scalars, so every existing case file stays readable exactly as
+    ! it is; with scalars an absent dataset is a hard error naming the fix.
+    subroutine read_ibm_coeff_p(ibm, dns, blk, c_file_name, n_comp, has_terminal)
+        type(ibm_type), intent(inout) :: ibm
+        type(dns_type), intent(in) :: dns
+        type(block_set_type), intent(in) :: blk
+        character(kind=C_CHAR,len=*), intent(in) :: c_file_name
+        integer(C_INT), intent(in) :: n_comp
+        logical, intent(in) :: has_terminal
+
+        integer(C_INT) :: ierr, found
+
+        if (n_comp <= 3_C_INT) return
+
+        ierr = fdm_h5_read_ibm_coeff_p_blocks(c_file_name, blk%nb(1), blk%nb(2), blk%nb(3), &
+            blk%nBlocks, blk%idStart, blk%origin, blk%level, n_comp, found, ibm%coef)
+        if (ierr /= 0_C_INT) then
+            if (has_terminal) print *, "error: could not read coef_p_blocks from: ", &
+                trim(dns%ibm_coeff_file)
+            error stop
+        end if
+        if (found == 0_C_INT) then
+            if (has_terminal) print *, "error: [scalar] is configured but the coefficient file", &
+                " carries no coef_p_blocks (cell-centred scalar coefficients);", &
+                " re-run moby_prepare with [scalar]: ", trim(dns%ibm_coeff_file)
+            error stop
+        end if
+    end subroutine read_ibm_coeff_p
 
 
     ! Height of the analytic wavy bottom wall at streamwise position x.
@@ -974,7 +1050,12 @@ contains
         real(C_DOUBLE) :: re_inv, solid_coef
         logical(C_BOOL) :: enabled
 
-        if (var < VAR_U .or. var > VAR_W) error stop "invalid IBM coefficient variable"
+        ! The kernel is generic in var -- it reads the position and the
+        ! graded stencil from blk%x/y/z(:,var,:) -- so VAR_P (the
+        ! cell-centred scalar column) is admissible exactly when init_ibm
+        ! allocated it.
+        if (var < VAR_U .or. var > ubound(ibm%coef,4)) &
+            error stop "invalid IBM coefficient variable"
 
         ilo = lbound(ibm%coef,1)
         ihi = ubound(ibm%coef,1)
@@ -1051,7 +1132,8 @@ contains
         real(C_DOUBLE) :: xA(1:3), xB(1:3), coeff
         real(C_DOUBLE) :: re_inv, solid_coef
 
-        if (var < VAR_U .or. var > VAR_W) error stop "invalid IBM coefficient variable"
+        if (var < VAR_U .or. var > ubound(ibm%coef,4)) &
+            error stop "invalid IBM coefficient variable"
 
         ilo = lbound(ibm%coef,1)
         ihi = ubound(ibm%coef,1)

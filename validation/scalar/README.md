@@ -1,15 +1,20 @@
-# Passive scalars — S0/S1 gates
+# Passive scalars — S0/S1/S2/S3 gates
 
 Gates for increments **S0** (layout, config, io, halos, BCs — the scalar is
-carried but not advanced) and **S1** (the transport kernel, molecular
-diffusivity only) of `docs/next_session_scalar.md`. S2 (turbulent closure,
-`nut/Pr_t` + Kays–Crawford) and S3 (cell-centred IBM coefficients) are NOT
-part of this directory yet.
+carried but not advanced), **S1** (the transport kernel, molecular diffusivity
+only), **S2** (the turbulent closure `D_face = 1/(Re Pr) + nut/Pr_t`,
+constant `Pr_t` or Kays–Crawford) and **S3** (the immersed body: cell-centred
+coefficients, both wall modes, `coef_p_blocks`) of
+`docs/next_session_scalar.md`.
 
 ```bash
 ./compile_nofma.sh cpu && ./compile_nofma.sh gpu   # bit-exactness builds
-./run_gates.sh [uniform|conserve|conduction|wave|pr|det|restart]
-REF=<pre-change nofma binary> MODE=cpu RANKS=4 ./run_bitexact.sh
+./run_gates.sh    [uniform|conserve|conduction|wave|pr|det|restart]   # S1
+./run_gates_s2.sh [kays|wferr|sst|les|band|det]                       # S2
+./run_gates_s3.sh [solid|conserve|prep|missing|refine|det|cyl]        # S3
+REF=<pre-change nofma binary> MODE=cpu RANKS=4 ./run_bitexact.sh      # count = 0
+REF=<S1 nofma binary>         MODE=cpu          ./run_bitexact_s1.sh  # turbulence off
+REF=<S2 nofma binary>         MODE=cpu          ./run_bitexact_s3.sh  # no body
 ```
 
 `run_gates.sh` takes `BIN` (default `../../build_cpu/moby_solve`), `GBIN`
@@ -32,13 +37,44 @@ restart path), `check_scalar.py` (all the checkers).
 | `det.ini` | (f) determinism on a refined transport case (`conserve.ini` + a 2:1 y slab): 1 rank == 4 ranks, CPU == GPU; also reports the (non-zero) 2:1-interface conservation residual. |
 | `smoke.ini` | (g) S0 restart round-trip: with the scalar dataset present the file must win over `[scalar.N] initial`; with it absent (renamed scalar) the solver must warn and reinitialise. |
 
+## S2 gate cases
+
+| ini | gate |
+|---|---|
+| (unit test) | (m) **Kays–Crawford correlation**: `src/test_scalar.f90` (CMake target `scalar_test`) checks `prt_kays` host-side against an independent mpmath transcription (50–1000 digits, so the large-`Pe_t` cancellation is resolved exactly) of the same formula. Every branch: the `Pe_t = 0` guard, the direct expression, the small-`x` series, both sides of the `x = 1/2` crossover plus its continuity, the `Pe_t → 0` limit (`Pr_t = 2 Prt_inf`) and the `Pe_t → ∞` limit at `Pe_t = 1e300`, where the direct expression overflows `a²` and cancels to nothing. Plus a monotonicity sweep over six decades. |
+| `turbles.ini` | (h) **developed turbulent channel under LES**, `Re_tau` 180, Pr 0.71. Geometry, grid, WALE settings and velocity restart are `../channel_interface/les` (`uniform.ini`) — the coarse 64×48×64 grid where the SGS term is genuinely active. Scalar: antisymmetric isothermal walls (+1 / −1), no source, so in statistical steady state the TOTAL wall-normal flux `J = <v'θ'> − (D + nut/Pr_t) d<θ>/dy` is exactly CONSTANT. `θ_tau = J` (u_tau = 1) and `θ+ = (θ_w − θ)/θ_tau` are then measured against Kader's correlation, and the constancy of `J(y)` is a second, internal gate on both convergence and the transport operator. |
+| `turbslab.ini` | (j) **2:1 wall-band-refined channel**, the same scalar, the `../channel_interface/les` `slab.ini` geometry (symmetric wall bands refined 2:1, flat y-interfaces at y+ ≈ 88). Band metric = the `tools/patch_interface_stats.py` method: the `θ'_rms` ratio of the refined run to the matched unrefined control on the COARSE rows adjacent to the interface, against the same ratio in the core. A spurious band is a localized excess — the u'/v' lesson of `../channel_interface/README.md`. |
+| `turbsst.ini` | (i) **steady k-ω SST, resolved walls** — `../rans_sst/turb180.ini` with two scalars. Steady RANS collapses to a 1D fixed point with NO resolved fluctuations, so the scalar equation reduces to one ODE whose only coefficient is the `nut` the solver wrote: integrating `dθ/dy = −J/(1/(Re Pr) + nut/Pr_t(y))` from the snapshot's own `nut` and comparing with its own `theta` tests the S2 face diffusivity and the `Pr_t` model **with the turbulence model divided out** — the sharpest gate in the set, and free of time averaging. `theta` uses the constant `Pr_t`, `theta_kc` the SAME scalar with `prt_model = kays`, so the two differ ONLY by the correlation — the in-kernel exercise of `prt_kays`. (The log-layer slope is reported for context only: the scalar carries a CONSTANT flux while the channel's momentum flux falls linearly, so the reference is `Pr_t/(kappa(1 − y/h))`, which is `Pr_t/kappa` = 2.073 only as `y/h → 0`.) |
+| `wferr.ini` | (k) `[scalar]` + `[rans] wall_treatment = wall_function` must be a **hard config error** (a thermal wall function is S5). `../rans_sst/wf180_y30.ini` with one scalar bolted on. |
+| `detles.ini` | (l) **determinism on a scalar + turbulence case**: `turbles.ini` for 20 steps without the `[mpi] dims` pin — 1 rank == 4 ranks and CPU == GPU, at tolerance 0, on nofma builds. |
+
+`make_theta_ic.py` seeds the developed velocity restarts with the
+Reynolds-analogy `θ(y)` built from the snapshot's OWN mean velocity (see its
+header for why that is not circular with the Kader gate); `check_scalar_turb.py`
+holds the three analyses (`channel`, `band`, `rans`).
+
+## S3 gate cases (the immersed body)
+
+| ini | gate |
+|---|---|
+| `ibmwavy.ini` | (n) + (o) the analytic wavy bottom wall with ONE SCALAR IN EACH WALL MODE. `theta` is `dirichlet` with `ibm_value = 1`: inside the body the penalization coefficient is `SOLID/Re`, so `mu_s` underflows and every solid cell must read **exactly** 1 — an equality, not a tolerance. `phi` is `adiabatic`, seeded through the restart path with a manufactured `2 + sin(k·x)` (a NON-ZERO mean, so `∫φ dV` is a real quantity): with x,z periodic, Neumann-0 y walls and every solid face masked there is no sink at all, so the integral must be conserved to round-off. Conservation alone would also hold if the mask never fired, so the checker adds the POSITIVE half — a cell whose six staggered faces are all inside the body is sealed on every side and must be **frozen exactly**. |
+| `ibmwavy.ini` (prepared) | (p) `moby_prepare` on the SAME ini writes `coef_p_blocks` **and changes nothing else**: `h5same.py --ignore coef_p_blocks` against the case file prepared from the `[scalar]`-stripped twin. The tiles are then checked against an independent Python transcription of the graded sharp-interface formula `Σ((d0−d)/d)/d0²/Re` (including the ibm.f90 bisection), the prepare is repeated on 4 ranks, and the solve FROM the file is compared with the inline analytic solve at tolerance 0 — `theta`/`phi` included, which is what makes the file round-trip a bit-exactness statement rather than a plausibility one. (p2) the same case file WITHOUT `coef_p_blocks` must be a hard error naming the fix. |
+| `ibmwavyr.ini` | (q) the same body under `refine_body` (2 levels): the cell-centred coefficients must be evaluated at EACH LEAF'S OWN LEVEL. Checked level by level against the same independent transcription, plus solve-from-file == inline analytic at tolerance 0. Conservation is deliberately NOT gated here — across a 2:1 interface the flux form telescopes only approximately (see the S1 note at the end). |
+| `ibmwavy.ini` (nofma) | (r) determinism on a scalar + IBM case: 1 rank == 4 ranks and CPU == GPU at tolerance 0, through the ANALYTIC path and again through the FILE path (`coef_p_blocks` read on both sides). |
+| `cylheat.ini` | (s) **heated cylinder, Re 40, Pr 0.71** — the quantitative body gate. Geometry, grid and far field are `../cylinder/cyl_re40.ini` verbatim (D = 1 at (6.0, 8.02) in a 16 × 16 × 0.25 box, uniform h = 1/32), restarted from that campaign's converged steady field, so only the thermal problem is new: an isothermal body (`theta = 1`) in a `theta = 0` freestream. The Nusselt number is measured TWICE from the same snapshot — from the penalization integral `Q = ∫coef_p (1 − θ)/Pr dV`, and from the Gauss/CV border flux of `(u θ − D_th ∇θ)·n` through a box in the fluid (the A2 cross-check method). The two share nothing but the `theta` field. Unlike the momentum cross-check this one never touches the pressure, so the `niter = 6` pn-drift caveat of `../cylinder/README.md` does not apply. |
+
+`check_scalar_ibm.py` holds the five analyses (`solid`, `conserve`, `coefp`,
+`nusselt`, `cv`); `run_bitexact_s3.sh` is the "scalar WITHOUT a body is
+bit-exact vs the S2 binaries" gate and doubles as the cheap, sharp form of
+"every S1/S2 gate still reads the same number" (see its header).
+
 `run_bitexact.sh` is the **`[scalar] count = 0` bit-exactness** gate: the
 standard 7-case suite (min_channel, les_ibm ± refine_body, Beltrami y-slab,
 turb180, wf180_y30, lam30t) run with a pre-change nofma binary and the new
 one, compared at tolerance 0 on every field dataset (`un vn wn pn` plus
 `nut`, `k`, `omega`, `gamma`, `rethetat` where the case has them).
 
-## Results (2026-08-03, branch `scalar`) — ALL PASS
+## Results — S0/S1 (2026-08-03, branch `scalar`) — ALL PASS
 
 Local runs (RTX 3060 GPU + nvhpc 25.9 CPU builds), branch `scalar`.
 
@@ -150,6 +186,418 @@ built from the pre-change tree. The gate covers S0 **and** S1 together:
 `count = 0` never allocates a scalar plane, never calls a scalar kernel and
 never issues the extra exchange, so the argument is by construction, not by
 cancellation.
+
+## Results — S2 (2026-08-03, branch `scalar`) — ALL PASS
+
+Local runs (RTX 3060 GPU + nvhpc 25.9 CPU builds, 24 cores; the GPU was
+shared with another job throughout, so the timings are not representative).
+
+**(m) Kays–Crawford correlation** (`mpirun -n 1 build_cpu/scalar_test`):
+
+```
+scalar_test: ALL PASS
+```
+
+29 tabulated values at `Prt_inf` = 0.85 / 0.5 / 1.0 / 0.4 / 1.2 matched to
+1e-13 relative, covering the `Pe_t = 0` guard (`Pr_t = 2 Prt_inf` exactly),
+the direct expression, the small-`x` series, both sides of the `x = 1/2`
+crossover (7.2310152534 / 7.2310152679 — the two branches join to 1.3e-10,
+their own slope), `Pe_t = 1e300` (`Pr_t = 0.85` exactly, where the direct
+expression overflows `a²` and its `1 - exp(-x)` rounds to 0), and a
+600-point monotonicity sweep over `Pe_t` = 1e-4…1e8.
+
+**(i) steady k-ω SST, resolved walls** (`turbsst.ini`, 186711 steps to
+`t = 200`, CPU 4 ranks — a true fixed point, no time averaging):
+
+| | `theta` (constant `Pr_t`) | `theta_kc` (Kays–Crawford) |
+|---|---|---|
+| `theta_tau` | 0.053413 | 0.049468 |
+| total flux `J(y)` constancy | **5.2e-08** | **2.6e-08** |
+| `theta` vs the `nut`-integral prediction | **0.096 %** of the wall difference | **0.094 %** |
+| predicted `theta_tau` | 0.267 % | 0.262 % |
+| `theta+/(Pr y+)`, `y+ ≤ 2` | 1.0000 | 1.0000 |
+| `Pr_t` realised over the faces | 0.8500 | **0.8832 … 1.7000** |
+
+The sharp gate here is the third row: because steady RANS has no resolved
+fluctuations, the scalar equation reduces to one ODE whose only coefficient
+is the `nut` the solver itself wrote, so integrating
+`dθ/dy = −J/(1/(Re Pr) + nut/Pr_t(y))` from the snapshot's own `nut` and
+comparing with the snapshot's own `theta` tests the S2 face diffusivity and
+the `Pr_t` model **with the turbulence model divided out**. It reproduces the
+solver to 0.1 % of the wall difference (the trapezoid-vs-face-flux
+discretisation difference), for both `Pr_t` models.
+
+`theta_kc` exercises `prt_kays` in the kernel over its whole range: the
+correlation runs from 1.7000 = `2 Prt_inf` at the wall (`Pe_t → 0`) to 0.8832
+in the core (`Pe_t = 15`), i.e. it DAMPS the near-wall eddy diffusivity, and
+the wall flux duly drops 7.4 % below the constant-`Pr_t` scalar in the same
+run. (The Python mirror of the correlation in `check_scalar_turb.py` is what
+makes its flux constant to 2.6e-08; with the constant-`Pr_t` formula the same
+field reads 0.19 — an incidental confirmation that kernel and mirror agree.)
+
+Log-layer slope, reported for context, NOT gated against `Pr_t/kappa`: the
+scalar carries a CONSTANT flux while the channel's momentum flux falls
+linearly, so the reference is `Pr_t/(kappa (1 − y/h))`, which is 2.07 only as
+`y/h → 0`. Measured over y+ ∈ [30,60] (y/h 0.17–0.33): 3.84 (`theta`) /
+4.16 (`theta_kc`) against the window's 2.72.
+
+**(h) developed turbulent channel under LES** (`turbles.ini`, WALE, Re_tau
+180, Pr 0.71, 10 snapshots over t = 30.2 … 33.8):
+
+```
+theta_tau = 0.050860       (first half 0.051120, second half 0.050599 -> 1.0% drift)
+total flux J(y): 0.049161 .. 0.052360,  max|J - J_wall|/theta_tau = 0.0334
+theta+ vs Kader, y+ in [1,35]:   max rel dev 0.2067 (at y+ 6.3),  mean 0.0682
+viscous sublayer theta+/(Pr y+), y+ <= 3:   0.9919 .. 1.0081
+theta+/U+ : first cell 0.7233 (Pr = 0.71),  y+ 20-40  0.8558 (Pr_t = 0.85)
+resolved <v'theta'>/J at y+ = 5:0.07  15:0.52  30:0.80  60:0.92  120:0.94
+   peak +0.048494 = 0.953 theta_tau u_tau at y+ 155
+```
+
+Reading these:
+
+- **`theta+/U+` is the sharpest physical statement.** At the first cell it is
+  0.7233 against the molecular `Pr` = 0.71 (1.9 %), and across the log layer
+  0.8558 against the configured `Pr_t` = 0.85 (0.7 %). The two halves of the
+  face diffusivity are therefore each delivering what they were set to, in a
+  genuinely turbulent field.
+- **The turbulent heat flux** rises from 7 % of the total at y+ 5 through
+  52 % at y+ 15 to 92–94 % beyond y+ 60, with its peak at 0.95 `theta_tau
+  u_tau` — the textbook split, and the reason the closure only has to supply
+  the remainder.
+- **The constant-flux residual (3.3 %)** is simultaneously the convergence
+  measure and a conservation check: the setup makes `J(y)` exactly constant
+  in statistical steady state, and 10 snapshots over 3.6 t.u. leave that much
+  statistical noise. `theta_tau` moves 1.0 % between the two halves.
+- **Kader** is matched to 6.8 % in the mean over the wall layer. The 20.7 %
+  maximum sits at y+ = 6.3, on **Kader's own blend kink**: the correlation
+  jumps 2.49 → 3.63 → 5.61 across three points where the computed profile
+  runs smoothly 2.64 → 4.29 → 5.86. The window stops at y+ 35 deliberately —
+  Kader describes a constant-flux WALL layer, and beyond y/h ≈ 0.2 the
+  channel's momentum flux has fallen enough that `U+` flattens into the wake
+  while the constant-flux scalar keeps a log-like slope. That divergence is
+  the setup, not the closure (the SST case above shows the same thing at a
+  fixed point).
+
+**(j) 2:1 wall-band-refined channel — NO spurious scalar band**
+(`turbslab.ini`, 8 snapshots against the 10-snapshot uniform control):
+
+```
+2:1 interfaces at y+ = 89.2 and 270.8 (= 89.2 from the far wall)
+theta'_rms band ratio (refined/control): adjacent 1.0014, core 1.0002, excess +0.0012
+   per-row ratios from the interface outward:  1.011  0.992  1.000  1.001  1.004  1.001
+<theta> footprint |refined - control|: adjacent 0.0320, core 0.0286 (wall difference 2.0)
+```
+
+The interface-adjacent coarse rows carry the same scalar fluctuation energy
+as the unrefined control to **0.1 %**, and no row within six of the interface
+departs from the control by more than 1.1 %. This is the metric that caught
+the momentum-reflux u'/v' band in `../channel_interface/` — here there is
+nothing to catch. (The comparison is made on the COARSE rows, where refined
+run and control share cells exactly; the fine rows resolve more scales by
+construction, so a difference there would be physics, not a band.)
+
+**Cost of the S2 kernel change with NO turbulence model.** In a DNS run the
+eddy branch is never taken (`turb%nut` does not even exist), but the kernel
+still initialises the six face diffusivities and carries the six face-`nut`
+registers, so the dead code was measured rather than assumed: the S1 and S2
+**nofma** binaries were run alternately on the same DNS channel (`turbles.ini`
+with `[les]` removed, 64x48x64 + one scalar, 100 steps, 5 repetitions each,
+interleaved to cancel machine drift), together with the `count = 0` twin whose
+code path is provably identical and therefore measures the noise floor:
+
+| | S1 s/step | S2 s/step | S2/S1 |
+|---|---|---|---|
+| CPU 4 ranks, `count = 1` | 0.2102 | 0.2102 | **0.9998** |
+| CPU 4 ranks, `count = 0` (identical code = noise floor) | 0.2006 | 0.1999 | 0.9962 |
+| GPU, `count = 1` | 0.2120 | 0.2128 | **1.0038** |
+| GPU, `count = 0` (identical code = noise floor) | 0.1950 | 0.1963 | 1.0068 |
+
+The `count = 1` change is smaller than the `count = 0` noise on both paths, so
+S2 costs nothing measurable in DNS. (The GPU was shared with an unrelated job
+throughout, which is why its absolute numbers are high and its noise floor is
+0.7 %; the CPU box was idle.) For reference, the scalar transport as a whole —
+S1's cost, not S2's — is **5.2 %** of the step for one scalar on this grid.
+
+**(k) wall functions + scalars rejected** (`wferr.ini`):
+
+```
+ERROR STOP [scalar] with [rans] wall_treatment = wall_function is not implemented
+           (a thermal wall function is increment S5); use resolved
+```
+
+**(l) determinism on a scalar + turbulence case** (`detles.ini`, 20 steps,
+nofma builds):
+
+```
+1 rank vs 4 ranks:  un vn wn pn nut theta   max_abs = 0.0   (EXACT)
+CPU vs GPU:         un vn wn pn nut theta   max_abs = 0.0   (EXACT)
+```
+
+**`[scalar] count = 0` bit-exactness, S2 vs the S1 binaries**
+(`run_bitexact.sh`, nofma, 7-case suite, every dataset at tolerance 0):
+
+```
+CPU, 4 ranks: min_channel les_ibm les_ibm_refine beltrami_yslab turb180 wf180_y30 lam30t
+              -> ALL PASS, max_abs = 0 on un/vn/wn/pn (+ nut, k, omega, gamma, rethetat)
+GPU, 1 rank:  same 7 cases -> ALL PASS, max_abs = 0
+```
+
+**Scalar run with turbulence OFF, bit-exact vs the S1 binaries**
+(`run_bitexact_s1.sh`, nofma, tolerance 0) — the other half of the
+by-construction argument: every face diffusivity keeps the molecular value
+exactly, the eddy term sitting behind `if (useNut)`:
+
+```
+CPU, 1 rank: uniform3 (2 scalars, 3-level refined) det conduction prsweep conserve
+             -> ALL PASS, max_abs = 0 on un/vn/wn/pn and every scalar
+GPU, 1 rank: same 5 cases -> ALL PASS, max_abs = 0
+```
+
+**S1 gates re-run with the S2 binary** (`run_gates.sh`, all seven groups, CPU
+1 rank) — the same numbers as the S0/S1 results above, to every digit:
+
+```
+uniform      max|theta - const| = max|phi - const| = 0.000e+00, uniform-flow gate exact
+conserve     relative drift -6.838e-19
+cond_lin     L2 = 0.000000e+00                         (CPU build -> exactly 0)
+cond_16/32/64  L2 = 2.814767e-03 / 7.054808e-04 / 1.764823e-04   (order 2.00 / 2.00)
+wave16/32/64   L2 = 1.554700e-02 / 3.909091e-03 / 9.786703e-04   (order 1.99 / 2.00)
+pr 0.1/1/10  max|s - series| = 9.995e-06 / 1.415e-04 / 1.584e-03
+             wall-flux ratio  1.001092 / 1.000366 / 1.004115
+restart      dataset present -> max|s - file| = 0.000e+00; absent -> warn + 99.0
+```
+
+## Results — S3 (2026-08-04, branch `scalar`) — ALL PASS
+
+Local runs (RTX 3060 GPU — shared with an unrelated job throughout — and
+nvhpc 25.9 CPU builds).
+`./run_gates_s3.sh [solid|conserve|balance|prep|missing|refine|det|cyl]`.
+
+**(n) dirichlet body mode — the solid cell IS the body value** (`ibmwavy.ini`,
+analytic wavy wall, 32×32×8 over a 1 × 0.25 × 0.25 box, `ibm_value = 1`):
+
+```
+cold start, 200 steps      704 solid cells,  max|theta - 1| = 0.000e+00
+after the seeded restart   704 solid cells,  max|theta - 1| = 0.000e+00
+refine_body, 2 levels     5984 solid cells,  max|theta - 1| = 0.000e+00
+through the FILE path      704 solid cells,  max|theta - 1| = 0.000e+00
+```
+
+An EQUALITY, not a tolerance: inside the body `coef_p = SOLID/Re`, so
+`mu_s = 1/(1 + dt_gamma coef_p/Pr) ≈ 4e-25` falls far below 2⁻⁵³,
+`(1 - mu_s)` is exactly 1 and `ibm_value + mu_s·ŝ` rounds back to
+`ibm_value`. (With `ibm_value = 0` the same cells would keep the residual
+`mu_s·ŝ ~ 1e-25` instead of exactly 0 — the velocity penalization's `~1e-26`
+behaviour, CLAUDE.md Phase 2. That residual is also what the heat-release
+diagnostic needs and does not get; see the FINDING under (o2).) The last
+line uses the PREPARED
+`coef_p` tiles to select the solid cells instead of the analytic indicator;
+the two select **identical** 704-cell sets.
+
+**(o) adiabatic body mode — conservation and the sealed cells** (the `phi`
+scalar of the same case, seeded with `2 + sin(k·x)`, 200 steps):
+
+```
+int phi dV: 1.2500000000000000e-01 -> 1.2500000000000000e-01
+relative drift (per max|s| V, V = 0.0625) = 0.000e+00
+sealed (all six staggered faces solid) cells: 624, max|delta phi| = 0.000e+00
+```
+
+Both halves matter. The drift is EXACTLY zero because the face mask is
+symmetric across a face, so the flux form telescopes with the body in place
+exactly as without it. The second line is the positive control — conservation
+alone would also hold if the mask never fired, and 624 cells sealed on all
+six sides are frozen to the last bit, which only happens if it does.
+
+**(o2) the dirichlet body's heat release closes the energy budget** — and the
+A2 penalization integral does NOT measure it (`ibmwavy.ini` again; the case
+has no boundary flux at all, so the heat the body releases must be exactly
+the rate at which the domain stores it):
+
+```
+body heat release  1/2 [Q(t1) + Q(t2)] = 8.1028873772e-02   (Q: 8.197512e-02 -> 8.008263e-02)
+storage rate  d/dt int theta dV        = 8.0997088108e-02   (dt = 0.002, 10 steps)
+relative difference = 3.924e-04
+   [the penalization integral alone would give 5.104632e-02 = 63 % of the truth]
+```
+
+The closure to **4e-4** (the residual is the trapezoid's curvature error —
+over a 200-step window, where `Q` falls 29 %, it grows to 3.1 % exactly as
+`O(dt²)` predicts) is a full discrete energy-budget check on the Dirichlet
+body: everything the penalization injects is accounted for, and nothing else
+enters.
+
+**FINDING (this is why `Q` above is not the penalization integral).** The A2
+force diagnostic `F = ∫coef·u dV` does NOT transpose to a Dirichlet scalar.
+A solid cell's stored scalar is the body value **to the last bit** — that is
+gate (n) — so `coef_p (s_body − s)` evaluates to `1e28 × 0 = 0` there, while
+the cell is in fact re-heated every substage by exactly the flux it loses to
+its fluid neighbours. Measured split on this case: solid cells contribute
+`0.000000e+00`, graded fluid cells `3.74e-02`, truth `6.95e-02`. The force
+version survives the same arithmetic only because `u_body = 0` and the stored
+velocity keeps a ~1e-26 residual whose product with `coef` is O(1) — the
+scalar's residual is flushed to zero by the rounding. The heat release is
+therefore measured as **staircase-interface flux + graded-cell
+penalization** (`check_scalar_ibm.py surface`), which is cancellation-free,
+and cross-checked against a control volume in the fluid (`cv`).
+
+**(p) `moby_prepare`: `coef_p_blocks` and nothing else**
+
+```
+h5same.py ibmwavy_case_ns.h5 ibmwavy_case.h5 --ignore coef_p_blocks   -> IDENTICAL
+(without --ignore: dataset lists differ by exactly coef_p_blocks)
+prepare 1 rank == 4 ranks                                             -> IDENTICAL
+solve from the case file vs the inline analytic solve, tolerance 0:
+   un vn wn pn theta phi   max_abs = 0.0
+coef_p_blocks vs the independent transcription of the graded formula:
+   level 0: 3456 cells checked (144 graded, 252 solid), worst rel dev 1.399e-16
+```
+
+The case file prepared from the `[scalar]`-stripped twin is dataset-for-dataset
+and bit-for-bit identical, so no existing case file changes. The transcription
+check is independent of the solver: it re-derives `Σ((d0−d)/d)/d0²/Re` in
+Python, bisection included, from the analytic wall.
+
+**(p2) a case file without `coef_p_blocks` + `[scalar]`: hard error**
+
+```
+error: [scalar] is configured but the coefficient file
+  carries no coef_p_blocks (cell-centred scalar coefficients);
+  re-run moby_prepare with [scalar]: ibmwavy_case_ns.h5
+ERROR STOP
+```
+
+This is not hypothetical: it caught the inherited S1 `uniform3` gate, whose
+zero-force twin predates S3. `../multilevel_body/make_uniform_twin.py` now
+writes a zeroed `coef_p_blocks` beside the zeroed `coef_blocks` (the scalar
+analogue of "the body exerts no force" is "the body penalises no scalar").
+The twin is a GENERATED artifact, not a tracked file — a stale local copy is
+repaired by re-running `../multilevel_body/setup.sh`, NOT by the "re-run
+moby_prepare with [scalar]" the error message suggests, which is the right
+advice only for a real case file.
+
+**(q) `refine_body`: the coefficients are evaluated at each leaf's own level**
+(`ibmwavyr.ini`, 72 leaves = 8 level-0 + 64 level-1):
+
+```
+level 0: 1728 cells checked (0 graded, 0 solid), worst rel dev 0.000e+00
+level 1: 13824 cells checked (432 graded, 2496 solid), worst rel dev 2.173e-16
+solve from the multi-level case file vs inline analytic, tolerance 0:
+   un vn wn pn theta phi   max_abs = 0.0
+```
+
+Level 0 carries no body cells at all under `refine_body` (everything touching
+the wall is refined), which is why its deviation is trivially 0; level 1 is
+where the graded coefficients live and they match the transcription to
+round-off. The bit-exact solve is the second, stronger statement: the file's
+per-level `coef_p` tiles and the solver's own inline `VAR_P` pass agree to
+the last bit at every level, or `theta` would differ.
+
+**(r) determinism on a scalar + IBM case** (`ibmwavy.ini`, 50 steps, nofma
+builds, tolerance 0 on `un vn wn pn theta phi`):
+
+```
+1 rank vs 4 ranks   (analytic path)                        max_abs = 0.0
+CPU vs GPU          (analytic path)                        max_abs = 0.0
+file path vs analytic path (CPU)                           max_abs = 0.0
+CPU vs GPU          (file path, coef_p_blocks both sides)  max_abs = 0.0
+CPU vs GPU          (+ WALE LES, ibm_aware; incl. nut)     max_abs = 0.0
+```
+
+The last line is the three code paths at once — eddy diffusivity, body
+coefficients and the scalar — on both devices.
+
+**(s) heated cylinder, Re 40, Pr 0.71** (`cylheat.ini`, 512×512×8, restarted
+from the A2 steady field at t = 100 with `pn` zeroed; `C_D` holds at
+1.690 ± 0.003 and `|C_L| < 6e-4` throughout, i.e. the A2-validated wake is
+undisturbed). Nusselt from the body-local method, snapshot by snapshot:
+
+```
+t = 105   Nu = 3.5199        (staircase flux 0.1825 + graded penalization 0.2069)
+t = 110   Nu = 3.4149
+t = 115   Nu = 3.3797
+t = 120   Nu = 3.3655        drift 0.42 % over the last 5 t.u.
+```
+
+and the INDEPENDENT Gauss/CV border flux on the t = 120 field (storage term
+included; it has fallen to 2.7 % of the outflow, which is the second
+convergence measure):
+
+| control volume | Nu (CV) | vs the body-local 3.3655 |
+|---|---|---|
+| `[4,8] × [6,10]` | 3.3958 | **0.90 %** |
+| `[3,9] × [5,11]` | 3.4321 | 1.98 % |
+| `[2,10] × [4,12]` | 3.4733 | 3.20 % |
+
+The two measurements share nothing but the `theta` field: one integrates the
+flux across the staircase solid/fluid faces plus the penalization delivered
+into the graded band, the other the advective + diffusive flux through a
+border several diameters away. Their spread with box size is the same
+signature the A2 momentum cross-check showed (0.1 % / 2.4 % / 6.5 % there) —
+longer faces accumulate more collocation and gradient error.
+
+Against the literature, `Nu = 3.37` sits on **Churchill–Bernstein's 3.35**
+(0.5 %) and inside the numerical band 3.2–3.5 for Re = 40, Pr = 0.71. The
+setup's known biases push the same way as they do for `C_D`: ~6 % blockage
+from the Dirichlet far field at 16 D, and a first-order staircase body whose
+effective diameter is ~D + h.
+
+**`[scalar] count = 0` bit-exactness, S3 vs the S2 binaries**
+(`run_bitexact.sh`, nofma, 7-case suite, every dataset at tolerance 0):
+
+```
+CPU, 4 ranks: min_channel les_ibm les_ibm_refine beltrami_yslab turb180 wf180_y30 lam30t
+              -> ALL PASS, max_abs = 0 on un/vn/wn/pn (+ nut, k, omega, gamma, rethetat)
+GPU, 1 rank:  same 7 cases -> ALL PASS, max_abs = 0
+```
+
+**Scalar run WITHOUT AN IMMERSED BODY, bit-exact vs the S2 binaries**
+(`run_bitexact_s3.sh`, nofma, tolerance 0) — the third by-construction
+property: with `useIbm` off, `adiab` is `.false.` for every scalar, the six
+face masks collapse to the FACE_CLOSED flags and the penalization statement
+is never entered, so the S2 arithmetic survives byte for byte. It is also the
+cheap, sharp form of "every S1/S2 gate still reads the same number": the S2
+gate cases are campaigns costing hours to days (turbsst alone is 186711
+steps), and if the S3 binary reproduces the S2 binary's fields at tolerance 0
+on those very inis, no statistic derived from them can have moved.
+
+```
+CPU, 1 rank: uniform3 det conduction prsweep conserve      (the S1 cases)
+             turbles turbslab turbsst detles               (the S2 cases)
+             -> ALL PASS, max_abs = 0 on un/vn/wn/pn, nut, k, omega and every scalar
+```
+
+`uniform3` is the one case in that list that DOES enter the penalization
+statement (its zero-force twin has `[ibm] enabled = true` with all
+coefficients zero), so its exactness rests on the IEEE identity
+`x*1.0 + 0.0*v = x` rather than on the branch not being taken — the same
+class of argument as the IDDES `fd_force = 0` blend identity, and measured
+rather than assumed.
+
+**S1 gates re-run with the S3 binary** (`run_gates.sh`, CPU 1 rank) — the
+same numbers as the S0/S1 results above, to every digit:
+
+```
+uniform      max|theta - const| = max|phi - const| = 0.000e+00, uniform-flow gate exact
+conserve     relative drift -6.838e-19
+cond_lin     L2 = 0.000000e+00                         (CPU build -> exactly 0)
+cond_16/32/64  L2 = 2.814767e-03 / 7.054808e-04 / 1.764823e-04   (order 2.00 / 2.00)
+wave16/32/64   L2 = 1.554700e-02 / 3.909091e-03 / 9.786703e-04   (order 1.99 / 2.00)
+pr 0.1/1/10  max|s - series| = 9.995e-06 / 1.415e-04 / 1.584e-03
+             centre s = 0.990836 / 0.227799 / 0.000002
+restart      dataset present -> max|s - file| = 0.000e+00; absent -> warn + 99.0
+```
+
+All seven groups, every digit identical to the S0/S1 results table above.
+
+**S2 gates re-run with the S3 binary**: the Kays–Crawford unit test
+(`scalar_test: ALL PASS`, 29 tabulated values) and the wall-function
+rejection reproduce identically. The three turbulent-channel CAMPAIGNS
+(`sst`, `les`, `band`) are not re-run wholesale — `turbsst` alone is 186711
+steps — because `run_bitexact_s3.sh` proves the stronger statement on the
+very same inis: the S3 binary reproduces the S2 binary's fields at
+TOLERANCE 0, so no statistic derived from them can have moved.
 
 ## Notes and limitations
 

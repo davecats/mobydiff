@@ -34,6 +34,9 @@ def main() -> int:
     ap.add_argument("--scalar", default="s1")
     ap.add_argument("--wave", type=int, nargs=3, default=[1, 0, 0])
     ap.add_argument("--amp", type=float, default=1.0)
+    ap.add_argument("--offset", type=float, default=0.0,
+                    help="constant added to the wave (a non-zero mean makes "
+                         "int s dV a real quantity for the conservation gates)")
     ap.add_argument("--velocity", type=float, nargs=3, default=None)
     ap.add_argument("--zero-pressure", action="store_true")
     a = ap.parse_args()
@@ -50,14 +53,14 @@ def main() -> int:
         dset = f[a.scalar]
         for bid in range(geo.n_blocks):
             x, y, z, _ = geo.mesh(bid)
-            dset[bid] = a.amp * np.sin(k[0] * x + k[1] * y + k[2] * z)
+            dset[bid] = a.offset + a.amp * np.sin(k[0] * x + k[1] * y + k[2] * z)
         if a.velocity is not None:
             for name, val in zip(("un", "vn", "wn"), a.velocity):
                 f[name][...] = val
         if a.zero_pressure:
             f["pn"][...] = 0.0
 
-    print(f"wrote {a.outfile}: {a.scalar} = {a.amp} sin(k.x), n = {a.wave}"
+    print(f"wrote {a.outfile}: {a.scalar} = {a.offset} + {a.amp} sin(k.x), n = {a.wave}"
           + (f", u = {a.velocity}" if a.velocity else ""))
     return 0
 

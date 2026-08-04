@@ -15,11 +15,11 @@
 program moby_prepare
     use, intrinsic :: iso_c_binding
     use :: init, only: dns_type, grid_type, init_grid, destroy_grid, &
-        set_serial_local_size, VAR_U, VAR_V, VAR_W
+        set_serial_local_size, VAR_U, VAR_V, VAR_W, VAR_P
     use :: blocks, only: block_set_type, init_block_set, destroy_block_set
     use :: flow_case, only: case_type, create_flow_case
     use :: config, only: config_seen_type, read_runtime_config, validate_dns_values
-    use :: scalar, only: scalar_type, destroy_scalar
+    use :: scalar, only: scalar_type, destroy_scalar, scalars_enabled
     use :: boundary, only: boundary_type
     use :: io, only: write_case_file
     use :: ibmm, only: ibm_type, init_ibm, enter_ibm_data, exit_ibm_data, &
@@ -60,6 +60,10 @@ program moby_prepare
     ! only; unallocated stays absent in the classify calls).
     real(C_DOUBLE), allocatable :: cullLo(:), cullHi(:)
     type(scalar_type) :: sc
+    ! [scalar] declared => the coefficient array gains its VAR_P column and
+    ! the case file gains coef_p_blocks.
+    logical :: cell_centred
+    integer(C_INT) :: nCoefComp
 
     call comm_init_world(c)
     call parse_prepare_args(input_file, output_file, show_help)
@@ -73,10 +77,14 @@ program moby_prepare
     if (c%has_terminal) print *, "reading input data: ", trim(input_file)
     call create_flow_case(flow, input_file, c%has_terminal)
     call flow%apply_defaults(dns, g, bc, c, ps)
-    ! Scalars are parsed but unused here: the cell-centred IBM coefficients
-    ! they need (coef_p_blocks) are increment S3.
+    ! A [scalar] section here means one thing: the case file must also carry
+    ! the CELL-CENTRED coefficient tiles the scalars penalise with
+    ! (coef_p_blocks, increment S3). Nothing else about the scalars matters
+    ! to prepare -- Pr, the wall mode and the boundary rows are solve-time
+    ! configuration, and one coefficient array serves every scalar.
     call read_runtime_config(dns, g, turb, les, ps, bc, sc, c, input_file, &
         c%has_terminal, config_seen)
+    cell_centred = scalars_enabled(sc)
 
     if (dns%block_nb <= 0_C_INT) &
         error stop "moby_prepare needs [blocks] nb: the case file is a block-table file"
@@ -129,16 +137,19 @@ program moby_prepare
     ! offload builds -- prepare with the CPU build for the gates); STL runs
     ! the host twin over the indicator.
     if (c%has_terminal) print *, "computing IBM coefficients..."
-    call init_ibm(ibm, blk)
+    call init_ibm(ibm, blk, cell_centred)
+    nCoefComp = int(ubound(ibm%coef,4) - lbound(ibm%coef,4) + 1, C_INT)
     if (use_stl) then
         call set_ibm_coeff_host(dns, blk, ibm, VAR_U, inside)
         call set_ibm_coeff_host(dns, blk, ibm, VAR_V, inside)
         call set_ibm_coeff_host(dns, blk, ibm, VAR_W, inside)
+        if (cell_centred) call set_ibm_coeff_host(dns, blk, ibm, VAR_P, inside)
     else
         call enter_ibm_data(ibm, dns)
         call set_ibm_coeff(dns, blk, ibm, VAR_U)
         call set_ibm_coeff(dns, blk, ibm, VAR_V)
         call set_ibm_coeff(dns, blk, ibm, VAR_W)
+        if (cell_centred) call set_ibm_coeff(dns, blk, ibm, VAR_P)
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target update from(ibm%coef)
 #endif
@@ -163,7 +174,7 @@ program moby_prepare
     end if
 
     if (c%has_terminal) print *, "writing case file: ", trim(output_file)
-    call write_case_file(output_file, blk, dns, g, bc, c, ibm%coef, c%has_terminal, &
+    call write_case_file(output_file, blk, dns, g, bc, c, ibm%coef, nCoefComp, c%has_terminal, &
         touch=blockTouch, buried=blockBuried, maskDims=blockMaskDims, &
         active=blockActive, dwall=dwall, maskLo=blockMaskLo)
     if (c%has_terminal) then

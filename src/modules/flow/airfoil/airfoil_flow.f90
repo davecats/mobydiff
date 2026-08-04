@@ -160,6 +160,25 @@ contains
     ! global block table (one contributor per entry, so the allreduce is
     ! exact) and the final sum runs in global-id order on every rank -- the
     ! sampled force is independent of the rank count by construction.
+    !
+    ! LANDMINE IF THE BODY EVER MOVES. This works only because u_body = 0.
+    ! Inside the body the penalization drives q toward u_body with the
+    ! implicit factor mu = 1/(1 + dt_gamma*coef) ~ 1e-25, so the stored
+    ! velocity is mu*q_hat ~ 1e-26 -- tiny, but carried FAITHFULLY, because
+    ! floats have unlimited relative precision near zero. coef*q is then
+    ! O(1) and the sink is measured correctly.
+    ! For a MOVING or ROTATING body the same expression becomes
+    ! coef*(u_body - q), and it collapses: q is stored as u_body to the LAST
+    ! BIT (the correction mu*q_hat lands far below the ulp of a non-zero
+    ! u_body), so the difference is identically 0 and coef*0 = 0 -- the whole
+    ! solid-cell contribution vanishes silently. This is not hypothetical:
+    ! the passive-scalar increment S3 hit exactly this with a Dirichlet body
+    ! value of 1 and lost 37-47 % of the heat release
+    ! (docs/next_session_scalar.md, the S3 FINDING; validation/scalar/
+    ! README.md gate (o2)). The fix used there, and the one to use here, is
+    ! to measure the flux across the staircase solid/fluid faces plus the
+    ! contribution of the GRADED near-body cells, where neither factor is
+    ! degenerate -- see validation/scalar/check_scalar_ibm.py `surface`.
     subroutine airfoil_after_step(this, blk, dns, g, c, ibm)
         class(airfoil_case_type), intent(inout) :: this
         type(block_set_type), intent(inout) :: blk

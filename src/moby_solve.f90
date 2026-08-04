@@ -139,7 +139,10 @@ program moby_solve
     call init_pressure_solver(ps, dns, bc, c%has_terminal)
 
     if (c%has_terminal) print *, "initialising IBM..."
-    call init_ibm(ibm, blk)
+    ! With passive scalars the coefficient array gains its cell-centred
+    ! (pressure-position) column: the scalars penalise with coef(VAR_P)/Pr
+    ! (increment S3). The file path reads it from coef_p_blocks.
+    call init_ibm(ibm, blk, scalars_enabled(sc))
     if (dns%ibm_enabled .and. len_trim(dns%ibm_coeff_file) > 0) then
         call read_ibm_coeff_file(ibm, dns, blk, c%has_terminal)
         call enter_ibm_data(ibm, dns)
@@ -148,6 +151,7 @@ program moby_solve
         call set_ibm_coeff(dns, blk, ibm, VAR_U)
         call set_ibm_coeff(dns, blk, ibm, VAR_V)
         call set_ibm_coeff(dns, blk, ibm, VAR_W)
+        if (scalars_enabled(sc)) call set_ibm_coeff(dns, blk, ibm, VAR_P)
     end if
     ! [ibm] band_filter: near-body band list from the device coefficients
     ! (off: nothing is built, allocated, or mapped).
@@ -270,7 +274,7 @@ program moby_solve
             ! turbulence block so the eddy diffusivity is THIS substage's
             ! nut, halos included -- the same nut the momentum predictor
             ! below uses. Nothing between here and momentum() touches q.
-            call scalar_transport(sc, blk, dns, turb, dt_alpha, dt_beta)
+            call scalar_transport(sc, blk, dns, turb, ibm%coef, dt_alpha, dt_beta, dt_gamma)
 
             if (turbulence_is_enabled(turb)) then
                 call momentum(blk, dns, dt_alpha, dt_beta, dt_gamma, ibm, turb, turb_prof, bf=bf)

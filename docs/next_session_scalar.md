@@ -1,9 +1,211 @@
 # Passive scalars (branch `scalar`) — implementation plan
 
-STATUS: **S0 + S1 LANDED AND GATED (2026-08-03, branch `scalar`).** S2
-(turbulent closure) and S3 (IBM cell-centred coefficients) are NOT started.
+STATUS: **S0 + S1 + S2 + S3 LANDED AND GATED (S0–S2 2026-08-03, S3
+2026-08-04, branch `scalar`).** S4 (statistics + tooling) and S5 (thermal wall
+function, TVD scalar convection, Boussinesq) are NOT started.
 
 What landed (the plan below is unchanged except where noted):
+
+- **S3** — the immersed body. `ibm%coef` gains its cell-centred (VAR_P)
+  column ONLY when `[scalar]` is configured (`init_ibm(ibm, blk,
+  cell_centred)`), so every scalar-free case keeps its memory, its kernels
+  and its case-file layout exactly. `set_ibm_coeff` / `set_ibm_coeff_host`
+  were already generic in `var`: the guard now reads
+  `var > ubound(ibm%coef,4)`, which admits `VAR_P` exactly when it exists.
+  The analytic path adds one `set_ibm_coeff(dns, blk, ibm, VAR_P)` in
+  `moby_solve.f90` and in `moby_prepare.f90` (the host twin there for STL
+  geometry); the file path reads the NEW, OPTIONAL `coef_p_blocks` case-file
+  dataset. The transport kernel gained the two wall modes and `dt_gamma`.
+  - **`dirichlet`** (default): `ss = ss*mu_s + (1 - mu_s)*ibm_value` with
+    `mu_s = 1/(1 + dt_gamma coef_p/Pr)` formed inline — no `mu` array per
+    scalar — and `oldrhs` keeping the UNpenalized rhs, the momentum
+    predictor's structure verbatim. The stored coefficient carries the
+    `1/Re` scaling, so `coef_p/Pr` is the scalar's own `1/(Re Pr)` and ONE
+    cell-centred array serves every scalar at its own `Pr`. Diffusive fluxes
+    are not masked.
+  - **`adiabatic`**: no penalization; the convective AND diffusive flux is
+    masked on each of the six p-cell faces whose staggered velocity
+    coefficient exceeds `SOLID_FACE_THRESHOLD` (rans.f90's `solw/sole/...`
+    test for `k`). The mask is symmetric across a face, so the flux form
+    still telescopes and the fluid conserves `∫s dV` exactly.
+  - **DEVIATION from §4 (deliberate):** only `ibm%coef` gains the VAR_P
+    extent — **`ibm%mu` keeps `VAR_U:VAR_W`**. The scalar penalization
+    factor is Prandtl-dependent and formed inline, so a VAR_P `mu` plane
+    would be a third more of a full field array, never read. `update_ibm_mu`
+    is unchanged (it loops `VAR_U, VAR_W`).
+  - **CORRECTION to landmine (9) / §4's `keep_buried` note:**
+    `[blocks] keep_buried` is honoured **only in the `refine_body` branch**
+    (`classify_refinement_masks`); a single-level case with the default
+    `remove_solid` needs `[blocks] remove_solid = false` instead. The
+    heated-cylinder gate sets both. For the THERMAL body integral this turns
+    out to be belt-and-braces rather than load-bearing (unlike the A2
+    penalization FORCE): a removed buried core consists of deep-solid cells,
+    which hold the body value to the last bit and therefore contribute
+    exactly zero to `∫coef_p (s_body − s) dV`.
+  - **`coef_p_blocks`** is a 4-D per-leaf tile dataset shaped exactly like
+    `dwall_blocks`; both now go through one pair of C helpers
+    (`read_leaf_tiles` / `case_append_leaf_tiles`) parameterised by the
+    destination stride and component-plane offset. The three coefficient
+    entry points gained an `n_comp` argument = the Fortran array's component
+    extent; the DATASETS are unchanged, so a case file for a scalar-free run
+    is byte-identical to what P0–P3 produced (gated). With scalars on and no
+    `coef_p_blocks` the solver hard-errors naming the fix.
+  - **FOUND WHILE GATING:** that hard error is not hypothetical — it caught
+    the inherited S1 `uniform3` gate, whose zero-force twin
+    (`validation/multilevel_body/ibm_coeff_ml3_zero.h5`) predates S3.
+    `make_uniform_twin.py` now writes a ZEROED `coef_p_blocks` alongside the
+    zeroed `coef_blocks` (the scalar analogue of "the body exerts no force"
+    is "the body penalises no scalar"). The twin is a GENERATED artifact, not
+    a tracked file (`*.h5` is gitignored; `validation/multilevel_body/
+    setup.sh` builds it), so the generator is the fix — a stale local copy is
+    repaired by re-running `make_uniform_twin.py`, NOT by the "re-run
+    moby_prepare with [scalar]" the solver's error message suggests, which is
+    the right advice only for a real case file. Any pre-S3 coefficient file needs the same treatment or a
+    re-run of `moby_prepare` with `[scalar]`.
+  - **FINDING that changed the Nusselt gate (§9's S3 bullet is superseded):
+    the A2 penalization integral does NOT transpose to a Dirichlet scalar.**
+    `F = ∫coef·u dV` works for the FORCE only because `u_body = 0` and the
+    stored velocity keeps a ~1e-26 residual, so `coef·u` is O(1). A Dirichlet
+    scalar's stored value is the body value TO THE LAST BIT (that is gate
+    (n)), so `coef_p (s_body − s)` evaluates to `1e28 × 0 = 0` in every solid
+    cell — while the cell is really re-heated every substage by exactly the
+    flux it loses to its fluid neighbours. Measured on the wavy case: solid
+    cells contribute `0.000000e+00`, the graded fluid band `3.74e-02`, truth
+    `6.95e-02`, i.e. the integral sees 63 % of the heat. The body heat
+    release is therefore measured as **staircase-interface flux + graded-cell
+    penalization** (`check_scalar_ibm.py surface`), which is
+    cancellation-free, and validated by a full discrete energy budget: on a
+    case with no boundary flux at all it equals `d/dt ∫s dV` to **3.9e-4**.
+    Note this also means the `keep_buried` landmine is inert for a THERMAL
+    body integral in both directions — the deep-solid cells the rule
+    protects are exactly the ones the integral cannot see anyway.
+  - **Bit-exactness has TWO tiers here.** Without a body (`dns%ibm_enabled`
+    false) `useIbm` is false, `adiab` is `.false.` for every scalar, the six
+    masks collapse to the FACE_CLOSED flags and the penalization statement
+    is not entered — the S2 arithmetic survives BY CONSTRUCTION
+    (`run_bitexact_s3.sh`). With a body whose coefficients are all zero (the
+    `uniform3` twin) the statement IS entered and exactness rests on the
+    IEEE identity `x*1.0 + 0.0*v = x` — the same class of argument as the
+    IDDES `fd_force = 0` blend identity, and measured, not assumed.
+  - **The heated-cylinder gate needed the `pn`-drift recipe** (a second
+    instance of the A2 caveat, with a new trigger): the committed steady
+    Re = 40 restart carries `|pn| ~ 1.2e3` of velocity-neutral mode whose
+    spurious `∇p` is only self-consistent with the coefficient field that
+    grew it. Restarting it as-is on the freshly PREPARED coefficients — which
+    differ from the retired mobygeom ones only in the near-grazing envelope —
+    kicked the forces to `|C_L| ~ 1.7e2`, oscillating with no decay. Zeroing
+    `pn` fixes it completely AT THE PRODUCTION `niter = 6` (`C_D` back to 1.69
+    within 40 steps, `|C_L| < 6e-4`); the `niter = 60` rebuild phase the A2
+    momentum cross-check needed is unnecessary here because the thermal
+    balance never reads the pressure.
+
+- **S2** — the turbulent closure. The transport kernel's face diffusivity is
+  now `D_face = 1/(Re Pr) + ½(ν_t,L + ν_t,R)/Pr_t(face)`, reading `turb%nut`
+  — the ONE blended field LES (WALE/Smagorinsky), RANS (SST) and IDDES all
+  write, so one code path covers all three. `Pr_t` is the per-scalar constant
+  (`[scalar.N] prt`) or the **Kays–Crawford** correlation (`prt_model =
+  kays`), implemented as the pure `!$omp declare target` function `prt_kays`
+  and unit-tested host-side by `src/test_scalar.f90` (CMake target
+  `scalar_test`) against an mpmath transcription. `[rans] wall_treatment =
+  wall_function` together with scalars is a hard config error
+  (`validate_turbulence_values`) — a thermal wall function is S5. §8 is
+  finished: `get_timestep_rates` scales the eddy Peclet rate by
+  `ν_eff = ire/Pr_min + ν_t/Pr_t,min` (`scalar_min_prt`), gated on
+  `nScalar > 0` so both factors are exactly 1 otherwise.
+  - **`prt_kays` numerics** (comment in scalar.f90): written directly, the
+    correlation subtracts `(C Pe_t)²[1 − exp(−x)]` from a term that cancels
+    it to leading order, so it loses all precision at large `Pe_t` and
+    overflows `a²` past `Pe_t ~ 1e150`. The small-`x` branch evaluates the
+    analytically equivalent series `1/Pr_t = (1/Prt_inf)[1 − x/3! + x²/4! −
+    …]`, which also makes the `Pe_t → ∞` limit exact by inspection; the
+    branches join at `x = 1/2` to their own slope.
+  - **DEVIATION (deliberate, one line):** `scalar_transport` moved from
+    "immediately before `momentum`" to "after the turbulence block, still
+    before `momentum`" in `moby_solve.f90`. It still reads the
+    start-of-substage `q` (nothing in between touches it — that was the S1
+    reason for the placement), but it now sees THIS substage's `nut` with
+    current halos, the same one the momentum predictor uses, instead of the
+    previous substage's.
+  - **ADDED beyond the plan (an S0 defect found while building the gate
+    cases):** a scalar's explicit `<face>_type` key on a **declared** `wall`
+    patch was a hard config error, because S0 applied the A0 contradiction
+    rule to walls. §5 of this plan says "PATCH_WALL → Neumann 0 (adiabatic)
+    **unless the ini gives a type/value**", and an isothermal wall is the
+    canonical scalar BC, so `resolve_scalar_row` gained a `strict` flag: a
+    wall honours an explicit type, inlet and outlet keep the strict rule (an
+    inlet must impose a value, an outlet must be zero-gradient).
+  - **Bit-exactness is by construction on BOTH counts.** `count = 0` allocates
+    no scalar and calls no kernel (S0/S1's argument, re-gated). A scalar run
+    with turbulence OFF keeps the S1 arithmetic byte-for-byte: every face
+    diffusivity is initialised to the molecular value and the eddy term sits
+    behind `if (useNut)`, so nothing is added — not even `+ 0.0`. When no
+    model is active `turb%nut` does not exist at all, and the kernel is handed
+    a 1-cell `sc%nutNone` dummy to map (the `turb_type` "1-cell dummies,
+    uniform device maps, all accesses model-guarded" idiom). **No turbulent
+    diffusivity exists at all in a DNS run** — every face keeps `1/(Re Pr)`,
+    `eddy_diffusivity` is never called — and the dead branch was MEASURED, not
+    assumed: interleaved S1-vs-S2 nofma runs on a DNS channel + scalar give
+    S2/S1 = 0.9998 (CPU 4 ranks) and 1.0038 (GPU), both inside the noise floor
+    of the `count = 0` control (0.9962 / 1.0068), whose code path is
+    identical. Numbers in `validation/scalar/README.md`.
+
+S3 gates (all in `validation/scalar/`, README records the commands and
+numbers; `run_gates_s3.sh [solid|conserve|balance|prep|missing|refine|det|cyl]`):
+
+| gate | result |
+|---|---|
+| `dirichlet`: solid cell == `ibm_value` (analytic, restarted, `refine_body`, file path) | **0.000e+00** in all four, on 704 / 704 / 5984 / 704 solid cells |
+| the analytic solid set vs the prepared `coef_p` solid set | **identical** (704 cells) |
+| `adiabatic`: `∫φ dV` with a body, 200 steps | drift **0.000e+00** (of 1.25e-01) |
+| `adiabatic`: cells sealed on all six staggered faces | 624 cells, max\|Δφ\| **0.000e+00** |
+| body heat release vs `d/dt ∫θ dV` (no boundary flux), 10-step window | **3.9e-04** (200-step window: 3.1 %, the trapezoid's `O(dt²)`) |
+| the A2 penalization integral on the same case | sees **63 %** of the heat — see the FINDING above |
+| prepared case file vs the `[scalar]`-stripped twin | dataset-identical apart from `coef_p_blocks` |
+| `coef_p_blocks` vs an independent transcription of the graded formula | **1.4e-16** (single level), **2.2e-16** (level 1 of `refine_body`) |
+| prepare 1 rank == 4 ranks | identical file |
+| solve from the case file == the inline analytic solve (single level / 2 levels) | max_abs **0** incl. both scalars |
+| `[scalar]` + a case file without `coef_p_blocks` | rejected, message names the fix |
+| heated cylinder Re 40, Pr 0.71: Nu (body-local, t = 105→120) | 3.520 → 3.415 → 3.380 → **3.366**, last drift 0.42 % — Churchill–Bernstein **3.35**, numerical band 3.2–3.5 |
+| the same, vs the INDEPENDENT Gauss/CV border flux at 3 box sizes | **0.90 % / 1.98 % / 3.20 %** (the A2 box-size signature) |
+| 1 rank == 4 ranks, CPU == GPU (scalar + IBM), analytic path, file path, +LES | **EXACT** (max_abs 0, incl. `nut`) |
+| `[scalar] count = 0` vs the S2 binaries, 7-case suite, nofma | max_abs **0**, CPU **and** GPU |
+| scalar WITHOUT a body vs the S2 binaries, 9 scalar cases (S1 + S2), nofma | max_abs **0**, CPU **and** GPU |
+| every S1 gate re-run with the S3 binary | identical numbers to every digit |
+
+S2 gates (all in `validation/scalar/`, README records the commands and
+numbers; `run_gates_s2.sh [kays|wferr|sst|les|band|det]`):
+
+| gate | result |
+|---|---|
+| Kays–Crawford unit test, every branch + both limits | 29 tabulated values to **1e-13** rel; `Pe_t = 1e300` → 0.85 exactly; branches join at `x = 1/2`; monotone over 12 decades |
+| steady SST, resolved walls: `theta` vs the `nut`-integral prediction | **0.096 %** of the wall difference; flux constancy **5.2e-08**; `θ⁺/(Pr y⁺) = 1.0000` |
+| the same with `prt_model = kays` | **0.094 %**; flux constancy **2.6e-08**; `Pr_t` spans **0.8832 … 1.7000** in-kernel (its `Pe_t → ∞ / → 0` limits), wall flux 7.4 % below the constant-`Pr_t` twin |
+| LES channel Re_τ 180, Pr 0.71: `θ⁺/U⁺` | first cell **0.7233** vs `Pr` 0.71 (1.9 %); log layer **0.8558** vs `Pr_t` 0.85 (0.7 %) |
+| the same, `θ⁺` vs Kader over the wall layer y⁺ ∈ [1,35] | mean **6.8 %**, max 20.7 % — at y⁺ 6.3, on Kader's own blend kink |
+| the same, resolved `<v'θ'>/J` | 0.07 / 0.52 / 0.80 / 0.92 / 0.94 at y⁺ 5 / 15 / 30 / 60 / 120, peak **0.95 θ_τ u_τ** |
+| the same, constant-flux residual (convergence + conservation) | **3.3 %** of `θ_τ`; `θ_τ` drifts **1.0 %** between the halves of the window |
+| 2:1 wall-band channel: NO spurious scalar band | `θ'_rms` interface/core ratio excess **+0.12 %**; no row within six of the interface off the control by >1.1 % |
+| `wall_treatment = wall_function` + scalars | rejected, explicit message |
+| 1 rank == 4 ranks, CPU == GPU (LES + scalar) | **EXACT** (max_abs 0 incl. `nut` and `theta`) |
+| `[scalar] count = 0` vs the S1 binaries, 7-case suite, nofma | max_abs **0**, CPU **and** GPU |
+| scalar with turbulence OFF vs the S1 binaries, nofma | max_abs **0** on 5 scalar cases |
+| every S1 gate re-run with the S2 binary | identical numbers to every digit |
+
+LANDMINE for the LES gates (cost an hour): the `../channel_interface/les`
+campaign's **final** `*_50001.h5` files carry an O(1e6) velocity-neutral
+pressure mode (the niter = 6 pn-drift family, CLAUDE.md A2) — restarting on
+one blows the run up in a single step. Every mid-run snapshot has `|pn| ~ 10`;
+the gate cases restart from `*_49600.h5`.
+
+METHOD note for the LES gates: the thermal field relaxes on
+`tau = L²/(pi² D_eff) ~ 6 t.u.`, so reaching a stationary mean from any IC is
+~3 tau of wall clock in which nothing is measured. `make_theta_ic.py` seeds
+the Reynolds analogy of the run's own mean velocity, and `retarget_theta.py`
+then replaces the mean by the profile the run's own MEASURED total
+diffusivity implies while keeping every fluctuation. Neither is circular with
+the gate: both derive from the run itself, not from Kader, and stationarity
+is measured afterwards (constant-flux residual + first-half/second-half
+`θ_τ`), not assumed.
 
 - **S0** — layout/config/io/halos/BCs. Scalars are extra variables of `blk%q`
   (`dns%nVar = NVAR + dns%nScalar`, `VAR_S0+is` in `q`, `SCR_S0+is` in
@@ -483,7 +685,8 @@ heat flux profile; the same case under SST (resolved walls) — log-law slope;
 ratios, the u'/v' band lesson from `validation/channel_interface/`);
 `wall_treatment = wall_function` + scalars is rejected with a clear message.
 
-**S3 — IBM cell-centred coefficients.**
+**S3 — IBM cell-centred coefficients.** (DONE — see the STATUS header for
+what actually landed and what this planned text got wrong.)
 Analytic path + `moby_prepare` `coef_p_blocks` + both body wall modes.
 Gates: solid-cell scalar == `ibm_value` exactly (Dirichlet mode); adiabatic
 mode conserves `∫s dV` to round-off with a body in the domain; heated cylinder
@@ -491,6 +694,12 @@ mode conserves `∫s dV` to round-off with a body in the domain; heated cylinder
 method); prepared case file identical to the previous one apart from the added
 dataset (`h5same` minus `coef_p_blocks`); `refine_body` per-level coefficients
 consistent.
+SUPERSEDED IN ONE PLACE: "Nu from `∫coef_p (s − s_body) dV`, the A2 method"
+does not work for a Dirichlet scalar — the solid cell's stored value IS the
+body value bit-for-bit, so the product vanishes and ~37 % of the heat is
+invisible. The gate measures the staircase solid/fluid face flux plus the
+graded-cell penalization instead, validated by a full energy-budget closure
+(3.9e-4) on a case with no boundary flux. Details in the STATUS header.
 
 **S4 — statistics and tooling (optional but wanted for production).**
 Channel/boundary-layer scalar statistics (mean profile, rms, turbulent flux,
@@ -551,9 +760,190 @@ Boussinesq buoyancy via the body-force custom hook.
 
 ---
 
-## 12. Next-session prompt (S2 — turbulent closure)
+## 12. Next-session prompt (S4 — statistics and tooling)
 
 Paste this to start the next implementation session.
+
+> Implement increment **S4** of `docs/next_session_scalar.md` — passive-scalar
+> STATISTICS AND TOOLING — on branch `scalar` (read the doc in full first: its
+> STATUS header records exactly what S0/S1/S2/S3 landed, every deviation, every
+> finding and every gate number; also read the "Active work" section of
+> CLAUDE.md for the project conventions, and `validation/scalar/README.md` for
+> the gate machinery you inherit).
+>
+> S0-S3 are DONE and gated: scalars are extra variables of `blk%q`, the fused
+> `scalar_transport` kernel carries central/skew convection, the turbulent
+> closure `1/(Re Pr) + nut/Pr_t` (constant or Kays-Crawford) and BOTH immersed-
+> body wall modes (`dirichlet` penalization toward `ibm_value`, `adiabatic`
+> face masking), `moby_prepare` writes the optional `coef_p_blocks` case-file
+> dataset, and `[scalar] count = 0` / a scalar run without turbulence / a scalar
+> run without a body are each bit-exact CPU+GPU against the previous
+> increment's binaries.
+>
+> **S4 — statistics and tooling.** Section 9 of the plan: channel and
+> boundary-layer scalar statistics (mean profile, rms, turbulent flux, Nusselt)
+> alongside `channel_stats.f90`, and `tools/compare_fields.py` dataset
+> discovery (`FIELDS` becomes "the datasets present in both files"). Read
+> `validation/scalar/check_scalar_turb.py` first: its `channel` analysis is the
+> post-processing form of exactly the statistics the solver should accumulate,
+> and the S2 gate numbers it produced are what the in-solver version must
+> reproduce.
+>
+> BEFORE YOU START, read the S3 FINDING in the STATUS header about the
+> penalization integral: a Dirichlet body's heat release CANNOT be measured as
+> `int coef_p (s_body - s) dV` (a solid cell holds the body value to the last
+> bit, so the product is 1e28 x 0 = 0 and ~37 % of the heat is invisible). If
+> S4 adds a runtime Nusselt statistic, it must use the cancellation-free form
+> `check_scalar_ibm.py surface` uses — the staircase solid/fluid face flux plus
+> the graded-cell penalization — or the control-volume balance.
+>
+> Conventions that are not negotiable:
+> - Build both paths (`./compile.sh cpu && ./compile.sh gpu`) with the module
+>   **loaded** (`module load toolkits/nvhpc/25.9`) — see the environment
+>   landmine in Section 13; always launch through `mpirun`, even on one rank.
+> - **Save the S3 nofma binaries outside the tree BEFORE touching any source.**
+> - `[scalar] count = 0` must stay bit-exact (`run_bitexact.sh`, 7-case suite,
+>   max_abs 0, CPU AND GPU), and `run_bitexact_s3.sh` (scalar without a body,
+>   9 cases) must stay max_abs 0 — that pair is also the cheap, sharp form of
+>   "every S1/S2/S3 gate still reads the same number". Re-run `run_gates.sh`,
+>   `run_gates_s2.sh` and `run_gates_s3.sh`.
+> - New gate cases and drivers go in `validation/scalar/`, and the README grows
+>   an S4 block with what was run and measured.
+> - Never declare an increment done with a failing build or an ungated result.
+>
+> Stop after S4's gates and report. S5 (thermal wall function, TVD/van-Leer
+> scalar convection, Boussinesq buoyancy) is a separate session; do not start
+> it. Update this document's STATUS header and `validation/scalar/README.md`.
+
+---
+
+### Historical: the S3 prompt (consumed 2026-08-04)
+
+> Implement increment **S3** of `docs/next_session_scalar.md` — the
+> cell-centred immersed-boundary coefficients for the passive scalars — on
+> branch `scalar` (read the doc in full first: its STATUS header records
+> exactly what S0/S1/S2 landed, every deviation and every gate number; also
+> read the "Active work" section of CLAUDE.md for the project conventions,
+> and `validation/scalar/README.md` for the gate machinery you inherit).
+>
+> S0 + S1 + S2 are DONE and gated: scalars are extra variables of `blk%q`
+> (`VAR_S0+is`; `SCR_S0+is` in `qs`/`oldrhs`), `src/modules/scalar.f90` owns
+> `scalar_type` and the fused `scalar_transport` kernel (2nd-order central
+> divergence-form convection, face-flux diffusion with `D_face = 1/(Re Pr) +
+> ½(ν_t,L+ν_t,R)/Pr_t(face)` reading `turb%nut`, constant `Pr_t` or
+> Kays–Crawford, momentum RK3), `scalar_finish` runs after
+> `pressure_projection`, and BOTH `[scalar] count = 0` AND a scalar run with
+> turbulence off are bit-exact CPU+GPU on their suites.
+>
+> **S3 — the immersed body.** Section 4 of the plan is the design and it was
+> written from a complete read of `ibm.f90`; the short version:
+>
+> - `set_ibm_coeff` / `set_ibm_coeff_host` are ALREADY generic in `var` (they
+>   read `blk%x(ix,var,b)` and the graded second-order stencil from the same
+>   column) — the only thing blocking the pressure position is the guard
+>   `if (var < VAR_U .or. var > VAR_W) error stop`. Allow `VAR_P`, and give
+>   `ibm%coef` / `ibm%mu` the extent `VAR_U:VAR_P` **only when scalars are on**
+>   so every existing case keeps its current memory and its current field
+>   layout exactly.
+> - Analytic IBM (inline): one extra `set_ibm_coeff(dns, blk, ibm, VAR_P)` in
+>   `moby_solve.f90` and in the prepare path.
+> - The stored coefficient carries the `1/Re` scaling, so the scalar uses
+>   `coef_p/Pr` = its own `1/(Re Pr)` — one cell-centred coefficient array
+>   serves ALL scalars, each with its own `Pr`.
+> - Two body wall modes per scalar (`[scalar.N] ibm_wall`, already parsed into
+>   `sc%ibmMode` by S0 but unused): `dirichlet` (default) penalises toward
+>   `ibm_value` with the implicit factor `mu_s = 1/(1 + dt_gamma coef_p/Pr)`
+>   computed inline (no `mu` array per scalar), diffusive fluxes NOT masked;
+>   `adiabatic` masks BOTH the convective and the diffusive flux on each of
+>   the six p-cell faces whose staggered velocity coefficient is solid — the
+>   `solw/sole/...` test `rans.f90` already uses for `k`.
+> - File-based IBM: a NEW, OPTIONAL case-file dataset `coef_p_blocks`, written
+>   by `moby_prepare` when the prepare ini declares scalars (one extra
+>   `set_ibm_coeff_host(..., VAR_P, inside)` + an append mirroring
+>   `fdm_h5_case_append_coef`). Existing case files must stay byte-identical
+>   and readable; the solver hard-errors with an explicit "re-run moby_prepare
+>   with [scalar]" message when scalars are on and the dataset is absent.
+>   `dwall_blocks`, the masks and `block_active` are untouched.
+>
+> Conventions that are not negotiable:
+> - Build both paths (`./compile.sh cpu && ./compile.sh gpu`) with the module
+>   **loaded** (`module load toolkits/nvhpc/25.9`) — see the environment
+>   landmine in Section 13; always launch through `mpirun`, even on one rank.
+> - **Save the S2 nofma binaries somewhere outside the tree BEFORE touching
+>   any source**: they are the reference for every bit-exactness gate below.
+> - `[scalar] count = 0` must stay bit-exact (`run_bitexact.sh`, 7-case suite,
+>   max_abs 0, CPU AND GPU) and a scalar run WITHOUT an immersed body must be
+>   bit-exact vs the S2 binaries (`run_bitexact_s1.sh`, same idea). Re-run
+>   `run_gates.sh` and `run_gates_s2.sh` — every S1 and S2 gate must still pass
+>   with the same numbers (none of them has a body).
+> - New gate cases and drivers go in `validation/scalar/`, and the README's
+>   results section grows an S3 block with what was run and measured.
+> - Never declare an increment done with a failing build or an ungated result.
+>
+> S3 gates (all must pass and be recorded): solid-cell scalar == `ibm_value`
+> EXACTLY in `dirichlet` mode; `adiabatic` mode conserves `∫s dV` to round-off
+> with a body in the domain; a heated cylinder (Re 40) Nusselt number against
+> literature AND against a Gauss/CV border-flux cross-check (the A2 method in
+> `validation/cylinder/`); the prepared case file dataset-identical (`h5same`)
+> to the previous one apart from the added `coef_p_blocks`; `refine_body`
+> per-level coefficients consistent; 1 rank == 4 ranks EXACT and CPU == GPU
+> EXACT on a scalar + IBM case.
+>
+> LANDMINES for this increment specifically: (1) `set_ibm_coeff_host` is the
+> host twin of the device kernel and carries a KEEP IN LOCKSTEP comment —
+> whatever you change in one, change in the other, and the prepare-vs-inline
+> gates are what catch a divergence; (2) a body-integrated flux diagnostic
+> (Nusselt from `∫coef_p (s − s_body) dV`) needs `[blocks] keep_buried` for
+> exactly the reason the penalization FORCES do (a removed buried core absorbs
+> loading outside the coefficient bookkeeping — CLAUDE.md A2); (3)
+> penalization Dirichlet at the body is first-order/staircase like the
+> velocity, and the graded coefficient only mitigates it — do not expect
+> better than the velocity's near-body accuracy.
+>
+> Stop after S3's gates and report. S4 (scalar statistics + `compare_fields.py`
+> dataset discovery) and S5 (thermal wall function, TVD/van-Leer scalar
+> convection, Boussinesq buoyancy) are separate sessions; do not start them.
+> Update this document's STATUS header and `validation/scalar/README.md` with
+> what landed and what each gate measured.
+
+---
+
+## 13. Environment and workflow notes (from the S2 session)
+
+- **`./compile.sh` without the nvhpc module loaded destroys the build cache.**
+  It re-runs `cmake` and re-discovers MPI; with no module the wrappers resolve
+  to `/usr/bin/mpif90` (gfortran module files), which nvfortran then rejects
+  with `Corrupt or Old Module file .../gfortran-mod-15/openmpi/mpi_f08.mod`.
+  Recovery is simply to `module load toolkits/nvhpc/25.9` and re-run
+  `./compile.sh`, but the failure looks like a source error and is not one.
+  `validation/scalar/compile_nofma.sh` reads the matching `build_cpu` /
+  `build_gpu` cache, so a clobbered cache breaks the nofma builds too.
+- **A new CMake target must be added to `SOLVER_TARGETS`**, not just given an
+  `add_executable` — that list is what carries `-O2`, `-Mpreprocess`, the MPI
+  and HDF5 include paths and the per-target module directory. A target left
+  out of it fails with "Label field of continuation line is not blank" (the
+  preprocessor never ran) and "cannot open source file hdf5.h".
+- **Do not restart a channel case from a run's FINAL snapshot.** The niter = 6
+  projection accumulates a large velocity-neutral mode in the stored `pn` (the
+  pn-drift family, CLAUDE.md A2), and the final write catches it at its worst:
+  `../channel_interface/les`'s `*_50001.h5` files carry `|pn| ~ 1e6` where every
+  mid-run snapshot has `|pn| ~ 10`, and restarting on one blows the run up in a
+  single step. Restart from a mid-run snapshot, or zero `pn` first.
+- **`pkill -f <pattern>` matches the shell running it** when the pattern also
+  appears in the command line, so it kills the caller before (or instead of)
+  the target. Kill by PID from `ps -C moby_solve`, and beware that two runs
+  writing the same `field_prefix` with different `field_interval`s produce
+  files with identical `(step, t)` labels — one silently overwrites the other
+  and the statistics silently mix.
+- **The local GPU is shared.** Budget the wall clock: the 64x48x64 LES channel
+  ran at 0.2-0.4 s/step with another job resident, i.e. ~7 min per 0.4 t.u.
+  snapshot, and the thermal field of a scalar channel relaxes on
+  `tau = L²/(pi² D_eff) ~ 6 t.u.` — see the METHOD note in the STATUS header
+  for how `make_theta_ic.py` + `retarget_theta.py` cut that down.
+
+---
+
+### Historical: the S2 prompt (consumed 2026-08-03)
 
 > Implement increment **S2** of `docs/next_session_scalar.md` — the turbulent
 > closure of the passive scalars — on branch `scalar` (read the doc in full

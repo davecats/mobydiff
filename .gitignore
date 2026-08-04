@@ -106,3 +106,7 @@ validation/channel_interface/les/runs/
 !validation/channel_interface/les_ibm/*.h5
 # passive-scalar bit-exactness suite scratch (validation/scalar/run_bitexact.sh)
 .bx_*
+
+# passive-scalar S3 gate scratch (run_bitexact_s3.sh, run_gates_s3.sh)
+.s3x_*
+validation/scalar/.*.ini
