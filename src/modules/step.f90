@@ -21,7 +21,7 @@ module step
     use :: turbulence, only: turb_type, turbulence_is_enabled, TURB_PROF_SGS
     use :: chron, only: profiler_type, wall_seconds, profiler_add
     use :: bodyforce, only: bodyforce_type, bodyforce_is_enabled
-    use :: scalar, only: scalar_type, scalars_enabled, scalar_min_pr
+    use :: scalar, only: scalar_type, scalars_enabled, scalar_min_pr, scalar_min_prt
     implicit none
 
     real(C_DOUBLE), parameter :: rk_alpha(3) = [64.0d0/120.0d0,  50.0d0/120.0d0,  90.0d0/120.0d0]
@@ -658,15 +658,22 @@ contains
             wall_seconds() - profile_start)
     end subroutine add_eddy_viscosity_correction
 
-    subroutine get_timestep_rates(blk, dns, rates, turb)
+    subroutine get_timestep_rates(blk, dns, rates, turb, sc)
         type(block_set_type), intent(inout) :: blk
         type(dns_type),   intent(in)    :: dns
         real(C_DOUBLE), intent(out) :: rates(1:NCFL)
         type(turb_type), intent(in), optional :: turb
+        ! Passive scalars: their effective diffusivity, not the momentum
+        ! viscosity, sets the explicit limit -- nu_eff = ire/Pr_min +
+        ! nu_t/Pr_t,min (docs/next_session_scalar.md Section 8; the molecular
+        ! half is already folded into dns%peclet_rate by
+        ! precompute_peclet_rate). Absent / no scalars leaves both scale
+        ! factors at exactly 1.
+        type(scalar_type), intent(in), optional :: sc
 
         integer :: i,j,k,b
         integer :: nx, ny, nz, nBlocks
-        real(C_DOUBLE) :: cfl_rate, peclet_rate, ire, nu_eff
+        real(C_DOUBLE) :: cfl_rate, peclet_rate, ire, nu_eff, pr_scale, prt_scale
         logical :: use_eddy_viscosity
 
         nx = int(blk%nb(1))
@@ -698,7 +705,15 @@ contains
         if (.not. use_eddy_viscosity) return
 
         peclet_rate = dns%peclet_rate
-        ire = 1.0d0/dns%re
+        pr_scale = 1.0d0
+        prt_scale = 1.0d0
+        if (present(sc)) then
+            if (scalars_enabled(sc)) then
+                pr_scale = max(1.0d0, 1.0d0/scalar_min_pr(sc))
+                prt_scale = max(1.0d0, 1.0d0/scalar_min_prt(sc))
+            end if
+        end if
+        ire = pr_scale/dns%re
 
         !$omp target teams distribute parallel do collapse(4) reduction(max:peclet_rate) &
         !$omp& map(to: blk%d1x, blk%d1y, blk%d1z, turb%nut) &
@@ -707,7 +722,7 @@ contains
         do k = 1, nz
             do j = 1, ny
                 do i = 1, nx
-                    nu_eff = ire + max(0.0d0, turb%nut(i,j,k,b))
+                    nu_eff = ire + prt_scale*max(0.0d0, turb%nut(i,j,k,b))
                     peclet_rate = max(peclet_rate, nu_eff*blk%d1x(i,VAR_P,b)**2)
                     peclet_rate = max(peclet_rate, nu_eff*blk%d1y(j,VAR_P,b)**2)
                     peclet_rate = max(peclet_rate, nu_eff*blk%d1z(k,VAR_P,b)**2)
@@ -745,11 +760,12 @@ contains
         dns%dt = min(dns%dt, max(0.0d0, remaining))
     end subroutine trim_dt_for_final_time
 
-    subroutine update_timestep_limits(blk, dns, c, turb)
+    subroutine update_timestep_limits(blk, dns, c, turb, sc)
         type(block_set_type), intent(inout) :: blk
         type(dns_type), intent(inout) :: dns
         type(comm_type), intent(in) :: c
         type(turb_type), intent(in), optional :: turb
+        type(scalar_type), intent(in), optional :: sc
 
         real(C_DOUBLE) :: rates(1:NCFL), next_dt
         logical :: have_limit
@@ -757,7 +773,7 @@ contains
         if (dns%cflmax <= 0.0d0 .and. dns%pecletmax <= 0.0d0) return
 
         if (present(turb)) then
-            call get_timestep_rates(blk, dns, rates, turb)
+            call get_timestep_rates(blk, dns, rates, turb, sc)
         else
             call get_timestep_rates(blk, dns, rates)
         end if

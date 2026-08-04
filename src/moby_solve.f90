@@ -212,7 +212,7 @@ program moby_solve
             call update_sgs_viscosity(les, turb, blk, dns, ibm, turb%nut)
         end select
         call exchange_scalar_halos(c, turb%nut, blk)
-        call update_timestep_limits(blk, dns, c, turb)
+        call update_timestep_limits(blk, dns, c, turb, sc)
     else
         call update_timestep_limits(blk, dns, c)
     end if
@@ -233,18 +233,6 @@ program moby_solve
             dt_alpha = dns%dt*rk_alpha(rkStage)
             dt_beta  = dns%dt*rk_beta(rkStage)
             dt_gamma = dns%dt*rk_gamma(rkStage)
-
-            ! Passive-scalar transport, OUTSIDE the projection. Called BEFORE
-            ! momentum: it must read the START-of-substage q -- the velocity
-            ! the momentum predictor itself advects with, divergence-free to
-            ! the projection tolerance, and with halos current from the
-            ! previous substage. (momentum() ends by copying qs -> q, and the
-            ! velocity halos are only refreshed by the exchange AFTER it, so
-            ! calling this after momentum would advect the scalar with the
-            ! non-solenoidal predicted velocity AND stale halo values. See
-            ! docs/next_session_scalar.md, STATUS/S1.) The two kernels touch
-            ! disjoint qs/oldrhs slots, so the order is otherwise free.
-            call scalar_transport(sc, blk, dns, dt_alpha, dt_beta)
 
             ! Predictor: advance tentative staggered velocities, then enforce solid/body constraints.
             call update_ibm_mu(ibm, dt_gamma)
@@ -268,6 +256,23 @@ program moby_solve
                 turb_profile_start = wall_seconds()
                 call exchange_scalar_halos(c, turb%nut, blk)
                 call profiler_add(turb_prof, TURB_PROF_EXCHANGE, wall_seconds() - turb_profile_start)
+            end if
+
+            ! Passive-scalar transport, OUTSIDE the projection. Called BEFORE
+            ! momentum: it must read the START-of-substage q -- the velocity
+            ! the momentum predictor itself advects with, divergence-free to
+            ! the projection tolerance, and with halos current from the
+            ! previous substage. (momentum() ends by copying qs -> q, and the
+            ! velocity halos are only refreshed by the exchange AFTER it, so
+            ! calling this after momentum would advect the scalar with the
+            ! non-solenoidal predicted velocity AND stale halo values. See
+            ! docs/next_session_scalar.md, STATUS/S1.) It sits after the
+            ! turbulence block so the eddy diffusivity is THIS substage's
+            ! nut, halos included -- the same nut the momentum predictor
+            ! below uses. Nothing between here and momentum() touches q.
+            call scalar_transport(sc, blk, dns, turb, dt_alpha, dt_beta)
+
+            if (turbulence_is_enabled(turb)) then
                 call momentum(blk, dns, dt_alpha, dt_beta, dt_gamma, ibm, turb, turb_prof, bf=bf)
             else
                 call momentum(blk, dns, dt_alpha, dt_beta, dt_gamma, ibm, bf=bf)
@@ -290,7 +295,7 @@ program moby_solve
         end do
 
         if (turbulence_is_enabled(turb)) then
-            call update_timestep_limits(blk, dns, c, turb)
+            call update_timestep_limits(blk, dns, c, turb, sc)
         else
             call update_timestep_limits(blk, dns, c)
         end if

@@ -51,7 +51,8 @@ set(MODULE_SOURCES
     ${MODULE_DIR}/flow_case.f90
 )
 
-set(SOLVER_TARGETS moby_solve moby_prepare walldist_test transition_test leaftable_test)
+set(SOLVER_TARGETS moby_solve moby_prepare walldist_test transition_test leaftable_test
+    scalar_test)
 
 # The prepare/solve pair (docs/prepare_solve_strategy.md): moby_prepare
 # writes the block-table case file, moby_solve runs it ([ibm] coeff_file).
@@ -69,6 +70,8 @@ add_executable(walldist_test ${SRC_DIR}/test_walldist.f90 ${MODULE_SOURCES})
 add_executable(transition_test ${SRC_DIR}/test_transition.f90 ${MODULE_SOURCES})
 # Leaf-table builder dump vs mobygeom's Python mirror (R2D-0 gate b).
 add_executable(leaftable_test ${SRC_DIR}/test_leaftable.f90 ${MODULE_SOURCES})
+# Host-side unit test for the Kays-Crawford Pr_t correlation (scalar.f90).
+add_executable(scalar_test ${SRC_DIR}/test_scalar.f90 ${MODULE_SOURCES})
 
 # =========================
 # Module directory

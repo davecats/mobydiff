@@ -34,6 +34,7 @@ module scalar
         apply_scalar_bc_q, BC_DIRICHLET, BC_NEUMANN, &
         PATCH_GENERIC, PATCH_WALL, PATCH_INLET, PATCH_OUTLET
     use :: comm, only: comm_type, exchange_halos
+    use :: turbulence, only: turb_type, turbulence_is_enabled
     implicit none
 
     private
@@ -41,8 +42,8 @@ module scalar
     ! Initial-condition profiles ([scalar.N] init_profile).
     integer(C_INT), parameter, public :: SC_INIT_UNIFORM = 0_C_INT
     integer(C_INT), parameter, public :: SC_INIT_LINEAR_Y = 1_C_INT
-    ! Turbulent-Prandtl models ([scalar.N] prt_model); the Kays-Crawford
-    ! correlation is wired up in increment S2.
+    ! Turbulent-Prandtl models ([scalar.N] prt_model): the per-scalar
+    ! constant prt, or the Kays-Crawford correlation (prt_kays below).
     integer(C_INT), parameter, public :: SC_PRT_CONSTANT = 0_C_INT
     integer(C_INT), parameter, public :: SC_PRT_KAYS = 1_C_INT
     ! Immersed-body wall modes ([scalar.N] ibm_wall); used from S3.
@@ -72,6 +73,12 @@ module scalar
         ! turbulence module returns early when the model is none, so a DNS
         ! run has no tables -- the scalar module owns its own.
         real(C_DOUBLE), allocatable :: invDx(:,:), invDy(:,:), invDz(:,:)  ! (0:nb+1,nBlocks)
+        ! 1-cell dummy standing in for turb%nut when no turbulence model is
+        ! active (that array is then not allocated at all): it gives the
+        ! transport kernel something to map, and every access to it is
+        ! guarded by useNut -- the turb_type "1-cell dummies, uniform device
+        ! maps, all accesses model-guarded" idiom.
+        real(C_DOUBLE), allocatable :: nutNone(:,:,:,:)
         ! Host-only: dataset names and the config bookkeeping.
         character(len=SC_NAME_LEN), allocatable :: name(:)
         logical, allocatable :: sectionSeen(:)
@@ -82,8 +89,8 @@ module scalar
     public :: apply_scalar_config, validate_scalar_config, destroy_scalar
     public :: init_scalar, init_scalar_fields, enter_scalar_data, exit_scalar_data
     public :: scalar_sync, scalar_finish, scalar_transport
-    public :: scalar_names, scalar_min_pr
-    public :: scalar_section_index
+    public :: scalar_names, scalar_min_pr, scalar_min_prt
+    public :: scalar_section_index, prt_kays
 
 contains
 
@@ -118,6 +125,89 @@ contains
         prmin = 1.0d0
         if (sc%n > 0_C_INT) prmin = minval(sc%pr(1:int(sc%n)))
     end function scalar_min_pr
+
+    ! Smallest turbulent Prandtl number any scalar can reach (the binding
+    ! eddy-diffusivity Peclet limit). Under prt_model = kays the correlation
+    ! stays in [prt, 2 prt] -- prt is its Pe_t -> infinity asymptote -- so the
+    ! configured prt is the floor for both models.
+    real(C_DOUBLE) function scalar_min_prt(sc) result(prtmin)
+        type(scalar_type), intent(in) :: sc
+
+        prtmin = 1.0d0
+        if (sc%n > 0_C_INT) prtmin = minval(sc%prt(1:int(sc%n)))
+    end function scalar_min_prt
+
+    ! Kays-Crawford turbulent Prandtl number (Kays 1994; Weigand, Ferguson &
+    ! Crawford 1997), a pointwise function of the turbulent Peclet number
+    ! Pe_t = (nu_t/nu) Pr:
+    !
+    !   1/Pr_t = 1/(2 Prt_inf) + C Pe_t/sqrt(Prt_inf)
+    !            - (C Pe_t)^2 [1 - exp(-1/(C Pe_t sqrt(Prt_inf)))],   C = 0.3
+    !
+    ! Limits: Pe_t -> 0 gives Pr_t = 2 Prt_inf (the molecular limit, inert --
+    ! it multiplies nu_t = 0); Pe_t -> infinity gives Pr_t -> Prt_inf, which
+    ! is the per-scalar [scalar.N] prt (0.85 by default), so `constant` and
+    ! `kays` share one configuration key.
+    !
+    ! NUMERICS: written with x = 1/(C Pe_t sqrt(Prt_inf)), the bracket is
+    ! (C Pe_t)^2 [1 - exp(-x)] = a/b - 1/(2b^2) + ... and the leading a/b
+    ! cancels the second term of the sum exactly -- catastrophically so once
+    ! Pe_t is large. The small-x branch therefore evaluates the analytically
+    ! equivalent series
+    !
+    !   1/Pr_t = (1/Prt_inf) [ 1 - x/3! + x^2/4! - x^3/5! + ... ]
+    !
+    ! which is also where the Pe_t -> infinity limit is exact by inspection.
+    ! The two branches agree to round-off at the x = 1/2 crossover.
+    real(C_DOUBLE) function prt_kays(pet, prtinf) result(prt)
+        !$omp declare target
+        real(C_DOUBLE), intent(in) :: pet      ! turbulent Peclet number
+        real(C_DOUBLE), intent(in) :: prtinf   ! Pr_t at Pe_t -> infinity
+
+        real(C_DOUBLE), parameter :: CKC = 0.3d0
+        real(C_DOUBLE) :: a, b, x, u, sum, invprt
+        integer :: m
+
+        b = sqrt(prtinf)
+        a = CKC*max(pet, 0.0d0)
+        if (a*b < 1.0d-300) then
+            prt = 2.0d0*prtinf              ! the molecular limit
+            return
+        end if
+        x = 1.0d0/(a*b)
+
+        if (x < 0.5d0) then
+            sum = 1.0d0
+            u = -x/6.0d0                    ! the m = 1 term, -x/3!
+            do m = 1, 16                    ! machine precision for x < 1/2
+                sum = sum + u
+                u = -u*x/real(m + 3, C_DOUBLE)
+            end do
+            invprt = sum/prtinf
+        else
+            invprt = 0.5d0/prtinf + a/b - a*a*(1.0d0 - exp(-x))
+        end if
+
+        prt = 1.0d0/invprt
+    end function prt_kays
+
+    ! Face eddy diffusivity nu_t/Pr_t for one scalar. Called per face inside
+    ! the transport kernel, so it is a declare-target pure function.
+    real(C_DOUBLE) function eddy_diffusivity(nutFace, pr, prt, prtModel, re) result(d)
+        !$omp declare target
+        real(C_DOUBLE), intent(in) :: nutFace, pr, prt, re
+        integer(C_INT), intent(in) :: prtModel
+
+        real(C_DOUBLE) :: nt
+
+        nt = max(nutFace, 0.0d0)
+        if (prtModel == SC_PRT_KAYS) then
+            ! Pe_t = (nu_t/nu) Pr = nu_t Re Pr.
+            d = nt/prt_kays(nt*re*pr, prt)
+        else
+            d = nt/prt
+        end if
+    end function eddy_diffusivity
 
     !--------------------------------------------------------------------
     ! Configuration
@@ -446,12 +536,25 @@ contains
                 case (PATCH_INLET)
                     do is = 1, int(sc%n)
                         call resolve_scalar_row(sc, is, face_id, BC_DIRICHLET, &
-                            sc%inlet(is), has_terminal)
+                            sc%inlet(is), has_terminal, strict=.true.)
                     end do
-                case (PATCH_WALL, PATCH_OUTLET, PATCH_GENERIC)
+                case (PATCH_OUTLET, PATCH_GENERIC)
                     do is = 1, int(sc%n)
                         call resolve_scalar_row(sc, is, face_id, BC_NEUMANN, 0.0d0, &
-                            has_terminal)
+                            has_terminal, strict=.true.)
+                    end do
+                case (PATCH_WALL)
+                    ! A wall is the ONE face kind where both scalar types are
+                    ! physical: adiabatic (Neumann 0, the default) and
+                    ! isothermal / fixed-concentration (Dirichlet) are equally
+                    ! valid, so an explicit _type key is HONOURED here rather
+                    ! than treated as a contradiction (Section 5 of
+                    ! docs/next_session_scalar.md: "unless the ini gives a
+                    ! type/value"). Inlet and outlet stay strict: an inlet must
+                    ! impose a value, an outlet must be zero-gradient.
+                    do is = 1, int(sc%n)
+                        call resolve_scalar_row(sc, is, face_id, BC_NEUMANN, 0.0d0, &
+                            has_terminal, strict=.false.)
                     end do
                 end select
             end do
@@ -475,6 +578,10 @@ contains
             end do
         end do
 
+        if (allocated(sc%nutNone)) deallocate(sc%nutNone)
+        allocate(sc%nutNone(0:0,0:0,0:0,1))
+        sc%nutNone = 0.0d0
+
         if (allocated(sc%varList)) deallocate(sc%varList)
         allocate(sc%varList(int(sc%n)))
         do is = 1, int(sc%n)
@@ -490,17 +597,19 @@ contains
         end if
     end subroutine init_scalar
 
-    ! Set-if-unset with the A0 contradiction rule: an explicit _type key that
-    ! disagrees with the declared patch is a hard config error.
-    subroutine resolve_scalar_row(sc, is, face_id, want, value, terminal)
+    ! Set-if-unset with the A0 contradiction rule: on a strict face an
+    ! explicit _type key that disagrees with the declared patch is a hard
+    ! config error; on a permissive one (a wall) it simply wins.
+    subroutine resolve_scalar_row(sc, is, face_id, want, value, terminal, strict)
         type(scalar_type), intent(inout) :: sc
         integer, intent(in) :: is, face_id
         integer(C_INT), intent(in) :: want
         real(C_DOUBLE), intent(in) :: value
         logical, intent(in) :: terminal
+        logical, intent(in) :: strict
 
         if (sc%bcTypeSet(is,face_id)) then
-            if (sc%bcType(is,face_id) /= want) then
+            if (strict .and. sc%bcType(is,face_id) /= want) then
                 if (terminal) print '(a,i0,a,i0)', &
                     " error: explicit [scalar.N] _type key contradicts the declared " // &
                     "patch type on face ", face_id, ", scalar ", is
@@ -566,7 +675,7 @@ contains
         !$omp target enter data map(to: sc)
         !$omp target enter data map(to: sc%pr, sc%prt, sc%prtModel, sc%source, &
         !$omp& sc%initValue, sc%ibmValue, sc%inlet, sc%ibmMode, sc%initProfile, &
-        !$omp& sc%bcType, sc%bcValue, sc%invDx, sc%invDy, sc%invDz)
+        !$omp& sc%bcType, sc%bcValue, sc%invDx, sc%invDy, sc%invDz, sc%nutNone)
 #endif
     end subroutine enter_scalar_data
 
@@ -578,7 +687,7 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target exit data map(delete: sc%pr, sc%prt, sc%prtModel, sc%source, &
         !$omp& sc%initValue, sc%ibmValue, sc%inlet, sc%ibmMode, sc%initProfile, &
-        !$omp& sc%bcType, sc%bcValue, sc%invDx, sc%invDy, sc%invDz)
+        !$omp& sc%bcType, sc%bcValue, sc%invDx, sc%invDy, sc%invDz, sc%nutNone)
         !$omp target exit data map(delete: sc)
 #endif
     end subroutine exit_scalar_data
@@ -608,6 +717,7 @@ contains
 
         call deallocate_config(sc)
         if (allocated(sc%varList)) deallocate(sc%varList)
+        if (allocated(sc%nutNone)) deallocate(sc%nutNone)
         if (allocated(sc%invDx)) deallocate(sc%invDx)
         if (allocated(sc%invDy)) deallocate(sc%invDy)
         if (allocated(sc%invDz)) deallocate(sc%invDz)
@@ -644,37 +754,73 @@ contains
     ! shared TVD increment lands.
     !
     ! Diffusion: face-flux form on the module's own inverse centre-to-centre
-    ! distances. S1 is molecular only (D = 1/(Re Pr)); the turbulent
-    ! nut/Pr_t part is increment S2 and the immersed-body coefficients S3.
-    subroutine scalar_transport(sc, blk, dns, dt_alpha, dt_beta)
+    ! distances, with the face diffusivity
+    !
+    !   D_face = 1/(Re Pr) + 1/2 (nu_t,L + nu_t,R)/Pr_t(face)
+    !
+    ! reading turb%nut -- the ONE blended eddy viscosity that LES (WALE /
+    ! Smagorinsky), RANS (SST) and IDDES all write, so a single code path
+    ! serves all three models (increment S2). Pr_t is the per-scalar constant
+    ! or the Kays-Crawford correlation, selected by [scalar.N] prt_model.
+    ! Immersed-body coefficients are still increment S3.
+    !
+    ! The nut ghost cells follow the momentum SGS convention: the halo
+    ! exchange fills them across block and rank boundaries, and they stay at
+    ! zero on a physical face (a resolved wall has nu_t -> 0 there anyway;
+    ! the T3 wall functions write the wall-cell value into the no-slip
+    ! ghosts, which this reads for free).
+    subroutine scalar_transport(sc, blk, dns, turb, dt_alpha, dt_beta)
+        type(scalar_type), intent(in) :: sc
+        type(block_set_type), intent(inout) :: blk
+        type(dns_type), intent(in) :: dns
+        type(turb_type), intent(in) :: turb
+        real(C_DOUBLE), intent(in) :: dt_alpha, dt_beta
+
+        if (.not. scalars_enabled(sc)) return
+
+        ! With no turbulence model turb%nut does not exist; hand the kernel
+        ! the 1-cell dummy and switch the eddy term off, which makes the
+        ! arithmetic byte-identical to the molecular-only (S1) kernel.
+        if (turbulence_is_enabled(turb) .and. allocated(turb%nut)) then
+            call scalar_transport_kernel(sc, blk, dns, dt_alpha, dt_beta, turb%nut, .true.)
+        else
+            call scalar_transport_kernel(sc, blk, dns, dt_alpha, dt_beta, sc%nutNone, .false.)
+        end if
+    end subroutine scalar_transport
+
+    subroutine scalar_transport_kernel(sc, blk, dns, dt_alpha, dt_beta, nut, useNut)
         type(scalar_type), intent(in) :: sc
         type(block_set_type), intent(inout) :: blk
         type(dns_type), intent(in) :: dns
         real(C_DOUBLE), intent(in) :: dt_alpha, dt_beta
+        real(C_DOUBLE), intent(in) :: nut(0:,0:,0:,1:)
+        logical, intent(in) :: useNut
 
         integer :: i, j, k, b, is, nx, ny, nz, nBlocks, nScal, var, scr
-        real(C_DOUBLE) :: ire, uw, ue, vs, vn, wb, wt, divu
-        real(C_DOUBLE) :: s0, conv, diff, rhs, dcoef, fw, fe
+        real(C_DOUBLE) :: ire, re, uw, ue, vs, vn, wb, wt, divu
+        real(C_DOUBLE) :: s0, conv, diff, rhs, dm, fw, fe
+        real(C_DOUBLE) :: ntw, nte, nts, ntn, ntb, ntt
+        real(C_DOUBLE) :: dxw, dxe, dys, dyn, dzb, dzt
         logical :: skew
         logical :: clw, cle, cls, cln, clb, clt
-
-        if (.not. scalars_enabled(sc)) return
 
         nx = int(blk%nb(1))
         ny = int(blk%nb(2))
         nz = int(blk%nb(3))
         nBlocks = int(blk%nBlocks)
         nScal = int(sc%n)
-        ire = 1.0d0/dns%re
+        re = dns%re
+        ire = 1.0d0/re
         skew = logical(dns%conv_skew)
 
         !$omp target teams distribute parallel do collapse(4) &
-        !$omp& map(to: ire, dt_alpha, dt_beta, skew, nScal, nx, ny, nz, &
-        !$omp& blk%q, blk%d1x, blk%d1y, blk%d1z, blk%physLow, blk%physHigh, &
-        !$omp& sc%pr, sc%source, sc%invDx, sc%invDy, sc%invDz) &
+        !$omp& map(to: ire, re, dt_alpha, dt_beta, skew, useNut, nScal, nx, ny, nz, &
+        !$omp& blk%q, blk%d1x, blk%d1y, blk%d1z, blk%physLow, blk%physHigh, nut, &
+        !$omp& sc%pr, sc%prt, sc%prtModel, sc%source, sc%invDx, sc%invDy, sc%invDz) &
         !$omp& map(tofrom: blk%qs, blk%oldrhs) &
         !$omp& private(i,j,k,b,is,var,scr,uw,ue,vs,vn,wb,wt,divu, &
-        !$omp& s0,conv,diff,rhs,dcoef,fw,fe,clw,cle,cls,cln,clb,clt)
+        !$omp& s0,conv,diff,rhs,dm,fw,fe,clw,cle,cls,cln,clb,clt, &
+        !$omp& ntw,nte,nts,ntn,ntb,ntt,dxw,dxe,dys,dyn,dzb,dzt)
         do b = 1, nBlocks
         do k = 1, nz
             do j = 1, ny
@@ -704,6 +850,21 @@ contains
                     clb = k == 1  .and. blk%physLow(3,b)  == FACE_CLOSED
                     clt = k == nz .and. blk%physHigh(3,b) == FACE_CLOSED
 
+                    ! Face eddy viscosities: the same 1/2 (L + R) average the
+                    ! momentum SGS correction uses for its face-normal terms.
+                    ! Scalar-independent, so they are hoisted out of the
+                    ! scalar loop; Pr_t is not (it may be per-scalar).
+                    ntw = 0.0d0; nte = 0.0d0; nts = 0.0d0
+                    ntn = 0.0d0; ntb = 0.0d0; ntt = 0.0d0
+                    if (useNut) then
+                        ntw = 0.5d0*(nut(i-1,j,k,b) + nut(i,j,k,b))
+                        nte = 0.5d0*(nut(i,j,k,b) + nut(i+1,j,k,b))
+                        nts = 0.5d0*(nut(i,j-1,k,b) + nut(i,j,k,b))
+                        ntn = 0.5d0*(nut(i,j,k,b) + nut(i,j+1,k,b))
+                        ntb = 0.5d0*(nut(i,j,k-1,b) + nut(i,j,k,b))
+                        ntt = 0.5d0*(nut(i,j,k,b) + nut(i,j,k+1,b))
+                    end if
+
                     do is = 1, nScal
                         var = VAR_S0 + is
                         scr = SCR_S0 + is
@@ -717,20 +878,40 @@ contains
                               - wb*0.5d0*(blk%q(i,j,k-1,var,b) + s0))*blk%d1z(k,VAR_P,b)
                         if (skew) conv = conv - s0*divu
 
-                        dcoef = ire/sc%pr(is)
-                        fw = merge(0.0d0, dcoef*(s0 - blk%q(i-1,j,k,var,b)) &
+                        ! Molecular diffusivity + the eddy part on each face.
+                        ! With useNut off every face keeps dm exactly, so the
+                        ! S1 arithmetic is reproduced bit-for-bit.
+                        dm = ire/sc%pr(is)
+                        dxw = dm; dxe = dm; dys = dm
+                        dyn = dm; dzb = dm; dzt = dm
+                        if (useNut) then
+                            dxw = dm + eddy_diffusivity(ntw, sc%pr(is), sc%prt(is), &
+                                sc%prtModel(is), re)
+                            dxe = dm + eddy_diffusivity(nte, sc%pr(is), sc%prt(is), &
+                                sc%prtModel(is), re)
+                            dys = dm + eddy_diffusivity(nts, sc%pr(is), sc%prt(is), &
+                                sc%prtModel(is), re)
+                            dyn = dm + eddy_diffusivity(ntn, sc%pr(is), sc%prt(is), &
+                                sc%prtModel(is), re)
+                            dzb = dm + eddy_diffusivity(ntb, sc%pr(is), sc%prt(is), &
+                                sc%prtModel(is), re)
+                            dzt = dm + eddy_diffusivity(ntt, sc%pr(is), sc%prt(is), &
+                                sc%prtModel(is), re)
+                        end if
+
+                        fw = merge(0.0d0, dxw*(s0 - blk%q(i-1,j,k,var,b)) &
                             *sc%invDx(i,b), clw)
-                        fe = merge(0.0d0, dcoef*(blk%q(i+1,j,k,var,b) - s0) &
+                        fe = merge(0.0d0, dxe*(blk%q(i+1,j,k,var,b) - s0) &
                             *sc%invDx(i+1,b), cle)
                         diff = (fe - fw)*blk%d1x(i,VAR_P,b)
-                        fw = merge(0.0d0, dcoef*(s0 - blk%q(i,j-1,k,var,b)) &
+                        fw = merge(0.0d0, dys*(s0 - blk%q(i,j-1,k,var,b)) &
                             *sc%invDy(j,b), cls)
-                        fe = merge(0.0d0, dcoef*(blk%q(i,j+1,k,var,b) - s0) &
+                        fe = merge(0.0d0, dyn*(blk%q(i,j+1,k,var,b) - s0) &
                             *sc%invDy(j+1,b), cln)
                         diff = diff + (fe - fw)*blk%d1y(j,VAR_P,b)
-                        fw = merge(0.0d0, dcoef*(s0 - blk%q(i,j,k-1,var,b)) &
+                        fw = merge(0.0d0, dzb*(s0 - blk%q(i,j,k-1,var,b)) &
                             *sc%invDz(k,b), clb)
-                        fe = merge(0.0d0, dcoef*(blk%q(i,j,k+1,var,b) - s0) &
+                        fe = merge(0.0d0, dzt*(blk%q(i,j,k+1,var,b) - s0) &
                             *sc%invDz(k+1,b), clt)
                         diff = diff + (fe - fw)*blk%d1z(k,VAR_P,b)
 
@@ -744,7 +925,7 @@ contains
         end do
         end do
         !$omp end target teams distribute parallel do
-    end subroutine scalar_transport
+    end subroutine scalar_transport_kernel
 
     ! Substage tail: qs -> q for the scalar slots, then the ghost/halo sync.
     ! Runs AFTER the pressure projection returns -- the scalar never enters
