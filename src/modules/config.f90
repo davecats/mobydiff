@@ -5,7 +5,7 @@ module config
     use :: turbulence, only: turb_type, TURB_NONE, TURB_LES, TURB_RANS, TURB_IDDES, &
         IDDES_DELTA_CBRT, IDDES_DELTA_IDDES
     use :: les_model, only: les_type, LES_NONE, LES_SMAGORINSKY, LES_WALE
-    use :: pressure_solver, only: pressure_solver_type
+    use :: pressure_solver, only: pressure_solver_type, PRESSURE_JACOBI, PRESSURE_REDBLACK
     use :: boundary, only: boundary_type, boundary_face_id, &
         PATCH_GENERIC, PATCH_WALL, PATCH_INLET, PATCH_OUTLET, &
         PROFILE_CONSTANT, PROFILE_PARABOLA, PROFILE_BLASIUS
@@ -223,6 +223,18 @@ subroutine apply_config_value(section, key, value, dns, g, turb, les, ps, bc, c,
         case ("sor")
             call read_real(value, ps%omega, line_no)
             seen%pressure_sor = .true.
+        case ("solver")
+            ! jacobi (default: damped Jacobi / Chebyshev-Jacobi, the 2:1-interface
+            ! projection) | redblack (the original single-level red-black SOR).
+            select case (trim(lower(clean_string(value))))
+            case ("jacobi", "")
+                ps%method = PRESSURE_JACOBI
+            case ("redblack", "red-black", "red_black", "sor")
+                ps%method = PRESSURE_REDBLACK
+            case default
+                if (terminal_output) print *, &
+                    "warning: unknown pressure solver on input line", line_no, ": ", trim(value)
+            end select
         case ("accel")
             ! none | jacobi (default) or chebyshev (Chebyshev-Jacobi).
             select case (trim(lower(clean_string(value))))

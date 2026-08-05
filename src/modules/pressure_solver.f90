@@ -11,9 +11,18 @@ module pressure_solver
 
     private
     public :: pressure_solver_type, init_pressure_solver, pressure_projection
+    public :: PRESSURE_JACOBI, PRESSURE_REDBLACK
+
+    ! Pressure smoother family ([pressure] solver): the current damped-Jacobi /
+    ! Chebyshev-Jacobi projection (default), or the original single-level
+    ! red-black SOR restored as a selectable alternative. They are mutually
+    ! exclusive with the 2:1 interface -- red-black is single-level only.
+    integer(C_INT), parameter :: PRESSURE_JACOBI = 0_C_INT
+    integer(C_INT), parameter :: PRESSURE_REDBLACK = 1_C_INT
 
     type :: pressure_solver_type
         integer(C_INT) :: nIter=3
+        integer(C_INT) :: method=PRESSURE_JACOBI
         ! Damped-Jacobi relaxation factor. The pressure projection is now a
         ! simple (un-coloured) damped Jacobi iteration; for the Poisson-like
         ! projection operator the high-frequency (checkerboard) mode forces
@@ -56,6 +65,7 @@ contains
         character(len=32) :: env
         real(C_DOUBLE) :: pi
         integer(C_INT) :: nMax
+        integer :: dir
 
         ! Damped Jacobi needs no red-black colouring, so the even-global-size
         ! restriction of the red-black scheme no longer applies.
@@ -80,6 +90,22 @@ contains
                     " Chebyshev-Jacobi projection: lmin=", ps%chebLmin, " lmax=", ps%chebLmax
             end if
         end if
+
+        ! Red-black SOR: kept mutually exclusive with the 2:1 interface (which it
+        ! predates and never handled) and with Chebyshev acceleration; and, like
+        ! the original scheme, it needs even global sizes in periodic directions
+        ! for a consistent colouring.
+        if (ps%method == PRESSURE_REDBLACK) then
+            if (ps%cheb) error stop &
+                "[pressure] solver = redblack is incompatible with accel = chebyshev"
+            if (dns%block_refine_levels > 1_C_INT .or. dns%block_refine_body .or. &
+                dns%block_refine_nboxes > 0_C_INT) error stop &
+                "[pressure] solver = redblack does not support 2:1 block refinement"
+            do dir = 1, 3
+                if (bc%isPeriodic(dir) .and. mod(dns%globalSize(dir), 2_C_INT) /= 0_C_INT) &
+                    error stop "red-black pressure solver requires even global sizes in periodic directions"
+            end do
+        end if
     end subroutine init_pressure_solver
 
     subroutine pressure_projection(ps, blk, dns, dt_gamma, ibm, bc, c)
@@ -97,6 +123,11 @@ contains
         logical(C_BOOL) :: outLow(3), outHigh(3), refd(3)
         logical :: anyOutlet
         integer(C_INT) :: phiMode(NFACES)
+
+        if (ps%method == PRESSURE_REDBLACK) then
+            call redblack_projection(ps, blk, dt_gamma, ibm, bc, c)
+            return
+        end if
 
         call allocate_phi(blk)
         if (ps%cheb) call allocate_delta(blk)
@@ -478,5 +509,150 @@ contains
             face_grad_corr = face_grad(fk, atBnd, d1f, refined)
         end if
     end function face_grad_corr
+
+    ! -------------------------------------------------------------------------
+    ! Red-black SOR projection ([pressure] solver = redblack): the original
+    ! coloured Gauss-Seidel scheme, restored as a selectable single-level
+    ! alternative to damped Jacobi. In-place over-relaxed sweeps; the same-level
+    ! halo exchange refreshes the velocity each colour (pressure only at the
+    ! end). It reuses the SPD diagonal metric face_grad_denom for BOTH the
+    ! divergence denominator AND the in-place face corrections: applying phi in
+    ! place (no ghost read) means the correction metric equals the diagonal
+    ! metric (d1f interior, 0 pinned, 2*d1f for the Dirichlet-p outlet), so the
+    ! outlet is handled exactly as in the Jacobi path and, on outlet-free grids,
+    ! the sweep is identical to the original red-black scheme.
+    subroutine redblack_projection(ps, blk, dt_gamma, ibm, bc, c)
+        type(pressure_solver_type), intent(in) :: ps
+        type(block_set_type), intent(inout) :: blk
+        real(C_DOUBLE), intent(in) :: dt_gamma
+        type(ibm_type), intent(in) :: ibm
+        type(boundary_type), intent(in) :: bc
+        type(comm_type), intent(inout) :: c
+
+        integer(C_INT) :: iIter, color, dir
+        logical(C_BOOL) :: outLow(3), outHigh(3), refd(3)
+
+        refd = blk%refMask == 1_C_INT
+        do dir = 1, 3
+            outLow(dir)  = bc%facePatchType(boundary_face_id(int(dir), 0)) == PATCH_OUTLET
+            outHigh(dir) = bc%facePatchType(boundary_face_id(int(dir), 1)) == PATCH_OUTLET
+        end do
+
+        do iIter = 1_C_INT, ps%nIter
+            do color = 1_C_INT, 0_C_INT, -1_C_INT
+                call redblack_sweep(ps, blk, dt_gamma, ibm, color, outLow, outHigh, refd)
+                call apply_bc(blk, bc)
+                if (iIter == ps%nIter .and. color == 0_C_INT) then
+                    call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W, VAR_P])
+                else
+                    call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W], interp=.false.)
+                end if
+            end do
+        end do
+    end subroutine redblack_projection
+
+    ! One red-black sweep of `color`. Each block sweeps from its halo layer (0)
+    ! redundantly with the owning neighbour except on physical boundaries -- the
+    ! rank-level red-black trick one level down -- so results are independent of
+    ! the block/rank layout; parity is anchored to the global index space via
+    ! the block origin. `sor` = ps%omega (the config "sor"; over-relaxation > 1
+    ! is allowed here, unlike the Jacobi damping).
+    subroutine redblack_sweep(ps, blk, dt_gamma, ibm, color, outLow, outHigh, refd)
+        type(pressure_solver_type), intent(in) :: ps
+        type(block_set_type), intent(inout) :: blk
+        real(C_DOUBLE), intent(in) :: dt_gamma
+        type(ibm_type), intent(in) :: ibm
+        integer(C_INT), intent(in) :: color
+        logical(C_BOOL), intent(in) :: outLow(3), outHigh(3), refd(3)
+
+        real(C_DOUBLE) :: phi, denom, idt, sor, div
+        real(C_DOUBLE) :: gLo1, gHi1, gLo2, gHi2, gLo3, gHi3
+        real(C_DOUBLE) :: mu_u_i, mu_u_ip, mu_v_j, mu_v_jp, mu_w_k, mu_w_kp
+        integer(C_INT) :: i, ip, j, jp, k, kp, b, nBlocks, nLowerHaloDirections, iColor, nColorX
+        integer(C_INT) :: iLo, jLo, kLo, colorOffset
+        integer(C_INT) :: hi(1:3)
+
+        hi = blk%nb(1:3)
+        sor = ps%omega
+        nColorX = (hi(1) + 2_C_INT)/2_C_INT
+        nBlocks = blk%nBlocks
+        idt = 1.0_C_DOUBLE/dt_gamma
+
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target teams distribute parallel do collapse(4) &
+        !$omp& map(to: color, nColorX, sor, idt, dt_gamma, hi(1:3), &
+        !$omp& outLow(1:3), outHigh(1:3), refd(1:3), &
+        !$omp& blk%origin, blk%physLow, blk%physHigh, &
+        !$omp& blk%d1x, blk%d1y, blk%d1z, ibm%mu) &
+        !$omp& map(tofrom: blk%q) &
+        !$omp& private(i,ip,j,jp,k,kp,b,iColor,iLo,jLo,kLo,colorOffset, &
+        !$omp& phi,denom,div,nLowerHaloDirections, gLo1,gHi1,gLo2,gHi2,gLo3,gHi3, &
+        !$omp& mu_u_i,mu_u_ip,mu_v_j,mu_v_jp,mu_w_k,mu_w_kp)
+#endif
+        DO b=1_C_INT,nBlocks
+        DO k=0_C_INT,hi(3)
+            DO j=0_C_INT,hi(2)
+                DO iColor=0_C_INT,nColorX-1_C_INT
+                    iLo = merge(1_C_INT, 0_C_INT, blk%physLow(1,b) /= 0_C_INT)
+                    jLo = merge(1_C_INT, 0_C_INT, blk%physLow(2,b) /= 0_C_INT)
+                    kLo = merge(1_C_INT, 0_C_INT, blk%physLow(3,b) /= 0_C_INT)
+                    if (j < jLo .or. k < kLo) cycle
+                    colorOffset = modulo(blk%origin(1,b) + blk%origin(2,b) + blk%origin(3,b), 2_C_INT)
+                    i = iLo + modulo(color - modulo(iLo+j+k+colorOffset, 2_C_INT), 2_C_INT) &
+                        + 2_C_INT*iColor
+                    if (i > hi(1)) cycle
+
+                    nLowerHaloDirections = 0_C_INT
+                    if (i == 0_C_INT) nLowerHaloDirections = nLowerHaloDirections + 1_C_INT
+                    if (j == 0_C_INT) nLowerHaloDirections = nLowerHaloDirections + 1_C_INT
+                    if (k == 0_C_INT) nLowerHaloDirections = nLowerHaloDirections + 1_C_INT
+                    if (nLowerHaloDirections > 1_C_INT) cycle
+
+                    ip = i + 1; jp = j + 1; kp = k + 1
+
+                    mu_u_i  = ibm%mu(i,j,k,VAR_U,b);  mu_u_ip = ibm%mu(ip,j,k,VAR_U,b)
+                    mu_v_j  = ibm%mu(i,j,k,VAR_V,b);  mu_v_jp = ibm%mu(i,jp,k,VAR_V,b)
+                    mu_w_k  = ibm%mu(i,j,k,VAR_W,b);  mu_w_kp = ibm%mu(i,j,kp,VAR_W,b)
+
+                    ! SPD face metric (0 pinned, 2*d1f outlet, d1f otherwise); the
+                    ! in-place correction reuses the same value as the diagonal.
+                    gLo1 = face_grad_denom(blk%physLow(1,b),  i == 1_C_INT, blk%d1x(i,VAR_U,b),  outLow(1),  refd(1))
+                    gHi1 = face_grad_denom(blk%physHigh(1,b), i == hi(1),   blk%d1x(ip,VAR_U,b), outHigh(1), refd(1))
+                    gLo2 = face_grad_denom(blk%physLow(2,b),  j == 1_C_INT, blk%d1y(j,VAR_V,b),  outLow(2),  refd(2))
+                    gHi2 = face_grad_denom(blk%physHigh(2,b), j == hi(2),   blk%d1y(jp,VAR_V,b), outHigh(2), refd(2))
+                    gLo3 = face_grad_denom(blk%physLow(3,b),  k == 1_C_INT, blk%d1z(k,VAR_W,b),  outLow(3),  refd(3))
+                    gHi3 = face_grad_denom(blk%physHigh(3,b), k == hi(3),   blk%d1z(kp,VAR_W,b), outHigh(3), refd(3))
+
+                    denom = (gLo1*mu_u_i + gHi1*mu_u_ip)*blk%d1x(i,VAR_P,b) &
+                          + (gLo2*mu_v_j + gHi2*mu_v_jp)*blk%d1y(j,VAR_P,b) &
+                          + (gLo3*mu_w_k + gHi3*mu_w_kp)*blk%d1z(k,VAR_P,b)
+
+                    div = (blk%q(ip,j,k,VAR_U,b)-blk%q(i,j,k,VAR_U,b))*blk%d1x(i,VAR_P,b) &
+                        + (blk%q(i,jp,k,VAR_V,b)-blk%q(i,j,k,VAR_V,b))*blk%d1y(j,VAR_P,b) &
+                        + (blk%q(i,j,kp,VAR_W,b)-blk%q(i,j,k,VAR_W,b))*blk%d1z(k,VAR_P,b)
+
+                    phi = -sor*div/denom
+
+                    blk%q(i,j,k,VAR_P,b) = blk%q(i,j,k,VAR_P,b) + phi*idt
+
+                    ! Symmetric correction: every non-pinned face of the cell is
+                    ! moved by phi*metric*mu; the neighbour of the other colour
+                    ! moves the shared face from its side, so over both colours a
+                    ! face sees (phi_below - phi_above)*d1f -- the same operator as
+                    ! the Jacobi apply, here in place.
+                    blk%q(i,j,k,VAR_U,b)  = blk%q(i,j,k,VAR_U,b)  - phi*gLo1*mu_u_i
+                    blk%q(ip,j,k,VAR_U,b) = blk%q(ip,j,k,VAR_U,b) + phi*gHi1*mu_u_ip
+                    blk%q(i,j,k,VAR_V,b)  = blk%q(i,j,k,VAR_V,b)  - phi*gLo2*mu_v_j
+                    blk%q(i,jp,k,VAR_V,b) = blk%q(i,jp,k,VAR_V,b) + phi*gHi2*mu_v_jp
+                    blk%q(i,j,k,VAR_W,b)  = blk%q(i,j,k,VAR_W,b)  - phi*gLo3*mu_w_k
+                    blk%q(i,j,kp,VAR_W,b) = blk%q(i,j,kp,VAR_W,b) + phi*gHi3*mu_w_kp
+                END DO
+            END DO
+        END DO
+        END DO
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp end target teams distribute parallel do
+#endif
+    end subroutine redblack_sweep
 
 end module pressure_solver
