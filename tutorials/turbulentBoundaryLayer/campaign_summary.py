@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""Campaign summary: c_f(Re_theta) and H(Re_theta) for the four boundaryLayer
-cases (trip x resolution 2x2) vs the SIMSON spectral reference."""
+"""Campaign summary: c_f(Re_theta) and H(Re_theta) vs the SIMSON spectral
+reference, showing the two fixes that close the gap -- reducing the (too
+aggressive) trip 0.15->0.03, then refining the streamwise grid Dx+ 8->4 (to
+match Dz+). The wall-normal-resolution experiments (removed) were a minor lever."""
 import h5py
 import numpy as np
 import matplotlib
@@ -24,10 +26,9 @@ def curves(fn):
 
 
 cases = [
-    ("turbulent_two (trip 0.15, std grid)", "turbulent_two/production_stats.h5", "C0"),
-    ("case i  (trip 0.03, std grid)", "turbulent_lowtrip/production_stats.h5", "C1"),
-    ("case ii (trip 0.15, fine outer)", "turbulent_finewall/production_stats.h5", "C2"),
-    ("case iii(trip 0.03, fine outer)", "turbulent_lowtrip_finewall/production_stats.h5", "C4"),
+    ("baseline: trip 0.15, dx+~8", "turbulent_two/production_stats.h5", "C0"),
+    ("+ low trip 0.03 (dx+~8)", "turbulent_lowtrip/production_stats.h5", "C1"),
+    ("+ fine streamwise dx+~4", "lowtrip_srdgridy_finex/production_stats.h5", "C2"),
 ]
 s = h5py.File("turbulent_two/passivewall.hdf5", "r")
 ys = s["mesh"]["y"][...]; us = s["mean"]["u"][...]; Ues = us[:, -1]
@@ -49,6 +50,6 @@ ax[0].plot(rs[val][o], cfs[val][o], "k-", lw=2, label="SIMSON (spectral)")
 ax[1].plot(rs[val][o], Hs[val][o], "k-", lw=2, label="SIMSON (spectral)")
 ax[0].set_xlim(400, 900); ax[0].set_ylim(0.0042, 0.0052); ax[0].set_xlabel(r"$Re_\theta$"); ax[0].set_ylabel(r"$c_f$"); ax[0].legend(fontsize=8); ax[0].set_title("skin friction")
 ax[1].set_xlim(400, 900); ax[1].set_ylim(1.48, 1.58); ax[1].set_xlabel(r"$Re_\theta$"); ax[1].set_ylabel("H"); ax[1].legend(fontsize=8); ax[1].set_title("shape factor")
-fig.suptitle("boundaryLayer campaign: trip x resolution vs SIMSON")
+fig.suptitle("boundaryLayer: closing the c_f gap to SIMSON (trip, then streamwise resolution)")
 fig.tight_layout(); fig.savefig("campaign_summary.png", dpi=150)
 print("wrote campaign_summary.png")
