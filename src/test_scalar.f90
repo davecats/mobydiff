@@ -11,9 +11,16 @@
 ! and Pe_t -> infinity (Pr_t -> Prt_inf), the latter at Pe_t = 1e300 where
 ! the direct expression would overflow a^2 and cancel to nothing.
 ! Run: mpirun -n 1 build_cpu/scalar_test
+!
+! Increment S5a adds the THERMAL WALL FUNCTION's two correlations to the same
+! driver, against the same kind of independent mpmath transcription:
+! Jayatilleke's P, the thermal sublayer thickness y+_T (a root, so the
+! bisection is checked against mpmath's), and the wall-cell eddy diffusivity
+! itself -- including that it is EXACTLY zero on the conduction branch and
+! continuous across the switch.
 program test_scalar
     use, intrinsic :: iso_c_binding
-    use :: scalar, only: prt_kays
+    use :: scalar, only: prt_kays, jayatilleke_p, thermal_yplus, wall_diffusivity
     implicit none
 
     integer :: nfail
@@ -76,6 +83,49 @@ program test_scalar
     ! --- monotonicity: Pr_t falls from 2 Prt_inf to Prt_inf --------------
     call check_monotone()
 
+    ! === S5a: the thermal wall function ==================================
+    ! Jayatilleke's P(Pr/Pr_t): zero at Pr = Pr_t (the Reynolds analogy),
+    ! negative below it, and strongly positive for high-Pr fluids.
+    call check("P(0.71/0.85)", jayatilleke_p(0.71d0/0.85d0), -1.49146084477208598d0)
+    call check("P(1)",         jayatilleke_p(1.0d0),          0.0d0)
+    call check("P(2)",         jayatilleke_p(2.0d0),          8.03917714490408820d0)
+    call check("P(0.1)",       jayatilleke_p(0.1d0),         -9.72250491069673163d0)
+    call check("P(7)",         jayatilleke_p(7.0d0),         38.6626559386263292d0)
+    call check("P(100)",       jayatilleke_p(100.0d0),      322.297542629418095d0)
+
+    ! y+_T, the thermal sublayer thickness: the root of Pr y+ = Pr_t
+    ! [ln(E y+)/kappa + P] beyond the minimum of the difference. Air
+    ! (Pr < Pr_t) has a slightly THICKER thermal sublayer than the momentum
+    ! y+_lam = 11.530; oil (Pr = 7) a much thinner one; a liquid metal
+    ! (Pr = 0.025) is conductive far into the log layer.
+    call check("ypt(0.71,0.85)",  thermal_yplus(0.71d0, 0.85d0, jayatilleke_p(0.71d0/0.85d0)), &
+        12.1776453329441076d0)
+    call check("ypt(1,0.85)",     thermal_yplus(1.0d0, 0.85d0, jayatilleke_p(1.0d0/0.85d0)), &
+        11.0047461578706663d0)
+    call check("ypt(7,0.9)",      thermal_yplus(7.0d0, 0.9d0, jayatilleke_p(7.0d0/0.9d0)), &
+        6.81462087400107665d0)
+    call check("ypt(0.025,0.85)", thermal_yplus(0.025d0, 0.85d0, jayatilleke_p(0.025d0/0.85d0)), &
+        284.245504876139746d0)
+    call check("ypt(0.71,0.9)",   thermal_yplus(0.71d0, 0.9d0, jayatilleke_p(0.71d0/0.9d0)), &
+        12.4010219438244231d0)
+
+    ! The wall-cell eddy diffusivity nu(y+/theta+ - 1/Pr), Re = 180.
+    call check("alpha(5)",   alpha_air(5.0d0),   0.0d0)      ! conduction branch
+    call check("alpha(12)",  alpha_air(12.0d0),  0.0d0)      ! still below y+_T
+    call check("alpha(30)",  alpha_air(30.0d0),  0.00802520995676793475d0)
+    call check("alpha(45)",  alpha_air(45.0d0),  0.0141902851232290114d0)
+    call check("alpha(100)", alpha_air(100.0d0), 0.0348731015462603677d0)
+    call check("alpha(30,Pr=7)", wall_diffusivity(30.0d0, 7.0d0, 0.9d0, 180.0d0, &
+        jayatilleke_p(7.0d0/0.9d0), thermal_yplus(7.0d0, 0.9d0, jayatilleke_p(7.0d0/0.9d0))), &
+        0.00247715805096350751d0)
+    ! Continuity across the switch: theta+ = Pr y+ AT y+_T by construction,
+    ! so the log branch must start from zero there too.
+    if (abs(alpha_air(12.1776453329441076d0*(1.0d0 + 1.0d-12))) > 1.0d-13) then
+        print *, "thermal wall function discontinuous at y+_T: ", &
+            alpha_air(12.1776453329441076d0*(1.0d0 + 1.0d-12))
+        nfail = nfail + 1
+    end if
+
     if (nfail > 0) then
         print '(A,I0,A)', "scalar_test: ", nfail, " FAILURES"
         error stop
@@ -83,6 +133,19 @@ program test_scalar
     print *, "scalar_test: ALL PASS"
 
 contains
+
+    ! The S5a wall diffusivity at Pr = 0.71, Pr_t = 0.85, Re = 180 (air in
+    ! the gate channels), with its two constants formed the way init_scalar
+    ! forms them.
+    real(C_DOUBLE) function alpha_air(yplus) result(a)
+        real(C_DOUBLE), intent(in) :: yplus
+
+        real(C_DOUBLE) :: p
+
+        p = jayatilleke_p(0.71d0/0.85d0)
+        a = wall_diffusivity(yplus, 0.71d0, 0.85d0, 180.0d0, p, &
+            thermal_yplus(0.71d0, 0.85d0, p))
+    end function alpha_air
 
     ! Relative comparison; the reference values come from mpmath (its own
     ! exp/sqrt), so allow a few-ulp cross-runtime spread.

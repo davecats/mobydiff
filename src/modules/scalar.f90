@@ -35,6 +35,10 @@ module scalar
         PATCH_GENERIC, PATCH_WALL, PATCH_INLET, PATCH_OUTLET
     use :: comm, only: comm_type, exchange_halos
     use :: turbulence, only: turb_type, turbulence_is_enabled
+    ! S5a: the log law of the wall is rans.f90's -- kappa and E are
+    ! use-associated so the thermal wall function below and the momentum one
+    ! (nut_wall_value / omega_wall_blend) can never drift apart.
+    use :: rans, only: WF_KAPPA, WF_E
     implicit none
 
     private
@@ -84,6 +88,15 @@ module scalar
         ! guarded by useNut -- the turb_type "1-cell dummies, uniform device
         ! maps, all accesses model-guarded" idiom.
         real(C_DOUBLE), allocatable :: nutNone(:,:,:,:)
+        ! Thermal wall function (S5a, [rans] wall_treatment = wall_function).
+        ! Per scalar: Jayatilleke's P and the thermal sublayer thickness
+        ! y+_T, both pure functions of (Pr, Pr_t) and computed once at init.
+        real(C_DOUBLE), allocatable :: wfP(:), wfYpt(:)         ! (n)
+        ! The wall-cell y+ field rans_wall_yplus fills (ghost-inclusive, zero
+        ! away from wall cells). Full size ONLY under wall functions; a 1-cell
+        ! dummy otherwise -- the nutNone idiom, so the device maps and the
+        ! kernel map clauses stay uniform and every access is mode-guarded.
+        real(C_DOUBLE), allocatable :: wfYplus(:,:,:,:)
         ! Host-only: dataset names and the config bookkeeping.
         character(len=SC_NAME_LEN), allocatable :: name(:)
         logical, allocatable :: sectionSeen(:)
@@ -107,6 +120,10 @@ module scalar
     public :: scalar_sync, scalar_finish, scalar_transport
     public :: scalar_names, scalar_min_pr, scalar_min_prt
     public :: scalar_section_index, prt_kays, eddy_diffusivity
+    ! S5a thermal wall function: the face diffusivity scalar_stats.f90 needs
+    ! (its wall flux must be the flux the transport kernel applied), and the
+    ! two correlations, public for the host-side unit test.
+    public :: wall_face_diffusivity, jayatilleke_p, thermal_yplus, wall_diffusivity
 
 contains
 
@@ -224,6 +241,136 @@ contains
             d = nt/prt
         end if
     end function eddy_diffusivity
+
+    !--------------------------------------------------------------------
+    ! Thermal wall function (increment S5a)
+    !--------------------------------------------------------------------
+    !
+    ! Under [rans] wall_treatment = wall_function the first cell sits in the
+    ! log layer, so neither the scalar's own gradient nor the wall-cell nu_t
+    ! the momentum wall function installs carries the right wall FLUX: the
+    ! thermal sublayer has its own thickness (it scales with Pr, not with
+    ! nu) and its own resistance. The classical closure is
+    !
+    !   theta+ = (theta_w - theta_P) u_tau* / q_w
+    !          = Pr y+                              y+ <  y+_T   (conduction)
+    !          = Pr_t [ln(E y+)/kappa + P(Pr/Pr_t)] y+ >= y+_T   (log layer)
+    !
+    ! with u_tau* = C_mu^(1/4) sqrt(k) (rans_wall_yplus supplies the same
+    ! k-based y+ the momentum wall function uses) and Jayatilleke's P the
+    ! extra sublayer resistance. It is delivered EXACTLY as T3 delivers the
+    ! wall shear: as a wall-cell eddy diffusivity, so the ordinary
+    ! face-flux discretisation reproduces q_w with no special-cased flux.
+    ! With the wall-cell value copied into the no-slip ghost the wall face
+    ! sees D = nu y+/theta+ and returns
+    !   D (theta_P - theta_w)/y_P = u_tau* (theta_P - theta_w)/theta+,
+    ! which IS the wall-function flux.
+    !
+    ! Pr_t here is the per-scalar CONSTANT [scalar.N] prt even under
+    ! prt_model = kays: P and the log layer are defined with a constant
+    ! Pr_t, and Kays-Crawford is a correlation for the RESOLVED interior
+    ! (where it keeps running -- only wall cells take this branch).
+
+    ! Jayatilleke's P (Jayatilleke 1969; the OpenFOAM Psmooth form): the
+    ! conductive sublayer's extra resistance relative to the momentum one.
+    ! P = 0 at Pr = Pr_t (the Reynolds analogy), positive for Pr > Pr_t.
+    pure real(C_DOUBLE) function jayatilleke_p(prat) result(p)
+        real(C_DOUBLE), intent(in) :: prat        ! Pr/Pr_t
+
+        p = 9.24d0*(prat**0.75d0 - 1.0d0)*(1.0d0 + 0.28d0*exp(-0.007d0*prat))
+    end function jayatilleke_p
+
+    ! The thermal sublayer thickness y+_T: where the conductive branch
+    ! Pr y+ meets the log branch. f(y) = Pr y - Pr_t[ln(E y)/kappa + P] has
+    ! its minimum at y* = Pr_t/(kappa Pr) and, whenever a conductive
+    ! sublayer exists at all, exactly one root beyond it -- the physical
+    ! crossing (the root BELOW y* is spurious: there the log branch is the
+    ! larger of the two). Bisection, host-side, once per scalar at init;
+    ! OpenFOAM iterates the same fixed point.
+    !
+    ! Degenerate case f(y*) >= 0 (Pr well below Pr_t -- liquid metals): the
+    ! log branch never rises above the conductive one, i.e. the thermal
+    ! sublayer has no extent. y+_T = y* is then the switch, which keeps the
+    ! log branch positive (it is increasing beyond y*) and reduces to
+    ! conduction below it.
+    real(C_DOUBLE) function thermal_yplus(pr, prt, p) result(ypt)
+        real(C_DOUBLE), intent(in) :: pr, prt, p
+
+        real(C_DOUBLE) :: ylo, yhi, ym, fm
+        integer :: it
+
+        ylo = prt/(WF_KAPPA*pr)                   ! the minimum of f
+        if (pr*ylo - prt*(log(WF_E*ylo)/WF_KAPPA + p) >= 0.0d0) then
+            ypt = ylo
+            return
+        end if
+        yhi = ylo
+        do it = 1, 200                            ! bracket the root above
+            yhi = 2.0d0*yhi
+            if (pr*yhi - prt*(log(WF_E*yhi)/WF_KAPPA + p) > 0.0d0) exit
+        end do
+        do it = 1, 200                            ! ~1e-60 of the bracket
+            ym = 0.5d0*(ylo + yhi)
+            fm = pr*ym - prt*(log(WF_E*ym)/WF_KAPPA + p)
+            if (fm < 0.0d0) then
+                ylo = ym
+            else
+                yhi = ym
+            end if
+        end do
+        ypt = 0.5d0*(ylo + yhi)
+    end function thermal_yplus
+
+    ! Wall-cell eddy diffusivity of the thermal wall function: the total
+    ! nu y+/theta+ minus the molecular nu/Pr, so the transport kernel adds
+    ! it to its unchanged molecular term. EXACTLY zero on the conductive
+    ! branch (theta+ = Pr y+ there), and continuous at y+_T by the
+    ! definition of y+_T -- the structure of T3's nut_wall_value.
+    real(C_DOUBLE) function wall_diffusivity(yplus, pr, prt, re, p, ypt) result(a)
+        !$omp declare target
+        real(C_DOUBLE), intent(in) :: yplus, pr, prt, re, p, ypt
+
+        real(C_DOUBLE) :: tp
+
+        if (yplus < ypt) then
+            a = 0.0d0
+        else
+            tp = prt*(log(WF_E*yplus)/WF_KAPPA + p)
+            a = max((yplus/tp - 1.0d0/pr)/re, 0.0d0)
+        end if
+    end function wall_diffusivity
+
+    ! Cell eddy diffusivity for one scalar under wall functions: the thermal
+    ! wall function at a wall cell (y+ > 0 marks them, rans_wall_yplus), the
+    ! ordinary nu_t/Pr_t everywhere else.
+    real(C_DOUBLE) function cell_diffusivity(nutc, yplus, pr, prt, prtModel, re, p, ypt) result(a)
+        !$omp declare target
+        real(C_DOUBLE), intent(in) :: nutc, yplus, pr, prt, re, p, ypt
+        integer(C_INT), intent(in) :: prtModel
+
+        if (yplus > 0.0d0) then
+            a = wall_diffusivity(yplus, pr, prt, re, p, ypt)
+        else
+            a = eddy_diffusivity(nutc, pr, prt, prtModel, re)
+        end if
+    end function cell_diffusivity
+
+    ! Face eddy diffusivity under wall functions: the 1/2 (L + R) average of
+    ! the two CELL diffusivities. (Resolved mode averages nu_t first and
+    ! divides by Pr_t afterwards; that is not available here, because a wall
+    ! cell's diffusivity is not a function of its nu_t at all. The two agree
+    ! identically for a constant Pr_t away from wall cells, and differ only
+    ! in rounding -- but the wall-function branch is a separate code path,
+    ! so resolved runs keep their arithmetic byte for byte.)
+    real(C_DOUBLE) function wall_face_diffusivity(nutL, nutR, ypL, ypR, &
+            pr, prt, prtModel, re, p, ypt) result(d)
+        !$omp declare target
+        real(C_DOUBLE), intent(in) :: nutL, nutR, ypL, ypR, pr, prt, re, p, ypt
+        integer(C_INT), intent(in) :: prtModel
+
+        d = 0.5d0*(cell_diffusivity(nutL, ypL, pr, prt, prtModel, re, p, ypt) &
+                 + cell_diffusivity(nutR, ypR, pr, prt, prtModel, re, p, ypt))
+    end function wall_face_diffusivity
 
     !--------------------------------------------------------------------
     ! Configuration
@@ -553,10 +700,13 @@ contains
     ! Resolve the patch-derived boundary rows and build the per-block metric
     ! tables. Runs after the config/restart metadata is final (the patch types
     ! and the block set must both exist).
-    subroutine init_scalar(sc, blk, bc, has_terminal)
+    subroutine init_scalar(sc, blk, bc, wall_function, has_terminal)
         type(scalar_type), intent(inout) :: sc
         type(block_set_type), intent(in) :: blk
         type(boundary_type), intent(in) :: bc
+        ! [rans] wall_treatment = wall_function: allocate the wall-cell y+
+        ! field and report the thermal wall function's per-scalar constants.
+        logical, intent(in) :: wall_function
         logical, intent(in) :: has_terminal
 
         integer :: is, dir, side, face_id, nx, ny, nz, i, b
@@ -620,6 +770,24 @@ contains
         allocate(sc%nutNone(0:0,0:0,0:0,1))
         sc%nutNone = 0.0d0
 
+        ! Thermal wall function (S5a): the per-scalar constants are pure
+        ! functions of (Pr, Pr_t) and always cheap, so they are computed
+        ! unconditionally; the y+ FIELD is full size only under wall
+        ! functions (a 1-cell dummy otherwise, the nutNone idiom).
+        if (allocated(sc%wfP)) deallocate(sc%wfP, sc%wfYpt)
+        allocate(sc%wfP(int(sc%n)), sc%wfYpt(int(sc%n)))
+        do is = 1, int(sc%n)
+            sc%wfP(is) = jayatilleke_p(sc%pr(is)/sc%prt(is))
+            sc%wfYpt(is) = thermal_yplus(sc%pr(is), sc%prt(is), sc%wfP(is))
+        end do
+        if (allocated(sc%wfYplus)) deallocate(sc%wfYplus)
+        if (wall_function) then
+            allocate(sc%wfYplus(0:nx+1,0:ny+1,0:nz+1,blk%nBlocks))
+        else
+            allocate(sc%wfYplus(0:0,0:0,0:0,1))
+        end if
+        sc%wfYplus = 0.0d0
+
         if (allocated(sc%varList)) deallocate(sc%varList)
         allocate(sc%varList(int(sc%n)))
         do is = 1, int(sc%n)
@@ -631,6 +799,8 @@ contains
             do is = 1, int(sc%n)
                 print '(a,i0,a,a,a,f8.4,a,es10.3)', "   s", is, " '", trim(sc%name(is)), &
                     "'  pr =", sc%pr(is), "  source =", sc%source(is)
+                if (wall_function) print '(a,f8.4,a,f8.3)', &
+                    "      thermal wall function: P =", sc%wfP(is), "  y+_T =", sc%wfYpt(is)
             end do
         end if
     end subroutine init_scalar
@@ -713,7 +883,8 @@ contains
         !$omp target enter data map(to: sc)
         !$omp target enter data map(to: sc%pr, sc%prt, sc%prtModel, sc%source, &
         !$omp& sc%initValue, sc%ibmValue, sc%inlet, sc%ibmMode, sc%initProfile, &
-        !$omp& sc%bcType, sc%bcValue, sc%invDx, sc%invDy, sc%invDz, sc%nutNone)
+        !$omp& sc%bcType, sc%bcValue, sc%invDx, sc%invDy, sc%invDz, sc%nutNone, &
+        !$omp& sc%wfP, sc%wfYpt, sc%wfYplus)
 #endif
     end subroutine enter_scalar_data
 
@@ -725,7 +896,8 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target exit data map(delete: sc%pr, sc%prt, sc%prtModel, sc%source, &
         !$omp& sc%initValue, sc%ibmValue, sc%inlet, sc%ibmMode, sc%initProfile, &
-        !$omp& sc%bcType, sc%bcValue, sc%invDx, sc%invDy, sc%invDz, sc%nutNone)
+        !$omp& sc%bcType, sc%bcValue, sc%invDx, sc%invDy, sc%invDz, sc%nutNone, &
+        !$omp& sc%wfP, sc%wfYpt, sc%wfYplus)
         !$omp target exit data map(delete: sc)
 #endif
     end subroutine exit_scalar_data
@@ -756,6 +928,9 @@ contains
         call deallocate_config(sc)
         if (allocated(sc%varList)) deallocate(sc%varList)
         if (allocated(sc%nutNone)) deallocate(sc%nutNone)
+        if (allocated(sc%wfP)) deallocate(sc%wfP)
+        if (allocated(sc%wfYpt)) deallocate(sc%wfYpt)
+        if (allocated(sc%wfYplus)) deallocate(sc%wfYplus)
         if (allocated(sc%invDx)) deallocate(sc%invDx)
         if (allocated(sc%invDy)) deallocate(sc%invDy)
         if (allocated(sc%invDz)) deallocate(sc%invDz)
@@ -823,9 +998,14 @@ contains
     !
     ! The nut ghost cells follow the momentum SGS convention: the halo
     ! exchange fills them across block and rank boundaries, and they stay at
-    ! zero on a physical face (a resolved wall has nu_t -> 0 there anyway;
-    ! the T3 wall functions write the wall-cell value into the no-slip
-    ! ghosts, which this reads for free).
+    ! zero on a physical face (a resolved wall has nu_t -> 0 there anyway).
+    !
+    ! Under [rans] wall_treatment = wall_function (increment S5a) the face
+    ! diffusivity at WALL CELLS comes from the thermal wall function instead
+    ! (Kader/Jayatilleke, above) -- the momentum wall function's wall-cell
+    ! nu_t is deliberately NOT reused there, because it carries the momentum
+    ! sublayer's resistance, not the thermal one. Every other cell keeps
+    ! nu_t/Pr_t, and with wall functions off the branch is not entered.
     subroutine scalar_transport(sc, blk, dns, turb, coef, dt_alpha, dt_beta, dt_gamma)
         type(scalar_type), intent(in) :: sc
         type(block_set_type), intent(inout) :: blk
@@ -870,7 +1050,7 @@ contains
         real(C_DOUBLE) :: s0, conv, diff, rhs, dm, fw, fe, ss, mus, ipr
         real(C_DOUBLE) :: ntw, nte, nts, ntn, ntb, ntt
         real(C_DOUBLE) :: dxw, dxe, dys, dyn, dzb, dzt
-        logical :: skew, useIbm, adiab
+        logical :: skew, useIbm, adiab, wallfn
         logical :: clw, cle, cls, cln, clb, clt
         logical :: solw, sole, sols, soln, solb, solt
         logical :: mw, me, ms, mn, mb, mt
@@ -884,13 +1064,18 @@ contains
         ire = 1.0d0/re
         skew = logical(dns%conv_skew)
         useIbm = logical(dns%ibm_enabled)
+        ! S5a: the thermal wall function replaces the face eddy diffusivity
+        ! AT WALL CELLS. Off (every resolved-wall and every non-RANS run) the
+        ! branch is not entered and the S2/S3 arithmetic is reproduced byte
+        ! for byte -- sc%wfYplus is then a 1-cell dummy, mapped but unread.
+        wallfn = dns%rans_wall_treatment == 1_C_INT
 
         !$omp target teams distribute parallel do collapse(4) &
         !$omp& map(to: ire, re, dt_alpha, dt_beta, dt_gamma, skew, useNut, useIbm, &
         !$omp& nScal, nx, ny, nz, &
         !$omp& blk%q, blk%d1x, blk%d1y, blk%d1z, blk%physLow, blk%physHigh, nut, coef, &
         !$omp& sc%pr, sc%prt, sc%prtModel, sc%source, sc%invDx, sc%invDy, sc%invDz, &
-        !$omp& sc%ibmMode, sc%ibmValue) &
+        !$omp& sc%ibmMode, sc%ibmValue, sc%wfP, sc%wfYpt, sc%wfYplus, wallfn) &
         !$omp& map(tofrom: blk%qs, blk%oldrhs) &
         !$omp& private(i,j,k,b,is,var,scr,uw,ue,vs,vn,wb,wt,divu, &
         !$omp& s0,conv,diff,rhs,dm,fw,fe,ss,mus,ipr,adiab, &
@@ -999,7 +1184,35 @@ contains
                         dm = ire/sc%pr(is)
                         dxw = dm; dxe = dm; dys = dm
                         dyn = dm; dzb = dm; dzt = dm
-                        if (useNut) then
+                        if (useNut .and. wallfn) then
+                            ! Thermal wall function: the face value is built
+                            ! from the two CELL diffusivities, because a wall
+                            ! cell's is not a function of its nu_t at all.
+                            dxw = dm + wall_face_diffusivity(nut(i-1,j,k,b), nut(i,j,k,b), &
+                                sc%wfYplus(i-1,j,k,b), sc%wfYplus(i,j,k,b), &
+                                sc%pr(is), sc%prt(is), sc%prtModel(is), re, &
+                                sc%wfP(is), sc%wfYpt(is))
+                            dxe = dm + wall_face_diffusivity(nut(i,j,k,b), nut(i+1,j,k,b), &
+                                sc%wfYplus(i,j,k,b), sc%wfYplus(i+1,j,k,b), &
+                                sc%pr(is), sc%prt(is), sc%prtModel(is), re, &
+                                sc%wfP(is), sc%wfYpt(is))
+                            dys = dm + wall_face_diffusivity(nut(i,j-1,k,b), nut(i,j,k,b), &
+                                sc%wfYplus(i,j-1,k,b), sc%wfYplus(i,j,k,b), &
+                                sc%pr(is), sc%prt(is), sc%prtModel(is), re, &
+                                sc%wfP(is), sc%wfYpt(is))
+                            dyn = dm + wall_face_diffusivity(nut(i,j,k,b), nut(i,j+1,k,b), &
+                                sc%wfYplus(i,j,k,b), sc%wfYplus(i,j+1,k,b), &
+                                sc%pr(is), sc%prt(is), sc%prtModel(is), re, &
+                                sc%wfP(is), sc%wfYpt(is))
+                            dzb = dm + wall_face_diffusivity(nut(i,j,k-1,b), nut(i,j,k,b), &
+                                sc%wfYplus(i,j,k-1,b), sc%wfYplus(i,j,k,b), &
+                                sc%pr(is), sc%prt(is), sc%prtModel(is), re, &
+                                sc%wfP(is), sc%wfYpt(is))
+                            dzt = dm + wall_face_diffusivity(nut(i,j,k,b), nut(i,j,k+1,b), &
+                                sc%wfYplus(i,j,k,b), sc%wfYplus(i,j,k+1,b), &
+                                sc%pr(is), sc%prt(is), sc%prtModel(is), re, &
+                                sc%wfP(is), sc%wfYpt(is))
+                        else if (useNut) then
                             dxw = dm + eddy_diffusivity(ntw, sc%pr(is), sc%prt(is), &
                                 sc%prtModel(is), re)
                             dxe = dm + eddy_diffusivity(nte, sc%pr(is), sc%prt(is), &

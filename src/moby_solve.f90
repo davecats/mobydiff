@@ -118,7 +118,7 @@ program moby_solve
     call init_boundary_faces(bc, blk, dns)
     ! Passive scalars ([scalar], scalar.f90): patch-derived boundary rows and
     ! the diffusion metric tables. A no-op when no scalar is configured.
-    call init_scalar(sc, blk, bc, c%has_terminal)
+    call init_scalar(sc, blk, bc, dns%rans_wall_treatment == 1_C_INT, c%has_terminal)
     call init_openmp_offload(c%has_terminal)
     call enter_grid_data(g)
     call enter_boundary_data(bc)
@@ -225,6 +225,11 @@ program moby_solve
             call update_sgs_viscosity(les, turb, blk, dns, ibm, turb%nut)
         end select
         call exchange_scalar_halos(c, turb%nut, blk)
+        ! S5a: the wall-cell y+ of the initial k, so the scalar's wall
+        ! diffusivity (and any statistics sample) is defined before the
+        ! first substage fills it. No-op unless wall functions + scalars.
+        if (scalars_enabled(sc) .and. dns%rans_wall_treatment == 1_C_INT) &
+            call rans_wall_yplus(sst, dns, blk, bc, c, sc%wfYplus)
         call update_timestep_limits(blk, dns, c, turb, sc)
     else
         call update_timestep_limits(blk, dns, c)
@@ -270,6 +275,15 @@ program moby_solve
                 call exchange_scalar_halos(c, turb%nut, blk)
                 call profiler_add(turb_prof, TURB_PROF_EXCHANGE, wall_seconds() - turb_profile_start)
             end if
+
+            ! Thermal wall function (S5a): refresh the wall-cell y+ from
+            ! THIS substage's k -- ghosts copied across the no-slip faces,
+            ! halos exchanged -- so the scalar's wall-cell diffusivity is
+            ! consistent with the nut the momentum predictor uses below. It
+            ! writes only sc%wfYplus, never q. A no-op unless [rans]
+            ! wall_treatment = wall_function.
+            if (scalars_enabled(sc) .and. dns%rans_wall_treatment == 1_C_INT) &
+                call rans_wall_yplus(sst, dns, blk, bc, c, sc%wfYplus)
 
             ! Passive-scalar transport, OUTSIDE the projection. Called BEFORE
             ! momentum: it must read the START-of-substage q -- the velocity

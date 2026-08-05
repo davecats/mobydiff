@@ -87,6 +87,21 @@ GPU <= 2e-13 (the `log()` intrinsic in the wall-function branch differs
 by an ulp between host and device libm — resolved mode remains exactly
 CPU == GPU).
 
+OPEN, found 2026-08-04 while gating the passive scalars' thermal wall
+function (validation/scalar, increment S5a): **`wf180_y30.ini` is NOT
+rank-independent when the decomposition splits x.** With no `[scalar]`
+section at all and the T3-era binaries, 1 rank vs 4 ranks (the default
+dims, which split x and z) reads `un` max_abs 8.800384e-03 / `k`
+9.035115e-02 / `omega` 1.238466e+00 after 20 steps — and already `un`
+7.6e-04 after ONE step, so it is the initial state or the first substage
+on an x-split rank box, not an accumulation. Pinning `[mpi] dims = 1 1 4`
+(a pure z split) is EXACT on the same case, which is what the S5a
+determinism gate does. The T3 claim above evidently ran a decomposition
+that did not split x. Suspects, in order: the channel case's initial
+condition on a non-cubic rank box, and the wall-cell/`domwall`
+classification at an x rank boundary. Not investigated further — it
+belongs to this case, not to the scalars.
+
 T4 gamma-Re_thetat transition cases (`[rans] transition = true`,
 Langtry & Menter 2009 = OpenFOAM kOmegaSSTLM, resolved walls only; run
 group `t4`). The canonical flat plate is DEFERRED: an inlet can be

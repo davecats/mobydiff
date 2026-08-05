@@ -139,6 +139,11 @@ module rans
     public :: write_rans_geometry
     public :: init_rans_transport, rans_prepare, rans_substage
     public :: rans_set_constrained_cells
+    ! S5a (thermal wall function): the wall-cell y+ field the passive-scalar
+    ! kernels read, and the log-law constants they share with the momentum
+    ! wall function -- ONE definition, so the two can never drift apart.
+    public :: rans_wall_yplus
+    public :: WF_KAPPA, WF_E
     ! T4 transition correlations, public for the host-side unit tests
     ! (src/test_transition.f90).
     public :: lm_rethetac, lm_flength, lm_fonset, lm_fturb, lm_rethetat0, &
@@ -1363,6 +1368,82 @@ contains
         mode = merge(SCALAR_BC_COPY, SCALAR_BC_NONE, sst%facewall == 1_C_INT)
         call apply_scalar_bc(blk, bc, nut, mode)
     end subroutine rans_apply_nut_wall_ghosts
+
+    ! S5a: the k-based wall y+ AT THE WALL CELLS, into a caller-supplied
+    ! cell-centred array (the update_sgs_viscosity "caller-supplied target"
+    ! idiom). It is the ONE thing the passive-scalar thermal wall function
+    ! (scalar.f90) needs from the SST state: y+ = C_mu^(1/4) sqrt(k) y_eff/nu,
+    ! exactly the quantity nut_wall_value is evaluated at, on exactly the same
+    ! cells rans_assemble_nut overwrites (IBM wall cells + no-slip domain-wall
+    ! rows; solid cells excluded -- there the body penalization owns the
+    ! scalar).
+    !
+    ! Non-wall cells carry ZERO, the "no wall function here" sentinel the
+    ! scalar kernel tests with y+ > 0. Zero is also what a wall cell with
+    ! k -> 0 gets, and that is harmless: the conductive branch adds no eddy
+    ! diffusivity anyway, so the sentinel and the physics agree there.
+    !
+    ! The ghosts across every no-slip physical face are the wall cell's OWN
+    ! y+ (SCALAR_BC_COPY) -- the T3 lesson, transposed: the scalar kernel
+    ! interpolates the diffusivity to the face, so without the copy the wall
+    ! face would see half the wall value and deliver half the wall flux. One
+    ! halo exchange then serves the block and rank boundaries.
+    subroutine rans_wall_yplus(sst, dns, blk, bc, c, yplus)
+        type(sst_type), intent(in) :: sst
+        type(dns_type), intent(in) :: dns
+        type(block_set_type), intent(inout) :: blk
+        type(boundary_type), intent(in) :: bc
+        type(comm_type), intent(inout) :: c
+        real(C_DOUBLE), intent(inout) :: yplus(0:,0:,0:,1:)
+
+        integer :: i, j, k, b, nx, ny, nz, nBlocks
+        integer(C_INT) :: mode(NFACES)
+        real(C_DOUBLE) :: nu
+
+        if (dns%rans_wall_treatment /= 1_C_INT) return
+
+        nx = int(blk%nb(1))
+        ny = int(blk%nb(2))
+        nz = int(blk%nb(3))
+        nBlocks = int(blk%nBlocks)
+        nu = 1.0d0/dns%re
+
+        !$omp target teams distribute parallel do collapse(4) &
+        !$omp& map(to: nx, ny, nz) map(tofrom: yplus) private(i,j,k,b)
+        do b = 1, nBlocks
+        do k = 0, nz+1
+            do j = 0, ny+1
+                do i = 0, nx+1
+                    yplus(i,j,k,b) = 0.0d0
+                end do
+            end do
+        end do
+        end do
+        !$omp end target teams distribute parallel do
+
+        !$omp target teams distribute parallel do collapse(4) &
+        !$omp& map(to: nu, sst%k, sst%yeff, sst%wallcell, sst%domwall) &
+        !$omp& map(tofrom: yplus) private(i,j,k,b)
+        do b = 1, nBlocks
+        do k = 1, nz
+            do j = 1, ny
+                do i = 1, nx
+                    if (sst%wallcell(i,j,k,b) == WALL_CELL_SOLID) cycle
+                    if (sst%wallcell(i,j,k,b) == WALL_CELL_WALL .or. &
+                        sst%domwall(i,j,k,b) /= 0_C_SIGNED_CHAR) then
+                        yplus(i,j,k,b) = WF_CMU25*sqrt(max(sst%k(i,j,k,b), 0.0d0)) &
+                                       *sst%yeff(i,j,k,b)/nu
+                    end if
+                end do
+            end do
+        end do
+        end do
+        !$omp end target teams distribute parallel do
+
+        mode = merge(SCALAR_BC_COPY, SCALAR_BC_NONE, sst%facewall == 1_C_INT)
+        call apply_scalar_bc(blk, bc, yplus, mode)
+        call exchange_scalar_halos(c, yplus, blk)
+    end subroutine rans_wall_yplus
 
     ! Pre-loop preparation: constrained cells, scalar ghosts/halos, and the
     ! first nut assembly so the momentum predictor starts consistent.

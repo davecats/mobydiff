@@ -56,15 +56,22 @@ if want kays; then
     mpirun -n 1 "$UNIT" | sed 's/^/   /' || status=1
 fi
 
-# --- (k) wall functions + scalars must be a hard config error --------------
+# --- (k) wall functions + scalars: REJECTED in S2, ACCEPTED since S5a ------
+# The S2 gate was that the combination error-stopped ("a thermal wall
+# function is increment S5"). S5a implemented it, so the same ini is now the
+# positive control: the solver must START and report the thermal wall
+# function's per-scalar constants. The physics gates live in
+# run_gates_s5.sh.
 if want wferr; then
-    echo "== [scalar] + [rans] wall_treatment = wall_function must be rejected"
-    if mpirun -n 1 "$CBIN" wferr.ini > wferr.log 2>&1; then
-        echo "   FAIL: the solver started"; status=1
+    echo "== [scalar] + [rans] wall_treatment = wall_function must be ACCEPTED (S5a)"
+    sed -e "s/^nsteps.*/nsteps = 5/" -e "s/^t_final.*/t_final = 0.0/" \
+        wferr.ini > .wferr_short.ini
+    if mpirun -n 1 "$CBIN" .wferr_short.ini > wferr.log 2>&1; then
+        grep -m1 "thermal wall function" wferr.log | sed 's/^/   /'
+        grep -q "thermal wall function" wferr.log \
+            && echo "   PASS" || { echo "   FAIL: no thermal wall function reported"; status=1; }
     else
-        grep -m1 "ERROR STOP" wferr.log | sed 's/^/   /'
-        grep -q "wall_function is not implemented" wferr.log \
-            && echo "   PASS" || { echo "   FAIL: wrong message"; status=1; }
+        echo "   FAIL: the solver stopped -- see wferr.log"; status=1
     fi
 fi
 

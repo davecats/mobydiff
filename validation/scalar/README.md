@@ -1,12 +1,14 @@
-# Passive scalars — S0/S1/S2/S3/S4 gates
+# Passive scalars — S0/S1/S2/S3/S4/S5a gates
 
 Gates for increments **S0** (layout, config, io, halos, BCs — the scalar is
 carried but not advanced), **S1** (the transport kernel, molecular diffusivity
 only), **S2** (the turbulent closure `D_face = 1/(Re Pr) + nut/Pr_t`,
 constant `Pr_t` or Kays–Crawford), **S3** (the immersed body: cell-centred
-coefficients, both wall modes, `coef_p_blocks`) and **S4** (in-solver
+coefficients, both wall modes, `coef_p_blocks`), **S4** (in-solver
 statistics + tooling: `scalar_stats.f90`, `tools/scalar_stats.py`,
-`compare_fields.py` dataset discovery) of `docs/next_session_scalar.md`.
+`compare_fields.py` dataset discovery) and **S5a** (the THERMAL WALL
+FUNCTION: Kader/Jayatilleke under `[rans] wall_treatment = wall_function`,
+which S2 rejected as a hard config error) of `docs/next_session_scalar.md`.
 
 ```bash
 ./compile_nofma.sh cpu && ./compile_nofma.sh gpu   # bit-exactness builds
@@ -14,6 +16,7 @@ statistics + tooling: `scalar_stats.f90`, `tools/scalar_stats.py`,
 ./run_gates_s2.sh [kays|wferr|sst|les|band|det]                       # S2
 ./run_gates_s3.sh [solid|conserve|prep|missing|refine|det|cyl]        # S3
 ./run_gates_s4.sh [stats|accum|plane|levels|restart|det|noeffect|heat|adia|cyl|tools]
+./run_gates_s5.sh [unit|ref|sweep|det]                                # S5a
 REF=<pre-change nofma binary> MODE=cpu RANKS=4 ./run_bitexact.sh      # count = 0
 REF=<S1 nofma binary>         MODE=cpu          ./run_bitexact_s1.sh  # turbulence off
 REF=<S2 nofma binary>         MODE=cpu          ./run_bitexact_s3.sh  # no body
@@ -47,7 +50,7 @@ restart path), `check_scalar.py` (all the checkers).
 | `turbles.ini` | (h) **developed turbulent channel under LES**, `Re_tau` 180, Pr 0.71. Geometry, grid, WALE settings and velocity restart are `../channel_interface/les` (`uniform.ini`) — the coarse 64×48×64 grid where the SGS term is genuinely active. Scalar: antisymmetric isothermal walls (+1 / −1), no source, so in statistical steady state the TOTAL wall-normal flux `J = <v'θ'> − (D + nut/Pr_t) d<θ>/dy` is exactly CONSTANT. `θ_tau = J` (u_tau = 1) and `θ+ = (θ_w − θ)/θ_tau` are then measured against Kader's correlation, and the constancy of `J(y)` is a second, internal gate on both convergence and the transport operator. |
 | `turbslab.ini` | (j) **2:1 wall-band-refined channel**, the same scalar, the `../channel_interface/les` `slab.ini` geometry (symmetric wall bands refined 2:1, flat y-interfaces at y+ ≈ 88). Band metric = the `tools/patch_interface_stats.py` method: the `θ'_rms` ratio of the refined run to the matched unrefined control on the COARSE rows adjacent to the interface, against the same ratio in the core. A spurious band is a localized excess — the u'/v' lesson of `../channel_interface/README.md`. |
 | `turbsst.ini` | (i) **steady k-ω SST, resolved walls** — `../rans_sst/turb180.ini` with two scalars. Steady RANS collapses to a 1D fixed point with NO resolved fluctuations, so the scalar equation reduces to one ODE whose only coefficient is the `nut` the solver wrote: integrating `dθ/dy = −J/(1/(Re Pr) + nut/Pr_t(y))` from the snapshot's own `nut` and comparing with its own `theta` tests the S2 face diffusivity and the `Pr_t` model **with the turbulence model divided out** — the sharpest gate in the set, and free of time averaging. `theta` uses the constant `Pr_t`, `theta_kc` the SAME scalar with `prt_model = kays`, so the two differ ONLY by the correlation — the in-kernel exercise of `prt_kays`. (The log-layer slope is reported for context only: the scalar carries a CONSTANT flux while the channel's momentum flux falls linearly, so the reference is `Pr_t/(kappa(1 − y/h))`, which is `Pr_t/kappa` = 2.073 only as `y/h → 0`.) |
-| `wferr.ini` | (k) `[scalar]` + `[rans] wall_treatment = wall_function` must be a **hard config error** (a thermal wall function is S5). `../rans_sst/wf180_y30.ini` with one scalar bolted on. |
+| `wferr.ini` | (k) `[scalar]` + `[rans] wall_treatment = wall_function` was a **hard config error** in S2 (a thermal wall function was deferred to S5). `../rans_sst/wf180_y30.ini` with one scalar bolted on. **S5a implemented it and FLIPPED this gate**: the same ini must now start and report the thermal wall function's constants — see the S5a table below. |
 | `detles.ini` | (l) **determinism on a scalar + turbulence case**: `turbles.ini` for 20 steps without the `[mpi] dims` pin — 1 rank == 4 ranks and CPU == GPU, at tolerance 0, on nofma builds. |
 
 `make_theta_ic.py` seeds the developed velocity restarts with the
@@ -74,6 +77,23 @@ holds the three analyses (`channel`, `band`, `rans`).
 | `ibmwavy.ini` + `heat_interval` | (u) (u2) the immersed body's HEAT RELEASE. The runtime samples are compared with `check_scalar_ibm.py surface` — the cancellation-free pair (staircase interface flux + graded-cell penalization) that S3 validated against the full energy budget — on the very snapshots the same run wrote, and then the physics is closed with the SOLVER's own `Q`: with no boundary flux anywhere, `½[Q(t₁)+Q(t₂)] = d/dt ∫θ dV`. (u2) is the positive control on the other wall mode: the seeded `phi` (`2 + sin(k·x)`, manifestly non-zero) is `adiabatic`, so its heat columns must be EXACTLY zero — no penalization is applied and every body face is masked, and any non-zero number would be a flux the solver never applied. |
 | `cylheat.ini` + `heat_interval` | (u3) the heated cylinder's RUNTIME Nusselt number: 20 steps from the S3 campaign's converged `t = 120` field, so the number is directly comparable with the S3 post-processed 3.3655 and with Churchill–Bernstein's 3.35. |
 | (tooling) | (v) `compare_fields.py` with no dataset arguments discovers the datasets present in BOTH files (canonical `un vn wn pn` first, then the scalars / `nut` / the RANS variables alphabetically), and `tools/scalar_stats.py` reads the files this session wrote. |
+
+## S5a gate cases (the thermal wall function)
+
+| ini | gate |
+|---|---|
+| `wfsst.ini` | (w0) the RESOLVED REFERENCE: `turbsst.ini` (the S2/S4 resolved-wall SST scalar channel) restarted from its converged `t = 200` field with the S4 statistics on. `theta_tau` and the wall flux for BOTH sides of the comparison therefore come out of the same instrument — the solver's own statistics — instead of a hand-rolled post-processing, which is what S4 was built for. |
+| `wfs180_y05/y15/y30/y45.ini` | (w) (x) the wall-function sweep: `../rans_sst/wf180_*.ini` (the T3 grids, `y+_1 = 5/15/30/45`, `u_tau = 1` by construction) with the `turbsst` scalar pair bolted on. Every run is step-bound, and the statistics are switched on with `interval = nsteps`, so exactly ONE sample is taken, at the last step, of the very field the snapshot carries — which makes the wall gate an IDENTITY rather than a comparison of two time levels. |
+| (unit test) | (m2) the two correlations host-side (`src/test_scalar.f90`, the S2 `kays` group's driver): Jayatilleke's `P(Pr/Pr_t)`, the thermal sublayer thickness `y+_T` (a ROOT — so the solver's bisection is checked against mpmath's) and `wall_diffusivity` itself, including that it is exactly 0 on the conduction branch and continuous across the switch. |
+| `wferr.ini` | (k, FLIPPED) the S2 gate was that `[scalar]` + `wall_treatment = wall_function` **error-stops**. S5a implements it, so the same ini is now the positive control: the solver must START and report the per-scalar `P` / `y+_T`. |
+| `wfs180_y30.ini` (nofma) | (z) determinism: 1 rank == 4 ranks at tolerance 0 and CPU == GPU on the wall-function scalar path. |
+
+`check_scalar_wf.py` holds the two analyses (`wall`, `compare`) and its own,
+INDEPENDENT transcription of the wall-function correlations. Note that
+`check_scalar_stats.py` (S4) is deliberately NOT used on a wall-function
+case: its face diffusivity is the resolved `nut/Pr_t`, so it cannot
+reproduce a wall row there — the `wall` analysis covers that instead, and
+more sharply.
 
 `check_scalar_stats.py` holds the five analyses (`profile`, `plane`, `rows`,
 `heat`, `diff`); `tools/scalar_stats.py` is the production reader (mean profile, rms,
@@ -341,6 +361,10 @@ S1's cost, not S2's — is **5.2 %** of the step for one scalar on this grid.
 ERROR STOP [scalar] with [rans] wall_treatment = wall_function is not implemented
            (a thermal wall function is increment S5); use resolved
 ```
+
+(SUPERSEDED by S5a, which implements the thermal wall function: the same ini
+is now the positive control that the combination is accepted — see the S5a
+results below.)
 
 **(l) determinism on a scalar + turbulence case** (`detles.ini`, 20 steps,
 nofma builds):
@@ -765,6 +789,202 @@ tables above, to every digit:
   turbulent-channel CAMPAIGNS are not re-run wholesale — `run_bitexact_s3.sh`
   proves the stronger statement on the very same inis (tolerance 0).
 
+## Results — S5a (2026-08-04, branch `scalar`) — ALL PASS
+
+Local runs (nvhpc 25.9 CPU builds, 1 rank for the channels — they are
+8 x ny x 8 fixed points — and the RTX 3060 for the GPU legs; the GPU was
+shared with an unrelated job throughout). `./run_gates_s5.sh [group]`.
+
+**(m2) the correlations** (`mpirun -n 1 build_cpu/scalar_test`, the S2
+driver extended):
+
+```
+scalar_test: ALL PASS
+```
+
+Jayatilleke's `P` at `Pr/Pr_t` = 0.835 / 1 / 2 / 0.1 / 7 / 100 (`P(1) = 0`
+exactly — the Reynolds analogy), the thermal sublayer thickness `y+_T` for
+five (Pr, Pr_t) pairs against mpmath's own root (air `Pr = 0.71` gives
+**12.178**, slightly THICKER than the momentum `y+_lam = 11.530`; oil
+`Pr = 7` gives 6.815; a liquid metal `Pr = 0.025` is conductive out to
+284), and `wall_diffusivity` at `y+` = 5 / 12 / 30 / 45 / 100 — including
+that it is **exactly 0** below `y+_T` and continuous across the switch
+(6e-15 just above it).
+
+**(w0) the resolved reference** (`wfsst.ini` = `turbsst.ini` restarted from
+its converged `t = 200` field, 200 steps, one sample):
+
+```
+wall flux: y_min +5.341323e-02   y_max +5.341323e-02  -> theta_tau = 0.053413
+total flux J(y): max|J - J_wall|/theta_tau = 0.0000        (a true fixed point)
+Nusselt (q_w H / (D dT), H = 2, dT = 2) = 6.8262           theta+_c = 18.7220
+```
+
+`theta_tau = 0.053413` is the S2 number to every digit (S2 results table,
+gate (i), post-processed by `check_scalar_turb.py rans`) — so the S4
+statistics and the S2 analysis agree exactly on the reference, before the
+wall-function cases are compared against it.
+
+**(w) the DELIVERED-FLUX identity — the sharp gate.** The thermal wall
+function is installed as a wall-cell eddy diffusivity `nu(y+/theta+ - 1/Pr)`
+whose ghost copy makes the wall face see `D = nu y+/theta+`, so the
+statistics' discrete wall flux must BE `u_tau* (theta_w - theta_1)/theta+`,
+with `theta+` from an independent Python transcription of
+Kader/Jayatilleke. Measured on all four grids, cell by cell (the solver
+averages the FLUX over the wall plane and the flux is nonlinear in the
+cell's own k):
+
+```
+y+_1 = 5    rel 1.3e-15 / 1.5e-15        y+_1 = 15   rel 1.3e-16 / 6.4e-16
+y+_1 = 30   rel 1.4e-15 / 1.6e-15        y+_1 = 45   rel 1.1e-15 / 7.3e-16
+```
+
+This is the thermal analogue of T3's "u_tau from the delivered wall stress
+= 1.0000": what the solver applies at the wall IS the closure, not an
+approximation to it. (`u_tau` from the delivered wall stress reads
+**1.0000** on every grid here too.)
+
+**(x) the y+_1 sweep: graceful degradation** (`theta_tau` and the implied
+centreline `theta+_c = 1/theta_tau`, against the resolved reference; the
+`theta+_1` column is the first cell against Kader at the VISCOUS `y+`):
+
+| y+_1 | branch | theta_tau | dev vs resolved | theta+_1 | Kader | dev |
+|---|---|---|---|---|---|---|
+| 5  | conduction (`y+_k` 1.4) | 0.054155 | **+1.39 %** | 3.550 | 3.041 | 16.8 % |
+| 15 | log (`y+_k` 14.6) | 0.054629 | **+2.28 %** | 9.279 | 7.924 | 17.1 % |
+| 30 | log (`y+_k` 28.9) | 0.056424 | **+5.64 %** | 10.832 | 10.819 | **0.1 %** |
+| 45 | log (`y+_k` 43.1) | 0.057272 | **+7.22 %** | 11.771 | 11.854 | **0.7 %** |
+
+Reading these:
+
+- **Monotone degradation, no dip.** The wall flux drifts up by 1.4 % to
+  7.2 % as the first cell walks from `y+ 5` to `y+ 45` — the same shape and
+  the same magnitude class as T3's momentum sweep (centreline `U+` off by
+  −3.1 % / +2.8 % / +3.0 % / 1.2 % / 0.7 %). A double-counting bug would
+  show as a DEFICIT, and there is none.
+- **On its own ground the closure is exact to Kader.** At `y+_1` = 30 and
+  45 — the range wall functions are for — the first cell's `theta+` lands
+  on Kader's correlation to 0.1 % and 0.7 %. The two buffer-layer grids sit
+  ~17 % above Kader at `y+` 5 and 15, which is Kader's own blend region
+  (the S2 LES gate measured up to 20.7 % there against a resolved DNS-grade
+  profile) and the documented T3 behaviour of the first cell below `y+ 30`.
+- **The two branches both fire.** `y+_1 = 5` puts the k-based `y+_k` at
+  1.4, below `y+_T = 12.18`, so that case runs the CONDUCTION branch, where
+  the wall diffusivity is exactly zero and the treatment degenerates to the
+  resolved one — and it is duly the closest to the resolved reference.
+- **The fixed points are converged**: the total-flux constancy
+  `max|J - J_wall|/theta_tau` reads 7.6e-12 / 1.0e-12 / 1.6e-14 / 1.2e-14.
+
+**(x2) the Kays–Crawford scalar of the same runs** (`theta_kc`, index 2;
+the last column is `theta_tau(theta_kc)/theta_tau(theta)` WITHIN one run):
+
+| case | theta_tau | dev vs resolved | s2/s1 |
+|---|---|---|---|
+| resolved reference | 0.049468 | — | **0.9261** |
+| y+_1 = 5  | 0.050369 | +1.82 % | **0.9301** |
+| y+_1 = 15 | 0.053397 | +7.94 % | 0.9775 |
+| y+_1 = 30 | 0.055728 | +12.65 % | 0.9877 |
+| y+_1 = 45 | 0.056812 | +14.85 % | 0.9920 |
+
+This is the DESIGN, measured, not a defect: the thermal wall function is
+defined with a CONSTANT `Pr_t` (P and the log branch are), so a wall cell
+treats `theta` and `theta_kc` identically and Kays–Crawford can only act in
+the interior, where `Pe_t` is large and the correlation sits at its
+`Prt_inf` asymptote. Hence `s2/s1 -> 1` as the first cell moves out into
+the log layer. The `y+_1 = 5` case, whose wall cells take the conduction
+branch (i.e. the resolved arithmetic), reproduces the resolved reference's
+own ratio 0.9261 to **0.4 %** — which is the positive control that the
+branch structure, not a coincidence, is what produces the trend.
+
+**(k, flipped) wall functions + scalars are now ACCEPTED**:
+
+```
+thermal wall function: P = -1.4915  y+_T =  12.178
+```
+
+**(z) determinism** (`wfs180_y30.ini`, 20 steps, nofma builds, datasets
+`un vn wn pn nut k omega theta theta_kc`):
+
+```
+1 rank vs 4 ranks ([mpi] dims = 1 1 4)   max_abs = 0.0   (EXACT, all nine)
+CPU vs GPU                               max_abs <= 3.3e-13 (pn), 4.6e-14 (un),
+                                         1.3e-15 on both scalars
+```
+
+The CPU-vs-GPU spread is the T3 wall-function class: the `log()` intrinsic
+differs by an ulp between host and device libm, and both wall functions
+call it (resolved mode stays exactly CPU == GPU — see the bit-exactness
+block below).
+
+**FINDING (pre-existing, NOT S5a).** The rank comparison pins `[mpi] dims =
+1 1 4` because this channel is **not rank-independent under an x split**,
+with or without scalars: `../rans_sst/wf180_y30.ini` with no `[scalar]`
+section at all, run with the **S4 reference binary**, reproduces the same
+deviation to the last bit (`un` max_abs 8.800384e-03 after 20 steps — and
+already 7.6e-04 after ONE step, so it is the initial state or the first
+substage on an x-split rank box, not an accumulation; `k` 9.0e-02, `omega`
+1.2e+00). A z split is EXACT on the same case. The T3 README's
+"wall-function 1-rank == 4-rank exactly" evidently ran a decomposition that
+did not split x. Worth its own look; it belongs to the RANS channel case,
+not to the scalars.
+
+**`[scalar] count = 0` bit-exactness, S5a vs the S4 binaries**
+(`run_bitexact.sh`, nofma, 7-case suite, every dataset at tolerance 0):
+
+```
+CPU, 4 ranks: min_channel les_ibm les_ibm_refine beltrami_yslab turb180 wf180_y30 lam30t
+              -> ALL PASS, max_abs = 0 on un/vn/wn/pn (+ nut, k, omega, gamma, rethetat)
+GPU, 1 rank:  same 7 cases -> ALL PASS, max_abs = 0
+```
+
+**Scalar runs vs the S4 binaries** (`run_bitexact_s3.sh`, nofma, tolerance
+0) — the resolved-wall path must be untouched, which is by construction:
+`wallfn` is false, the new branch is not entered and the S4 arithmetic is
+reproduced byte for byte (the `wfYplus` array is then a 1-cell dummy).
+
+```
+CPU, 4 ranks: min_channel les_ibm les_ibm_refine beltrami_yslab turb180 wf180_y30 lam30t
+              -> ALL PASS, max_abs = 0 on un/vn/wn/pn (+ nut, k, omega, gamma, rethetat)
+GPU, 1 rank:  same 7 cases -> ALL PASS, max_abs = 0_S3
+```
+
+**Earlier increments re-run with the S5a binary** — the same numbers as the
+tables above, to every digit:
+
+```
+run_gates.sh    (S1, all seven groups -> "no failures" x7)
+  uniform      max|theta - const| = max|phi - const| = 0.000e+00; uniform-flow gate exact
+  conserve     relative drift -6.838e-19
+  conduction   cond_lin L2 = 0.000000e+00 (CPU build);
+               cond_16/32/64 L2 = 2.814767e-03 / 7.054808e-04 / 1.764823e-04  (order 2.00)
+  wave         wave16/32/64 L2 = 1.554700e-02 / 3.909091e-03 / 9.786703e-04   (order 1.99/2.00)
+  pr           max|s - series| 9.995e-06 / 1.415e-04 / 1.584e-03;
+               wall-flux ratios 1.001092 / 1.000366 / 1.004115
+  restart      dataset present -> max|s - file| = 0.000e+00; absent -> 99.0
+  det (nofma)  1 == 4 ranks and CPU == GPU both max_abs 0; 2:1 residual 1.047e-05
+
+run_gates_s3.sh (the body gates, every group except the cyl campaign) -> 7/7 ALL PASS
+  solid 704/704/5984/704 cells at max|theta - 1| = 0.000e+00; adiabatic drift
+  0.000e+00 with 624 sealed cells frozen exactly; energy budget 3.924e-04;
+  coef_p_blocks vs the transcription 1.399e-16; prepare/file gates identical
+
+run_gates_s4.sh (the statistics, every group except cyl) -> 10/10, no failures
+  rows vs snapshots 2.881e-14 / 2.780e-14 (one sample), 2.596e-14 / 2.683e-14
+  (four), plane 4.808e-16 / 4.503e-16, levels 2.563e-14 / 2.122e-13, restart
+  0.000e+00, 1 vs 4 ranks 2.346e-14, CPU vs GPU 8.873e-16, statistics-off twin
+  max_abs 0, body heat vs the Python form 2.817e-15, an adiabatic scalar exactly
+  zero, tools theta_tau = 0.049870
+
+scalar_test    ALL PASS (the S2 kays values + the S5a correlations)
+run_gates_s2.sh wferr -> the flipped gate above; kays is scalar_test
+```
+
+Every number is the one the S1 / S3 / S4 result tables above record, to every
+digit. The three turbulent-channel CAMPAIGNS (`sst`, `les`, `band`) are not
+re-run wholesale — `run_bitexact_s3.sh` proves the stronger statement on the
+very same inis (tolerance 0), which is the argument the S3 and S4 sessions
+used.
+
 ## Notes and limitations
 
 - **Order of the substage calls.** `scalar_transport` runs immediately BEFORE
@@ -791,3 +1011,29 @@ tables above, to every digit:
 - The diffusive flux is masked at `FACE_CLOSED` faces (blocks removed inside
   an immersed body hold a zeroed halo). Immersed-body scalar coefficients
   themselves are increment S3.
+- **The thermal wall function uses the CONSTANT `Pr_t` at wall cells**, even
+  under `prt_model = kays`: Jayatilleke's P and the log branch are defined
+  with a constant `Pr_t`, and Kays–Crawford is a correlation for the
+  resolved interior, where it keeps running. Gate (x2) measures exactly what
+  that costs and why the trend is the design.
+- **Under wall functions the face eddy diffusivity is the average of the two
+  CELL diffusivities**, not `eddy_diffusivity` of the averaged `nu_t`: a
+  wall cell's diffusivity is not a function of its `nu_t` at all. Away from
+  wall cells and at constant `Pr_t` the two are the same expression in a
+  different order; the wall-function branch is separate code, so resolved
+  runs keep their arithmetic byte for byte.
+- **IBM wall cells take the thermal wall function too** (the same
+  `wallcell` marker `rans_assemble_nut` uses), but the S5a gates are DOMAIN
+  walls, and no IBM wall-function scalar case was run here. On the T3 IBM
+  channel the k-based `y+` is 2-3 (`../rans_sst/README.md`, gate (c)), i.e.
+  the conduction branch of this closure, where the wall diffusivity is
+  exactly zero and nothing new happens — but that is T3's measurement of
+  the momentum side, not a scalar gate. A body whose wall cells reach the
+  log layer is UNGATED: the Dirichlet penalization and the wall function
+  would then both act on the same cell, which needs its own increment (and
+  its coefficient file re-prepared with `[scalar]`, for `coef_p_blocks`).
+- `check_scalar_stats.py` (the S4 snapshot recomputation) does NOT know
+  about the wall function: it rebuilds the face diffusivity as
+  `1/(Re Pr) + nut/Pr_t`, which is not what the solver applies at a wall
+  cell in wall-function mode. Use `check_scalar_wf.py wall`, whose identity
+  is sharper anyway.

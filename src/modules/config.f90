@@ -451,16 +451,12 @@ subroutine validate_turbulence_values(turb, les, dns)
         if (dns%rans_transition .and. dns%rans_wall_treatment /= 0_C_INT) then
             error stop "[rans] transition requires wall_treatment = resolved"
         end if
-        ! Passive scalars under wall functions need a THERMAL wall function
-        ! (Kader/Jayatilleke P-function) -- the momentum one says nothing
-        ! about the scalar's wall flux, and the wall-cell nu_t it installs
-        ! would be fed straight into the scalar's face diffusivity. That is
-        ! increment S5 (docs/next_session_scalar.md Section 3); until it is
-        ! implemented and gated, the combination is rejected.
-        if (dns%nScalar > 0_C_INT .and. dns%rans_wall_treatment /= 0_C_INT) then
-            error stop "[scalar] with [rans] wall_treatment = wall_function is not " // &
-                "implemented (a thermal wall function is increment S5); use resolved"
-        end if
+        ! Passive scalars under wall functions run the THERMAL wall function
+        ! (Kader/Jayatilleke P-function, increment S5a: scalar.f90's
+        ! wall_diffusivity on rans_wall_yplus's wall-cell y+). The momentum
+        ! wall function's wall-cell nu_t is deliberately NOT reused for the
+        ! scalar -- it carries the momentum sublayer's resistance, not the
+        ! thermal one.
         if (dns%rans_tu <= 0.0d0) error stop "[rans] tu must be positive (percent)"
         if (dns%rans_nut_ratio <= 0.0d0) error stop "[rans] nut_ratio must be positive"
     end if

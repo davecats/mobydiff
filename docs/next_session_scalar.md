@@ -1,10 +1,93 @@
 # Passive scalars (branch `scalar`) — implementation plan
 
-STATUS: **S0 + S1 + S2 + S3 + S4 LANDED AND GATED (S0–S2 2026-08-03, S3 and
-S4 2026-08-04, branch `scalar`).** S5 (thermal wall function, TVD scalar
-convection, Boussinesq) is NOT started.
+STATUS: **S0 + S1 + S2 + S3 + S4 + S5a LANDED AND GATED (S0–S2 2026-08-03,
+S3 / S4 / S5a 2026-08-04, branch `scalar`).** S5b (TVD/van-Leer scalar
+convection) and S5c (Boussinesq buoyancy) are NOT started.
 
 What landed (the plan below is unchanged except where noted):
+
+- **S5a** — the THERMAL WALL FUNCTION. `[rans] wall_treatment =
+  wall_function` with `[scalar]` was S2's hard config error; it now runs the
+  Kader/Jayatilleke closure, delivered exactly the way T3 delivers the wall
+  shear — **as a wall-cell eddy diffusivity**, so the ordinary face-flux
+  discretisation reproduces the wall-function flux with no special-cased
+  flux anywhere:
+
+  ```
+  theta+ = Pr y+                                y+ <  y+_T   (conduction)
+         = Pr_t [ln(E y+)/kappa + P(Pr/Pr_t)]   y+ >= y+_T   (log layer)
+  alpha_t = nu (y+/theta+ - 1/Pr)   (EXACTLY 0 on the conduction branch)
+  ```
+
+  with `y+ = C_mu^(1/4) sqrt(k) y_eff/nu` — the SAME k-based y+ the momentum
+  wall function switches on — and `P` Jayatilleke's sublayer resistance.
+  With the wall-cell value copied into the no-slip ghost the wall face sees
+  `D = nu y+/theta+` and returns `u_tau* (theta_1 - theta_w)/theta+`, which
+  IS the wall-function flux: gate (w) measures that identity at **1e-15** on
+  every grid of the sweep. THE T3 LESSON TRANSPOSED: without the ghost copy
+  the face-interpolated diffusivity would be half the wall value and the
+  delivered flux would be half of it too.
+  - **Where the pieces live.** `rans.f90` owns the geometry/velocity scale:
+    the new `rans_wall_yplus` fills a caller-supplied cell-centred y+ array
+    on exactly the cells `rans_assemble_nut` overwrites (IBM wall cells +
+    no-slip domain-wall rows, solid cells excluded), ghost-copies it across
+    every no-slip physical face and exchanges the halos — the
+    `update_sgs_viscosity` "caller-supplied target" idiom. `scalar.f90` owns
+    the thermal correlation (`jayatilleke_p`, `thermal_yplus`,
+    `wall_diffusivity`, `wall_face_diffusivity`) and the array
+    (`sc%wfYplus`, full size only under wall functions, the `nutNone`
+    1-cell-dummy idiom; `sc%wfP` / `sc%wfYpt` per scalar, computed once at
+    init). `kappa` and `E` are USE-ASSOCIATED from rans.f90 — one definition
+    of the log law, so the momentum and thermal wall functions cannot drift
+    apart. `moby_solve.f90` calls `rans_wall_yplus` once per substage,
+    between the turbulence block and `scalar_transport`, so the scalar's
+    wall diffusivity rides THIS substage's k.
+  - **The sentinel is zero**, not a negative flag: `y+ > 0` marks a wall
+    cell, and a wall cell whose k has collapsed reads 0 too — harmless,
+    because the conduction branch adds no eddy diffusivity there anyway. It
+    also degrades gracefully through a 2:1 interface transfer, which
+    averages values rather than flags.
+  - `scalar_stats.f90` takes the SAME branch (one shared
+    `wall_face_diffusivity`): the S4 statistics must report the flux the
+    transport kernel applied, or `theta_tau` is not the solver's
+    `theta_tau`. That is what makes gates (w)/(x) readable straight out of
+    `tools/scalar_stats.py profile`.
+  - **DELIBERATE: the wall cell uses the per-scalar CONSTANT `prt` even
+    under `prt_model = kays`** (P and the log branch are defined with a
+    constant Pr_t; Kays-Crawford is a correlation for the resolved
+    interior, where it keeps running). Gate (x2) measures what that costs
+    and shows the trend IS the design: within one run
+    `theta_tau(kays)/theta_tau(constant)` goes 0.930 -> 0.978 -> 0.988 ->
+    0.992 as `y+_1` walks 5 -> 45, and the `y+_1 = 5` case — whose wall
+    cells take the conduction branch, i.e. the resolved arithmetic —
+    reproduces the RESOLVED reference's own ratio 0.9261 to 0.4 %.
+  - **Under wall functions the face eddy diffusivity is the average of the
+    two CELL diffusivities**, not `eddy_diffusivity` of the averaged `nu_t`:
+    a wall cell's diffusivity is not a function of its `nu_t` at all. It is
+    a separate branch, so the resolved path keeps its arithmetic byte for
+    byte — which is the whole bit-exactness argument, and it is measured
+    (`run_bitexact.sh` / `run_bitexact_s3.sh` at max_abs 0, CPU and GPU).
+  - **`validation/scalar/wferr.ini` FLIPPED SIDES**: the S2 gate (k) was
+    that the combination error-stops; it is now the positive control that
+    the solver starts and reports each scalar's `P` / `y+_T`.
+  - **FOUND WHILE GATING (pre-existing, not S5a):** `../rans_sst/
+    wf180_y30.ini` — with NO `[scalar]` section and run with the **S4
+    reference binary** — is not rank-independent under an x split (`un`
+    max_abs 8.8e-03 after 20 steps, already 7.6e-04 after ONE step; a z
+    split is exact). The S5a determinism gate therefore pins `[mpi] dims =
+    1 1 4`, where 1 rank == 4 ranks is EXACT on all nine datasets. The T3
+    README's "1-rank == 4-rank exactly" evidently ran a decomposition that
+    did not split x. It belongs to the RANS channel case, not to the
+    scalars, and is recorded in `validation/scalar/README.md`.
+  - **IBM wall cells take the same treatment** (the same `wallcell` marker),
+    but the gates here are DOMAIN walls and NO IBM wall-function scalar case
+    was run. T3 measured `y+_k ~ 2-3` on its IBM channel (validation/
+    rans_sst/README.md gate (c)) — the conduction branch of this closure,
+    where the wall diffusivity is exactly zero — but that is the momentum
+    side. A body whose wall cells reach the log layer, where the Dirichlet
+    penalization and the wall function would both act on the same cell, is
+    UNGATED and needs its own increment (plus a coefficient file re-prepared
+    with `[scalar]` for `coef_p_blocks`).
 
 - **S4** — statistics and tooling. New `src/modules/scalar_stats.f90` owning
   `scalar_stats_type`: per-row accumulators of SEVEN columns per scalar —
@@ -167,7 +250,8 @@ What landed (the plan below is unchanged except where noted):
   and unit-tested host-side by `src/test_scalar.f90` (CMake target
   `scalar_test`) against an mpmath transcription. `[rans] wall_treatment =
   wall_function` together with scalars is a hard config error
-  (`validate_turbulence_values`) — a thermal wall function is S5. §8 is
+  (`validate_turbulence_values`) — a thermal wall function is S5a, which
+  landed 2026-08-04 and lifted the rejection. §8 is
   finished: `get_timestep_rates` scales the eddy Peclet rate by
   `ν_eff = ire/Pr_min + ν_t/Pr_t,min` (`scalar_min_prt`), gated on
   `nScalar > 0` so both factors are exactly 1 otherwise.
@@ -207,6 +291,26 @@ What landed (the plan below is unchanged except where noted):
     S2/S1 = 0.9998 (CPU 4 ranks) and 1.0038 (GPU), both inside the noise floor
     of the `count = 0` control (0.9962 / 1.0068), whose code path is
     identical. Numbers in `validation/scalar/README.md`.
+
+S5a gates (all in `validation/scalar/`, README records the commands and the
+full numbers; `run_gates_s5.sh [unit|ref|sweep|det]`):
+
+| gate | result |
+|---|---|
+| the two correlations host-side vs mpmath (P, y+_T as a ROOT, the diffusivity, both branches + continuity) | `scalar_test: ALL PASS` (17 values; `y+_T` = **12.178** at Pr 0.71 vs the momentum 11.530) |
+| the RESOLVED reference's `theta_tau` out of the S4 statistics | **0.053413** = the S2 post-processed number to every digit; flux constancy 0.0000 |
+| the DELIVERED-FLUX identity (the discrete wall flux IS `u_tau*(theta_w - theta_1)/theta+`), 4 grids x 2 walls | **1.3e-16 … 1.6e-15** |
+| `y+_1` sweep 5/15/30/45: `theta_tau` vs the resolved reference | **+1.39 % / +2.28 % / +5.64 % / +7.22 %** — monotone, no double-counting dip |
+| the same runs: first-cell `theta+` vs Kader at the viscous `y+` | **0.1 % / 0.7 %** at `y+_1` = 30 / 45; 16.8 % / 17.1 % at 5 / 15 (Kader's own blend region, the T3 first-cell class) |
+| both branches fire | `y+_1 = 5` runs the CONDUCTION branch (`y+_k` 1.4 < 12.18), where the wall diffusivity is exactly 0 |
+| convergence of the fixed points (total-flux constancy) | 7.6e-12 / 1.0e-12 / 1.6e-14 / 1.2e-14 |
+| `prt_model = kays` under wall functions (the constant-`Pr_t` wall design) | `theta_tau(kays)/theta_tau(const)` 0.930 → 0.992 across the sweep; the conduction-branch case reproduces the resolved 0.9261 to 0.4 % |
+| `[scalar]` + `wall_treatment = wall_function` | now ACCEPTED (S2's gate (k) flipped); prints `P` / `y+_T` per scalar |
+| 1 rank == 4 ranks (z split), wall-function scalar case | **max_abs 0** on `un vn wn pn nut k omega theta theta_kc` |
+| CPU vs GPU, same case | ≤ 3.3e-13 (pn), 1.3e-15 on both scalars — the T3 `log()` ulp class |
+| `[scalar] count = 0` vs the S4 binaries, 7-case suite, nofma | max_abs **0**, CPU **and** GPU |
+| the 9 scalar cases (S1+S2+S3) vs the S4 binaries, nofma | max_abs **0** |
+| every S1 / S3 / S4 gate group re-run with the S5a binary (7 + 7 + 10 groups) | identical numbers to every digit; `scalar_test` ALL PASS |
 
 S4 gates (all in `validation/scalar/`, README records the commands and
 numbers; `run_gates_s4.sh [stats|accum|plane|levels|restart|det|noeffect|heat|adia|cyl|tools]`):
@@ -582,10 +686,11 @@ all three models:
   `2·Pr_t∞`… clamp to `Pr_t∞` at the molecular limit) and `Pe_t → ∞`.
 
 - **RANS wall functions**: `[rans] wall_treatment = wall_function` together
-  with scalars is a **hard config error** in this phase — a thermal wall
-  function (Kader/Jayatilleke P-function) is a separate, separately-validated
-  increment (S5). Resolved-wall RANS works: `ν_t → 0` at the wall leaves the
-  molecular diffusivity, which is the correct near-wall limit.
+  with scalars was a **hard config error** in S2 — the thermal wall function
+  (Kader/Jayatilleke P-function) landed as increment **S5a**; see the STATUS
+  header for what it does and where it lives. Resolved-wall RANS works
+  unchanged: `ν_t → 0` at the wall leaves the molecular diffusivity, which is
+  the correct near-wall limit.
 
 - **Buoyancy is explicitly out of scope.** The hook is obvious and cheap later:
   a Boussinesq source is `bodyforce.f90`'s `custom` hook reading `q(...,VAR_S0+is,...)`.
@@ -792,14 +897,19 @@ graded-cell penalization instead, validated by a full energy-budget closure
 Channel/boundary-layer scalar statistics (mean profile, rms, turbulent flux,
 Nusselt) alongside `channel_stats.f90`; `compare_fields.py` dataset discovery.
 
-**S5 — deferred, each its own session:** thermal wall function
-(Kader/Jayatilleke) for `wall_treatment = wall_function`; TVD/van-Leer scalar
+**S5a — thermal wall function (DONE; see the STATUS header).**
+**S5b/S5c — deferred, each its own session:** TVD/van-Leer scalar
 convection (shared with the RANS scalars — blocked by the single halo layer);
 Boussinesq buoyancy via the body-force custom hook.
 
 ---
 
-## 10. Files touched (S0–S3)
+## 10. Files touched (S0–S3; S5a adds `rans.f90`'s `rans_wall_yplus` + the
+log-law constants it now exports, `scalar.f90`'s thermal wall function and
+`sc%wfYplus/wfP/wfYpt`, the same branch in `scalar_stats.f90`, one call site
+in `moby_solve.f90`, the lifted `config.f90` rejection, the correlations in
+`test_scalar.f90`, and `validation/scalar/{wfsst,wfs180_y*}.ini` +
+`check_scalar_wf.py` + `run_gates_s5.sh`)
 
 | File | Change |
 |---|---|
@@ -847,33 +957,27 @@ Boussinesq buoyancy via the body-force custom hook.
 
 ---
 
-## 12. Next-session prompt (S5 — thermal wall function, TVD, Boussinesq)
+## 12. Next-session prompt (S5b — TVD scalar convection; S5c — Boussinesq)
 
-Paste this to start the next implementation session. S5 is THREE independent
-increments; do ONE per session.
+Paste this to start the next implementation session. What is left of S5 is
+TWO independent increments; do ONE per session. (S5a, the thermal wall
+function, was consumed 2026-08-04 — its prompt is kept below as history.)
 
-> Implement increment **S5a/S5b/S5c** of `docs/next_session_scalar.md` (pick
+> Implement increment **S5b/S5c** of `docs/next_session_scalar.md` (pick
 > one) on branch `scalar` — read the doc in full first: its STATUS header
-> records exactly what S0–S4 landed, every deviation, every finding and every
+> records exactly what S0–S5a landed, every deviation, every finding and every
 > gate number; also read the "Active work" section of CLAUDE.md for the
 > project conventions, and `validation/scalar/README.md` for the gate
 > machinery you inherit.
 >
-> S0–S4 are DONE and gated: scalars are extra variables of `blk%q`, the fused
+> S0–S5a are DONE and gated: scalars are extra variables of `blk%q`, the fused
 > `scalar_transport` kernel carries central/skew convection, the turbulent
 > closure `1/(Re Pr) + nut/Pr_t` (constant or Kays–Crawford) and BOTH
-> immersed-body wall modes, `moby_prepare` writes `coef_p_blocks`, and
+> immersed-body wall modes, `moby_prepare` writes `coef_p_blocks`,
 > `scalar_stats.f90` accumulates the channel/boundary-layer statistics and the
-> body heat release while the solver runs.
+> body heat release while the solver runs, and the Kader/Jayatilleke thermal
+> wall function serves `[rans] wall_treatment = wall_function`.
 >
-> - **S5a — thermal wall function.** `[rans] wall_treatment = wall_function`
->   together with `[scalar]` is currently a HARD CONFIG ERROR
->   (`validate_turbulence_values`); lift it by adding the Kader/Jayatilleke
->   P-function to the scalar's wall treatment, mirroring T3's momentum wall
->   functions (`rans.f90`: the wall-cell `nut` and the `omega` blend are the
->   pattern, and the T3 gates in `validation/rans_sst/` are the shape of the
->   validation). Gate against the resolved-wall scalar channel the way T3
->   gated `wf180_y30` against `turb180`, and keep the resolved path bit-exact.
 > - **S5b — TVD/van-Leer scalar convection.** Shared with the RANS scalars
 >   (`rans.f90`'s documented first-order-upwind deviation) and blocked by the
 >   SINGLE halo layer — a second upwind cell is needed and a block-edge
@@ -884,12 +988,67 @@ increments; do ONE per session.
 >   path reading `q(...,VAR_S0+is,...)`; the design note is §3 of this plan.
 >   Deliberately out of scope until someone needs it.
 >
+> TWO SMALLER ITEMS S5a left open, either of which is a session of its own
+> and neither of which blocks S5b/S5c:
+>
+> - **The IBM thermal wall function is UNGATED.** IBM wall cells take the
+>   same closure as domain walls (the same `wallcell` marker), but every
+>   S5a gate is a domain wall, and on the one IBM case T3 measured the
+>   k-based `y+` is 2-3 — the conduction branch, where the wall diffusivity
+>   is exactly zero and nothing new happens. A body whose wall cells reach
+>   the log layer would have the Dirichlet penalization AND the wall
+>   function acting on the same cell. Gating it needs `../rans_sst/
+>   ibm180wf.ini` plus a scalar, and its coefficient file RE-PREPARED with
+>   `[scalar]` (S3's `coef_p_blocks`, else the solver hard-errors —
+>   `../rans_geometry/setup.sh` is the generator).
+> - **`../rans_sst/wf180_y30.ini` is not rank-independent under an x split**
+>   — PRE-EXISTING and nothing to do with the scalars (the S4 reference
+>   binary reproduces it bit for bit without any `[scalar]` section: `un`
+>   max_abs 8.8e-03 after 20 steps, 7.6e-04 after ONE step; a z split is
+>   exact). Written up in `validation/rans_sst/README.md` under the T3
+>   determinism claim, which it contradicts. Suspects: the channel initial
+>   condition on a non-cubic rank box, and the wall-cell/`domwall`
+>   classification at an x rank boundary.
+>
 > Conventions that are not negotiable: build both paths with the module
-> loaded; always `mpirun`; save the S4 nofma binaries outside the tree BEFORE
-> touching any source; `run_bitexact.sh` / `run_bitexact_s3.sh` must stay at
-> max_abs 0; re-run `run_gates.sh`, `run_gates_s2.sh`, `run_gates_s3.sh` and
-> `run_gates_s4.sh`; new gates in `validation/scalar/` with a README block;
-> never declare an increment done with a failing build or an ungated result.
+> loaded; always `mpirun`; save the current nofma binaries outside the tree
+> BEFORE touching any source (the S5a set is already archived at
+> `~/s5a_ref_binaries/` — built from the S5a commit, its PROVENANCE.txt
+> names the hash; the S4 one at `~/s4_ref_binaries/`, HEAD e1d87cc);
+> `run_bitexact.sh` / `run_bitexact_s3.sh` must stay at max_abs 0;
+> re-run `run_gates.sh`, `run_gates_s2.sh`, `run_gates_s3.sh`,
+> `run_gates_s4.sh` and `run_gates_s5.sh`; new gates in `validation/scalar/`
+> with a README block; never declare an increment done with a failing build
+> or an ungated result.
+>
+> Stop after the increment's gates and report; do not start a second one.
+> Update this document's STATUS header and `validation/scalar/README.md`.
+>
+> LANDMINE for the re-runs: `run_gates.sh`'s `det` group compares CPU vs GPU
+> at TOLERANCE 0, so give it the nofma binaries
+> (`BIN=…/build_cpu_nofma/moby_solve GBIN=…/build_gpu_nofma/moby_solve`).
+
+---
+
+### Historical: the S5a prompt (consumed 2026-08-04)
+
+> Implement increment **S5a** of `docs/next_session_scalar.md` — the thermal
+> wall function — on branch `scalar`. `[rans] wall_treatment = wall_function`
+> together with `[scalar]` is currently a HARD CONFIG ERROR
+> (`validate_turbulence_values`, gate (k)); lift it by adding the
+> Kader/Jayatilleke P-function to the scalar's wall treatment, mirroring T3's
+> momentum wall functions — `rans.f90`'s wall-cell `nut` and the `omega`
+> viscous/log blend are the pattern, and the T3 gates in
+> `validation/rans_sst/` are the shape of the validation. Everything must be
+> branch-gated on the mode so the RESOLVED path stays bit-exact. Note what T3
+> learned and the thermal analogue needs: the wall-cell eddy value must also
+> be copied into the no-slip physical-face ghosts, or the face-interpolated
+> diffusivity delivers the wrong wall flux. Gate it the way T3 gated
+> `wf180_y30` against `turb180`: the wall-function scalar channel against the
+> S2/S4 RESOLVED scalar channel, with `theta_tau` and the wall flux read
+> straight out of the S4 statistics rather than post-processed by hand. A
+> `y+_1` sweep (5/15/30/45) showing graceful degradation, and Kader over the
+> wall layer, are the physical checks.
 
 ---
 

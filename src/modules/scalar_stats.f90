@@ -50,6 +50,7 @@ module scalar_stats
     use :: turbulence, only: turb_type, turbulence_is_enabled
     use :: ibmm, only: ibm_type
     use :: scalar, only: scalar_type, scalars_enabled, eddy_diffusivity, &
+        wall_face_diffusivity, &
         SC_IBM_ADIABATIC, SC_LAYOUT_PROFILE, SC_LAYOUT_PLANE
     implicit none
 
@@ -326,7 +327,7 @@ contains
         integer :: lvlOff(0:this%nLevels)
         real(C_DOUBLE) :: weight, ire, re, dm, uc, s0, sS, sN, vs, vn, dys, dyn
         real(C_DOUBLE) :: nts, ntn, clo, jlo, chi, jhi
-        logical :: useIbm, adiab, cls, cln, sols, soln, ms, mn
+        logical :: useIbm, adiab, cls, cln, sols, soln, ms, mn, wallfn
 
         nx = int(blk%nb(1))
         ny = int(blk%nb(2))
@@ -341,13 +342,19 @@ contains
         re = dns%re
         ire = 1.0d0/re
         useIbm = logical(dns%ibm_enabled)
+        ! S5a: under wall functions the wall row's flux is the THERMAL WALL
+        ! FUNCTION's, not nu_t/Pr_t's -- the statistics must report the flux
+        ! the transport kernel actually applied, or theta_tau is not the
+        ! solver's theta_tau. Same branch, same helper as scalar.f90.
+        wallfn = dns%rans_wall_treatment == 1_C_INT
         sample_sum = 0.0d0
         sample_count = 0.0d0
 
         !$omp target teams distribute parallel do collapse(4) &
         !$omp& map(to: ire, re, useNut, useIbm, nScal, nStat, nx, ny, nz, plane, ny_g, lvlOff, &
         !$omp& blk%q, blk%x, blk%z, blk%origin, blk%level, blk%physLow, blk%physHigh, nut, coef, &
-        !$omp& sc%pr, sc%prt, sc%prtModel, sc%invDy, sc%ibmMode) &
+        !$omp& sc%pr, sc%prt, sc%prtModel, sc%invDy, sc%ibmMode, &
+        !$omp& sc%wfP, sc%wfYpt, sc%wfYplus, wallfn) &
         !$omp& map(tofrom: sample_sum, sample_count) &
         !$omp& private(i,j,k,b,is,s,var,row,base,gx,gy,weight,dm,uc,s0,sS,sN,vs,vn, &
         !$omp& dys,dyn,nts,ntn,clo,jlo,chi,jhi,adiab,cls,cln,sols,soln,ms,mn)
@@ -403,7 +410,16 @@ contains
                         dm = ire/sc%pr(is)
                         dys = dm
                         dyn = dm
-                        if (useNut) then
+                        if (useNut .and. wallfn) then
+                            dys = dm + wall_face_diffusivity(nut(i,j-1,k,b), nut(i,j,k,b), &
+                                sc%wfYplus(i,j-1,k,b), sc%wfYplus(i,j,k,b), &
+                                sc%pr(is), sc%prt(is), sc%prtModel(is), re, &
+                                sc%wfP(is), sc%wfYpt(is))
+                            dyn = dm + wall_face_diffusivity(nut(i,j,k,b), nut(i,j+1,k,b), &
+                                sc%wfYplus(i,j,k,b), sc%wfYplus(i,j+1,k,b), &
+                                sc%pr(is), sc%prt(is), sc%prtModel(is), re, &
+                                sc%wfP(is), sc%wfYpt(is))
+                        else if (useNut) then
                             dys = dm + eddy_diffusivity(nts, sc%pr(is), sc%prt(is), &
                                 sc%prtModel(is), re)
                             dyn = dm + eddy_diffusivity(ntn, sc%pr(is), sc%prt(is), &
@@ -675,7 +691,7 @@ contains
         integer :: i, j, k, b, is, nx, ny, nz, nBlocks, nScal, var
         real(C_DOUBLE) :: ire, re, dm, dx, dy, dz, s0, sW, sS, sB, flux, sgn
         real(C_DOUBLE) :: ntw, nts, ntb, dxw, dys, dzb, cp
-        logical :: solc, solw, sols, solb, clw, cls, clb
+        logical :: solc, solw, sols, solb, clw, cls, clb, wallfn
 
         nx = int(blk%nb(1))
         ny = int(blk%nb(2))
@@ -684,13 +700,14 @@ contains
         nScal = int(sc%n)
         re = dns%re
         ire = 1.0d0/re
+        wallfn = dns%rans_wall_treatment == 1_C_INT      ! S5a, as above
         heat = 0.0d0
 
         !$omp target teams distribute parallel do collapse(4) &
         !$omp& map(to: ire, re, useNut, nScal, nx, ny, nz, &
         !$omp& blk%q, blk%x, blk%y, blk%z, blk%physLow, nut, coef, &
         !$omp& sc%pr, sc%prt, sc%prtModel, sc%invDx, sc%invDy, sc%invDz, &
-        !$omp& sc%ibmValue, sc%ibmMode) &
+        !$omp& sc%ibmValue, sc%ibmMode, sc%wfP, sc%wfYpt, sc%wfYplus, wallfn) &
         !$omp& map(tofrom: heat) &
         !$omp& private(i,j,k,b,is,var,dm,dx,dy,dz,s0,sW,sS,sB,flux,sgn,cp, &
         !$omp& ntw,nts,ntb,dxw,dys,dzb,solc,solw,sols,solb,clw,cls,clb)
@@ -733,7 +750,17 @@ contains
                         dxw = dm
                         dys = dm
                         dzb = dm
-                        if (useNut) then
+                        if (useNut .and. wallfn) then
+                            dxw = dm + wall_face_diffusivity(nut(i-1,j,k,b), nut(i,j,k,b), &
+                                sc%wfYplus(i-1,j,k,b), sc%wfYplus(i,j,k,b), &
+                                sc%pr(is), sc%prt(is), sc%prtModel(is), re, sc%wfP(is), sc%wfYpt(is))
+                            dys = dm + wall_face_diffusivity(nut(i,j-1,k,b), nut(i,j,k,b), &
+                                sc%wfYplus(i,j-1,k,b), sc%wfYplus(i,j,k,b), &
+                                sc%pr(is), sc%prt(is), sc%prtModel(is), re, sc%wfP(is), sc%wfYpt(is))
+                            dzb = dm + wall_face_diffusivity(nut(i,j,k-1,b), nut(i,j,k,b), &
+                                sc%wfYplus(i,j,k-1,b), sc%wfYplus(i,j,k,b), &
+                                sc%pr(is), sc%prt(is), sc%prtModel(is), re, sc%wfP(is), sc%wfYpt(is))
+                        else if (useNut) then
                             dxw = dm + eddy_diffusivity(ntw, sc%pr(is), sc%prt(is), sc%prtModel(is), re)
                             dys = dm + eddy_diffusivity(nts, sc%pr(is), sc%prt(is), sc%prtModel(is), re)
                             dzb = dm + eddy_diffusivity(ntb, sc%pr(is), sc%prt(is), sc%prtModel(is), re)
