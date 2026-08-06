@@ -24,12 +24,15 @@ and stand:
   their initial condition, so they legitimately differ against it. Every
   non-RANS case and every restarted case is max_abs 0 either way, CPU and
   GPU.
-- NOT re-run afterwards, and cheap to close if a session wants the belt:
-  `run_gates_s2.sh les` / `band` (restart-based LES campaigns, no RANS, so
-  the IC fix cannot reach them) and `run_gates_s3.sh` / `run_gates_s4.sh`
-  beyond their `heat`/`adia` groups (which were re-run and read their
-  recorded numbers). `run_bitexact.sh` (CPU+GPU) and `run_bitexact_s3.sh`
-  were re-run in full.
+- NOT re-run afterwards: `run_gates.sh` (S1), `run_gates_s2.sh les`/`band`,
+  `run_gates_s3.sh`, `run_gates_s4.sh` beyond `heat`/`adia`, and
+  `run_gates_s5.sh det`. Each is expected to be safe for a stated reason
+  (turbulence-free, body-free, restart-based, or `ibm_value = 1` where the
+  heat fix is a measured no-op) — but those are arguments, not
+  measurements. **`docs/next_session_verification.md` is the session that
+  converts them**, together with the audit of the host/device staleness
+  class that the GPU half of the IC fix exposed. `run_bitexact.sh` (CPU
+  AND GPU) and `run_bitexact_s3.sh` WERE re-run in full.
 
 What landed (the plan below is unchanged except where noted):
 

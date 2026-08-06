@@ -1003,10 +1003,14 @@ immersed boundary. Phased, each phase verified before the next:
     without the update the fix was a pure NO-OP on GPU (measured: the fixed
     GPU binary reproduced the pre-fix result bit-for-bit and kept the
     x-dependent k, x-spread 1.49e-02 vs 0.0 on CPU). This is the general
-    trap: **any host-side init code reading `blk%q` after `enter_block_data`
-    sees a stale host copy** — the `target update from(ibm%coef)` a few lines
-    below is the same pattern. Only the GPU bit-exactness suite could catch
-    it; the CPU one looked complete. Only the k/omega INITIAL CONDITION of a cold start
+    trap: **any host-side code reading a device-mapped array after its
+    `enter_*_data` sees a stale host copy** (and any host-side WRITE is
+    invisible to the device until a `target update to`) — the
+    `target update from(ibm%coef)` a few lines below is the same pattern.
+    Only the GPU bit-exactness suite could catch it; the CPU one looked
+    complete. **Exactly one instance of this class has been found; the audit
+    for the others is `docs/next_session_verification.md`**, which also
+    carries the gate groups not re-run after these two fixes. Only the k/omega INITIAL CONDITION of a cold start
     changes; the converged answer does not (`wf180_y30`/`wf180_y45`
     reproduce the T3 gate to every printed digit), but cold-started RANS
     snapshots written before this date no longer reproduce bit-for-bit.
