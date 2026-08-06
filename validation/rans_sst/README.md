@@ -87,20 +87,88 @@ GPU <= 2e-13 (the `log()` intrinsic in the wall-function branch differs
 by an ulp between host and device libm — resolved mode remains exactly
 CPU == GPU).
 
-OPEN, found 2026-08-04 while gating the passive scalars' thermal wall
-function (validation/scalar, increment S5a): **`wf180_y30.ini` is NOT
-rank-independent when the decomposition splits x.** With no `[scalar]`
-section at all and the T3-era binaries, 1 rank vs 4 ranks (the default
-dims, which split x and z) reads `un` max_abs 8.800384e-03 / `k`
-9.035115e-02 / `omega` 1.238466e+00 after 20 steps — and already `un`
-7.6e-04 after ONE step, so it is the initial state or the first substage
-on an x-split rank box, not an accumulation. Pinning `[mpi] dims = 1 1 4`
-(a pure z split) is EXACT on the same case, which is what the S5a
-determinism gate does. The T3 claim above evidently ran a decomposition
-that did not split x. Suspects, in order: the channel case's initial
-condition on a non-cubic rank box, and the wall-cell/`domwall`
-classification at an x rank boundary. Not investigated further — it
-belongs to this case, not to the scalars.
+RESOLVED 2026-08-05 (found 2026-08-04 while gating the passive scalars'
+thermal wall function, validation/scalar increment S5a): **a cold-started
+RANS run was not rank- or nb-independent when the decomposition split a
+direction in which the velocity is nonzero.** Symptom as recorded:
+`wf180_y30.ini` with no `[scalar]` section, 1 rank vs 4 ranks (the default
+dims, which split x and z) read `un` max_abs 8.800384e-03 / `k`
+9.035115e-02 / `omega` 1.238466e+00 after 20 steps, and already `un`
+7.6e-04 after ONE step; a pure z split (`[mpi] dims = 1 1 4`) was EXACT.
+
+ROOT CAUSE — the k initial condition read an unfilled halo.
+`init_rans_transport` (rans.f90) sets `k = 1.5 (tu/100 |u|)^2` with the
+cell velocity interpolated from the two staggered faces,
+`uc = ½(q(i) + q(i+1))`, so at a block's LAST interior cell it reads
+`q(nb+1)` — a halo. `moby_solve.f90` called `apply_bc` +
+`exchange_halos` only AFTER the whole init block, so that halo was still
+zero: `k` came out a factor **4** low (`|u|` halved) on the last plane of
+every block, and `omega = k/(nut_ratio nu)` fell with it until the viscous
+limb `6 nu/(beta1 y_eff^2)` took over. Measured on the 8x6x8 case with
+`dt = 1e-14` (i.e. the initial state itself): `k` 0.172673 vs 0.690693 =
+exactly 1/4, `omega` 16.0 (the viscous limb, exactly) vs 22.204923, at
+x = 7 on one rank and at x = 3 AND x = 7 on two x-ranks — one bad plane
+per block, which is what made the answer depend on the decomposition.
+Only x showed it because this channel's `v` and `w` are zero in the IC, so
+the corresponding y/z halo reads contributed nothing; a case with a
+nonzero `v`/`w` initial field (a restart missing its k/omega datasets, an
+inlet case) was wrong on the high face of every block in all three
+directions. Neither of the two suspects recorded above was involved.
+
+FIX (`src/moby_solve.f90`): `apply_bc(..., outflow_copy=.true.)` +
+`exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W, VAR_P])` now run BEFORE the
+`[rans]` init block. The calls that follow it are unchanged and
+idempotent — both write only ghosts and halos, from interior data that
+nothing in between modifies — so every non-RANS case stays bit-exact.
+
+SECOND HALF OF THE FIX, and the reason to run the GPU suite rather than
+argue from the CPU one: **those two calls write the DEVICE copy of `blk%q`
+(mapped by `enter_block_data`), while `init_rans_transport` is HOST code
+reading the host copy** — so on the GPU the fix above was a pure no-op.
+Measured 2026-08-05: the fixed GPU binary reproduced the pre-fix GPU result
+BIT-FOR-BIT on turb180 / wf180_y30 / lam30t and kept the x-dependent `k`
+(x-spread 1.492e-02 after 20 steps, against 0.000e+00 on the CPU). The
+completed fix adds `!$omp target update from(blk%q)` after the exchange,
+under `USE_OPENMP_OFFLOAD` — the same pattern as the
+`target update from(ibm%coef)` a few lines below. After it the GPU `k` is
+x-uniform (x-spread **0.000e+00**) and turb180's 20-step deviation from the
+pre-fix binary is IDENTICAL to the CPU's to every digit (un 2.2814559502704945e-02,
+k 2.8996297594464926e-01, omega 5.2618740388259901e+00), i.e. the two paths
+now agree on the corrected initial condition.
+
+WHAT IT CHANGES: only the k/omega INITIAL CONDITION of a cold-started RANS
+run (a restart carrying k/omega overwrites the IC, and was never
+affected). The converged answer is unchanged: `wf180_y30` re-run to
+`t_final` with the fixed binary reproduces the gate above to EVERY PRINTED
+DIGIT (log-region dev 0.0297, near-centre 0.0297, implied U+ centreline
+18.41, k/om/nut ranges identical) — the RANS fixed point does not remember
+the IC. Cold-started RANS field snapshots taken before 2026-08-05 are
+therefore not reproducible bit-for-bit with the current binary; their
+physics is.
+
+GATE: `wf180_y30.ini` at 20 steps, 1 rank vs `dims = 4 1 1`, `1 1 4` and
+`2 1 2`, all **max_abs 0** on `un vn wn pn k omega nut` (nofma CPU). The
+S5a determinism gate's `[mpi] dims = 1 1 4` pin is no longer load-bearing
+(kept: it still passes, and a z split remains the cheaper decomposition
+for that grid). Independently re-confirmed on an IBM + RANS + scalar cold
+start (`../scalar/ibmwf180.ini`, 8 blocks, 20 steps): 1 rank == 4 ranks
+**max_abs 0** on `un vn wn pn k omega nut theta`.
+
+RE-BASELINE REQUIRED. `validation/scalar/run_bitexact.sh` against the
+pre-fix (S5a) binaries now reads exactly the intended signature — the four
+non-RANS cases untouched, the three cold-started RANS cases moved:
+
+```
+min_channel  les_ibm  les_ibm_refine  beltrami_yslab   -> max_abs 0, PASS
+turb180      un 2.28e-02  k 2.90e-01  omega 5.26e+00   -> differs (the fixed IC)
+wf180_y30    un 1.55e-02  k 1.58e-01  omega 2.21e+00   -> differs
+lam30t       un 1.77e-02  gamma 2.80e-01  rethetat 8.0 -> differs
+```
+
+Those three are 20-step transients from a corrected initial condition, and
+their CONVERGED answers are unchanged (above). So `~/s5a_ref_binaries/` is
+stale for RANS cases: the next increment must build its reference set from
+a commit that CONTAINS this fix, or it will chase this difference.
 
 T4 gamma-Re_thetat transition cases (`[rans] transition = true`,
 Langtry & Menter 2009 = OpenFOAM kOmegaSSTLM, resolved walls only; run

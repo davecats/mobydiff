@@ -161,6 +161,28 @@ program moby_solve
     if (dns%ibm_enabled .and. dns%ibm_band_filter) &
         call init_ibm_band(ibm, dns, blk, c, c%has_terminal)
 
+    ! Velocity ghosts and halos BEFORE any init-time consumer reads them.
+    ! init_rans_transport's k initial condition interpolates the cell
+    ! velocity from the two staggered faces, so at a block's LAST interior
+    ! cell it reads q(nb+1) -- a halo. Without this call that halo is still
+    ! zero, and k = 1.5 (tu/100 |u|)^2 comes out a factor 4 low on the last
+    ! plane of EVERY block, i.e. rank- and nb-dependently (found 2026-08-05;
+    ! it made wf180_y30 differ between an x-split and a z-split run). The
+    ! calls repeated below are idempotent: both write only ghosts and halos,
+    ! from interior data that nothing in between modifies.
+    call apply_bc(blk, bc, outflow_copy=.true.)
+    call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W, VAR_P])
+#ifdef USE_OPENMP_OFFLOAD
+    ! ...and back to the HOST, because init_rans_transport is host code
+    ! reading blk%q while the two calls above wrote the DEVICE copy (blk%q
+    ! was mapped by enter_block_data). Without this the fix above is a
+    ! no-op on the GPU: measured 2026-08-05, the GPU binary reproduced the
+    ! pre-fix result bit-for-bit and kept the x-dependent k (x-spread
+    ! 1.5e-02 after 20 steps, vs 0.0 on the CPU). Same pattern as the
+    ! `target update from(ibm%coef)` below.
+    !$omp target update from(blk%q)
+#endif
+
     ! A configured [rans] section builds the SST geometry state (T1: wall
     ! distance + IBM wall cells); [turbulence] model = rans additionally
     ! builds and advances the k-omega transport state (T2).

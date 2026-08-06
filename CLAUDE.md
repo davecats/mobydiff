@@ -870,6 +870,167 @@ immersed boundary. Phased, each phase verified before the next:
   gone velocity-active through outlet faces); dt detunes it. The case ships
   accel-off. Latent risk for long chebyshev+outlet runs (cylinder/naca
   horizons were too short to show it).
+- Passive scalars S0-S5a (DONE 2026-08-03/04, branch `scalar` off
+  `boundaryLayer`; plan + every deviation, finding and gate number in
+  `docs/next_session_scalar.md` STATUS header, gate machinery in
+  `validation/scalar/README.md`). N user-selectable transported scalars, each
+  with its own Pr/Sc. THE ONE DESIGN DECISION: **scalars are extra variables of
+  `blk%q`** (`dns%nVar = NVAR + dns%nScalar`, scalar `is` at `VAR_S0+is`;
+  `SCR_S0+is` in `qs`/`oldrhs` — p has no scratch, so THE TWO INDICES DIFFER),
+  which makes the metric arrays (a scalar sits exactly at the `VAR_P` position),
+  the 2:1 halo exchange (cell-centred ⇒ the PRESSURE transfer: 8-cell restrict +
+  blended `(2 p_C + p_f)/3` prolong ghost — deliberately unlike the RANS
+  scalars' plain injection) and the io (one file, one collective write) come for
+  free. `count = 0` is bit-exact BY CONSTRUCTION and gated at max_abs 0 (nofma,
+  CPU AND GPU) on the standard 7-case suite at every increment.
+  `src/modules/scalar.f90` owns `scalar_type` (allocatable per-scalar arrays —
+  there is NO `MAX_SCALARS`), the fused `scalar_transport` (one GPU launch for
+  any N: collapse(4) + inner scalar loop) and `scalar_finish` (qs→q, ghosts, ONE
+  batched exchange), both OUTSIDE the projection.
+  - S0/S1: config `[scalar]`/`[scalar.N]`, `apply_scalar_bc_q` (a var-indexed
+    twin of apply_bc's cell-centred branch — do NOT extend apply_bc, it runs
+    `nIter`x inside the projection), patch-derived BC defaults; 2nd-order
+    central divergence-form convection on the p-cell's own face velocities,
+    `convection = skew` honoured, face-flux diffusion, momentum RK3 verbatim.
+    **NO upwind option** (project stance; the sharp-front over/undershoot is a
+    known limitation until the shared TVD increment lands). Called BEFORE
+    `momentum` — after it the velocity is the non-solenoidal predictor with
+    stale halos.
+  - S2: `D_face = 1/(Re Pr) + ½(nut_L+nut_R)/Pr_t(face)` reading `turb%nut`, so
+    ONE path covers LES/RANS/IDDES; `prt_model = kays` (Kays-Crawford, pure
+    declare-target, small-x series branch or it loses all precision at large
+    Pe_t) unit-tested in `src/test_scalar.f90`. Peclet limiter scaled by
+    `nu_eff = ire/Pr_min + nut/Pr_t,min`.
+  - S3: `ibm%coef` gains its `VAR_P` column ONLY when `[scalar]` is configured
+    (**`ibm%mu` does NOT** — `mu_s = 1/(1+dt_gamma coef_p/Pr)` is Pr-dependent
+    and formed inline); `ibm_wall = dirichlet` (penalization, solid cell == the
+    body value to the last bit) | `adiabatic` (six-face convective AND diffusive
+    masking, symmetric ⇒ `∫s dV` conserved exactly). File path reads the NEW
+    OPTIONAL `coef_p_blocks` case-file dataset — scalar-free case files stay
+    byte-identical, and scalars + a file without it is a hard error naming the
+    fix (**any pre-S3 coefficient file must be re-prepared**; the generated
+    zero-force twins are fixed by re-running their generator, not moby_prepare).
+    **FINDING: the A2 penalization integral does NOT transpose to a Dirichlet
+    scalar** — `coef_p (s_body − s)` is `1e28 x 0 = 0` in every solid cell and
+    the integral sees only 63 % of the heat; the body heat release is measured
+    as staircase-interface flux + graded-cell penalization (validated by a
+    discrete energy budget to 3.9e-4).
+  - S4: `src/modules/scalar_stats.f90` — seven columns per scalar per row
+    (`<s>`, `<s²>`, `<u_c s>`, and on the LOW and HIGH y face the convective and
+    the TOTAL flux) built with the TRANSPORT KERNEL's own face diffusivity, so a
+    wall row's `J` IS the exact discrete wall flux and `theta_tau`/Nusselt are
+    exact rather than reconstructed; `stats_layout = profile|plane`, per-level
+    files, restart-continued. DEVIATION: a solver-level facility called from
+    `moby_solve.f90`, NOT a case component — the case `after_step` interface
+    carries neither `sc` nor `turb%nut`. `tools/scalar_stats.py` reads it;
+    `compare_fields.py` with no dataset arguments now discovers datasets.
+  - S5a: the Kader/Jayatilleke THERMAL WALL FUNCTION for `[rans]
+    wall_treatment = wall_function` (was S2's hard config error), delivered
+    exactly as T3 delivers the wall shear — **as a wall-cell eddy
+    DIFFUSIVITY**, so the ordinary face-flux discretisation reproduces the
+    wall-function flux with no special-cased flux anywhere (measured identity
+    1e-15). THE T3 LESSON TRANSPOSED: the wall-cell value must also be copied
+    into the no-slip ghosts or the face-interpolated diffusivity, and the
+    delivered flux, are halved. `kappa`/`E` are USE-ASSOCIATED from rans.f90 —
+    one definition of the log law. The wall cell uses the CONSTANT `prt` even
+    under `prt_model = kays` (deliberate: P and the log branch are defined with
+    a constant Pr_t); gate (x2) measures what that costs.
+  - STILL OPEN: **S5b** (TVD/van-Leer scalar convection — shared with the RANS
+    scalars, blocked by the single halo layer, measurement-justified by the
+    SD7003 gamma front); **S5c** (Boussinesq via bodyforce's `custom` hook);
+    (S5b/S5c).
+  - IBM THERMAL WALL FUNCTION — case built + PARTIALLY gated 2026-08-05
+    (S5a's open item; every S5a gate was a domain wall).
+    `validation/scalar/ibmwf180.ini`: the les_ibm wall slabs on a COARSE grid
+    (ly 2.5 / ny 8), where the classified wall cells are CUT cells (centre
+    inside the solid, one fluid staggered face) that the Dirichlet
+    penalization pins (u 2e-27, theta 1.6e-29) while the wall function reads
+    them. ONE body value serves both walls, so the case drives the scalar
+    with isothermal walls + a constant volumetric `source`: the steady budget
+    is then CLOSED-FORM (fluxes telescope; heat into the body =
+    `source*V_fluid`) and NO reference run is needed -- gated to 1.4e-15.
+    LOG BRANCH -- CLOSED at Re_tau 1000 (`ibmwf1000.ini`, GPU on istmcetus).
+    KEY INSIGHT: **coarsening the grid is not the y+ lever at an immersed
+    wall.** The cut cell's velocity is penalized, so its k stays small
+    however coarse the grid; y+ only picks up the bounded growth of
+    y_eff ~ dwall <= dy/2 (ibmwf180 already has 6x ibm180wf's y_eff and still
+    converges to y+ 5.8, the conduction branch). The lever is `nu`: at fixed
+    u_tau = 1, y+ ∝ Re. `ibmwf1000.ini` is the same ini with re = 1000 and
+    nothing else (the case file is re-prepared because the coefficients carry
+    the 1/Re scaling; dwall/yeff/wallcell come out BIT-IDENTICAL, so y+ moves
+    only through nu and k). Converged: y+_k **38.3-41.0** (mean 39.7), the
+    log branch fires on **128/128** wall cells for BOTH wall functions, the
+    wall-cell nut matches the independent transcription **exactly (0.0, on
+    GPU)**, and the closed-form budget holds to **2.3e-15**. So the
+    penalization and the thermal wall function coexist correctly on the same
+    cut cell in the log branch. BONUS control: the same case run with the
+    PRE-FIX GPU binary read 132 % high, reproducing the double count at a
+    second Re and on a second device.
+  - FOUND BY THAT GATE, FIXED 2026-08-05: **the S4 body-heat diagnostic
+    double counted whenever `ibm_value = 0`.** The staircase/penalization
+    split assumes a solid cell contributes exactly 0 to the penalization sum
+    (it holds the body value to the last bit -- the S3 FINDING), so its heat
+    is carried by the staircase term. That cancellation is an ARTEFACT OF THE
+    VALUE: it is bitwise only when `ibm_value` is large enough to swallow the
+    O(1e-29) penalization residual under its own ulp. With `ibm_value = 0` the
+    residual survives, `coef_p*(0 - 1.6e-29)` is O(0.1) per cell, and the heat
+    was counted twice. MEASURED on the same physics with the two conventions
+    (theta differs by a constant; the staircase column is bit-identical to 13
+    digits): `ibm_value = 1` gave the exact closed-form answer 0.46263770630106
+    (rel dev 1.7e-14), `ibm_value = 0` gave 1.0556 -- 128 % high. FIX: exclude
+    solid cells from the penalization accumulator explicitly
+    (`scalar_stats.f90`), which is a NO-OP at `ibm_value = 1` -- re-gated, the
+    S4 heat gates read their recorded numbers (solver-vs-Python 1.3e-15,
+    energy budget 4.49e-04, adiabatic exactly 0) and the fixed binary at
+    `ibm_value = 0` now reproduces the `ibm_value = 1` numbers to 1e-15. The
+    diagnostic is now value-independent, which is the invariance it must have.
+    LESSON: never rely on a floating-point cancellation as a classification.
+  - FIXED 2026-08-05 (pre-existing, found while gating S5a): a cold-started
+    RANS run was **not rank/nb-independent**. `init_rans_transport`'s
+    `k = 1.5 (tu/100 |u|)^2` IC interpolates the cell velocity from the two
+    staggered faces, so at a block's LAST interior cell it read the halo
+    `q(nb+1)` — which `moby_solve.f90` did not fill until after the whole
+    init block: `k` came out a factor **4** low on the last plane of EVERY
+    block (`omega` following it down to the viscous limb), one bad plane per
+    block, so the answer depended on the decomposition. Visible in x only on
+    the channels because their `v`/`w` vanish in the IC; a nonzero-`v`/`w`
+    cold start was wrong on the high face of every block in all three
+    directions. FIX: `apply_bc` + `exchange_halos` now run BEFORE the
+    `[rans]` init block (the later calls are idempotent — ghosts and halos
+    only, from interior data nothing modifies in between), so non-RANS cases
+    stay bit-exact. **PLUS `!$omp target update from(blk%q)` after it**: those
+    calls write the DEVICE copy while `init_rans_transport` is HOST code, so
+    without the update the fix was a pure NO-OP on GPU (measured: the fixed
+    GPU binary reproduced the pre-fix result bit-for-bit and kept the
+    x-dependent k, x-spread 1.49e-02 vs 0.0 on CPU). This is the general
+    trap: **any host-side init code reading `blk%q` after `enter_block_data`
+    sees a stale host copy** — the `target update from(ibm%coef)` a few lines
+    below is the same pattern. Only the GPU bit-exactness suite could catch
+    it; the CPU one looked complete. Only the k/omega INITIAL CONDITION of a cold start
+    changes; the converged answer does not (`wf180_y30`/`wf180_y45`
+    reproduce the T3 gate to every printed digit), but cold-started RANS
+    snapshots written before this date no longer reproduce bit-for-bit.
+    `run_bitexact.sh` vs the S5a binaries now reads the INTENDED signature on
+    CPU **and GPU**: min_channel / les_ibm / les_ibm_refine / beltrami_yslab
+    max_abs 0, and turb180 / wf180_y30 / lam30t moved (20-step transients
+    from the corrected IC: un ~2e-2, k ~3e-1; turb180's GPU deviation is
+    IDENTICAL to its CPU one to every digit). Same for `run_bitexact_s3.sh`:
+    8 of 9 scalar cases max_abs 0, `turbsst` moved (it is cold-started RANS).
+    The S2/S5a PHYSICS is unmoved — re-measured, not assumed: the S5a
+    `theta_tau` sweep still reads +1.39/+2.28/+5.64/+7.22 %, the resolved
+    reference still 0.053413, Kader still 17.1/0.1/0.7 %, and the S5a
+    determinism gate is now max_abs 0 for the X SPLIT too (CPU vs GPU 5.6e-17).
+    **A NEW REFERENCE SET IS ARCHIVED AT `~/s5b_ref_binaries/`** (CPU+GPU
+    nofma solve/prepare + PROVENANCE): use it, not `~/s5a_ref_binaries/`,
+    which is stale for cold-started RANS cases. LESSON: `q`'s halos are invalid
+    throughout init — any init-time consumer reading a neighbour must
+    exchange first. Write-up in `validation/rans_sst/README.md`.
+  - LANDMINE (cost an hour): a local `nVar` in blocks.f90 SHADOWED the
+    use-associated `NVAR` parameter (Fortran is case-insensitive) and silently
+    allocated a zero-size dimension. The local is now `nQ`.
+  - Conjugate heat transfer at the immersed interface is the planned third
+    `ibm_wall` mode: `docs/next_session_conjugate.md` (PROPOSAL, not started;
+    derivation in `docs/conjugate/conjugate_ibm.tex`).
 - ALSO PENDING: **Profile + optimise** the GPU step for the 2:1-refined channel.
   The last hard profile is STALE (the reflux that was 23% is removed; the
   `MOBY_PHASETIME` timer is deleted): re-profile first with a minimal removable

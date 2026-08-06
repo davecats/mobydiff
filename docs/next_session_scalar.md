@@ -70,24 +70,37 @@ What landed (the plan below is unchanged except where noted):
   - **`validation/scalar/wferr.ini` FLIPPED SIDES**: the S2 gate (k) was
     that the combination error-stops; it is now the positive control that
     the solver starts and reports each scalar's `P` / `y+_T`.
-  - **FOUND WHILE GATING (pre-existing, not S5a):** `../rans_sst/
-    wf180_y30.ini` — with NO `[scalar]` section and run with the **S4
-    reference binary** — is not rank-independent under an x split (`un`
-    max_abs 8.8e-03 after 20 steps, already 7.6e-04 after ONE step; a z
-    split is exact). The S5a determinism gate therefore pins `[mpi] dims =
-    1 1 4`, where 1 rank == 4 ranks is EXACT on all nine datasets. The T3
-    README's "1-rank == 4-rank exactly" evidently ran a decomposition that
-    did not split x. It belongs to the RANS channel case, not to the
-    scalars, and is recorded in `validation/scalar/README.md`.
-  - **IBM wall cells take the same treatment** (the same `wallcell` marker),
-    but the gates here are DOMAIN walls and NO IBM wall-function scalar case
-    was run. T3 measured `y+_k ~ 2-3` on its IBM channel (validation/
-    rans_sst/README.md gate (c)) — the conduction branch of this closure,
-    where the wall diffusivity is exactly zero — but that is the momentum
-    side. A body whose wall cells reach the log layer, where the Dirichlet
-    penalization and the wall function would both act on the same cell, is
-    UNGATED and needs its own increment (plus a coefficient file re-prepared
-    with `[scalar]` for `coef_p_blocks`).
+  - **FOUND WHILE GATING (pre-existing, not S5a) — FIXED 2026-08-05:**
+    `../rans_sst/wf180_y30.ini` — with NO `[scalar]` section and run with
+    the **S4 reference binary** — was not rank-independent under an x split
+    (`un` max_abs 8.8e-03 after 20 steps, already 7.6e-04 after ONE step; a
+    z split is exact). The S5a determinism gate therefore pins `[mpi] dims =
+    1 1 4`, where 1 rank == 4 ranks is EXACT on all nine datasets. CAUSE:
+    `init_rans_transport`'s `k = 1.5 (tu/100 |u|)^2` initial condition
+    interpolates the cell velocity from the two staggered faces, so at a
+    block's last interior cell it read the halo `q(nb+1)` — which
+    `moby_solve.f90` did not fill until after the whole init block. `k` came
+    out a factor 4 low on the last plane of EVERY block (only in x here,
+    because this channel's `v`/`w` are zero in the IC). FIX: `apply_bc` +
+    `exchange_halos` now run BEFORE the `[rans]` init block; the calls that
+    follow are idempotent, so every non-RANS case stays bit-exact. Only the
+    k/omega INITIAL CONDITION of a cold-started RANS run changes — the
+    converged answer does not (`wf180_y30`/`wf180_y45` reproduce the T3
+    gate to every printed digit). Write-up in `validation/rans_sst/
+    README.md`, gate numbers in `validation/scalar/README.md`.
+  - **IBM wall cells take the same treatment** (the same `wallcell` marker).
+    The S5a gates were all DOMAIN walls; the IBM case was **gated 2026-08-05**
+    by `validation/scalar/ibmwf180.ini` (the les_ibm wall slabs on `ly = 2.5 /
+    ny = 8`, so the CUT wall cells sit at `y+_k ~ 13`, past the thermal
+    switch 12.178 AND the momentum switch 11.530 — T3's `ibm180wf` sits at
+    `y+ ~ 2-3`, the conduction branch, which is why the regime was never
+    exercised). Result: 128/128 wall cells take the LOG branch while the
+    penalization pins `u`/`theta` in the SAME cells (2e-27 / 1.6e-29), and
+    the wall-cell `nut` reproduces an independent transcription of
+    `nu(y+ kappa/ln(E y+) - 1)` to 2.7e-15. The gate needs a case file
+    prepared WITH `[scalar]` (S3's `coef_p_blocks`) — built from the ini
+    itself by `moby_prepare`, not from the retired mobygeom. **It also found
+    and fixed a real defect in the S4 heat diagnostic** — see the S4 bullet.
 
 - **S4** — statistics and tooling. New `src/modules/scalar_stats.f90` owning
   `scalar_stats_type`: per-row accumulators of SEVEN columns per scalar —
@@ -119,6 +132,22 @@ What landed (the plan below is unchanged except where noted):
     (`name.h5`, `name_l1.h5`, …) — the channel form; `plane` = rows of the
     global `(x,y)` plane z averaged — the boundary-layer form. Accumulators
     continue from the file on restart (the `channel_stats` recipe).
+  - **CORRECTED 2026-08-05 (a real defect, found by the IBM wall-function
+    gate): the split double counted whenever `ibm_value = 0`.** "A solid cell
+    contributes exactly 0 to the penalization sum" is an ARTEFACT OF THE
+    VALUE, not a property of solid cells: the O(1e-29) penalization residual
+    is swallowed by `ibm_value`'s own ulp only when `ibm_value` is O(1). At
+    `ibm_value = 0` it survives, `coef_p*(0 - 1.6e-29)` is O(0.1) per cell,
+    and that heat was counted BOTH as penalization and as the staircase flux
+    into the same cell. Measured on one physical problem run with both
+    conventions (theta differs by a constant, so the staircase column is
+    bit-identical to 13 digits): `ibm_value = 1` gave the closed-form truth
+    0.46263770630106 to 1.7e-14, `ibm_value = 0` gave 1.0556 — **128 % high**.
+    The fix excludes solid cells from the penalization accumulator
+    EXPLICITLY, a no-op at `ibm_value = 1` (re-gated: the S4 heat gates read
+    their recorded numbers, and the fixed binary at `ibm_value = 0` now
+    reproduces the `ibm_value = 1` answer to 1e-15). Never classify on a
+    floating-point cancellation.
   - **The Nusselt/heat diagnostic uses the cancellation-free form the S3
     FINDING forced**: `heat_interval` writes, per scalar, the flux across
     every staircase face separating a solid cell from a fluid one PLUS the
@@ -991,30 +1020,34 @@ function, was consumed 2026-08-04 — its prompt is kept below as history.)
 > TWO SMALLER ITEMS S5a left open, either of which is a session of its own
 > and neither of which blocks S5b/S5c:
 >
-> - **The IBM thermal wall function is UNGATED.** IBM wall cells take the
->   same closure as domain walls (the same `wallcell` marker), but every
->   S5a gate is a domain wall, and on the one IBM case T3 measured the
->   k-based `y+` is 2-3 — the conduction branch, where the wall diffusivity
->   is exactly zero and nothing new happens. A body whose wall cells reach
->   the log layer would have the Dirichlet penalization AND the wall
->   function acting on the same cell. Gating it needs `../rans_sst/
->   ibm180wf.ini` plus a scalar, and its coefficient file RE-PREPARED with
->   `[scalar]` (S3's `coef_p_blocks`, else the solver hard-errors —
->   `../rans_geometry/setup.sh` is the generator).
-> - **`../rans_sst/wf180_y30.ini` is not rank-independent under an x split**
->   — PRE-EXISTING and nothing to do with the scalars (the S4 reference
->   binary reproduces it bit for bit without any `[scalar]` section: `un`
->   max_abs 8.8e-03 after 20 steps, 7.6e-04 after ONE step; a z split is
->   exact). Written up in `validation/rans_sst/README.md` under the T3
->   determinism claim, which it contradicts. Suspects: the channel initial
->   condition on a non-cubic rank box, and the wall-cell/`domwall`
->   classification at an x rank boundary.
+> - ~~**The IBM thermal wall function is UNGATED.**~~ **DONE 2026-08-05.**
+>   `validation/scalar/ibmwf180.ini` (Re_tau 180) + `ibmwf1000.ini`
+>   (Re_tau 1000, run on istmcetus' GPU) + `check_scalar_ibmwf.py`
+>   (`wall`, `budget`). The penalization and the wall function act on the
+>   same CUT cells; the closed-form steady budget is met to 1.4e-15 / 2.3e-15;
+>   and at Re_tau 1000 the converged wall cells reach `y+_k` 38-41, so the
+>   LOG branch fires on 128/128 of them for both wall functions with the
+>   wall-cell `nut` exact against an independent transcription. Coarsening is
+>   NOT the y+ lever at an immersed wall (a cut cell's velocity is penalized,
+>   so its k stays small; y+ only follows the bounded `y_eff <= dy/2`) —
+>   `nu` is: `y+ ∝ Re` at fixed u_tau. The work also turned up and fixed an
+>   `ibm_value = 0` double count in the S4 heat diagnostic.
+>   See `validation/scalar/README.md`.
+> - ~~**`../rans_sst/wf180_y30.ini` is not rank-independent under an x
+>   split**~~ — **FIXED 2026-08-05**: `init_rans_transport`'s k initial
+>   condition read the still-unfilled velocity halo `q(nb+1)`, so `k` came
+>   out a factor 4 low on the last plane of every block; `apply_bc` +
+>   `exchange_halos` now run before the `[rans]` init. Every decomposition
+>   is max_abs 0 at 20 steps. See `validation/rans_sst/README.md`.
 >
 > Conventions that are not negotiable: build both paths with the module
 > loaded; always `mpirun`; save the current nofma binaries outside the tree
-> BEFORE touching any source (the S5a set is already archived at
-> `~/s5a_ref_binaries/` — built from the S5a commit, its PROVENANCE.txt
-> names the hash; the S4 one at `~/s4_ref_binaries/`, HEAD e1d87cc);
+> BEFORE touching any source. **Use `~/s5b_ref_binaries/` (CPU+GPU nofma
+> solve+prepare, PROVENANCE.txt inside): it contains the two 2026-08-05
+> fixes. `~/s5a_ref_binaries/` is STALE for cold-started RANS cases** —
+> turb180 / wf180_y30 / lam30t / turbsst / the wfs180_y* sweep legitimately
+> differ against it, because the first fix corrects their k/omega initial
+> condition (the converged physics is unchanged; re-measured, not assumed).
 > `run_bitexact.sh` / `run_bitexact_s3.sh` must stay at max_abs 0;
 > re-run `run_gates.sh`, `run_gates_s2.sh`, `run_gates_s3.sh`,
 > `run_gates_s4.sh` and `run_gates_s5.sh`; new gates in `validation/scalar/`

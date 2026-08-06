@@ -79,9 +79,17 @@ fi
 if want sst; then
     rm -f turbsst_*.h5
     run turbsst.ini 1 turbsst && {
+        # theta_kc runs prt_model = kays IN THE SOLVER, so the checker must
+        # be told: without --prt-model its nut-integral prediction is built
+        # with a constant Pr_t and the comparison is against the wrong model
+        # (it read 0.68 % / 1.9e-01 instead of 0.094 % / 2.6e-08, and
+        # reported "Pr_t 0.8500 .. 0.8500", which is its own assumption and
+        # not a measurement). The S2 README numbers were produced with the
+        # flag; this makes the group reproduce them by itself.
         for s in theta theta_kc; do
+            model=constant; [ "$s" = theta_kc ] && model=kays
             python3 check_scalar_turb.py rans "$(newest turbsst)" --scalar $s \
-                --dump "turbsst_$s.dat" | sed 's/^/   /' || status=1
+                --prt-model $model --dump "turbsst_$s.dat" | sed 's/^/   /' || status=1
         done
     }
 fi

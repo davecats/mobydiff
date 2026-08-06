@@ -672,8 +672,9 @@ contains
 
     ! Per scalar: heat(2*is-1) = the flux across every staircase face
     ! separating a solid cell from a fluid one, heat(2*is) = the penalization
-    ! delivered into the fluid cells (solid cells contribute exactly 0 -- they
-    ! hold the body value to the last bit, which is the S3 FINDING).
+    ! delivered into the NON-SOLID cells (a solid cell's own share is the
+    ! staircase term -- see the guard below, and the S3 FINDING for why the
+    ! split exists at all).
     !
     ! Each interior face is visited ONCE, as the LOW face of the cell that
     ! owns it, so blocks and ranks never double count. A FACE_CLOSED face
@@ -766,10 +767,27 @@ contains
                             dzb = dm + eddy_diffusivity(ntb, sc%pr(is), sc%prt(is), sc%prtModel(is), re)
                         end if
 
-                        ! The penalization delivered into this cell (exactly 0
-                        ! in a solid cell, where s IS the body value).
-                        !$omp atomic update
-                        heat(2*is) = heat(2*is) + cp*(sc%ibmValue(is) - s0)*dx*dy*dz/sc%pr(is)
+                        ! The penalization delivered into this cell. SOLID
+                        ! cells are EXCLUDED explicitly, not left to cancel:
+                        ! their heat is the staircase term below, and counting
+                        ! both double counts it. The exclusion used to be
+                        ! implicit -- a solid cell holds the body value, so
+                        ! cp*(ibmValue - s0) reads 1e28*0 = 0 (the S3 FINDING)
+                        ! -- but that cancellation is an ARTEFACT OF THE VALUE:
+                        ! it is bitwise exact only when ibmValue is large
+                        ! enough to swallow the O(1e-29) penalization residual
+                        ! under its own ulp. With ibmValue = 0 the residual
+                        ! survives, cp*(0 - 1.6e-29) is O(0.1) per cell, and
+                        ! the reported total came out 128 % high (measured
+                        ! 2026-08-05 on validation/scalar/ibmwf180.ini, whose
+                        ! walls are at 0). The guard makes the diagnostic
+                        ! independent of ibmValue, which it must be: with
+                        ! ibmValue = 1 it changes nothing (those terms are
+                        ! already exactly 0), so every S3/S4 gate is unmoved.
+                        if (.not. solc) then
+                            !$omp atomic update
+                            heat(2*is) = heat(2*is) + cp*(sc%ibmValue(is) - s0)*dx*dy*dz/sc%pr(is)
+                        end if
 
                         ! The three LOW faces; a face counts only when exactly
                         ! one side is solid, positive INTO the fluid.

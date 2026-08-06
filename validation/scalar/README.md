@@ -88,6 +88,27 @@ holds the three analyses (`channel`, `band`, `rans`).
 | `wferr.ini` | (k, FLIPPED) the S2 gate was that `[scalar]` + `wall_treatment = wall_function` **error-stops**. S5a implements it, so the same ini is now the positive control: the solver must START and report the per-scalar `P` / `y+_T`. |
 | `wfs180_y30.ini` (nofma) | (z) determinism: 1 rank == 4 ranks at tolerance 0 and CPU == GPU on the wall-function scalar path. |
 
+## The thermal wall function at an IMMERSED wall (S5a's open item)
+
+| ini | gate |
+|---|---|
+| `ibmwf180.ini`, `ibmwf1000.ini` | (y) the S5a closure where S5a never ran it: the wall is an immersed body, so the classified wall cell is a CUT cell and the Dirichlet penalization pins the same cell the wall function installs a diffusivity on. Geometry = the `../channel_interface/les_ibm/wall_{lo,hi}.stl` slabs (walls mid-cell at `y = 0.259375 / 2.259375`, fluid gap EXACTLY 2.0); `ly = 2.5` over `ny = 8`. The pair differs ONLY in `re` (180 / 1000), which is the `y+` lever at an immersed wall: the converged wall cells sit at `y+_k = 5.8` (conduction branch) and **39.7** (log branch) respectively, against the thermal switch `y+_T = 12.178` and the momentum switch `y+_lam = 11.530`. T3's only IBM wall-function case (`../rans_sst/ibm180wf.ini`) sits at `y+ ~ 2-3`, so the log branch at an immersed wall was never exercised before. `nx = nz = 8` (RANS here is 1-D; the STL slabs are padded well past the domain, so a small x/z box is covered by the same geometry). |
+| `ibmwf180.ini` (`ibm_value` 0 vs 1) | (y2) the SAME physics run with the two body-value conventions — `theta` differs by a constant, so the staircase flux is bit-identical — as the decisive test of the S4 heat diagnostic's `ibm_value` invariance. This is what turned up the double count fixed 2026-08-05 (below). |
+
+ONE body value serves both walls (`ibm_value` is per scalar, not per
+surface), so S5a's antisymmetric +1/−1 walls are unavailable: the case
+drives the scalar with isothermal walls plus a constant volumetric
+`source` instead. That makes the steady budget CLOSED-FORM, which is the
+gate's real instrument — summed over all interior cells the convective and
+diffusive fluxes telescope to the domain boundary (periodic x/z, zero-flux
+y), so at steady state the heat crossing into the body is `source *
+V_fluid` exactly, with no reference run needed.
+
+`check_scalar_ibmwf.py` holds the two analyses (`wall`, `budget`) with its
+own transcription of the correlations and of the budget. The case file must
+carry `coef_p_blocks`, so it is built from the ini itself:
+`mpirun -n 1 ../../build_cpu/moby_prepare ibmwf180.ini ibmwf180_case.h5`.
+
 `check_scalar_wf.py` holds the two analyses (`wall`, `compare`) and its own,
 INDEPENDENT transcription of the wall-function correlations. Note that
 `check_scalar_stats.py` (S4) is deliberately NOT used on a wall-function
@@ -916,17 +937,32 @@ differs by an ulp between host and device libm, and both wall functions
 call it (resolved mode stays exactly CPU == GPU — see the bit-exactness
 block below).
 
-**FINDING (pre-existing, NOT S5a).** The rank comparison pins `[mpi] dims =
-1 1 4` because this channel is **not rank-independent under an x split**,
-with or without scalars: `../rans_sst/wf180_y30.ini` with no `[scalar]`
-section at all, run with the **S4 reference binary**, reproduces the same
-deviation to the last bit (`un` max_abs 8.800384e-03 after 20 steps — and
-already 7.6e-04 after ONE step, so it is the initial state or the first
-substage on an x-split rank box, not an accumulation; `k` 9.0e-02, `omega`
-1.2e+00). A z split is EXACT on the same case. The T3 README's
-"wall-function 1-rank == 4-rank exactly" evidently ran a decomposition that
-did not split x. Worth its own look; it belongs to the RANS channel case,
-not to the scalars.
+**FINDING (pre-existing, NOT S5a) — RESOLVED 2026-08-05.** The rank
+comparison pins `[mpi] dims = 1 1 4` because this channel was **not
+rank-independent under an x split**, with or without scalars:
+`../rans_sst/wf180_y30.ini` with no `[scalar]` section at all, run with the
+**S4 reference binary**, reproduced the same deviation to the last bit
+(`un` max_abs 8.800384e-03 after 20 steps — and already 7.6e-04 after ONE
+step, so it is the initial state or the first substage on an x-split rank
+box, not an accumulation; `k` 9.0e-02, `omega` 1.2e+00). A z split was
+EXACT on the same case.
+
+The cause was in the RANS layer, exactly as suspected — but neither of the
+two suspects named: `init_rans_transport`'s `k = 1.5 (tu/100 |u|)^2`
+initial condition interpolates the cell velocity from the two staggered
+faces, so at a block's last interior cell it reads the halo `q(nb+1)`,
+which `moby_solve.f90` did not fill until AFTER the whole init block. `k`
+came out a factor 4 low on the last plane of EVERY block — one bad plane
+per block, hence the decomposition dependence — and only in x here because
+this channel's `v` and `w` are zero in the IC. The fix moves `apply_bc` +
+`exchange_halos` ahead of the `[rans]` init; the full write-up, the
+measured initial-state numbers and the re-gate are in
+`../rans_sst/README.md`. The `dims = 1 1 4` pin below is kept but is no
+longer load-bearing: every decomposition (`4 1 1`, `1 1 4`, `2 1 2`) is now
+max_abs 0 at 20 steps. Cold-started RANS snapshots written before
+2026-08-05 no longer reproduce bit-for-bit; their converged physics does
+(`wf180_y30` / `wf180_y45` re-run to `t_final` reproduce the T3 gate to
+every printed digit).
 
 **`[scalar] count = 0` bit-exactness, S5a vs the S4 binaries**
 (`run_bitexact.sh`, nofma, 7-case suite, every dataset at tolerance 0):
@@ -984,6 +1020,152 @@ digit. The three turbulent-channel CAMPAIGNS (`sst`, `les`, `band`) are not
 re-run wholesale — `run_bitexact_s3.sh` proves the stronger statement on the
 very same inis (tolerance 0), which is the argument the S3 and S4 sessions
 used.
+
+## Re-gate after the 2026-08-05 solver fixes — ALL PASS
+
+Two source changes landed on 2026-08-05: the RANS cold-start IC fix
+(`moby_solve.f90`, write-up in `../rans_sst/README.md`) and the body-heat
+double-count fix (`scalar_stats.f90`, below). The first CHANGES every
+cold-started RANS run's initial condition, so the S2/S5a gate numbers had to
+be re-measured rather than assumed. They are unmoved:
+
+| re-gate | result |
+|---|---|
+| `run_gates_s5.sh unit` (the two correlations vs mpmath) | `scalar_test: ALL PASS` |
+| `run_gates_s5.sh ref` (the RESOLVED reference `theta_tau`) | **0.053413**, flux constancy **0.0000** — the recorded S5a number to every digit |
+| `run_gates_s5.sh sweep`, `theta_tau` at `y+_1` = 5/15/30/45 | 0.054155 / 0.054629 / 0.056424 / 0.057272 = **+1.39 % / +2.28 % / +5.64 % / +7.22 %** vs the reference — every one the recorded S5a number |
+| the same, first-cell `theta+` vs Kader | **17.1 % / 0.1 % / 0.7 %** at `y+_1` = 15 / 30 / 45 — as recorded |
+| the same, flux-constancy convergence | 7.3e-12 / 1.1e-12 / 4.6e-14 / 4.4e-14 (recorded 7.6e-12 / 1.0e-12 / 1.6e-14 / 1.2e-14) |
+| `run_gates_s2.sh kays` (Kays–Crawford unit test) | `scalar_test: ALL PASS` |
+| `run_gates_s2.sh wferr` (the S5a-flipped acceptance gate) | **PASS** |
+| `run_gates_s2.sh sst` (steady SST, resolved walls, 186711 steps) | `theta`: `theta_tau` **0.053413**, flux constancy **5.225e-08**, vs the nut-integral prediction **0.0962 %**; `theta_kc`: **0.049468**, **2.613e-08**, **0.0941 %**, `Pr_t` spans **0.8832 … 1.7000**, ratio to the constant-`Pr_t` twin **0.92615** — every one the recorded S2 number |
+| S5a gate (z) determinism, `wfs180_y30` 20 steps, nofma | 1 rank == 4 ranks **max_abs 0** on `un vn wn pn nut k omega theta theta_kc` — **for the x split too**, which is the decomposition the fixed bug broke (the `[mpi] dims = 1 1 4` pin is now genuinely unnecessary) |
+| the same, CPU vs GPU (GPU leg on istmcetus) | **0.0** on eight datasets, **5.6e-17** on `theta_kc` — tighter than the recorded ≤3.3e-13 |
+| `run_bitexact_s3.sh` (scalar without a body, 9 cases, nofma CPU) | **max_abs 0** on 8 of 9; `turbsst` MOVED (un 1.6e-02, k 3.2e-01, theta 2.0e-03) because it is a COLD-STARTED RANS case — the intended signature, same class as turb180/wf180_y30/lam30t |
+| `run_bitexact.sh` MODE=gpu (7-case suite, GPU legs on istmcetus, compared locally) | non-RANS 4/4 **max_abs 0**; the 3 cold-started RANS cases moved, `turb180`'s deviation IDENTICAL to the CPU's to every digit |
+
+LANDMINE for re-runs: `turbles.ini`, `turbslab.ini` and `turbsst.ini` pin
+`[mpi] dims = 1 1 1`, so `run_bitexact_s3.sh` must be given `RANKS=1` for
+them — with `RANKS=4` they error-stop on "MPI Cartesian dimensions do not
+match the number of ranks", which looks like a failure of the gate and is
+not. Also: istmcetus has **no h5py**, so the GPU suite runs its solver legs
+there (`env_cetus.sh`) and the comparisons run locally on the shared files.
+
+## Results — the IMMERSED-WALL thermal wall function (2026-08-05) — ALL PASS
+
+S5a's remaining open item. Case `ibmwf180.ini` (see the gate table above),
+prepared with `moby_prepare` so the case file carries `coef_p_blocks`, run
+to a steady state on 1 CPU rank; commands:
+
+```
+mpirun -n 1 ../../build_cpu/moby_prepare ibmwf180.ini ibmwf180_case.h5
+mpirun -n 1 ../../build_cpu/moby_solve  .ibmwf180_solve.ini     # coeff_file form
+python3 check_scalar_ibmwf.py wall   ibmwf180_ransgeom.h5 ibmwf180_<step>.h5
+python3 check_scalar_ibmwf.py budget ibmwf180_<step>.h5 ibmwf180_case.h5 \
+        --heat ibmwf180_heat.txt
+```
+
+| gate | result |
+|---|---|
+| (y1) the regime EXISTS: classified IBM wall cells | **128** cut cells (centre inside the solid, one fluid staggered face); `wallcell == 2` (fully solid): 0 |
+| (y1) the penalization acts on those same cells | `u` = 2.1e-27, `theta` = 1.6e-29 there (`ibm_value` = 0), i.e. pinned, while the wall-function machinery reads them |
+| (y1) the LOG branch DURING THE TRANSIENT (t ≈ 2.1, k still high) | `y+_k` **12.74 … 13.58** — past the thermal `y+_T` = **12.1776** (Jayatilleke `P(0.71/0.85)` = −1.491461) and the momentum `y+_lam` = 11.5301: fires on **128/128** wall cells, and the wall-cell `nu_t` reproduces an INDEPENDENT transcription of `nu(y+ kappa/ln(E y+) − 1)` to **2.7e-15** (`nu_t` 4.55e-04 … 7.70e-04) — so the log-branch arithmetic at an IBM wall cell is verified |
+| (y1) the LOG branch AT CONVERGENCE | **NOT REACHED**: `y+_k` falls to **5.46 … 6.17** (mean 5.81), i.e. back on the conduction branch, where the wall diffusivity is exactly 0 (`nu_t` 0.000e+00 on all 128) — see the note below. This grid therefore does NOT yet gate the converged log-branch regime. |
+| (y2) the steady budget, closed form: the body heat release must be `source * V_fluid` = 4.626377063010637e-01 | solver runtime heat file **−4.626377063010643e-01**, rel dev **1.3e-15** (stable to 15 digits from `t ~ 130` on). `check_scalar_ibmwf.py budget` also checks the underlying identity from the SNAPSHOT — `sum coef_p (s_body − s) dV/Pr` over all interior cells = `−source*V_total`, rel dev **3.6e-16** — and the solver's `graded` column against the snapshot's unpinned sum, **1.5e-15** |
+| (y3) determinism: cold start, 20 steps, 1 rank vs 4 ranks (nofma) | **max_abs 0** on `un vn wn pn k omega nut theta` — which also re-exercises the RANS cold-start IC path fixed the same day (see `../rans_sst/README.md`) |
+| (y4) the diagnostic fix does not touch the solution | the fixed binary's fields vs the pre-fix run: `un vn wn k omega nut` **max_abs 0** |
+| (y2) `ibm_value` invariance: the same physics at `ibm_value` = 0 and 1 | a CONTROLLED pair, verified as such: `un vn wn k omega nut` are **max_abs 0** between the two runs and `theta_1 − theta_0 = 1` everywhere to **1.0e-14**, so the only difference is the body-value convention. The staircase column is bit-identical to **13 digits** (−4.3874549474718e-01); after the fix below the totals agree to **1e-15** (before it they differed by 128 %) |
+| (y1) the converged `y+` is convention-independent | both runs read `y+_k` 5.4568 … 6.1706 (mean 5.8137), as they must — the velocity and `k` fields are bit-identical |
+
+**DEFECT FOUND AND FIXED (`src/modules/scalar_stats.f90`, 2026-08-05): the S4
+body-heat diagnostic double counted whenever `ibm_value = 0`.** The
+staircase/penalization split rests on "a solid cell contributes exactly 0 to
+the penalization sum, because it holds the body value to the last bit" (the
+S3 FINDING). That cancellation is an **artefact of the value**: it is bitwise
+only when `ibm_value` is large enough to swallow the O(1e-29) penalization
+residual under its own ulp. At `ibm_value = 0` the residual survives,
+`coef_p*(0 − 1.6e-29)` is O(0.1) per cell, and the cell's heat is counted
+twice — once as its own penalization, once as the staircase flux into it.
+Measured on ONE physical problem run with both conventions (`theta` differs
+by a constant, so the staircase column is bit-identical):
+
+```
+ibm_value = 1.0  ->  total  -4.62637706301056e-01   = source*V_fluid  (rel 1.7e-14)
+ibm_value = 0.0  ->  total  -1.05559576981527e+00   = 128 % HIGH
+                     graded -6.16850275068085e-01   = -source*V_TOTAL exactly:
+                     the whole source input, including what is deposited inside
+                     the body and never crossed the interface
+```
+
+The fix excludes solid cells from the penalization accumulator EXPLICITLY
+instead of relying on the cancellation. It is a **no-op at `ibm_value = 1`**,
+which is measured, not asserted: re-running the S4 heat gates with the fixed
+binary reproduces their recorded numbers — solver-vs-Python worst rel dev
+**1.315e-15** (tol 1e-12), energy budget **4.485e-04** (tol 1e-2), and the
+adiabatic control **exactly 0.000e+00** — and the fixed binary at
+`ibm_value = 0` now reproduces the `ibm_value = 1` answer to 1e-15. The
+diagnostic is now independent of `ibm_value`, which is the invariance it must
+have. The change touches the diagnostic only; solver fields are unaffected.
+
+**WHEN the old code was wrong — pinned down 2026-08-05 by an `ibm_value = 0`
+sweep of the S3 body gates.** It takes BOTH conditions, which is why the
+defect hid for three increments:
+
+| `ibm_value` | solid-cell rhs | solid cell holds | old diagnostic |
+|---|---|---|---|
+| 1.0 | anything | `1.0` BITWISE (the residual is under 1.0's ulp) | correct |
+| 0.0 | zero (no source; `ibmwavy.ini` as committed) | **exactly 0.0** (`mus ~ 5e-30` drives it to zero) | correct |
+| 0.0 | nonzero (a volumetric `source`) | **1.311e-29** — measured | **double counts** |
+
+So the S3 gate (n) "solid cell == `ibm_value` EXACTLY" is NOT resting on the
+value in its committed form: re-run at `ibm_value = 0` it still reads
+**0.000000e+00** on all 704 cells. Add a `source` and the same gate reads
+1.311e-29 and FAILs its exact-equality test. The scheme's real invariant is
+`|s − ibm_value| <~ 1e-28` ABSOLUTE, not bitwise equality; bitwise is what you
+get when the residual falls under `ibm_value`'s ulp, or when there is nothing
+to drive it. Worth knowing before anyone tightens that gate or reads it as a
+guarantee.
+
+The fixed diagnostic is `ibm_value`-independent on a CURVED body too, not
+only on the flat slabs: the wavy case run as a controlled pair (`ibm_value` 1
+with `initial` 0, vs `ibm_value` 0 with `initial` −1 — the same problem shifted
+by exactly 1, both with `source = 0.05`) reports body heat
+**8.3661018093697e-02** and **8.3661018093128e-02**, agreeing to **6.8e-12**
+(not bitwise: shifting the field changes the rounding, and the staircase and
+graded terms partly cancel).
+
+LESSON (worth carrying): never use a floating-point cancellation as a
+classification. The S3 FINDING was right that a solid cell's penalization
+integral vanishes — but "vanishes" was true of the cases it was measured on,
+not of the arithmetic.
+
+**The converged log branch: CLOSED at Re_tau 1000 (`ibmwf1000.ini`,
+2026-08-05, istmcetus A6000 GPU).** Coarsening the grid is NOT the lever at
+an immersed wall. At a DOMAIN wall the first cell's `y+` grows with the grid
+spacing, which is how the S5a sweep reached `y+_1 = 45`. At an IMMERSED wall
+the classified wall cell is a CUT cell whose velocity is penalized, so its
+`k` stays small however coarse the grid gets, and
+`y+_k = C_mu^(1/4) sqrt(k) y_eff/nu` only picks up the (bounded) growth of
+`y_eff ~ dwall <= dy/2` — `ibmwf180` already has `y_eff` = 0.103, about 6x
+T3's `ibm180wf`, and still converges to `y+ ~ 5.8`. THE LEVER IS `nu`: at
+fixed `u_tau = 1`, `y+ ∝ 1/nu ∝ Re`. `ibmwf1000.ini` is `ibmwf180.ini` with
+`re = 1000` and NOTHING else changed (the case file is re-prepared because
+the stored coefficients carry the `1/Re` scaling; `dwall`, `yeff` and
+`wallcell` come out **bit-identical**, max_abs 0 — so `y+` moves only through
+`nu` and `k`, which is the controlled comparison the argument needs).
+
+| gate (Re_tau 1000, converged at `t = 993.8`) | result |
+|---|---|
+| wall-cell `y+_k` | **38.29 … 41.03** (mean **39.66**) vs 5.81 at Re_tau 180 — past `y+_T` = 12.1776 and `y+_lam` = 11.5301 |
+| the LOG branch at CONVERGENCE | fires on **128/128** wall cells, for BOTH wall functions — the regime S5a never gated |
+| wall-cell `nu_t` vs the independent transcription of `nu(y+ kappa/ln(E y+) − 1)` | **0.000e+00** (exact, on the GPU); `nu_t` 1.648e-03 … 1.805e-03 |
+| the closed-form budget, `source * V_fluid` | total **−4.6263770630e-01**, rel dev **2.3e-15**; `graded` vs the snapshot's unpinned sum **8.0e-16** |
+| the same case run with the PRE-FIX GPU binary (an accident that became a control) | total **−1.0751501972e+00** = **132 % high**, exactly the reconstruction `check_scalar_ibmwf.py budget` prints — the double count reproduced independently at a second Reynolds number and on a second device |
+
+So the Dirichlet penalization and the thermal wall function DO coexist
+correctly on the same cut cell in the log branch: the penalization holds
+`u`/`theta` at the body value while the wall function sets the cell's eddy
+diffusivity, and the resulting wall heat flux is the exact closed-form one.
 
 ## Notes and limitations
 
