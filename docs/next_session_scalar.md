@@ -4,6 +4,33 @@ STATUS: **S0 + S1 + S2 + S3 + S4 + S5a LANDED AND GATED (S0–S2 2026-08-03,
 S3 / S4 / S5a 2026-08-04, branch `scalar`).** S5b (TVD/van-Leer scalar
 convection) and S5c (Boussinesq buoyancy) are NOT started.
 
+**FOLLOW-UP SESSION 2026-08-05/06 (commits `2c90aea`, `7d54556`)** — closed
+S5a's two open items and fixed two defects they exposed. Nothing about the
+S0–S5a design changed; the numbers in the tables below were all re-measured
+and stand:
+
+- the **IBM thermal wall function is now GATED** (S5a's open item) —
+  `validation/scalar/ibmwf180.ini` / `ibmwf1000.ini` +
+  `check_scalar_ibmwf.py`; see the S5a bullet.
+- **`../rans_sst/wf180_y30.ini`'s x-split non-determinism is FIXED** (the
+  other open item) — it was the k initial condition reading an unfilled
+  velocity halo; see the S5a "FOUND WHILE GATING" bullet and
+  `validation/rans_sst/README.md`.
+- **the S4 body-heat diagnostic double counted at `ibm_value = 0`** — found
+  by the new gate, fixed; see the S4 bullet.
+- **`~/s5b_ref_binaries/` is the reference set to use.**
+  `~/s5a_ref_binaries/` is stale for COLD-STARTED RANS cases (turb180,
+  wf180_y30, lam30t, turbsst, the wfs180_y* sweep): the IC fix corrects
+  their initial condition, so they legitimately differ against it. Every
+  non-RANS case and every restarted case is max_abs 0 either way, CPU and
+  GPU.
+- NOT re-run afterwards, and cheap to close if a session wants the belt:
+  `run_gates_s2.sh les` / `band` (restart-based LES campaigns, no RANS, so
+  the IC fix cannot reach them) and `run_gates_s3.sh` / `run_gates_s4.sh`
+  beyond their `heat`/`adia` groups (which were re-run and read their
+  recorded numbers). `run_bitexact.sh` (CPU+GPU) and `run_bitexact_s3.sh`
+  were re-run in full.
+
 What landed (the plan below is unchanged except where noted):
 
 - **S5a** — the THERMAL WALL FUNCTION. `[rans] wall_treatment =
@@ -990,7 +1017,16 @@ in `moby_solve.f90`, the lifted `config.f90` rejection, the correlations in
 
 Paste this to start the next implementation session. What is left of S5 is
 TWO independent increments; do ONE per session. (S5a, the thermal wall
-function, was consumed 2026-08-04 — its prompt is kept below as history.)
+function, was consumed 2026-08-04, and the two items it left open were
+consumed by the 2026-08-05/06 follow-up — their prompts are kept below as
+history.)
+
+**The passive-scalar plan itself is otherwise COMPLETE.** If neither S5b nor
+S5c is wanted, the live work on this branch is
+`docs/next_session_conjugate.md` increment **C1** — conjugate heat transfer
+as the third `ibm_wall` mode, whose prerequisite (S3) is met and whose own
+next-session prompt is up to date. Of the three, S5b is the one with a
+measured motivation behind it; C1 is the one that adds physics.
 
 > Implement increment **S5b/S5c** of `docs/next_session_scalar.md` (pick
 > one) on branch `scalar` — read the doc in full first: its STATUS header
@@ -1012,13 +1048,22 @@ function, was consumed 2026-08-04 — its prompt is kept below as history.)
 >   SINGLE halo layer — a second upwind cell is needed and a block-edge
 >   fallback would break the nb/rank-independence that Phase 1 established.
 >   The measured motivation is in CLAUDE.md (the SD7003 γ front, 104 level-4
->   cells) — this increment is about the halo, not about the scalars.
+>   cells; and at L5-xz the separation-induced transition stops firing
+>   altogether) — **this increment is about the halo, not about the
+>   scalars**, so budget it as a comm.f90 change: halo depth touches the
+>   per-dim affine gather maps and every 2:1 transfer, and the
+>   uniform-flow / 1-vs-4-rank / nb-independence gates in
+>   `validation/interface_suite/` and `validation/refine2d/` are the ones
+>   that decide whether it is right. Rerun the L5-xz SD7003 afterwards —
+>   that is the measurement the increment exists for.
 > - **S5c — Boussinesq buoyancy.** The hook is `bodyforce.f90`'s `custom`
 >   path reading `q(...,VAR_S0+is,...)`; the design note is §3 of this plan.
->   Deliberately out of scope until someone needs it.
+>   Deliberately out of scope until someone needs it — though if conjugate
+>   C1 lands, natural convection becomes its obvious demonstrator, which is
+>   the one thing that would move it up the list.
 >
-> TWO SMALLER ITEMS S5a left open, either of which is a session of its own
-> and neither of which blocks S5b/S5c:
+> TWO SMALLER ITEMS S5a left open — **BOTH CLOSED 2026-08-05/06**, recorded
+> here because what they cost is worth inheriting:
 >
 > - ~~**The IBM thermal wall function is UNGATED.**~~ **DONE 2026-08-05.**
 >   `validation/scalar/ibmwf180.ini` (Re_tau 180) + `ibmwf1000.ini`
@@ -1057,9 +1102,32 @@ function, was consumed 2026-08-04 — its prompt is kept below as history.)
 > Stop after the increment's gates and report; do not start a second one.
 > Update this document's STATUS header and `validation/scalar/README.md`.
 >
-> LANDMINE for the re-runs: `run_gates.sh`'s `det` group compares CPU vs GPU
-> at TOLERANCE 0, so give it the nofma binaries
-> (`BIN=…/build_cpu_nofma/moby_solve GBIN=…/build_gpu_nofma/moby_solve`).
+> LANDMINES for the re-runs (the first cost the 2026-08-05 session a
+> half-finished fix; the rest cost an hour between them):
+>
+> - `run_gates.sh`'s `det` group compares CPU vs GPU at TOLERANCE 0, so give
+>   it the nofma binaries (`BIN=…/build_cpu_nofma/moby_solve
+>   GBIN=…/build_gpu_nofma/moby_solve`).
+> - **RUN THE GPU BIT-EXACTNESS SUITE, do not argue from the CPU one.** Any
+>   host-side init code reading `blk%q` after `enter_block_data` sees a
+>   STALE HOST COPY — device-side `apply_bc`/`exchange_halos` do not touch
+>   it. That is how the 2026-08-05 IC fix came out correct on CPU and a pure
+>   no-op on GPU, with the GPU binary reproducing the pre-fix result
+>   bit-for-bit. `!$omp target update from(blk%q)` is the completion; the
+>   `target update from(ibm%coef)` next to it is the same pattern.
+> - `turbles.ini`, `turbslab.ini` and `turbsst.ini` pin `[mpi] dims = 1 1 1`,
+>   so `run_bitexact_s3.sh` needs `RANKS=1` for them; with `RANKS=4` they
+>   error-stop on "MPI Cartesian dimensions do not match the number of
+>   ranks", which looks like a gate failure and is not.
+> - **istmcetus has no h5py** (and no nvhpc 25.9 under /opt/Nvidia, and no
+>   modulefile for it). `validation/scalar/env_cetus.sh` puts the shared-
+>   filesystem 25.9 tree on PATH and pins `CUDA_VISIBLE_DEVICES`; run the
+>   solver legs there and the comparisons locally on the shared files.
+>   `run_cetus.sh` is the one-ini form. Check `nvidia-smi` first — the
+>   machine is shared, and so is the local RTX 3060.
+> - `ps -C moby_solve` does NOT match `~/s5*_ref_binaries/moby_solve_*_nofma`
+>   (different command name), and a `pgrep -f`/`pkill -f` pattern matches
+>   the shell running it. Both make healthy runs look dead; kill by PID.
 
 ---
 
