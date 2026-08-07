@@ -212,6 +212,8 @@ subroutine apply_config_value(section, key, value, dns, g, turb, les, ps, bc, sc
             call read_int(value, dns%field_interval, line_no)
         case ("field_prefix")
             dns%field_prefix = clean_string(value)
+        case ("profile")
+            call read_bool(value, dns%profile_phases, line_no)
         end select
     case ("restart")
         select case (key_l)

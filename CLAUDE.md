@@ -1049,9 +1049,17 @@ immersed boundary. Phased, each phase verified before the next:
     `theta_tau` sweep still reads +1.39/+2.28/+5.64/+7.22 %, the resolved
     reference still 0.053413, Kader still 17.1/0.1/0.7 %, and the S5a
     determinism gate is now max_abs 0 for the X SPLIT too (CPU vs GPU 5.6e-17).
-    **A NEW REFERENCE SET IS ARCHIVED AT `~/s5b_ref_binaries/`** (CPU+GPU
-    nofma solve/prepare + PROVENANCE): use it, not `~/s5a_ref_binaries/`,
-    which is stale for cold-started RANS cases. LESSON: `q`'s halos are invalid
+    **THE REFERENCE SET TO USE IS `~/s5c_ref_binaries/`** (CPU+GPU nofma
+    solve/prepare, commit-pinned to `8f60944`, PROVENANCE inside).
+    `~/s5a_ref_binaries/` is stale for cold-started RANS cases, and so is the
+    **GPU** binary of `~/s5b_ref_binaries/` — found 2026-08-07: it was
+    archived in the four minutes BEFORE the `target update from(blk%q)` was
+    added, so it is the "correct on CPU, no-op on GPU" intermediate state and
+    gives output IDENTICAL to s5a's GPU binary on turb180 (its own
+    PROVENANCE claimed both fixes; that holds for the CPU binary only). It
+    silently failed a GPU gate before it was caught. LESSON, now in the s5c
+    provenance: **cut a reference set from a COMMIT, never from a working
+    tree mid-edit, and record the hash.** LESSON: `q`'s halos are invalid
     throughout init — any init-time consumer reading a neighbour must
     exchange first. Write-up in `validation/rans_sst/README.md`.
   - LANDMINE (cost an hour): a local `nVar` in blocks.f90 SHADOWED the
@@ -1061,11 +1069,28 @@ immersed boundary. Phased, each phase verified before the next:
     `ibm_wall` mode: `docs/next_session_conjugate.md` (PROPOSAL, not started;
     derivation in `docs/conjugate/conjugate_ibm.tex`).
 - ALSO PENDING: **Profile + optimise** the GPU step for the 2:1-refined channel.
-  The last hard profile is STALE (the reflux that was 23% is removed; the
-  `MOBY_PHASETIME` timer is deleted): re-profile first with a minimal removable
-  phase timer, then attack the dominant cost (likely the projection's
-  per-Jacobi-iteration halo exchanges). Every change is a scheduling refactor and
-  must stay bit-exact. Full plan + next-session prompt in
+  **STEP 1 (re-profile) IS DONE 2026-08-07; step 2 (optimise) is not started.**
+  The phase timer is back as a CONFIG key, not an env hook: `[output] profile
+  = true` builds chron.f90's `step_timing` profiler (six `STEP_PROF_*`
+  buckets: momentum, syncface_exchange, projection_jacobi,
+  projection_exchange, projection_bc, scalar_transport);
+  `pressure_projection` takes it as an OPTIONAL argument so the production
+  path never reads the clock. Fresh split (A6000, 100 steps, min_channel
+  refined 128x64x8, niter=6 cheb): loop 31.3 ms/step = projection_exchange
+  44.5% + projection_jacobi 33.9% + syncface 7.9% + momentum 6.1% +
+  projection_bc 4.2%; **all halo exchange 52.4%**, and on the heavier
+  128x64x128 refined case 42.4% with the projection's exchange (79.1 ms)
+  costing as much as its Jacobi kernels (82.1 ms). So the target is the
+  projection's per-iteration exchange, i.e. the doc's hypothesis 1
+  (core/shell nonblocking overlap) — ceiling ~40% of the step. The nb lever
+  is measured too: unrefined 128x64x128, nb 8/16/32 = 48.6/39.3/36.4
+  ms/step (**-25%**) with the exchange share 44.6%/35.2%/35.1% — but the
+  refined channel is PINNED to nb=8 (its 24-cell wall band is 3 block rows;
+  nb=16 does not divide it), so bigger blocks are not the fix there.
+  LANDMINE: `nb` must divide the global grid in every direction, so an nb
+  sweep is impossible on the nz=8 case. Every step-2 change is a scheduling
+  refactor and must stay bit-exact. Full plan, the measured table and the
+  next-session prompt in
   `docs/next_session_profiling.md` (Phase-4 overlap sketch in
   `docs/nonblocking_overlap_strategy.md`, which predates the Chebyshev-Jacobi
   solver and needs updating).

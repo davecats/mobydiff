@@ -52,7 +52,11 @@ and stand:
   `validation/rans_sst/README.md`.
 - **the S4 body-heat diagnostic double counted at `ibm_value = 0`** — found
   by the new gate, fixed; see the S4 bullet.
-- **`~/s5b_ref_binaries/` is the reference set to use.**
+- **`~/s5c_ref_binaries/` is the reference set to use** (commit-pinned to
+  `8f60944`). SUPERSEDED 2026-08-07: `~/s5b_ref_binaries/`'s **GPU** binary
+  turned out to be stale for cold-started RANS too — archived before the
+  `target update from(blk%q)` landed, so it reproduces `~/s5a`'s GPU results
+  exactly; only its CPU binary is sound.
   `~/s5a_ref_binaries/` is stale for COLD-STARTED RANS cases (turb180,
   wf180_y30, lam30t, turbsst, the wfs180_y* sweep): the IC fix corrects
   their initial condition, so they legitimately differ against it. Every
@@ -1122,9 +1126,11 @@ history.)
 >
 > Conventions that are not negotiable: build both paths with the module
 > loaded; always `mpirun`; save the current nofma binaries outside the tree
-> BEFORE touching any source. **Use `~/s5b_ref_binaries/` (CPU+GPU nofma
-> solve+prepare, PROVENANCE.txt inside): it contains the two 2026-08-05
-> fixes. `~/s5a_ref_binaries/` is STALE for cold-started RANS cases** —
+> BEFORE touching any source. **Use `~/s5c_ref_binaries/` (CPU+GPU nofma
+> solve+prepare, commit-pinned to `8f60944`, PROVENANCE.txt inside).
+> `~/s5b_ref_binaries/`'s GPU binary is STALE for cold-started RANS —
+> archived before the `target update from(blk%q)` landed (2026-08-07).
+> Its CPU binary is sound. `~/s5a_ref_binaries/` is STALE for cold-started RANS cases** —
 > turb180 / wf180_y30 / lam30t / turbsst / the wfs180_y* sweep legitimately
 > differ against it, because the first fix corrects their k/omega initial
 > condition (the converged physics is unchanged; re-measured, not assumed).

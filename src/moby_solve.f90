@@ -9,7 +9,8 @@ program moby_solve
         enter_block_data, exit_block_data, zero_closed_halos, &
         FACE_FINE, FACE_PHYS, FACE_CLOSED
     use :: chron, only: chron_type, start_chron, stop_chron, write_chron, &
-        profiler_type, wall_seconds, profiler_add, write_profiler
+        profiler_type, wall_seconds, profiler_add, write_profiler, &
+        init_step_profiler, STEP_PROF_MOMENTUM, STEP_PROF_SYNCFACE, STEP_PROF_SCALAR
     use :: flow_case, only: case_type, create_flow_case
     use :: config
     use :: boundary
@@ -34,6 +35,7 @@ program moby_solve
     integer(C_INT) :: loop_steps
     real(C_DOUBLE) :: dt_alpha, dt_beta, dt_gamma
     real(C_DOUBLE) :: turb_profile_start
+    real(C_DOUBLE) :: step_profile_start
     character(len=256) :: input_file
     type(chron_type) :: loop_timer
     class(case_type), allocatable :: flow
@@ -47,6 +49,7 @@ program moby_solve
     type(les_type) :: les
     type(sst_type) :: sst
     type(profiler_type) :: turb_prof
+    type(profiler_type) :: step_prof
     type(bodyforce_type) :: bf
     type(scalar_type) :: sc
     type(scalar_stats_type) :: sstats
@@ -260,6 +263,9 @@ program moby_solve
     if (c%has_terminal) print *, "main loop starting..."
     loop_steps = 0_C_INT
     call init_turbulence_profiler(turb_prof)
+    ! [output] profile: per-phase step timing (docs/next_session_profiling.md).
+    ! Off by default; when off no clock is read anywhere on the step path.
+    if (dns%profile_phases) call init_step_profiler(step_prof)
     call start_chron(loop_timer)
     do while (run_should_continue(dns, loop_steps))
         call trim_dt_for_final_time(dns)
@@ -319,23 +325,36 @@ program moby_solve
             ! turbulence block so the eddy diffusivity is THIS substage's
             ! nut, halos included -- the same nut the momentum predictor
             ! below uses. Nothing between here and momentum() touches q.
+            if (dns%profile_phases) step_profile_start = wall_seconds()
             call scalar_transport(sc, blk, dns, turb, ibm%coef, dt_alpha, dt_beta, dt_gamma)
+            if (dns%profile_phases) call profiler_add(step_prof, STEP_PROF_SCALAR, &
+                wall_seconds() - step_profile_start)
 
+            if (dns%profile_phases) step_profile_start = wall_seconds()
             if (turbulence_is_enabled(turb)) then
                 call momentum(blk, dns, dt_alpha, dt_beta, dt_gamma, ibm, turb, turb_prof, bf=bf)
             else
                 call momentum(blk, dns, dt_alpha, dt_beta, dt_gamma, ibm, bf=bf)
             end if
             call apply_bc(blk, bc, outflow_copy=.true.)
+            if (dns%profile_phases) call profiler_add(step_prof, STEP_PROF_MOMENTUM, &
+                wall_seconds() - step_profile_start)
             ! Post-predictor exchange with the conservation SYNC: the cross-level
             ! PROLONG/RESTRICT write the shared 2:1 face so the two stored copies
             ! start the projection mean-consistent (avg(fine)=coarse). The
             ! projection then owns the face and the composite stencil keeps it
             ! conservative.
+            if (dns%profile_phases) step_profile_start = wall_seconds()
             call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W], syncface=.true.)
+            if (dns%profile_phases) call profiler_add(step_prof, STEP_PROF_SYNCFACE, &
+                wall_seconds() - step_profile_start)
 
             ! Projection: solve for pressure correction and project tentative velocities.
-            call pressure_projection(ps, blk, dns, dt_gamma, ibm, bc, c)
+            if (dns%profile_phases) then
+                call pressure_projection(ps, blk, dns, dt_gamma, ibm, bc, c, step_prof)
+            else
+                call pressure_projection(ps, blk, dns, dt_gamma, ibm, bc, c)
+            end if
 
             ! Scalar substage tail: qs -> q, physical ghosts, one batched
             ! halo exchange over the scalar variables (no-op off).
@@ -364,6 +383,7 @@ program moby_solve
         print *, "main loop ended..."
         call write_chron(loop_timer)
         if (turbulence_is_enabled(turb)) call write_profiler(turb_prof, loop_steps)
+        if (dns%profile_phases) call write_profiler(step_prof, loop_steps)
     end if
 
     call write_field(blk, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%omega, &

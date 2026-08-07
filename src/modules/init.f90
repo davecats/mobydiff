@@ -191,6 +191,10 @@ module init
         character(len=256) :: field_prefix = ""
         integer :: field_interval = 0
         character(len=256) :: restart_file = ""
+        ! [output] profile: accumulate and print the per-phase step timing
+        ! (chron.f90's STEP_PROF_* buckets). Diagnostic only -- it reads the
+        ! clock around phases that are already there and changes nothing.
+        logical(C_BOOL) :: profile_phases = .false.
     end type dns_type
 
     ! Grid generation parameters and the global node lines. The staggered

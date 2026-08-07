@@ -1,5 +1,15 @@
 # Next session — profile & optimise (the refined channel)
 
+> **STEP 1 IS DONE (2026-08-07).** The phase timer is in (`[output] profile =
+> true`, chron.f90's `STEP_PROF_*` buckets) and the fresh split is measured —
+> see "Step 1 — MEASURED" below. Short version: **the projection is 78–83 %
+> of the step, and its halo exchange is as expensive as its Jacobi kernels**
+> (13.9 vs 10.6 ms/step on the doc's case). Halo exchange overall is 35–58 %
+> of the step. Hypothesis 1 of step 2 (nonblocking core/shell overlap of the
+> projection exchange) is confirmed as THE target; hypothesis 2 (block-count
+> overhead) is quantified and is worth 25 % where `nb` is free — which on the
+> refined case it is not. Step 2 has not been started.
+
 Branch `claude/jacobi-interface`. Goal: **measure where the step time goes now**,
 on the GPU, for the 2:1-refined channel, then attack the dominant cost. The
 suspected bottleneck is halo exchange, but the last hard profile is **stale** and
@@ -109,6 +119,85 @@ Phase-1 note in CLAUDE.md: nb=32 +19%, nb=16 +49% halo overhead vs nb=default).
 
 Report the fresh split (projection kernels vs projection exchange vs momentum vs
 syncface). THAT decides the target.
+
+## Step 1 — MEASURED (2026-08-07)
+
+**The timer.** `[output] profile = true` (`dns%profile_phases`) builds the
+`step_timing` profiler and prints one line per bucket at loop end, next to
+`turb_timing`. Six buckets, indices in chron.f90 (`STEP_PROF_*`): `momentum`
+(predictor + its `apply_bc`), `syncface_exchange` (the post-predictor
+`exchange_halos(..., syncface=.true.)`), and inside the projection
+`projection_jacobi` (`jacobi_compute_phi` + `cheb_combine` + `jacobi_apply`),
+`projection_exchange` (the per-iteration phi-scalar exchange + the velocity
+exchange) and `projection_bc` (`apply_scalar_bc` + `apply_bc`), plus
+`scalar_transport`. `pressure_projection` takes the profiler as an OPTIONAL
+argument, so with the key off nothing on the step path reads the clock. The
+whole facility is those six parameters + `init_step_profiler` + the
+`if (present(prof))` brackets — removable in one pass. Host wall time around
+target regions is honest here because the kernels are launched without
+`nowait` (the host blocks), and `total_measured` accounts for 94–98 % of the
+loop; the remainder is the dt limits, the io check and `after_step`.
+
+**Where it was measured.** istmcetus device 1 (RTX A6000, idle) — NOT the
+local RTX 3060, which was saturated by an unrelated production job for the
+whole session and would have made every number meaningless. 100 steps,
+`tutorials/min_channel/input.ini` and variants of it, 1 rank, niter = 6
+Chebyshev.
+
+**The split** (ms/step, and % of the loop):
+
+| case | loop | proj_jacobi | proj_exchange | momentum | syncface | proj_bc | ALL exchange |
+|---|---|---|---|---|---|---|---|
+| refined 128×64×8, nb=8 (the doc's case) | 31.26 | 10.58 (33.9 %) | **13.92 (44.5 %)** | 1.91 (6.1 %) | 2.47 (7.9 %) | 1.31 | **52.4 %** |
+| refined 128×64×128, nb=8 (heavier) | 199.20 | 82.06 (41.2 %) | **79.07 (39.7 %)** | 18.65 (9.4 %) | 5.41 (2.7 %) | 1.45 | **42.4 %** |
+| UNrefined 128×64×8, nb=8 | 18.66 | 5.70 (30.5 %) | **9.99 (53.5 %)** | 0.83 | 0.92 | 0.89 | **58.5 %** |
+| UNrefined 128×64×128, nb=8 | 48.58 | 20.43 (42.0 %) | 20.08 (41.3 %) | 4.42 | 1.57 | 0.91 | 44.6 % |
+| UNrefined 128×64×128, nb=16 | 39.27 | 18.28 (46.5 %) | 12.48 (31.8 %) | 4.12 | 1.35 | 0.91 | 35.2 % |
+| UNrefined 128×64×128, nb=32 | 36.35 | 17.27 (47.5 %) | 11.98 (33.0 %) | 4.53 | 0.76 | 0.94 | 35.1 % |
+
+**What it says.**
+
+1. **The projection IS the step**: jacobi + exchange + bc is 78–83 % of the
+   loop in every case. Momentum is 4–12 %, the syncface exchange 2–8 %.
+2. **Inside the projection, the exchange costs as much as the arithmetic** —
+   13.92 vs 10.58 ms on the doc's case, 79.07 vs 82.06 on the heavy refined
+   one. Six Chebyshev iterations each pay a phi-scalar exchange AND a
+   velocity exchange, and they are strictly serialized with the kernels that
+   could hide them. **That is the target**, and it is step-2 hypothesis 1
+   (core/shell nonblocking overlap) unchanged. Ceiling if the exchange were
+   perfectly hidden: ~40 % of the step on the heavy refined case.
+3. **The old `[[refinement-perf-profile]]` number survives in magnitude but
+   not in composition.** "Halo exchange ~62 %" is now 42–58 %, and none of it
+   is reflux (deleted); it is the projection's per-iteration exchange.
+4. **Block-count overhead is real and quantified — but the lever is not
+   available where it is needed.** On the unrefined 128×64×128 case, nb 8 →
+   16 → 32 costs 48.58 → 39.27 → 36.35 ms/step (**−25 %**) and the exchange
+   share falls 44.6 % → 35.2 % → 35.1 % (21.6 → 13.8 → 12.7 ms). The refined
+   channel cannot use it: its wall band is 24 base cells = 3 block rows at
+   nb = 8, which nb = 16 does not divide. So step-2 hypothesis 2 (shrink or
+   overlap the redundant open-halo sweep) keeps its motivation for the
+   refined case, while "just use bigger blocks" is a real 25 % only for
+   unrefined runs.
+5. Refinement itself costs 1.68× at equal base grid (31.26 vs 18.66 ms on
+   128×64×8), which is the price of the two wall bands.
+
+**Reproduce:** `[output] profile = true` in the ini and read the
+`step_timing:` lines; the sweep driver used here is in the session
+scratchpad (five `sed` variants of `min_channel/input.ini` run through
+`validation/scalar/env_cetus.sh 1`). LANDMINE: `nb` must divide the global
+grid in EVERY direction, so the nb sweep is impossible on the nz = 8 case —
+it fails silently at init if you do not check. That is why the sweep above
+is at nz = 128.
+
+**Gate.** The timer is diagnostic, but it was gated as a code change anyway:
+the 7-case `run_bitexact.sh` suite, CPU AND GPU, **max_abs 0 on all seven**.
+That gate is also what exposed the stale archived GPU reference (see
+`docs/next_session_verification.md` B3): run against `~/s5b_ref_binaries` the
+GPU leg failed on exactly the three cold-started RANS cases, because that
+archive's GPU binary predates the `target update from(blk%q)`. Re-run against
+`~/s5c_ref_binaries` — built from a clean worktree at commit `8f60944`, which
+is the commit this timer sits on top of — all seven are max_abs 0 on both
+paths. **Use `~/s5c_ref_binaries` for any future gate.**
 
 ## Step 2 — optimise the dominant cost
 

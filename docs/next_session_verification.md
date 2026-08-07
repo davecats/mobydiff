@@ -153,6 +153,39 @@ the loop exits instead of taking a round-off step. Whoever does it should
 also check the same `1/dt` amplification in `update_timestep_limits`'s
 `cfl` report (the final snapshot's `cfl` attribute comes out NaN).
 
+### B3. The archived GPU reference binary was itself stale (found 2026-08-07, while gating the phase timer)
+
+A tail of the same defect class, one level up. `~/s5b_ref_binaries/`'s
+PROVENANCE says the set carries both 2026-08-05 fixes. That is true of its
+CPU binary and **false of its GPU binary**: it was archived at 16:42 on
+2026-08-05, and the tree's own `build_gpu` is 16:46 — the four minutes in
+which the `!$omp target update from(blk%q)` was added. So the archived GPU
+reference is exactly the "correct on CPU, pure no-op on GPU" intermediate
+state that §A's site 183 is about.
+
+Proven three ways, all on `turb180`, 20 steps, GPU:
+
+- the `s5a` and `s5b` GPU binaries produce IDENTICAL fields (`max_abs` 0 on
+  all seven datasets) although the two FILES differ in size and md5 — so the
+  s5b build predates the fix even though it is a distinct build;
+- a GPU nofma binary built fresh from commit `8f60944` differs from the s5b
+  one by `un` 2.2814559502704945e-02, `k` 2.8996297594464926e-01, `omega`
+  5.2618740388259901e+00;
+- those are the same numbers, to 13 digits, that §A's `no_q_from` probe
+  produced by deleting that one directive.
+
+It cost nothing this time only because the failure was loud: the phase
+timer's GPU suite failed on exactly the three cold-started RANS cases and
+nowhere else, which is the fingerprint. Against a quieter change it would
+have been read as a regression in the change.
+
+**Fixed:** `~/s5c_ref_binaries/` is the reference set now — CPU+GPU nofma
+solve+prepare, built from a clean `git worktree` at commit `8f60944`, hash
+recorded in its PROVENANCE, and cross-checked by the 7-case suite passing
+`max_abs` 0 against it on CPU **and** GPU. `~/s5b_ref_binaries/PROVENANCE.txt`
+carries a correction notice. **LESSON: cut a reference set from a COMMIT,
+never from a working tree mid-edit, and record the hash.**
+
 ### B2. What the groups measured
 
 | runner / group | outcome |
@@ -241,9 +274,10 @@ mean.** Read these before running, so a failure is interpretable:
   split, and CPU vs GPU came out at 5.6e-17. Running the group closes the
   bookkeeping; it needs the nofma binaries.
 
-**Conventions.** `~/s5b_ref_binaries/` is the reference set (CPU+GPU nofma,
-solve+prepare, PROVENANCE inside); `~/s5a_ref_binaries/` is STALE for
-cold-started RANS cases. Build both paths with the module loaded; always
+**Conventions.** `~/s5c_ref_binaries/` is the reference set (CPU+GPU nofma,
+solve+prepare, commit-pinned to `8f60944`, PROVENANCE inside).
+`~/s5a_ref_binaries/` is STALE for cold-started RANS cases, and so is the
+GPU binary of `~/s5b_ref_binaries/` — see B3. Build both paths with the module loaded; always
 `mpirun`. The re-run landmines (RANKS pinning, cetus' missing h5py, `pgrep`
 self-matching, the `det` tolerance-0 nofma requirement) are listed in §12 of
 `docs/next_session_scalar.md` — read them, they cost the last session real
@@ -349,7 +383,8 @@ code reading a device-mapped array after `enter_*_data` sees a stale copy.*
 >
 > Conventions that are not negotiable: the reference set is
 > `~/s5b_ref_binaries/`, NOT `~/s5a_ref_binaries/` (stale for cold-started
-> RANS); build both paths with `module load toolkits/nvhpc/25.9`; always
+> RANS);   *(2026-08-07: use `~/s5c_ref_binaries/` — s5b's GPU binary turned
+> out to be stale too, see B3)* build both paths with `module load toolkits/nvhpc/25.9`; always
 > `mpirun`; the `det` groups compare at TOLERANCE 0 and need the nofma
 > binaries. The re-run landmines — `turbles`/`turbslab`/`turbsst` pin
 > `dims = 1 1 1` so they need `RANKS=1`; istmcetus has no h5py (run solver

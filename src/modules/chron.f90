@@ -21,6 +21,19 @@ module chron
     ! subsystem (LES today, the projection profiling to come) can reuse it.
     integer, parameter, public :: PROFILER_MAX_CATS = 8
 
+    ! Step-phase profiler ([output] profile = true, docs/next_session_profiling.md
+    ! step 1). The category indices live here rather than in step.f90 because
+    ! the buckets straddle two modules -- moby_solve.f90 owns the substage
+    ! phases, pressure_solver.f90 the three inside the projection -- and
+    ! chron is the one module both already depend on. The whole facility is
+    ! these six parameters plus init_step_profiler: remove them together.
+    integer, parameter, public :: STEP_PROF_MOMENTUM = 1
+    integer, parameter, public :: STEP_PROF_SYNCFACE = 2
+    integer, parameter, public :: STEP_PROF_PJACOBI  = 3
+    integer, parameter, public :: STEP_PROF_PEXCH    = 4
+    integer, parameter, public :: STEP_PROF_PBC      = 5
+    integer, parameter, public :: STEP_PROF_SCALAR   = 6
+
     type, public :: profiler_type
         character(len=24) :: tag = "timing"                 ! output line prefix
         integer :: ncats = 0
@@ -31,6 +44,7 @@ module chron
 
     public :: init_chron, start_chron, stop_chron, write_chron
     public :: wall_seconds, init_profiler, reset_profiler, profiler_add, write_profiler
+    public :: init_step_profiler
 
 contains
 
@@ -102,6 +116,17 @@ contains
         profile%seconds = 0.0d0
         profile%calls = 0_C_INT
     end subroutine init_profiler
+
+    ! Build the step-phase profiler: output tag "step_timing" and the six
+    ! labels, ordered to match the STEP_PROF_* category indices.
+    subroutine init_step_profiler(profile)
+        type(profiler_type), intent(out) :: profile
+
+        call init_profiler(profile, "step_timing", &
+            [character(len=24) :: "momentum", "syncface_exchange", &
+             "projection_jacobi", "projection_exchange", "projection_bc", &
+             "scalar_transport"])
+    end subroutine init_step_profiler
 
     ! Zero the accumulators, keeping the tag and labels.
     subroutine reset_profiler(profile)

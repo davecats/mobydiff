@@ -6,6 +6,8 @@ module pressure_solver
     use :: boundary, only: boundary_type, apply_bc, apply_scalar_bc, &
         boundary_face_id, NFACES, PATCH_OUTLET, SCALAR_BC_NONE, SCALAR_BC_MIRROR
     use :: comm, only: comm_type, exchange_halos, exchange_scalar_halos
+    use :: chron, only: profiler_type, wall_seconds, profiler_add, &
+        STEP_PROF_PJACOBI, STEP_PROF_PEXCH, STEP_PROF_PBC
 
     implicit none
 
@@ -82,7 +84,7 @@ contains
         end if
     end subroutine init_pressure_solver
 
-    subroutine pressure_projection(ps, blk, dns, dt_gamma, ibm, bc, c)
+    subroutine pressure_projection(ps, blk, dns, dt_gamma, ibm, bc, c, prof)
         type(pressure_solver_type), intent(in) :: ps
         type(block_set_type), intent(inout) :: blk
         type(dns_type), intent(in) :: dns
@@ -90,7 +92,11 @@ contains
         type(ibm_type), intent(in) :: ibm
         type(boundary_type), intent(in) :: bc
         type(comm_type), intent(inout) :: c
+        ! [output] profile: present only when the phase timing is on, so the
+        ! production path does not even read the clock.
+        type(profiler_type), intent(inout), optional :: prof
 
+        real(C_DOUBLE) :: t0
         integer(C_INT) :: iIter, dir
         real(C_DOUBLE) :: omega
         real(C_DOUBLE) :: dd, cc, alpha, alphaPrev, beta, gamma
@@ -139,6 +145,7 @@ contains
         ! velocity (+ pressure on the last iteration) halos for the next
         ! divergence.
         do iIter = 1_C_INT, ps%nIter
+            if (present(prof)) t0 = wall_seconds()
             call jacobi_compute_phi(blk, ibm, omega, outLow, outHigh, refd)
             if (ps%cheb) then
                 if (iIter == 1_C_INT) then
@@ -152,18 +159,34 @@ contains
                 end if
                 call cheb_combine(blk, alpha, gamma)
             end if
+            if (present(prof)) call profiler_add(prof, STEP_PROF_PJACOBI, wall_seconds() - t0)
+
+            if (present(prof)) t0 = wall_seconds()
             call exchange_scalar_halos(c, phi, blk, ifaceRow=.true.)
+            if (present(prof)) call profiler_add(prof, STEP_PROF_PEXCH, wall_seconds() - t0)
+
             ! Re-mirror the outlet phi ghosts EVERY iteration: the exchange's
             ! tangential extension can write physical halos, so do not rely on
             ! them staying zero.
+            if (present(prof)) t0 = wall_seconds()
             if (anyOutlet) call apply_scalar_bc(blk, bc, phi, phiMode)
+            if (present(prof)) call profiler_add(prof, STEP_PROF_PBC, wall_seconds() - t0)
+
+            if (present(prof)) t0 = wall_seconds()
             call jacobi_apply(ps, blk, dt_gamma, ibm, outLow, outHigh, refd)
+            if (present(prof)) call profiler_add(prof, STEP_PROF_PJACOBI, wall_seconds() - t0)
+
+            if (present(prof)) t0 = wall_seconds()
             call apply_bc(blk, bc)
+            if (present(prof)) call profiler_add(prof, STEP_PROF_PBC, wall_seconds() - t0)
+
+            if (present(prof)) t0 = wall_seconds()
             if (iIter == ps%nIter) then
                 call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W, VAR_P])
             else
                 call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W], interp=.false.)
             end if
+            if (present(prof)) call profiler_add(prof, STEP_PROF_PEXCH, wall_seconds() - t0)
         end do
     end subroutine pressure_projection
 
