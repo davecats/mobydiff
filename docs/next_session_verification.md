@@ -33,10 +33,15 @@ accumulated round-off in `t_current` (2.46e-11 against a 1e-12 stopping
 tolerance), and the projection's pressure on that step is amplified by
 `1/dt` — |pn| = **1.5e6** at step 60001 against **9.1** at step 60000, with
 the velocity identical to 8.5e-6. The FINAL snapshot of any
-`t_final`-terminated run is therefore a bad restart. Fixed at the gate level
-(`les_legs` now retargets from the last PERIODIC snapshot,
-`last_periodic`); the solver-side one-liner is proposed, not applied, in
-§B1 — it changes every `t_final` run's last step and needs its own re-gate.
+`t_final`-terminated run is therefore a bad restart. **FIXED on both
+levels**: the gate driver retargets from the last PERIODIC snapshot
+(`les_legs`/`last_periodic`), and `trim_dt_for_final_time` now zeroes a
+`remaining` that is a negligible FRACTION of the step (`< 1e-6 dt`), so the
+loop exits instead of taking it. Gated three ways in §B1 — inert on all 32
+bit-exactness case-runs, effective on the exact leg that produced the
+finding (10400 steps not 10401, `max|pn|` 9.09 not 1.5e6, and the last real
+step bit-identical), and not over-triggering on a genuine final partial
+step.
 
 Prerequisite reading: the STATUS header of `docs/next_session_scalar.md`
 (what the two 2026-08-05 fixes were), `validation/rans_sst/README.md` (the
@@ -145,40 +150,41 @@ a bad restart; only one of them is a two-line arithmetic problem.
 `last_periodic`, and `les_legs` retargets from the last PERIODIC relax
 snapshot rather than from `newest`, which picked the post-loop write.
 
-**NOT fixed in the solver, deliberately** — it changes the trajectory of
-every `t_final`-terminated run (it removes a ~1e-11 step) and would require
-re-measuring every gate that ends on `t_final`, which is a session of its
-own. The candidate, in `trim_dt_for_final_time`:
+**FIXED IN THE SOLVER 2026-08-07** (`step.f90`, `trim_dt_for_final_time`),
+after the write-up above was corrected — the first version of the proposed
+fix was an ABSOLUTE test and would not have caught this:
 
 ```fortran
 remaining = dns%t_final - dns%t_current
-! A `remaining` that is a negligible FRACTION of the step about to be taken
-! is accumulated round-off in t_current, not a real final partial step.
-! Taking it makes the projection solve against dt_gamma ~ 1e-11 and the
-! stored pn comes out amplified by 1/dt (2026-08-07: 1.5e6 vs 9.1).
-if (remaining < 1.0d-6*dns%dt) remaining = 0.0d0
+if (remaining < FINAL_STEP_FRACTION*dns%dt) remaining = 0.0d0   ! 1.0d-6
 dns%dt = min(dns%dt, max(0.0d0, remaining))
 ```
 
-and the loop's existing `if (dns%dt <= 0.0d0) exit` then fires.
+The loop's existing `if (dns%dt <= 0.0d0) exit` then fires. The test is
+RELATIVE to the step because the round-off in `t_current` grows with the step
+count (~`N eps t_final`, 6.9e-11 here) and outruns any fixed floor, while
+`remaining/dt = 4.9e-08` identifies it scale-free. It is also start-value
+dependent — each addition rounds at ~`eps t`, so summing 10400 x 5e-4 from
+`t = 24.8` reproduces the shortfall while summing from 0 does not.
 
-**The test must be RELATIVE to `dt`, not absolute** — this is the part that
-is easy to get wrong, and the first version of this note got it wrong. An
-absolute snap at `run_should_continue`'s own tolerance would NOT have caught
-this case: the observed gap 2.46e-11 is 25x that tolerance (1e-12). The
-round-off accumulated in `t_current` grows with the STEP COUNT — roughly
-`N eps t_final`, here 10400 x 2.2e-16 x 30 = 6.9e-11, the same order as
-what was measured — so it outruns any fixed floor on a long enough run,
-while `remaining/dt = 4.9e-08` identifies it immediately and scale-free. A
-genuine final partial step is a meaningful fraction of `dt` and is untouched
-by a 1e-6 threshold.
+**Gated three ways.**
 
-CORRECTION (2026-08-07, same day): an earlier version of this section said
-the final snapshot's `cfl` attribute comes out NaN. It does not — the relax
-leg's own final snapshot carries `cfl = [0.0685, 0.0307]`, `dt = 5e-4`. The
-NaN `cfl` was in `turbles_60055.h5`, the snapshot of the statistics leg that
-had already DIVERGED after restarting from the bad pressure, i.e. a
-consequence of the blow-up and not of the trim.
+- **(A) Inert where it must be.** Both bit-exactness suites, CPU and GPU, vs
+  `~/s5c_ref_binaries`: `run_bitexact.sh` 7/7 and `run_bitexact_s3.sh` 9/9,
+  **max_abs 0** on all 32 case-runs. Every case in both suites is
+  `nsteps`-terminated (`short_ini` sets `t_final = 0.0`), so the new branch
+  is never taken there — which is exactly the point.
+- **(B) Effective where it must be.** The `turbles` relax leg, the exact run
+  that produced the finding, re-run with the fix: **10400 steps, not 10401**;
+  the final snapshot is step **60000**, not 60001; `max|pn| = 9.093` against
+  **1.5064e+06** before. And the step-60000 snapshot is **max_abs 0** against
+  the pre-fix run's own step-60000 snapshot on `un vn wn pn nut theta` — the
+  fix changes nothing up to the last real step, it just declines to take the
+  fake one. The final snapshot of a `t_final` run is now a normal restart.
+- **(C) Not over-triggering.** A GENUINE final partial step still runs:
+  `wave.ini` (fixed `dt = 1e-3`) with `t_final = 0.0105` takes 11 steps, the
+  last of length 5.0e-4 — half a step, 5e5 times the threshold — and ends at
+  `t_current = 0.0105` exactly.
 
 ### B3. The archived GPU reference binary was itself stale (found 2026-08-07, while gating the phase timer)
 

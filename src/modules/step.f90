@@ -28,6 +28,11 @@ module step
     real(C_DOUBLE), parameter :: rk_beta(3)  = [ 0.0d0,         -34.0d0/120.0d0, -50.0d0/120.0d0]
     real(C_DOUBLE), parameter :: rk_gamma(3) = [64.0d0/120.0d0,  16.0d0/120.0d0,  40.0d0/120.0d0]
 
+    ! Fraction of the nominal step below which a "remaining" time is taken to
+    ! be accumulated round-off in t_current rather than a real final partial
+    ! step. See the comment in trim_dt_for_final_time.
+    real(C_DOUBLE), parameter :: FINAL_STEP_FRACTION = 1.0d-6
+
 contains
 
     ! Lower-face momentum start index: skip the pinned face (index 1) only for
@@ -757,6 +762,24 @@ contains
         if (dns%t_final <= 0.0d0) return
 
         remaining = dns%t_final - dns%t_current
+
+        ! t_current is accumulated by repeated `t_current = t_current + dt`, so
+        ! it carries round-off that grows with the STEP COUNT (~N eps t_final).
+        ! On a long run that outruns run_should_continue's absolute stopping
+        ! tolerance and the loop takes one extra step of essentially zero
+        ! length -- measured 2026-08-07 on the turbles relax leg: 10401 steps
+        ! instead of 10400, t_current = 29.999999999975433 against t_final =
+        ! 30.0 and a 1e-12 tolerance, i.e. dt = 2.46e-11. The velocity barely
+        ! moves, but the projection solves against dt_gamma ~ 1e-11 and the
+        ! stored pn comes out amplified by 1/dt (|pn| 1.5e6 against 9.1 one
+        ! step earlier), which makes the FINAL snapshot of any t_final run a
+        ! restart that blows up. So: a remaining that is a negligible FRACTION
+        ! of the step about to be taken is round-off, not a step. The test has
+        ! to be RELATIVE -- an absolute one at the stopping tolerance would not
+        ! have caught this (the gap was 25x it) -- while a genuine final
+        ! partial step is a meaningful fraction of dt and passes through.
+        if (remaining < FINAL_STEP_FRACTION*dns%dt) remaining = 0.0d0
+
         dns%dt = min(dns%dt, max(0.0d0, remaining))
     end subroutine trim_dt_for_final_time
 

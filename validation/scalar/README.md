@@ -1268,7 +1268,11 @@ tolerance of 1e-12, so `dt = 2.46e-11` and the projection's pressure comes
 out amplified by `1/dt`: **|pn| = 1.5e6 at step 60001 against 9.1 at 60000,
 with the velocity identical to 8.5e-6**. Restarting from it blows the run up.
 `les_legs` retargeted from exactly that file (`newest`). It now uses
-`last_periodic`, i.e. the last PERIODIC relax snapshot. The same trap makes
+`last_periodic`, i.e. the last PERIODIC relax snapshot — **and the solver
+was fixed too** (`trim_dt_for_final_time` zeroes a `remaining` below
+`1e-6 dt`): re-running that same leg now gives **10400 steps, final
+snapshot step 60000, `max|pn|` 9.093** against 1.5064e+06, with the
+step-60000 field `max_abs` 0 against the pre-fix run's own. The same trap makes
 the FINAL snapshot of ANY `t_final`-terminated run a bad restart — this is
 the real mechanism behind the landmine previously recorded as "the campaign's
 final `*_50001.h5` carries the niter = 6 pn-drift mode".
