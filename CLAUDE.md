@@ -1104,15 +1104,20 @@ immersed boundary. Phased, each phase verified before the next:
     accumulated round-off in `t_current`, and that step's `pn` is amplified
     by `1/dt`** — measured |pn| 1.5e6 at step 60001 vs 9.1 at 60000 with the
     velocity identical to 8.5e-6 (10401 steps instead of 10400;
-    `t_current = 29.999999999975433` against a 6.7e-13 stopping tolerance).
+    `t_current = 29.999999999975433` against a 1e-12 stopping tolerance).
     **The FINAL snapshot of any `t_final` run is therefore a bad restart** —
     this is the real mechanism behind the "never restart from the campaign's
     final `*_50001.h5`" landmine, which had been blamed on the niter = 6
     pn-drift mode. Fixed at the gate level (`run_gates_s2.sh last_periodic`);
-    the solver one-liner (snap `remaining` to zero in
-    `trim_dt_for_final_time` at the tolerance `run_should_continue` uses) is
-    PROPOSED, not applied — it moves every `t_final` run's last step and
-    needs its own re-gate. Details in §B1.
+    the solver one-liner (in `trim_dt_for_final_time`, zero `remaining` when
+    it is a negligible FRACTION of the step: `if (remaining < 1.0d-6*dns%dt)
+    remaining = 0.0d0`, after which the loop's existing `dt <= 0` exit
+    fires) is PROPOSED, not applied — it moves every `t_final` run's last
+    step and needs its own re-gate. The test must be RELATIVE: an absolute
+    snap at `run_should_continue`'s tolerance would NOT catch this, since
+    the round-off in `t_current` grows like `N eps t_final` (6.9e-11 here)
+    and outruns the fixed 1e-12 floor, while `remaining/dt = 4.9e-08`
+    identifies it scale-free. Details in §B1.
   - **`check_scalar_turb.py cmd_band` compares RAW `theta'_rms`**, so the two
     campaigns' wall-flux difference enters the ratio as a global factor:
     measured core ratio 1.0365 == the flux ratio 1.0360, and normalising by

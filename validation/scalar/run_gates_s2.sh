@@ -97,7 +97,7 @@ fi
 # The last snapshot of a leg is the POST-LOOP write_field, and a run that
 # stops on t_final takes ONE EXTRA step whose dt is the accumulated round-off
 # in t_current -- here 10401 steps instead of 10400, t_current =
-# 29.999999999975433 against a 6.7e-13 stopping tolerance, so dt = 2.46e-11.
+# 29.999999999975433 against a 1e-12 stopping tolerance, so dt = 2.46e-11.
 # The projection's pressure on that step is amplified by 1/dt: measured
 # 2026-08-07, |pn| = 1.5e6 at step 60001 against 9.1 at 60000, with the
 # VELOCITY identical to 8.5e-6. Restarting the statistics leg from it NaNs

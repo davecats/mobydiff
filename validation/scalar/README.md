@@ -1255,6 +1255,8 @@ second A6000 (`env_cetus.sh`) with the analysis local.
 | `run_gates_s4.sh cyl` | staircase/Lz **1.739023e-01** + graded/Lz **1.983667e-01** = Q/Lz **3.722690e-01**, **Nu = 3.3653** — every digit of the recorded run; solver vs Python **9.576e-16** (1.3e-15). (Run it AFTER `run_gates_s3.sh cyl`: it needs that group's snapshots and case file, and skips itself if they are absent.) |
 | `run_gates_s4.sh tools` | dataset discovery `un vn wn pn nut theta theta_kc`; `scalar_stats.py profile` reads `theta_tau = 0.049873` against the recorded 0.049870 |
 | `run_gates_s5.sh det` | 1 == 4 ranks **max_abs 0** on nine datasets; CPU vs GPU 0.0 on eight and **5.55e-17** on `theta_kc` (recorded 5.6e-17) |
+| `run_bitexact.sh` (7 cases, `count = 0`) | **max_abs 0**, CPU AND GPU, against `~/s5c_ref_binaries` |
+| `run_bitexact_s3.sh` (9 cases, scalars ON) | **max_abs 0 on all nine, on GPU** — the first time this suite has been run on the GPU at all (it had only ever been run on CPU). `turbsst`, the cold-started RANS + scalar case that legitimately moved against `~/s5a` and `~/s5b`, is max_abs 0 against the commit-pinned `~/s5c` reference |
 
 **The one thing that moved, and it is not the fixes.** `run_gates_s2.sh les`
 first NaN'd 54 steps into its statistics leg. Cause (measured, full write-up
@@ -1262,7 +1264,7 @@ in `docs/next_session_verification.md` §B1): the relax leg's LAST snapshot is
 the post-loop `write_field` of a step whose `dt` was trimmed to the
 accumulated round-off in `t_current` — 10401 steps instead of 10400,
 `t_current = 29.999999999975433` against `t_final = 30.0` and a stopping
-tolerance of 6.7e-13, so `dt = 2.46e-11` and the projection's pressure comes
+tolerance of 1e-12, so `dt = 2.46e-11` and the projection's pressure comes
 out amplified by `1/dt`: **|pn| = 1.5e6 at step 60001 against 9.1 at 60000,
 with the velocity identical to 8.5e-6**. Restarting from it blows the run up.
 `les_legs` retargeted from exactly that file (`newest`). It now uses

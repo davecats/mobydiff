@@ -29,7 +29,7 @@ one-line metric fix in `validation/scalar/README.md`.
 And: `run_gates_s2.sh les` NaN'd 54
 steps into its statistics leg, and chasing that turned up a SOLVER-level
 trap: a run that stops on `t_final` takes one extra step whose `dt` is the
-accumulated round-off in `t_current` (2.46e-11 against a 6.7e-13 stopping
+accumulated round-off in `t_current` (2.46e-11 against a 1e-12 stopping
 tolerance), and the projection's pressure on that step is amplified by
 `1/dt` — |pn| = **1.5e6** at step 60001 against **9.1** at step 60000, with
 the velocity identical to 8.5e-6. The FINAL snapshot of any
@@ -124,7 +124,8 @@ driver quirk, and it is measured:
 - After step 60000, `t_current = 29.999999999975433`: the accumulated
   round-off of 10400 additions of 5e-4 is **2.46e-11**, while
   `run_should_continue`'s stopping tolerance is
-  `max(1e-12, 100 eps |t_final|)` = **6.7e-13**. So the loop continues,
+  `max(1e-12, 100 eps |t_final|)` = **1e-12** (the floor wins: 100 eps 30 =
+  6.66e-13). So the loop continues,
   `trim_dt_for_final_time` sets `dt = 2.46e-11`, and one more step runs.
 - That step's projection solves for a pressure correction against
   `dt_gamma ~ 1e-11`, so the stored `pn` is amplified by `1/dt`:
@@ -147,11 +148,37 @@ snapshot rather than from `newest`, which picked the post-loop write.
 **NOT fixed in the solver, deliberately** — it changes the trajectory of
 every `t_final`-terminated run (it removes a ~1e-11 step) and would require
 re-measuring every gate that ends on `t_final`, which is a session of its
-own. The one-line candidate: make `trim_dt_for_final_time` snap `remaining`
-to zero when it is below the same tolerance `run_should_continue` uses, so
-the loop exits instead of taking a round-off step. Whoever does it should
-also check the same `1/dt` amplification in `update_timestep_limits`'s
-`cfl` report (the final snapshot's `cfl` attribute comes out NaN).
+own. The candidate, in `trim_dt_for_final_time`:
+
+```fortran
+remaining = dns%t_final - dns%t_current
+! A `remaining` that is a negligible FRACTION of the step about to be taken
+! is accumulated round-off in t_current, not a real final partial step.
+! Taking it makes the projection solve against dt_gamma ~ 1e-11 and the
+! stored pn comes out amplified by 1/dt (2026-08-07: 1.5e6 vs 9.1).
+if (remaining < 1.0d-6*dns%dt) remaining = 0.0d0
+dns%dt = min(dns%dt, max(0.0d0, remaining))
+```
+
+and the loop's existing `if (dns%dt <= 0.0d0) exit` then fires.
+
+**The test must be RELATIVE to `dt`, not absolute** — this is the part that
+is easy to get wrong, and the first version of this note got it wrong. An
+absolute snap at `run_should_continue`'s own tolerance would NOT have caught
+this case: the observed gap 2.46e-11 is 25x that tolerance (1e-12). The
+round-off accumulated in `t_current` grows with the STEP COUNT — roughly
+`N eps t_final`, here 10400 x 2.2e-16 x 30 = 6.9e-11, the same order as
+what was measured — so it outruns any fixed floor on a long enough run,
+while `remaining/dt = 4.9e-08` identifies it immediately and scale-free. A
+genuine final partial step is a meaningful fraction of `dt` and is untouched
+by a 1e-6 threshold.
+
+CORRECTION (2026-08-07, same day): an earlier version of this section said
+the final snapshot's `cfl` attribute comes out NaN. It does not — the relax
+leg's own final snapshot carries `cfl = [0.0685, 0.0307]`, `dt = 5e-4`. The
+NaN `cfl` was in `turbles_60055.h5`, the snapshot of the statistics leg that
+had already DIVERGED after restarting from the bad pressure, i.e. a
+consequence of the blow-up and not of the trim.
 
 ### B3. The archived GPU reference binary was itself stale (found 2026-08-07, while gating the phase timer)
 
