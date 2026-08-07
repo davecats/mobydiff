@@ -203,6 +203,11 @@ subroutine apply_config_value(section, key, value, dns, g, turb, les, ps, bc, c,
             call read_int(value, dns%field_interval, line_no)
         case ("field_prefix")
             dns%field_prefix = clean_string(value)
+        case ("profile")
+            ! Per-phase step timing (profiling.f90). Off by default: it only
+            ! reads clocks, so results are unaffected either way, but the hooks
+            ! should cost nothing in production.
+            call read_bool(value, dns%profile_steps, line_no)
         end select
     case ("restart")
         select case (key_l)

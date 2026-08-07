@@ -198,6 +198,7 @@ runs; `[turbulence] model = rans|iddes` additionally advances k/ω.
 |-----|------|---------|---------|
 | `field_interval` | int | 0 | Steps between field dumps (≥ 0; 0 disables). |
 | `field_prefix` | string | (empty) | Output filename prefix (`<prefix>_<n>.h5`). |
+| `profile` | bool | false | Per-phase step timing (`profiling.f90`): three nested profilers (`step_timing` / `proj_timing` / `exch_timing`) printed after the loop, plus a coverage line against the loop timer. Diagnostic only — it reads clocks, so fields are bit-identical either way. |
 
 ## `[restart]` — restart
 

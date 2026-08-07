@@ -31,6 +31,7 @@ module chron
 
     public :: init_chron, start_chron, stop_chron, write_chron
     public :: wall_seconds, init_profiler, reset_profiler, profiler_add, write_profiler
+    public :: profiler_total
 
 contains
 
@@ -120,6 +121,14 @@ contains
         profile%seconds(category) = profile%seconds(category) + elapsed_seconds
         profile%calls(category) = profile%calls(category) + 1_C_INT
     end subroutine profiler_add
+
+    ! Wall time accumulated over all categories (the caller decides whether that
+    ! is a partition of something or a subset of it).
+    real(C_DOUBLE) function profiler_total(profile) result(seconds)
+        type(profiler_type), intent(in) :: profile
+
+        seconds = sum(profile%seconds(1:profile%ncats))
+    end function profiler_total
 
     subroutine write_profiler(profile, nsteps)
         type(profiler_type), intent(in) :: profile

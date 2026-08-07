@@ -6,6 +6,9 @@ module pressure_solver
     use :: boundary, only: boundary_type, apply_bc, apply_scalar_bc, &
         boundary_face_id, NFACES, PATCH_OUTLET, SCALAR_BC_NONE, SCALAR_BC_MIRROR
     use :: comm, only: comm_type, exchange_halos, exchange_scalar_halos
+    use :: profiling, only: prof_tic, prof_toc, proj_prof, &
+        PROF_SWEEP, PROF_APPLY, PROF_PHI_EXCHANGE, PROF_PROJ_VEL_EXCHANGE, &
+        PROF_PROJ_BC, PROF_PROJ_SETUP
 
     implicit none
 
@@ -123,12 +126,14 @@ contains
         logical(C_BOOL) :: outLow(3), outHigh(3), refd(3)
         logical :: anyOutlet
         integer(C_INT) :: phiMode(NFACES)
+        real(C_DOUBLE) :: t0
 
         if (ps%method == PRESSURE_REDBLACK) then
             call redblack_projection(ps, blk, dt_gamma, ibm, bc, c)
             return
         end if
 
+        t0 = prof_tic()
         call allocate_phi(blk)
         if (ps%cheb) call allocate_delta(blk)
 
@@ -169,7 +174,10 @@ contains
         ! (4) apply phi to the pressure and velocity faces, (5) refresh the
         ! velocity (+ pressure on the last iteration) halos for the next
         ! divergence.
+        call prof_toc(proj_prof, PROF_PROJ_SETUP, t0)
+
         do iIter = 1_C_INT, ps%nIter
+            t0 = prof_tic()
             call jacobi_compute_phi(blk, ibm, omega, outLow, outHigh, refd)
             if (ps%cheb) then
                 if (iIter == 1_C_INT) then
@@ -183,18 +191,27 @@ contains
                 end if
                 call cheb_combine(blk, alpha, gamma)
             end if
+            call prof_toc(proj_prof, PROF_SWEEP, t0)
+            t0 = prof_tic()
             call exchange_scalar_halos(c, phi, blk, ifaceRow=.true.)
             ! Re-mirror the outlet phi ghosts EVERY iteration: the exchange's
             ! tangential extension can write physical halos, so do not rely on
             ! them staying zero.
             if (anyOutlet) call apply_scalar_bc(blk, bc, phi, phiMode)
+            call prof_toc(proj_prof, PROF_PHI_EXCHANGE, t0)
+            t0 = prof_tic()
             call jacobi_apply(ps, blk, dt_gamma, ibm, outLow, outHigh, refd)
+            call prof_toc(proj_prof, PROF_APPLY, t0)
+            t0 = prof_tic()
             call apply_bc(blk, bc)
+            call prof_toc(proj_prof, PROF_PROJ_BC, t0)
+            t0 = prof_tic()
             if (iIter == ps%nIter) then
                 call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W, VAR_P])
             else
                 call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W], interp=.false.)
             end if
+            call prof_toc(proj_prof, PROF_PROJ_VEL_EXCHANGE, t0)
         end do
     end subroutine pressure_projection
 
@@ -531,22 +548,35 @@ contains
 
         integer(C_INT) :: iIter, color, dir
         logical(C_BOOL) :: outLow(3), outHigh(3), refd(3)
+        real(C_DOUBLE) :: t0
 
+        t0 = prof_tic()
         refd = blk%refMask == 1_C_INT
         do dir = 1, 3
             outLow(dir)  = bc%facePatchType(boundary_face_id(int(dir), 0)) == PATCH_OUTLET
             outHigh(dir) = bc%facePatchType(boundary_face_id(int(dir), 1)) == PATCH_OUTLET
         end do
+        call prof_toc(proj_prof, PROF_PROJ_SETUP, t0)
 
+        ! The coupled sweep updates pressure AND velocity in one kernel, so
+        ! proj_timing's `apply` and `phi_exchange` stay zero here: the red-black
+        ! path spends everything in `sweep` and the velocity exchange. That
+        ! asymmetry against the Jacobi path is real, not missing instrumentation.
         do iIter = 1_C_INT, ps%nIter
             do color = 1_C_INT, 0_C_INT, -1_C_INT
+                t0 = prof_tic()
                 call redblack_sweep(ps, blk, dt_gamma, ibm, color, outLow, outHigh, refd)
+                call prof_toc(proj_prof, PROF_SWEEP, t0)
+                t0 = prof_tic()
                 call apply_bc(blk, bc)
+                call prof_toc(proj_prof, PROF_PROJ_BC, t0)
+                t0 = prof_tic()
                 if (iIter == ps%nIter .and. color == 0_C_INT) then
                     call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W, VAR_P])
                 else
                     call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W], interp=.false.)
                 end if
+                call prof_toc(proj_prof, PROF_PROJ_VEL_EXCHANGE, t0)
             end do
         end do
     end subroutine redblack_projection

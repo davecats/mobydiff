@@ -179,6 +179,8 @@ module init
         character(len=256) :: field_prefix = ""
         integer :: field_interval = 0
         character(len=256) :: restart_file = ""
+        ! [output] profile: per-phase step timing (profiling.f90), diagnostic only.
+        logical(C_BOOL) :: profile_steps = .false._C_BOOL
     end type dns_type
 
     ! Grid generation parameters and the global node lines. The staggered

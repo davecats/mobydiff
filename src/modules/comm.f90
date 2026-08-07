@@ -5,6 +5,8 @@ module comm
     use :: blocks, only: block_set_type, DIST_ZORDER, zorder_owner, zorder_start, zorder_count, &
         leaf_at, level_cells, level_cell_width, occupied_any_level, parent_coord, child_origin
     use :: boundary, only: boundary_type
+    use :: profiling, only: prof_tic, prof_toc, exch_prof, &
+        PROF_PACK, PROF_MPI_POST, PROF_MPI_WAIT, PROF_UNPACK, PROF_LOCAL_COPY
 #ifdef USE_OPENMP_OFFLOAD
     use omp_lib
 #endif
@@ -1059,6 +1061,7 @@ contains
         integer(C_INT), intent(in) :: vars(:)
 
         integer :: ierr, p, nv, nRecvPts, nSendPts
+        real(C_DOUBLE) :: t0
 
         call require_ready(c)
         if (c%exchangeActive) error stop "halo exchange already active"
@@ -1069,7 +1072,10 @@ contains
 
         c%request = MPI_REQUEST_NULL
         if (c%nPeers > 0) then
+            t0 = prof_tic()
             call pack_entries(c, blk)
+            call prof_toc(exch_prof, PROF_PACK, t0)
+            t0 = prof_tic()
 #ifdef USE_OPENMP_OFFLOAD
             !$omp target data use_device_addr(c%sendbuf, c%recvbuf)
 #endif
@@ -1091,8 +1097,10 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
             !$omp end target data
 #endif
+            call prof_toc(exch_prof, PROF_MPI_POST, t0)
         end if
 
+        t0 = prof_tic()
         ! Same-rank block-pair copies overlap with the messages in flight. Two
         ! passes for a full exchange: same-level copies first fill the coarse-block
         ! halos, THEN the cross-level prolong/restrict run so the prolong tangential
@@ -1104,6 +1112,7 @@ contains
             call copy_local_entries(c, blk, 1)
             call copy_local_entries(c, blk, 2)
         end if
+        call prof_toc(exch_prof, PROF_LOCAL_COPY, t0)
 
         c%exchangeActive = .true.
     end subroutine start_halo_exchange
@@ -1113,13 +1122,18 @@ contains
         type(block_set_type), intent(inout) :: blk
 
         integer :: ierr, nRequest
+        real(C_DOUBLE) :: t0
 
         if (.not. c%exchangeActive) return
 
         if (c%nPeers > 0) then
             nRequest = 2*c%nPeers
+            t0 = prof_tic()
             call MPI_Waitall(nRequest, c%request(1:nRequest), MPI_STATUSES_IGNORE, ierr)
+            call prof_toc(exch_prof, PROF_MPI_WAIT, t0)
+            t0 = prof_tic()
             call unpack_entries(c, blk)
+            call prof_toc(exch_prof, PROF_UNPACK, t0)
         end if
 
         c%request = MPI_REQUEST_NULL
@@ -1156,6 +1170,7 @@ contains
         logical, intent(in), optional :: ifaceRow
 
         integer :: ierr, p, nRequest
+        real(C_DOUBLE) :: t0
 
         call require_ready(c)
         if (c%exchangeActive) error stop "halo exchange already active"
@@ -1164,8 +1179,11 @@ contains
         if (present(ifaceRow)) c%phiIfaceRow = ifaceRow
 
         if (c%nPeers > 0) then
+            t0 = prof_tic()
             call pack_scalar_entries(c, scalar)
+            call prof_toc(exch_prof, PROF_PACK, t0)
             c%request = MPI_REQUEST_NULL
+            t0 = prof_tic()
 #ifdef USE_OPENMP_OFFLOAD
             !$omp target data use_device_addr(c%sendbuf, c%recvbuf)
 #endif
@@ -1181,14 +1199,21 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
             !$omp end target data
 #endif
+            call prof_toc(exch_prof, PROF_MPI_POST, t0)
         end if
 
+        t0 = prof_tic()
         call copy_local_scalar_entries(c, scalar, blk)
+        call prof_toc(exch_prof, PROF_LOCAL_COPY, t0)
 
         if (c%nPeers > 0) then
             nRequest = 2*c%nPeers
+            t0 = prof_tic()
             call MPI_Waitall(nRequest, c%request(1:nRequest), MPI_STATUSES_IGNORE, ierr)
+            call prof_toc(exch_prof, PROF_MPI_WAIT, t0)
+            t0 = prof_tic()
             call unpack_scalar_entries(c, scalar)
+            call prof_toc(exch_prof, PROF_UNPACK, t0)
             c%request = MPI_REQUEST_NULL
         end if
         c%phiIfaceRow = .false.

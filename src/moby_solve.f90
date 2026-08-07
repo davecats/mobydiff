@@ -25,12 +25,16 @@ program moby_solve
     use :: comm, only: comm_type, comm_init_world, comm_init, comm_finalize, &
         init_block_exchange, exchange_halos, exchange_scalar_halos, &
         comm_allreduce_sum, comm_allreduce_max
+    use :: profiling, only: init_step_profilers, write_step_profilers, prof_tic, prof_toc, &
+        step_prof, PROF_MOMENTUM, PROF_IBM_MU, PROF_BODYFORCE, PROF_TURBULENCE, &
+        PROF_APPLY_BC, PROF_VEL_EXCHANGE, PROF_PROJECTION, PROF_IO_STATS
     implicit none
 
     integer :: arg_status, rkStage
     integer(C_INT) :: loop_steps
     real(C_DOUBLE) :: dt_alpha, dt_beta, dt_gamma
     real(C_DOUBLE) :: turb_profile_start
+    real(C_DOUBLE) :: prof_start
     character(len=256) :: input_file
     type(chron_type) :: loop_timer
     class(case_type), allocatable :: flow
@@ -209,6 +213,7 @@ program moby_solve
     if (c%has_terminal) print *, "main loop starting..."
     loop_steps = 0_C_INT
     call init_turbulence_profiler(turb_prof)
+    call init_step_profilers(logical(dns%profile_steps))
     call start_chron(loop_timer)
     do while (run_should_continue(dns, loop_steps))
         call trim_dt_for_final_time(dns)
@@ -224,11 +229,16 @@ program moby_solve
             dt_gamma = dns%dt*rk_gamma(rkStage)
 
             ! Predictor: advance tentative staggered velocities, then enforce solid/body constraints.
+            prof_start = prof_tic()
             call update_ibm_mu(ibm, dt_gamma)
+            call prof_toc(step_prof, PROF_IBM_MU, prof_start)
             ! Body force: refresh the (custom) force for this substage; profile
             ! and file sources are filled once at init and this is a no-op.
+            prof_start = prof_tic()
             if (dns%force_enabled) call update_bodyforce(bf, blk, dns, g, dns%t_current)
+            call prof_toc(step_prof, PROF_BODYFORCE, prof_start)
             if (turbulence_is_enabled(turb)) then
+                prof_start = prof_tic()
                 turb_profile_start = wall_seconds()
                 select case (turb%model)
                 case (TURB_RANS)
@@ -245,23 +255,34 @@ program moby_solve
                 turb_profile_start = wall_seconds()
                 call exchange_scalar_halos(c, turb%nut, blk)
                 call profiler_add(turb_prof, TURB_PROF_EXCHANGE, wall_seconds() - turb_profile_start)
+                call prof_toc(step_prof, PROF_TURBULENCE, prof_start)
+                prof_start = prof_tic()
                 call momentum(blk, dns, dt_alpha, dt_beta, dt_gamma, ibm, turb, turb_prof, bf=bf)
             else
+                prof_start = prof_tic()
                 call momentum(blk, dns, dt_alpha, dt_beta, dt_gamma, ibm, bf=bf)
             end if
+            call prof_toc(step_prof, PROF_MOMENTUM, prof_start)
+            prof_start = prof_tic()
             call apply_bc(blk, bc, outflow_copy=.true.)
+            call prof_toc(step_prof, PROF_APPLY_BC, prof_start)
             ! Post-predictor exchange with the conservation SYNC: the cross-level
             ! PROLONG/RESTRICT write the shared 2:1 face so the two stored copies
             ! start the projection mean-consistent (avg(fine)=coarse). The
             ! projection then owns the face and the composite stencil keeps it
             ! conservative.
+            prof_start = prof_tic()
             call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W], syncface=.true.)
+            call prof_toc(step_prof, PROF_VEL_EXCHANGE, prof_start)
 
             ! Projection: solve for pressure correction and project tentative velocities.
+            prof_start = prof_tic()
             call pressure_projection(ps, blk, dns, dt_gamma, ibm, bc, c)
+            call prof_toc(step_prof, PROF_PROJECTION, prof_start)
 
         end do
 
+        prof_start = prof_tic()
         if (turbulence_is_enabled(turb)) then
             call update_timestep_limits(blk, dns, c, turb)
         else
@@ -273,6 +294,7 @@ program moby_solve
                 turb%nut, sst%k, sst%omg, sst%gam, sst%ret, turb%fd)
         end if
         call flow%after_step(blk, dns, g, c, ibm)
+        call prof_toc(step_prof, PROF_IO_STATS, prof_start)
 
     end do
     call stop_chron(loop_timer, loop_steps)
@@ -281,6 +303,7 @@ program moby_solve
         print *, "main loop ended..."
         call write_chron(loop_timer)
         if (turbulence_is_enabled(turb)) call write_profiler(turb_prof, loop_steps)
+        call write_step_profilers(loop_steps, loop_timer%elapsed_seconds)
     end if
 
     call write_field(blk, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%omega, &
