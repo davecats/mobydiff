@@ -1,0 +1,4 @@
+# Large data kept locally — all exceed GitHub's 100 MB limit (see README).
+restart_field.h5
+production_stats.h5
+assets/postpro/passivewall.hdf5
