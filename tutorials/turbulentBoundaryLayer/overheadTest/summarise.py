@@ -36,16 +36,20 @@ CHRON_RE = re.compile(
 LEAF_RE = re.compile(r"block refinement:\s+(\d+)\s+leaves,\s+(\d+)\s+refined")
 
 # Which base each run is compared against, and the expected cell count.
+# The refined case is read against nb16_jacobi, NOT base_jacobi: both carry the
+# same block tax, so the ratio isolates what the refinement itself buys.
 PAIRS = {
     "nb16_redblack": "base_redblack",
     "nb16_jacobi": "base_jacobi",
-    "refined_yp100_jacobi": "base_jacobi",
+    "nb8_jacobi": "base_jacobi",
+    "refined_yp100_jacobi": "nb16_jacobi",
 }
 CELLS = {
     "base_redblack": 4096 * 176 * 192,
     "nb16_redblack": 4096 * 176 * 192,
     "base_jacobi": 4096 * 176 * 192,
     "nb16_jacobi": 4096 * 176 * 192,
+    "nb8_jacobi": 4096 * 176 * 192,
     # 2048*176*96 level-0 cells with 3 of 11 y-tiles refined 2x in x and z.
     "refined_yp100_jacobi": 2048 * 176 * 96 * 8 // 11 + 2048 * 176 * 96 * 3 // 11 * 4,
 }
@@ -93,17 +97,28 @@ def main():
     if not runs:
         sys.exit("runs/ is empty")
 
+    # A profiled matrix lives in <name>_prof/ and is summarised exactly like a
+    # plain one: strip the suffix to look a run up, keep it to find its base.
+    def stem(name):
+        return name[:-5] if name.endswith("_prof") else name
+
+    def base_of(name):
+        b = PAIRS.get(stem(name))
+        if b is None:
+            return None
+        return b + "_prof" if name.endswith("_prof") else b
+
     print(f"{'run':<24} {'chron s/step':>13} {'marginal':>10} {'ratio':>7} "
           f"{'cells':>8} {'leaves':>8}  {'L2_div':>12} {'Linf_vel':>12}")
     print("-" * 104)
     for name, r in runs.items():
-        base = runs.get(PAIRS.get(name, ""))
+        base = runs.get(base_of(name) or "")
         ratio = ""
         if base and base.get("marginal") and r.get("marginal"):
             ratio = f"{r['marginal'] / base['marginal']:.3f}"
         cellrat = ""
-        if name in CELLS and PAIRS.get(name) in CELLS:
-            cellrat = f"{CELLS[name] / CELLS[PAIRS[name]]:.3f}"
+        if stem(name) in CELLS and PAIRS.get(stem(name)) in CELLS:
+            cellrat = f"{CELLS[stem(name)] / CELLS[PAIRS[stem(name)]]:.3f}"
         leaves = f"{r['leaves'][0]}" if r["leaves"] else "-"
         chron = f"{r['chron']:.4f}" if r["chron"] else "-"
         marg = f"{r['marginal']:.4f}" if r["marginal"] else "-"
@@ -121,8 +136,8 @@ def main():
                       f"{100*gap:.1f}% -- the run was probably disturbed")
 
     # nb-independence: the block layout must not change the answer.
-    for nbname, basename in (("nb16_redblack", "base_redblack"),
-                             ("nb16_jacobi", "base_jacobi")):
+    for nbname in [n for n in runs if re.match(r"nb\d+_", stem(n))]:
+        basename = base_of(nbname) or ""
         a, b = runs.get(nbname), runs.get(basename)
         if a and b and a["l2_div"] is not None and b["l2_div"] is not None:
             same = (a["l2_div"] == b["l2_div"] and a["linf"] == b["linf"])

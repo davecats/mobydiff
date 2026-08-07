@@ -18,12 +18,14 @@ grid produce no meaningful flow. Nothing here should be read as a result.
 singleLevel/base_redblack.ini      production layout (nb unset), red-black SOR
 singleLevel/nb16_redblack.ini      same grid, nb = 16 (33792 blocks)
 singleLevel/base_jacobi.ini        production layout, damped Jacobi
-singleLevel/nb16_jacobi.ini        same grid, nb = 16, damped Jacobi
+singleLevel/nb8_jacobi.ini         same grid, nb = 8  (270336 blocks)
+singleLevel/nb16_jacobi.ini        same grid, nb = 16 (33792 blocks)
 multiLevel_xz/refined_yp100_jacobi.ini
                                    half-resolution freestream + wall band
                                    refined 2:1 in x,z (15360 leaves, 62.9 M cells)
 run_overhead.sh                    runs them into runs/<name>/ (gitignored)
 summarise.py                       the two rates, the ratios and the gates
+phase_table.py                     the per-phase table from the profiled runs
 ```
 
 Both solvers are timed on purpose. Red-black sweeps the open halo layer
@@ -49,6 +51,37 @@ loop timer and the rate differenced out of `runtime.txt` (whose last column is a
 marginal cost and to drop the start-up transient). They should agree to a few
 percent; a larger gap means the run was disturbed and the number is unusable.
 
+## Attributing the overhead (per-phase timing)
+
+```bash
+PROFILE=1 ./run_overhead.sh          # same five configs into runs/<name>_prof/
+./phase_table.py                     # phases x runs, with the nb16/base ratios
+./phase_table.py --markdown          # the same table for a document
+```
+
+`PROFILE=1` sets `[output] profile = true`, which turns on `profiling.f90`'s
+three nested profilers: `step_timing` (the phases of an RK substage — these are
+disjoint and must cover the loop), `proj_timing` (the inside of the projection
+bucket) and `exch_timing` (the inside of every halo exchange). The profiler only
+reads clocks, so a profiled run produces bit-identical fields.
+
+**Read the coverage line first.** `phase_table.py` prints, per run, what
+fraction of the chron loop time `step_timing` accounts for. The target regions
+carry no `nowait`, so the host blocks on each kernel and wall-clock brackets are
+meaningful — but only if they add up. Below ~0.97 the instrumentation is missing
+time and nothing derived from the table can be trusted.
+
+**At one rank the MPI buckets are exactly zero** and the whole exchange shows up
+as `local_copy`. That is the intended reading, not a gap: `local_copy` is
+device-local halo traffic, the MPI buckets are network. Re-run at 4 ranks to
+populate them.
+
+`ibm_mu` is the control row: `update_ibm_mu` is a pure pointwise pass over
+halo-carrying arrays, with no stencil and no exchange, so its nb16/base ratio is
+what a purely footprint-bound phase looks like on the machine at hand — compare
+every other phase against it and against the allocated-volume prediction
+`(18/16)³ = 1.4238`.
+
 ## Reference measurements (A6000, 2026-08-06)
 
 | | s/step | ratio |
@@ -59,10 +92,21 @@ percent; a larger gap means the run was disturbed and the number is unusable.
 | `nb = 16`, jacobi | 1.753 | **1.413** |
 | 2:1 xz refined (y⁺ ~100), `nb = 16`, jacobi | 0.859 | 0.490 (cells 0.455) |
 
+Reproduced 2026-08-07 on a fresh binary (same machine): 1.4499 / 2.0490 /
+1.2422 / 1.7551 / 0.8670, ratios 1.414 / 1.412 / 0.497 — the original case.
+
 **The cost model.** 1.409 measured against `(18/16)³ = 1.4238` predicted: cost
 tracks the *allocated* volume, so the overhead of any block shape is
-`(1+2/nb_x)(1+2/nb_y)(1+2/nb_z)` and does not need re-measuring per case. The
-lattice costs 41 %; the 2:1 interface costs 3–8 %.
+`(1+2/nb_x)(1+2/nb_y)(1+2/nb_z)` and does not need re-measuring per case. Added
+2026-08-07: `nb = 8` gives a second point, 1.938 measured vs `(10/8)³ = 1.9531`
+predicted, so the law holds across a 2× range of block size. The lattice costs
+41 %; the 2:1 interface costs 3–8 %.
+
+**But the mechanism is exchange traffic, not footprint** (Phase 0,
+`docs/next_session_block_overhead.md` STATUS): 86 % of the tax is
+`exch/local_copy`, the volume kernels are untouched (`momentum` 1.012), and the
+volume law predicts the total only because halo cells are what gets *copied*.
+`(nb+2)³/nb³ − 1` is exactly the halo-to-interior cell ratio.
 
 **The free gate.** The block decomposition is result-invariant by design
 (Phase 1: "results EXACTLY independent of nb and rank count"), and the runs

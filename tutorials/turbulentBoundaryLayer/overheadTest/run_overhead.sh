@@ -10,6 +10,11 @@
 # Environment:
 #   BIN                  solver binary       (default ../../../build_gpu/moby_solve)
 #   NRANKS               mpirun ranks        (default 1)
+#   PROFILE=1            turn on per-phase step timing ([output] profile) and
+#                        write the runs into runs/<name>_prof/. The profiler only
+#                        reads clocks, so profiled and unprofiled runs produce
+#                        bit-identical fields -- but keep them in separate
+#                        directories so the plain matrix stays the clean baseline.
 #   CUDA_VISIBLE_DEVICES which GPU           (default 1 -- istmcetus GPU 1; GPU 0
 #                                             and corax are the production campaign)
 #
@@ -35,6 +40,7 @@ else
         singleLevel/base_redblack.ini
         singleLevel/nb16_redblack.ini
         singleLevel/base_jacobi.ini
+        singleLevel/nb8_jacobi.ini
         singleLevel/nb16_jacobi.ini
         multiLevel_xz/refined_yp100_jacobi.ini
     )
@@ -45,10 +51,15 @@ for cfg in "${configs[@]}"; do
     [ -f "$abs" ] || { echo "no such config: $cfg" >&2; exit 1; }
     name="$(basename "$cfg" .ini)"
     run="$HERE/runs/$name"
+    [ "${PROFILE:-0}" = 1 ] && run="${run}_prof"
 
-    echo "=== $name  ($(date '+%F %T'))"
+    echo "=== $(basename "$run")  ($(date '+%F %T'))"
     rm -rf "$run"
     mkdir -p "$run"
+    if [ "${PROFILE:-0}" = 1 ]; then
+        sed 's/^profile *=.*/profile = true/' "$abs" > "$run/config.ini"
+        abs="$run/config.ini"
+    fi
     ( cd "$run" && mpirun -n "$NRANKS" "$BIN" "$abs" 2>&1 | tee run.log )
     rm -f "$run"/overhead_*.h5
 done

@@ -1,5 +1,14 @@
 # Next session — profile & optimise (the refined channel)
 
+> **SUPERSEDED (2026-08-07) by `docs/next_session_block_overhead.md`.** Its
+> central ask — "re-instate a lightweight phase timer and re-profile the current
+> code" — is done: `src/modules/profiling.f90` behind `[output] profile = true`,
+> with the per-phase table produced by
+> `tutorials/turbulentBoundaryLayer/overheadTest/phase_table.py`. The step
+> structure and the bit-exactness discipline below still hold; the NUMBERS in it
+> were already stale when it was written (see its own first section) and are now
+> two generations old. Start from the block-overhead handout instead.
+
 Branch `claude/jacobi-interface`. Goal: **measure where the step time goes now**,
 on the GPU, for the 2:1-refined channel, then attack the dominant cost. The
 suspected bottleneck is halo exchange, but the last hard profile is **stale** and

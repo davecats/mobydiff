@@ -1,2 +1,5 @@
 runs/
 overhead_all.log
+overhead_prof.log
+overhead_rerun.log
+rerun_gpu_state.txt
