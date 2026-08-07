@@ -293,6 +293,16 @@ contains
     !  bodyforce_update_to_device(bf) (done for you at the end here).    !
     !  A bulk-velocity controller would comm_allreduce_sum blk%q over    !
     !  the domain, then write a uniform bf%f.                            !
+    !                                                                    !
+    !  BUT on an offload build blk%q's HOST copy is STALE inside the     !
+    !  time loop -- the solver's kernels write the DEVICE copy and       !
+    !  nothing pulls it back (moby_solve.f90's `target update           !
+    !  from(blk%q)` runs at init only; io.f90 pulls it per snapshot).    !
+    !  A controller reading blk%q here would silently integrate the      !
+    !  INITIAL field on GPU and the current one on CPU. Put an explicit  !
+    !  `!$omp target update from(blk%q)` (guarded by                     !
+    !  USE_OPENMP_OFFLOAD) ahead of the read, or do the reduction in a   !
+    !  target region.                                                    !
     !------------------------------------------------------------------!
     subroutine update_bodyforce(bf, blk, dns, g, t)
         type(bodyforce_type), intent(inout) :: bf

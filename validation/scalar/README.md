@@ -1219,3 +1219,106 @@ diffusivity, and the resulting wall heat flux is the exact closed-form one.
   `1/(Re Pr) + nut/Pr_t`, which is not what the solver applies at a wall
   cell in wall-function mode. Use `check_scalar_wf.py wall`, whose identity
   is sharper anyway.
+
+## Re-gate 2026-08-07 — the verification debt + the host/device audit
+
+`docs/next_session_verification.md` §1 listed the gate groups that were NOT
+re-run after the two 2026-08-05 fixes, each with the argument for why it was
+expected to be safe. This session converted those arguments into
+measurements: **every group was run, and every number reproduces.** Runs on
+the local RTX 3060 (shared with an unrelated production job) + nvhpc 25.9 CPU
+builds, except the two LES campaigns, whose solver legs ran on istmcetus'
+second A6000 (`env_cetus.sh`) with the analysis local.
+
+| group | outcome |
+|---|---|
+| `run_gates.sh uniform` | `max\|theta − 2.5\|` = `max\|phi + 1.25\|` = **0.000e+00**; the underlying uniform-flow gate exact — the recorded S1 numbers |
+| `run_gates.sh conserve` | `int s dV` −2.2759572004815709e-15 → −2.4424906541753444e-15, relative drift **−6.838e-19** — the recorded number to every digit |
+| `run_gates.sh conduction` | `cond_lin` L2 = Linf = **0.0** (CPU build); `cond_16/32/64` L2 = **2.814767e-03 / 7.054808e-04 / 1.764823e-04** — all three the recorded values to every digit, order 2.00 |
+| `run_gates.sh wave` | L2 = **1.554700e-02 / 3.909091e-03 / 9.786703e-04** at n = 16/32/64 — the recorded values to every digit, order 2.00 |
+| `run_gates.sh pr` | Pr 0.1/1/10: centre s **0.990836 / 0.227799 / 0.000002**, `max|s − series|` **9.995e-06 / 1.415e-04 / 1.584e-03**, wall-flux ratio **1.0011 / 1.0004 / 1.0041** — as recorded |
+| `run_gates.sh restart` | dataset present: `max|s − file|` **0.000e+00**, the file beats `[scalar.N] initial`; dataset absent: the warning fires and the ini's 99.0 is used — PASS |
+| `run_gates.sh det` (nofma) | 1 rank == 4 ranks **max_abs 0** and CPU == GPU **max_abs 0** on `un vn wn pn s1`; the informative 2:1-interface conservation drift 1.047e-05 |
+| `run_gates_s2.sh les` | `theta_tau` **0.050841** (recorded 0.050860), flux constancy **0.0356** (0.0334), Kader max rel dev **0.2042 at y+ 6.3** (0.2067 at 6.3) / mean **0.0683** (0.0682), sublayer `theta+/(Pr y+)` 0.9933…1.0067, `theta+/U+` **0.7204** first cell / **0.8563** at y+ 20–40 (0.7233 / 0.8558), resolved `<v'theta'>/J` 0.08/0.52/0.80/0.91/0.93 — statistically the same run |
+| `run_gates_s2.sh band` | PASS — interfaces at y+ 89.2 / 270.8, `theta'_rms` ratio adjacent **1.0090**, core **1.0365**, excess **−0.0265** (recorded 1.0014 / 1.0002 / +0.0012). RUN DOWN, see the note below: the core offset is the two runs' WALL-FLUX ratio, and what is left after normalising is a small localized DEFICIT at the interface, not a band. `<theta>` footprint adjacent 0.0367 / core 0.0249 (recorded 0.0320 / 0.0286) |
+| `run_gates_s2.sh det` | 1 == 4 ranks and CPU == GPU **max_abs 0** on `un vn wn pn nut theta` |
+| `run_gates_s3.sh solid conserve balance prep refine missing` | ALL PASS, every equality still exact (solid-cell `max\|theta − 1\|` = 0.000e+00, adiabatic drift 0.000e+00, prepared-vs-inline tolerance 0, per-level coefficient deviation 2.173e-16) |
+| `run_gates_s3.sh det` | **max_abs 0** on all six datasets for 1 vs 4 ranks AND CPU vs GPU, plus the LES variant (7 datasets) and the file-IBM variant |
+| `run_gates_s3.sh cyl` | PASS — Nu(surface) drifts 3.5199 → 3.4149 → 3.3797 → **3.3655** over t = 105…120, the Gauss/CV cross-check **3.3655 / 3.3656** (0.00 % against the penalization integral), literature band [2.8, 4.0] — the recorded numbers |
+| `run_gates_s4.sh stats` | worst relative deviation **2.779e-14** / **3.068e-14** (`theta` / `theta_kc`), recorded 2.881e-14 / 2.780e-14 |
+| `run_gates_s4.sh accum` | **2.634e-14 / 2.676e-14** (recorded 2.596e-14 / 2.683e-14) |
+| `run_gates_s4.sh plane` | **4.359e-16 / 4.503e-16** (recorded 4.8e-16 / 4.5e-16) |
+| `run_gates_s4.sh levels` | level 0 **2.563e-14**, level 1 **2.122e-13** — the recorded values to every digit |
+| `run_gates_s4.sh restart` | count / raw_sum / profile **0.000e+00** (EXACT), as recorded |
+| `run_gates_s4.sh det` | 1 rank vs 4 ranks **2.455e-14** (recorded 2.346e-14), CPU vs GPU **1.648e-15** (9.383e-16) |
+| `run_gates_s4.sh noeffect` | statistics ON vs OFF **max_abs 0** on all seven datasets, as recorded |
+| `run_gates_s4.sh cyl` | staircase/Lz **1.739023e-01** + graded/Lz **1.983667e-01** = Q/Lz **3.722690e-01**, **Nu = 3.3653** — every digit of the recorded run; solver vs Python **9.576e-16** (1.3e-15). (Run it AFTER `run_gates_s3.sh cyl`: it needs that group's snapshots and case file, and skips itself if they are absent.) |
+| `run_gates_s4.sh tools` | dataset discovery `un vn wn pn nut theta theta_kc`; `scalar_stats.py profile` reads `theta_tau = 0.049873` against the recorded 0.049870 |
+| `run_gates_s5.sh det` | 1 == 4 ranks **max_abs 0** on nine datasets; CPU vs GPU 0.0 on eight and **5.55e-17** on `theta_kc` (recorded 5.6e-17) |
+
+**The one thing that moved, and it is not the fixes.** `run_gates_s2.sh les`
+first NaN'd 54 steps into its statistics leg. Cause (measured, full write-up
+in `docs/next_session_verification.md` §B1): the relax leg's LAST snapshot is
+the post-loop `write_field` of a step whose `dt` was trimmed to the
+accumulated round-off in `t_current` — 10401 steps instead of 10400,
+`t_current = 29.999999999975433` against `t_final = 30.0` and a stopping
+tolerance of 6.7e-13, so `dt = 2.46e-11` and the projection's pressure comes
+out amplified by `1/dt`: **|pn| = 1.5e6 at step 60001 against 9.1 at 60000,
+with the velocity identical to 8.5e-6**. Restarting from it blows the run up.
+`les_legs` retargeted from exactly that file (`newest`). It now uses
+`last_periodic`, i.e. the last PERIODIC relax snapshot. The same trap makes
+the FINAL snapshot of ANY `t_final`-terminated run a bad restart — this is
+the real mechanism behind the landmine previously recorded as "the campaign's
+final `*_50001.h5` carries the niter = 6 pn-drift mode".
+
+**The host/device staleness audit** (the other half of the session) found no
+unprotected site in the solver; the verdict table, with the GPU probe that
+established each row, is in `docs/next_session_verification.md` §A. Of
+interest here: the probes confirmed that `read_field`'s and
+`zero_closed_halos`' `target update to(blk%q)`, `moby_solve.f90`'s
+`target update from(blk%q)` and `from(ibm%coef)`, and `moby_prepare.f90`'s
+`from(ibm%coef)` are all LOAD-BEARING — dropping any of them moves the GPU
+result — while `setup_after_grid` / `scalar_stats_setup` demonstrably do not
+read `blk%q` on the host.
+
+### Where the S2 `band` "excess" comes from (run down 2026-08-07)
+
+`cmd_band` compares the RAW `theta'_rms` of the refined run and the control,
+row by row. It is not normalised by either run's own `theta_tau`, so any
+difference in wall flux between the two campaigns enters the ratio as a
+GLOBAL factor and lands in both the "adjacent" and the "core" number. That
+is exactly what happened:
+
+```
+theta_tau   refined (turbslab) 0.052670    control (turbles) 0.050841   ratio 1.0360
+raw           rms ratio: adjacent 1.0090   core 1.0365   excess -0.0265
+flux-normalised          : adjacent 0.9740   core 1.0005   deficit -0.0265
+   per-row, from the interface outward:  0.976 0.972 0.988 0.997 1.002 1.003
+```
+
+The core ratio **1.0365 IS the flux ratio 1.0360** (they agree to 0.05 %), and
+once each run is normalised by its own `theta_tau` the core matches the
+control to **0.05 %** — the recorded run's 1.0002, recovered. So the number
+that moved was a normalisation, not physics.
+
+What survives normalisation is the real content: a **localized ~2.6 % DEFICIT**
+of scalar fluctuation on the two coarse rows adjacent to the interface,
+recovering monotonically to 1.00 within four rows. That is the expected sign.
+A spurious band is an EXCESS (the momentum-reflux artefact of
+`../channel_interface/`); a deficit is the mildly dissipative const-1/2
+restriction under-transmitting the fine side's small scales into the coarse
+core — the same loss CLAUDE.md records for `v'`/`w'` at ~5 %. It is systematic,
+not noise: the two halves of the sample give -0.0339 and -0.0184.
+
+**Why the two runs sat at different `theta_tau`.** The CONTROL had not
+converged. Across the sampling window `turbles`' own `theta_tau` drifts
+0.051343 -> 0.050341 (-2.0 %), while `turbslab`'s is steady to 2e-5
+(0.052664 -> 0.052655). The retarget also seeds them at different implied
+fluxes (0.053003 vs 0.052278). The recorded run's raw core ratio of 1.0002
+therefore reflects a lucky flux match on a shorter window, not a tighter gate.
+
+**Suggested (not applied): normalise the ratio by each run's own `theta_tau`
+in `cmd_band`.** It makes the metric measure what the gate is about — a
+localized departure — instead of inheriting the control's convergence state,
+and it would have reported -0.027 rather than a number that looks like a
+regression. It changes a recorded gate number, so it wants its own decision.

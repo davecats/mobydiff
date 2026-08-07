@@ -49,6 +49,17 @@ mpirun -n 1 ./build_gpu/moby_solve path/to/input.ini    # main is a symlink
 - Derived types own flat contiguous allocatable arrays; map them to the
   device once in `enter_*_data`/`exit_*_data` routines (see `gpu_runtime.f90`,
   `blocks.f90`). No allocatable components inside arrays of derived types.
+- **After `enter_*_data`, the host and device copies are independent.** Host
+  code that READS a mapped array sees whatever the HOST last wrote (device
+  kernels do not update it), and a host WRITE is invisible to the device
+  until an explicit update. The two escapes are `!$omp target update
+  from(x)` (device → host, before a host read) and `... to(x)` (host →
+  device, after a host write) — both `#ifdef USE_OPENMP_OFFLOAD`-guarded.
+  This is a real defect class: the 2026-08-05 RANS cold-start IC fix was
+  correct on CPU and a pure no-op on GPU for exactly this reason. Never
+  argue a site is safe — TEST it: make the host-side change and check the
+  GPU output MOVES. Full audit (every call site, verdict + probe) in
+  `docs/next_session_verification.md` §2.
 
 ## Active work: block refinement + 2:1 interface (branch `claude/jacobi-interface`)
 
@@ -935,10 +946,24 @@ immersed boundary. Phased, each phase verified before the next:
     one definition of the log law. The wall cell uses the CONSTANT `prt` even
     under `prt_model = kays` (deliberate: P and the log branch are defined with
     a constant Pr_t); gate (x2) measures what that costs.
-  - STILL OPEN: **S5b** (TVD/van-Leer scalar convection — shared with the RANS
-    scalars, blocked by the single halo layer, measurement-justified by the
-    SD7003 gamma front); **S5c** (Boussinesq via bodyforce's `custom` hook);
-    (S5b/S5c).
+  - **THE PASSIVE-SCALAR PLAN IS CONCLUDED (decided 2026-08-07).** S0–S5a are
+    the shipped feature set, and the verification debt behind them is closed
+    (`docs/next_session_verification.md`: every gate group re-measured, plus
+    a host/device staleness audit that came back clean). The two remaining
+    plan items are reclassified and are BOTH LOW PRIORITY:
+    **S5b** (TVD/van-Leer convection) moves to the comm/halo track — it is a
+    halo-DEPTH change in comm.f90 (second upwind cell, the per-dim affine
+    gather maps, every 2:1 transfer), shared with the RANS transition
+    scalars, and its measured motivation is the SD7003 gamma front, not
+    anything a passive scalar failed; its gates are `validation/
+    interface_suite/` + `validation/refine2d/`. **S5c** (Boussinesq) is
+    parked: the `[force] type = custom` hook is in and gated, so it is user
+    code away. WHAT CONCLUDING RATIFIES: scalar convection stays 2nd-order
+    CENTRAL with no upwind option, so sharp fronts over/undershoot — the
+    documented stance, now the shipped behaviour. The live scalar work is
+    conjugate heat transfer, `docs/next_session_conjugate.md` C1, which gets
+    its own session (it is a third `ibm_wall` mode on the same cut cells the
+    penalization pins).
   - IBM THERMAL WALL FUNCTION — case built + PARTIALLY gated 2026-08-05
     (S5a's open item; every S5a gate was a domain wall).
     `validation/scalar/ibmwf180.ini`: the les_ibm wall slabs on a COARSE grid
@@ -1044,6 +1069,32 @@ immersed boundary. Phased, each phase verified before the next:
   `docs/next_session_profiling.md` (Phase-4 overlap sketch in
   `docs/nonblocking_overlap_strategy.md`, which predates the Chebyshev-Jacobi
   solver and needs updating).
+- Verification debt + host/device staleness audit (DONE 2026-08-07, branch
+  `scalar`, `docs/next_session_verification.md`). Every gate group left
+  un-measured by the 2026-08-05 fixes was re-run and reproduces; the audit of
+  host-side consumers of device-mapped arrays came back CLEAN (verdict table
+  + the GPU probe behind each row in §A; the class is now a coding convention
+  above). TWO OPEN ITEMS it produced, neither a scalar feature:
+  - **A `t_final`-terminated run takes one extra step whose `dt` is the
+    accumulated round-off in `t_current`, and that step's `pn` is amplified
+    by `1/dt`** — measured |pn| 1.5e6 at step 60001 vs 9.1 at 60000 with the
+    velocity identical to 8.5e-6 (10401 steps instead of 10400;
+    `t_current = 29.999999999975433` against a 6.7e-13 stopping tolerance).
+    **The FINAL snapshot of any `t_final` run is therefore a bad restart** —
+    this is the real mechanism behind the "never restart from the campaign's
+    final `*_50001.h5`" landmine, which had been blamed on the niter = 6
+    pn-drift mode. Fixed at the gate level (`run_gates_s2.sh last_periodic`);
+    the solver one-liner (snap `remaining` to zero in
+    `trim_dt_for_final_time` at the tolerance `run_should_continue` uses) is
+    PROPOSED, not applied — it moves every `t_final` run's last step and
+    needs its own re-gate. Details in §B1.
+  - **`check_scalar_turb.py cmd_band` compares RAW `theta'_rms`**, so the two
+    campaigns' wall-flux difference enters the ratio as a global factor:
+    measured core ratio 1.0365 == the flux ratio 1.0360, and normalising by
+    each run's own `theta_tau` leaves a localized −2.6 % DEFICIT at the
+    interface (the const-1/2 restriction's known dissipation — the opposite
+    sign from a spurious band). Normalising inside the checker is suggested,
+    not applied. Write-up in `validation/scalar/README.md`.
 
 ## Verification
 

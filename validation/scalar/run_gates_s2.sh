@@ -94,6 +94,22 @@ if want sst; then
     }
 fi
 
+# The last snapshot of a leg is the POST-LOOP write_field, and a run that
+# stops on t_final takes ONE EXTRA step whose dt is the accumulated round-off
+# in t_current -- here 10401 steps instead of 10400, t_current =
+# 29.999999999975433 against a 6.7e-13 stopping tolerance, so dt = 2.46e-11.
+# The projection's pressure on that step is amplified by 1/dt: measured
+# 2026-08-07, |pn| = 1.5e6 at step 60001 against 9.1 at 60000, with the
+# VELOCITY identical to 8.5e-6. Restarting the statistics leg from it NaNs
+# the run in 54 steps (dt -> 0, cfl NaN). Retarget from the last PERIODIC
+# snapshot instead -- physically the same field, one step earlier.
+# (docs/next_session_verification.md B1; NOT the niter = 6 pn-drift mode,
+# which is what this was blamed on before the mechanism was measured.)
+last_periodic() {  # prefix interval
+    ls "$1"_*.h5 2>/dev/null | sed -E 's/.*_([0-9]+)\.h5$/\1 &/' | sort -n -k1,1 \
+        | awk -v iv="$2" '$1 % iv == 0 { f = $2 } END { print f }'
+}
+
 # --- LES legs: relax the scalar, re-target the mean, then measure ---------
 les_legs() {   # case  (turbles | turbslab)
     local case=$1
@@ -101,7 +117,7 @@ les_legs() {   # case  (turbles | turbslab)
     sed -e "s/^t_final = .*/t_final = $TRELAX/" -e "s/^field_interval = .*/field_interval = 800/" \
         "$case.ini" > ".${case}_relax.ini"
     run ".${case}_relax.ini" 1 "${case}_relax" || return 1
-    python3 retarget_theta.py "$(newest $case)" "RT_${case}.h5" \
+    python3 retarget_theta.py "$(last_periodic $case 800)" "RT_${case}.h5" \
         --stats "${case}_*.h5" --skip 2 | sed 's/^/   /'
     mkdir -p relax && mv "${case}_"*.h5 relax/
     sed -e "s/^t_final = .*/t_final = $TEND/" -e "s/^field_interval = .*/field_interval = $SNAP/" \

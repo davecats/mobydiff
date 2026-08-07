@@ -1,8 +1,42 @@
 # Passive scalars (branch `scalar`) — implementation plan
 
-STATUS: **S0 + S1 + S2 + S3 + S4 + S5a LANDED AND GATED (S0–S2 2026-08-03,
-S3 / S4 / S5a 2026-08-04, branch `scalar`).** S5b (TVD/van-Leer scalar
-convection) and S5c (Boussinesq buoyancy) are NOT started.
+STATUS: **CONCLUDED 2026-08-07.** S0 + S1 + S2 + S3 + S4 + S5a LANDED AND
+GATED (S0–S2 2026-08-03, S3 / S4 / S5a 2026-08-04, branch `scalar`), the
+2026-08-05/06 follow-up closed S5a's two open items, and the 2026-08-07
+session closed the verification debt they left
+(`docs/next_session_verification.md`: every outstanding gate group
+re-measured and reproducing, plus a host/device staleness audit that came
+back clean). **S0–S5a is the shipped passive-scalar feature set.**
+
+The two remaining plan items are RECLASSIFIED and both LOW PRIORITY
+(decision 2026-08-07):
+
+- **S5b (TVD/van-Leer convection) moves to the comm/halo track.** It is a
+  halo-DEPTH change in `comm.f90` — a second upwind cell, the per-dim affine
+  gather maps, every 2:1 transfer — shared with the RANS transition scalars,
+  and its measured motivation is the SD7003 gamma front (104 level-4 cells;
+  at L5-xz separation-induced transition stops firing altogether), not
+  anything a passive scalar failed. Its gates are the nb/rank-independence
+  and uniform-flow suites in `validation/interface_suite/` and
+  `validation/refine2d/`, not the scalar ones. §12's prompt still applies
+  when someone takes it.
+- **S5c (Boussinesq) is parked.** The hook — `bodyforce.f90`'s `custom` path
+  reading `q(...,VAR_S0+is,...)` — is implemented and gated, so this is user
+  code away; the design note is §3. Note the hook's host/device caveat added
+  2026-08-07: `blk%q`'s HOST copy is stale inside the time loop on an offload
+  build, so a controller must pull it back first.
+
+**What concluding RATIFIES:** scalar convection stays 2nd-order CENTRAL with
+no upwind option, so sharp scalar fronts over- and undershoot. That was
+already the project stance; it is now the shipped behaviour rather than a
+pending increment.
+
+**The live scalar work is conjugate heat transfer**,
+`docs/next_session_conjugate.md` increment **C1** — deliberately its own
+session, because it is a third `ibm_wall` mode acting on the same cut cells
+the Dirichlet penalization pins, and it has to respect the two S3 deviations
+its own doc lists (`ibm%mu` has no `VAR_P` extent; the heat diagnostic must
+reuse the cancellation-free form).
 
 **FOLLOW-UP SESSION 2026-08-05/06 (commits `2c90aea`, `7d54556`)** — closed
 S5a's two open items and fixed two defects they exposed. Nothing about the
@@ -1018,18 +1052,16 @@ in `moby_solve.f90`, the lifted `config.f90` rejection, the correlations in
 
 ## 12. Next-session prompt (S5b — TVD scalar convection; S5c — Boussinesq)
 
-Paste this to start the next implementation session. What is left of S5 is
-TWO independent increments; do ONE per session. (S5a, the thermal wall
+**BOTH ARE LOW PRIORITY as of 2026-08-07** — see the STATUS header: the
+passive-scalar plan is concluded, S5b is booked on the comm/halo track and
+S5c is parked. The prompt below is kept intact for whoever picks either up;
+nothing in it is stale, only its priority changed. **The live work on this
+branch is `docs/next_session_conjugate.md` increment C1** — conjugate heat
+transfer as the third `ibm_wall` mode, whose prerequisite (S3) is met and
+whose own next-session prompt is up to date. (S5a, the thermal wall
 function, was consumed 2026-08-04, and the two items it left open were
 consumed by the 2026-08-05/06 follow-up — their prompts are kept below as
 history.)
-
-**The passive-scalar plan itself is otherwise COMPLETE.** If neither S5b nor
-S5c is wanted, the live work on this branch is
-`docs/next_session_conjugate.md` increment **C1** — conjugate heat transfer
-as the third `ibm_wall` mode, whose prerequisite (S3) is met and whose own
-next-session prompt is up to date. Of the three, S5b is the one with a
-measured motivation behind it; C1 is the one that adds physics.
 
 > Implement increment **S5b/S5c** of `docs/next_session_scalar.md` (pick
 > one) on branch `scalar` — read the doc in full first: its STATUS header

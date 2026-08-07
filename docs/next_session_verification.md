@@ -1,9 +1,42 @@
 # Verification debt + the host/device staleness audit (branch `scalar`)
 
-STATUS: **NOT STARTED.** Written 2026-08-06 at the end of the session that
-created the debt (commits `2c90aea`, `7d54556`, `a69a615`). One session, two
-halves, in this order — the audit is the part with a real chance of finding
-something, so do not let the gate re-runs eat the whole slot.
+STATUS: **DONE 2026-08-07.** Written 2026-08-06 at the end of the session
+that created the debt (commits `2c90aea`, `7d54556`, `a69a615`); both halves
+were executed on 2026-08-07. Results are in §A (the audit) and §B (the gate
+re-runs) below; §1 and §2 are kept verbatim as the specification they were
+measured against.
+
+**The audit found NO unprotected site in the solver.** Every host-side
+consumer of a device-mapped array is protected by an explicit `target
+update` or host-authoritative by construction, and each verdict was
+MEASURED, not argued: the escape hatches were dropped or the host copy
+perturbed in an instrumented GPU build, and the GPU output was checked to
+move (or not). One documentation gap was found and fixed — the `[force]
+type = custom` user hook invited a host-side `blk%q` read with no warning
+that the host copy is stale inside the time loop (`bodyforce.f90`,
+comment-only). The class itself is now a CLAUDE.md coding convention.
+
+**The gate re-runs found two things, and neither was the two fixes.** Every
+group reproduces its recorded numbers except the S2 `band` excess, which
+turned out to be a normalisation in the METRIC rather than a change in the
+solver: `cmd_band` compares raw `theta'_rms`, so the two campaigns' 3.6 %
+wall-flux difference (the control had not converged) lands in the ratio;
+normalised, the core matches the control to 0.05 % and the residue is a
+localized 2.6 % DEFICIT at the interface — the const-1/2 restriction's known
+dissipation, the opposite sign from a band. Run-down and the suggested
+one-line metric fix in `validation/scalar/README.md`.
+
+And: `run_gates_s2.sh les` NaN'd 54
+steps into its statistics leg, and chasing that turned up a SOLVER-level
+trap: a run that stops on `t_final` takes one extra step whose `dt` is the
+accumulated round-off in `t_current` (2.46e-11 against a 6.7e-13 stopping
+tolerance), and the projection's pressure on that step is amplified by
+`1/dt` — |pn| = **1.5e6** at step 60001 against **9.1** at step 60000, with
+the velocity identical to 8.5e-6. The FINAL snapshot of any
+`t_final`-terminated run is therefore a bad restart. Fixed at the gate level
+(`les_legs` now retargets from the last PERIODIC snapshot,
+`last_periodic`); the solver-side one-liner is proposed, not applied, in
+§B1 — it changes every `t_final` run's last step and needs its own re-gate.
 
 Prerequisite reading: the STATUS header of `docs/next_session_scalar.md`
 (what the two 2026-08-05 fixes were), `validation/rans_sst/README.md` (the
@@ -11,6 +44,126 @@ cold-start IC write-up, which is where the landmine is documented in full),
 and the "Active work" passive-scalar block of CLAUDE.md.
 
 ---
+
+## A. Results — the host/device staleness audit (2026-08-07)
+
+**Method.** Two passes, in this order.
+
+1. **Static enumeration.** A script over `src/` that tracks subroutine scope,
+   `!$omp target` regions and `declare target` routines, and reports every
+   reference to a mapped array from HOST context (device kernels and
+   declare-target helpers excluded). Run for `blk%q/qs/oldrhs`, `ibm%coef/mu`,
+   `turb%nut/nut_sgs/fd`, all of `sst`'s transport arrays, `sc%wfYplus` and
+   `bf%f` — i.e. every mapped array a device kernel WRITES. (Everything else
+   that is mapped — the grid lines, the block metrics, the bc point lists,
+   the turbulence metric tables, `sst%dwall/yeff/wallcell/wnorm/domwall`, the
+   scalar config arrays — is host-filled before its map and never written on
+   the device, so its host copy cannot go stale.) The enumeration came back
+   SHORT: outside the init routines that fill these arrays before their map,
+   the only host-context readers are the sites listed below.
+2. **Probes.** An instrumented GPU build in a throwaway git worktree (never
+   committed), selecting behaviour by a `MOBY_AUDIT` environment variable, so
+   one build serves every probe. Each probe either DROPS an escape hatch or
+   PERTURBS the host copy, and the run is compared with the same binary's
+   baseline. A protected write site must MOVE when its `target update to` is
+   dropped; a host-reading site must MOVE when the host copy is perturbed.
+
+**Verdict table** (line numbers as of `fee53aa`, `src/moby_solve.f90` unless
+stated):
+
+| line | call | verdict | measurement |
+|---|---|---|---|
+| 137 | `read_field` | **PROTECTED** — `target update to(blk%q)` at `io.f90:890` | dropping it moves `channel_ibm` (`un` 2.08e+01) — the positive example the plan asked for |
+| 139 | `zero_closed_halos` | **PROTECTED** — its own `target update to(blk%q)` | writing 3.0 instead of 0.0 into the closed halos moves `channel_ibm_refine` (`pn` 1.8e+27), so the host write does reach the device |
+| 148–157 | `init_ibm` / `read_ibm_coeff_file` / `set_ibm_coeff` | **SAFE by construction** | file path fills the HOST before `enter_ibm_data`; analytic path fills the DEVICE after it |
+| 162 | `init_ibm_band` | **SAFE by construction** — it reads `ibm%coef` INSIDE a target region, i.e. the device copy | analytic `wavy.ini` + `band_filter`: `nBand` = **6144 on GPU == 6144 on CPU**, although the host copy of `coef` is still all-zero at that point. A host read would have produced 0. |
+| 183 | `target update from(blk%q)` | **PROTECTED / LOAD-BEARING** | dropping it moves cold-started `turb180` (`k` 2.90e-01, `omega` 5.26, `un` 2.28e-02) — the 2026-08-05 defect reproduced from the other side. Perturbing the host copy just after it ALSO moves the run (`k` 3.09e-02), i.e. `init_rans_transport` genuinely reads the host copy. |
+| 194 | `target update from(ibm%coef)` | **PROTECTED, scope sufficient** | dropping it collapses the `wavy` ransgeom `wallcell` sum **2944 → 0** while `dwall`, `yeff`, `blocks`, `xc/yc/zc` stay bit-identical — exactly the arrays `classify_wall_cells` / `compute_wall_normals` need, and nothing more |
+| 196 | `init_rans_geometry` | covered by 194 | (the `ibm%coef` reads live in `classify_wall_cells`) |
+| 198 | `init_rans_transport` | covered by 183 | (see the 183 row) |
+| 200 | `write_rans_geometry` | **SAFE — host-authoritative** | a host-only +0.125 on `sst%dwall` after `enter_rans_data` moves the dump by exactly 0.125 (so it does read the host copy), and no device kernel writes `dwall`/`yeff`, so the host copy IS the authority |
+| 210 | `init_iddes_geometry` | **SAFE — host-authoritative** | a host-only +0.125 on `sst%yeff` moves `iddes180`'s `fd` by 9.99e-01 (the whole shielding function) — it reads the host copy, which nothing device-side writes. NOTE it uses `yeff`, not `dwall`: perturbing `dwall` alone is a no-op here. |
+| 225 | `flow%setup_after_grid` | **SAFE — does not read `blk%q`** | a host-only +0.25 on `q` just before it: `max_abs` **0** on every dataset of `turb180` (7) and `iddes180` (8). With channel statistics ON (`min_channel`, 20 steps) the fields are still `max_abs` 0 and the stats file differs by 2.7e-12 — the same as a base-vs-base rerun (3.6e-12), i.e. the GPU atomics' accumulation order, not the perturbation. |
+| 231 | `scalar_stats_setup` | **SAFE — does not read `blk%q`** | same probe; statically it reads only `[scalar]` config, the node lines and its own restart file |
+| `moby_prepare.f90:154` | `target update from(ibm%coef)` before `write_case_file` | **PROTECTED** | the GPU-prepared case file equals the CPU-prepared one on EVERY dataset (`max_abs` 0), `coef_blocks` absmax 1e+28 — a missing update would have written zeros |
+| `bodyforce.f90` `fill_trip` | the trip random-walk coefficients advance on the HOST each `trip_ts` | **SAFE — measured** | the suspicion was that `map(to: bf)` deep-copies `bf%trip_ak/bk` so the per-call `map(to: ak(1:nm))` would find them present and skip the refresh. It does not: with `trip_ts` shrunk to 0.005 so the walk advances 4× inside a 20-step run, CPU vs GPU is **3.9e-15** (`un`); control — the same case at `trip_ts` = 4.0 differs from it by `vn` **1.30e-01**, so the trip force is genuinely active and time-dependent |
+| `bodyforce.f90` `update_bodyforce` | the `[force] type = custom` USER HOOK | **DOCUMENTATION GAP — FIXED** | the hook's comment invited reading `blk%q` "for controllers" with no warning that the host copy is stale throughout the time loop; a controller written to that comment would integrate the INITIAL field on GPU and the current one on CPU. Comment now says so and names the fix. |
+
+Sites deliberately NOT probed, with the reason: `comm.f90`'s `sendbuf`/
+`recvbuf` never have a host copy in play (GPU-aware MPI, `target data
+use_device_addr`); `pressure_solver.f90`'s `phi`/`delta` are device-only
+workspaces with no host reference outside their `allocate`; the `src/test_*`
+drivers map nothing. `init_ibm_band` has **no committed gate case** — every
+`band_filter` ini in the tree is an untracked `.`-prefixed experiment — so
+its row above comes from an ini written for this audit, not from the suite.
+
+**Conclusion: clean.** Every escape hatch in the solver is load-bearing and
+every host-side consumer is either behind one or reading an array the host
+owns. The one thing worth carrying forward is the METHOD, not the result:
+the sharp test is to make the host-side change and check that the GPU output
+moves, and it is cheap — one instrumented build with an environment switch
+covers a dozen sites.
+
+## B. Results — the verification debt (2026-08-07)
+
+Every outstanding group was run. The per-gate numbers are in
+`validation/scalar/README.md`'s "Re-gate 2026-08-07" table; the short form is
+that **nothing moved because of the two 2026-08-05 fixes**, which is what §1
+predicted, and that the re-run turned up ONE defect that had nothing to do
+with them.
+
+### B1. THE FINDING: the last step of a `t_final` run has a round-off `dt`, and its snapshot's `pn` is `O(1/dt)`
+
+Seen first as a gate failure: `run_gates_s2.sh les` NaN'd 54 steps into the
+statistics leg (`dt` → 0, `cfl` NaN). The cause is a solver-level trap, not a
+driver quirk, and it is measured:
+
+- `turbles.ini`'s relax leg runs from `t = 24.8` (step 49600) to
+  `t_final = 30.0` at a fixed `dt = 5e-4` — exactly **10400** steps. It took
+  **10401**.
+- After step 60000, `t_current = 29.999999999975433`: the accumulated
+  round-off of 10400 additions of 5e-4 is **2.46e-11**, while
+  `run_should_continue`'s stopping tolerance is
+  `max(1e-12, 100 eps |t_final|)` = **6.7e-13**. So the loop continues,
+  `trim_dt_for_final_time` sets `dt = 2.46e-11`, and one more step runs.
+- That step's projection solves for a pressure correction against
+  `dt_gamma ~ 1e-11`, so the stored `pn` is amplified by `1/dt`:
+  **|pn| = 1.5e6 at step 60001 against 9.1 at step 60000**, with the
+  VELOCITY identical to 8.5e-6. The post-loop `write_field` stores exactly
+  that field, so the FINAL snapshot of any `t_final`-terminated run is
+  unusable as a restart — restarting from it blows the run up.
+
+This is the true mechanism behind the landmine recorded in §1 (and in the S2
+notes) as "the campaign's FINAL `*_50001.h5` carries |pn| ~ 1e6 of the
+niter = 6 pn-drift mode". It is NOT the drift mode: the drift mode is the A2
+velocity-neutral oscillation in `pn` on IBM runs at `niter = 6`, and it is
+not what happens here (`turbles` has no body). Both make the final snapshot
+a bad restart; only one of them is a two-line arithmetic problem.
+
+**Fixed at the gate level** (this session): `run_gates_s2.sh` gained
+`last_periodic`, and `les_legs` retargets from the last PERIODIC relax
+snapshot rather than from `newest`, which picked the post-loop write.
+
+**NOT fixed in the solver, deliberately** — it changes the trajectory of
+every `t_final`-terminated run (it removes a ~1e-11 step) and would require
+re-measuring every gate that ends on `t_final`, which is a session of its
+own. The one-line candidate: make `trim_dt_for_final_time` snap `remaining`
+to zero when it is below the same tolerance `run_should_continue` uses, so
+the loop exits instead of taking a round-off step. Whoever does it should
+also check the same `1/dt` amplification in `update_timestep_limits`'s
+`cfl` report (the final snapshot's `cfl` attribute comes out NaN).
+
+### B2. What the groups measured
+
+| runner / group | outcome |
+|---|---|
+| `run_gates.sh uniform conserve conduction wave pr restart det` | ALL PASS, every number the recorded one (`cond_16/32/64` L2 = 2.814767e-03 / 7.054808e-04 / 1.764823e-04 and `wave` L2 = 1.554700e-02 / 3.909091e-03 / 9.786703e-04, both to every digit; `det` 1 == 4 ranks AND CPU == GPU `max_abs` **0** on `un vn wn pn s1`) |
+| `run_gates_s2.sh les` | PASS — `theta_tau` 0.050841 (recorded 0.050860), `theta+/U+` 0.7204 / 0.8563 (0.7233 / 0.8558), Kader mean 0.0683 (0.0682); see B1 for what had to be fixed first |
+| `run_gates_s2.sh band` | PASS — excess **−0.0265** (recorded +0.0012). Run down (`validation/scalar/README.md`, "Where the S2 `band` excess comes from"): the metric is a RAW rms ratio, and the core offset **1.0365 IS the two runs' wall-flux ratio 1.0360**; normalised by each run's own `theta_tau` the core matches to **1.0005** (the recorded 1.0002) and what remains is a localized **−2.6 % DEFICIT** at the interface — the const-1/2 restriction's known dissipation, and the opposite sign from a spurious band. The flux gap is the CONTROL's residual drift (`turbles` `theta_tau` 0.051343 → 0.050341 across the window; `turbslab` steady to 2e-5) |
+| `run_gates_s2.sh det` | 1 == 4 ranks and CPU == GPU **max_abs 0** on `un vn wn pn nut theta` |
+| `run_gates_s3.sh solid conserve balance prep refine missing det cyl` | ALL PASS; `det` **max_abs 0** on all six datasets for 1 vs 4 ranks, CPU vs GPU, the LES variant (7 datasets) and the file-IBM variant; `cyl` Nu 3.3655 with the CV cross-check at 0.00 % |
+| `run_gates_s4.sh stats accum plane levels restart det noeffect cyl tools` | ALL PASS; `levels` (2.563e-14 / 2.122e-13) and `cyl` (Nu 3.3653, Q/Lz 3.722690e-01) reproduce to every digit. NOTE `s4 cyl` must run AFTER `s3 cyl` — it needs that group's snapshots and silently SKIPS otherwise (it did, on the first pass) |
+| `run_gates_s5.sh det` | 1 == 4 ranks **max_abs 0** on nine datasets; CPU vs GPU 0.0 on eight and **5.55e-17** on `theta_kc` — the recorded 5.6e-17 |
 
 ## 0. Why this session exists
 
@@ -70,6 +223,11 @@ mean.** Read these before running, so a failure is interpretable:
   S2 session an hour): restart from `*_49600.h5`, never from the campaign's
   FINAL `*_50001.h5` — those carry `|pn| ~ 1e6` of the niter = 6 pn-drift mode
   and blow up in one step.
+  *(2026-08-07: the attribution in that last sentence is WRONG, and §B1
+  above has the measured mechanism — the final snapshot is the post-loop
+  write of a step whose `dt` was trimmed to the accumulated round-off in
+  `t_current`, so its `pn` is amplified by `1/dt`. Same symptom, different
+  cause, and it bites every `t_final`-terminated run, body or not.)*
 - **S3 (all groups)** — analytic/file IBM without RANS, so the IC fix cannot
   reach them. The heat fix is a measured no-op at `ibm_value = 1`, which is
   what every S3 case uses; `balance` and `surface` are Python-side and
