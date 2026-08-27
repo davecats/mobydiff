@@ -1,5 +1,47 @@
 # Next session — `jacobi_apply`, the largest single phase in the step
 
+## STATUS 2026-08-27 — increment 1 done: the mu planes are not read
+
+`jacobi_apply` is **DRAM-bound**, not occupancy-bound: `ncu` puts its two
+launches at **91.1 % and 84.0 % of peak** DRAM throughput (664 / 612 GB/s), and
+k2 gets there at 38.7 % occupancy. Hypothesis 2 of this handout is dead for this
+kernel; the only lever is bytes. Measured bytes per cell match the hand model to
+3 % (`apply` 24.6 + 82.9, `compute_phi` 58.8), which makes the byte budget
+actionable: `q` u/v/w 48, **`ibm%mu` 24**, `q` p 16, `phi` 16.
+
+`ibm%mu` is identically 1 whenever there is no immersed body (`ibm_enabled =
+.false.` ⇒ both `set_ibm_coeff` branches zero `coef` and `cycle`,
+`read_ibm_coeff_file` is guarded by the same flag ⇒ `mu = 1/(1+dt·0) = 1`), so a
+warp-uniform `useIbm` scalar skips the loads and `update_ibm_mu` altogether.
+Multiplying by exactly 1.0 is the IEEE identity: bit-exact by construction.
+
+**Production step 1.21922 -> 1.09031 s/step (10.6 %)**, control layout 1.17811
+-> 1.02871 (12.7 %); `apply` −18.1 %, `sweep` −5.3 %, `ibm_mu` −100 %, nothing
+regressed. Same-day A/B, both drift-clean, identical runtime diagnostics.
+Numbers, the `ncu` tables and the before/after byte counts:
+`overheadTest/results_nomu_2026-08-27.md`.
+
+Gates all PASS: 7-case suite `max_abs 0` CPU **and** GPU (four channel cases +
+Beltrami exercise `useIbm = .false.`, `les_ibm` ± refine exercise the unchanged
+IBM path), `validation/block_nb/run_gates.sh` CPU + GPU, 1 rank == 4 ranks.
+
+**Next, and the ordering has changed.** `apply` k2 fell off the roofline
+(84 % -> 74 % DRAM), so it has headroom again and its remaining levers — fuse
+the two launches (drops 8 of ~83 B/cell; disjoint outputs, pure scheduling) and
+split the rare high-face work out of the 86-register common path — are now worth
+what they were not before. But **`jacobi_compute_phi` is the better target**:
+0.266 s/step (24 % of the step), 122 registers, 31.5 % occupancy, 82 % SM
+throughput at 27 % DRAM. It is compute/latency-bound — a *different* problem
+from the one just solved, and cutting 41 % of its traffic bought only 2–13 %,
+which is exactly why this handout insists on profiling before choosing.
+
+The gain is for body-free runs (every channel / boundary layer / Beltrami /
+turbulence case, including the production boundary layer). IBM runs take the
+old path and are bit-identical — unchanged, not slower. `momentum` (0.350
+s/step) still reads the three mu planes and was deliberately left alone.
+
+---
+
 Handout. **Measure first.** The previous four phases of this track all turned on
 a measurement that contradicted the obvious guess; assume this one will too.
 
