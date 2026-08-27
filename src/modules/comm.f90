@@ -1,7 +1,7 @@
 module comm
     use, intrinsic :: iso_c_binding
     use :: mpi_f08
-    use :: init, only: dns_type, NVAR
+    use :: init, only: dns_type, NVAR, VAR_U, VAR_V, VAR_W
     use :: blocks, only: block_set_type, DIST_ZORDER, zorder_owner, zorder_start, zorder_count, &
         leaf_at, level_cells, level_cell_width, occupied_any_level, parent_coord, child_origin
     use :: boundary, only: boundary_type
@@ -58,6 +58,11 @@ module comm
         integer :: nLocal = 0
         integer :: nLocalPts = 0
         integer :: nLocalCopyPts = 0
+        integer :: nLocalCopyEntries = 0
+        ! Same-level +axis neighbour slot per block and dim, 0 = none (physical,
+        ! closed, cross-level or off-rank). Drives sync_divergence_halos, the
+        ! minimal mid-iteration velocity refresh the Jacobi projection needs.
+        integer, allocatable :: dsSlot(:,:)                ! (3,nBlocks)
         integer, allocatable :: lSrcSlot(:), lDstSlot(:)   ! (nLocal)
         integer, allocatable :: lDstLo(:,:), lExt(:,:)     ! (3,nLocal)
         integer, allocatable :: lGA(:,:), lGB(:,:), lGS(:,:), lGC(:,:) ! gather map (3,nLocal)
@@ -142,6 +147,7 @@ module comm
     public :: comm_allreduce_max, comm_allreduce_sum, comm_allreduce_max_int
     public :: init_block_exchange
     public :: start_halo_exchange, finish_halo_exchange, exchange_halos, exchange_scalar_halos
+    public :: sync_divergence_halos
 
 contains
 
@@ -284,7 +290,10 @@ contains
                         end do
                     end do
                 end do
-                if (round == 1) c%nLocalCopyPts = c%nLocalPts
+                if (round == 1) then
+                    c%nLocalCopyPts = c%nLocalPts
+                    c%nLocalCopyEntries = nLocal
+                end if
             end do
             c%nLocal = nLocal
 
@@ -461,7 +470,19 @@ contains
         allocate(c%request(2*max(1, c%nPeers)))
         c%request = MPI_REQUEST_NULL
 
+        ! Pure +axis same-level copy entries: exactly the neighbours whose
+        ! face-1 plane feeds this block's q(nb+1) divergence halo.
+        allocate(c%dsSlot(3, max(1, int(blk%nBlocks))))
+        c%dsSlot = 0
+        do e = 1, c%nLocalCopyEntries
+            do d = 1, 3
+                if (c%lDir(d,e) == 1 .and. sum(abs(c%lDir(:,e))) == 1) &
+                    c%dsSlot(d, c%lDstSlot(e)) = c%lSrcSlot(e)
+            end do
+        end do
+
 #ifdef USE_OPENMP_OFFLOAD
+        !$omp target enter data map(to: c%dsSlot)
         !$omp target enter data map(to: &
         !$omp& c%lPointEntry, c%sPointEntry, c%rPointEntry, &
         !$omp& c%lSrcSlot, c%lDstSlot, c%lDstLo, c%lExt, c%lOff, &
@@ -480,6 +501,7 @@ contains
         if (allocated(c%sendbuf)) then
 #ifdef USE_OPENMP_OFFLOAD
             !$omp target exit data map(delete: c%sendbuf, c%recvbuf)
+            !$omp target exit data map(delete: c%dsSlot)
             !$omp target exit data map(delete: &
             !$omp& c%lPointEntry, c%sPointEntry, c%rPointEntry, &
             !$omp& c%lSrcSlot, c%lDstSlot, c%lDstLo, c%lExt, c%lOff, &
@@ -1218,6 +1240,82 @@ contains
         end if
         c%phiIfaceRow = .false.
     end subroutine exchange_scalar_halos
+
+    ! Minimal mid-iteration velocity refresh for the Jacobi projection.
+    !
+    ! Between projection iterations the ONLY velocity halo anything reads is the
+    ! divergence stencil's: jacobi_compute_phi forms
+    !   (q(ip,j,k,U)-q(i,j,k,U))*d1x + (q(i,jp,k,V)-...)*d1y + (q(i,j,kp,W)-...)*d1z
+    ! over i,j,k = 1..nb, so the only halo cells it touches are q(nb+1) in each
+    ! dim -- and only the component NORMAL to that face. jacobi_apply writes its
+    ! own interior faces and reads the same high plane; apply_bc works on
+    ! physical ghosts the block owns. The low halo planes, the tangential
+    ! components, the edges, the corners and p are NOT read until the next
+    ! substage, and the last iteration's full exchange refreshes them all.
+    !
+    ! So iterations 1..niter-1 need three face planes of one component each
+    ! instead of the whole 26-direction shell of three components: at
+    ! nb = 64 44 48 that is 8000 values against 49896, a 6.2x cut.
+    !
+    ! SAME-LEVEL ONLY, exactly like the copy-only exchange it replaces: a block
+    ! whose +axis face is a 2:1 interface has dsSlot 0 and keeps the stale halo
+    ! it already had (the cross-level transfer happens once per substage, not per
+    ! iteration). Bit-exact by construction -- the values delivered are the same
+    ! copies, only the unread ones are skipped.
+    subroutine sync_divergence_halos(c, blk)
+        type(comm_type), intent(inout) :: c
+        type(block_set_type), intent(inout) :: blk
+
+        integer :: b, i, j, k, s, nx, ny, nz, nBlocks
+
+        call require_ready(c)
+        nx = int(blk%nb(1)); ny = int(blk%nb(2)); nz = int(blk%nb(3))
+        nBlocks = int(blk%nBlocks)
+
+        ! One kernel per direction: the planes have different shapes, and this
+        ! way the fastest thread index walks contiguous memory in y and z.
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target teams distribute parallel do collapse(3) &
+        !$omp& map(to: nx, ny, nz, nBlocks, c%dsSlot) map(tofrom: blk%q) private(s)
+#endif
+        do b = 1, nBlocks
+            do k = 1, nz
+                do j = 1, ny
+                    s = c%dsSlot(1,b)
+                    if (s > 0) blk%q(nx+1,j,k,VAR_U,b) = blk%q(1,j,k,VAR_U,s)
+                end do
+            end do
+        end do
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp end target teams distribute parallel do
+        !$omp target teams distribute parallel do collapse(3) &
+        !$omp& map(to: nx, ny, nz, nBlocks, c%dsSlot) map(tofrom: blk%q) private(s)
+#endif
+        do b = 1, nBlocks
+            do k = 1, nz
+                do i = 1, nx
+                    s = c%dsSlot(2,b)
+                    if (s > 0) blk%q(i,ny+1,k,VAR_V,b) = blk%q(i,1,k,VAR_V,s)
+                end do
+            end do
+        end do
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp end target teams distribute parallel do
+        !$omp target teams distribute parallel do collapse(3) &
+        !$omp& map(to: nx, ny, nz, nBlocks, c%dsSlot) map(tofrom: blk%q) private(s)
+#endif
+        do b = 1, nBlocks
+            do j = 1, ny
+                do i = 1, nx
+                    s = c%dsSlot(3,b)
+                    if (s > 0) blk%q(i,j,nz+1,VAR_W,b) = blk%q(i,j,1,VAR_W,s)
+                end do
+            end do
+        end do
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp end target teams distribute parallel do
+#endif
+    end subroutine sync_divergence_halos
 
     ! phase = 1 same-level copies only (the prefix), 2 cross-level prolong/restrict
     ! only (the suffix), 0 both.

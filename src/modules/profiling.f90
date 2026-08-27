@@ -26,6 +26,13 @@
 !                 (step_timing's `vel_exchange` and `turbulence`, proj_timing's
 !                 `phi_exchange` and `vel_exchange`).
 !
+! ONE EXCEPTION to that nesting: comm.f90's sync_divergence_halos is a direct
+! kernel, not an exchange, so it is counted in proj_timing's `vel_exchange` but
+! NOT in exch_timing. On a single-rank run it replaces 15 of the 18 per-step
+! velocity exchanges, so exch_timing's total is a SUBSET of the exchange buckets
+! above it rather than equal to them. Do not read the shortfall as a lost
+! measurement.
+!
 ! At ONE rank there are no peers, so pack/mpi_post/mpi_wait/unpack are exactly
 ! zero and the whole exchange shows up as local_copy -- which is the intended
 ! reading: local_copy is device-local halo traffic, the MPI buckets are network.

@@ -81,10 +81,10 @@ remains chasing the small term.
    (see the next section).
 2. ~~**Phase 1 — per-direction `nb`**~~ — **DONE 2026-08-27, tax 1.370 -> 1.071**
    (see below).
-3. **Phase 3 — fewer exchanges per iteration.** 3a ATTEMPTED AND REVERTED
-   2026-08-27, see the STATUS below: it is not bit-exact, and after Phases 0-1
-   its ceiling is only 1.8 % of the step. The remaining exchange cost is in
-   `proj/vel_exchange`, which 3a never addressed.
+3. **Phase 3 — fewer exchanges per iteration.** 3a (the `phi` halo) ATTEMPTED
+   AND REVERTED — not bit-exact, and worth only 1.8 %. The `vel_exchange` half
+   is **DONE 2026-08-27**: the minimal divergence sync, 3.4 % on the production
+   layout and 9.0 % at `nb = 16`. Both STATUS sections below.
 4. **Phase 5 — fuse same-level interior blocks.** The structural fix for the
    dominant term: fused tiles have no internal halos, so the traffic is not
    reduced but *deleted*. Now clearly worth the disruption. 5a (per-level block
@@ -231,6 +231,89 @@ A 2:1 interface can only sit on a block boundary, so `nb_y = 44` offers y-index
 44 / 88 / 132 (y+ 82 / 318 / 613) where `nb_y = 16` offered every 16 cells. The
 refined BL case's y+ ~99 interface moves to y+ ~82. `overheadTest/README.md` has
 the placement table.
+
+---
+
+## STATUS 2026-08-27 — Phase 3 (vel_exchange) DONE. 3.4 % on the production layout.
+
+`comm.f90 sync_divergence_halos` replaces the mid-iteration velocity exchange on
+single-rank runs.
+
+**The observation.** Between projection iterations the ONLY velocity halo
+anything reads is the divergence stencil's. `jacobi_compute_phi` forms
+`(q(ip,j,k,U)-q(i,j,k,U))*d1x + ...` over `i,j,k = 1..nb`, so it touches exactly
+`q(nb+1)` in each dim, and only the component NORMAL to that face.
+`jacobi_apply` writes its own interior faces and reads that same high plane for
+owned interface/outlet faces; `apply_bc` works on physical ghosts the block owns.
+The low halo planes, the tangential components, the edges, the corners and `p`
+are NOT read until the next substage, and the last iteration's full exchange
+refreshes them all. So 15 of the 18 per-step calls need three face planes of one
+component instead of a 26-direction shell of three: at `nb = 64 44 48`, **8000
+values against 49896**.
+
+**Measured** (A6000, 400 cold steps, same-day A/B against `e77c75e`):
+
+| config | reference | candidate | gain |
+|---|---|---|---|
+| `rect_jacobi` (nb = 64 44 48) | 1.2622 | **1.2192** | **3.4 %** |
+| `nb16_jacobi` (cubic) | 1.6116 | **1.4673** | **9.0 %** |
+
+The cubic gain is larger because its halo shell is far bigger — i.e. Phase 1
+had already removed most of what this saves.
+
+**Two restrictions, both deliberate:**
+- **Same-level only**, exactly like the copy-only exchange it replaces. A block
+  whose +axis face is a 2:1 interface has `dsSlot = 0` and keeps the halo it
+  had; cross-level transfer happens once per substage, not per iteration.
+- **Single rank only** (`c%nPeers == 0`). With peers those planes must come over
+  MPI, and the message IS the saving, so it needs the entry list partitioned
+  into a per-peer suffix first (the `copyOnly` prefix logic, mirrored). Multi-
+  rank keeps the old path: correct, just not faster. **That fallback is also the
+  gate**: `1 rank == 4 ranks` now compares the NEW path against the OLD one and
+  they are bit-identical.
+
+**Gates**: 7-case suite `max_abs 0` CPU AND GPU vs `e77c75e`; `validation/block_nb`
+all pass; 1 rank == 4 ranks exact. The geometry is verified from the gather map
+rather than assumed: for a same-level `OP_COPY` with `off = (+1,0,0)`,
+`entry_gather_map` gives `gb1 = srcLo1 - dstLo1`, so `b1 = (nb+1) + (1-(nb+1)) = 1`
+-- the source really is the neighbour's interior plane, which the kernel hardcodes.
+
+**PROFILER CAVEAT**: the sync is a direct kernel, not an exchange, so it counts
+in `proj_timing/vel_exchange` but NOT in `exch_timing/local_copy`. On a
+single-rank run `exch_timing`'s total is therefore a SUBSET of the exchange
+buckets above it, not equal to them. Noted in `profiling.f90`; do not read the
+shortfall as lost measurement.
+
+### WHERE THE TIME ACTUALLY IS NOW — read this before choosing the next target
+
+Per-phase at the production layout (`nb = 64 44 48`, 1.2596 s/step, before this
+change):
+
+| phase | s/step | share |
+|---|---|---|
+| **`proj/apply`** | **0.4072** | **32.3 %** |
+| `step/momentum` | 0.3505 | 27.8 % |
+| `proj/sweep` | 0.2806 | 22.3 % |
+| `proj/vel_exchange` | 0.0664 | 5.3 % |
+| `proj/phi_exchange` | 0.0229 | 1.8 % |
+| `exch/local_copy` (all exchanges) | 0.0976 | 7.8 % |
+
+**The exchanges are no longer the story.** `jacobi_apply` alone is 32 % --
+bigger than momentum, 6x bigger than the exchange this phase just optimised --
+and nothing has examined it. It is two kernel launches (pressure update, then
+the velocity face corrections) over the same interior, so at minimum the `phi`
+read is done twice; whether that is what limits it is UNKNOWN and should be
+MEASURED, not assumed. Recipe that worked for the copy kernel:
+
+```
+mpirun -n 1 ncu --kernel-name regex:jacobi_apply --launch-skip 12 --launch-count 4 \
+    --section SpeedOfLight --section MemoryWorkloadAnalysis --section Occupancy <bin> <ini>
+```
+
+NOTE: performance counters are permission-blocked on the local workstation
+(`ERR_NVGPUCTRPERM`); `ncu` works on istmcetus. And the copy-kernel precedent is
+the reason to measure first: the obvious guess there (bandwidth) was wrong, and
+the real cause (register-limited occupancy) called for a completely different fix.
 
 ---
 

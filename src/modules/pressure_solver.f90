@@ -5,7 +5,7 @@ module pressure_solver
     use :: ibmm, only: ibm_type
     use :: boundary, only: boundary_type, apply_bc, apply_scalar_bc, &
         boundary_face_id, NFACES, PATCH_OUTLET, SCALAR_BC_NONE, SCALAR_BC_MIRROR
-    use :: comm, only: comm_type, exchange_halos, exchange_scalar_halos
+    use :: comm, only: comm_type, exchange_halos, exchange_scalar_halos, sync_divergence_halos
     use :: profiling, only: prof_tic, prof_toc, proj_prof, &
         PROF_SWEEP, PROF_APPLY, PROF_PHI_EXCHANGE, PROF_PROJ_VEL_EXCHANGE, &
         PROF_PROJ_BC, PROF_PROJ_SETUP
@@ -207,7 +207,17 @@ contains
             call prof_toc(proj_prof, PROF_PROJ_BC, t0)
             t0 = prof_tic()
             if (iIter == ps%nIter) then
+                ! Last iteration: the full shell, all four variables, with the
+                ! cross-level transfers -- this is what the next substage reads.
                 call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W, VAR_P])
+            else if (c%nPeers == 0) then
+                ! Between iterations only the divergence stencil reads the
+                ! velocity halo, so refresh just q(nb+1) per dim, normal
+                ! component (see comm.f90 sync_divergence_halos). Single-rank
+                ! only: with peers the same planes would have to come over MPI,
+                ! and the message is the whole point of the saving, so that
+                ! needs the entry list partitioned first.
+                call sync_divergence_halos(c, blk)
             else
                 call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W], interp=.false.)
             end if
