@@ -1220,13 +1220,106 @@ contains
     end subroutine exchange_scalar_halos
 
     ! phase = 1 same-level copies only (the prefix), 2 cross-level prolong/restrict
-    ! only (the suffix), 0 all. The full exchange runs phase 1 THEN phase 2 so the
-    ! coarse-block halos are filled before the prolong tangential interpolation
-    ! reads the coarse tangential neighbour (else it races the same-level fill).
+    ! only (the suffix), 0 both.
+    !
+    ! The phases are separate KERNELS, and that is the point: see
+    ! copy_local_same_level for why the prefix must not pay for the interface
+    ! machinery it never uses.
+    !
+    ! On the ordering: a full exchange runs phase 1 then phase 2. That originally
+    ! had to hold because the velocity prolong interpolated tangentially and so
+    ! read the coarse tangential neighbour, which the same-level fill provides --
+    ! but that branch went away with the production-config lockdown (const-1/2
+    ! injects), and cross-level entries now gather only from INTERIOR source
+    ! cells, which no entry writes. The order is kept as cheap insurance, not
+    ! because a known dependence needs it.
     subroutine copy_local_entries(c, blk, phase)
         type(comm_type), intent(inout) :: c
         type(block_set_type), intent(inout) :: blk
         integer, intent(in) :: phase
+
+        if (phase /= 2) call copy_local_same_level(c, blk)
+        if (phase /= 1) call copy_local_cross_level(c, blk)
+    end subroutine copy_local_entries
+
+    ! Same-level block-pair copies (the entry-list prefix, and on a single-level
+    ! grid that is ALL of them).
+    !
+    ! For OP_COPY the general gather degenerates exactly to a shifted copy:
+    ! entry_gather_map gives ga = 1, gs = 0, gc = 1 in every dim (so a single
+    ! source at a constant per-dim offset, weight 1.0), entry_blend returns 1.0
+    ! (no ghost blend) and interface_normal_dim returns 0 (nothing to leave to
+    ! the owner). So this kernel computes the same values as the general one and
+    ! is bit-exact BY CONSTRUCTION -- the value is copied, never recomputed.
+    !
+    ! WHY IT IS WORTH A SEPARATE KERNEL (measured with ncu on an A6000, not
+    ! guessed): the general kernel needs ~128 registers for the interface
+    ! machinery, which caps it at "Block Limit Registers = 4" -> 33% theoretical
+    ! occupancy, 15 of 48 warps per SM. At that occupancy it cannot cover memory
+    ! latency and reaches only ~37% of DRAM peak while the SM is also only ~36%
+    ! busy -- latency-bound, not bandwidth-bound. This kernel carries none of
+    ! that state, so it runs at a far higher occupancy.
+    subroutine copy_local_same_level(c, blk)
+        type(comm_type), intent(inout) :: c
+        type(block_set_type), intent(inout) :: blk
+
+        integer :: gp, v, e, pt, ni, nj, nPts, nv, qj, qk
+        integer :: di, dj, dk, var, si, sj, sk, ds, ss
+
+        nPts = c%nLocalCopyPts
+        nv = c%nActiveVars
+        if (nPts <= 0 .or. nv <= 0) return
+
+        ! ONE thread per halo POINT, with the variables looped INSIDE the thread.
+        ! Measured against the two obvious alternatives (A6000, 1.18 M points):
+        ! a collapse(2) over (var, point) 317 us, one launch per variable
+        ! 3 x 97 us, this 253 us. It decodes the point once instead of nv times,
+        ! reads the entry metadata once instead of nv times, and leaves nv
+        ! independent loads in flight per thread. q is (i,j,k,var,slot) with i
+        ! fastest, so the nv accesses are (nb+2)^3 elements apart and were never
+        ! going to coalesce with each other -- spreading them across threads (the
+        ! original p = point*nv + var indexing) only made every warp straddle nv
+        ! distinct regions of memory. Consecutive threads now walk consecutive i.
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target teams distribute parallel do &
+        !$omp& map(to: nPts, nv, c%lOff, c%lPointEntry, c%lSrcSlot, c%lDstSlot, &
+        !$omp& c%lDstLo, c%lExt, c%lGB, c%activeVars) &
+        !$omp& map(tofrom: blk%q) &
+        !$omp& private(e,pt,ni,nj,di,dj,dk,qj,qk,v,var,si,sj,sk,ds,ss)
+#endif
+        do gp = 0, nPts - 1
+            e = c%lPointEntry(gp)
+            pt = gp - c%lOff(e-1)
+            ni = c%lExt(1,e)
+            nj = c%lExt(2,e)
+            ! Two divisions, not the four that modulo(pt,ni) / pt/ni /
+            ! modulo(pt/ni,nj) / pt/(ni*nj) generate. pt >= 0 and ni,nj > 0
+            ! here, so this is the same decode without modulo's sign handling.
+            qj = pt/ni
+            qk = qj/nj
+            di = c%lDstLo(1,e) + (pt - qj*ni)
+            dj = c%lDstLo(2,e) + (qj - qk*nj)
+            dk = c%lDstLo(3,e) + qk
+            si = di + c%lGB(1,e)
+            sj = dj + c%lGB(2,e)
+            sk = dk + c%lGB(3,e)
+            ds = c%lDstSlot(e)
+            ss = c%lSrcSlot(e)
+            do v = 1, nv
+                var = int(c%activeVars(v))
+                blk%q(di, dj, dk, var, ds) = blk%q(si, sj, sk, var, ss)
+            end do
+        end do
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp end target teams distribute parallel do
+#endif
+    end subroutine copy_local_same_level
+
+    ! Cross-level prolong/restrict entries (the entry-list suffix): the general
+    ! weighted gather, unchanged.
+    subroutine copy_local_cross_level(c, blk)
+        type(comm_type), intent(inout) :: c
+        type(block_set_type), intent(inout) :: blk
 
         integer :: p, gp, v, e, pt, ni, nj, pLo, pHi
         integer :: di, dj, dk, var, nv, sf
@@ -1235,13 +1328,8 @@ contains
         logical :: doBlend
 
         nv = c%nActiveVars
-        if (phase == 1) then
-            pLo = 0;                pHi = c%nLocalCopyPts*nv
-        else if (phase == 2) then
-            pLo = c%nLocalCopyPts*nv; pHi = c%nLocalPts*nv
-        else
-            pLo = 0;                pHi = c%nLocalPts*nv
-        end if
+        pLo = c%nLocalCopyPts*nv
+        pHi = c%nLocalPts*nv
         if (pHi <= pLo) return
         sf = merge(1, 0, c%syncFace)
 
@@ -1324,7 +1412,7 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
 #endif
-    end subroutine copy_local_entries
+    end subroutine copy_local_cross_level
 
     ! Gather every local cross-block halo point of a cell-centred scalar (phi /
     ! les%nut): same-level COPY, fine->coarse RESTRICT (lGC(d)==2 averages the 2
@@ -1336,24 +1424,31 @@ contains
         real(C_DOUBLE), intent(inout) :: scalar(0:,0:,0:,1:)
         type(block_set_type), intent(in) :: blk
 
-        integer :: p, e, pt, ni, nj, pHi
+        integer :: p, e, pt, ni, nj, pLo, pHi
         integer :: di, dj, dk, sfr, pn, ss, ds
         integer :: b1, b2, b3, og1, og2, og3, np1, np2, np3, s1, s2, s3
         real(C_DOUBLE) :: val, wa1, wb1, wa2, wb2, wa3, wb3
 
+        ! Same-level prefix in its own light kernel, exactly as for the velocity
+        ! exchange (see copy_local_same_level for the occupancy argument). For a
+        ! COPY entry lGC is 1 in every dim and lPhiN is 0, so the general body
+        ! below reduces to this copy -- bit-exact by construction.
+        call copy_local_scalar_same_level(c, scalar)
+
+        pLo = c%nLocalCopyPts
         pHi = c%nLocalPts
-        if (pHi <= 0) return
+        if (pHi <= pLo) return
         sfr = merge(1, 0, c%phiIfaceRow)
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
-        !$omp& map(to: pHi, sfr, c%nLocal, c%lOff, c%lPointEntry, c%lSrcSlot, c%lDstSlot, &
+        !$omp& map(to: pLo, pHi, sfr, c%nLocal, c%lOff, c%lPointEntry, c%lSrcSlot, c%lDstSlot, &
         !$omp& c%lDstLo, c%lExt, c%lGA, c%lGB, c%lGS, c%lGC, c%lPhiN, blk%x, blk%y, blk%z) &
         !$omp& map(tofrom: scalar) &
         !$omp& private(p,e,pt,ni,nj,di,dj,dk,b1,b2,b3,og1,og2,og3,np1,np2,np3,s1,s2,s3, &
         !$omp& val,wa1,wb1,wa2,wb2,wa3,wb3,pn,ss,ds)
 #endif
-        do p = 1, pHi
+        do p = pLo + 1, pHi
             e = c%lPointEntry(p - 1)
             pt = p - 1 - c%lOff(e-1)
             ni = c%lExt(1,e)
@@ -1409,6 +1504,41 @@ contains
         !$omp end target teams distribute parallel do
 #endif
     end subroutine copy_local_scalar_entries
+
+    ! Same-level scalar copies: the scalar twin of copy_local_same_level.
+    subroutine copy_local_scalar_same_level(c, scalar)
+        type(comm_type), intent(inout) :: c
+        real(C_DOUBLE), intent(inout) :: scalar(0:,0:,0:,1:)
+
+        integer :: p, e, pt, ni, nj, nPts, di, dj, dk, qj, qk
+
+        nPts = c%nLocalCopyPts
+        if (nPts <= 0) return
+
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target teams distribute parallel do &
+        !$omp& map(to: nPts, c%lOff, c%lPointEntry, c%lSrcSlot, c%lDstSlot, &
+        !$omp& c%lDstLo, c%lExt, c%lGB) &
+        !$omp& map(tofrom: scalar) &
+        !$omp& private(e,pt,ni,nj,di,dj,dk,qj,qk)
+#endif
+        do p = 1, nPts
+            e = c%lPointEntry(p - 1)
+            pt = p - 1 - c%lOff(e-1)
+            ni = c%lExt(1,e)
+            nj = c%lExt(2,e)
+            qj = pt/ni
+            qk = qj/nj
+            di = c%lDstLo(1,e) + (pt - qj*ni)
+            dj = c%lDstLo(2,e) + (qj - qk*nj)
+            dk = c%lDstLo(3,e) + qk
+            scalar(di, dj, dk, c%lDstSlot(e)) = &
+                scalar(di + c%lGB(1,e), dj + c%lGB(2,e), dk + c%lGB(3,e), c%lSrcSlot(e))
+        end do
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp end target teams distribute parallel do
+#endif
+    end subroutine copy_local_scalar_same_level
 
     subroutine pack_entries(c, blk)
         type(comm_type), intent(inout) :: c

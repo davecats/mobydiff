@@ -12,9 +12,13 @@ Reports TWO independent rates per run, as the handout requires:
 
                   (sps_j*step_j - sps_i*step_i) / (step_j - step_i)
 
-              which assumes the run started at step 0 -- true for the cold-start
-              configs here, and asserted below. Anchoring at the first line past
-              WARMUP drops allocation, the first device maps and the JIT.
+              which assumes the run started at step 0. That holds for the
+              cold-start configs here and is CHECKED (a restart writes absolute
+              step numbers while averaging only over steps since the restart, so
+              sps_i*step_i would not be elapsed time); read_run warns and drops
+              the marginal rate if the first line does not sit at one output
+              interval. Anchoring at the first line past WARMUP drops
+              allocation, the first device maps and the JIT.
 
 The two should agree to a few percent; a gap means the run was disturbed
 (shared GPU, another job) and the numbers should not be used.
@@ -55,9 +59,12 @@ CELLS = {
 }
 
 
+KNOWN = set(PAIRS) | set(PAIRS.values()) | set(CELLS)
+
+
 def read_run(d):
     out = {"name": d.name, "chron": None, "marginal": None, "leaves": None,
-           "l2_div": None, "linf": None}
+           "l2_div": None, "linf": None, "restarted": False}
 
     log = d / "run.log"
     if log.exists():
@@ -78,6 +85,12 @@ def read_run(d):
             if len(f) == 8:
                 rows.append((int(f[0]), float(f[2]), float(f[4]), float(f[7])))
         if len(rows) >= 2:
+            # cold-start check: line k sits at (k+1)*interval, so the first line
+            # must equal the spacing. A restart breaks the sps*step identity.
+            spacing = rows[1][0] - rows[0][0]
+            if spacing <= 0 or rows[0][0] != spacing:
+                out["restarted"] = True
+                return out
             anchor = next((r for r in rows if r[0] > WARMUP), rows[0])
             last = rows[-1]
             if last[0] > anchor[0]:
@@ -99,14 +112,26 @@ def main():
 
     # A profiled matrix lives in <name>_prof/ and is summarised exactly like a
     # plain one: strip the suffix to look a run up, keep it to find its base.
+    # A run directory is a known config name plus an arbitrary tag from
+    # PROFILE=1 / SUFFIX=<tag> (e.g. nb16_jacobi_prof_opt). Recover the config
+    # by longest-prefix match rather than stripping a hardcoded list of tags --
+    # an unrecognised SUFFIX must not silently blank the ratio column AND the
+    # nb-independence gate, which is exactly what an A/B run is there for.
     def stem(name):
-        return name[:-5] if name.endswith("_prof") else name
+        best = None
+        for key in KNOWN:
+            if name == key or name.startswith(key + "_"):
+                if best is None or len(key) > len(best):
+                    best = key
+        return best if best is not None else name
 
     def base_of(name):
         b = PAIRS.get(stem(name))
         if b is None:
             return None
-        return b + "_prof" if name.endswith("_prof") else b
+        # pair a run with a base measured the same way (same binary, same
+        # profiling setting) -- never across an A/B boundary
+        return b + name[len(stem(name)):]
 
     print(f"{'run':<24} {'chron s/step':>13} {'marginal':>10} {'ratio':>7} "
           f"{'cells':>8} {'leaves':>8}  {'L2_div':>12} {'Linf_vel':>12}")
@@ -128,6 +153,10 @@ def main():
               f"{leaves:>8}  {l2:>12} {li:>12}")
 
     print()
+    for name, r in runs.items():
+        if r.get("restarted"):
+            print(f"WARNING {name}: runtime.txt does not start at one output "
+                  f"interval -- not a cold start, marginal rate not computed")
     for name, r in runs.items():
         if r["chron"] and r["marginal"]:
             gap = abs(r["chron"] - r["marginal"]) / r["marginal"]

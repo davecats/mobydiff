@@ -77,9 +77,8 @@ remains chasing the small term.
 
 ### Revised phase order
 
-1. **The copy kernel itself** (new; the 165 GB/s finding). Cheapest possible
-   experiment, purely a scheduling/coalescing question, bit-exact by
-   construction.
+1. ~~**The copy kernel itself**~~ — **DONE 2026-08-27, block tax 1.430 -> 1.370**
+   (see the next section).
 2. **Phase 1 — per-direction `nb`.** Unchanged in value but now for the right
    reason: it removes halo CELLS. `nb = 64 44 48` divides the BL grid, takes the
    halo/interior ratio 42.4 % → 12.3 % (3.45×) and predicts the tax 1.414 → ~1.12.
@@ -98,6 +97,81 @@ remains chasing the small term.
 6. **Phase 6 — mixed precision.** Unchanged in position, but note it now has a
    second justification: it halves the exchange payload, which is 86 % of the
    tax.
+
+---
+
+## STATUS 2026-08-27 — copy kernel DONE. Block tax 1.430 -> 1.370.
+
+The first item of the revised order is done: `comm.f90`'s same-rank halo gather
+is split into a light same-level copy kernel (`copy_local_same_level`,
+`copy_local_scalar_same_level`) and the general cross-level one
+(`copy_local_cross_level`). **Pure scheduling change, bit-exact CPU AND GPU.**
+
+**Why it was slow — measured with ncu, not guessed.** The old single kernel was
+never bandwidth-starved: `Block Limit Registers = 4` gave 33 % theoretical
+occupancy (15 of 48 warps/SM) with DRAM at 37 % and SM at 36 % — latency-bound.
+~128 registers/thread went on interface machinery (8 weight variables, the
+8-point gather, the ghost blend, the owned-face guard) that same-level copies
+never use. The entry list was already ordered copies-first
+(`init_block_exchange` round 1 emits exactly the `OP_COPY` entries), so the
+split needed no new bookkeeping.
+
+**Why the fast path is bit-exact by construction**, not by luck: for `OP_COPY`,
+`entry_gather_map` returns `ga = 1, gs = 0, gc = 1` in every dim (one source at
+a constant per-dim offset, weight 1.0), `entry_blend` returns 1.0 (`lWpDst = 0`,
+no blend) and `interface_normal_dim` returns 0 (the write guard always passes).
+The value is copied, never recomputed.
+
+**Kernel** (A6000, 1.18 M halo points). Three formulations were measured:
+
+| formulation | velocity copy | occupancy | DRAM |
+|---|---|---|---|
+| original single kernel | 350 us | 31.7 % | 37.0 % |
+| split, `collapse(2)` over (var, point) | 317 us | 43.4 % | 44.5 % |
+| split, one launch per variable | 3 x 97 us | 57.9 % | 48.1 % |
+| **split, point-per-thread, vars inside the thread** | **253 us** | 51.7 % | **53.5 %** |
+
+1.39x on the velocity copy, 1.19x on the scalar copy.
+
+**End to end** (A6000, 400 cold steps, 138.4 M cells, SAME DAY A/B against a
+`bcc69eb` binary — see the drift warning below):
+
+| config | reference | candidate | gain |
+|---|---|---|---|
+| `base_jacobi` (nb unset) | 1.1836 | 1.1764 | 0.6 % |
+| `nb16_jacobi` | 1.6923 | **1.6118** | **4.8 %** |
+| `refined_yp100` | 0.7809 | **0.7495** | **4.0 %** |
+| **block tax** | **1.4297** | **1.3701** | 14 % of the tax removed |
+
+The 0.6 % at `nb` unset is the control: no blocks, no halo copies, no gain.
+Runtime lines are IDENTICAL between the two binaries after 400 steps on 138 M
+cells (L2_div 1.844810E-05, Linf 1.00341600E+00) — bit-exactness far past the
+20-step gate cases.
+
+**HOW MUCH IS LEFT HERE: not much.** The payload now moves at 224 GB/s with
+1.84x DRAM amplification, and that amplification is STRUCTURAL: 29.5 % of halo
+points lie on x-normal faces, whose halo plane is strided by `nb+2` in the
+fastest-varying index and can never fill a 32 B sector (4x waste, and
+0.295*4 + 0.705 = 1.885 predicts the measured 1.84). **~51 % of peak is the
+floor for this data layout**, so the remaining headroom in this kernel is
+occupancy-only, perhaps 1.3-1.5x — not the ~4x that "21 % of peak" suggested
+before profiling. Bigger wins now have to come from moving less data
+(Phases 1, 3, 5), not from moving it faster.
+
+NOT done here, and worth knowing: `pack_entries`/`unpack_entries` (the off-rank
+MPI path) still carry the same register-heavy general form. They are dead at
+1 rank, which is why they did not show up, but a multi-GPU run would want the
+same treatment.
+
+**MEASUREMENT WARNING, the second time this bit.** The candidate first appeared
+5.3 % faster at `nb` unset, where the copy kernel can explain ~1 %. The recorded
+baseline was three weeks old and the machine had drifted ~5 % faster in the
+meantime. Only a SAME-DAY run of the pre-change binary separated the two.
+`run_overhead.sh` now takes `SUFFIX=<tag>` for exactly this, and `summarise.py`
+pairs a run with a base carrying the same tag so an A/B never compares across
+binaries by accident.
+
+---
 
 ### What Phase 0 delivered
 

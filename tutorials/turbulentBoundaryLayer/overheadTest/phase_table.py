@@ -31,16 +31,37 @@ LINE = re.compile(
 CHRON = re.compile(r"timing:\s+nsteps\s+\d+\s+loop_seconds\s+(\S+)\s+seconds_per_step\s+(\S+)")
 COVER = re.compile(r"step_timing: coverage measured\s+\S+\s+loop_seconds\s+\S+\s+fraction\s+(\S+)")
 
-# Which base each run is read against. The refined case pairs with nb16_jacobi
-# (same block tax on both sides) so its column isolates the refinement.
+# Which base each run is read against, keyed by CONFIG name. The refined case
+# pairs with nb16_jacobi (same block tax on both sides) so its column isolates
+# the refinement. Run directories carry a tag on top of the config name
+# (_prof from PROFILE=1, plus anything from SUFFIX=<tag>); pairing is done on
+# the config with the tag carried across, so an A/B run still gets its ratios.
 PAIRS = {
-    "nb16_redblack_prof": "base_redblack_prof",
-    "nb16_jacobi_prof": "base_jacobi_prof",
-    "nb8_jacobi_prof": "base_jacobi_prof",
-    "refined_yp100_jacobi_prof": "nb16_jacobi_prof",
+    "nb16_redblack": "base_redblack",
+    "nb16_jacobi": "base_jacobi",
+    "nb8_jacobi": "base_jacobi",
+    "refined_yp100_jacobi": "nb16_jacobi",
 }
-ORDER = ["base_redblack_prof", "nb16_redblack_prof", "base_jacobi_prof",
-         "nb8_jacobi_prof", "nb16_jacobi_prof", "refined_yp100_jacobi_prof"]
+KNOWN = set(PAIRS) | set(PAIRS.values())
+ORDER = ["base_redblack", "nb16_redblack", "base_jacobi",
+         "nb8_jacobi", "nb16_jacobi", "refined_yp100_jacobi"]
+
+
+def stem(name):
+    """Config name inside a run-directory name (longest known prefix)."""
+    best = None
+    for key in KNOWN:
+        if name == key or name.startswith(key + "_"):
+            if best is None or len(key) > len(best):
+                best = key
+    return best
+
+
+def base_of(name):
+    s = stem(name)
+    if s is None or s not in PAIRS:
+        return None
+    return PAIRS[s] + name[len(s):]
 
 
 def read(d):
@@ -67,16 +88,15 @@ def read(d):
 
 def main():
     md = "--markdown" in sys.argv
+    # profiled run dirs, in ORDER first then whatever else is present
+    found = [d.name for d in sorted(RUNS.iterdir())
+             if d.is_dir() and "_prof" in d.name] if RUNS.is_dir() else []
+    found.sort(key=lambda n: (ORDER.index(stem(n)) if stem(n) in ORDER else 99, n))
     runs = {}
-    for name in ORDER:
+    for name in found:
         r = read(RUNS / name)
         if r:
             runs[name] = r
-    for d in sorted(RUNS.iterdir()) if RUNS.is_dir() else []:
-        if d.is_dir() and d.name.endswith("_prof") and d.name not in runs:
-            r = read(d)
-            if r:
-                runs[d.name] = r
     if not runs:
         sys.exit("no profiled runs -- PROFILE=1 ./run_overhead.sh")
 
@@ -88,11 +108,13 @@ def main():
                 labels.append(k)
 
     short = [n.replace("_prof", "").replace("_yp100", "") for n in names]
+    short = [s[-14:] for s in short]
     sep = " | " if md else "  "
     head = f"{'phase':<22}" + sep + sep.join(f"{s:>14}" for s in short)
-    ratios = [n for n in names if n in PAIRS and PAIRS[n] in runs]
-    head += sep + sep.join(f"{n.replace('_prof','').replace('_yp100','')+'/base':>22}"
-                           for n in ratios)
+    ratios = [n for n in names if base_of(n) in runs]
+    head += sep + sep.join(
+        f"{(n.replace('_prof','').replace('_yp100',''))[-16:]+'/base':>22}"
+        for n in ratios)
     print(("| " + head + " |") if md else head)
     if md:
         print("|" + "|".join(["---"] * (1 + len(names) + len(ratios))) + "|")
@@ -106,7 +128,7 @@ def main():
             cells.append(f"{v:14.5f}" if v is not None else " " * 14)
         rcells = []
         for n in ratios:
-            b = runs[PAIRS[n]]
+            b = runs[base_of(n)]
             a, bb = (runs[n]["chron"], b["chron"]) if lab == "TOTAL/chron" else \
                     (runs[n]["phases"].get(lab), b["phases"].get(lab))
             # Below ~1 ms/step a phase is noise; a ratio there means nothing.
