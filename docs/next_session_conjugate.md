@@ -541,64 +541,116 @@ error path. That is the whole benefit of the baseline.
 
 ## 13. Next-session prompt (C1)
 
+Refreshed 2026-08-27 against branch `scalar` HEAD `21a7701`. **The reference
+binary set changed**: earlier revisions of this prompt named
+`~/s5a_ref_binaries`, which its successor's `PROVENANCE.txt` documents as STALE
+for cold-started RANS. Use `~/s5c_ref_binaries` (commit `8f60944`).
+
 > Implement increment **C1** of `docs/next_session_conjugate.md` — conjugate
-> heat transfer at the immersed interface, baseline scheme — on branch `scalar`.
-> Read that document in full first (it is short: §0–§3 contain the whole
-> method), then `docs/conjugate/conjugate_ibm.tex` §6 for the derivation and the
-> sketches (build it with `make` in that directory), then the "Active work"
-> section of CLAUDE.md for the project conventions, and
+> heat transfer at an immersed interface, baseline scheme — on branch `scalar`
+> (HEAD `21a7701`).
+>
+> **Read first, in this order:** `docs/next_session_conjugate.md` (§0–§3 are the
+> whole method; §5, §8, §10 and §12 are the constraints), then
+> `docs/conjugate/conjugate_ibm.tex` §6 for the derivation and the sketches
+> (`make` in that directory), then the STATUS header of
+> `docs/next_session_scalar.md` (S0–S5a is CONCLUDED and conjugate is the live
+> scalar work), then the "Active work" section of CLAUDE.md, then
 > `validation/scalar/README.md` for the gate machinery you inherit.
 >
-> The scheme is one face coefficient, (★) in §1: at a face whose two cells
-> straddle the interface, replace the face diffusivity by the distance-weighted
-> harmonic mean, with the weight `w = φ_L/(φ_L − φ_R)` taken from the two
-> cell-centre signed distances. `φ = ±dwall`, and `dwall` already exists at
-> every cell centre including ghosts, at the `VAR_P` position, for both the
-> analytic and the file geometry path. **There is no new dataset and no
-> `moby_prepare` change in this increment** — if you find yourself adding one,
-> re-read §8, you have missed the obliquity lemma.
+> **The scheme is one face coefficient.** At a face whose two cell centres
+> straddle the interface (`φ_L·φ_R < 0`, with `φ = ±dwall` and the sign from the
+> solid marker), replace the face diffusivity by the distance-weighted harmonic
+> mean built on `w = φ_L/(φ_L − φ_R)`; every other face keeps today's kernel
+> line verbatim. `dwall` already exists at every cell centre including ghosts,
+> at the `VAR_P` position, for both the analytic and the file geometry path.
+> **No new dataset, no `moby_prepare` change, no case-file format change** — if
+> you find yourself adding one you have missed the obliquity lemma (§8, or §6.2
+> of the LaTeX note).
 >
-> Also in C1: solid cells become real unknowns (`κ = k/k_f`, `C = ρc/(ρc)_f`,
-> both ≡ 1 in the fluid); convection HARD-masked on cut faces and on faces whose
-> staggered velocity node is solid; the Peclet limiter takes the maximum over
-> materials; the distance state is built when `ibm_wall = conjugate` even
-> without a `[rans]` section.
+> **Also in C1:** solid cells become real unknowns (`κ = k/k_f`,
+> `C = ρc/(ρc)_f`, both ≡ 1 in the fluid); convection HARD-masked on cut faces
+> and on faces whose staggered velocity node is solid; the Peclet limiter takes
+> `max` over materials; the distance state is built when `ibm_wall = conjugate`
+> even with no `[rans]` section, and its solid marker is ghost-inclusive.
 >
-> Do NOT implement the tangential correction (★★) or its indicator — that is C2,
-> and whether it ever ships enabled is a question C2's gate answers with a
-> measurement. Structure the cut-face branch as ONE LOCAL MODEL PER FACE,
-> always consumed as a face flux, so that (★★) and later the C4 wedge model drop
-> in without touching the surrounding machinery.
+> **Scope boundaries — do NOT:**
+> - implement the tangential correction (★★) or the `e_face` indicator. That is
+>   C2, and whether (★★) ever ships enabled is a question C2 answers with a
+>   measurement, not a design decision to pre-empt.
+> - re-express the existing `dirichlet` / `adiabatic` modes through the new
+>   cut-face arithmetic. §5 records why: they shipped as an inline penalization
+>   statement and six face masks, both gated, and re-expressing them cannot be
+>   bit-exact. **`conjugate` is a THIRD branch**; the `κ_s → ∞` / `κ_s → 0`
+>   limits are gates it must reproduce to discretisation tolerance, not a
+>   refactor.
 >
-> Conventions that are not negotiable:
-> - Build both paths (`./compile.sh cpu && ./compile.sh gpu`, module
->   `toolkits/nvhpc/25.9`); always launch through `mpirun`, even on one rank.
-> - `[scalar] count = 0` AND `ibm_wall /= conjugate` must be **bit-exact by
->   construction** — uncut faces keep the current arithmetic verbatim. Prove it
->   with `-Mnofma` / `-gpu=nofma` builds and `tools/compare_fields.py`
->   (max_abs 0) on the standard 7-case suite, CPU AND GPU.
-> - `remove_solid = true` with `ibm_wall = conjugate` is a HARD CONFIG ERROR
->   (buried blocks carry the solid field), and `refine_body`'s one-block buffer
->   must be CHECKED at init.
-> - **Save the current nofma binaries outside the tree BEFORE touching any
->   source** (the S5a set is already archived at `~/s5a_ref_binaries/`, its
->   PROVENANCE.txt names the hash). Beyond the 7-case suite, the scalar gate
->   suites must all still read the same numbers: `run_bitexact.sh`,
->   `run_bitexact_s3.sh` (both at max_abs 0) and `run_gates.sh`,
->   `run_gates_s2.sh`, `run_gates_s3.sh`, `run_gates_s4.sh`, `run_gates_s5.sh`
->   in `validation/scalar/`. LANDMINE: `run_gates.sh`'s `det` group compares
->   CPU vs GPU at TOLERANCE 0, so give it the nofma binaries
->   (`BIN=…/build_cpu_nofma/moby_solve GBIN=…/build_gpu_nofma/moby_solve`).
-> - New gate cases and drivers go in `validation/conjugate/` with a README
->   recording what was run and measured.
-> - Never declare an increment done with a failing build or an ungated result.
+> **Two S3 deviations that bite here** (both in this document's header):
+> - `ibm%mu` was never given the `VAR_P` extent — only `ibm%coef` was — because
+>   the scalar penalization factor is Prandtl-dependent and formed inline in the
+>   kernel. A stored per-face conjugate coefficient needs its own array.
+> - The body heat release **cannot** be measured as `∫coef_p (s_body − s) dV`: a
+>   Dirichlet solid cell holds the body value to the last bit, so the product is
+>   `1e28 × 0` and ~37 % of the heat is invisible. The cancellation-free form
+>   lives in `scalar_stats.f90` and `validation/scalar/check_scalar_ibm.py
+>   surface`; a conjugate Nusselt diagnostic must reuse it. S4's per-row
+>   accumulators are built from the TRANSPORT KERNEL's own face diffusivity, so
+>   a conjugate cut face must extend that same expression or the statistics stop
+>   reporting the flux the kernel actually applied.
 >
-> C1 gates (all must pass and be recorded): the 1D two-material slab with the
-> cut position swept through a full cell and `κ_s ∈ {10⁻², 1, 10, 10³}` must be
-> **EXACT**, and `w` must match the analytic cut position; `κ_s → ∞` reproduces
-> the `dirichlet` mode and `κ_s → 0` the `adiabatic` one; `Σ C·T·ΔV` conserved
-> to round-off in an insulated composite box; 1 rank == 4 ranks EXACT;
-> CPU == GPU EXACT.
+> **Reference binaries: `~/s5c_ref_binaries`, commit `8f60944`.** Read its
+> `PROVENANCE.txt` — it supersedes `~/s5a_ref_binaries` and `~/s5b_ref_binaries`
+> and says exactly how each is stale. It was cross-checked max_abs 0 against the
+> profile-timer commit, and the `t_final` fix at HEAD is provably inert on the
+> suites (every suite case is nsteps-terminated), so it is valid against
+> `21a7701`. If you ever archive a new set, cut it from a COMMIT, never from a
+> working tree, and record the hash.
+>
+> **Bit-exactness protocol** — `[scalar] count = 0` AND any
+> `ibm_wall /= conjugate` run must stay max_abs 0, CPU and GPU:
+> ```
+> cd validation/scalar
+> REF=~/s5c_ref_binaries/moby_solve_cpu_nofma MODE=cpu ./run_bitexact.sh     # 7 cases
+> REF=~/s5c_ref_binaries/moby_solve_gpu_nofma MODE=gpu ./run_bitexact.sh
+> REF=~/s5c_ref_binaries/moby_solve_cpu_nofma MODE=cpu ./run_bitexact_s3.sh  # 9 cases
+> REF=~/s5c_ref_binaries/moby_solve_gpu_nofma MODE=gpu ./run_bitexact_s3.sh
+> ./run_gates.sh ; ./run_gates_s2.sh ; ./run_gates_s3.sh
+> ./run_gates_s4.sh ; ./run_gates_s5.sh
+> ```
+> LANDMINE: `run_gates.sh`'s `det` group compares CPU vs GPU at TOLERANCE 0, so
+> hand it the nofma pair:
+> `BIN=$PWD/../../build_cpu_nofma/moby_solve GBIN=$PWD/../../build_gpu_nofma/moby_solve ./run_gates.sh`.
+>
+> **Landmines that will actually bite** (§12 has the rest):
+> - `remove_solid = true` with `ibm_wall = conjugate` must be a HARD CONFIG
+>   ERROR — buried blocks carry the solid temperature field.
+> - `refine_body`'s one-block 26-neighbour buffer is what keeps cut cells away
+>   from 2:1 interfaces and keeps `κh ≪ 1`: CHECK it at init, do not assume it.
+> - Write the interface term as a **face flux, never a cell source**, and anchor
+>   the local model to the face. That is what keeps conservation exact
+>   regardless of the dropped tangential term, and what lets C2 and C4 drop in
+>   without touching the surrounding machinery.
+> - Guard `w` for grazing arms (small `a = (φ_L − φ_R)/h_d`): fall back to the
+>   plain harmonic mean below a threshold.
+>
+> **Conventions:** build both paths (`./compile.sh cpu && ./compile.sh gpu`,
+> module `toolkits/nvhpc/25.9`) plus the nofma pair via
+> `validation/scalar/compile_nofma.sh`; always launch through `mpirun`, even on
+> one rank; new cases and drivers go in `validation/conjugate/` (it does not
+> exist yet) with a README recording what was run and measured; never declare
+> the increment done with a failing build or an ungated result.
+>
+> **C1 gates — all must pass and be recorded:**
+> 1. 1D two-material slab, cut position swept through a full cell
+>    (`δ_L/h ∈ {0.05 … 0.95}`), `κ_s ∈ {10⁻², 1, 10, 10³}`: **EXACT**, and `w`
+>    matches the analytic cut position — that weight is the one genuinely new
+>    ingredient in this increment.
+> 2. `κ_s → ∞` reproduces the `dirichlet` mode and `κ_s → 0` the `adiabatic`
+>    one, to the discretisation's own tolerance.
+> 3. `Σ C·T·ΔV` conserved to round-off in an insulated composite box.
+> 4. 1 rank == 4 ranks EXACT; CPU == GPU EXACT.
+> 5. The full bit-exactness protocol above.
 >
 > Stop after C1's gates and report. Update this document's STATUS header with
-> what landed and what each gate measured.
+> what landed, each gate's measured number, and any deviation from the plan —
+> the S3 deviations recorded in the header are the model for how that is done.
