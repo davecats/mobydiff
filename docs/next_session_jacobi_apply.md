@@ -105,6 +105,52 @@ than accepting a tolerance.
 - **`1 rank == 4 ranks` does not catch everything.** It cancels anything both
   rank counts share — it missed the periodic-seam metric asymmetry entirely.
 
+## NEXT-SESSION PROMPT
+
+> Read `docs/next_session_jacobi_apply.md` and CLAUDE.md. Branch
+> `optimiseBlockRefinement_parentBoundaryLayer`, HEAD `730d0ca`; Phases 0, 1 and
+> 3 (vel_exchange) are DONE and committed — block tax 1.4297 -> 1.0369,
+> production step 1.6923 -> 1.2192 s/step, all bit-exact. **Build fresh nofma
+> reference binaries at HEAD before touching any code** (detached worktree +
+> `build_nofma.sh` pattern; recreate it from the doc if the scratchpad is gone).
+>
+> Target: **`jacobi_apply`, 32.3 % of the step** — the largest single phase,
+> bigger than the fused momentum predictor, and never examined. The exchange
+> work is finished; what is left is kernel efficiency.
+>
+> **MEASURE BEFORE CHANGING ANYTHING, in this order.** (1) Re-profile:
+> `PROFILE=1 ./run_overhead.sh` in `tutorials/turbulentBoundaryLayer/overheadTest`
+> then `phase_table.py` — the shares moved a lot on 2026-08-27 and the numbers in
+> this doc predate the divergence sync. (2) `ncu` the kernel on **istmcetus**
+> (performance counters are permission-blocked on the local workstation,
+> `ERR_NVGPUCTRPERM`; GPU 1 is the free one), recipe in the doc. Read
+> `Block Limit Registers` and `Achieved Occupancy` FIRST. (3) Only then pick a
+> fix, from the ranked hypotheses in the doc or a better one the profile
+> suggests. This ordering is not ceremony: this track's obvious guess was wrong
+> twice — the halo copy was register-limited, not bandwidth-limited, and R0's
+> predicted bit-exactness failed on a periodic-seam metric asymmetry.
+>
+> Gates for any change, non-negotiable: the 7-case suite bit-exact (`max_abs 0`,
+> `-Mnofma` / `-gpu=nofma`, **CPU AND GPU**), `validation/block_nb/run_gates.sh`,
+> and 1 rank == 4 ranks. Fusing kernels or splitting off a rare path is a
+> scheduling change and MUST be bit-exact; if it is not, something reordered the
+> arithmetic — find it rather than accepting a tolerance.
+>
+> Report the gain as a **same-day A/B**: `SUFFIX=<tag>` + `BIN=<ref>` on
+> `rect_jacobi.ini` (the production layout) with `base_jacobi.ini` as the
+> control, both binaries the same afternoon. Machine state drifts ~5 % over
+> weeks and has already faked a gain once. Judge a timing delta from
+> `runtime.txt`'s drift within the run, not the final cumulative average, and
+> **never rebuild a binary while a timing matrix is running**.
+>
+> Do NOT reopen: the halo copy kernel (at its ~51 %-of-peak coalescing floor,
+> `docs/next_session_block_overhead.md`), or R0 / redundant-computation schemes
+> (blocked by the periodic-seam metric asymmetry — fixing that is its own
+> non-bit-exact numerics change and buys < 1.8 %).
+>
+> Stop cleanly after any increment: one commit, its own gate, STATUS header in
+> the handout, and a results file in `overheadTest/`.
+
 ## Related
 
 - `docs/next_session_block_overhead.md` — STATUS headers for Phases 0, 1, 3 and
