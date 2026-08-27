@@ -1051,7 +1051,26 @@ int fdm_h5_read_field(const char *filename, int nbx, int nby, int nbz,
  * (x-fastest lattice raster order). *found = 0 when the dataset is absent,
  * which is not an error: the solver then keeps every block.
  */
-int fdm_h5_read_block_active(const char *filename, int n_lattice, int block_nb,
+/* Cross-check the file's block size against the run's, per direction.
+ * Case files written before per-direction nb carry a scalar "block_nb"; those
+ * are still readable, but only by a cubic run -- a non-cubic run against a
+ * legacy file is a real mismatch, not a compatibility case.
+ * Returns 0 when the file matches. */
+static int block_nb_matches(hid_t file, const int *block_nb)
+{
+    int file_nb3[3] = {0, 0, 0};
+    int file_nb = 0;
+
+    if (read_attr_int(file, "block_nb_xyz", file_nb3, 3) == 0) {
+        return (file_nb3[0] == block_nb[0] && file_nb3[1] == block_nb[1] &&
+                file_nb3[2] == block_nb[2]) ? 0 : 1;
+    }
+    if (read_attr_int(file, "block_nb", &file_nb, 1) != 0) return 1;
+    return (file_nb == block_nb[0] && file_nb == block_nb[1] &&
+            file_nb == block_nb[2]) ? 0 : 1;
+}
+
+int fdm_h5_read_block_active(const char *filename, int n_lattice, const int *block_nb,
                              int *found, int *active)
 {
     hsize_t dims[1] = {0};
@@ -1059,7 +1078,6 @@ int fdm_h5_read_block_active(const char *filename, int n_lattice, int block_nb,
     hid_t dset = -1;
     hid_t space = -1;
     htri_t exists;
-    int file_nb = 0;
     herr_t status;
 
     *found = 0;
@@ -1073,7 +1091,7 @@ int fdm_h5_read_block_active(const char *filename, int n_lattice, int block_nb,
         return 0;
     }
 
-    if (read_attr_int(file, "block_nb", &file_nb, 1) != 0 || file_nb != block_nb) {
+    if (block_nb_matches(file, block_nb) != 0) {
         H5Fclose(file);
         return 1;
     }
@@ -1110,11 +1128,10 @@ int fdm_h5_read_block_active(const char *filename, int n_lattice, int block_nb,
 
 /* Per-level refinement masks written by mobygeom block-table. */
 int fdm_h5_read_block_masks(const char *filename, int level, int n_raster,
-                            int block_nb, int *found, int *touch, int *buried)
+                            const int *block_nb, int *found, int *touch, int *buried)
 {
     char name[64];
     hid_t file = -1;
-    int file_nb = 0;
     int ierr = 0;
 
     *found = 0;
@@ -1126,7 +1143,7 @@ int fdm_h5_read_block_masks(const char *filename, int level, int n_raster,
         H5Fclose(file);
         return 0;
     }
-    if (read_attr_int(file, "block_nb", &file_nb, 1) != 0 || file_nb != block_nb) {
+    if (block_nb_matches(file, block_nb) != 0) {
         H5Fclose(file);
         return 1;
     }
@@ -1559,7 +1576,7 @@ static hid_t open_parallel_rdwr(const char *filename)
 int fdm_h5_case_create(const char *filename,
                        int nx, int ny, int nz,
                        double lx, double ly, double lz, double re,
-                       int block_nb, int block_levels, const int *refine_mask,
+                       const int *block_nb, int block_levels, const int *refine_mask,
                        int n_blocks_global, int id_start, int n_blocks,
                        const int *block_origin, const int *block_level)
 {
@@ -1578,7 +1595,13 @@ int fdm_h5_case_create(const char *filename,
     ierr |= write_attr_double(file, "ly", ly);
     ierr |= write_attr_double(file, "lz", lz);
     ierr |= write_attr_double(file, "re", re);
-    ierr |= write_attr_int(file, "block_nb", block_nb);
+    /* Per-direction block size. The legacy scalar is kept for cubic layouts so
+     * case files stay readable by older builds and by the retired-mobygeom
+     * reference tooling; a non-cubic layout has no meaningful scalar. */
+    ierr |= write_attr_int_array(file, "block_nb_xyz", block_nb, 3);
+    if (block_nb[0] == block_nb[1] && block_nb[1] == block_nb[2]) {
+        ierr |= write_attr_int(file, "block_nb", block_nb[0]);
+    }
     ierr |= write_attr_int(file, "block_levels", block_levels);
     if (refine_mask[0] != 1 || refine_mask[1] != 1 || refine_mask[2] != 1) {
         ierr |= write_attr_int_array(file, "refine_dims", refine_mask, 3);

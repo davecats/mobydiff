@@ -471,7 +471,7 @@ contains
         ! write a 1).
         integer, intent(in), optional :: nsplit, isplit
 
-        integer :: nb, nTiles(3), gx, gy, gz, raster, d
+        integer :: nb(3), nTiles(3), gx, gy, gz, raster, d
         integer :: i, j, k, var, o(3), r, r0, r1, nRaster
         real(C_DOUBLE) :: xA(3)
         logical :: buried
@@ -480,10 +480,10 @@ contains
 
         nb = int(dns%block_nb)
         do d = 1, 3
-            if (mod(int(dns%globalSize(d)), nb) /= 0) then
+            if (mod(int(dns%globalSize(d)), nb(d)) /= 0) then
                 error stop "[blocks] nb must divide the global grid in every direction"
             end if
-            nTiles(d) = int(dns%globalSize(d))/nb
+            nTiles(d) = int(dns%globalSize(d))/nb(d)
         end do
         nRaster = product(nTiles)
         if (size(active) /= nRaster) error stop "block active mask size mismatch"
@@ -513,9 +513,9 @@ contains
             buried = .true.
             outer: do var = int(VAR_U), int(VAR_P)
                 ! Dilated window: 1-based cell indices o .. o+nb+1.
-                do k = o(3), o(3) + nb + 1
-                    do j = o(2), o(2) + nb + 1
-                        do i = o(1), o(1) + nb + 1
+                do k = o(3), o(3) + nb(3) + 1
+                    do j = o(2), o(2) + nb(2) + 1
+                        do i = o(1), o(1) + nb(1) + 1
                             xA(1) = location_coord(g%xNode, int(dns%globalSize(1)), &
                                 dns%leng(1), periodic(1), 1, var, i)
                             xA(2) = location_coord(g%yNode, int(dns%globalSize(2)), &
@@ -543,7 +543,7 @@ contains
     logical function block_outside_box(nodeX, nodeY, nodeZ, n, o, nb, lo, hi) &
             result(outside)
         real(C_DOUBLE), intent(in) :: nodeX(0:), nodeY(0:), nodeZ(0:)
-        integer, intent(in) :: n(3), o(3), nb
+        integer, intent(in) :: n(3), o(3), nb(3)
         real(C_DOUBLE), intent(in) :: lo(3), hi(3)
 
         real(C_DOUBLE) :: blo, bhi
@@ -553,11 +553,11 @@ contains
         do d = 1, 3
             select case (d)
             case (1)
-                call block_span(nodeX, n(1), o(1), nb, blo, bhi)
+                call block_span(nodeX, n(1), o(1), nb(1), blo, bhi)
             case (2)
-                call block_span(nodeY, n(2), o(2), nb, blo, bhi)
+                call block_span(nodeY, n(2), o(2), nb(2), blo, bhi)
             case default
-                call block_span(nodeZ, n(3), o(3), nb, blo, bhi)
+                call block_span(nodeZ, n(3), o(3), nb(3), blo, bhi)
             end select
             if (bhi < lo(d) .or. blo > hi(d)) then
                 outside = .true.
@@ -629,7 +629,7 @@ contains
         ! (the windows contain the padded cull box).
         integer(C_INT), intent(in), optional :: winLo(:,:), winDims(:,:)
 
-        integer :: nb, l, nTiles(3), gx, gy, gz, raster, d
+        integer :: nb(3), l, nTiles(3), gx, gy, gz, raster, d
         integer :: i, j, k, var, o(3), nf(3), nl(3), r, r0, r1, nRaster
         integer :: wLo(3), wDims(3)
         real(C_DOUBLE) :: xA(3)
@@ -701,9 +701,9 @@ contains
                 anySolid = .false.
                 anyFluid = .false.
                 scan: do var = int(VAR_U), int(VAR_P)
-                    do k = o(3), o(3) + nb + 1
-                        do j = o(2), o(2) + nb + 1
-                            do i = o(1), o(1) + nb + 1
+                    do k = o(3), o(3) + nb(3) + 1
+                        do j = o(2), o(2) + nb(2) + 1
+                            do i = o(1), o(1) + nb(1) + 1
                                 xA(1) = location_coord(lineX(:,l), nl(1), dns%leng(1), &
                                     periodic(1), 1, var, i)
                                 xA(2) = location_coord(lineY(:,l), nl(2), dns%leng(2), &
@@ -906,14 +906,14 @@ contains
         real(C_DOUBLE), intent(in) :: cullLo(3), cullHi(3)
         logical(C_BOOL), intent(in) :: periodic(1:3)
 
-        integer :: d, nb, nT, lscale, ib0, ib1, j0, j1, n0, i
+        integer :: d, nb(3), nT, lscale, ib0, ib1, j0, j1, n0, i
         real(C_DOUBLE) :: x
 
         nb = int(dns%block_nb)
         do d = 1, 3
             lscale = 2**(level*int(dns%block_refine_mask(d)))
             n0 = int(dns%globalSize(d))
-            nT = n0*lscale/nb
+            nT = n0*lscale/nb(d)
             ! base-cell bracket of the cull range (linear scan; base lines
             ! are short and this runs once per level)
             ib0 = n0 - 1
@@ -932,8 +932,8 @@ contains
                     exit
                 end if
             end do
-            j0 = (ib0*lscale)/nb - 4
-            j1 = ((ib1 + 1)*lscale + nb - 1)/nb + 4
+            j0 = (ib0*lscale)/nb(d) - 4
+            j1 = ((ib1 + 1)*lscale + nb(d) - 1)/nb(d) + 4
             if ((j0 < 0 .or. j1 > nT) .and. periodic(d)) then
                 lo(d) = 0_C_INT
                 dims(d) = int(nT, C_INT)

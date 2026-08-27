@@ -79,10 +79,8 @@ remains chasing the small term.
 
 1. ~~**The copy kernel itself**~~ — **DONE 2026-08-27, block tax 1.430 -> 1.370**
    (see the next section).
-2. **Phase 1 — per-direction `nb`.** Unchanged in value but now for the right
-   reason: it removes halo CELLS. `nb = 64 44 48` divides the BL grid, takes the
-   halo/interior ratio 42.4 % → 12.3 % (3.45×) and predicts the tax 1.414 → ~1.12.
-   Still the best gain per unit of work after the kernel.
+2. ~~**Phase 1 — per-direction `nb`**~~ — **DONE 2026-08-27, tax 1.370 -> 1.071**
+   (see below).
 3. **Phase 3 — fewer exchanges per iteration.** Promoted from conditional to
    central: `proj/vel_exchange` + `proj/phi_exchange` = 0.411 of the 1.754
    s/step (23 %), at 18 calls each per step. 3a (redundant `phi` computation)
@@ -170,6 +168,69 @@ meantime. Only a SAME-DAY run of the pre-change binary separated the two.
 `run_overhead.sh` now takes `SUFFIX=<tag>` for exactly this, and `summarise.py`
 pairs a run with a base carrying the same tag so an A/B never compares across
 binaries by accident.
+
+---
+
+## STATUS 2026-08-27 — Phase 1 DONE. Block tax 1.370 -> 1.071.
+
+`[blocks] nb` is per direction: `nb = 16` still broadcasts, `nb = 64 44 48` sets
+each. Validation is per direction (even, >= 4, divides the grid) plus all-set-or-
+none; the parser counts tokens, so `nb = 64 44` is an error rather than a silent
+broadcast of 64.
+
+**Payoff** (A6000, 400 cold steps, 138.4 M cells, same-day A/B, one binary):
+
+| layout | s/step | tax | blocks | halo/interior |
+|---|---|---|---|---|
+| `nb` unset | 1.1771 | — | 1 | — |
+| `nb = 16` | 1.6123 | 1.367 | 33792 | 42.4 % |
+| **`nb = 64 44 48`** | **1.2622** | **1.071** | 1024 | 12.3 % |
+
+**21.7 % faster than cubic `nb = 16`.** Together with the copy kernel, the
+production layout went 1.6923 -> 1.2622 s/step today, **25.4 %**, with the tax
+1.4297 -> 1.0722 — i.e. 83 % of the original block overhead removed, all of it
+bit-exact.
+
+**The cost model needs a caveat now.** The allocated-volume law predicted 1.1230;
+measured 1.0722. It was calibrated when cost tracked halo CELLS through the old
+copy kernel. With 1024 blocks instead of 33792 there are 33x fewer exchange
+ENTRIES, and per-entry metadata (index decode, slot lookup, gather map) falls
+faster than the cell count. **Treat `(1+2/nb_x)(1+2/nb_y)(1+2/nb_z)` as an upper
+bound on the tax, not an estimate.**
+
+**Where it reached**: `dns%block_nb` is a 3-vector through config, blocks, ibm
+(three routines had `nb` scalar inside per-direction loops, plus
+`block_outside_box`), io, moby_solve, moby_prepare, test_leaftable and the C
+case-file readers/writer. Field files already carried `block_nb_x/y/z`, so
+restart needed nothing. Case files gain a 3-element `block_nb_xyz` attribute;
+the legacy scalar is still written for cubic layouts and still read, so every
+committed case file keeps working and a non-cubic run against a legacy file
+fails the cross-check rather than silently mismatching.
+
+**Gates** (`validation/block_nb/run_gates.sh`, CPU AND GPU): non-cubic == cubic
+== `nb` unset at `max_abs 0`; 1 rank == 4 ranks; uniform oblique flow through a
+3-level patch EXACT (0.0, pn spread 0.0) in both `xz` and `xyz` at `nb = 8 4 8`;
+7-case suite bit-exact vs 6d7d1e5; prepare round-trip 20/20.
+
+### FINDING: the 2:1 interface is not nb-independent (predates Phase 1)
+
+Two layouts refining the IDENTICAL cell range differ by ~1e-4. This is not a
+regression: two CUBIC layouts (`nb = 8` vs `nb = 4`) do the same, reproducing to
+9 significant digits on a pre-Phase-1 binary. So "results EXACTLY independent of
+nb and rank count" holds for the SINGLE-LEVEL lattice (where the redundant
+halo-layer sweep makes it exact) and for rank count always, but NOT across a 2:1
+interface, where a block boundary on the interface plane is not equivalent to one
+away from it. Consistent with the historical record, which always gated "channel
+nb = 4 WITHOUT refinement bit-exact". Details and numbers in
+`validation/block_nb/README.md`. **No gate may assume refined layouts are
+bit-comparable** -- use uniform-flow preservation instead.
+
+### Interface placement, the price of a large nb_y
+
+A 2:1 interface can only sit on a block boundary, so `nb_y = 44` offers y-index
+44 / 88 / 132 (y+ 82 / 318 / 613) where `nb_y = 16` offered every 16 cells. The
+refined BL case's y+ ~99 interface moves to y+ ~82. `overheadTest/README.md` has
+the placement table.
 
 ---
 

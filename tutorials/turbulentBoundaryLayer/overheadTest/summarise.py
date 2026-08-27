@@ -46,6 +46,7 @@ PAIRS = {
     "nb16_redblack": "base_redblack",
     "nb16_jacobi": "base_jacobi",
     "nb8_jacobi": "base_jacobi",
+    "rect_jacobi": "base_jacobi",
     "refined_yp100_jacobi": "nb16_jacobi",
 }
 CELLS = {
@@ -54,6 +55,7 @@ CELLS = {
     "base_jacobi": 4096 * 176 * 192,
     "nb16_jacobi": 4096 * 176 * 192,
     "nb8_jacobi": 4096 * 176 * 192,
+    "rect_jacobi": 4096 * 176 * 192,
     # 2048*176*96 level-0 cells with 3 of 11 y-tiles refined 2x in x and z.
     "refined_yp100_jacobi": 2048 * 176 * 96 * 8 // 11 + 2048 * 176 * 96 * 3 // 11 * 4,
 }
@@ -164,8 +166,17 @@ def main():
                 print(f"WARNING {name}: chron and marginal rates differ by "
                       f"{100*gap:.1f}% -- the run was probably disturbed")
 
-    # nb-independence: the block layout must not change the answer.
-    for nbname in [n for n in runs if re.match(r"nb\d+_", stem(n))]:
+    # nb-independence: a different LAYOUT OF THE SAME GRID must not change the
+    # answer -- so this covers per-direction layouts (rect_jacobi) as well as the
+    # nb<N> ones, but NOT the refined case, which solves a different problem
+    # (coarser base grid plus refinement) and is expected to differ. Equal cell
+    # counts is the discriminator.
+    def same_grid(a, b):
+        return (stem(a) in CELLS and stem(b) in CELLS
+                and CELLS[stem(a)] == CELLS[stem(b)])
+
+    for nbname in [n for n in runs
+                   if base_of(n) in runs and same_grid(n, base_of(n))]:
         basename = base_of(nbname) or ""
         a, b = runs.get(nbname), runs.get(basename)
         if a and b and a["l2_div"] is not None and b["l2_div"] is not None:

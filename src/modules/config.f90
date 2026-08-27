@@ -301,7 +301,9 @@ subroutine apply_config_value(section, key, value, dns, g, turb, les, ps, bc, c,
     case ("blocks")
         select case (key_l)
         case ("nb")
-            call read_int(value, dns%block_nb, line_no)
+            ! One value broadcasts to all three directions, three set them
+            ! individually: `nb = 16` or `nb = 64 44 48`.
+            call read_block_nb(value, dns%block_nb, line_no)
         case ("remove_solid")
             call read_bool(value, dns%block_remove_solid, line_no)
         case ("refine")
@@ -482,10 +484,15 @@ subroutine validate_dns_values(dns, g)
     if (dns%pecletmax < 0.0d0) error stop "pecletmax must be non-negative"
     if (dns%dtmax <= 0.0d0) error stop "dtmax must be positive"
     if (dns%field_interval < 0) error stop "field interval must be non-negative"
-    if (dns%block_nb < 0_C_INT) error stop "block size nb must be non-negative"
-    if (dns%block_nb > 0_C_INT) then
-        if (dns%block_nb < 4_C_INT) error stop "block size nb must be at least 4"
-        if (mod(dns%block_nb, 2_C_INT) /= 0_C_INT) error stop "block size nb must be even (red-black)"
+    if (any(dns%block_nb < 0_C_INT)) error stop "block size nb must be non-negative"
+    ! nb is all-set or all-unset: a partly specified triple is a typo, not a
+    ! request for a mixed layout.
+    if (any(dns%block_nb > 0_C_INT) .neqv. all(dns%block_nb > 0_C_INT)) &
+        error stop "[blocks] nb must be set in all three directions or none"
+    if (all(dns%block_nb > 0_C_INT)) then
+        if (any(dns%block_nb < 4_C_INT)) error stop "block size nb must be at least 4 in every direction"
+        if (any(mod(dns%block_nb, 2_C_INT) /= 0_C_INT)) &
+            error stop "block size nb must be even in every direction (red-black)"
         if (any(dns%block_refine_box_level(1:dns%block_refine_nboxes) > dns%block_refine_levels)) then
             error stop "[blocks] refine box level exceeds refine_levels"
         end if
@@ -1043,6 +1050,47 @@ end subroutine strip_comment
 
 ! Parse a single integer config value. The C_INT target also accepts default
 ! integer actuals (same kind on this platform), so one routine serves both.
+! `[blocks] nb`: one value (broadcast to all three directions) or three.
+! Anything else is a hard error rather than a warning -- silently keeping the
+! previous value would change the block layout, and the layout is supposed to
+! be irrelevant to results but very relevant to cost.
+subroutine read_block_nb(value, target, line_no)
+    character(len=*), intent(in) :: value
+    integer(C_INT), intent(inout) :: target(3)
+    integer, intent(in) :: line_no
+    integer(C_INT) :: stat, parsed(3)
+    integer :: i, ntok
+    logical :: inTok
+
+    ! Count tokens rather than just trying a 3-read then a 1-read: `nb = 64 44`
+    ! would pass the 1-read and silently broadcast 64, which is a layout the
+    ! user did not ask for.
+    ntok = 0
+    inTok = .false.
+    do i = 1, len_trim(value)
+        if (value(i:i) == ' ' .or. value(i:i) == ',' .or. value(i:i) == char(9)) then
+            inTok = .false.
+        else if (.not. inTok) then
+            inTok = .true.
+            ntok = ntok + 1
+        end if
+    end do
+
+    stat = 1_C_INT
+    if (ntok == 3) then
+        read(value, *, iostat=stat) parsed
+        if (stat == 0) target = parsed
+    else if (ntok == 1) then
+        read(value, *, iostat=stat) parsed(1)
+        if (stat == 0) target = parsed(1)
+    end if
+    if (stat /= 0 .or. (ntok /= 1 .and. ntok /= 3)) then
+        print *, "[blocks] nb must be ONE integer (broadcast) or THREE", &
+            " (nb_x nb_y nb_z) on input line", line_no
+        error stop "invalid [blocks] nb"
+    end if
+end subroutine read_block_nb
+
 subroutine read_int(value, target, line_no)
     character(len=*), intent(in) :: value
     integer(C_INT), intent(inout) :: target

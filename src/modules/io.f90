@@ -138,7 +138,8 @@ module io
                 bind(C, name="fdm_h5_read_block_masks") result(ierr)
             import :: C_CHAR, C_INT
             character(kind=C_CHAR), intent(in) :: file_name(*)
-            integer(C_INT), value :: level, n_raster, block_nb
+            integer(C_INT), value :: level, n_raster
+            integer(C_INT), intent(in) :: block_nb(*)
             integer(C_INT), intent(out) :: found
             integer(C_INT), intent(out) :: touch(*), buried(*)
             integer(C_INT) :: ierr
@@ -160,7 +161,8 @@ module io
                 bind(C, name="fdm_h5_read_block_active") result(ierr)
             import :: C_CHAR, C_INT
             character(kind=C_CHAR), intent(in) :: file_name(*)
-            integer(C_INT), value :: n_lattice, block_nb
+            integer(C_INT), value :: n_lattice
+            integer(C_INT), intent(in) :: block_nb(*)
             integer(C_INT), intent(out) :: found
             integer(C_INT), intent(out) :: active(*)
             integer(C_INT) :: ierr
@@ -204,8 +206,8 @@ module io
             character(kind=C_CHAR), intent(in) :: file_name(*)
             integer(C_INT), value :: nx, ny, nz
             real(C_DOUBLE), value :: lx, ly, lz, re
-            integer(C_INT), value :: block_nb, block_levels
-            integer(C_INT), intent(in) :: refine_mask(*)
+            integer(C_INT), value :: block_levels
+            integer(C_INT), intent(in) :: block_nb(*), refine_mask(*)
             integer(C_INT), value :: n_blocks_global, id_start, n_blocks
             integer(C_INT), intent(in) :: block_origin(*), block_level(*)
             integer(C_INT) :: ierr

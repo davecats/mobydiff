@@ -24,8 +24,8 @@ program test_leaftable
 
     nargs = command_argument_count()
     if (nargs < 15) then
-        print *, "usage: leaftable_test nx ny nz lx ly lz nb levels dims" &
-            // " x0 x1 y0 y1 z0 z1 [px py pz]"
+            print *, "usage: leaftable_test nx ny nz lx ly lz nb levels dims" &
+            // " x0 x1 y0 y1 z0 z1 [px py pz]   (nb = n | nx,ny,nz)"
         error stop 1
     end if
 
@@ -35,8 +35,14 @@ program test_leaftable
         call get_command_argument(3 + i, arg)
         read(arg, *) dns%leng(i)
     end do
+    ! nb: one value (broadcast) or three comma/space separated, matching
+    ! [blocks] nb in the ini.
     call get_command_argument(7, arg)
-    read(arg, *) dns%block_nb
+    read(arg, *, iostat=i) dns%block_nb
+    if (i /= 0) then
+        read(arg, *) dns%block_nb(1)
+        dns%block_nb = dns%block_nb(1)
+    end if
     call get_command_argument(8, arg)
     read(arg, *) dns%block_refine_levels
     call get_command_argument(9, arg)

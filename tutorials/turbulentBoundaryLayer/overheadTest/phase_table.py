@@ -40,11 +40,12 @@ PAIRS = {
     "nb16_redblack": "base_redblack",
     "nb16_jacobi": "base_jacobi",
     "nb8_jacobi": "base_jacobi",
+    "rect_jacobi": "base_jacobi",
     "refined_yp100_jacobi": "nb16_jacobi",
 }
 KNOWN = set(PAIRS) | set(PAIRS.values())
 ORDER = ["base_redblack", "nb16_redblack", "base_jacobi",
-         "nb8_jacobi", "nb16_jacobi", "refined_yp100_jacobi"]
+         "nb8_jacobi", "nb16_jacobi", "rect_jacobi", "refined_yp100_jacobi"]
 
 
 def stem(name):

@@ -165,11 +165,11 @@ contains
         call destroy_block_set(blk)
 
         blk%refMask = dns%block_refine_mask
-        if (dns%block_nb > 0_C_INT) then
+        if (all(dns%block_nb > 0_C_INT)) then
             blk%distMode = DIST_ZORDER
             blk%nb = dns%block_nb
             do d = 1, 3
-                if (mod(dns%globalSize(d), dns%block_nb) /= 0_C_INT) then
+                if (mod(dns%globalSize(d), dns%block_nb(d)) /= 0_C_INT) then
                     print *, "block size nb =", dns%block_nb, "does not divide the grid", &
                         dns%globalSize(1:3), "in direction", d
                     error stop "[blocks] nb must divide the global grid in every direction"

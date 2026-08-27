@@ -20,6 +20,7 @@ singleLevel/nb16_redblack.ini      same grid, nb = 16 (33792 blocks)
 singleLevel/base_jacobi.ini        production layout, damped Jacobi
 singleLevel/nb8_jacobi.ini         same grid, nb = 8  (270336 blocks)
 singleLevel/nb16_jacobi.ini        same grid, nb = 16 (33792 blocks)
+singleLevel/rect_jacobi.ini        same grid, nb = 64 44 48 (1024 blocks)
 multiLevel_xz/refined_yp100_jacobi.ini
                                    half-resolution freestream + wall band
                                    refined 2:1 in x,z (15360 leaves, 62.9 M cells)
@@ -36,7 +37,7 @@ does not. Equal overheads under the two ⇒ the tax is not redundant arithmetic.
 
 ```bash
 module load toolkits/nvhpc/25.9
-./run_overhead.sh                    # all five, ~10-15 min each on an A6000
+./run_overhead.sh                    # all six, ~10-15 min each on an A6000
 ./summarise.py                       # re-print the table without re-running
 ```
 
@@ -54,7 +55,7 @@ percent; a larger gap means the run was disturbed and the number is unusable.
 ## Attributing the overhead (per-phase timing)
 
 ```bash
-PROFILE=1 ./run_overhead.sh          # same five configs into runs/<name>_prof/
+PROFILE=1 ./run_overhead.sh          # same six configs into runs/<name>_prof/
 ./phase_table.py                     # phases x runs, with the nb16/base ratios
 ./phase_table.py --markdown          # the same table for a document
 ```
@@ -102,18 +103,30 @@ tracks the *allocated* volume, so the overhead of any block shape is
 predicted, so the law holds across a 2× range of block size. The lattice costs
 41 %; the 2:1 interface costs 3–8 %.
 
+**Per-direction nb (Phase 1, 2026-08-27)**: `nb = 64 44 48` measures a tax of
+1.071 against 1.367 for `nb = 16` -- 21.7 % off the step. The law predicted
+1.1230, so it now OVER-predicts: with 33x fewer exchange entries the per-entry
+metadata falls faster than the halo-cell count. Treat it as an upper bound.
+Results in `results_phase1_2026-08-27.md`.
+
 **But the mechanism is exchange traffic, not footprint** (Phase 0,
 `docs/next_session_block_overhead.md` STATUS): 86 % of the tax is
 `exch/local_copy`, the volume kernels are untouched (`momentum` 1.012), and the
 volume law predicts the total only because halo cells are what gets *copied*.
 `(nb+2)³/nb³ − 1` is exactly the halo-to-interior cell ratio.
 
-**The free gate.** The block decomposition is result-invariant by design
-(Phase 1: "results EXACTLY independent of nb and rank count"), and the runs
-confirm it — `nb = 16` and `nb` unset produced identical runtime lines (jacobi
-L2_div 1.73814896E-05 / Linf 1.00322464E+00; redblack 6.37658051E-06 /
-1.00344109E+00). `summarise.py` checks this automatically. Any change to
-blocking or storage must reproduce the same fields bit-for-bit.
+**The free gate.** On a SINGLE LEVEL the block decomposition is result-invariant
+by design, and the runs confirm it — `nb = 16`, `nb = 64 44 48` and `nb` unset
+all produce identical runtime lines (jacobi L2_div 1.73814896E-05 / Linf
+1.00322464E+00; redblack 6.37658051E-06 / 1.00344109E+00). `summarise.py` checks
+this automatically for every layout of the same grid. Any change to blocking or
+storage must reproduce the same fields bit-for-bit.
+
+The invariance does NOT extend across a 2:1 interface — two layouts refining the
+identical region differ at interface-truncation level (~1e-4), and that predates
+per-direction nb. See `validation/block_nb/README.md`. So the refined config is
+deliberately excluded from the check, and refined layouts must be gated on
+uniform-flow preservation instead.
 
 ## Interface placement
 

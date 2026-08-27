@@ -130,11 +130,26 @@ wall.
 
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
-| `nb` | int | 0 (auto) | Block edge in cells; if set, must be even and ≥ 4, and divide the grid. |
+| `nb` | 1 or 3 ints | 0 (auto) | Block edge in cells. One value broadcasts (`nb = 16`), three set each direction (`nb = 64 44 48`). Each must be even, ≥ 4, and divide the grid; set all three or none. |
 | `remove_solid` | bool | true | Drop blocks fully buried inside a solid body. |
 | `refine` | 6 reals | — | Refinement box `xmin xmax ymin ymax zmin zmax`; repeatable up to 4 boxes. |
 | `refine_levels` | int | 1 | Number of refinement levels. |
+| `refine_dims` | enum | `xyz` | `xyz` (octree) or `xz` (quadtree: blocks refine in x and z only, y keeps one global node line at every level). |
 | `refine_body` | bool | false | Refine blocks touching the immersed body (geometry-driven). |
+| `keep_buried` | bool | false | Keep blocks buried inside the body. LOAD-BEARING for penalization forces: a removed core absorbs pressure loading through `FACE_CLOSED` faces outside the coefficient bookkeeping. |
+
+**Choosing `nb`.** Each block carries a one-cell halo, so the cost of a layout is
+its *allocated* volume, `(1+2/nb_x)(1+2/nb_y)(1+2/nb_z)` — measured to predict
+the step time to better than 1 % across a 2× range of block size. Almost all of
+that tax is device-local halo-copy traffic, not arithmetic. Prefer the largest
+`nb` the refinement placement tolerates, per direction: under
+`refine_dims = xz`, y is never subdivided, so `nb_y` buys nothing and is pure
+overhead. On the 4096×176×192 boundary-layer grid, `nb = 16` costs 1.424 while
+`nb = 64 44 48` costs 1.123.
+
+The trade-off is granularity: a 2:1 interface can only sit on a block boundary,
+so a larger `nb_y` leaves fewer legal interface heights (at `nb_y = 44`, y-index
+44/88/132 instead of every 16 cells).
 
 See [Numerical methods](numerical-methods.md#block-structured-grid-and-21-refinement) for
 what these do.

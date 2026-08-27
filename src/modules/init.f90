@@ -76,7 +76,12 @@ module init
         ! uniform/beltrami/tgv are exact incompressible-NS solutions used as gates.
         character(len=32) :: initial = "uniform"
         ! [blocks] nb: cubic block edge in cells; 0 = one block per rank box.
-        integer(C_INT) :: block_nb = 0_C_INT
+        ! Block edge in cells, PER DIRECTION (0 = auto, one block per rank box).
+        ! Scalar `[blocks] nb = 16` broadcasts; `nb = 64 44 48` sets each. The
+        ! halo tax is (1+2/nb_x)(1+2/nb_y)(1+2/nb_z), so a direction that buys no
+        ! refinement (y under refine_dims = xz) wants the largest nb the
+        ! interface placement tolerates.
+        integer(C_INT) :: block_nb(3) = 0_C_INT
         ! [blocks] remove_solid: drop blocks buried inside the immersed body.
         logical(C_BOOL) :: block_remove_solid = .true.
         ! [blocks] refine = x0 x1 y0 y1 z0 z1 [level]: refine blocks

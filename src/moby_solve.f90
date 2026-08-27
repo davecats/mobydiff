@@ -89,7 +89,7 @@ program moby_solve
     ! lives in a block set tiling the grid ([blocks] nb per block). With an
     ! immersed boundary, blocks buried inside the body are removed from the
     ! global table before the set is built.
-    if (dns%block_nb > 0_C_INT .and. dns%block_refine_body) then
+    if (all(dns%block_nb > 0_C_INT) .and. dns%block_refine_body) then
         ! Geometry-driven refinement (analytic or file IBM): refine to the
         ! finest level at the surface with a one-block buffer, removing
         ! buried blocks at every level. ibmm produces the geometry masks.
@@ -101,7 +101,7 @@ program moby_solve
             int(c%cart_rank, C_INT), touch=blockTouch, buried=blockBuried, &
             maskLo=blockMaskLo, maskDims=blockMaskDims)
         deallocate(blockTouch, blockBuried, blockMaskLo, blockMaskDims)
-    else if (dns%block_nb > 0_C_INT .and. dns%ibm_enabled .and. dns%block_remove_solid) then
+    else if (all(dns%block_nb > 0_C_INT) .and. dns%ibm_enabled .and. dns%block_remove_solid) then
         ! Solid-block removal: drop blocks buried inside the immersed body.
         call classify_active_mask(blockActive, dns, g, ibm, bc%isPeriodic, &
             c%has_terminal, isInBody, c=c)

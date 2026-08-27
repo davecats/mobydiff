@@ -74,7 +74,7 @@ program moby_prepare
     call read_runtime_config(dns, g, turb, les, ps, bc, c, input_file, &
         c%has_terminal, config_seen)
 
-    if (dns%block_nb <= 0_C_INT) &
+    if (any(dns%block_nb <= 0_C_INT)) &
         error stop "moby_prepare needs [blocks] nb: the case file is a block-table file"
     if (.not. dns%ibm_enabled) &
         error stop "moby_prepare needs [ibm] enabled = true (analytic or stl_file geometry)"
