@@ -544,7 +544,14 @@ contains
         cd = 2.0d0*( fc*cos(a) + fl*sin(a))/qref
         cl = 2.0d0*(-fc*sin(a) + fl*cos(a))/qref
 
-        if (c%has_terminal) call append_forces(this, dns, cl, cd)
+        ! The steady measure travels with the coefficients: it is what
+        ! `steady_tol` is compared against, so a run's trace carries the
+        ! evidence for where its own tolerance should sit (and, afterwards,
+        ! why it stopped when it did). Zero until d/dt exists.
+        unsteady = 0.0d0
+        if (have_dmdt) unsteady = 2.0d0*max(abs(dmdt(1)), abs(dmdt(2)))/qref
+
+        if (c%has_terminal) call append_forces(this, dns, cl, cd, unsteady)
 
         ! Steady-state stop. The measure is the unsteady term in the same
         ! units as the reported coefficients, so `steady_tol` reads like a
@@ -552,7 +559,6 @@ contains
         ! rank decides identically -- this must stay OUTSIDE has_terminal or
         ! the ranks part company at the loop exit.
         if (this%steady_tol > 0.0d0 .and. have_dmdt) then
-            unsteady = 2.0d0*max(abs(dmdt(1)), abs(dmdt(2)))/qref
             if (unsteady < this%steady_tol) then
                 this%steady_hits = this%steady_hits + 1
             else
@@ -657,13 +663,16 @@ contains
         end do
     end subroutine cv_reduce
 
-    subroutine append_forces(this, dns, cl, cd)
+    subroutine append_forces(this, dns, cl, cd, unsteady)
         class(airfoil_case_type), intent(inout) :: this
         type(dns_type), intent(in) :: dns
         real(C_DOUBLE), intent(in) :: cl, cd
+        ! |2 dmom/dt|/qref, the budget's own unsteady term: the quantity
+        ! `steady_tol` thresholds, logged so convergence is auditable.
+        real(C_DOUBLE), intent(in) :: unsteady
 
         integer :: unit, stat
-        character(len=*), parameter :: header = "iteration time cl cd"
+        character(len=*), parameter :: header = "iteration time cl cd dmomdt"
 
         if (.not. this%header_written) then
             write(*,'(A)') header
@@ -678,11 +687,11 @@ contains
             this%header_written = .true.
         end if
 
-        write(*,'(I10,3(1X,ES16.8))') int(dns%step_current), dns%t_current, cl, cd
+        write(*,'(I10,4(1X,ES16.8))') int(dns%step_current), dns%t_current, cl, cd, unsteady
         open(newunit=unit, file=trim(this%runtime_file), status="old", &
             position="append", action="write", iostat=stat)
         if (stat == 0) then
-            write(unit,'(I10,3(1X,ES16.8))') int(dns%step_current), dns%t_current, cl, cd
+            write(unit,'(I10,4(1X,ES16.8))') int(dns%step_current), dns%t_current, cl, cd, unsteady
             close(unit)
         end if
     end subroutine append_forces

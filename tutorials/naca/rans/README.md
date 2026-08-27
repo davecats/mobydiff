@@ -26,23 +26,43 @@ configurations are documented:
   at 11 and a level-12 band on the NOSE alone (`refine_body_levels` +
   `refine_body_box`), finest c/12288 there. First-cell y+ 2.3 at the LE,
   1.4-2.1 over the rest of the chord. 16976 leaves / 8.69M cells,
-  dt = 2.5e-5, converged at t = 35.
+  dt = 2.5e-5, converged at t = 34 (`c11_nose_660000.h5`).
 - BASELINE (`c11_aoa5.ini`): level 11 everywhere, finest c/6144, y+ 4.6
   at the LE and 1.4-2.1 elsewhere. 16042 leaves / 8.2M cells, dt = 5e-5,
-  converged at t = 30. Kept as the "before" of the nose-refinement
-  comparison below.
+  converged at t = 29 (`c11_aoa5_460000.h5`). Kept as the "before" of the
+  nose-refinement comparison below.
 
 ## Results (converged)
 
-|               | production | baseline | OpenFOAM (body-fitted) |
-|---------------|------------|----------|------------------------|
-| C_L           | 0.520 +- 0.005 | 0.514 +- 0.009 | 0.5142      |
-| C_D           | 0.0128 +- 0.0008 | 0.0130 +- 0.0007 | 0.0134  |
-| Cp_min        | -1.7686    | -1.7749  | -1.7797                |
-| Cp stagnation | +1.0026    | +1.0011  | +1.0044                |
+Regenerated from scratch on 2026-08-08 with the CURRENT force tooling: the
+headline C_L/C_D are the solver's own RUNTIME control-volume budget
+(`[case.airfoil] cv_box`, mean +- scatter over the last time unit), which
+includes the unsteady term; the offline row is `cv_forces.py` after its
+half-cell collocation fix, quoted the way the previous campaign did (spread
+over two box margins x the last two regular-cadence snapshots).
 
-The +- on the forces is the spread over two control-volume box margins
-and the last two snapshots; it is the CV d/dt term, not sampling error.
+|                     | production | baseline | OpenFOAM (body-fitted) |
+|---------------------|------------|----------|------------------------|
+| C_L (runtime CV)    | 0.5199 +- 0.0001 | 0.5136 +- 0.0004 | 0.5142 |
+| C_D (runtime CV)    | 0.01294 +- 0.00017 | 0.01277 +- 0.00013 | 0.0134 |
+| C_L (offline, 2 boxes) | 0.5222 +- 0.0046 | 0.5170 +- 0.0048 |     |
+| C_D (offline, 2 boxes) | 0.0131 +- 0.0001 | 0.0127 +- 0.0003 |     |
+| Cp_min              | -1.7797    | -1.7854  | -1.7797                |
+| Cp stagnation       | +1.0025    | +1.0013  | +1.0044                |
+
+The two force statistics differ by the budget's unsteady term (dC_L 0.002
+at the production state, matching the measured |2 dmom/dt|/qref of 1.2e-3):
+the runtime value carries it, a single snapshot cannot. The offline +- is
+dominated by the BOX margin, not by time — the 1.5c and 2.5c boxes bracket
+the runtime value, which is the error bar to read.
+
+Cp_min reads -1.7797 against OpenFOAM's -1.7797 — agreement to four
+decimals is luck (the peak sits between stations ~0.007 apart in x/c, so
+read it as "within a station"), but it is a real improvement on the
+previous campaign's -1.7686, which was 0.6 % low. Everything else
+reproduces the destroyed state closely: station-by-station Cf agrees with
+it to a median ratio of 0.999 (5-95 % 0.995-1.003) and Cp to an rms of
+0.0024, so the Cf discussion below carries over unchanged.
 
 ![Cp and Cf vs OpenFOAM](assets/figures/cpcf_c11_nose_vs_openfoam.png)
 
@@ -67,7 +87,7 @@ matter. Transition also completes somewhat downstream of OpenFOAM's
 ## Running the case
 
     ./run_case.sh restart    # continue the PRODUCTION case from the shipped
-                             # converged state c11_nose_640000.h5 (t = 34.75)
+                             # converged state c11_nose_660000.h5 (t = 34.0)
     ./run_case.sh scratch    # full reproduction: L10 -> L11 -> nose band
     ./postprocess.sh         # forces/Cp/Cf + the OpenFOAM overlay; the case
                              # is detected from the snapshot name
@@ -75,12 +95,68 @@ matter. Transition also completes somewhat downstream of OpenFOAM's
 The from-scratch protocol runs the whole transient on a 2x-coarser wall
 band (L10, dt 1e-4, ~5x cheaper), interpolates onto the L11 layout
 (interp_restart.py), converges there, then interpolates onto the
-nose-refined layout and finishes at t = 35. Timings on an RTX 3060:
-the nose case runs 1.09 s/step at 8.69M cells, i.e. ~12.7 h per time
-unit, and stage 3 alone is ~42 h. `moby_prepare` for the nose case is
-~40 min at 20 ranks — give it MANY RANKS, not threads: the CPU build has
-no OpenMP so the classify pragmas are inert, and the geometry
-classification is the whole cost.
+nose-refined layout and runs a further 5 t.u. Each stage ends on the
+control-volume budget's own steadiness measure (`[case.airfoil]
+steady_tol`, set per stage in run_case.sh, overridable in `.steady.conf`)
+with the stage's `t_final` as the safety net — see "Convergence and
+stopping" below, which is where the run time actually goes.
+
+Timings: the nose case runs 1.09 s/step at 8.69M cells on an RTX 3060
+(~12.7 h per time unit) and 0.50 s/step on an RTX A6000. The 2026-08
+from-scratch reproduction took ~33 h for stage 1 (L10, t -> 12, RTX 3060)
+plus ~46 h for stages 2-3 on one A6000. `moby_prepare` for the nose case
+is ~40 min at 20 ranks — give it MANY RANKS, not threads: the CPU build
+has no OpenMP so the classify pragmas are inert, and the geometry
+classification is the whole cost. The L10/L11 case files are much cheaper
+(4 and 11 min).
+
+### Convergence and stopping (`steady_tol`), measured 2026-08
+
+The stages stop on `[case.airfoil] steady_tol`, which thresholds the
+budget's own unsteady term |2 dmom/dt| / qref in coefficient units. Two
+properties of THIS case decide how to set it, both measured during the
+from-scratch reproduction; the `dmomdt` column of the forces trace is that
+measure, so a run records its own evidence.
+
+**Sample the difference far enough apart.** The control volume's momentum
+carries a coherent oscillation at f ~ 35 U/c (lag-1 autocorrelation +0.94,
+sharp spectral peak). It cancels against the border fluxes and barely shows
+in C_L/C_D, but the measure differences momentum over one sampling
+interval, so it floors at ~2 A / dt_sample. At the inis' 20-step sampling
+that floor was 0.19 during the starting transient — thirty times any
+sensible tolerance, i.e. UNFIREABLE. `run_case.sh` therefore raises
+`force_sample_interval` per stage to ~0.25 t.u. per sample, which drops the
+floor two decades and lets the measure read the physical drift. (The same
+arithmetic explains the previous campaign's quoted "+- 0.005, the CV d/dt
+term": that is this wobble seen at 0.5 t.u. differencing.)
+
+**The global circulation is slow — tau ~ 9 t.u.** After the L10 -> L11
+interpolation C_L approaches its asymptote exponentially with that time
+constant, so the protocol's 18 t.u. at L11 is ~2 time constants, NOT the
+margin it looks like. Cutting it to 6 t.u. and handing over at t = 18 was
+tried, on the same nose layout and in parallel: 4 t.u. later that run reads
+C_L 0.5105 and is still drifting upward, against 0.5199 from the converged
+handover — a 2 % error in the headline number, in the direction of
+under-reading lift. The README's "~3 t.u." refers to the much smaller
+nose-band perturbation, not to this.
+
+What actually stopped each stage in the 2026-08 run:
+
+| stage | tolerance | window | stopped by | at |
+|-------|-----------|--------|------------|-----|
+| 1 (L10)  | 5e-3 | 1 t.u. | `t_final` net (measure reached 7.6e-3) | t = 12 |
+| 2 (L11)  | 2e-3 | 1 t.u. | `steady_tol` at 1.09e-3 | t = 29 |
+| 3 (nose) | 1e-3 | 1 t.u. | `steady_tol` at 8.5e-4, then CONTINUED | t = 34 |
+
+Stage 3's certification at t = 31 is sound but incomplete, and this is the
+one trap worth knowing: the measure is a CONTROL-VOLUME MOMENTUM budget,
+which the already-converged circulation satisfies as soon as the nose band
+is added — while the SUCTION PEAK is still moving. Cp follows the global
+circulation over ~3 t.u. (below: Cp_min ran -1.7540 -> -1.7688 over
+t = 30..33 before going flat). So the production stage is run the full
+published 5 t.u. regardless, and `steady_tol` is kept there as a floor, not
+as the expected stop. Budget ~3 t.u. after a wall-refinement change if you
+need the pressure, ~1 if you only need friction.
 
 The prepared IBM coefficient file is an OUTPUT, not shipped: both
 run_case.sh and postprocess.sh regenerate it with moby_prepare when
@@ -90,7 +166,9 @@ anything else.
 ALWAYS post-process a REGULAR-CADENCE snapshot. The last snapshot a run
 writes sits on a dt-clipped micro-step, which inflates the stored
 incremental pn and corrupts every pressure-based quantity; that is why
-the shipped state is step 640000 (t = 34.75) and not 650013 (t = 35).
+the shipped state is step 660000 (t = 33.9997) and not 660002, the two
+micro-steps the run needed to land exactly on t_final. A run that ends on
+`steady_tol` instead stops on an ordinary step and needs no such care.
 
 Post-processing notes (scripts in postProcess/): cv_forces.py computes
 flux-exact control-volume forces in wind axes (--aoa) — the same budget
@@ -98,8 +176,10 @@ the solver now reports at runtime through `[case.airfoil] cv_box`, so a
 converged run needs no post-processing for C_L/C_D. FIXED 2026-08-03: its
 tangential velocity was read on the cell's low tangential face, a half-cell
 collocation offset that biased C_D by ~0.2 % (it moved the Re 40 cylinder
-from 1.7069 to 1.7040 against a runtime 1.70387); the C_L/C_D table above
-predates the fix and shifts by about that much. surface_cp_cf.py
+from 1.7069 to 1.7040 against a runtime 1.70387). The table above is
+CURRENT with respect to that fix: the state was regenerated from scratch on
+2026-08-08 and both force statistics come from the post-fix tooling.
+surface_cp_cf.py
 extracts Cp (linear wall
 extrapolation, converged depth 12 cells) and Cf; pressure-based
 quantities should be read from regular-cadence snapshots (a dt-clipped
@@ -247,11 +327,13 @@ refined value is the better-converged discrete answer and the residual
 0.6 % is a genuine model/discretization difference, not a grid error
 that got worse. Stagnation Cp +1.0026 vs OF +1.0044.
 
-CV forces over t = 33.75-34.75, both boxes: C_D 0.0128 +- 0.0008
-(OF 0.0134), C_L 0.5196 +- 0.0049 (OF 0.5142) — unchanged from the
-level-11 case within the scatter, as expected since the integral loads
-are pressure-dominated and Cp barely moved. The spread is the CV d/dt
-term, not sampling error.
+CV forces over the last time unit, runtime budget: C_D 0.01294 +- 0.00017
+(OF 0.0134), C_L 0.5199 +- 0.0001 (OF 0.5142); offline over two boxes x
+the last two snapshots, C_D 0.0131 +- 0.0001 and C_L 0.5222 +- 0.0046.
+Barely moved from the level-11 case (C_L 0.5136, C_D 0.01277), as expected
+since the integral loads are pressure-dominated and Cp changes little. The
+offline spread is dominated by the BOX margin; the runtime-vs-offline gap
+is the budget's unsteady term.
 
 Reproduce (`./run_case.sh scratch` does all of it): `moby_prepare .prep_c11_nose.ini
 assets/geometry/ibm_coeff_c11_nose.h5` (~40 min at 20 ranks — use MANY
@@ -307,11 +389,19 @@ are what it produced.
 
 Main folder: the inis — `c11_aoa5_nose.ini` / `.prep_c11_nose.ini`
 (PRODUCTION) and `c11_aoa5.ini` / `.prep_c11.ini` (the level-11 stage
-of the from-scratch protocol, not a case to run on its own) — the
-shipped converged state `c11_nose_640000.h5`, this README,
-`run_case.sh` (re-run) + `interp_restart.py` (its level-change helper),
-and `postprocess.sh` (regenerate the statistics/figures). Everything
-else lives under `assets/` and `postProcess/`:
+of the from-scratch protocol, not a case to run on its own) — the two
+shipped converged states, this README, `run_case.sh` (re-run) +
+`interp_restart.py` (its level-change helper), and `postprocess.sh`
+(regenerate the statistics/figures). Everything else lives under
+`assets/` and `postProcess/`:
+
+The states are `c11_nose_660000.h5` (PRODUCTION, t = 34.0, the restart
+entry point of run_case.sh) and `c11_aoa5_460000.h5` (BASELINE, t = 29.0,
+the `[restart] file` of c11_aoa5.ini and the level-11 column of the table
+above). They are the only flow fields kept: the staged reproduction's
+intermediates are deleted once it finishes, and `.h5` is gitignored, so
+both live on disk only — a fresh clone regenerates them with
+`./run_case.sh scratch`.
 
 - postProcess/ — the post-processing scripts (cv_forces.py,
   surface_cp_cf.py, compare_openfoam.py) driven by postprocess.sh.
@@ -319,12 +409,14 @@ else lives under `assets/` and `postProcess/`:
   INPUT. The prepared IBM coefficient case files are outputs:
   run_case.sh and postprocess.sh regenerate them with moby_prepare when
   absent (~40 min for the nose case at 20 ranks).
-- assets/referenceStats/ — the extracted surface statistics
-  cpcf_c11_nose_final{.npz,_cp.dat,_cf.dat}, which postprocess.sh
-  regenerates.
-- assets/figures/ — the OpenFOAM overlay shown above, plus
-  cpcf_c11_nose_final.png (the raw Cp/Cf panels); both are written
-  by postprocess.sh.
+- assets/referenceStats/ — the extracted surface statistics, per
+  configuration: cpcf_c11_nose_final{.npz,_cp.dat,_cf.dat} (production)
+  and cpcf_c11_aoa5_final{...} (the level-11 baseline). postprocess.sh
+  regenerates whichever matches the snapshot it is given.
+- assets/figures/ — the OpenFOAM overlay shown above
+  (cpcf_c11_nose_vs_openfoam.png) plus cpcf_c11_nose_final.png (the raw
+  Cp/Cf panels), and the baseline pair cpcf_c11_final_vs_openfoam.png /
+  cpcf_c11_aoa5_final.png; all written by postprocess.sh.
 - assets/openfoam/dictionaries/ — the OpenFOAM case's dictionaries
   (fvOptions with the transition constraints, globalVariables,
   turbulence/transport properties, fvSchemes/fvSolution, controlDict,

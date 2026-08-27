@@ -911,6 +911,22 @@ immersed boundary. Phased, each phase verified before the next:
   ~2900 steps saved), shedding Re 100 never gets within a decade of it (min
   3.1e-2 over 99 samples — each component's d/dt crosses zero twice per
   period but the two are out of phase, so their max never vanishes).
+  The forces trace carries the measure itself as a `dmomdt` column (added
+  2026-08-08): the reported C_L/C_D already have -dmdt folded in, so a
+  tolerance cannot otherwise be sized from a trace.
+  USAGE LANDMINE (measured on tutorials/naca/rans, 2026-08-08): the
+  criterion differences box momentum over ONE `force_sample_interval`, so
+  any coherent oscillation of that momentum floors it at ~2A/dt_sample —
+  the NACA case's f ~ 35 U/c wobble (invisible in C_L/C_D, where it cancels
+  against the border fluxes) floored the measure at 0.19 at the tutorial's
+  20-step sampling and ~8e-3 even converged, i.e. UNFIREABLE at any sane
+  threshold. Fix the SAMPLING, not the threshold: ~0.25 t.u. per sample
+  drops the floor two decades and the measure then reads physical drift.
+  Second caveat: it certifies the MOMENTUM BUDGET, which a converged
+  circulation satisfies as soon as a local refinement is added — the NACA
+  nose stage certified at 8.5e-4 while Cp_min was still moving (Cp follows
+  the global circulation over ~3 t.u.). Do not use it alone to stop a stage
+  whose deliverable is a pressure quantity.
 - ALSO PENDING: **Profile + optimise** the GPU step for the 2:1-refined channel.
   The last hard profile is STALE (the reflux that was 23% is removed; the
   `MOBY_PHASETIME` timer is deleted): re-profile first with a minimal removable

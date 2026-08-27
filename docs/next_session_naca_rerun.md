@@ -1,5 +1,51 @@
 # Next session: re-run tutorials/naca/rans from scratch, stopping on `steady_tol`
 
+## STATUS: DONE (2026-08-08)
+
+The converged state is regenerated (`tutorials/naca/rans/c11_nose_660000.h5`,
+t = 34.0, plus the level-11 baseline `c11_aoa5_460000.h5` at t = 29) and the
+README table is refreshed with the current tooling. Cost: ~33 h stage 1 on
+the RTX 3060 + ~46 h stages 2-3 on one istmcetus A6000 (0.46 s/step vs the
+3060's 1.16 — worth moving hosts for).
+
+Results: runtime CV budget C_L 0.5199 +- 0.0001, C_D 0.01294 +- 0.00017
+(OF 0.5142 / 0.0134); Cp_min -1.7797, EXACTLY OpenFOAM's, where the
+destroyed state read -1.7686. The regeneration reproduces that state to a
+Cf median ratio of 0.999 (5-95 % 0.995-1.003) and a Cp rms of 0.0024, so
+the whole Cf/OpenFOAM discussion in the README carried over unchanged.
+
+Four things this doc got wrong or could not know, all now in the README's
+"Convergence and stopping" section and in `run_case.sh`:
+
+1. **The tolerance could not fire at the inis' 20-step sampling.** The CV
+   momentum carries a coherent f ~ 35 U/c oscillation (lag-1 autocorrelation
+   +0.94) that cancels in C_L/C_D but not in a one-interval difference, so
+   the measure floors at ~2A/dt_sample = 0.19 in the transient and ~8e-3
+   when converged. The fix is `force_sample_interval`, not the threshold:
+   sampling ~0.25 t.u. apart drops the floor two decades. The doc's
+   "steady_tol = 1e-3 reproduces the shipped convergence level" read the
+   README's "+- 0.005 is the CV d/dt term" as something the 20-step measure
+   could see; that +- IS this wobble at 0.5 t.u. differencing.
+2. **Stages 1-2 are NOT the place to save time.** "5e-3 is plenty; they are
+   re-converged after each interpolation anyway" is wrong for stage 2: C_L
+   relaxes with tau ~ 9 t.u. after the L10 -> L11 interpolation, so its
+   18 t.u. is ~2 time constants. Cutting it to 6 was tried and, on the same
+   nose layout run in parallel, under-reads C_L by 2 % (0.5105 and still
+   drifting, vs 0.5199).
+3. **A steady certification is not a converged suction peak.** Stage 3
+   certified at 8.5e-4 after 2 t.u.; the measure is a momentum budget the
+   converged circulation already satisfies, while Cp needs ~3 t.u. Run the
+   published 5 t.u. out and keep the tolerance as a floor.
+4. **The final snapshot was dt-clipped anyway** (step 660002 after 2
+   micro-steps onto t_final), so the README's regular-cadence rule still
+   applies — 660000 is the state to post-process. It would NOT apply had
+   the stage stopped on the tolerance, as the doc says.
+
+Solver change made for this (committed with the campaign): the forces trace
+gained a `dmomdt` column carrying |2 dmom/dt|/qref, the quantity
+`steady_tol` thresholds — without it the tolerance cannot be sized from a
+real trace, since the reported C_L/C_D already have -dmdt folded in.
+
 ## The prompt
 
 > Reproduce the converged state of `tutorials/naca/rans` from scratch
