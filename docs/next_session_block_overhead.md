@@ -81,10 +81,10 @@ remains chasing the small term.
    (see the next section).
 2. ~~**Phase 1 — per-direction `nb`**~~ — **DONE 2026-08-27, tax 1.370 -> 1.071**
    (see below).
-3. **Phase 3 — fewer exchanges per iteration.** Promoted from conditional to
-   central: `proj/vel_exchange` + `proj/phi_exchange` = 0.411 of the 1.754
-   s/step (23 %), at 18 calls each per step. 3a (redundant `phi` computation)
-   attacks the 0.101; the 0.310 needs its own look.
+3. **Phase 3 — fewer exchanges per iteration.** 3a ATTEMPTED AND REVERTED
+   2026-08-27, see the STATUS below: it is not bit-exact, and after Phases 0-1
+   its ceiling is only 1.8 % of the step. The remaining exchange cost is in
+   `proj/vel_exchange`, which 3a never addressed.
 4. **Phase 5 — fuse same-level interior blocks.** The structural fix for the
    dominant term: fused tiles have no internal halos, so the traffic is not
    reduced but *deleted*. Now clearly worth the disruption. 5a (per-level block
@@ -231,6 +231,75 @@ A 2:1 interface can only sit on a block boundary, so `nb_y = 44` offers y-index
 44 / 88 / 132 (y+ 82 / 318 / 613) where `nb_y = 16` offered every 16 cells. The
 refined BL case's y+ ~99 interface moves to y+ ~82. `overheadTest/README.md` has
 the placement table.
+
+---
+
+## STATUS 2026-08-27 — Phase 3a (R0) ATTEMPTED, NOT BIT-EXACT, REVERTED.
+
+R0 (`docs/next_session_redblack_interface.md` §3) is: compute the Jacobi `phi`
+halo redundantly instead of exchanging it. It was implemented in full
+(`jacobi_compute_phi` and `cheb_combine` extended over the three low halo face
+planes behind a shared `phi_cell_owned` predicate; `crossOnly` on
+`exchange_scalar_halos`) and it WORKS -- but it is **not bit-exact**, and the
+reason is structural, not a coding slip.
+
+**6 of 7 suite cases fail** (only `lam30t` passes), at ~1e-13. Isolated on one
+case, changing nothing but the boundary condition:
+
+| same case | max_abs (pn) |
+|---|---|
+| periodic x/z | 9.5e-13 |
+| **walls all round** | **0.0** |
+
+So the redundant computation reproduces the owner's arithmetic EXACTLY at
+interior block seams -- the R0 consistency argument is sound -- and diverges
+ONLY at a **periodic domain seam**. There, the two blocks sharing the face build
+their metrics through different branches of `init.f90 face_at`: the low side via
+`node(idx+n) - length`, the high side via `node(idx)`. For the cell-centred
+metric those are bitwise equal (exact negation), but for the FACE-STAGGERED
+metric the `- length` enters BEFORE the cell-centre averaging in
+`cell_center_at`, so `0.5*fl(a-L) - 0.5*(fl(b-L)+fl(a-L))` is not bitwise
+`0.5*(a+L) - 0.5*(b+a)`. The halo cell's metric is therefore not bitwise the
+owner's, and no arrangement of the KERNEL fixes that.
+
+**Chebyshev amplifies it but does not cause it** (a wrong turn worth recording:
+the first, incomplete gate list looked like a perfect `accel = chebyshev`
+correlation; the same case with `accel = none` differs too). With Chebyshev the
+seam error enters the recursion through `gamma*delta`: niter = 1 gives 1.8e-13,
+niter = 2 gives 1.97e-01.
+
+**Note also**: `1 rank == 4 ranks` does NOT gate this. Both rank counts share
+the same seam asymmetry, so it cancels; only the reference-binary comparison
+exposes it.
+
+**WHY IT WAS NOT PURSUED FURTHER.** Making the seam metrics canonical would fix
+R0, but that change is itself NOT bit-exact (it alters the interior metric
+arithmetic, since `0.5*(face(g)-face(g-2))` is not bitwise
+`0.5*(face(g-1)+face(g)) - 0.5*(face(g-2)+face(g-1))`), so it needs its own
+validation campaign. And the prize has shrunk. Measured at the current
+production layout (`nb = 64 44 48`, total 1.2596 s/step):
+
+| phase | s/step | share |
+|---|---|---|
+| `proj/phi_exchange` — R0's ENTIRE target | 0.0229 | **1.8 %** |
+| `proj/vel_exchange` | 0.0664 | 5.3 % |
+| `exch/local_copy` (all exchanges) | 0.0976 | 7.8 % |
+
+At `nb = 16` before today R0's target was 5.7 % of the step; the copy-kernel
+split and per-direction `nb` have already taken most of it. **A non-bit-exact
+metric change plus revalidation to buy at most 1.8 % is a bad trade.**
+
+**If a future session wants R0 anyway**, the order is: (1) make the block
+metrics canonical at periodic seams and revalidate as a numerics change, THEN
+(2) re-apply R0, which then gates bit-exact. A cheaper alternative that keeps
+bit-exactness is to exclude periodic-seam halo cells from ownership and let the
+exchange fill only those -- but that needs the entry list partitioned so the
+same-level exchange can be skipped for everything else, and it buys less than
+1.8 %.
+
+**Where the exchange cost actually is now**: `proj/vel_exchange` (5.3 %), which
+R0 never touched, and which runs 18 times per step. That is the target worth
+sizing next, not `phi`.
 
 ---
 
