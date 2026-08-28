@@ -718,7 +718,10 @@ immersed boundary. Phased, each phase verified before the next:
   ONE global — possibly stretched — node line at all levels). Mechanics: a
   per-direction mask (dns%block_refine_mask / blk%refMask) makes every
   level scaling `2**(l*mask(d))`; 2x1x2 children; CANONICAL mixed Morton
-  ids in xz mode (y tile in key bits 42+ over the 2D x,z Morton curve —
+  ids in xz mode (2D x,z Morton key in the high bits over the y tile in the
+  low 21 — y sat in the HIGH bits until 2026-08-28, which made the order
+  y-major and so put the whole 2:1 interface on a rank boundary at EVERY rank
+  count; peer traffic 20.5x lower after the swap, `docs/next_session_2to1_penalty.md`;
   mobygeom/make_channel_restart mirror it); `refine_dims` file attribute
   (xz only, xyz files byte-identical; restart cross-checks BLOCK-layout
   files only); exchange entries generated per-direction (x/z faces 2 fine
