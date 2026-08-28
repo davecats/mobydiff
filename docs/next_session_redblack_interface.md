@@ -1,21 +1,53 @@
 # Next session — 2:1 interfaces on the red-black SOR projection
 
+## PRECONDITION MET 2026-08-28 (user measurement)
+
+**Jacobi needs `niter >= 12`** to keep the pressure zero-mode away; **red-black
+stays clean below `niter = 6`** at similar residuals. So the two smoothers reach
+equal quality at a ratio of *more than* 2:1 in iterations, which is what this
+whole increment rests on. §6's "iterations-to-residual" gate is satisfied in
+advance; what remains to measure is **cost at those settings**, not convergence.
+
+Two consequences worth carrying forward:
+
+- **The production configs are under-iterated.** Everything in `overheadTest`
+  runs `niter = 6` Jacobi, so every baseline in this repository — 1.219 s/step
+  single-level, 0.324 s/step refined at 2 GPU ranks — is for a setting that
+  does not keep the zero-mode away. The correct-Jacobi step is roughly the
+  non-projection part plus twice the projection: ~0.52 s/step for the refined
+  2-rank case. Red-black must be compared against **that**, not against the
+  recorded numbers.
+- **A colour sweep is not free on a GPU.** At EQUAL `niter` red-black measured
+  **17 % slower** than Jacobi on this grid (1.4499 vs 1.2422 s/step,
+  single-level, 2026-08-07) — strided colour access wastes bandwidth on the
+  unused colour. So the prize is `(12 / N_redblack)` against a ~1.17 penalty,
+  not a clean 2×. At `N = 5` that is still a large net win; at `N = 6` it is
+  ~1.7×. Put the penalty in the arithmetic rather than assuming it away.
+
 ## NOTE 2026-08-28 — the communication argument does NOT hold; the compute one does
 
 Measured on the refined boundary-layer config at 2 GPU ranks
 (`overheadTest/results_exchange_diag_2026-08-28.md`). Rounds per substage with
 a 2:1 interface present:
 
+Red-black needs a communication **per colour**, and §4 gives each colour both a
+cross-level phi exchange and a velocity exchange. So the round count obeys
+
+> red-black at `niter = N` costs the same rounds as Jacobi at `niter = 2N`.
+
+At the equal-quality settings above (Jacobi 12, red-black 6) the rounds are
+therefore **exactly equal, 24 per substage**, and a round saving appears only
+from red-black running *below* 6 — at `N = 5` it is 20 against 24, ~17 % fewer.
+
 | | per iteration | iters | phi | velocity | total |
 |---|---|---|---|---|---|
-| Jacobi `niter = 6` | 1 phi + 1 velocity | 6 | 6 | 6 | 12 |
-| red-black `niter = 3` | 2 colours × (1 phi + 1 velocity) | 3 | 6 | 6 | **12** |
+| Jacobi `niter = 12` | 1 phi + 1 velocity | 12 | 12 | 12 | 24 |
+| red-black `niter = 6` | 2 colours × (1 phi + 1 velocity) | 6 | 12 | 12 | **24** |
+| red-black `niter = 5` | " | 5 | 10 | 10 | **20** |
 
-Red-black needs a communication **per colour**, and §4 gives each colour both a
-cross-level phi exchange and a velocity exchange, so halving the iterations
-cancels exactly against doubling the exchanges per iteration. On a single-level
-grid red-black needs no phi and the count does halve (6 against 12) — but that
-is where red-black already works.
+On a single-level grid red-black needs no phi at all, so the count halves again
+(12 against 24 at equal quality) — but single-level is where red-black already
+works.
 
 Bytes do not save either, on the current decomposition: red-black's phi is
 cross-level-only, and cross-level is **98.1 %** of the full phi exchange because
@@ -29,11 +61,28 @@ projection arithmetic. `sweep` + `apply` are 46 % of the 2-rank step, so the
 prize is of order 20 % of the step, several times anything the overlap work can
 reach, and it helps single-rank runs equally.
 
-**Do this before writing the 150–250 lines**: measure iterations-to-residual for
-red-black vs damped Jacobi on the existing **single-level** path, where both
-smoothers already run. It costs no new code and it is the number the whole
-increment rests on ("3 SOR ≈ 6 Jacobi" is an expectation, not a measurement).
-§6 already lists it as a gate; promote it to a precondition.
+**Cost at those settings is now measured too**
+(`overheadTest/results_smoother_2026-08-28.md`, single-level production layout,
+four runs one session):
+
+| | `L2_div` | s/step |
+|---|---|---|
+| Jacobi `niter = 6` (today's baselines) | 1.845e-05 | 1.1758 |
+| Jacobi `niter = 12` (the honest setting) | 1.234e-05 | 1.8924 |
+| red-black `niter = 3` | 1.653e-05 | 0.9243 |
+| red-black `niter = 6` | 6.556e-06 | 1.3929 |
+
+Red-black at `N` reaches a better residual than Jacobi at `2N`. Against Jacobi
+12 the gain is **−26.4 % at `niter = 6`, −34 % at 5, −43 % at 4, −51 % at 3**
+(red-black's projection is linear in `niter`, 0.1558 s/step per iteration, on a
+fixed 0.464 s/step non-projection base). The 18.5 % per-iteration colour-sweep
+penalty is confirmed at equal `niter` and is already inside those numbers.
+
+**The prize is 26–51 % of the step — larger than everything else on the
+performance list combined.** Two things it does not size: the cross-level phi
+exchange R1 adds per colour (absent from single-level red-black; 98.1 % of phi
+entries are cross-level at 2 GPU ranks), and multi-rank. Expect the refined-case
+win to be smaller, and do not quote these numbers for it.
 
 R0 (§3) remains CLOSED — attempted and reverted in `e77c75e`, not bit-exact
 because block metrics differ across a periodic seam.

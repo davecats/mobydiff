@@ -220,23 +220,49 @@ the 2-rank step, so the prize is of order **20 % of the step**, several times
 anything in Plan A. It is also the only item here that helps the single-rank
 case equally.
 
-Two caveats to keep honest: "3 iterations of SOR ≈ 6 of damped Jacobi" is an
-expectation, not a measurement — `docs/next_session_redblack_interface.md` §6
-already makes iterations-to-residual a gate, and it should be measured *before*
-the 150–250 lines are written, on the existing single-level red-black path.
-And the `omega` stability limit with an interface present is unknown; §5 has the
-escalation ladder.
+**Convergence is settled (user measurement, 2026-08-28): Jacobi needs
+`niter >= 12` to keep the pressure zero-mode away; red-black stays clean below
+`niter = 6` at similar residuals.** Two consequences: every baseline in this
+repository runs `niter = 6` Jacobi and is therefore **under-iterated** — the
+correct-Jacobi refined 2-rank step is ~0.52 s/step, not the recorded 0.324, and
+red-black must be compared against that. And the round count obeys "red-black at
+`N` = Jacobi at `2N`", so at the equal-quality settings (12 vs 6) the rounds are
+*exactly equal* and a round saving needs red-black below 6.
 
-## Recommended order
+The remaining unknown is cost, not convergence: at equal `niter` red-black
+measured **17 % slower** than Jacobi here (1.4499 vs 1.2422 s/step, single-level,
+2026-08-07) because a colour sweep wastes bandwidth on the unused colour. The
+prize is `(12 / N_redblack)` against a ~1.17 penalty. Measuring it needs no new
+code — `run_overhead.sh` now takes `NITER=` and both smoothers run on the
+single-level path.
 
-1. **A0**, the progress probe — half a day, and it decides whether Plan A exists
-   at all.
-2. **Iterations-to-residual for red-black vs Jacobi** on the existing
-   single-level path — cheap, no new code, and it sizes Plan C's 20 % before
-   committing to it.
-3. Whichever of A1 / C-R1 those two justify.
-4. B1 (partitioning) once someone is willing to touch the Morton order or the
-   ownership lookup; it is the largest exchange lever but the most structural.
+Still unknown: the `omega` stability limit with an interface present; §5 of the
+red-black handout has the escalation ladder.
+
+## Recommended order — REVISED 2026-08-28, Plan C is first
+
+Plan C was sized (`overheadTest/results_smoother_2026-08-28.md`) and it dwarfs
+the rest: against the honest Jacobi setting (`niter = 12`, 1.8924 s/step)
+red-black is **−26 % at `niter = 6` and −51 % at 3**, with a better residual at
+every pairing. Nothing in Plan A or B is within a factor of three of that.
+
+1. **C-R1** — red-black + 2:1, `docs/next_session_redblack_interface.md` §4.
+   The design exists, convergence and cost are both measured, the operator is
+   already SPD at the interface. Start with the uniform-flow-through-a-patch
+   gate (§6): if that is not EXACT, stop and fix the transfer.
+2. **A0**, the progress probe — half a day, and it decides whether Plan A exists
+   at all. Worth doing early anyway because it is cheap and it also tells you
+   whether red-black's per-colour exchanges will overlap.
+3. **A1** if A0 says transfers progress during a kernel.
+4. **B1** (partitioning) once someone is willing to touch the Morton order or
+   the ownership lookup; it is the largest *exchange* lever but the most
+   structural, and it becomes more attractive after C-R1 because red-black's
+   per-colour cross-level phi exchange is exactly the traffic B1 would localise.
+
+Note for whoever runs the A/B on any of these: **re-baseline at `niter = 12`
+first.** Every recorded number in `overheadTest` is `niter = 6` Jacobi, which
+does not keep the pressure zero-mode away, so all of them understate the
+production cost.
 
 B0 and R0 are closed for the refined case; do not reopen without a decomposition
 where same-level peer traffic dominates.
