@@ -1,5 +1,45 @@
 # Next session — 2:1 interfaces on the red-black SOR projection
 
+## STATUS 2026-08-28 — R1a + R1b IMPLEMENTED, R1 NOT yet complete
+
+`[pressure] solver = redblack` now runs on a refined grid; the init guard's
+refinement rejection is gone (Chebyshev stays exclusive). Implemented as §4
+specifies, with no deviation:
+
+- **R1a** (`dfd9357`): `interface_correct` factored out of `jacobi_apply` and
+  shared by both smoothers. Jacobi bit-exact, 7-case suite `max_abs 0` CPU and
+  GPU, `validation/block_nb` still EXACT.
+- **R1b**: the sweep stores its increment when interfaces are present, keeps
+  interface faces in the denominator but not in the in-place correction, and the
+  colour loop gains zero → cross-level phi exchange → patch. `phi` is allocated
+  only when interfaces exist, so single-level red-black is untouched.
+
+Gates PASSED (`validation/redblack_interface/`): red-black + 2:1 runs and stays
+finite (200 steps by hand); **1 rank == 4 ranks EXACT**; **CPU == GPU EXACT**
+(nofma); uniform oblique flow through a 3-level patch EXACT; **single-level
+red-black bit-exact** vs the pre-R1 binary; Jacobi 7-case suite bit-exact CPU
+and GPU.
+
+**A correction to this plan's §8, worth carrying:** the uniform-flow gate that
+§8.3 calls decisive — "if that is not exact, stop and fix the transfer before
+looking at anything else" — **is blind to the interface patch**. Uniform flow
+makes the divergence and hence `phi` exactly zero, so `interface_correct`
+contributes nothing; measured with the patch deliberately disabled, the
+deviation is still `0.000e+00`. It is a real gate on the halo transfer
+operators and is kept, but it is not evidence about the patch. The gate with
+power is the refined **channel**: patch disabled, it reaches ‖u‖ ~ 4e4 and
+‖p‖ ~ 2e11 within 20 steps against a stable run with it enabled.
+
+**§6 items still NOT run — R1 cannot be declared done:** global mass residual
+with a patch; Beltrami y-slab and the laminar channel-patch convergence order
+(note `validation/beltrami/run_beltrami.sh` is stale — it drives the removed
+`MOBY_BELTRAMI` hook); developed Re_τ 180 no-interface-band vs the Jacobi
+solution; `refine_body` over ~2000 steps; **the `omega` sweep with an interface
+present** (§5's escalation ladder trigger — these gates run at `sor = 1.5` and
+are stable, which is evidence, not the sweep); and iterations-to-residual /
+s/step against Jacobi **on a refined grid** (the 26–51 % sizing is single-level
+and excludes the per-colour cross-level phi exchange R1 adds).
+
 ## PRECONDITION MET 2026-08-28 (user measurement)
 
 **Jacobi needs `niter >= 12`** to keep the pressure zero-mode away; **red-black

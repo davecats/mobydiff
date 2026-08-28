@@ -10,7 +10,10 @@ direction), RK3 time stepping, a segregated **damped-Jacobi pressure
 projection** with optional **Chebyshev-Jacobi** acceleration (`[pressure]
 accel = chebyshev`; on the `claude/jacobi-interface` branch — it replaced the
 old coupled red-black SOR projection, which could not make the 2:1 interface
-operators consistent), volume-penalization immersed boundary method (IBM),
+operators consistent on the OPERATOR of the day; red-black is selectable again
+via `[pressure] solver = redblack` and, since R1, runs across a 2:1 interface
+too — see `validation/redblack_interface/`), volume-penalization immersed
+boundary method (IBM),
 optional LES. Fortran + MPI (3D Cartesian decomposition, 26-neighbour halos) with
 OpenMP target offload for GPU. Entry points: `src/moby_solve.f90` (the
 solver; the build keeps a `main` symlink for the older scripts) and

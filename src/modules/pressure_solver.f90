@@ -103,16 +103,15 @@ contains
             end if
         end if
 
-        ! Red-black SOR: kept mutually exclusive with the 2:1 interface (which it
-        ! predates and never handled) and with Chebyshev acceleration; and, like
-        ! the original scheme, it needs even global sizes in periodic directions
-        ! for a consistent colouring.
+        ! Red-black SOR: 2:1 refinement is supported since R1 (the sweep stores
+        ! its increment, a per-colour cross-level exchange transmits it and
+        ! interface_correct applies it -- the same operator the Jacobi path
+        ! uses). Chebyshev stays exclusive: it needs a stationary linear
+        ! operator. Like the original scheme it needs even global sizes in
+        ! periodic directions for a consistent colouring.
         if (ps%method == PRESSURE_REDBLACK) then
             if (ps%cheb) error stop &
                 "[pressure] solver = redblack is incompatible with accel = chebyshev"
-            if (dns%block_refine_levels > 1_C_INT .or. dns%block_refine_body .or. &
-                dns%block_refine_nboxes > 0_C_INT) error stop &
-                "[pressure] solver = redblack does not support 2:1 block refinement"
             do dir = 1, 3
                 if (bc%isPeriodic(dir) .and. mod(dns%globalSize(dir), 2_C_INT) /= 0_C_INT) &
                     error stop "red-black pressure solver requires even global sizes in periodic directions"
@@ -710,25 +709,44 @@ contains
 
         integer(C_INT) :: iIter, color, dir
         logical(C_BOOL) :: outLow(3), outHigh(3), refd(3)
+        logical :: hasIface
         real(C_DOUBLE) :: t0
 
         t0 = prof_tic()
         refd = blk%refMask == 1_C_INT
+        hasIface = interfaces_present(blk, c)
+        ! phi exists on this path ONLY to cross a level jump; a single-level
+        ! red-black run allocates and maps nothing.
+        if (hasIface) call allocate_phi(blk)
         do dir = 1, 3
             outLow(dir)  = bc%facePatchType(boundary_face_id(int(dir), 0)) == PATCH_OUTLET
             outHigh(dir) = bc%facePatchType(boundary_face_id(int(dir), 1)) == PATCH_OUTLET
         end do
         call prof_toc(proj_prof, PROF_PROJ_SETUP, t0)
 
-        ! The coupled sweep updates pressure AND velocity in one kernel, so
-        ! proj_timing's `apply` and `phi_exchange` stay zero here: the red-black
-        ! path spends everything in `sweep` and the velocity exchange. That
-        ! asymmetry against the Jacobi path is real, not missing instrumentation.
+        ! The coupled sweep updates pressure AND velocity in one kernel, so on a
+        ! SINGLE-LEVEL grid proj_timing's `apply` and `phi_exchange` stay zero
+        ! here and the red-black path spends everything in `sweep` and the
+        ! velocity exchange. That asymmetry against the Jacobi path is real, not
+        ! missing instrumentation. With a 2:1 interface the two buckets fill:
+        ! `phi_exchange` is the per-colour cross-level transmission of the
+        ! increment and `apply` is interface_correct.
         do iIter = 1_C_INT, ps%nIter
             do color = 1_C_INT, 0_C_INT, -1_C_INT
                 t0 = prof_tic()
-                call redblack_sweep(ps, blk, dt_gamma, ibm, color, outLow, outHigh, refd)
+                ! Zero per COLOUR, not per iteration: the patch must see this
+                ! colour's increment alone (see redblack_sweep).
+                if (hasIface) call zero_phi(blk)
+                call redblack_sweep(ps, blk, dt_gamma, ibm, color, outLow, outHigh, refd, hasIface)
                 call prof_toc(proj_prof, PROF_SWEEP, t0)
+                if (hasIface) then
+                    t0 = prof_tic()
+                    call exchange_scalar_halos(c, phi, blk, ifaceRow=.true.)
+                    call prof_toc(proj_prof, PROF_PHI_EXCHANGE, t0)
+                    t0 = prof_tic()
+                    call interface_correct(blk, ibm, outLow, outHigh, refd)
+                    call prof_toc(proj_prof, PROF_APPLY, t0)
+                end if
                 t0 = prof_tic()
                 call apply_bc(blk, bc)
                 call prof_toc(proj_prof, PROF_PROJ_BC, t0)
@@ -743,22 +761,56 @@ contains
         end do
     end subroutine redblack_projection
 
+    ! Zero phi over the whole array, halos included: the sweep writes only its
+    ! own colour's interior cells, and the interface patch must not read a stale
+    ! value anywhere else.
+    subroutine zero_phi(blk)
+        type(block_set_type), intent(in) :: blk
+        integer(C_INT) :: i, j, k, b
+
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target teams distribute parallel do collapse(4) map(tofrom: phi) &
+        !$omp& private(i,j,k,b)
+#endif
+        do b = 1_C_INT, blk%nBlocks
+        do k = lbound(phi,3), ubound(phi,3)
+            do j = lbound(phi,2), ubound(phi,2)
+                do i = lbound(phi,1), ubound(phi,1)
+                    phi(i,j,k,b) = 0.0d0
+                end do
+            end do
+        end do
+        end do
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp end target teams distribute parallel do
+#endif
+    end subroutine zero_phi
+
     ! One red-black sweep of `color`. Each block sweeps from its halo layer (0)
     ! redundantly with the owning neighbour except on physical boundaries -- the
     ! rank-level red-black trick one level down -- so results are independent of
     ! the block/rank layout; parity is anchored to the global index space via
     ! the block origin. `sor` = ps%omega (the config "sor"; over-relaxation > 1
     ! is allowed here, unlike the Jacobi damping).
-    subroutine redblack_sweep(ps, blk, dt_gamma, ibm, color, outLow, outHigh, refd)
+    ! storePhi: with a 2:1 interface present the increment has to survive the
+    ! sweep so interface_correct can transmit it across the level jump, so it is
+    ! written to the module phi array as well as applied in place. Interface
+    ! faces are then kept in the DENOMINATOR but NOT corrected here -- the patch
+    ! owns them, which keeps the interface formula in exactly one place and
+    ! avoids stray writes into tangential halo copies of an interface face.
+    subroutine redblack_sweep(ps, blk, dt_gamma, ibm, color, outLow, outHigh, refd, storePhi)
         type(pressure_solver_type), intent(in) :: ps
         type(block_set_type), intent(inout) :: blk
         real(C_DOUBLE), intent(in) :: dt_gamma
         type(ibm_type), intent(in) :: ibm
         integer(C_INT), intent(in) :: color
         logical(C_BOOL), intent(in) :: outLow(3), outHigh(3), refd(3)
+        logical, intent(in) :: storePhi
 
-        real(C_DOUBLE) :: phi, denom, idt, sor, div
+        real(C_DOUBLE) :: phiC, denom, idt, sor, div
         real(C_DOUBLE) :: gLo1, gHi1, gLo2, gHi2, gLo3, gHi3
+        real(C_DOUBLE) :: cLo1, cHi1, cLo2, cHi2, cLo3, cHi3
+        logical :: store
         real(C_DOUBLE) :: mu_u_i, mu_u_ip, mu_v_j, mu_v_jp, mu_w_k, mu_w_kp
         integer(C_INT) :: i, ip, j, jp, k, kp, b, nBlocks, nLowerHaloDirections, iColor, nColorX
         integer(C_INT) :: iLo, jLo, kLo, colorOffset
@@ -769,16 +821,18 @@ contains
         nColorX = (hi(1) + 2_C_INT)/2_C_INT
         nBlocks = blk%nBlocks
         idt = 1.0_C_DOUBLE/dt_gamma
+        store = storePhi
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do collapse(4) &
-        !$omp& map(to: color, nColorX, sor, idt, dt_gamma, hi(1:3), &
+        !$omp& map(to: color, nColorX, sor, idt, dt_gamma, hi(1:3), store, &
         !$omp& outLow(1:3), outHigh(1:3), refd(1:3), &
         !$omp& blk%origin, blk%physLow, blk%physHigh, &
         !$omp& blk%d1x, blk%d1y, blk%d1z, ibm%mu) &
-        !$omp& map(tofrom: blk%q) &
+        !$omp& map(tofrom: blk%q, phi) &
         !$omp& private(i,ip,j,jp,k,kp,b,iColor,iLo,jLo,kLo,colorOffset, &
-        !$omp& phi,denom,div,nLowerHaloDirections, gLo1,gHi1,gLo2,gHi2,gLo3,gHi3, &
+        !$omp& phiC,denom,div,nLowerHaloDirections, gLo1,gHi1,gLo2,gHi2,gLo3,gHi3, &
+        !$omp& cLo1,cHi1,cLo2,cHi2,cLo3,cHi3, &
         !$omp& mu_u_i,mu_u_ip,mu_v_j,mu_v_jp,mu_w_k,mu_w_kp)
 #endif
         DO b=1_C_INT,nBlocks
@@ -823,21 +877,40 @@ contains
                         + (blk%q(i,jp,k,VAR_V,b)-blk%q(i,j,k,VAR_V,b))*blk%d1y(j,VAR_P,b) &
                         + (blk%q(i,j,kp,VAR_W,b)-blk%q(i,j,k,VAR_W,b))*blk%d1z(k,VAR_P,b)
 
-                    phi = -sor*div/denom
+                    phiC = -sor*div/denom
 
-                    blk%q(i,j,k,VAR_P,b) = blk%q(i,j,k,VAR_P,b) + phi*idt
+                    blk%q(i,j,k,VAR_P,b) = blk%q(i,j,k,VAR_P,b) + phiC*idt
+
+                    ! Interface faces stay in the denominator above but are not
+                    ! corrected in place: interface_correct applies them from the
+                    ! exchanged phi. Every other face keeps the diagonal metric,
+                    ! so with no interface present cX == gX and the arithmetic is
+                    ! untouched.
+                    cLo1 = merge(0.0d0, gLo1, i == 1_C_INT     .and. is_interface(blk%physLow(1,b)))
+                    cHi1 = merge(0.0d0, gHi1, i == hi(1)       .and. is_interface(blk%physHigh(1,b)))
+                    cLo2 = merge(0.0d0, gLo2, j == 1_C_INT     .and. is_interface(blk%physLow(2,b)))
+                    cHi2 = merge(0.0d0, gHi2, j == hi(2)       .and. is_interface(blk%physHigh(2,b)))
+                    cLo3 = merge(0.0d0, gLo3, k == 1_C_INT     .and. is_interface(blk%physLow(3,b)))
+                    cHi3 = merge(0.0d0, gHi3, k == hi(3)       .and. is_interface(blk%physHigh(3,b)))
 
                     ! Symmetric correction: every non-pinned face of the cell is
                     ! moved by phi*metric*mu; the neighbour of the other colour
                     ! moves the shared face from its side, so over both colours a
                     ! face sees (phi_below - phi_above)*d1f -- the same operator as
                     ! the Jacobi apply, here in place.
-                    blk%q(i,j,k,VAR_U,b)  = blk%q(i,j,k,VAR_U,b)  - phi*gLo1*mu_u_i
-                    blk%q(ip,j,k,VAR_U,b) = blk%q(ip,j,k,VAR_U,b) + phi*gHi1*mu_u_ip
-                    blk%q(i,j,k,VAR_V,b)  = blk%q(i,j,k,VAR_V,b)  - phi*gLo2*mu_v_j
-                    blk%q(i,jp,k,VAR_V,b) = blk%q(i,jp,k,VAR_V,b) + phi*gHi2*mu_v_jp
-                    blk%q(i,j,k,VAR_W,b)  = blk%q(i,j,k,VAR_W,b)  - phi*gLo3*mu_w_k
-                    blk%q(i,j,kp,VAR_W,b) = blk%q(i,j,kp,VAR_W,b) + phi*gHi3*mu_w_kp
+                    blk%q(i,j,k,VAR_U,b)  = blk%q(i,j,k,VAR_U,b)  - phiC*cLo1*mu_u_i
+                    blk%q(ip,j,k,VAR_U,b) = blk%q(ip,j,k,VAR_U,b) + phiC*cHi1*mu_u_ip
+                    blk%q(i,j,k,VAR_V,b)  = blk%q(i,j,k,VAR_V,b)  - phiC*cLo2*mu_v_j
+                    blk%q(i,jp,k,VAR_V,b) = blk%q(i,jp,k,VAR_V,b) + phiC*cHi2*mu_v_jp
+                    blk%q(i,j,k,VAR_W,b)  = blk%q(i,j,k,VAR_W,b)  - phiC*cLo3*mu_w_k
+                    blk%q(i,j,kp,VAR_W,b) = blk%q(i,j,kp,VAR_W,b) + phiC*cHi3*mu_w_kp
+
+                    ! Only this colour's cells hold a non-zero increment (phi was
+                    ! zeroed before the sweep), so each interface face receives
+                    ! the red half in one pass and the black half in the other --
+                    ! the two sum to the full two-sided correction, no double
+                    ! counting.
+                    if (store) phi(i,j,k,b) = phiC
                 END DO
             END DO
         END DO

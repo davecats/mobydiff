@@ -97,11 +97,20 @@ Only read when `[case] name = channel`.
 
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
-| `niter` | int | 3 | Damped-Jacobi iterations per projection (≥ 0). |
-| `sor` | real | 0.8 | Damping/over-relaxation factor (plain Jacobi diverges above ~0.8). |
-| `accel` | enum | `jacobi` (none) | `chebyshev` / `cheb` enables Chebyshev–Jacobi acceleration. |
+| `solver` | enum | `jacobi` | Smoother: `jacobi` (damped Jacobi) or `redblack` (coloured Gauss–Seidel / SOR). |
+| `niter` | int | 3 | Iterations per projection (≥ 0). One red-black iteration is two colour sweeps. |
+| `sor` | real | 0.8 | Damping / over-relaxation factor. Damped Jacobi diverges above ~0.8; red-black takes over-relaxation (1.5 is the usual setting) and **0.8 is the wrong value for it**. |
+| `accel` | enum | `jacobi` (none) | `chebyshev` / `cheb` enables Chebyshev–Jacobi acceleration. Mutually exclusive with `solver = redblack` (Chebyshev needs a stationary linear operator). |
 | `cheb_lmin` | real | -1.0 (auto) | Chebyshev lower eigenvalue bound. |
 | `cheb_lmax` | real | -1.0 (auto ≈ 2.0) | Chebyshev upper eigenvalue bound. |
+
+Both smoothers run on 2:1-refined grids (red-black since R1 —
+`validation/redblack_interface/`). They need **different `niter` for the same
+quality**: measured on the production boundary layer, damped Jacobi needs
+`niter ≥ 12` to keep the pressure zero-mode away where red-black stays clean
+below 6, so comparing the two at a fixed `niter` compares nothing useful.
+`solver = redblack` additionally requires even global sizes in periodic
+directions, for a consistent colouring.
 
 ## `[boundary]` — boundary conditions
 
