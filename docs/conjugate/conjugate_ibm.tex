@@ -1426,6 +1426,117 @@ conductivity: the low-conductivity side carries the steeper, noisier gradient.
 can be written in terms of either one-sided limit, and the formulations are not
 equally well conditioned.)
 
+\paragraph{Construction 1 carries an $O(\text{jump})$ bias, and it is
+removable in closed form.}
+\emph{Added after increment C2 measured it}
+(\code{validation/conjugate/README.md}). The forgiveness argument above is
+right for the two \emph{tangential} differences and wrong for the arm
+difference. Let the face lie between cells $L$ and $R$, let the one-sided
+gradients differ by the kink $\grad T^{+}-\grad T^{-}=\mu\nn$, and build the
+face-centred gradient as the kernel does --- the arm difference along $\ed$,
+the mean of the two cells' central differences along each tangential
+direction. The arm difference weights the two sides $(w,1-w)$ while each
+tangential difference weights them $(\tfrac12,\tfrac12)$, so
+\begin{equation}
+  \grad T^{\wedge} = \grad T^{-}
+    + \mu\left[\tfrac12\nn + \left(\tfrac12-w\right)n_d\,\ed\right],
+  \qquad
+  s_t^{\text{raw}} = s_t + \mu\,n_d\left(\tfrac12-w\right)\left(1-n_d^{2}\right).
+  \label{eq:stbias}
+\end{equation}
+The projection annihilates the $\tfrac12\mu\nn$ term exactly --- that is the
+argument above --- but not the arm's share. The residue is $O(\mu)$, i.e.\ it
+grows with the very conductivity contrast the correction exists for. Measured
+on the oblique-plane gate, the raw estimate makes the interface flux
+\emph{worse than dropping the term altogether} at every tangential ratio
+$\lesssim0.1$.
+
+Equation~\eqref{eq:stbias} is also its own cure. Estimating $\mu$ from the
+face's own normal flux, $\mu=-q_n(1/k_R-1/k_L)$ with
+$q_n=(\grad_dT-s_t)k_{\text{face}}/a$, makes $n_d$ cancel and leaves a linear
+equation for $s_t$:
+\begin{equation}
+  \boxed{\;
+  s_t=\frac{s_t^{\text{raw}}-c\,\grad_dT}{1-c},
+  \qquad
+  c=\kappa_{\text{face}}\left(\frac{1}{\kappa_R}-\frac{1}{\kappa_L}\right)
+     \left(\tfrac12-w\right)\left(1-n_d^{2}\right) \;}
+  \label{eq:stdebias}
+\end{equation}
+with $\kappa$ the conductivity \emph{ratios}. It needs no wider stencil and no
+new data, and it is unconditionally well posed: whenever $c>0$ the geometry
+forces $\kappa_{\text{face}}\le1/w$ (or $1/(1-w)$), hence $c\le\tfrac12$ and
+$1-c\ge\tfrac12$ for every material pair and every cut position. It is inert
+exactly where it should be --- equal materials, $w=\tfrac12$, a grid-aligned
+face, and a purely tangential field, where $s_t^{\text{raw}}=\grad_dT$ returns
+$\grad_dT$ whatever $c$ is. This is what \code{conjugate\_tangential} in
+\code{scalar.f90} implements; construction 2 was not needed, and would in any
+case require a two-deep halo for the far cell's own far neighbour.
+
+\paragraph{Why the escalation still does not pay.}
+Also from C2, and more fundamental than the estimate of $s_t$: with
+\eqref{eq:stdebias} the corrected face flux is exact to round-off for a purely
+tangential field, and the resulting \emph{solution} is nevertheless worse than
+the baseline's. The reason is that \eqref{eq:main} is the flux \emph{at the
+face midpoint}, while the cell balance sums face fluxes as if they were face
+\emph{averages}. At a cut face the exact average is
+$\overline{k}=f k_f+(1-f)k_s$ with $f$ the face's fluid \emph{area} fraction;
+$k_{\text{face}}$, being smooth in $w$, approximates it better than the exact
+midpoint value $k_{\text{loc}}$, which is a staircase in $w$. Measured local
+truncation error at cut cells on the exact field: rms $130$ for the baseline
+against $174$ with the correction. \textbf{Making the pointwise flux exact
+makes the divergence worse.} An escalation that would actually pay has to
+correct the face \emph{average}:
+\begin{equation}
+  \overline{F} = a\,q_n + \overline{k}_A\,s_t,
+  \qquad
+  \overline{k}_A = f\,k_f+(1-f)\,k_s ,
+  \label{eq:kareamean}
+\end{equation}
+with $f$ the face's fluid \emph{area} fraction --- because $a q_n$ and $s_t$
+are both continuous, so the only thing the average acts on is $k$. The three
+schemes differ in nothing but this multiplier: $k_{\text{face}}$ (baseline),
+$k_{\text{loc}}$ (the escalation as derived), $\overline{k}_A$ (exact). And
+$f$ costs no new data: for a plane it follows in closed form from
+$\varphi$ at the face centre --- the mean of the two cell values --- and the
+in-plane components of $\grad\varphi$, both of which $s_t$ already forms.
+Measured with \eqref{eq:kareamean} in place of $k_{\text{loc}}$, and applied
+at every face the interface \emph{clips} rather than only where the two cell
+markers disagree, the same truncation error falls from $130$ to
+$1.3\times10^{-8}$.
+
+\paragraph{Why that is still not enough, and the limit is physical.}
+On a \emph{curved} interface the multiplier stops being the binding
+constraint. Take the classical conducting cylinder in a uniform far-field
+gradient, $T^{+}=-G\cos\theta\,(r+\beta a^{2}/r)$,
+$T^{-}=-G\cos\theta\,\gamma r$ with $\beta=(1-k_s)/(1+k_s)$,
+$\gamma=2/(1+k_s)$: both pieces are harmonic, the interface conditions hold
+exactly, and there is no source, so the exact divergence vanishes and the
+truncation test above applies unchanged. Its tangential gradient at the
+surface is
+\begin{equation}
+  \big|\grad_tT\big|_{r=a} = G\,|\sin\theta|\,\frac{2}{1+k_s}
+  \;\xrightarrow[k_s\to\infty]{}\;0 ,
+  \label{eq:isothermal}
+\end{equation}
+which is the isothermal limit seen from the tangential side: \textbf{the very
+term the escalation exists to add disappears as the contrast grows}. The
+discrete estimate of it does not disappear with it --- measured, the exact
+$s_t$ falls $90\times$ from $k_s=10$ to $10^{3}$ (matching
+\eqref{eq:isothermal} to two digits) while the estimate's error does not fall
+at all --- and the difference is then multiplied by
+$(k_{\text{loc}}-k_{\text{face}})\approx k_s$. Measured cut-cell truncation at
+$k_s=10^{3}$: $22$ for the baseline against $855$ ($k_{\text{loc}}$) and $1448$
+($\overline{k}_A$). Even at $k_s=10$ the estimate of $s_t$ on a curved
+interface is $43$--$54\,\%$ wrong and \emph{does not converge} under
+refinement, because the de-biasing above is derived for a plane.
+
+The order in which to attack this is therefore the opposite of the obvious
+one: not the multiplier, and not the correction, but $s_t$ --- and on a curved
+interface that means the same-side least squares of construction~2, with the
+two-deep halo it implies. Sec.~\ref{sec:coco}'s corner model rests on the
+identical premise, so the same measurement gates it.
+
 \begin{figure}[htbp]
 \centering
 \begin{tikzpicture}[scale=1.15,>=Stealth,font=\small]

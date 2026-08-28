@@ -26,6 +26,21 @@ CMP="$PY $ROOT/tools/compare_fields.py --tolerance 0"
 sel=${1:-all}
 status=0
 
+# C2 gate 3: TANG=true re-runs this entire suite with the tangential
+# correction ON. The grid-aligned cases have s_t = 0 BY CONSTRUCTION, so
+# every number below must come back to round-off; the wavy case is oblique,
+# so it is a genuine re-measurement. The key is injected into the two
+# TEMPLATES rather than into each of the ~15 generated inis.
+TANG=${TANG:-false}
+SLAB=slab.ini
+WAVY=wavy.ini
+if [ "$TANG" != false ]; then
+    inject='s|^ibm_wall = conjugate|ibm_wall = conjugate\ntangential_correction = true|'
+    sed "$inject" slab.ini > .slab_tang.ini; SLAB=.slab_tang.ini
+    sed "$inject" wavy.ini > .wavy_tang.ini; WAVY=.wavy_tang.ini
+    echo "== tangential_correction = true (C2 gate 3)"
+fi
+
 want() { [ "$sel" = all ] || [ "$sel" = "$1" ]; }
 run() { echo "   \$ $*"; "$@"; }
 report() { if [ "$1" -eq 0 ]; then echo "   PASS"; else echo "   FAIL"; status=1; fi }
@@ -37,7 +52,7 @@ slab_case() {
     $PY ./make_slab_stl.py "$pre.stl" --y-top "$yw" > /dev/null || return 1
     sed -e "s|@STL@|$pre.stl|" -e "s|@CASE@|$pre.h5|" \
         -e "s|@KAPPA@|$ka|" -e "s|@CAP@|$cap|" -e "s|@PREFIX@|$pre|" \
-        -e "s|@NSTEPS@|$ns|" -e "s|@WRITE@|$wr|" slab.ini > ".$pre.full.ini"
+        -e "s|@NSTEPS@|$ns|" -e "s|@WRITE@|$wr|" $SLAB > ".$pre.full.ini"
     # moby_prepare COMPUTES the coefficient file, so its input must not name
     # one; the solve input takes the file and drops the STL.
     sed '/^coeff_file/d' ".$pre.full.ini" > ".$pre.prep.ini"
@@ -205,7 +220,7 @@ if want stats; then
     echo "== (3d) scalar_stats on a conjugate case (smoke; C3 gates the numbers)"
     sed -e 's|^\[scalar\]|[scalar]\nstats_sample_interval = 20\nstats_write_interval = 20\nstats_file = wavy_stats.h5|' \
         -e 's|^nsteps.*|nsteps = 20|' -e 's|^field_interval.*|field_interval = 20|' \
-        -e 's|field_prefix = wavy|field_prefix = wstat|' wavy.ini > .wstat.ini
+        -e 's|field_prefix = wavy|field_prefix = wstat|' $WAVY > .wstat.ini
     for tag in cpu gpu; do
         bin=$BIN; [ "$tag" = gpu ] && bin=$GBIN
         sed "s|stats_file = wavy_stats.h5|stats_file = wavy_stats_$tag.h5|" .wstat.ini > ".wstat_$tag.ini"
@@ -281,7 +296,7 @@ fi
 # wavy wall, so it is independent of the solver's own marker.
 if want conserve; then
     echo "== (3) sum(C theta dV) conserved in an insulated composite box"
-    run mpirun -n "$RANKS" "$BIN" wavy.ini > wavy.log 2>&1
+    run mpirun -n "$RANKS" "$BIN" $WAVY > wavy.log 2>&1
     if [ $? -ne 0 ]; then tail -20 wavy.log; report 1; else
         run $PY ./check_conjugate.py conserve wavy_100.h5 wavy_200.h5 \
             --capacity 2.0 --wavy
@@ -297,7 +312,7 @@ if want guard; then
     guard() {  # <label> <sed expr...>
         local label=$1; shift
         local ini=".guard.ini"
-        cp wavy.ini "$ini"
+        cp $WAVY "$ini"
         for e in "$@"; do sed -i "$e" "$ini"; done
         mpirun -n 1 "$BIN" "$ini" > guard.log 2>&1
         if [ $? -ne 0 ]; then echo "   $label: rejected  PASS"; else
@@ -330,7 +345,7 @@ if want refine; then
     # y-face at y = 0.03125, which the 0.010 .. 0.035 wall crosses.
     sed -e 's|^nb = 8|nb = 4\nrefine = 0.0 1.0 0.0 0.03125 0.0 0.25\nrefine_levels = 1|' \
         -e 's|^nsteps.*|nsteps = 5|' -e 's|^field_interval.*|field_interval = 5|' \
-        -e 's|field_prefix = wavy|field_prefix = ref_bad|' wavy.ini > .ref_bad.ini
+        -e 's|field_prefix = wavy|field_prefix = ref_bad|' $WAVY > .ref_bad.ini
     mpirun -n 1 "$BIN" .ref_bad.ini > ref_bad.log 2>&1
     if [ $? -ne 0 ] && grep -q "2:1 block face" ref_bad.log; then
         echo "   hand-placed refinement box across the wall: rejected  PASS"
@@ -339,7 +354,7 @@ if want refine; then
     fi
     sed -e 's|^nb = 8|nb = 8\nrefine_body = true\nkeep_buried = true\nrefine_levels = 1|' \
         -e 's|^nsteps.*|nsteps = 20|' -e 's|^field_interval.*|field_interval = 20|' \
-        -e 's|field_prefix = wavy|field_prefix = ref_ok|' wavy.ini > .ref_ok.ini
+        -e 's|field_prefix = wavy|field_prefix = ref_ok|' $WAVY > .ref_ok.ini
     run mpirun -n 1 "$BIN" .ref_ok.ini > ref_ok.log 2>&1
     if [ $? -eq 0 ]; then
         grep -E "conjugate interface:" ref_ok.log | sed 's/^/  /'
@@ -359,7 +374,7 @@ fi
 if want det; then
     echo "== (4) determinism: 1 == 4 ranks, CPU == GPU (tolerance 0)"
     sed -e 's|^nsteps.*|nsteps = 20|' -e 's|^field_interval.*|field_interval = 20|' \
-        -e 's|^field_prefix = wavy|field_prefix = det_r1|' wavy.ini > .det_r1.ini
+        -e 's|^field_prefix = wavy|field_prefix = det_r1|' $WAVY > .det_r1.ini
     sed 's|field_prefix = det_r1|field_prefix = det_r4|' .det_r1.ini > .det_r4.ini
     sed 's|field_prefix = det_r1|field_prefix = det_gpu|' .det_r1.ini > .det_gpu.ini
     run mpirun -n 1 "$NBIN" .det_r1.ini  > det_r1.log  2>&1

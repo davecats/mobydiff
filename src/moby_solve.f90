@@ -290,6 +290,13 @@ program moby_solve
         call update_timestep_limits(blk, dns, c)
     end if
 
+    ! The conjugate cut-face indicator on the INITIAL field, before anything
+    ! has moved: that is the form the C2 gates use, where the initial
+    ! condition is a prescribed manufactured solution and the measurement is
+    ! of the SCHEME rather than of a transient.
+    if (sc%indicatorInterval > 0_C_INT) &
+        call scalar_conjugate_indicator(sc, blk, c, dns%step_current)
+
     if (c%has_terminal) print *, "main loop starting..."
     loop_steps = 0_C_INT
     call init_turbulence_profiler(turb_prof)
@@ -407,6 +414,13 @@ program moby_solve
         call flow%after_step(blk, dns, g, c, ibm)
         ! Scalar profiles/rms/fluxes and the body heat release (no-op off).
         call scalar_stats_after_step(sstats, sc, blk, dns, turb, ibm, c)
+        ! The conjugate cut-face error indicator (increment C2): what the
+        ! baseline's dropped tangential term is worth, measured on the
+        ! running field. Off unless [scalar] indicator_interval asks.
+        if (sc%indicatorInterval > 0_C_INT) then
+            if (mod(int(dns%step_current), int(sc%indicatorInterval)) == 0) &
+                call scalar_conjugate_indicator(sc, blk, c, dns%step_current)
+        end if
 
     end do
     call stop_chron(loop_timer, loop_steps)

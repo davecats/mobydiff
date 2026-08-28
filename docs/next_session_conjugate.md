@@ -1,13 +1,278 @@
 # Conjugate heat transfer at an immersed interface (branch `scalar`) — strategy
 
-STATUS: **C1 IS DONE AND GATED (2026-08-27/28, branch `scalar`, on top of
-`e1b5c2c`).** C2/C3/C4 are not started; §10 still describes them. Gates, the
-commands that produced every number, and the two time-step findings are in
+STATUS: **C1 AND C2 ARE DONE AND GATED** (C1 2026-08-27/28 on top of
+`e1b5c2c`; C2 2026-08-28 on top of `735d360`, branch `scalar`). C3/C4 are not
+started; §10 still describes them. Gates, the commands that produced every
+number, and the three time-step findings are in
 [`validation/conjugate/README.md`](../validation/conjugate/README.md).
 This document is the plan; the derivation, the limit checks, the accuracy
 argument and the sketches live in
 [`docs/conjugate/conjugate_ibm.tex`](conjugate/conjugate_ibm.tex) (build with
 `make` in that directory).
+
+**THE C2 VERDICT — the tangential correction SHIPS DISABLED.** It is
+implemented, gated and switched off by default (`[scalar.N]
+tangential_correction`), and the numbers below say it should stay off for the
+geometries this solver is for. The measurement, not the design, decided:
+`e_face` and §3's closed form agree per face to every digit, and the term the
+baseline drops costs ~3.6 % rms of the local interface flux at the DNS-like
+ratio `|∇_tT|/|∂_nT| ~ 10⁻²` and moderate contrast — but putting it back is
+better only above a measured crossover ratio (`r* ≈ 0.027` at κ_s = 10 on a
+plane; a LOCAL ratio ≈ 0.1 on a body), it makes the SOLUTION worse even where
+it makes the face flux exact, and at high contrast on a curved interface it is
+**40–65× worse than dropping the term** — because `|∇_tT| = G|sin t|·2/(1+κ_s)`
+vanishes in the isothermal limit, so the term the correction exists to add
+disappears while the discrete estimate of it does not, and that noise is then
+multiplied by `κ_s`. The INDICATOR, by contrast, ships as a permanent, free
+diagnostic: any conjugate run can now report the error it is making.
+
+## C2 — what landed
+
+Two things, both at the SAME cut faces the C1 coefficient lives on, and
+neither touching anything else:
+
+1. **The indicator.** `[scalar] indicator_interval = N` reduces
+   `e_face = h_d s_t/(T_R − T_L)` over every cut face and prints
+   `max|e_face|`, its rms and the face count — at step 0 (on the initial
+   field, which is how the manufactured gates use it) and every N steps
+   after. It is §3's own expression, so it IS the relative error the
+   baseline makes in the interface-normal flux at that face. Two passes, so
+   that faces whose denominator vanishes (a cut face carrying no normal
+   flux: `e_face = ∞`, meaning nothing) are excluded against a measured
+   scale rather than silently dominating.
+2. **The correction**, `F += s_t (k_loc − k_face)` behind `[scalar.N]
+   tangential_correction` (**default off**), where `k_loc` is the
+   conductivity of the material containing the face MIDPOINT — the sign of
+   `φ_L + φ_R`, no division. It is added as its own flux divergence AFTER
+   the C1 term rather than folded into it, so the fused expression is
+   untouched and the feature is inert by CONSTRUCTION when off (the
+   bodyforce lesson: not a `+ 0.0` argument).
+
+`s_t` and its indicator go through ONE routine, `conjugate_tangential`, so
+the number reported is the number applied — the invariant S4 exists for. The
+explicit correction enters `scalar_conjugate_peclet_rate` as its Gershgorin
+row sum (measured cost: 26 % of `dt` at κ_s = 10³). No new dataset, no
+case-file change, no new stencil beyond the 3³ neighbourhood the 26-neighbour
+halo already delivers.
+
+## C2 — measured gate numbers
+
+| §10 gate | measured |
+|---|---|
+| oblique plane, baseline error vs §3's closed form | agree **per face, to every printed digit** (`1.5080e+00` vs `1.5080e+00`, κ_s = 10, r = 0.1) |
+| …vs the ratio `r` | baseline rms **strictly linear in r** and INDEPENDENT of h: `3.6 r` (κ_s = 10), `13 … 56 r` (κ_s = 10³) — the contrast amplifies it |
+| …the corrected error | **flat in r**: rms `9.6e-2` (κ_s = 10) / `1.4e-1` (κ_s = 10³) ⇒ crossover `r* = 0.027` / `0.003 … 0.011` |
+| …`r = ∞` (pure tangential) | corrected face flux **exact to 1e-11** (the STL floor / h); baseline 36 % rms |
+| the solver's `e_face` vs the checker's | `1.0000E+00` max and rms, both, on 404 cut faces (the analytic value is exactly 1) |
+| cylindrical shell, baseline | rms `1.61e-2 → 8.38e-3 → 4.09e-3`, **order 1.00** — §8's `O(κ_curv h/a)`, measured |
+| …corrected | `4.1e-2 / 8.8e-2 / 5.8e-2`: **2.5–15× worse, and no longer converging** |
+| cylinder in a UNIFORM GRADIENT (the curved case WITH a tangential gradient) | position-resolved the correction wins above a local ratio ≈ 0.1 (2.7–47× better); but `s_t` itself is **43–54 % wrong and does not converge**, and at κ_s = 10³ the correction is **40–65× worse** than the baseline (`|∇_tT| ∝ 2/(1+κ_s) → 0`) |
+| the `r = ∞` BVP (field error) | baseline `L2 = 3.33e-3`; corrected `8.74e-3` — 2.6× worse, at the ratio most favourable to it and with the corrected face flux exact to 1e-11 |
+| …and why (local truncation on the exact field) | cut-cell `|div|` rms **130** baseline vs **174** corrected; the area-weighted multiplier below gives **1.3e-8** |
+| time-step penalty of the correction, κ_s = 10³ | `dt` × **0.743** |
+| every C1 gate with the correction ON | **`ALL C1 GATES PASS`, 61 checks** — the grid-aligned ones digit for digit (`9.658940e-15`, `7.438494e-15`, `q = 1.332889036988`, rate order 1.000), the oblique one re-measured (conservation drift `6.939e-18`, guards 5/5, the 2:1 precondition both ways) |
+| 1 == 4 ranks, CPU == GPU, correction ON | **max_abs 0** on all five datasets — and the indicator itself is bit-identical across both |
+| the bit-exactness protocol | **32 case-runs, every one max_abs 0**, CPU and GPU, on the 7-case and 9-case suites |
+| the S-suite physics groups | `run_gates{,_s2,_s3,_s4,_s5}.sh` — 91 checks, `rc = 0`, no failures |
+
+## C2 — deviations from this plan
+
+1. **The note's construction 1 is NOT what shipped, and gate 1 is why.**
+   §7.3 argues that ordinary central differences suffice because the jump in
+   `∇T` is purely normal and the projection removes it. That is right for the
+   two TANGENTIAL differences, which weight the two sides `(½, ½)`, and WRONG
+   for the arm difference, which weights them `(w, 1−w)`: the raw estimate
+   carries a bias `μ n_d (½ − w)(1 − n_d²)` proportional to the jump `μ`, so
+   it grows with the conductivity contrast. Measured, it makes the interface
+   flux WORSE than dropping the term at every ratio ≤ 0.1 (at r = 0.01: rms
+   0.359 against the baseline's 0.036 at κ_s = 10, and 1.74 against 0.129
+   at κ_s = 10³). The note's own fallback — same-side least squares — needs the far
+   cell's far neighbour, i.e. a TWO-DEEP halo, which is the comm-layer change
+   the TVD increment is blocked on. What shipped instead removes the bias in
+   CLOSED FORM: estimating `μ` from the face's own normal flux makes `n_d`
+   cancel and leaves `s_t = (s_t^raw − c ∇_dT)/(1 − c)` with
+   `c = κ_face(1/κ_R − 1/κ_L)(½ − w)(1 − n_d²)`. It needs no wider stencil,
+   is inert exactly where it should be (equal materials, `w = ½`, a
+   grid-aligned face, a purely tangential field), and is UNCONDITIONALLY well
+   posed: whenever `c > 0` the geometry forces `κ_face ≤ 1/w`, hence
+   `c ≤ ½`, hence `1 − c ≥ ½` for every material pair and every cut position.
+2. **§10's "the baseline stalls near first order" is optimistic, by a full
+   order.** §3's own bullet two paragraphs earlier has it right — "set by the
+   flow, not by `h` … it does not converge away" — and that is what the gate
+   measures. Over a 4× refinement at θ = 30°, κ_s = 10, the baseline's
+   relative `q_n` error is `3.559e-02 → 3.774e-02 → 3.586e-02` (apparent order
+   −0.08, +0.07) and its face-flux error `3.284e-02 → 3.331e-02 → 3.318e-02`
+   (−0.02, +0.01). It cannot converge: `e_face = h_d s_t/(T_R − T_L)` is a
+   RATIO OF TWO GRADIENTS, and both scale like `h`. In the usual accounting
+   the cut-face flux is therefore **zeroth order** — inconsistent —
+   `F_num − F_exact = s_t(k_face − k_loc)` being O(1) absolute; "first order"
+   would mean O(h), which it is not. What makes the scheme usable anyway is
+   not consistency but CONSERVATION plus sign alternation: `k_loc` is a
+   staircase in `w` that flips as the interface sweeps past the face midpoint,
+   so neighbouring faces carry errors of opposite sign and they largely cancel
+   in the cell balances (the EJIIM Remark 24 regime the plan cites).
+   A genuine first order does appear in the suite, but it is a DIFFERENT
+   error: the cylinder gate, where `s_t ≡ 0` by symmetry and what is left is
+   the curvature error in `w` — order `+0.94, +1.03` (κ_s = 10) and
+   `+0.99, +1.00` (κ_s = 10³), i.e. §8's `O(κ_curv h/a)`. NOT MEASURED, and
+   the natural C3 item: the order of the SOLUTION error, which needs two
+   grids of the `r = ∞` BVP and was priced out here (`dt = 0.4 h²/κ_s` against
+   a relaxation time `L²/α_f = 1` is 1e5 steps per leg at n = 64).
+3. **§3's `≈ tanθ |∇_tT|/|∂_nT|` is the EQUAL-MATERIAL estimate.** The
+   tangential term competes against `a q_n R`, and `R` is cut down by the
+   high-conductivity leg, so the real error is amplified by the contrast: at
+   `r = 0.01` it is 3.6 % rms at κ_s = 10 but 13–56 % at κ_s = 10³. The
+   closed form in §3 is exact; only its `tanθ` reading is not.
+4. **A finite-ratio BVP is not available, and that is a property of the
+   problem.** Every `r < ∞` manufactured solution has a JUMP in `∇T`, so its
+   exact boundary data differs BETWEEN THE TWO MATERIALS on the two domain
+   faces the plane cuts, and the solver's per-face rows are constants. The
+   finite ratios are therefore measured face by face on the analytic field
+   (which needs no boundary condition at all and isolates the scheme), and
+   `r = ∞` — the one ratio with no jump — carries the global statement.
+   Adding per-point boundary data for a gate was rejected: it is solver
+   surface no production case would use.
+5. **A `45°` plane on a uniform grid is lattice-degenerate.** Every cut face
+   of a direction gets the same `(w, a)`, so `max = rms` and the numbers
+   track the offset `mod h`. Worse, with `y₀` ON the lattice a whole diagonal
+   of cell centres lands EXACTLY on the plane, `w` collapses to 0 or 1 and
+   the measured flux is off by the full contrast. The driver offsets `y₀`;
+   the 30° numbers are the ones to read.
+6. **Found by C2's geometry, but a C1 property: `pecletmax = 0.4` is
+   marginal at an oblique high-contrast interface.** `scalar_conjugate_
+   peclet_rate` grants `dt = pecletmax·3C/diag` at a cut cell while
+   Gershgorin plus this RK3's real-axis limit allow `1.25 C/diag` — the
+   default is at **96 % of the bound**. C1's gates never saw it because
+   their interface is grid-aligned. Measured: the baseline at κ_s = 10³ on
+   the oblique plane goes to NaN at 0.4 and is stable at 0.2. NOT changed
+   here (moving `dt` invalidates every C1 number and is a C3-sized
+   decision); recorded, with the recommendation to run such cases at
+   `pecletmax ≤ 0.2`.
+
+## C2 — the verdict, and what it rests on
+
+**SHIP DISABLED.** Three independent measurements agree:
+
+- **the crossover.** The correction's own error is flat in `r`, so it beats
+  the baseline only above `r* ≈ 0.027` (κ_s = 10) or `0.003 … 0.011`
+  (κ_s = 10³). §3's DNS-like ratio `10⁻²` sits AT or BELOW that.
+- **curvature.** On a cylinder with a RADIAL field — where `s_t ≡ 0` — the
+  correction injects 4–9 % where the baseline has 0.4–1.6 %, and destroys its
+  first-order convergence. On a cylinder in a UNIFORM GRADIENT — the curved
+  case that does carry a tangential gradient — the correction wins
+  position-resolved above a local ratio ≈ 0.1, but its `s_t` is 43–54 % wrong
+  and does NOT converge (the de-bias is derived for a plane), and at
+  κ_s = 10³ it is **40–65× worse than the baseline**: `|∇_tT| = G|sin t|·
+  2/(1 + κ_s)` vanishes in the isothermal limit, so the signal disappears
+  while the estimate's error does not, and the difference is amplified by
+  `(k_loc − k_face) ≈ κ_s`. **This is the strongest single argument in the
+  increment**, and it is one no choice of multiplier can address.
+- **the global test.** At `r = ∞`, where the corrected FACE flux is exact to
+  1e-11 and the baseline is 36 % off, the corrected FIELD is 2.6× worse.
+  That is not a contradiction, it is the lesson: the flux divergence of a
+  finite-difference cell balance wants a face-AVERAGED flux, and `k_face`
+  (smooth in `w`) approximates that better than the exact midpoint value
+  `k_loc`, which is a staircase in `w`. **Making the pointwise flux exact
+  makes the divergence worse.** §4 derives `F` as the flux AT THE FACE
+  MIDPOINT; that is the quantity the escalation makes exact, and it is not
+  the quantity the cell balance needs.
+
+  MEASURED DIRECTLY, so it is a mechanism and not a story
+  (`check_oblique.py residual`): the discrete flux divergence of the EXACT
+  field at cut cells, whose true value is zero, has rms **130** with the
+  baseline and **174** with the correction (`h = 1/64`, κ_s = 10; away from
+  the interface both are `7e-12`). The correction makes the pointwise face
+  flux exact and the local truncation error 34 % larger. And the same
+  measurement points at the fix — see §13.
+
+The last point is the one to carry into C4: a corner model anchored on the
+same pointwise-flux premise will inherit the same problem.
+
+## C2 — the way out, if the tangential term is ever wanted
+
+Measured, not proposed on paper (`check_oblique.py residual`, and the table
+in `validation/conjugate/README.md`). The three schemes differ in exactly ONE
+number — the coefficient multiplying `s_t`, since `F = a q_n + K s_t` with
+`a q_n` continuous:
+
+| | `K` | what it is |
+|---|---|---|
+| C1 baseline | `k_face` | distance-weighted harmonic mean along the arm |
+| C2 as shipped | `k_loc` | the material at the face MIDPOINT — a staircase in `w` |
+| **the fix** | `k_area = f k_f + (1−f) k_s` | the exact face AVERAGE, `f` = fluid AREA fraction |
+
+`k_area` is what the cell balance wants, in two lines: with exact face
+averages the discrete divergence IS `∮ k∇T·n dS = ∫ ∇·(k∇T) dV = 0`.
+
+**It needs no new data** — for a plane, `f` follows in closed form from `φ` at
+the face centre (the mean of the two cell values, exact for a plane) and the
+in-plane components of the face-centred `∇φ`, both of which `s_t` already
+forms. And **one thing must change besides the multiplier**: it applies at
+every face the interface CLIPS, not only where the two cell markers disagree
+(different sets; the difference is `3.9e+01` vs `1.3e-08` in the residual).
+
+Measured (rms cut-cell `|div|` on the exact field, `h = 1/64`, θ = 30°):
+
+| κ_s, r | `k_face` | `k_loc` | `k_area` |
+|---|---|---|---|
+| 10, ∞ | 1.30e+02 | 1.74e+02 | **1.33e-08** |
+| 10, 1 | 1.30e+02 | 1.72e+02 | **8.51e+00** |
+| 10, 0.01 | **1.30e+00** | 7.27e+00 | 8.51e+00 |
+| 10³, ∞ | 1.92e+04 | 1.93e+04 | **1.55e-06** |
+| 10³, 0.01 | **1.92e+02** | 1.08e+03 | 1.21e+03 |
+
+Three readings, and the third is the honest one:
+
+1. `k_area` **removes the paradox** — exact wherever `s_t` is exact, ~10¹⁰
+   down. "Making the flux exact makes the divergence worse" was the wrong
+   MULTIPLIER, not a flaw in the escalation idea.
+2. At finite `r` it hits a floor INDEPENDENT of `r` (8.5 / 1.2e3), which is
+   the discrete `s_t`'s own residual error.
+3. So the decision moves but does not flip: that floor still crosses the
+   baseline at `r ≈ 0.065`, **above the DNS-like 10⁻²**. `k_area` alone would
+   not earn the correction its default-on.
+
+### …and on a CURVED interface the fix stops working, for a reason worth
+### keeping
+
+Measured on the **cylinder in a uniform far-field gradient** — harmonic on
+both sides, no source (so the exact divergence is zero), and unlike the radial
+log solution it carries a tangential gradient whose local ratio sweeps
+`0 → ∞` around the body (`check_cylinder.py dipole`):
+
+1. **Position-resolved, the correction pays over most of a body.** The
+   crossover is at a LOCAL ratio ≈ 0.1 (κ_s = 10, h = 1/64): baseline wins
+   only in the 0–0.1 band (32 of 512 faces); above it the correction is
+   2.7–47× better. That is friendlier than the plane's global-ratio sweep.
+2. **But `s_t` itself is 43–54 % wrong there, and does not converge**
+   (h = 1/64, 1/128, 1/256 → 43 %, 54 %, 46 % of the signal's own rms). The
+   de-bias is derived for a PLANE; curvature breaks its model.
+3. **So `k_area` helps but no longer fixes**: cut-cell truncation rms
+   `1.66e+1` (baseline) / `2.29e+1` (`k_loc`) / **`1.01e+1`** (`k_area`) at
+   κ_s = 10, consistently ~1.6× better than the baseline across h.
+4. **At κ_s = 10³ both corrections are 40–65× WORSE than the baseline**, and
+   the reason is physics: `|∇_tT| = G|sin t|·2/(1 + κ_s) → 0` in the
+   isothermal limit, so the term the correction exists to add VANISHES while
+   the discrete estimate of it does not (measured: the exact `s_t` rms falls
+   90× from κ_s = 10 to 10³, matching `2/(1+κ)`; the estimate's error falls
+   not at all). That noise is then multiplied by `(k_loc − k_face) ≈ κ_s`.
+
+**Conclusion: the fix is right and cannot rescue the feature.** `k_area` is
+the correct multiplier — provably, and exactly so on a plane — but the binding
+constraint is the `s_t` estimate on curved interfaces, and at high contrast
+there is no signal left to estimate. Anyone reopening this should start from
+`s_t`, not from the multiplier: the de-bias in `conjugate_tangential` corrects
+the straddle of the ARM difference only, while the two TANGENTIAL differences
+straddle too, and on a curved interface the plane model behind all of it needs
+replacing (the same-side least squares of the note's construction 2, which
+needs a two-deep halo). C4's corner model inherits the identical premise, so
+this is the first thing to settle before attempting it.
+
+**What ships enabled is the indicator.** It costs one reduction at a chosen
+interval, it is the honest answer to "how much is this scheme's premise worth
+on MY geometry", and its verdict on the wavy C1 case is worth recording:
+`max|e_face| ~ 0.9`, `rms ~ 0.3`. That surface is resolved by 1.3–4.5 cells,
+so it is a warning about the CASE, not about the scheme.
 
 ## C1 — what landed
 
@@ -485,7 +750,14 @@ is no small-cell problem either. No exponential integrator at the interface.
 
 Start at (1); escalate only on measured evidence. The escalation term (★★) is
 an explicit spatial operator whose size grows with contrast, so measure its
-time-step cost at `κ_s = 10³` if it is ever switched on.
+time-step cost at `κ_s = 10³` if it is ever switched on. **Measured in C2**:
+the correction costs `dt` × 0.743 at `κ_s = 10³` — small, and not what decided
+against it. What C2 DID find here is that level (1) as shipped is marginal:
+`scalar_conjugate_peclet_rate` grants `dt = pecletmax·3C/diag` at a cut cell
+while Gershgorin plus this RK3's real-axis limit allow `1.25 C/diag`, so the
+default `pecletmax = 0.4` is at **96 % of the bound** and an oblique interface
+at `κ_s = 10³` goes to NaN there (0.2 is stable). C1's gates never saw it
+because their interface is grid-aligned. That is C3's to settle.
 
 ---
 
@@ -602,7 +874,11 @@ behind `tangential_correction`, the (★★) term.
 - Time-step penalty of (★★) measured at `κ_s = 10³`.
 
 **C3 — transients and production.** Fraction-weighted capacity; the `[f/β]`
-second-derivative jump term only if C2 demanded it.
+second-derivative jump term only if C2 demanded it — **it did not**: C2's
+verdict is that the tangential escalation ships disabled, so C3 carries no
+second-derivative work. C3 also inherits C2's time-step debt (the shipped
+`pecletmax = 0.4` sits at 96 % of the Gershgorin bound at a cut cell), which
+belongs here because the capacity change moves `dt` at the same cells.
 *Gates*:
 - **Transient two-material slab/sphere** with a capacity jump vs the analytic
   solution, second order in the time-resolved interface flux.
@@ -678,111 +954,126 @@ error path. That is the whole benefit of the baseline.
   penalization forces do.
 
 ---
-## 13. Next-session prompt (C2)
+## 13. Next-session prompt (C3)
 
-Written 2026-08-28 against branch `scalar` HEAD `d013c9f` (C1) on top of
-`252d36b` (the `t_final` fix). **Reference binaries: `~/s5c_ref_binaries`,
-commit `8f60944`** — read its `PROVENANCE.txt`; it supersedes
-`~/s5a_ref_binaries` and `~/s5b_ref_binaries` and says how each is stale. It
-remains valid against `d013c9f`: C1 is dormant without a conjugate scalar and
-the `t_final` fix is inert where `t_final = 0.0`, which both bit-exactness
-drivers force.
+Written 2026-08-28 against branch `scalar`, C2 landed on top of `735d360`.
+**Reference binaries: `~/s5c_ref_binaries`, commit `8f60944`** — read its
+`PROVENANCE.txt`. It remains valid against C2: the correction and the
+indicator are both dormant without a conjugate scalar, and C2 changed no
+arithmetic on any other path (32/32 bit-exactness case-runs, `max_abs 0`).
 
-> Implement increment **C2** of `docs/next_session_conjugate.md` — *measure
-> the trade the C1 baseline makes, then decide whether to ship the correction*
-> — on branch `scalar` (HEAD `d013c9f`).
+> Implement increment **C3** of `docs/next_session_conjugate.md` — *the
+> fraction-weighted capacity, the conjugate Nusselt diagnostic, and the
+> time-step debt C2 left* — on branch `scalar`.
 >
 > **Read first, in this order:** the STATUS header of
-> `docs/next_session_conjugate.md` (C1 is DONE; its seven deviations are the
-> ground truth, and deviations 3 and 4 rewrote §7's escalation item 1), then
-> §3 and §10's C2 entry, then `docs/conjugate/conjugate_ibm.tex` §6.4 and §7.3
-> for `e_face` and the two constructions of `s_t` (`make` in that directory),
-> then `validation/conjugate/README.md` for the gate machinery you inherit,
-> then the "Active work" section of CLAUDE.md.
+> `docs/next_session_conjugate.md` (C1 and C2 are DONE; C2's six deviations
+> and its verdict are the ground truth), then §6's capacity paragraph and
+> §10's C3 entry, then `validation/conjugate/README.md` — the whole C2
+> section, because three of its findings change what C3 has to do — then the
+> "Active work" section of CLAUDE.md.
 >
-> **C2 IS A MEASUREMENT, NOT A FEATURE.** C1 deliberately drops the tangential
-> term of the exact cut-face flux. §3 gives the error in closed form,
-> `(q_n^num − q_n)/q_n = h_d s_t/(T_R − T_L − h_d s_t) ≈ tanθ |∇_tT|/|∂_nT|`,
-> and argues it is a few percent at DNS-like ratios. C2's job is to turn that
-> argument into a number and let the number decide. Concretely:
-> - implement the INDICATOR `e_face = h_d s_t/(T_R − T_L)` at cut faces, and
->   report `max|e_face|` and its rms. This is a deliverable, not an optional
->   diagnostic;
-> - implement the correction `F += s_t (k_loc − k_face)` behind
->   `[scalar.N] tangential_correction`, **default off**;
-> - `s_t = e_d·∇T − a (∇φ·∇T)` with `a = (φ_L − φ_R)/h_d` and both gradients
->   from central differences (LaTeX note §7.3 construction 1 — the recommended
->   one; construction 2, same-side least squares, only if the ordinary
->   differences prove too contaminated). **`|∇φ| = 1` so `∇φ` IS the unit
->   normal** — the identity `sst%wnorm` already exploits. Everything you need
->   is `sc%phi` and central differences: still no new dataset.
+> **C3 IS THREE THINGS, AND THEY SHARE ONE COST.** The capacity change and
+> the time-step fix both move `dt` at cut cells, so they must land together:
+> the re-gate is paid once.
 >
-> **Gates (§10's C2 list), all must pass and be recorded** in
-> `validation/conjugate/README.md` beside C1's:
-> 1. **Oblique plane interface**, manufactured solution at 30°/45° with a
->    CONTROLLED ratio `|∇_tT|/|∂_nT|`, `κ_s ∈ {10, 10³}`: measure the
->    interface-flux error against that ratio and against `h`, check it against
->    the §3 prediction AND against `e_face`. Expected: at DNS-like ratios
->    (~10⁻²) the baseline is adequate; at O(1) ratios it stalls near first
->    order and the correction recovers second. **RECORD BOTH CURVES — this is
->    the number that decides whether the correction ever ships enabled.**
-> 2. **Cylindrical shell**, exact log solution: isolates the `O(κh/a)` error
->    in `w` (§8's curvature caveat) in the interface flux.
-> 3. Every C1 gate unchanged: the grid-aligned ones are `s_t = 0` BY
->    CONSTRUCTION, so `./run_gates_c1.sh` must still read its recorded numbers
->    to round-off with the correction ON as well as off.
-> 4. Time-step penalty of the correction measured at `κ_s = 10³` — it is an
->    explicit spatial operator whose size grows with contrast, and C1 already
->    showed the interface's explicit limit is subtler than §7 assumed.
-> 5. The full bit-exactness protocol, unchanged:
->    ```
->    cd validation/scalar
->    REF=~/s5c_ref_binaries/moby_solve_cpu_nofma MODE=cpu ./run_bitexact.sh
->    REF=~/s5c_ref_binaries/moby_solve_gpu_nofma MODE=gpu ./run_bitexact.sh
->    REF=~/s5c_ref_binaries/moby_solve_cpu_nofma MODE=cpu ./run_bitexact_s3.sh
->    REF=~/s5c_ref_binaries/moby_solve_gpu_nofma MODE=gpu ./run_bitexact_s3.sh
->    ./run_gates.sh ; ./run_gates_s2.sh ; ./run_gates_s3.sh
->    ./run_gates_s4.sh ; ./run_gates_s5.sh
->    ```
->    LANDMINE: `run_gates.sh`'s `det` group compares CPU vs GPU at TOLERANCE 0,
->    so hand it the nofma pair (`BIN=.../build_cpu_nofma/moby_solve
->    GBIN=.../build_gpu_nofma/moby_solve ./run_gates.sh`).
+> 1. **The fluid-fraction-weighted capacity** (§6). A cut cell contains both
+>    materials, so `C_cell = φ + (1 − φ)C_s` with `φ` the fluid VOLUME
+>    fraction. It is irrelevant at steady state — C1 gated exactly that
+>    (`8.85e-14 / 4.37e-14 / 4.88e-15` over `C_s ∈ {0.5, 1, 8}`) — and
+>    required for second-order TRANSIENTS, which is the whole of this item.
+>    **C2 leaves you the machinery**: `check_oblique.py face_area_fraction`
+>    is the 2D plane-in-rectangle form, validated against brute force to the
+>    quadrature error (9e-4 at 400² samples); the cell version is its 3D
+>    sibling (plane-in-cube, same family), and both need only `φ` at the
+>    centre and `∇φ` — data the solver already has. Do NOT reach for
+>    `clip(½ + φ_c/h)` without measuring it against the closed form first.
+> 2. **The Nusselt diagnostic** (§10). `Σ` over cut faces of (★), against the
+>    Gauss/CV border-flux cross-check, the way A2 validated `C_L`/`C_D`.
+>    **Reuse `scalar_stats.f90`'s cancellation-free form, do not reinvent
+>    it** — the S3 finding (`docs/next_session_scalar.md`) is that
+>    `∫coef_p(s_body − s)dV` is `1e28 × 0` in a penalized cell and loses
+>    ~37 % of the heat, and the 2026-08-05 fix on top of it is that the
+>    split must EXCLUDE solid cells explicitly rather than rely on a
+>    floating-point cancellation. C1 left the conjugate flux columns
+>    SMOKE-gated only (deviation 6); this is where they get their numbers.
+> 3. **The time-step debt.** C2 measured that the shipped `pecletmax = 0.4`
+>    sits at **96 % of the Gershgorin bound** at a cut cell
+>    (`dt = pecletmax·3C/diag` against an allowed `1.25 C/diag`), and that an
+>    OBLIQUE interface at `κ_s = 10³` therefore goes to NaN at 0.4 while 0.2
+>    is stable. C1's gates never saw it because their interface is
+>    grid-aligned. Decide it now, with the capacity change already in hand:
+>    either tighten the cut-cell `share` (3 → 2 gives a 1.56× margin; → 1.5
+>    reproduces the measured-stable 0.2) or leave it and make the guard a
+>    documented config error. **Whatever you choose, C1's recorded numbers
+>    move**, which is why it belongs here and not in a later increment.
 >
-> **Optional but cheap, and §10 recommends it during C2:** a standalone 2D
-> EJIIM solve (augmented system + GMRES) for the manufactured cases, in
-> `validation/conjugate/reference/`. It separates "the scheme is wrong" from
-> "the implementation is wrong" — the role `mobygeom` played for the geometry.
+> *Gates* (§10's C3 list, plus the two C3 inherits):
+> 1. **Transient two-material slab** with a capacity jump against the
+>    analytic solution, second order in the TIME-RESOLVED interface flux.
+>    `validation/conjugate/slab.ini` already sweeps the cut position; the
+>    transient reference is the standard two-material series solution.
+> 2. **Conducting channel wall**: reuse
+>    `validation/channel_interface/les_ibm/` — its off-grid plane walls sit
+>    mid-cell (`y = 0.259375`), so the cut fractions are non-trivial while
+>    the interface stays grid-aligned, i.e. a case where the baseline is
+>    EXACT. It also exercises the LES/IBM/2:1 stack.
+> 3. **Nusselt** against the Gauss/CV border flux. LANDMINE inherited from
+>    A2: `niter = 6` IBM runs accumulate a velocity-neutral oscillating mode
+>    in stored `pn`, so a border-flux cross-check needs a clean-`p` snapshot
+>    (zero `pn` in a copy of the converged restart, rerun ~300 steps at
+>    `niter = 60`; restarting the POLLUTED `p` at `niter = 60` transients
+>    violently).
+> 4. **Every C1 and C2 gate re-run**, since `dt` moves:
+>    `./run_gates_c1.sh` and `./run_gates_c2.sh` must both come back — the
+>    steady-state equalities to their recorded numbers, and the C2
+>    measurements (which are evaluated on ANALYTIC fields and so must be
+>    bit-stable) unchanged. If you tighten the rate, the `converge` group's
+>    200 000 steps buy less physical time — check it still converges rather
+>    than assuming it.
+> 5. **The full bit-exactness protocol, unchanged**, against
+>    `~/s5c_ref_binaries` (4 drivers) plus the five S-suite groups. C2's run:
+>    32/32 case-runs `max_abs 0`, 91 S-suite checks, `rc = 0` throughout.
+>    LANDMINE: `run_gates.sh`'s `det` group compares CPU vs GPU at TOLERANCE
+>    0, so hand it the nofma pair.
 >
-> **Scope boundaries — do NOT:** implement the fluid-fraction-weighted
-> capacity or the conjugate Nusselt diagnostic (both C3), or the COCO wedge
-> model (C4, its own session). Do not re-express `dirichlet`/`adiabatic`
-> through the cut-face path — §5, and C1's bit-exactness rests on it.
+> **Scope boundaries — do NOT:** touch the tangential correction. C2 measured
+> it and the verdict is SHIP DISABLED; the analysis of what a working version
+> would need is in the README's "the way out" and in the LaTeX note, and it
+> starts with `s_t`, not with the correction. Do not attempt C4's wedge model
+> — it rests on the same premise C2 falsified and is gated by the same
+> measurement.
 >
-> **What C1 learned that will bite you** (STATUS header, deviations 3 and 4):
-> - the explicit diffusive limit at a conjugate interface is NOT a per-material
->   `α = κ/C`, and a cut cell attains a Gershgorin factor the uniform interior
->   never excites. `scalar_conjugate_peclet_rate` encodes both. The correction
->   adds an explicit term at the SAME faces, so re-derive rather than assume;
-> - the cut test is the MARKER disagreement, and a solid `φ` is kept strictly
->   negative so `φ < 0` is exact. Do not reintroduce `φ_L·φ_R < 0`;
-> - a cut face may never sit on a 2:1 block face; `check_conjugate_refinement`
->   enforces it. Your oblique-plane cases must satisfy it or say why;
-> - `validation/conjugate/make_slab_stl.py` keeps its STL box TIGHT on purpose:
->   the BVH distance loses ~64× more in the `d²` cancellation at ±4 than at
->   ±0.5, and that floor propagates into every tolerance downstream;
-> - REBUILD ALL FOUR BINARIES (`build_{cpu,gpu}`, `build_{cpu,gpu}_nofma`)
->   after any change that touches `dt`. The `det` group compares three
->   binaries against each other and passes happily when all three are equally
->   stale.
+> **What C1 and C2 learned that will bite you:**
+> - **the explicit limit at a conjugate interface is not a per-material
+>   `α = κ/C`**, and a cut cell attains a Gershgorin factor the uniform
+>   interior never excites. `scalar_conjugate_peclet_rate` encodes both, and
+>   C2 showed the remaining margin is 4 %. The capacity change alters `C_i`
+>   at exactly those cells, so re-derive the rate rather than assume it
+>   survives;
+> - **never rely on a floating-point cancellation as a classification** — the
+>   2026-08-05 body-heat double count is the precedent, and the Nusselt
+>   diagnostic is the same shape of computation;
+> - **a claim of the form "no case exercises this path" must be checked
+>   against the GENERATED inis**, not only the committed ones (C1's own
+>   `t_final` regression);
+> - **`check_oblique.py` and `check_cylinder.py` evaluate schemes on ANALYTIC
+>   fields** with `φ` from the case file. That makes them cheap and
+>   solver-independent — use the same style for the transient reference
+>   rather than building another solver-in-the-loop gate;
+> - REBUILD ALL FOUR BINARIES after any change that touches `dt`. The `det`
+>   group compares three binaries against each other and passes happily when
+>   all three are equally stale.
 >
 > **Conventions:** build both paths (`./compile.sh cpu && ./compile.sh gpu`,
 > module `toolkits/nvhpc/25.9`) plus the nofma pair via
-> `validation/scalar/compile_nofma.sh`; always launch through `mpirun`, even on
-> one rank; new cases and drivers go in `validation/conjugate/` beside C1's;
-> never declare the increment done with a failing build or an ungated result.
+> `validation/scalar/compile_nofma.sh`; always launch through `mpirun`, even
+> on one rank; new cases and drivers go in `validation/conjugate/` beside C1's
+> and C2's; never declare the increment done with a failing build or an
+> ungated result.
 >
-> Stop after C2's gates and report. Update this document's STATUS header with
+> Stop after C3's gates and report. Update this document's STATUS header with
 > what landed, each gate's measured number, and any deviation from the plan —
-> C1's entry is the model. **And state the C2 verdict explicitly: does the
-> tangential correction ship enabled, ship disabled, or not ship?** That
-> sentence is the point of the increment.
+> C1's and C2's entries are the model. **And state explicitly what the
+> time-step decision was and what it cost**, because every conjugate number
+> recorded before it is measured against a different `dt`.

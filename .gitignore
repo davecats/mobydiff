@@ -131,3 +131,6 @@ docs/conjugate/*.pdf
 # templates, the checkers and the driver.
 validation/conjugate/.*.ini
 validation/conjugate/*.stl
+# ...and the C2 measurement tables (run_gates_c2.sh): every number they hold
+# is recorded in validation/conjugate/README.md, which is the durable record.
+validation/conjugate/c2_*.dat
