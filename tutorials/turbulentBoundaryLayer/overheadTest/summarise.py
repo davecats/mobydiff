@@ -48,6 +48,9 @@ PAIRS = {
     "nb8_jacobi": "base_jacobi",
     "rect_jacobi": "base_jacobi",
     "refined_yp100_jacobi": "nb16_jacobi",
+    # Each refined case pairs with the SINGLE-LEVEL run of its own block shape,
+    # so the ratio isolates the refinement and not the block tax.
+    "refined_yp82_rect_jacobi": "rect_jacobi",
 }
 CELLS = {
     "base_redblack": 4096 * 176 * 192,
@@ -58,6 +61,10 @@ CELLS = {
     "rect_jacobi": 4096 * 176 * 192,
     # 2048*176*96 level-0 cells with 3 of 11 y-tiles refined 2x in x and z.
     "refined_yp100_jacobi": 2048 * 176 * 96 * 8 // 11 + 2048 * 176 * 96 * 3 // 11 * 4,
+    # nb_y = 44 makes 4 y-tiles, of which 1 is refined -- a LOWER interface
+    # (y+ 82 vs 99) and so fewer cells. The two refined cases are comparable
+    # per cell, not per step.
+    "refined_yp82_rect_jacobi": 2048 * 176 * 96 * 3 // 4 + 2048 * 176 * 96 // 4 * 4,
 }
 
 
@@ -135,9 +142,9 @@ def main():
         # profiling setting) -- never across an A/B boundary
         return b + name[len(stem(name)):]
 
-    print(f"{'run':<24} {'chron s/step':>13} {'marginal':>10} {'ratio':>7} "
+    print(f"{'run':<32} {'chron s/step':>13} {'marginal':>10} {'ratio':>7} "
           f"{'cells':>8} {'leaves':>8}  {'L2_div':>12} {'Linf_vel':>12}")
-    print("-" * 104)
+    print("-" * 112)
     for name, r in runs.items():
         base = runs.get(base_of(name) or "")
         ratio = ""
@@ -151,7 +158,7 @@ def main():
         marg = f"{r['marginal']:.4f}" if r["marginal"] else "-"
         l2 = f"{r['l2_div']:.6e}" if r["l2_div"] is not None else "-"
         li = f"{r['linf']:.6e}" if r["linf"] is not None else "-"
-        print(f"{name:<24} {chron:>13} {marg:>10} {ratio:>7} {cellrat:>8} "
+        print(f"{name:<32} {chron:>13} {marg:>10} {ratio:>7} {cellrat:>8} "
               f"{leaves:>8}  {l2:>12} {li:>12}")
 
     print()

@@ -4,7 +4,7 @@
 # snapshot is deleted afterwards (it is written outside the timed region, but it
 # is 2-4 GB per run).
 #
-#   ./run_overhead.sh                      # all five configs
+#   ./run_overhead.sh                      # the whole matrix
 #   ./run_overhead.sh singleLevel/base_jacobi.ini ...
 #
 # Environment:
@@ -46,7 +46,9 @@ else
         singleLevel/base_jacobi.ini
         singleLevel/nb8_jacobi.ini
         singleLevel/nb16_jacobi.ini
+        singleLevel/rect_jacobi.ini
         multiLevel_xz/refined_yp100_jacobi.ini
+        multiLevel_xz/refined_yp82_rect_jacobi.ini
     )
 fi
 

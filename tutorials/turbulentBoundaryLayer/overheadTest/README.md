@@ -24,6 +24,9 @@ singleLevel/rect_jacobi.ini        same grid, nb = 64 44 48 (1024 blocks)
 multiLevel_xz/refined_yp100_jacobi.ini
                                    half-resolution freestream + wall band
                                    refined 2:1 in x,z (15360 leaves, 62.9 M cells)
+multiLevel_xz/refined_yp82_rect_jacobi.ini
+                                   the same at nb = 64 44 48 (448 leaves,
+                                   60.6 M cells, interface at y+ 82 not 99)
 run_overhead.sh                    runs them into runs/<name>/ (gitignored)
 summarise.py                       the two rates, the ratios and the gates
 phase_table.py                     the per-phase table from the profiled runs
@@ -37,7 +40,7 @@ does not. Equal overheads under the two ⇒ the tax is not redundant arithmetic.
 
 ```bash
 module load toolkits/nvhpc/25.9
-./run_overhead.sh                    # all six, ~10-15 min each on an A6000
+./run_overhead.sh                    # the whole matrix, ~10-15 min each on an A6000
 ./summarise.py                       # re-print the table without re-running
 ```
 
@@ -109,6 +112,15 @@ predicted, so the law holds across a 2× range of block size. The lattice costs
 metadata falls faster than the halo-cell count. Treat it as an upper bound.
 Results in `results_phase1_2026-08-27.md`.
 
+**The refined case at the production block shape (2026-08-28)**: moving
+`refined_yp100_jacobi` (nb 16) to `nb = 64 44 48` is worth **19.5 % of the step,
+16.3 % per cell**, and drops the refined case's overhead over an ideal unblocked
+single-level rate from 1.280 to **1.071**. The projection exchange falls from
+11.3 % of the step to 4.8 %, leaving a cost structure indistinguishable from the
+single-level one — there is no 2:1-specific cost centre left at one rank.
+Results in `results_refined_rect_2026-08-28.md`, which also records that the
+previous refined profile was stale by 20.9 % and what that had overstated.
+
 **But the mechanism is exchange traffic, not footprint** (Phase 0,
 `docs/next_session_block_overhead.md` STATUS): 86 % of the tax is
 `exch/local_copy`, the volume kernels are untouched (`momentum` 1.012), and the
@@ -147,9 +159,13 @@ uniform-flow preservation instead.
 
 (y⁺ at the developed c_f = 0.00464, i.e. u_τ = 0.0482, ν = 1/450.)
 
-The shipped configuration is the **3-tile / y⁺ 99** row. This is the trade-off
+`refined_yp100_jacobi.ini` is the **3-tile / y⁺ 99** row. This is the trade-off
 per-direction `nb` has to weigh: a larger `nb_y` is cheaper but leaves fewer
-legal interface heights.
+legal interface heights. With `nb = 64 44 48` there are only 4 y-tiles and the
+choices become y node 44/88/132 = y⁺ **82**/318/613, so the nearest usable
+interface sits slightly lower than y⁺ 99 — which is
+`refined_yp82_rect_jacobi.ini`, and why the two refined configs carry different
+cell counts (60.6 M vs 62.9 M) and must be compared **per cell**.
 
 ## Provenance
 

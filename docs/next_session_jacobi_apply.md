@@ -48,6 +48,22 @@ because traffic was never its limiter.
 
 Reduced `ncu` case and launchers: `~/.moby_prof/`.
 
+**And it applies to the refined case too, which is new.** The 2:1 config was
+still running at cubic `nb = 16`; moving it to the production block shape
+(`multiLevel_xz/refined_yp82_rect_jacobi.ini`, 2026-08-28) is worth 19.5 % of
+the step / 16.3 % per cell and drops its overhead over an ideal unblocked
+single-level rate from 1.280 to 1.071. What is left has the SAME cost structure
+as the single-level case — `apply` 32.4 %, `sweep` 22.0 %, `momentum` 27.9 %,
+projection exchange 4.8 % — so there is no 2:1-specific target to chase at one
+rank, and the list above serves both configs. Details, and a correction to
+conclusions drawn from the previously-recorded (stale) refined profile:
+`overheadTest/results_refined_rect_2026-08-28.md`.
+
+Unmeasured, and the one place the exchange story may still be alive:
+**multi-rank**. `sync_divergence_halos` is single-rank only, so with MPI peers
+the projection falls back to the full velocity exchange 15 times per step. That
+needs a 4-rank profiled run of the refined config before it can be ranked.
+
 ---
 
 Handout. **Measure first.** The previous four phases of this track all turned on
