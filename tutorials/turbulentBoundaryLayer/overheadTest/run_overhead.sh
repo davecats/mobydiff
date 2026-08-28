@@ -41,6 +41,9 @@ if [ ! -x "$BIN" ]; then
     echo "solver binary not found or not executable: $BIN" >&2
     exit 1
 fi
+# Absolute, because each run is launched from inside its own run directory --
+# a relative BIN (BIN=./gpu_rank.sh) would not resolve there.
+BIN="$(cd "$(dirname "$BIN")" && pwd)/$(basename "$BIN")"
 
 if [ "$#" -gt 0 ]; then
     configs=("$@")

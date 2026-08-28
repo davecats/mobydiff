@@ -227,6 +227,42 @@ contains
     ! the per-component rule of the old rank exchange, including the
     ! tangential extension into physical-boundary halos that fills
     ! wall-adjacent corners from apply_bc-set values.
+    ! One line describing what the halo exchange actually puts on the wire.
+    ! Points, not bytes: a round carries nSendPts*nv doubles per peer, and nv
+    ! varies by call site (4 for the full velocity+pressure shell, 3 for the
+    ! copy-only velocity refresh, 1 for a scalar like phi).
+    subroutine report_exchange_sizes(c)
+        type(comm_type), intent(inout) :: c
+
+        integer :: sendPts, copyPts, localPts, peers, ierr
+        integer :: sendMin, sendMax, sendSum, copySum, localSum, peerMax
+
+        sendPts = c%peerSendOff(c%nPeers)
+        copyPts = c%peerSendCopyOff(c%nPeers)
+        localPts = c%nLocalPts
+        peers = c%nPeers
+        call MPI_Allreduce(sendPts, sendMin, 1, MPI_INTEGER, MPI_MIN, c%cart_comm, ierr)
+        call MPI_Allreduce(sendPts, sendMax, 1, MPI_INTEGER, MPI_MAX, c%cart_comm, ierr)
+        call MPI_Allreduce(sendPts, sendSum, 1, MPI_INTEGER, MPI_SUM, c%cart_comm, ierr)
+        call MPI_Allreduce(copyPts, copySum, 1, MPI_INTEGER, MPI_SUM, c%cart_comm, ierr)
+        call MPI_Allreduce(localPts, localSum, 1, MPI_INTEGER, MPI_SUM, c%cart_comm, ierr)
+        call MPI_Allreduce(peers, peerMax, 1, MPI_INTEGER, MPI_MAX, c%cart_comm, ierr)
+        if (c%has_terminal) then
+            print '(a,i0,a,i0,a,i0,a,i0,a,i0)', &
+                " exchange sizes: peers/rank(max) ", peerMax, &
+                "  send pts/rank min ", sendMin, " max ", sendMax, &
+                "  total send pts ", sendSum, "  local copy pts ", localSum
+            ! The copy-only prefix is what the 15 mid-iteration velocity
+            ! refreshes per step actually send; the full count is what the 3
+            ! end-of-substage shells send.
+            print '(a,f10.3,a,f10.3,a,f10.3,a)', &
+                " exchange MB per round (all ranks): scalar nv=1 ", &
+                real(sendSum, C_DOUBLE)*8.0d0/1.0d6, "   copy-only nv=3 ", &
+                real(copySum, C_DOUBLE)*24.0d0/1.0d6, "   full nv=4 ", &
+                real(sendSum, C_DOUBLE)*32.0d0/1.0d6
+        end if
+    end subroutine report_exchange_sizes
+
     subroutine init_block_exchange(c, blk, dns)
         type(comm_type), intent(inout) :: c
         type(block_set_type), intent(in) :: blk
@@ -468,6 +504,15 @@ contains
         allocate(c%sendbuf(c%maxBufferCount, max(1, c%nPeers)))
         allocate(c%recvbuf(c%maxBufferCount, max(1, c%nPeers)))
         allocate(c%request(2*max(1, c%nPeers)))
+
+        ! Message sizes, once at init when [output] profile is on. exch_timing's
+        ! mpi_wait bucket is only interpretable against the bytes actually on
+        ! the wire: one round sends nSendPts*nv doubles per peer, so this line
+        ! plus the round count is what separates "bandwidth-bound" from
+        ! "latency- or imbalance-bound". Reduced over ranks so one line
+        ! describes the whole run; local_copy points are the on-device
+        ! (same-rank) traffic that never becomes a message.
+        if (dns%profile_steps) call report_exchange_sizes(c)
         c%request = MPI_REQUEST_NULL
 
         ! Pure +axis same-level copy entries: exactly the neighbours whose
