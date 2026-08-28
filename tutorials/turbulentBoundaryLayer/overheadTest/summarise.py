@@ -51,6 +51,9 @@ PAIRS = {
     # Each refined case pairs with the SINGLE-LEVEL run of its own block shape,
     # so the ratio isolates the refinement and not the block tax.
     "refined_yp82_rect_jacobi": "rect_jacobi",
+    # The two refined smoothers pair with each other: identical grid, block
+    # shape and interface placement, so the ratio is the smoother alone.
+    "refined_yp82_rect_redblack": "refined_yp82_rect_jacobi",
 }
 CELLS = {
     "base_redblack": 4096 * 176 * 192,
@@ -65,6 +68,7 @@ CELLS = {
     # (y+ 82 vs 99) and so fewer cells. The two refined cases are comparable
     # per cell, not per step.
     "refined_yp82_rect_jacobi": 2048 * 176 * 96 * 3 // 4 + 2048 * 176 * 96 // 4 * 4,
+    "refined_yp82_rect_redblack": 2048 * 176 * 96 * 3 // 4 + 2048 * 176 * 96 // 4 * 4,
 }
 
 
@@ -182,8 +186,17 @@ def main():
         return (stem(a) in CELLS and stem(b) in CELLS
                 and CELLS[stem(a)] == CELLS[stem(b)])
 
+    # ...and the same SMOOTHER. The refined jacobi/redblack pair shares a grid
+    # and a cell count but solves the projection to a different residual, so
+    # identical runtime lines are not expected and demanding them would report a
+    # permanent false failure.
+    def same_solver(a, b):
+        sol = lambda n: "redblack" if "redblack" in stem(n) else "jacobi"
+        return sol(a) == sol(b)
+
     for nbname in [n for n in runs
-                   if base_of(n) in runs and same_grid(n, base_of(n))]:
+                   if base_of(n) in runs and same_grid(n, base_of(n))
+                   and same_solver(n, base_of(n))]:
         basename = base_of(nbname) or ""
         a, b = runs.get(nbname), runs.get(basename)
         if a and b and a["l2_div"] is not None and b["l2_div"] is not None:

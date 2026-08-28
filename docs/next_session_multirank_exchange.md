@@ -239,12 +239,27 @@ single-level path.
 Still unknown: the `omega` stability limit with an interface present; §5 of the
 red-black handout has the escalation ladder.
 
-## Recommended order — REVISED 2026-08-28, Plan C is first
+## Recommended order — REVISED TWICE on 2026-08-28; read both revisions
 
-Plan C was sized (`overheadTest/results_smoother_2026-08-28.md`) and it dwarfs
-the rest: against the honest Jacobi setting (`niter = 12`, 1.8924 s/step)
-red-black is **−26 % at `niter = 6` and −51 % at 3**, with a better residual at
-every pairing. Nothing in Plan A or B is within a factor of three of that.
+**First revision** sized Plan C single-level
+(`overheadTest/results_smoother_2026-08-28.md`): −26 % at `niter = 6`, −51 % at
+3 against the honest Jacobi setting, dwarfing everything else.
+
+**Second revision, after R1 was implemented and measured on a REFINED grid**
+(`overheadTest/results_smoother_refined_2026-08-28.md`): **the win mostly does
+not survive refinement — 6.2 % at equal residual** (21 % under the zero-mode
+criterion, which leaves red-black at 1.23× Jacobi's residual). A control at the
+same base resolution with refinement removed shows it is the interface, not the
+grid: red-black's per-iteration residual advantage falls 1.91× → 1.49× and its
+cost premium rises 1.095× → 1.264×, exactly the additive cross-level coupling
+§5 of the red-black handout predicted. The `omega` sweep is done: 1.7 beats the
+1.5 that was assumed, but diverges at `niter = 3`.
+
+So on refined grids — what the 2:1 machinery exists for — Plan C no longer
+dominates Plan A or B, and the ordering below is a genuine three-way choice
+again. The item that would restore it is §5's ladder, in particular
+**level-ordered smoothing** (coarse, patch, fine — making cross-level coupling
+multiplicative for one extra phi exchange per colour).
 
 1. **C-R1** — red-black + 2:1, `docs/next_session_redblack_interface.md` §4.
    The design exists, convergence and cost are both measured, the operator is

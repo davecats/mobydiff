@@ -30,15 +30,46 @@ operators and is kept, but it is not evidence about the patch. The gate with
 power is the refined **channel**: patch disabled, it reaches ‖u‖ ~ 4e4 and
 ‖p‖ ~ 2e11 within 20 steps against a stable run with it enabled.
 
+### Performance on the refined grid — MEASURED, and the win mostly does not survive
+
+`overheadTest/results_smoother_refined_2026-08-28.md`, the §6 performance gate
+and the `omega` sweep, on the refined production case (448 leaves, 60.56 M
+cells, 1 GPU rank, one session):
+
+- **`omega` matters and `sor = 1.5` was the wrong setting**: at `niter = 6` the
+  sweep gives `L2_div` 2.51e-05 (1.0) / 2.76e-05 (1.2) / 2.49e-05 (1.5) /
+  **1.97e-05 (1.7)**, at flat cost. But **1.7 is at the stability edge** — at
+  `niter = 3` it DIVERGED (3.7e+50) where 1.5 was fine. The usable point depends
+  on `niter` as well as `sor`.
+- **Equal residual: red-black is 6.2 % faster**, against 26–51 % single-level.
+  Red-black `niter = 6, sor = 1.7` reaches 1.9747e-05 at 0.7000 s/step; Jacobi
+  needs `niter = 9.46` (interpolated *inside* the measured 6–12 span) for the
+  same residual, at 0.7465.
+- Under the pressure-zero-mode criterion instead (Jacobi ≥ 12, red-black ≤ 6)
+  it is 0.8881 → 0.7000, **21 %** — but red-black then leaves 1.23× Jacobi-12's
+  divergence residual, so the two criteria do not agree and the right number
+  depends on what production needs.
+- **The cause is §5's predicted additive cross-level coupling, and a control
+  proves it is the interface and not the smaller grid.** Same base resolution
+  with refinement removed: red-black's per-iteration residual advantage is
+  1.91× unrefined but only 1.49× refined, while its cost premium rises 1.095×
+  → 1.264×. Refinement hurts it on both axes.
+- `interface_correct` itself is cheap (0.008 s/step). The cost is in the sweep
+  and in `vel_exchange`, 2.7× Jacobi's because red-black exchanges per COLOUR.
+
+So §5's escalation ladder is now motivated by a measurement rather than a
+worry: clamping `omega` at interface-adjacent cells, or **level-ordered
+smoothing** (relax coarse, patch, then fine — making the cross-level coupling
+multiplicative, at one extra phi exchange per colour) attacks exactly the
+1.91× → 1.49× loss.
+
 **§6 items still NOT run — R1 cannot be declared done:** global mass residual
 with a patch; Beltrami y-slab and the laminar channel-patch convergence order
 (note `validation/beltrami/run_beltrami.sh` is stale — it drives the removed
 `MOBY_BELTRAMI` hook); developed Re_τ 180 no-interface-band vs the Jacobi
-solution; `refine_body` over ~2000 steps; **the `omega` sweep with an interface
-present** (§5's escalation ladder trigger — these gates run at `sor = 1.5` and
-are stable, which is evidence, not the sweep); and iterations-to-residual /
-s/step against Jacobi **on a refined grid** (the 26–51 % sizing is single-level
-and excludes the per-colour cross-level phi exchange R1 adds).
+solution; `refine_body` over ~2000 steps; and the refined **multi-rank** figure
+(red-black doubles the exchange rounds, and at 2 GPU ranks the exchange is
+already 17 % of the step, so it is likely worse than the single-rank 6 %).
 
 ## PRECONDITION MET 2026-08-28 (user measurement)
 

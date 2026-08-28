@@ -45,11 +45,14 @@ PAIRS = {
     # Each refined case pairs with the SINGLE-LEVEL run of its own block shape,
     # so the ratio isolates the refinement and not the block tax.
     "refined_yp82_rect_jacobi": "rect_jacobi",
+    # The two refined smoothers pair with each other: identical grid, block
+    # shape and interface placement, so the ratio is the smoother alone.
+    "refined_yp82_rect_redblack": "refined_yp82_rect_jacobi",
 }
 KNOWN = set(PAIRS) | set(PAIRS.values())
 ORDER = ["base_redblack", "nb16_redblack", "base_jacobi",
          "nb8_jacobi", "nb16_jacobi", "rect_jacobi", "refined_yp100_jacobi",
-         "refined_yp82_rect_jacobi"]
+         "refined_yp82_rect_jacobi", "refined_yp82_rect_redblack"]
 
 
 def stem(name):
@@ -121,12 +124,12 @@ def main():
     def short_label(n):
         s = n.replace("_prof", "").replace("_yp100", "").replace("_yp82", "")
         if s.startswith("refined"):
-            s = s.replace("_jacobi", "")
-        return s[-16:]
+            s = s.replace("_rect", "")
+        return s[-20:]
 
     short = [short_label(n) for n in names]
     sep = " | " if md else "  "
-    head = f"{'phase':<22}" + sep + sep.join(f"{s:>16}" for s in short)
+    head = f"{'phase':<22}" + sep + sep.join(f"{s:>20}" for s in short)
     ratios = [n for n in names if base_of(n) in runs]
     head += sep + sep.join(f"{short_label(n) + '/base':>22}" for n in ratios)
     print(("| " + head + " |") if md else head)
@@ -139,7 +142,7 @@ def main():
         cells = []
         for n in names:
             v = runs[n]["chron"] if lab == "TOTAL/chron" else runs[n]["phases"].get(lab)
-            cells.append(f"{v:16.5f}" if v is not None else " " * 16)
+            cells.append(f"{v:20.5f}" if v is not None else " " * 20)
         rcells = []
         for n in ratios:
             b = runs[base_of(n)]

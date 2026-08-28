@@ -20,6 +20,9 @@
 #                        case is 2+ hours at 20 s/step. Phase SHARES converge in
 #                        a few tens of steps; absolute rates from a shortened run
 #                        are only comparable to another run of the same length.
+#   SOR=<x>              override [pressure] sor. Red-black takes over-relaxation
+#                        (1.5); it is NOT proven at an interface, where the
+#                        cross-level coupling is additive within a colour.
 #   NITER=<n>            override [pressure] niter. For smoother comparisons the
 #                        two solvers need DIFFERENT niter to reach the same
 #                        quality (measured: Jacobi needs >=12 to keep the
@@ -63,6 +66,7 @@ else
         singleLevel/rect_jacobi.ini
         multiLevel_xz/refined_yp100_jacobi.ini
         multiLevel_xz/refined_yp82_rect_jacobi.ini
+        multiLevel_xz/refined_yp82_rect_redblack.ini
     )
 fi
 
@@ -79,10 +83,13 @@ for cfg in "${configs[@]}"; do
     mkdir -p "$run"
     # Any config edit lands in the run directory, so the exact config a run used
     # sits next to its log.
-    if [ "${PROFILE:-0}" = 1 ] || [ -n "${NSTEPS:-}" ] || [ -n "${NITER:-}" ]; then
+    if [ "${PROFILE:-0}" = 1 ] || [ -n "${NSTEPS:-}" ] || [ -n "${NITER:-}" ] || [ -n "${SOR:-}" ]; then
         cp "$abs" "$run/config.ini"
         if [ -n "${NITER:-}" ]; then
             sed -i -e "s/^niter *=.*/niter = $NITER/" "$run/config.ini"
+        fi
+        if [ -n "${SOR:-}" ]; then
+            sed -i -e "s/^sor *=.*/sor = $SOR/" "$run/config.ini"
         fi
         if [ -n "${NSTEPS:-}" ]; then
             # Keep ~4 runtime.txt lines so summarise.py can still difference a
