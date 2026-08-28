@@ -230,11 +230,7 @@ program moby_solve
 
             ! Predictor: advance tentative staggered velocities, then enforce solid/body constraints.
             prof_start = prof_tic()
-            ! With no body ibm%coef is identically zero, so this pass would
-            ! rewrite mu = 1/(1+dt*0) = 1 over the whole halo-carrying array --
-            ! exactly the value init_ibm already put there. Skip it: nothing
-            ! else writes mu, so it stays 1 for the whole run.
-            if (dns%ibm_enabled) call update_ibm_mu(ibm, dt_gamma)
+            call update_ibm_mu(ibm, dt_gamma)
             call prof_toc(step_prof, PROF_IBM_MU, prof_start)
             ! Body force: refresh the (custom) force for this substage; profile
             ! and file sources are filled once at init and this is a no-op.

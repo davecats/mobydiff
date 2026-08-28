@@ -1,44 +1,52 @@
 # Next session — `jacobi_apply`, the largest single phase in the step
 
-## STATUS 2026-08-27 — increment 1 done: the mu planes are not read
+## STATUS 2026-08-27/28 — profiled; the mu increment was reverted
+
+**The characterisation stands and should drive the next increment.**
 
 `jacobi_apply` is **DRAM-bound**, not occupancy-bound: `ncu` puts its two
 launches at **91.1 % and 84.0 % of peak** DRAM throughput (664 / 612 GB/s), and
-k2 gets there at 38.7 % occupancy. Hypothesis 2 of this handout is dead for this
-kernel; the only lever is bytes. Measured bytes per cell match the hand model to
-3 % (`apply` 24.6 + 82.9, `compute_phi` 58.8), which makes the byte budget
-actionable: `q` u/v/w 48, **`ibm%mu` 24**, `q` p 16, `phi` 16.
+k2 gets there at 38.7 % occupancy. Hypothesis 2 below is dead for this kernel;
+the only lever is bytes. Measured bytes per cell match a hand model to 3 %,
+which makes the byte budget actionable: `q` u/v/w 48, `ibm%mu` 24, `q` p 16,
+`phi` 16 (read once per launch).
 
-`ibm%mu` is identically 1 whenever there is no immersed body (`ibm_enabled =
-.false.` ⇒ both `set_ibm_coeff` branches zero `coef` and `cycle`,
-`read_ibm_coeff_file` is guarded by the same flag ⇒ `mu = 1/(1+dt·0) = 1`), so a
-warp-uniform `useIbm` scalar skips the loads and `update_ibm_mu` altogether.
-Multiplying by exactly 1.0 is the IEEE identity: bit-exact by construction.
+`jacobi_compute_phi` is the opposite: 45.7 % DRAM against **82 % SM throughput**,
+128 registers, 31.5 % occupancy — compute/latency-bound. Do not carry a
+conclusion from one of these kernels to the other.
 
-**Production step 1.21922 -> 1.09031 s/step (10.6 %)**, control layout 1.17811
--> 1.02871 (12.7 %); `apply` −18.1 %, `sweep` −5.3 %, `ibm_mu` −100 %, nothing
-regressed. Same-day A/B, both drift-clean, identical runtime diagnostics.
-Numbers, the `ncu` tables and the before/after byte counts:
-`overheadTest/results_nomu_2026-08-27.md`.
+**Reverted increment.** Skipping the `ibm%mu` loads when there is no body (mu is
+then identically 1, so the multiply is the IEEE `x*1.0` identity) measured
+1.21922 -> 1.09031 s/step, **10.6 %** on the production layout, with all gates
+`max_abs 0` on CPU and GPU. It was reverted on 2026-08-28 **by decision, not by
+a gate**: the 2:1 interface is mostly going to be used together with the IBM, so
+the body-free path is not where the code will spend its time, and a second
+branch through the two hottest projection kernels is not worth carrying for it.
+The A/B, the `ncu` tables and the before/after byte counts are kept in
+`overheadTest/results_nomu_2026-08-27.md`; recover the code from history if a
+body-free campaign ever justifies it.
 
-Gates all PASS: 7-case suite `max_abs 0` CPU **and** GPU (four channel cases +
-Beltrami exercise `useIbm = .false.`, `les_ibm` ± refine exercise the unchanged
-IBM path), `validation/block_nb/run_gates.sh` CPU + GPU, 1 rank == 4 ranks.
+The experiment did confirm the profile quantitatively, which is why it is worth
+recording: `apply` k2 converted its 24 B/cell into time nearly one-for-one
+(−18.1 %), while `compute_phi` took the *same* cut and gained only 5.3 %,
+because traffic was never its limiter.
 
-**Next, and the ordering has changed.** `apply` k2 fell off the roofline
-(84 % -> 74 % DRAM), so it has headroom again and its remaining levers — fuse
-the two launches (drops 8 of ~83 B/cell; disjoint outputs, pure scheduling) and
-split the rare high-face work out of the 86-register common path — are now worth
-what they were not before. But **`jacobi_compute_phi` is the better target**:
-0.266 s/step (24 % of the step), 122 registers, 31.5 % occupancy, 82 % SM
-throughput at 27 % DRAM. It is compute/latency-bound — a *different* problem
-from the one just solved, and cutting 41 % of its traffic bought only 2–13 %,
-which is exactly why this handout insists on profiling before choosing.
+**Next, in the order the profile supports:**
 
-The gain is for body-free runs (every channel / boundary layer / Beltrami /
-turbulence case, including the production boundary layer). IBM runs take the
-old path and are bit-identical — unchanged, not slower. `momentum` (0.350
-s/step) still reads the three mu planes and was deliberately left alone.
+1. **`jacobi_compute_phi`** (0.281 s/step, 23 % of the step) — the better
+   target, and a different problem: instruction count and register pressure
+   (128 regs, 31.5 % occupancy), not traffic. The six `face_grad_denom` calls
+   and the division are where to look.
+2. **Fuse the two `apply` launches** — `phi` is read once per launch over the
+   whole interior; fusing drops 8 of 107 B/cell (~7 % of `apply`, ~2.5 % of the
+   step). Disjoint outputs (`VAR_P` vs `VAR_U/V/W`), no cell reads another
+   cell's `q` output: a pure scheduling change.
+3. **Split the rare high-face work out of `apply` k2** — 86 registers and
+   38.7 % occupancy are partly paid for three `face_grad_corr` calls that fire
+   only at `i == nx` / `j == ny` / `k == nz`. Worth little while k2 is pinned at
+   84 % of peak, but it is the natural companion to the fusion.
+
+Reduced `ncu` case and launchers: `~/.moby_prof/`.
 
 ---
 
