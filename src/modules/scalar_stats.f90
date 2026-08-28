@@ -717,6 +717,27 @@ contains
     ! owns it, so blocks and ranks never double count. A FACE_CLOSED face
     ! borders a block removed inside the body: both sides are then solid (that
     ! is the removal criterion), so skipping it loses no flux.
+    !
+    ! THE CONJUGATE MODE (increment C3) IS THE SAME SUM WITH A DIFFERENT FACE
+    ! SET AND A DIFFERENT COEFFICIENT, and it is the conjugate NUSSELT
+    ! diagnostic: the interface heat transfer is the sum over CUT faces of the
+    ! scheme's own flux (strategy doc Section 10), which here is purely
+    ! diffusive because the transport kernel hard-masks convection on every
+    ! cut face, and carries conjugate_face_diffusivity rather than the
+    ! molecular value -- the same helper, so the number reported is the number
+    ! applied. TWO differences from the S3 modes, both deliberate:
+    !   * there is NO penalization in the conjugate mode, so the graded column
+    !     is EXPLICITLY zero. It is not left to cancel: coef(VAR_P) is finite
+    !     and non-zero in a graded FLUID cell and nothing pins its value
+    !     there, so the S3 expression would contribute a large spurious term
+    !     rather than the 1e28 x 0 it contributes for a Dirichlet body. That
+    !     is the 2026-08-05 lesson applied before it could bite: never rely on
+    !     a floating-point cancellation as a classification;
+    !   * the material test is the CELL-CENTRED marker, which is exactly the
+    !     sign of phi (init_scalar_conjugate builds phi from it), so a "cut"
+    !     face here and a cut face in the transport kernel are the same set.
+    ! The split's two columns then read: staircase = the interface heat,
+    ! graded = 0, total = the interface heat.
     subroutine body_heat_kernel(sc, blk, dns, nut, useNut, coef, heat)
         type(scalar_type), intent(in) :: sc
         type(block_set_type), intent(inout) :: blk
@@ -729,7 +750,9 @@ contains
         integer :: i, j, k, b, is, nx, ny, nz, nBlocks, nScal, var
         real(C_DOUBLE) :: ire, re, dm, dx, dy, dz, s0, sW, sS, sB, flux, sgn
         real(C_DOUBLE) :: ntw, nts, ntb, dxw, dys, dzb, cp
+        real(C_DOUBLE) :: phc, phw, phs, phb
         logical :: solc, solw, sols, solb, clw, cls, clb, wallfn
+        logical :: anyConj, conjug
 
         nx = int(blk%nb(1))
         ny = int(blk%nb(2))
@@ -739,16 +762,19 @@ contains
         re = dns%re
         ire = 1.0d0/re
         wallfn = dns%rans_wall_treatment == 1_C_INT      ! S5a, as above
+        anyConj = scalar_conjugate_enabled(sc)           ! C3, as above
         heat = 0.0d0
 
         !$omp target teams distribute parallel do collapse(4) &
-        !$omp& map(to: ire, re, useNut, nScal, nx, ny, nz, &
+        !$omp& map(to: ire, re, useNut, nScal, nx, ny, nz, anyConj, &
         !$omp& blk%q, blk%x, blk%y, blk%z, blk%physLow, nut, coef, &
         !$omp& sc%pr, sc%prt, sc%prtModel, sc%invDx, sc%invDy, sc%invDz, &
-        !$omp& sc%ibmValue, sc%ibmMode, sc%wfP, sc%wfYpt, sc%wfYplus, wallfn) &
+        !$omp& sc%ibmValue, sc%ibmMode, sc%wfP, sc%wfYpt, sc%wfYplus, wallfn, &
+        !$omp& sc%phi, sc%solidK, sc%contactR) &
         !$omp& map(tofrom: heat) &
         !$omp& private(i,j,k,b,is,var,dm,dx,dy,dz,s0,sW,sS,sB,flux,sgn,cp, &
-        !$omp& ntw,nts,ntb,dxw,dys,dzb,solc,solw,sols,solb,clw,cls,clb)
+        !$omp& ntw,nts,ntb,dxw,dys,dzb,solc,solw,sols,solb,clw,cls,clb, &
+        !$omp& phc,phw,phs,phb,conjug)
         do b = 1, nBlocks
         do k = 1, nz
             do j = 1, ny
@@ -775,6 +801,16 @@ contains
                         ntb = 0.5d0*(nut(i,j,k-1,b) + nut(i,j,k,b))
                     end if
 
+                    ! The conjugate interface's three LOW arms (C3). Off,
+                    ! sc%phi is a 1-cell dummy and none of this is read.
+                    phc = 0.0d0; phw = 0.0d0; phs = 0.0d0; phb = 0.0d0
+                    if (anyConj) then
+                        phc = sc%phi(i,  j,  k,  b)
+                        phw = sc%phi(i-1,j,  k,  b)
+                        phs = sc%phi(i,  j-1,k,  b)
+                        phb = sc%phi(i,  j,  k-1,b)
+                    end if
+
                     do is = 1, nScal
                         ! An adiabatic body exchanges nothing with the fluid
                         ! BY CONSTRUCTION: no penalization, and every solid
@@ -783,12 +819,23 @@ contains
                         ! never applied.
                         if (sc%ibmMode(is) == SC_IBM_ADIABATIC) cycle
                         var = VAR_S0 + is
+                        conjug = sc%ibmMode(is) == SC_IBM_CONJUGATE
                         s0 = blk%q(i,j,k,var,b)
                         dm = ire/sc%pr(is)
                         dxw = dm
                         dys = dm
                         dzb = dm
-                        if (useNut .and. wallfn) then
+                        if (conjug) then
+                            ! The scheme's own cut-face coefficient. nu_t does
+                            ! not enter a cut face (nor the solid), so the
+                            ! molecular branch is the whole story here.
+                            dxw = conjugate_face_diffusivity(dm, phw, phc, &
+                                sc%solidK(is), sc%contactR(is), sc%invDx(i,b))
+                            dys = conjugate_face_diffusivity(dm, phs, phc, &
+                                sc%solidK(is), sc%contactR(is), sc%invDy(j,b))
+                            dzb = conjugate_face_diffusivity(dm, phb, phc, &
+                                sc%solidK(is), sc%contactR(is), sc%invDz(k,b))
+                        else if (useNut .and. wallfn) then
                             dxw = dm + wall_face_diffusivity(nut(i-1,j,k,b), nut(i,j,k,b), &
                                 sc%wfYplus(i-1,j,k,b), sc%wfYplus(i,j,k,b), &
                                 sc%pr(is), sc%prt(is), sc%prtModel(is), re, sc%wfP(is), sc%wfYpt(is))
@@ -821,16 +868,20 @@ contains
                         ! independent of ibmValue, which it must be: with
                         ! ibmValue = 1 it changes nothing (those terms are
                         ! already exactly 0), so every S3/S4 gate is unmoved.
-                        if (.not. solc) then
+                        ! ...and a CONJUGATE body has no penalization at all,
+                        ! so its graded column is zero by construction.
+                        if (.not. solc .and. .not. conjug) then
                             !$omp atomic update
                             heat(2*is) = heat(2*is) + cp*(sc%ibmValue(is) - s0)*dx*dy*dz/sc%pr(is)
                         end if
 
                         ! The three LOW faces; a face counts only when exactly
-                        ! one side is solid, positive INTO the fluid.
+                        ! one side is solid, positive INTO the fluid. The
+                        ! conjugate mode masks convection on exactly these
+                        ! faces, so its flux is the diffusive term alone.
                         if ((solc .neqv. solw) .and. .not. clw) then
                             sW = blk%q(i-1,j,k,var,b)
-                            flux = blk%q(i,j,k,VAR_U,b)*0.5d0*(sW + s0) &
+                            flux = merge(0.0d0, blk%q(i,j,k,VAR_U,b)*0.5d0*(sW + s0), conjug) &
                                  - dxw*(s0 - sW)*sc%invDx(i,b)
                             sgn = merge(1.0d0, -1.0d0, solw)
                             !$omp atomic update
@@ -838,7 +889,7 @@ contains
                         end if
                         if ((solc .neqv. sols) .and. .not. cls) then
                             sS = blk%q(i,j-1,k,var,b)
-                            flux = blk%q(i,j,k,VAR_V,b)*0.5d0*(sS + s0) &
+                            flux = merge(0.0d0, blk%q(i,j,k,VAR_V,b)*0.5d0*(sS + s0), conjug) &
                                  - dys*(s0 - sS)*sc%invDy(j,b)
                             sgn = merge(1.0d0, -1.0d0, sols)
                             !$omp atomic update
@@ -846,7 +897,7 @@ contains
                         end if
                         if ((solc .neqv. solb) .and. .not. clb) then
                             sB = blk%q(i,j,k-1,var,b)
-                            flux = blk%q(i,j,k,VAR_W,b)*0.5d0*(sB + s0) &
+                            flux = merge(0.0d0, blk%q(i,j,k,VAR_W,b)*0.5d0*(sB + s0), conjug) &
                                  - dzb*(s0 - sB)*sc%invDz(k,b)
                             sgn = merge(1.0d0, -1.0d0, solb)
                             !$omp atomic update

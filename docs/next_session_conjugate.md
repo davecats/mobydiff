@@ -1,14 +1,29 @@
 # Conjugate heat transfer at an immersed interface (branch `scalar`) — strategy
 
-STATUS: **C1 AND C2 ARE DONE AND GATED** (C1 2026-08-27/28 on top of
-`e1b5c2c`; C2 2026-08-28 on top of `735d360`, branch `scalar`). C3/C4 are not
-started; §10 still describes them. Gates, the commands that produced every
-number, and the three time-step findings are in
+STATUS: **C1, C2 AND C3 ARE DONE AND GATED** (C1 2026-08-27/28 on top of
+`e1b5c2c`; C2 2026-08-28 on top of `735d360`; C3 2026-08-28 on top of
+`c243e56`, branch `scalar`). C4 is not started; §10 still describes it. Gates,
+the commands that produced every number, and the time-step findings are in
 [`validation/conjugate/README.md`](../validation/conjugate/README.md).
 This document is the plan; the derivation, the limit checks, the accuracy
 argument and the sketches live in
 [`docs/conjugate/conjugate_ibm.tex`](conjugate/conjugate_ibm.tex) (build with
 `make` in that directory).
+
+**THE C3 TIME-STEP DECISION, first because every conjugate number recorded
+before it was measured against a different `dt`.** The cut-cell share in
+`scalar_conjugate_peclet_rate` is now **2, not 3**: C2 measured that the
+shipped convention granted `dt = pecletmax·3C/diag` at a cut cell where
+Gershgorin plus this RK3's real-axis limit allow `1.25 C/diag` — 96 % of the
+bound — and found the case that attains it (an oblique interface at
+`κ_s = 10³` went to NaN at the default `pecletmax = 0.4`). `share = 2` grants
+`0.8 C/diag`, a **1.56× margin**, and that case now runs. The alternative —
+leave the rate and make the combination a documented config error — was
+rejected because it asks the user to know a bound the solver can compute.
+**The cost is `dt × 2/3` AT CUT CELLS ONLY** (the bulk of a conjugate run is
+untouched): C1's `converge` group still reaches its fixed point inside its
+200 000 steps, with the residual between the last two writes still exactly
+0.0, and every C1/C2 number below was re-measured rather than assumed.
 
 **THE C2 VERDICT — the tangential correction SHIPS DISABLED.** It is
 implemented, gated and switched off by default (`[scalar.N]
@@ -25,6 +40,41 @@ vanishes in the isothermal limit, so the term the correction exists to add
 disappears while the discrete estimate of it does not, and that noise is then
 multiplied by `κ_s`. The INDICATOR, by contrast, ships as a permanent, free
 diagnostic: any conjugate run can now report the error it is making.
+
+## C3 — what landed
+
+Three things that share one cost, since the capacity and the time-step
+convention both move `dt` at the same cells:
+
+1. **The fluid-fraction-weighted capacity** (§6). `C_cell = f + (1−f)C_s` with
+   `f` the fluid VOLUME fraction, from the closed plane-in-box form
+   (`plane_box_fraction`) on `a_i = |n_i| h_i` with `n = ∇φ` — of which
+   `clip(½ + φ_c/h)` is not an approximation but the degenerate limit, the one
+   a GRID-ALIGNED wall lands in. It is built ONCE at init beside `φ`
+   (`sc%vfrac`, same shape, same 1-cell-dummy idiom) and read by the transport
+   kernel, by the explicit limiter and by the checkers, so the capacity the
+   run integrates, the capacity the step is bounded by and the capacity a gate
+   weighs with are the same number. It rides the snapshot as `vfrac` (write
+   only; a restart rebuilds it from the case file), which is what lets a
+   checker state the invariant the SOLVER conserves. The volumetric source is
+   weighted with the same fraction.
+2. **The conjugate branch of the interface-heat diagnostic**
+   (`scalar_stats.f90`) — the Nusselt number: the sum over CUT faces of the
+   scheme's own flux, with `conjugate_face_diffusivity` and with convection
+   masked exactly as the transport kernel masks it, and with the penalization
+   column EXPLICITLY zero rather than left to cancel (there is no
+   penalization in this mode, and `coef_p` is finite and non-zero in a graded
+   fluid cell — the 2026-08-05 lesson applied before it could bite).
+3. **The time-step decision** — the STATUS header above.
+
+One new config error: `heat_interval` together with `tangential_correction`.
+The diagnostic reports the BASELINE cut-face flux; with the correction on the
+kernel applies a different one, and a diagnostic that does not report the flux
+the kernel applied is worse than none. The correction ships disabled by
+measurement, so the combination is rejected rather than carrying a second,
+ungated copy of its six-face stencil in the statistics.
+
+Everything is dormant without a conjugate scalar, and gated so.
 
 ## C2 — what landed
 
@@ -54,6 +104,73 @@ explicit correction enters `scalar_conjugate_peclet_rate` as its Gershgorin
 row sum (measured cost: 26 % of `dt` at κ_s = 10³). No new dataset, no
 case-file change, no new stencil beyond the 3³ neighbourhood the 26-neighbour
 halo already delivers.
+
+## C3 — measured gate numbers
+
+| §10 gate | measured |
+|---|---|
+| the plane-in-box fluid fraction vs BRUTE FORCE (unit test) | max deviation **2.9457e-06** on a 300³ midpoint count, plus exact values in all three degeneracy regimes, the symmetry `f(φ)+f(−φ)=1`, and exact 0/1 clipping |
+| transient two-material slab, FIELD error, `n_y` 16→32→64 | **order 1.99, 2.00** (`L₂`) / 1.98, 2.00 (`L∞`) |
+| …the same with the C2 POINTWISE capacity (the control) | 1.71, **1.09** — the old capacity costs a full order |
+| …the realised DECAY RATE `mu` (the flux's time-resolved content) | 6.557e-3 → 1.654e-3 → 4.139e-4, **order 1.99, 2.00**; control 1.28, **0.54** |
+| …the flux AMPLITUDE at fixed time | 1.38e-3 / 1.13e-3 / 1.75e-3 relative — bounded, NOT an order (deviation 1) |
+| interface heat vs a CLOSED FORM (insulated slab + solid source) | **4.572e-13** relative, and that residual is the run's own remaining transient |
+| interface heat vs an INDEPENDENT Python transcription | **3.553e-16** (slab, 16 cut faces) and **2.141e-15** (LES channel, 8192 cut faces) |
+| the CV budget `dE/dt = H − plane flux`, wavy box, flow ON | residual **6.45e-06** relative; falls by **3.98** when `dt` is halved (it is the centred difference's truncation, measured); IDENTICAL at `niter` 40 and 200 |
+| conducting channel wall (WALE LES + file IBM ± 2:1), budget with `ν_t` active | **1.681e-05** relative (flat, 640 leaves / 8192 cut faces) and **4.817e-06** (refined, 3328 leaves / 32768 cut faces); the diagnostic vs Python **2.141e-15** |
+| …determinism, 1 == 4 ranks and CPU == GPU | **max_abs 0** on `un vn wn pn nut theta vfrac`, BOTH legs — the whole stack, including the 2:1 one |
+| the oblique `κ_s = 10³` case C2 could not run at `pecletmax = 0.4` | now stable, `max|θ| = 0.6794849` against the 0.2 run's 0.6789875; `dt` exactly 2/3 of C2's |
+| every C1 gate re-run | **`ALL C1 GATES PASS`, 61 checks** — table in the README; the slab fixed point improves to **8.47e-16**, `converge` still reaches its fixed point with residual **exactly 0.0**, conservation drift **1.206e-16** with the new capacity map |
+| every C2 gate re-run | **`ALL C2 GATES PASS`**, which includes `ALL C1 GATES PASS` with the correction ON. The analytic-field measurements are bit-stable (`e_face` still `1.0000E+00` max and rms on 404 cut faces; `s_t`/`k_area` tables to every digit); the `r = ∞` BVP moved with `dt` as it must, `L2` 3.310e-03 (off) vs 8.682e-03 (on) — still **2.6× worse corrected**, C2's conclusion unchanged |
+| the bit-exactness protocol | **32 case-runs, every one `max_abs 0` on every dataset**, CPU and GPU, vs `~/s5c_ref_binaries` — zero non-zero deviations anywhere in the four drivers' output |
+| the S-suite physics groups | `run_gates{,_s2,_s3,_s4,_s5}.sh` — **no failures in any group** (`scalar S1 gates: no failures`, `scalar S2 gates: no failures`, `S3 gates (all): ALL PASS`, S4 10/10, `S5a gates: ALL PASS`), `rc = 0` throughout |
+
+## C3 — deviations from this plan
+
+1. **§10's "second order in the time-resolved interface flux" splits in two,
+   and only one half is second order.** The flux's TIME DEPENDENCE — its decay
+   rate, which is what "time-resolved" names — converges at order 2.00. Its
+   instantaneous AMPLITUDE does not, and cannot: the cut-face flux
+   `(T_R−T_L)/(δ_L/k_L + δ_R/k_R)` is the flux at the resistance-weighted
+   point of the arm, O(h) away from the interface, so it carries
+   `q'(δ_R²/k_R − δ_L²/k_L)/2R` — first order, with a coefficient whose SIGN
+   depends on where in the cell the interface falls. Measured (1.38e-3 /
+   1.13e-3 / 1.75e-3 relative): bounded and small, but not an order. Same
+   class as C2's deviation 2 — what converges at the scheme's order is the
+   SOLUTION, not a pointwise cut-face quantity.
+2. **The fraction is STORED, not recomputed in the kernel.** §6 reads like a
+   per-cell expression evaluated where it is needed. It is pure geometry, so
+   evaluating it once at init and keeping `sc%vfrac` costs one array the size
+   of `φ` and buys the invariant that matters: the capacity the kernel divides
+   by, the capacity the time-step limiter bounds against, and the capacity a
+   checker weighs an integral with are the SAME number. Which leads to:
+3. **§11's "no io.f90 change" is no longer true, and it had to give.** The
+   fraction rides the snapshot as `vfrac` (write only; a restart rebuilds it
+   from the case file). The reason is the conservation gate: `Σ C θ dV` is the
+   invariant the scheme conserves, `C` depends on a DISCRETE plane
+   reconstruction, and an analytic capacity map instead of the solver's leaves
+   `Σ (C_ref − C) Δθ dV` — measured ~1e-3 relative on the wavy case, i.e. the
+   gate would measure the map mismatch rather than conservation. No case-file
+   change, no new dataset in any non-conjugate file, and the write is gated on
+   `size > 1` exactly as `iddes_fd` is.
+4. **The volumetric source is fraction-weighted too**, which §6 does not
+   mention. `f S_f + (1−f) C_s S_s` is the cell's power density; it reduces
+   exactly to the pointwise C1 statement at `f = 1` and, to round-off, at
+   `f = 0` (`(d + C_s S_s)/C_s` versus `d/C_s + S_s` differ in the last bit
+   when `S_s ≠ 0`; every gate here has `S_s = 0` except the closed-form
+   Nusselt one, where the fraction weighting is the point).
+5. **One new hard config error, not in §12's list**: `heat_interval` together
+   with `tangential_correction`. The diagnostic reports the baseline cut-face
+   flux; with the correction on the kernel applies a different one. Rather
+   than carry a second, ungated copy of the correction's six-face stencil in
+   the statistics — for a feature C2's verdict disables — the combination is
+   rejected and the message says why.
+6. **A C1/C2 defect this increment fixed on the way**: the PRE-C3
+   interface-heat diagnostic on a conjugate case reported a meaningless
+   number (a spurious penalization column from graded fluid cells, and the
+   molecular diffusivity at cut faces). C1's deviation 6 recorded those
+   columns as smoke-gated; they were also wrong. Measured side by side in the
+   README's transient section.
 
 ## C2 — measured gate numbers
 
@@ -712,10 +829,21 @@ consistent to second order. Do not rely on the penalized velocity being "small":
 unlike a passive scalar inside a Dirichlet body, the solid now carries a real
 temperature field that must not be advected.
 
-**Capacity at cut cells**: `C_cell = φ + (1−φ)C_s` with `φ` the fluid volume
-fraction, estimated from the same signed distance (`φ ≈ clip(½ + φ_c/h, 0, 1)`,
-or the closed-form plane-in-cube expression). Irrelevant at steady state,
-required for second-order transients.
+**Capacity at cut cells**: `C_cell = f + (1−f)C_s` with `f` the fluid volume
+fraction, estimated from the same signed distance. Irrelevant at steady state,
+required for second-order transients. **LANDED IN C3**, as the CLOSED FORM
+rather than the `clip(½ + φ_c/h)` estimate this section used to offer as an
+alternative: `plane_box_fraction` is the plane-in-box inclusion-exclusion on
+`a_i = |n_i| h_i` with `n = ∇φ`, and `clip(½ + φ_c/h)` is not an approximation
+of it but its own degenerate limit — the value it returns when the plane is
+parallel to two axes, i.e. at a grid-aligned wall. The fraction is built ONCE
+at init beside `φ` (`sc%vfrac`, same shape, same 1-cell-dummy idiom) and read
+by the transport kernel, by the explicit time-step limiter and by the
+checkers, which is what keeps the capacity the run integrates, the capacity
+the step is bounded by and the capacity a gate weighs with THE SAME number.
+The volumetric source is weighted with the same fraction (`f S_f +
+(1−f) C_s S_s`, the power density), which reduces exactly to the pointwise
+statement at `f = 0` and `f = 1`.
 
 **Eddy diffusivity**: at DNS there is none. With a model active it is fluid-side
 only (`ibm_aware` zeroes `ν_t` in solid cells, and `ν_t → 0` at a resolved
@@ -757,7 +885,12 @@ against it. What C2 DID find here is that level (1) as shipped is marginal:
 while Gershgorin plus this RK3's real-axis limit allow `1.25 C/diag`, so the
 default `pecletmax = 0.4` is at **96 % of the bound** and an oblique interface
 at `κ_s = 10³` goes to NaN there (0.2 is stable). C1's gates never saw it
-because their interface is grid-aligned. That is C3's to settle.
+because their interface is grid-aligned. **SETTLED IN C3**: the cut-cell share
+is `2`, not `3`, so `pecletmax = 0.4` grants `0.8 C/diag` — 64 % of the bound,
+a 1.56× margin — and the case that produced the NaN now runs. The alternative
+(leave the rate, reject such cases in the config) was rejected: it asks the
+user to know a bound the solver can compute. The price is `dt × 2/3` AT CUT
+CELLS ONLY, measured in `validation/conjugate/README.md`.
 
 ---
 
@@ -873,12 +1006,13 @@ behind `tangential_correction`, the (★★) term.
 - Grid-aligned cases from C1 unchanged to round-off (`s_t = 0` by construction).
 - Time-step penalty of (★★) measured at `κ_s = 10³`.
 
-**C3 — transients and production.** Fraction-weighted capacity; the `[f/β]`
-second-derivative jump term only if C2 demanded it — **it did not**: C2's
-verdict is that the tangential escalation ships disabled, so C3 carries no
-second-derivative work. C3 also inherits C2's time-step debt (the shipped
-`pecletmax = 0.4` sits at 96 % of the Gershgorin bound at a cut cell), which
-belongs here because the capacity change moves `dt` at the same cells.
+**C3 — transients and production. DONE** (see the C3 sections at the top).
+Fraction-weighted capacity; the `[f/β]` second-derivative jump term only if C2
+demanded it — **it did not**: C2's verdict is that the tangential escalation
+ships disabled, so C3 carried no second-derivative work. C3 also inherited
+C2's time-step debt (the shipped `pecletmax = 0.4` sat at 96 % of the
+Gershgorin bound at a cut cell), which belonged here because the capacity
+change moves `dt` at the same cells; it is settled at `share = 2`.
 *Gates*:
 - **Transient two-material slab/sphere** with a capacity jump vs the analytic
   solution, second order in the time-resolved interface flux.
@@ -954,126 +1088,47 @@ error path. That is the whole benefit of the baseline.
   penalization forces do.
 
 ---
-## 13. Next-session prompt (C3)
+## 13. Next-session prompt (C4, optional)
 
-Written 2026-08-28 against branch `scalar`, C2 landed on top of `735d360`.
+Written 2026-08-28 against branch `scalar`, C3 landed on top of `c243e56`.
 **Reference binaries: `~/s5c_ref_binaries`, commit `8f60944`** — read its
-`PROVENANCE.txt`. It remains valid against C2: the correction and the
-indicator are both dormant without a conjugate scalar, and C2 changed no
-arithmetic on any other path (32/32 bit-exactness case-runs, `max_abs 0`).
+`PROVENANCE.txt`. It remains valid against C3: everything C3 added is dormant
+without a conjugate scalar (`sc%vfrac` is a 1-cell dummy, the `vfrac` dataset
+is gated on `size > 1`, and the diagnostic's branch is mode-gated), and C3
+changed no arithmetic on any other path. `~/c2_ref_binaries` (commit
+`c243e56`) is the POINTWISE-capacity control the transient gate uses; keep it.
 
-> Implement increment **C3** of `docs/next_session_conjugate.md` — *the
-> fraction-weighted capacity, the conjugate Nusselt diagnostic, and the
-> time-step debt C2 left* — on branch `scalar`.
->
-> **Read first, in this order:** the STATUS header of
-> `docs/next_session_conjugate.md` (C1 and C2 are DONE; C2's six deviations
-> and its verdict are the ground truth), then §6's capacity paragraph and
-> §10's C3 entry, then `validation/conjugate/README.md` — the whole C2
-> section, because three of its findings change what C3 has to do — then the
-> "Active work" section of CLAUDE.md.
->
-> **C3 IS THREE THINGS, AND THEY SHARE ONE COST.** The capacity change and
-> the time-step fix both move `dt` at cut cells, so they must land together:
-> the re-gate is paid once.
->
-> 1. **The fluid-fraction-weighted capacity** (§6). A cut cell contains both
->    materials, so `C_cell = φ + (1 − φ)C_s` with `φ` the fluid VOLUME
->    fraction. It is irrelevant at steady state — C1 gated exactly that
->    (`8.85e-14 / 4.37e-14 / 4.88e-15` over `C_s ∈ {0.5, 1, 8}`) — and
->    required for second-order TRANSIENTS, which is the whole of this item.
->    **C2 leaves you the machinery**: `check_oblique.py face_area_fraction`
->    is the 2D plane-in-rectangle form, validated against brute force to the
->    quadrature error (9e-4 at 400² samples); the cell version is its 3D
->    sibling (plane-in-cube, same family), and both need only `φ` at the
->    centre and `∇φ` — data the solver already has. Do NOT reach for
->    `clip(½ + φ_c/h)` without measuring it against the closed form first.
-> 2. **The Nusselt diagnostic** (§10). `Σ` over cut faces of (★), against the
->    Gauss/CV border-flux cross-check, the way A2 validated `C_L`/`C_D`.
->    **Reuse `scalar_stats.f90`'s cancellation-free form, do not reinvent
->    it** — the S3 finding (`docs/next_session_scalar.md`) is that
->    `∫coef_p(s_body − s)dV` is `1e28 × 0` in a penalized cell and loses
->    ~37 % of the heat, and the 2026-08-05 fix on top of it is that the
->    split must EXCLUDE solid cells explicitly rather than rely on a
->    floating-point cancellation. C1 left the conjugate flux columns
->    SMOKE-gated only (deviation 6); this is where they get their numbers.
-> 3. **The time-step debt.** C2 measured that the shipped `pecletmax = 0.4`
->    sits at **96 % of the Gershgorin bound** at a cut cell
->    (`dt = pecletmax·3C/diag` against an allowed `1.25 C/diag`), and that an
->    OBLIQUE interface at `κ_s = 10³` therefore goes to NaN at 0.4 while 0.2
->    is stable. C1's gates never saw it because their interface is
->    grid-aligned. Decide it now, with the capacity change already in hand:
->    either tighten the cut-cell `share` (3 → 2 gives a 1.56× margin; → 1.5
->    reproduces the measured-stable 0.2) or leave it and make the guard a
->    documented config error. **Whatever you choose, C1's recorded numbers
->    move**, which is why it belongs here and not in a later increment.
->
-> *Gates* (§10's C3 list, plus the two C3 inherits):
-> 1. **Transient two-material slab** with a capacity jump against the
->    analytic solution, second order in the TIME-RESOLVED interface flux.
->    `validation/conjugate/slab.ini` already sweeps the cut position; the
->    transient reference is the standard two-material series solution.
-> 2. **Conducting channel wall**: reuse
->    `validation/channel_interface/les_ibm/` — its off-grid plane walls sit
->    mid-cell (`y = 0.259375`), so the cut fractions are non-trivial while
->    the interface stays grid-aligned, i.e. a case where the baseline is
->    EXACT. It also exercises the LES/IBM/2:1 stack.
-> 3. **Nusselt** against the Gauss/CV border flux. LANDMINE inherited from
->    A2: `niter = 6` IBM runs accumulate a velocity-neutral oscillating mode
->    in stored `pn`, so a border-flux cross-check needs a clean-`p` snapshot
->    (zero `pn` in a copy of the converged restart, rerun ~300 steps at
->    `niter = 60`; restarting the POLLUTED `p` at `niter = 60` transients
->    violently).
-> 4. **Every C1 and C2 gate re-run**, since `dt` moves:
->    `./run_gates_c1.sh` and `./run_gates_c2.sh` must both come back — the
->    steady-state equalities to their recorded numbers, and the C2
->    measurements (which are evaluated on ANALYTIC fields and so must be
->    bit-stable) unchanged. If you tighten the rate, the `converge` group's
->    200 000 steps buy less physical time — check it still converges rather
->    than assuming it.
-> 5. **The full bit-exactness protocol, unchanged**, against
->    `~/s5c_ref_binaries` (4 drivers) plus the five S-suite groups. C2's run:
->    32/32 case-runs `max_abs 0`, 91 S-suite checks, `rc = 0` throughout.
->    LANDMINE: `run_gates.sh`'s `det` group compares CPU vs GPU at TOLERANCE
->    0, so hand it the nofma pair.
->
-> **Scope boundaries — do NOT:** touch the tangential correction. C2 measured
-> it and the verdict is SHIP DISABLED; the analysis of what a working version
-> would need is in the README's "the way out" and in the LaTeX note, and it
-> starts with `s_t`, not with the correction. Do not attempt C4's wedge model
-> — it rests on the same premise C2 falsified and is gated by the same
-> measurement.
->
-> **What C1 and C2 learned that will bite you:**
-> - **the explicit limit at a conjugate interface is not a per-material
->   `α = κ/C`**, and a cut cell attains a Gershgorin factor the uniform
->   interior never excites. `scalar_conjugate_peclet_rate` encodes both, and
->   C2 showed the remaining margin is 4 %. The capacity change alters `C_i`
->   at exactly those cells, so re-derive the rate rather than assume it
->   survives;
-> - **never rely on a floating-point cancellation as a classification** — the
->   2026-08-05 body-heat double count is the precedent, and the Nusselt
->   diagnostic is the same shape of computation;
-> - **a claim of the form "no case exercises this path" must be checked
->   against the GENERATED inis**, not only the committed ones (C1's own
->   `t_final` regression);
-> - **`check_oblique.py` and `check_cylinder.py` evaluate schemes on ANALYTIC
->   fields** with `φ` from the case file. That makes them cheap and
->   solver-independent — use the same style for the transient reference
->   rather than building another solver-in-the-loop gate;
-> - REBUILD ALL FOUR BINARIES after any change that touches `dt`. The `det`
->   group compares three binaries against each other and passes happily when
->   all three are equally stale.
->
-> **Conventions:** build both paths (`./compile.sh cpu && ./compile.sh gpu`,
-> module `toolkits/nvhpc/25.9`) plus the nofma pair via
-> `validation/scalar/compile_nofma.sh`; always launch through `mpirun`, even
-> on one rank; new cases and drivers go in `validation/conjugate/` beside C1's
-> and C2's; never declare the increment done with a failing build or an
-> ungated result.
->
-> Stop after C3's gates and report. Update this document's STATUS header with
-> what landed, each gate's measured number, and any deviation from the plan —
-> C1's and C2's entries are the model. **And state explicitly what the
-> time-step decision was and what it cost**, because every conjugate number
-> recorded before it is measured against a different `dt`.
+**THE CONJUGATE PLAN IS OTHERWISE COMPLETE.** C1 is the baseline, C2 measured
+what it gives up and shipped the correction disabled, C3 made the transient
+second order, put numbers on the interface-heat diagnostic and settled the
+time step. C4 is optional and it is NOT a natural continuation — read the next
+paragraph before deciding to start it.
+
+**BEFORE ATTEMPTING C4, SETTLE WHAT C2 FALSIFIED.** C4's wedge model is
+anchored on the same premise the C2 measurement broke: that making the
+POINTWISE cut-face flux exact improves the solution. It does not — at `r = ∞`
+the corrected face flux is exact to 1e-11 and the corrected FIELD is 2.6×
+worse, because a finite-difference divergence wants the face AVERAGE. C2 also
+measured the fix (`k_area`) and showed it cannot rescue the feature, because
+the binding constraint is the `s_t` estimate on a CURVED interface, which is
+43–54 % wrong and does not converge. A corner model inherits that estimate.
+So the first increment of any C4 session is not the eigensolution `γ(α, κ_s)`
+— it is a better `s_t` on curved interfaces (the note's construction 2,
+same-side least squares, which needs the TWO-DEEP HALO the TVD increment is
+also blocked on), and the gate for it already exists:
+`check_cylinder.py dipole`, which knows the exact `s_t` and reports the
+estimate's error. If that error does not come down and converge, C4 cannot
+pay, and the honest outcome of the session is that measurement.
+
+§10's C4 entry describes the increment itself and its gates; nothing in it has
+changed. The one thing to add to that list, from C3: any new interface term
+must also be reflected in the interface-heat diagnostic, or be rejected
+alongside it — `heat_interval` with `tangential_correction` is the precedent
+and the reason (the number reported must be the number applied).
+
+**If instead the next session is production work with the conjugate scheme**,
+the two things to know are in the README: run a strongly oblique,
+high-contrast interface and read the `indicator_interval` output (it is the
+error the scheme is making, in closed form), and remember that `remove_solid`
+must be off, `keep_buried` on, and the case file re-prepared if it predates
+S3 (it needs `coef_p_blocks` and `dwall_blocks`).

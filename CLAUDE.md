@@ -1065,11 +1065,57 @@ immersed boundary. Phased, each phase verified before the next:
   - LANDMINE (cost an hour): a local `nVar` in blocks.f90 SHADOWED the
     use-associated `NVAR` parameter (Fortran is case-insensitive) and silently
     allocated a zero-size dimension. The local is now `nQ`.
-- Conjugate heat transfer at the immersed interface — increment **C1 DONE**
-  (2026-08-27/28, branch `scalar`; plan + every deviation and gate number in
-  the STATUS header of `docs/next_session_conjugate.md`, commands and
-  measurements in `validation/conjugate/README.md`, derivation in
-  `docs/conjugate/conjugate_ibm.tex`). `[scalar.N] ibm_wall = conjugate` is a
+- Conjugate heat transfer at the immersed interface — increments **C1, C2 and
+  C3 DONE** (C1 2026-08-27/28, C2 and C3 2026-08-28, branch `scalar`; plan +
+  every deviation and gate number in the STATUS header of
+  `docs/next_session_conjugate.md`, commands and measurements in
+  `validation/conjugate/README.md`).
+  **C2 — the tangential term the C1 baseline drops: measured, and SHIPPED
+  DISABLED.** `[scalar] indicator_interval` reduces `e_face = h_d s_t/(T_R −
+  T_L)` over the cut faces (max, rms, count) — §3's own closed form, so it IS
+  the relative error the baseline makes, and it ships ENABLED as a free
+  diagnostic; `[scalar.N] tangential_correction` adds `s_t (k_loc − k_face)`
+  as its OWN flux divergence after the C1 term (inert by construction when
+  off, not by a `+0.0` argument) and is DEFAULT OFF because three independent
+  measurements say so: a crossover ratio `r* ≈ 0.027` that the DNS-like
+  `|∇_tT|/|∂_nT| ~ 10⁻²` sits below; the `r = ∞` BVP where the corrected FACE
+  flux is exact to 1e-11 and the corrected FIELD is 2.6× WORSE (a
+  finite-difference divergence wants the face AVERAGE, not the midpoint
+  value); and — decisive — a cylinder at κ_s = 10³ where the correction is
+  40–65× worse than dropping the term, because `|∇_tT| ∝ 2/(1+κ_s) → 0` in the
+  isothermal limit while the discrete estimate of it does not. The measured
+  fix (`k_area`, the face AREA-weighted mean, which removes the paradox
+  exactly on a plane) is recorded in the README and NOT implemented: it cannot
+  rescue the feature, because the binding constraint is the `s_t` estimate on
+  curved interfaces. **Anyone reopening this starts from `s_t`, not from the
+  multiplier.**
+  **C3 — the fluid-fraction-weighted capacity, the Nusselt diagnostic, and the
+  TIME STEP.** (1) `C_cell = f + (1−f)C_s` with `f` from the closed
+  plane-in-box form (`plane_box_fraction`; `clip(½ + φ_c/h)` is not an
+  approximation of it but its degenerate limit, the one a GRID-ALIGNED wall
+  lands in). `f` is pure geometry, built once at init beside `φ` (`sc%vfrac`)
+  and read by the transport kernel, the time-step limiter AND the checkers —
+  it rides the snapshot as `vfrac` (write only), which is what lets a gate
+  state the invariant the SOLVER conserves. Gated: field error order **1.99,
+  2.00** and decay rate order **1.99, 2.00** on a two-material eigenmode,
+  against **1.71, 1.09** and **1.28, 0.54** from the archived C2 binary on the
+  same inis — the pointwise capacity costs a full order, measured with a
+  control, not argued. (2) The conjugate branch of the interface-heat
+  diagnostic (`scalar_stats.f90`) = the Nusselt number: the sum over cut faces
+  of the scheme's own flux, penalization column EXPLICITLY zero (there is none
+  in this mode, and `coef_p` is finite in a graded fluid cell — the 2026-08-05
+  lesson applied before it could bite). Gated three ways: a closed form
+  (**4.572e-13**), an independent Python transcription (**3.553e-16** / 
+  **2.709e-16**), and a control-volume budget with the flow on that falls like
+  `dt²` and does not move with `niter`. FOUND: the PRE-C3 diagnostic on a
+  conjugate case reported a MEANINGLESS number, so C1's "smoke-gated" columns
+  were also wrong. (3) **The cut-cell share in `scalar_conjugate_peclet_rate`
+  is now 2, not 3** — C2 measured the old convention at 96 % of the Gershgorin
+  bound and found the case that attains it; `share = 2` gives a 1.56× margin
+  and that case runs. Cost: `dt × 2/3` AT CUT CELLS ONLY. Every C1/C2 number
+  was therefore re-measured, not assumed.
+  **C1 — the baseline** (derivation in `docs/conjugate/conjugate_ibm.tex`).
+  `[scalar.N] ibm_wall = conjugate` is a
   THIRD mode beside `dirichlet`/`adiabatic` (re-expressing those two through
   the new arithmetic could not be bit-exact, so they are untouched): the solid
   stops being a boundary condition and becomes a REAL unknown carrying
@@ -1113,9 +1159,15 @@ immersed boundary. Phased, each phase verified before the next:
   α_s = α_f; the rate is built from the ACTUAL face coefficients instead
   (also 500× less conservative at w = ½); (2) a cut cell attains the
   Gershgorin factor `ρ ≤ 2A_ii/C_i` that the uniform interior never excites,
-  so its rate is doubled — measured, `pecletmax` 0.3 blows up / 0.2 is stable.
-  NEXT: C2 (the `e_face` indicator and the tangential correction — whether it
-  ever ships enabled is a MEASUREMENT, not a design decision), then C3.
+  so its rate is raised — measured, `pecletmax` 0.3 blows up / 0.2 is stable.
+  C1 doubled it (share 6 → 3); C2 measured that even so the default sat at
+  96 % of the bound and found an oblique high-contrast case that went to NaN
+  there, and **C3 went to share 2** (a 3× rate at cut cells, a 1.56× margin).
+  NEXT (optional, its own session): **C4, conducting sharp corners** — the
+  COCO wedge model. It rests on the same pointwise-flux premise C2 falsified,
+  so read C2's verdict and the README's "the way out" BEFORE starting it; the
+  first thing to settle is the `s_t` estimate on a curved interface, not the
+  corner eigensolution. Everything else in the conjugate plan is done.
 - ALSO PENDING: **Profile + optimise** the GPU step for the 2:1-refined channel.
   **STEP 1 (re-profile) IS DONE 2026-08-07; step 2 (optimise) is not started.**
   The phase timer is back as a CONFIG key, not an env hook: `[output] profile

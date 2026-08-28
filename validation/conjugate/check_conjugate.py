@@ -138,8 +138,26 @@ def cmd_weight(a):
 
 
 def capacity_integral(path, name, capacity, geometry):
+    """sum(C theta dV) with the SOLVER's own cell capacity.
+
+    C3: the capacity of a cut cell is FLUID-FRACTION WEIGHTED,
+    C = f + (1-f) C_s, so the invariant the scheme conserves is built on f
+    -- and f is a discrete quantity (a plane reconstructed from the central
+    differences of phi), not something a checker can rebuild from the
+    analytic geometry to the last bit. An analytic capacity map instead of
+    the solver's would leave sum (C_ref - C) dtheta dV, which is ~1e-3
+    relative here, i.e. the gate would measure the map mismatch rather than
+    conservation. So the solver writes f to the snapshot as `vfrac` and the
+    checker reads it. The analytic marker is still used, as a CROSS-CHECK of
+    the fraction (reported, not gated: they must agree away from the
+    interface exactly and inside it to O(h)).
+    """
     h5, geo, th = read_scalar(path, name)
+    vf = h5["vfrac"][...] if "vfrac" in h5 else None
+    if vf is None:
+        raise SystemExit(f"{path}: no vfrac dataset -- conjugate runs write it")
     total = 0.0
+    worst = 0.0
     for bid in range(geo.n_blocks):
         x, y, z, dV = geo.mesh(bid)
         if geometry == "wavy":
@@ -147,20 +165,24 @@ def capacity_integral(path, name, capacity, geometry):
                 np.broadcast_to(x, th[bid].shape), lx=geo.leng[0])
         else:
             solid = np.broadcast_to(y, th[bid].shape) < geometry
-        cc = np.where(solid, capacity, 1.0)
+        f = vf[bid]
+        cc = f + (1.0 - f) * capacity
         total += float((cc * th[bid] * np.broadcast_to(dV, th[bid].shape)).sum())
+        worst = max(worst, float(np.abs(f - np.where(solid, 0.0, 1.0)).max()))
     h5.close()
-    return total
+    return total, worst
 
 
 def cmd_conserve(a):
     geometry = "wavy" if a.wavy else a.y_wall
-    ia = capacity_integral(a.first, a.name, a.capacity, geometry)
-    ib = capacity_integral(a.second, a.name, a.capacity, geometry)
+    ia, da = capacity_integral(a.first, a.name, a.capacity, geometry)
+    ib, db = capacity_integral(a.second, a.name, a.capacity, geometry)
     scale = max(abs(ia), abs(ib), 1e-300)
     rel = abs(ib - ia) / scale
     print(f"   sum(C theta dV): {ia:.16e} -> {ib:.16e}")
     print(f"   drift = {ib - ia:.3e}   relative = {rel:.3e}")
+    print(f"   (fluid fraction vs the analytic pointwise marker: max dev "
+          f"{max(da, db):.3f} -- a cut cell, by construction)")
     ok = rel <= a.tolerance
     print("   PASS" if ok else f"   FAIL (tolerance {a.tolerance:g})")
     return 0 if ok else 1

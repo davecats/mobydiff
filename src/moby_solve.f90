@@ -409,7 +409,7 @@ program moby_solve
 
         if (dns%field_interval > 0) then
             call maybe_write_field(blk, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%omega, &
-                turb%nut, sst%k, sst%omg, sst%gam, sst%ret, turb%fd, scalar_names(sc))
+                turb%nut, sst%k, sst%omg, sst%gam, sst%ret, turb%fd, scalar_names(sc), sc%vfrac)
         end if
         call flow%after_step(blk, dns, g, c, ibm)
         ! Scalar profiles/rms/fluxes and the body heat release (no-op off).
@@ -433,7 +433,7 @@ program moby_solve
     end if
 
     call write_field(blk, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%omega, &
-        turb%nut, sst%k, sst%omg, sst%gam, sst%ret, turb%fd, scalar_names(sc))
+        turb%nut, sst%k, sst%omg, sst%gam, sst%ret, turb%fd, scalar_names(sc), sc%vfrac)
 
     ! Release device-side data before the host allocatables go out of scope.
     call flow%finalize(dns, g, c)

@@ -312,7 +312,7 @@ logical function output_is_due(step, output_interval)
 end function output_is_due
 
 subroutine maybe_write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor, nut, &
-        rans_k, rans_omg, rans_gam, rans_ret, iddes_fd, scalar_names)
+        rans_k, rans_omg, rans_gam, rans_ret, iddes_fd, scalar_names, conj_vfrac)
     type(block_set_type), intent(inout) :: blk
     type(dns_type), intent(in) :: dns
     type(grid_type), intent(in) :: g
@@ -326,10 +326,11 @@ subroutine maybe_write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_
     real(C_DOUBLE), allocatable, intent(in), optional :: rans_gam(:,:,:,:), rans_ret(:,:,:,:)
     real(C_DOUBLE), allocatable, intent(in), optional :: iddes_fd(:,:,:,:)
     character(len=*), intent(in), optional :: scalar_names(:)
+    real(C_DOUBLE), allocatable, intent(in), optional :: conj_vfrac(:,:,:,:)
 
     if (.not. output_is_due(step, dns%field_interval)) return
     call write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor, nut, &
-        rans_k, rans_omg, rans_gam, rans_ret, iddes_fd, scalar_names)
+        rans_k, rans_omg, rans_gam, rans_ret, iddes_fd, scalar_names, conj_vfrac)
 end subroutine maybe_write_field
 
 ! Packed variable-name table for the C field writer/reader: n_var slots of
@@ -364,7 +365,7 @@ function field_var_names(dns, scalar_names) result(table)
 end function field_var_names
 
 subroutine write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor, nut, &
-        rans_k, rans_omg, rans_gam, rans_ret, iddes_fd, scalar_names)
+        rans_k, rans_omg, rans_gam, rans_ret, iddes_fd, scalar_names, conj_vfrac)
     ! Parallel HDF5 call: all MPI ranks must enter this routine together.
     ! Global datasets, one hyperslab per block.
     type(block_set_type), intent(inout) :: blk
@@ -387,6 +388,15 @@ subroutine write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor, n
     real(C_DOUBLE), allocatable, intent(in), optional :: iddes_fd(:,:,:,:)
     ! Passive-scalar dataset names (scalar.f90); absent = the s1..sN default.
     character(len=*), intent(in), optional :: scalar_names(:)
+    ! Conjugate fluid VOLUME FRACTION (C3): a 1-cell dummy unless a conjugate
+    ! scalar is configured (size gate below), so every other file is
+    ! unchanged. It is pure geometry, so it is written for the reader's
+    ! benefit and never read back -- a restart rebuilds it from the case file
+    ! exactly as a cold start does. What it buys: the cell capacity
+    ! C = f + (1-f)C_s the scheme conserves is a solver-side quantity that no
+    ! checker can reconstruct to the last bit from the geometry alone, so the
+    ! conservation and interface-heat gates read the solver's own f.
+    real(C_DOUBLE), allocatable, intent(in), optional :: conj_vfrac(:,:,:,:)
 
     character(len=256) :: h5_file_name
     character(kind=C_CHAR,len=:), allocatable :: c_file_name, var_names
@@ -474,6 +484,12 @@ subroutine write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor, n
         if (allocated(iddes_fd)) then
             if (size(iddes_fd) > 1) call append_scalar_field(c_file_name, "fd", iddes_fd, blk, &
                 h5_file_name, c%has_terminal)
+        end if
+    end if
+    if (present(conj_vfrac)) then
+        if (allocated(conj_vfrac)) then
+            if (size(conj_vfrac) > 1) call append_scalar_field(c_file_name, "vfrac", &
+                conj_vfrac, blk, h5_file_name, c%has_terminal)
         end if
     end if
 

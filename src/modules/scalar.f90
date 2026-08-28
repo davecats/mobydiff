@@ -131,6 +131,16 @@ module scalar
         ! both geometry paths). A 1-cell dummy without a conjugate scalar,
         ! the nutNone idiom: mapped uniformly, every access mode-guarded.
         real(C_DOUBLE), allocatable :: phi(:,:,:,:)
+        ! FLUID VOLUME FRACTION of each cell (increment C3), from the same phi
+        ! and its central differences: the cell's volumetric capacity is then
+        ! C_cell = f + (1 - f) C_s instead of the pointwise C1 value. It is a
+        ! pure GEOMETRY field -- scalar-independent, built once at init beside
+        ! phi, never touched again -- so it is stored rather than recomputed
+        ! per substage, which also makes the number the transport kernel
+        ! divides by, the number the time-step limiter uses and the number the
+        ! checkers read (it rides the snapshot as "vfrac") THE SAME number.
+        ! Same shape and same 1-cell-dummy idiom as phi.
+        real(C_DOUBLE), allocatable :: vfrac(:,:,:,:)
         integer(C_INT) :: nConjugate = 0_C_INT
         integer(C_INT) :: nTangential = 0_C_INT
         ! Per-face boundary rows (n, NFACES): BC_DIRICHLET / BC_NEUMANN with
@@ -202,6 +212,9 @@ module scalar
     public :: scalar_conjugate_enabled, init_scalar_conjugate
     public :: init_scalar_solid_fields, scalar_conjugate_to_device
     public :: scalar_conjugate_peclet_rate, conjugate_face_diffusivity
+    ! Increment C3: the fluid volume fraction of a cut cell (the transient's
+    ! capacity) and the closed form behind it, public for the unit test.
+    public :: scalar_volume_fraction, plane_box_fraction
     ! Increment C2: the tangential term the C1 baseline drops -- its
     ! indicator (always available) and the correction itself (config-gated).
     public :: scalar_conjugate_indicator, conjugate_tangential
@@ -327,6 +340,114 @@ contains
 
         k = dm*merge(ks, 1.0d0, phiL + phiR < 0.0d0)
     end function conjugate_face_local_k
+
+    ! FLUID VOLUME FRACTION of a box cut by a plane -- the 3D sibling of the
+    ! face-area fraction (increment C3, strategy doc Section 6).
+    !
+    ! phic is the signed distance at the box CENTRE (positive in the fluid)
+    ! and a_i = |n_i| h_i the projections of the box edges on the interface
+    ! normal. Measuring from the corner the plane reaches first,
+    ! s = phic + (a1+a2+a3)/2, the fluid volume is the volume of the box
+    ! {0 <= y_i <= a_i} below the plane sum(y_i) = s, which is the standard
+    ! inclusion-exclusion over the corner simplices:
+    !
+    !   V(s) = [ s+^3 - sum_i (s-a_i)+^3 + sum_i<j (s-a_i-a_j)+^3
+    !            - (s-a1-a2-a3)+^3 ] / 6 ,      x+ = max(x, 0)
+    !
+    ! divided by a1 a2 a3. It clips itself: a box the plane misses has
+    ! s <= 0 or s >= sum(a), giving exactly 0 or 1, so no interface test is
+    ! needed around it.
+    !
+    ! DEGENERATE DIRECTIONS ARE NOT A SPECIAL CASE, THEY ARE THE COMMON CASE.
+    ! A grid-aligned wall has two of the a_i equal to zero (up to the float
+    ! noise of the distance field), and the 3D form then divides a numerator
+    ! that has cancelled to nothing by a denominator that is nothing. The
+    ! limit a_3 -> 0 IS the 2D form and a_2 -> 0 the 1D form
+    ! (f = clip(1/2 + phic/h), the strategy doc's simple estimate -- which is
+    ! therefore not an approximation for a grid-aligned interface but the
+    ! closed form itself), so the routine drops directions whose a_i is
+    ! negligible against the largest and evaluates the reduced form. The
+    ! threshold is a pure conditioning choice: the cancellation in the full
+    ! form costs about eps*(sum a)/a_min relative, and dropping a direction
+    ! costs about a_i/sum(a) -- at 1e-8 both are ~1e-8, far below the O(h)
+    ! error of the normal itself.
+    real(C_DOUBLE) function plane_box_fraction(phic, a1, a2, a3) result(f)
+        real(C_DOUBLE), intent(in) :: phic, a1, a2, a3
+
+        real(C_DOUBLE), parameter :: DEGENERATE = 1.0d-8
+        real(C_DOUBLE) :: a(3), s, tot, amax
+        integer :: m
+
+        amax = max(a1, max(a2, a3))
+        m = 0
+        if (a1 > DEGENERATE*amax) then; m = m + 1; a(m) = a1; end if
+        if (a2 > DEGENERATE*amax) then; m = m + 1; a(m) = a2; end if
+        if (a3 > DEGENERATE*amax) then; m = m + 1; a(m) = a3; end if
+        if (m == 0) then
+            ! The normal has no component along any box edge: the plane is
+            ! parallel to the box and the whole cell is on one side.
+            f = merge(1.0d0, 0.0d0, phic > 0.0d0)
+            return
+        end if
+
+        tot = sum(a(1:m))
+        s = phic + 0.5d0*tot
+        ! Clip FIRST, and exactly. Outside the band the inclusion-exclusion
+        ! sum is an identity that holds analytically and cancels numerically:
+        ! its terms grow like s^3 while the answer stays 6 a1 a2 a3, so a cell
+        ! a few h from the interface would come back as 1 - 1e-13 instead of
+        ! 1. Nothing downstream would break, but "which cells are cut" is a
+        ! classification, and a classification must not be decided by
+        ! round-off (the 2026-08-05 body-heat lesson, one level down).
+        if (s <= 0.0d0) then
+            f = 0.0d0
+            return
+        else if (s >= tot) then
+            f = 1.0d0
+            return
+        end if
+        select case (m)
+        case (1)
+            f = (pos(s) - pos(s - a(1)))/a(1)
+        case (2)
+            f = (pos(s)**2 - pos(s - a(1))**2 - pos(s - a(2))**2 &
+                 + pos(s - tot)**2)/(2.0d0*a(1)*a(2))
+        case default
+            f = (pos(s)**3 &
+                 - pos(s - a(1))**3 - pos(s - a(2))**3 - pos(s - a(3))**3 &
+                 + pos(s - a(1) - a(2))**3 + pos(s - a(1) - a(3))**3 &
+                 + pos(s - a(2) - a(3))**3 &
+                 - pos(s - tot)**3)/(6.0d0*a(1)*a(2)*a(3))
+        end select
+        f = min(max(f, 0.0d0), 1.0d0)
+    end function plane_box_fraction
+
+    real(C_DOUBLE) function pos(x)
+        real(C_DOUBLE), intent(in) :: x
+
+        pos = max(x, 0.0d0)
+    end function pos
+
+    ! The fluid volume fraction of ONE cell, from the signed distance at its
+    ! centre and the face-normal it implies. |grad phi| = 1 for a distance
+    ! function, so the central differences of phi ARE the interface normal
+    ! (the identity the whole scheme rests on, strategy doc Section 8); where
+    ! they collapse -- a medial axis, where the two nearest surface points
+    ! differ -- there is no usable plane, and the cell falls back to the
+    ! pointwise C1 marker, which is what the rest of the scheme does there.
+    real(C_DOUBLE) function scalar_volume_fraction(phic, gx, gy, gz, hx, hy, hz) result(f)
+        real(C_DOUBLE), intent(in) :: phic, gx, gy, gz   ! phi and its gradient
+        real(C_DOUBLE), intent(in) :: hx, hy, hz         ! the cell's edge lengths
+
+        real(C_DOUBLE) :: gn
+
+        gn = sqrt(gx*gx + gy*gy + gz*gz)
+        if (gn < CONJ_MIN_GRADPHI) then
+            f = merge(1.0d0, 0.0d0, phic > 0.0d0)
+            return
+        end if
+        f = plane_box_fraction(phic, abs(gx)*hx/gn, abs(gy)*hy/gn, abs(gz)*hz/gn)
+    end function scalar_volume_fraction
 
     ! The tangential scalar s_t = e_d.grad T - (n.e_d)(n.grad T) at a cut
     ! face (increment C2; LaTeX note Section 7.3, construction 1). It is the
@@ -1040,6 +1161,21 @@ contains
                 " wall_treatment = wall_function is not supported"
             error stop "[scalar] conjugate with wall functions"
         end if
+        ! The C3 interface-heat diagnostic reports the C1 baseline cut-face
+        ! flux. With the C2 tangential correction ON the kernel applies a
+        ! DIFFERENT flux at those faces, and a diagnostic that does not report
+        ! the flux the kernel applied is worse than no diagnostic (the
+        ! invariant the S4 accumulators exist for). The correction ships
+        ! disabled by measurement (C2's verdict), so rather than carry a
+        ! second, ungated copy of its six-face stencil in the statistics, the
+        ! combination is rejected and says so.
+        if (sc%nTangential > 0_C_INT .and. sc%heatInterval > 0_C_INT) then
+            if (terminal) print *, "error: [scalar] heat_interval with", &
+                " [scalar.N] tangential_correction = true: the interface-heat", &
+                " diagnostic reports the baseline cut-face flux, which is not", &
+                " the one the kernel applies with the correction on"
+            error stop "[scalar] heat_interval with tangential_correction"
+        end if
     end subroutine validate_conjugate_config
 
     logical function name_is_reserved(name)
@@ -1047,7 +1183,7 @@ contains
 
         select case (trim(name))
         case ("un", "vn", "wn", "pn", "nut", "k", "omega", "gamma", "rethetat", &
-              "fd", "x", "y", "z", "blocks")
+              "fd", "vfrac", "x", "y", "z", "blocks")
             name_is_reserved = .true.
         case default
             name_is_reserved = .false.
@@ -1186,12 +1322,16 @@ contains
         ! is allocated HERE (before enter_scalar_data maps it) but FILLED
         ! later by init_scalar_conjugate, which needs the IBM coefficients.
         if (allocated(sc%phi)) deallocate(sc%phi)
+        if (allocated(sc%vfrac)) deallocate(sc%vfrac)
         if (scalar_conjugate_enabled(sc)) then
             allocate(sc%phi(0:nx+1,0:ny+1,0:nz+1,blk%nBlocks))
+            allocate(sc%vfrac(0:nx+1,0:ny+1,0:nz+1,blk%nBlocks))
         else
             allocate(sc%phi(0:0,0:0,0:0,1))
+            allocate(sc%vfrac(0:0,0:0,0:0,1))
         end if
         sc%phi = 0.0d0
+        sc%vfrac = 1.0d0
 
         ! Thermal wall function (S5a): the per-scalar constants are pure
         ! functions of (Pr, Pr_t) and always cheap, so they are computed
@@ -1379,6 +1519,8 @@ contains
         end do
         deallocate(dwall)
 
+        call fill_volume_fraction(sc, blk)
+
         counts(2) = real(count_cut_faces(sc, blk), C_DOUBLE)
         call comm_allreduce_sum(c, counts)
         if (c%has_terminal) then
@@ -1392,6 +1534,52 @@ contains
 
         call check_conjugate_refinement(sc, blk, c)
     end subroutine init_scalar_conjugate
+
+    ! The fluid volume fraction at every cell (increment C3), from phi and
+    ! its central differences. Pure geometry, so it is built ONCE here, right
+    ! after phi, and is thereafter read by the transport kernel (the
+    ! capacity), by the explicit time-step limiter (the same capacity) and by
+    ! the statistics -- one number, three consumers.
+    !
+    ! GHOSTS: the outermost layer has no central difference of its own, so it
+    ! keeps the pointwise marker value (0 or 1). Nothing reads it -- the
+    ! capacity is a CELL property and only interior cells are advanced -- but
+    ! it makes the field it rides out to the snapshot well defined everywhere.
+    ! The inner ghost layer gets the real fraction, which is what a checker
+    ! rebuilding a rank-independent statement needs.
+    subroutine fill_volume_fraction(sc, blk)
+        type(scalar_type), intent(inout) :: sc
+        type(block_set_type), intent(in) :: blk
+
+        integer :: i, j, k, b, nx, ny, nz
+        real(C_DOUBLE) :: gx, gy, gz, hx, hy, hz
+
+        nx = int(blk%nb(1))
+        ny = int(blk%nb(2))
+        nz = int(blk%nb(3))
+
+        do b = 1, int(blk%nBlocks)
+        do k = 0, nz+1
+            do j = 0, ny+1
+                do i = 0, nx+1
+                    if (i == 0 .or. i == nx+1 .or. j == 0 .or. j == ny+1 &
+                        .or. k == 0 .or. k == nz+1) then
+                        sc%vfrac(i,j,k,b) = merge(0.0d0, 1.0d0, sc%phi(i,j,k,b) < 0.0d0)
+                        cycle
+                    end if
+                    gx = (sc%phi(i+1,j,k,b) - sc%phi(i-1,j,k,b))*sc%cdx(i,b)
+                    gy = (sc%phi(i,j+1,k,b) - sc%phi(i,j-1,k,b))*sc%cdy(j,b)
+                    gz = (sc%phi(i,j,k+1,b) - sc%phi(i,j,k-1,b))*sc%cdz(k,b)
+                    hx = blk%x(i+1,VAR_U,b) - blk%x(i,VAR_U,b)
+                    hy = blk%y(j+1,VAR_V,b) - blk%y(j,VAR_V,b)
+                    hz = blk%z(k+1,VAR_W,b) - blk%z(k,VAR_W,b)
+                    sc%vfrac(i,j,k,b) = scalar_volume_fraction(sc%phi(i,j,k,b), &
+                        gx, gy, gz, hx, hy, hz)
+                end do
+            end do
+        end do
+        end do
+    end subroutine fill_volume_fraction
 
     ! Interior cut faces of one rank (the two cell centres in different
     ! materials), for the init report. Counted on the low side of each cell
@@ -1586,6 +1774,28 @@ contains
     !    measured-stable 0.2 in BOTH, which is exactly the factor Gershgorin
     !    predicts. Only interface cells pay it; the bulk of a conjugate run
     !    keeps today's step.
+    !
+    ! 3. C3 CLOSES THE MARGIN THAT LEFT. The C1 convention above grants
+    !    dt = pecletmax*3C/diag at a cut cell while Gershgorin plus this RK3's
+    !    real-axis limit of 2.5 allow dt <= 2.5 C/(2 diag) = 1.25 C/diag, so
+    !    the default pecletmax = 0.4 sat at 96 % of the bound -- and C2 found
+    !    the case that attains it: an OBLIQUE interface at kappa_s = 10^3 went
+    !    to NaN at 0.4 and was stable at 0.2. C1's gates never saw it because
+    !    their interface is grid-aligned, where the extreme mode is not
+    !    excited. `share = 2` grants 0.8 C/diag at pecletmax = 0.4, i.e. 64 %
+    !    of the bound, a 1.56x margin, and that is what ships: the alternative
+    !    -- leaving the rate and rejecting such cases in the config -- would
+    !    ask the user to know a bound the solver can compute. The cost is a
+    !    1.5x smaller dt AT CUT CELLS ONLY (the bulk of a conjugate run is
+    !    unaffected), and it is measured in validation/conjugate/README.md.
+    !
+    ! The capacity here is the C3 FLUID-FRACTION-WEIGHTED one, the same the
+    ! transport kernel divides by -- and it moves the limit at exactly the
+    ! cells with the least margin, in both directions: a fluid cut cell
+    ! against a heavy solid gains capacity (a larger step), a solid cut cell
+    ! loses it (a smaller one). Reading it from sc%vfrac rather than
+    ! re-deriving it is what keeps the limiter and the kernel talking about
+    ! the same cell.
     real(C_DOUBLE) function scalar_conjugate_peclet_rate(sc, blk, dns, c) result(rate)
         type(scalar_type), intent(in) :: sc
         type(block_set_type), intent(in) :: blk
@@ -1616,14 +1826,15 @@ contains
                     do i = 1, nx
                         phc = sc%phi(i,j,k,b)
                         solc = phc < 0.0d0
-                        cc = merge(sc%solidC(is), 1.0d0, solc)
+                        cc = sc%vfrac(i,j,k,b) &
+                            + (1.0d0 - sc%vfrac(i,j,k,b))*sc%solidC(is)
                         cut = ((sc%phi(i-1,j,k,b) < 0.0d0) .neqv. solc) &
                          .or. ((sc%phi(i+1,j,k,b) < 0.0d0) .neqv. solc) &
                          .or. ((sc%phi(i,j-1,k,b) < 0.0d0) .neqv. solc) &
                          .or. ((sc%phi(i,j+1,k,b) < 0.0d0) .neqv. solc) &
                          .or. ((sc%phi(i,j,k-1,b) < 0.0d0) .neqv. solc) &
                          .or. ((sc%phi(i,j,k+1,b) < 0.0d0) .neqv. solc)
-                        share = merge(3.0d0, 6.0d0, cut)
+                        share = merge(2.0d0, 6.0d0, cut)
                         diag = (conjugate_face_diffusivity(dm, sc%phi(i-1,j,k,b), phc, &
                                     ks, rc, sc%invDx(i,b))*sc%invDx(i,b) &
                               + conjugate_face_diffusivity(dm, phc, sc%phi(i+1,j,k,b), &
@@ -1923,7 +2134,7 @@ contains
         if (.not. scalar_conjugate_enabled(sc)) return
 
 #ifdef USE_OPENMP_OFFLOAD
-        !$omp target update to(sc%phi)
+        !$omp target update to(sc%phi, sc%vfrac)
 #endif
     end subroutine scalar_conjugate_to_device
 
@@ -1938,7 +2149,7 @@ contains
         !$omp& sc%initValue, sc%ibmValue, sc%inlet, sc%ibmMode, sc%initProfile, &
         !$omp& sc%bcType, sc%bcValue, sc%invDx, sc%invDy, sc%invDz, sc%nutNone, &
         !$omp& sc%cdx, sc%cdy, sc%cdz, &
-        !$omp& sc%wfP, sc%wfYpt, sc%wfYplus, sc%phi, sc%solidK, sc%solidC, &
+        !$omp& sc%wfP, sc%wfYpt, sc%wfYplus, sc%phi, sc%vfrac, sc%solidK, sc%solidC, &
         !$omp& sc%solidSource, sc%contactR, sc%tangCorr)
 #endif
     end subroutine enter_scalar_data
@@ -1953,7 +2164,7 @@ contains
         !$omp& sc%initValue, sc%ibmValue, sc%inlet, sc%ibmMode, sc%initProfile, &
         !$omp& sc%bcType, sc%bcValue, sc%invDx, sc%invDy, sc%invDz, sc%nutNone, &
         !$omp& sc%cdx, sc%cdy, sc%cdz, &
-        !$omp& sc%wfP, sc%wfYpt, sc%wfYplus, sc%phi, sc%solidK, sc%solidC, &
+        !$omp& sc%wfP, sc%wfYpt, sc%wfYplus, sc%phi, sc%vfrac, sc%solidK, sc%solidC, &
         !$omp& sc%solidSource, sc%contactR, sc%tangCorr)
         !$omp target exit data map(delete: sc)
 #endif
@@ -2004,6 +2215,7 @@ contains
         if (allocated(sc%cdy)) deallocate(sc%cdy)
         if (allocated(sc%cdz)) deallocate(sc%cdz)
         if (allocated(sc%phi)) deallocate(sc%phi)
+        if (allocated(sc%vfrac)) deallocate(sc%vfrac)
         sc%n = 0_C_INT
         sc%nConjugate = 0_C_INT
     end subroutine destroy_scalar
@@ -2186,7 +2398,7 @@ contains
         !$omp& blk%q, blk%d1x, blk%d1y, blk%d1z, blk%physLow, blk%physHigh, nut, coef, &
         !$omp& sc%pr, sc%prt, sc%prtModel, sc%source, sc%invDx, sc%invDy, sc%invDz, &
         !$omp& sc%ibmMode, sc%ibmValue, sc%wfP, sc%wfYpt, sc%wfYplus, wallfn, &
-        !$omp& sc%phi, sc%solidK, sc%solidC, sc%solidSource, sc%contactR) &
+        !$omp& sc%phi, sc%vfrac, sc%solidK, sc%solidC, sc%solidSource, sc%contactR) &
         !$omp& map(tofrom: blk%qs, blk%oldrhs) &
         !$omp& private(i,j,k,b,is,var,scr,uw,ue,vs,vn,wb,wt,divu,divuse, &
         !$omp& s0,conv,diff,rhs,dm,fw,fe,ss,mus,ipr,adiab,conjug,solc,ks,rc,tang, &
@@ -2605,14 +2817,29 @@ contains
                                               + (crt - crb)*blk%d1z(k,VAR_P,b)
 
                         if (conjug) then
-                            ! Divide the flux divergence by the LOCAL
-                            ! volumetric capacity, and let the solid carry
-                            ! its own volumetric source (Joule heating, ...).
-                            ! C is pointwise here; the fluid-fraction-weighted
-                            ! capacity of a cut cell is increment C3 (it
-                            ! matters for transients, not at steady state).
-                            rhs = (-conv + diff)/merge(sc%solidC(is), 1.0d0, solc) &
-                                + merge(sc%solidSource(is), sc%source(is), solc)
+                            ! Divide the flux divergence by the cell's own
+                            ! volumetric capacity, and let the solid carry its
+                            ! own volumetric source (Joule heating, ...).
+                            !
+                            ! C3: the capacity is FLUID-FRACTION WEIGHTED,
+                            !   C_cell = f + (1 - f) C_s,
+                            ! because a cut cell physically contains both
+                            ! materials. It cannot change any steady state (it
+                            ! divides an rhs that vanishes there -- C1 gated
+                            ! exactly that), and it is what makes the TRANSIENT
+                            ! second order: with the pointwise value a cut cell
+                            ! carries one material's whole heat capacity, an
+                            ! O(1) error on an O(h) band, i.e. first order.
+                            ! The volumetric source is weighted with the SAME
+                            ! fraction, as the power density f C_f S_f +
+                            ! (1-f) C_s S_s it is (C_f = 1); at f = 1 and f = 0
+                            ! it reduces to the pointwise C1 statement.
+                            rhs = (-conv + diff &
+                                   + sc%vfrac(i,j,k,b)*sc%source(is) &
+                                   + (1.0d0 - sc%vfrac(i,j,k,b))*sc%solidC(is) &
+                                        *sc%solidSource(is)) &
+                                /(sc%vfrac(i,j,k,b) &
+                                  + (1.0d0 - sc%vfrac(i,j,k,b))*sc%solidC(is))
                         else
                             rhs = -conv + diff + sc%source(is)
                         end if
