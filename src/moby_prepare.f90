@@ -19,7 +19,8 @@ program moby_prepare
     use :: blocks, only: block_set_type, init_block_set, destroy_block_set
     use :: flow_case, only: case_type, create_flow_case
     use :: config, only: config_seen_type, read_runtime_config, validate_dns_values
-    use :: scalar, only: scalar_type, destroy_scalar, scalars_enabled
+    use :: scalar, only: scalar_type, destroy_scalar, scalars_enabled, &
+        scalar_conjugate_enabled
     use :: boundary, only: boundary_type
     use :: io, only: write_case_file
     use :: ibmm, only: ibm_type, init_ibm, enter_ibm_data, exit_ibm_data, &
@@ -161,7 +162,12 @@ program moby_prepare
     ! init_rans_geometry computes inline; STL = the exact BVH
     ! point-triangle distance (the same query mobygeom's dwall_blocks
     ! uses -- indicator bisections would cost millions of parity casts).
-    if (dns%rans_configured) then
+    ! Conjugate heat transfer (increment C1) reads the very same tiles: the
+    ! signed distance whose sign the IBM marker supplies IS this field, so
+    ! `ibm_wall = conjugate` triggers the build exactly as a [rans] section
+    ! does. A TRIGGER only -- no new dataset, and a file prepared either way
+    ! is identical (docs/next_session_conjugate.md Section 8, arrangement 1).
+    if (dns%rans_configured .or. scalar_conjugate_enabled(sc)) then
         if (c%has_terminal) print *, "computing wall distance..."
         allocate(dwall(0:int(blk%nb(1))+1, 0:int(blk%nb(2))+1, &
             0:int(blk%nb(3))+1, blk%nBlocks))

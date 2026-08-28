@@ -1,10 +1,150 @@
 # Conjugate heat transfer at an immersed interface (branch `scalar`) — strategy
 
-STATUS: **PROPOSAL — NOT STARTED (2026-08-05).** No code written, nothing gated.
+STATUS: **C1 IS DONE AND GATED (2026-08-27/28, branch `scalar`, on top of
+`e1b5c2c`).** C2/C3/C4 are not started; §10 still describes them. Gates, the
+commands that produced every number, and the two time-step findings are in
+[`validation/conjugate/README.md`](../validation/conjugate/README.md).
 This document is the plan; the derivation, the limit checks, the accuracy
 argument and the sketches live in
 [`docs/conjugate/conjugate_ibm.tex`](conjugate/conjugate_ibm.tex) (build with
 `make` in that directory).
+
+## C1 — what landed
+
+`[scalar.N] ibm_wall = conjugate` (a THIRD branch, per §5), with `solid_k`
+(κ_s), `solid_rhocp` (C_s), `solid_init`, `solid_source` and
+`contact_resistance`. The scheme is the one face coefficient of §1:
+`conjugate_face_diffusivity` (scalar.f90) is `κ·dm` within one material and
+the distance-weighted harmonic mean `dm/(w/κ_L + (1−w)/κ_R + R_c dm/h)`
+across a cut face, on `w = φ_L/(φ_L − φ_R)`. Around it: solid cells are real
+unknowns (κ, C, pointwise — the fluid-fraction-weighted capacity is C3);
+convection HARD-masked on solid and cut faces with the skew term's divergence
+built from the SAME masked face velocities; `ν_t` in neither the solid nor a
+cut face; no penalization. `sc%phi = ±dwall`, ghost-inclusive, signed by the
+cell-centred IBM marker, built at init from the two EXISTING dwall producers.
+**No new dataset, no case-file format change** — §8 held.
+
+Everything is dormant without a conjugate scalar, and gated so: `[scalar]
+count = 0` and every `ibm_wall /= conjugate` run is **max_abs 0**, CPU and
+GPU, on both the 7-case standard suite and the 9-case scalar suite.
+
+## C1 — measured gate numbers
+
+| §10 gate | measured |
+|---|---|
+| 1D slab, `δ_L/h ∈ {0.05 … 0.95}` × `κ_s ∈ {10⁻², 1, 10, 10³}` | **max\|θ − exact\| ≤ 9.66e-15** over all 28 pairs (exactly 0 for every `κ_s = 1`) |
+| …and `w` itself, from the case file alone | **max\|w − w_exact\| = 2.2e-14** (the STL distance's float floor, 72 cut arms per case) |
+| cold start reaches the same profile | 2.39e-14 / 7.44e-15 / 4.77e-15 at `κ_s = 10⁻²/1/10`, residual between the last two writes **exactly 0** |
+| Peclet limiter over materials (`α_s/α_f = 200`) | bounded with (`max\|θ\| = 0.869`), NaN without |
+| capacity irrelevant at steady state (`C_s ∈ {0.5, 1, 8}`) | 8.85e-14 / 4.37e-14 / 4.88e-15 |
+| contact resistance (`R_c ∈ {0, 0.25, 4}`) | 6.9e-17 / **0.0** / 4.3e-19 |
+| `κ_s → ∞` == `dirichlet`, `κ_s → 0` == `adiabatic` | field difference **3.19e-4 / 3.19e-6 / 3.19e-8** and **2.87e-3 / 2.87e-5 / 2.87e-7**; interface-flux rate **order 1.000** both ways |
+| `Σ C·T·ΔV` in an insulated composite box | drift **−6.94e-18**, relative **1.22e-16** (flow ON) |
+| 1 == 4 ranks, CPU == GPU | **max_abs 0** on all five datasets, on BOTH geometry paths |
+| the §12 config guards | 5/5 hard-rejected |
+| the 2:1 precondition | checked at init, not assumed: a hand-placed box across the wall is rejected (224 bad faces); `refine_body` + `keep_buried` runs |
+
+## C1 — deviations from this plan
+
+1. **§11's "no `moby_prepare` change" needed one TRIGGER line.** `moby_prepare`
+   computed `dwall` only when a `[rans]` section was present, so a conjugate
+   case file came out without `dwall_blocks`. It now also builds them when
+   `ibm_wall = conjugate` — the same arrangement §8 asks for in the solver,
+   applied to the preprocessor. **No new dataset and no format change**: a
+   file prepared with `[rans]` and one prepared with a conjugate scalar are
+   the same file. §11's stronger claim ("no `moby_prepare` change") was too
+   strong as literally written; the substance of it holds.
+2. **The cut test is the MARKER DISAGREEMENT, not `φ_L·φ_R < 0`.** They are
+   the same test — the sign of φ *is* the marker — but the marker form cannot
+   be defeated by a cell centre lying exactly on the surface. `φ` is built so
+   a solid cell is always STRICTLY negative, which makes `φ < 0` an exact
+   material test and keeps `uncut ⇔ one material` a theorem rather than a
+   hope.
+3. **§7's escalation item 1 is wrong as written, and gate 1 proved it.**
+   "Take the maximum over materials" of each material's own `α = κ/C` is NOT
+   the explicit limit: a cut face carries `k_face` up to `max(κ_L, κ_R)` —
+   which IS §7's own not-stiff bound — but it feeds the cell on the **other**
+   side, whose capacity belongs to the other material. A fluid cell against a
+   `κ_s = 1000` solid sees 1000× the fluid rate even when `α_s = α_f`
+   exactly. `scalar_conjugate_peclet_rate` therefore builds the rate from the
+   ACTUAL face coefficients after the interface exists (it cannot live in
+   `precompute_peclet_rate`, which runs before `φ` does). That is also far
+   *less* conservative than `max(κ)/min(C)`: at `w = ½`, `κ_s = 1000` the true
+   penalty is 2×, not 1000×.
+4. **A cut cell pays a Gershgorin factor the uniform interior never does.**
+   ρ ≤ `2 A_ii/C_i`, and the shipped `pecletmax` convention is ~1.9× short of
+   that — uniform runs survive only because their extreme modes are never
+   excited. A cut cell's row is strongly asymmetric, so its worst mode is
+   local and IS attained (this RK3's real-axis limit is 2.5). Measured:
+   `(κ_s, C_s) = (0.01, 0.01)` at `w = 0.95` blows up at `pecletmax = 0.3`,
+   stable at 0.2; `(1000, 1000)` at `w = 0.80` blows up at 0.4, stable at 0.2.
+   The rate is doubled at cut cells only, which makes the nominal 0.4 behave
+   as the measured-stable 0.2 in both.
+5. **`solid_init` applies on a COLD START only.** On a restart the solid field
+   is saved state and comes from the file like every other cell.
+6. **`scalar_stats.f90` was extended but is only SMOKE-gated at C1.** Its
+   y-face diffusivity and convective mask now take the same conjugate branch
+   as the transport kernel, so the rows keep reporting the flux the kernel
+   applied (the invariant S4 exists for). C1 checks only that the branch runs
+   on CPU and GPU with finite output; the quantitative gate on the conjugate
+   flux columns is C3's Nusselt increment, which is where §10 puts it.
+7. **The grazing-arm guard is a fixed parameter, not a config key**
+   (`CONJ_MIN_COSINE = 0.05` in scalar.f90). §8 asks for "a threshold on `a`";
+   making it configurable would ship a knob no gate constrains.
+
+## C1 — a pre-existing defect the gate run surfaced (fixed here)
+
+Running the full §10 protocol turned up a regression in `21a7701` — the
+commit this increment sits on — that has nothing to do with conjugate heat
+transfer, and it blocked gate 5's `run_gates_s2.sh` / `run_gates_s4.sh`.
+
+`trim_dt_for_final_time` signalled "the remaining time is round-off, not a
+step" by setting `dns%dt = 0` and letting the main loop's `dt <= 0` exit
+fire. But `dns%dt` is written into every snapshot's metadata and read back by
+the restart, so the FINAL snapshot of a `t_final` run became unusable in a
+NEW way — `config.f90: time step must be positive`. It traded one bad final
+restart (the `1/dt`-amplified `pn`) for another. Measured:
+
+```
+relax/turbles_60000.h5   dt = 0.0   t = 29.999999999975433
+RT_turbles.h5            dt = 0.0   t = 29.999999999975433
+turbles.log              ERROR STOP time step must be positive
+```
+
+and because the failing leg deletes `turbles_*.h5` before it dies, S4 went
+with it (`s4stats.ini` restarts from one of those snapshots).
+
+`trim_dt_for_final_time` is now a LOGICAL FUNCTION that reports rather than
+zeroing. The trajectory is unchanged — the loop exits at the same step and a
+genuine final partial step still gets `dt = remaining` — only the recorded
+metadata differs, and both bit-exactness drivers force `t_final = 0.0`, so
+the routine returns immediately there.
+
+**The commit's own claim was also wrong**, and that is the transferable part:
+it says the fix is "inert on all 32 bit-exactness case-runs (every suite case
+is nsteps-terminated)". `run_gates_s2.sh`'s `les_legs()` REWRITES `t_final`
+in a generated variant, so its `les` and `band` legs are `t_final`-terminated.
+A claim of the form "no case exercises this path" has to be checked against
+the GENERATED inis, not only the committed ones.
+
+## C1 — one result stronger than the plan predicted
+
+§10's `κ_s → ∞` gate is written as a limit "to the discretisation's own
+tolerance", on the expectation of an O(h) floor: the S3 modes put their
+effective boundary on the STAIRCASE while the conjugate interface sits at its
+true position. **There is no floor.** The difference from the `dirichlet`
+twin falls like `1/κ_s` straight to `3.19e-8` — five decades below any `h²` in
+that case — and the interface flux approaches `q_Dirichlet` at measured order
+1.000. That is §5's algebraic claim confirmed rather than merely approached:
+the S3 `dirichlet` mode, with its second-order graded `((d0−d)/d)/d0²`
+coefficient, **is** Luchini's λ, and the `κ_s → ∞` limit of the cut-face
+coefficient reproduces it. The `κ_s → 0` side is equally clean:
+`|q|/κ_s → 4.000000`, the closed form.
+
+This does NOT reopen §5's "one code path" question — re-expressing the two S3
+modes through the cut-face arithmetic still could not be bit-exact, which is
+what §5 actually turns on. It does mean the limits are a sharper regression
+than expected, and worth keeping as one.
 
 **REVISION (2026-08-05): the plan was restructured around a much simpler
 baseline.** The scheme is unchanged in substance but the machinery collapsed:

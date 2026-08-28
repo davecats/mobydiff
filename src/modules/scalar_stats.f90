@@ -50,8 +50,8 @@ module scalar_stats
     use :: turbulence, only: turb_type, turbulence_is_enabled
     use :: ibmm, only: ibm_type
     use :: scalar, only: scalar_type, scalars_enabled, eddy_diffusivity, &
-        wall_face_diffusivity, &
-        SC_IBM_ADIABATIC, SC_LAYOUT_PROFILE, SC_LAYOUT_PLANE
+        wall_face_diffusivity, scalar_conjugate_enabled, conjugate_face_diffusivity, &
+        SC_IBM_ADIABATIC, SC_IBM_CONJUGATE, SC_LAYOUT_PROFILE, SC_LAYOUT_PLANE
     implicit none
 
     private
@@ -327,7 +327,9 @@ contains
         integer :: lvlOff(0:this%nLevels)
         real(C_DOUBLE) :: weight, ire, re, dm, uc, s0, sS, sN, vs, vn, dys, dyn
         real(C_DOUBLE) :: nts, ntn, clo, jlo, chi, jhi
+        real(C_DOUBLE) :: phc, phs, phn
         logical :: useIbm, adiab, cls, cln, sols, soln, ms, mn, wallfn
+        logical :: anyConj, conjug, solc, cuts, cutn, cms, cmn
 
         nx = int(blk%nb(1))
         ny = int(blk%nb(2))
@@ -347,6 +349,11 @@ contains
         ! the transport kernel actually applied, or theta_tau is not the
         ! solver's theta_tau. Same branch, same helper as scalar.f90.
         wallfn = dns%rans_wall_treatment == 1_C_INT
+        ! C1: a conjugate cut face's diffusivity is the interface
+        ! coefficient, not nu_t/Pr_t, and its convective flux is masked --
+        ! the rows must report what the kernel APPLIED. Same helper, same
+        ! branch as scalar.f90; off, sc%phi is a 1-cell dummy and unread.
+        anyConj = scalar_conjugate_enabled(sc)
         sample_sum = 0.0d0
         sample_count = 0.0d0
 
@@ -354,10 +361,12 @@ contains
         !$omp& map(to: ire, re, useNut, useIbm, nScal, nStat, nx, ny, nz, plane, ny_g, lvlOff, &
         !$omp& blk%q, blk%x, blk%z, blk%origin, blk%level, blk%physLow, blk%physHigh, nut, coef, &
         !$omp& sc%pr, sc%prt, sc%prtModel, sc%invDy, sc%ibmMode, &
-        !$omp& sc%wfP, sc%wfYpt, sc%wfYplus, wallfn) &
+        !$omp& sc%wfP, sc%wfYpt, sc%wfYplus, wallfn, anyConj, &
+        !$omp& sc%phi, sc%solidK, sc%contactR) &
         !$omp& map(tofrom: sample_sum, sample_count) &
         !$omp& private(i,j,k,b,is,s,var,row,base,gx,gy,weight,dm,uc,s0,sS,sN,vs,vn, &
-        !$omp& dys,dyn,nts,ntn,clo,jlo,chi,jhi,adiab,cls,cln,sols,soln,ms,mn)
+        !$omp& dys,dyn,nts,ntn,clo,jlo,chi,jhi,adiab,cls,cln,sols,soln,ms,mn, &
+        !$omp& phc,phs,phn,conjug,solc,cuts,cutn,cms,cmn)
         do b = 1, nBlocks
         do k = 1, nz
             do j = 1, ny
@@ -393,6 +402,17 @@ contains
                         nts = 0.5d0*(nut(i,j-1,k,b) + nut(i,j,k,b))
                         ntn = 0.5d0*(nut(i,j,k,b) + nut(i,j+1,k,b))
                     end if
+                    ! The conjugate interface's y-face geometry (C1).
+                    phc = 0.0d0; phs = 0.0d0; phn = 0.0d0
+                    solc = .false.; cuts = .false.; cutn = .false.
+                    if (anyConj) then
+                        phc = sc%phi(i,j,  k,b)
+                        phs = sc%phi(i,j-1,k,b)
+                        phn = sc%phi(i,j+1,k,b)
+                        solc = phc < 0.0d0
+                        cuts = (phs < 0.0d0) .neqv. solc
+                        cutn = (phn < 0.0d0) .neqv. solc
+                    end if
 
                     !$omp atomic update
                     sample_count(row) = sample_count(row) + weight
@@ -404,13 +424,30 @@ contains
                         sN = blk%q(i,j+1,k,var,b)
 
                         adiab = useIbm .and. sc%ibmMode(is) == SC_IBM_ADIABATIC
+                        conjug = useIbm .and. sc%ibmMode(is) == SC_IBM_CONJUGATE
                         ms = cls .or. (adiab .and. sols)
                         mn = cln .or. (adiab .and. soln)
+                        ! Diffusion is NOT masked in the conjugate mode (the
+                        ! solid conducts) but convection is, on solid and cut
+                        ! faces alike -- the transport kernel's split.
+                        cms = ms .or. (conjug .and. (sols .or. cuts))
+                        cmn = mn .or. (conjug .and. (soln .or. cutn))
 
                         dm = ire/sc%pr(is)
                         dys = dm
                         dyn = dm
-                        if (useNut .and. wallfn) then
+                        if (conjug) then
+                            dys = conjugate_face_diffusivity(dm, phs, phc, sc%solidK(is), &
+                                sc%contactR(is), sc%invDy(j,b))
+                            dyn = conjugate_face_diffusivity(dm, phc, phn, sc%solidK(is), &
+                                sc%contactR(is), sc%invDy(j+1,b))
+                            if (useNut .and. .not. solc) then
+                                if (.not. cuts) dys = dys + eddy_diffusivity(nts, sc%pr(is), &
+                                    sc%prt(is), sc%prtModel(is), re)
+                                if (.not. cutn) dyn = dyn + eddy_diffusivity(ntn, sc%pr(is), &
+                                    sc%prt(is), sc%prtModel(is), re)
+                            end if
+                        else if (useNut .and. wallfn) then
                             dys = dm + wall_face_diffusivity(nut(i,j-1,k,b), nut(i,j,k,b), &
                                 sc%wfYplus(i,j-1,k,b), sc%wfYplus(i,j,k,b), &
                                 sc%pr(is), sc%prt(is), sc%prtModel(is), re, &
@@ -427,9 +464,9 @@ contains
                         end if
 
                         ! Fluxes in the +y sense: convection minus D ds/dy.
-                        clo = merge(0.0d0, vs*0.5d0*(sS + s0), ms)
+                        clo = merge(0.0d0, vs*0.5d0*(sS + s0), cms)
                         jlo = clo - merge(0.0d0, dys*(s0 - sS)*sc%invDy(j,b), ms)
-                        chi = merge(0.0d0, vn*0.5d0*(s0 + sN), mn)
+                        chi = merge(0.0d0, vn*0.5d0*(s0 + sN), cmn)
                         jhi = chi - merge(0.0d0, dyn*(sN - s0)*sc%invDy(j+1,b), mn)
 
                         s = base + SCALAR_NSTAT*(is - 1)

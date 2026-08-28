@@ -186,6 +186,36 @@ program moby_solve
     !$omp target update from(blk%q)
 #endif
 
+    ! Conjugate heat transfer at the immersed interface (increment C1,
+    ! docs/next_session_conjugate.md): the signed distance phi = +-dwall,
+    ! signed by the cell-centred IBM marker, and the solid's own initial
+    ! temperature. It must run HERE -- after the IBM coefficients exist (the
+    ! marker IS the cell-centred coefficient) and after blk%q's host copy has
+    ! been refreshed above. Both routines are host code writing device-mapped
+    ! arrays, so both pushes below are load-bearing on the GPU (the
+    ! 2026-08-05 staleness class, CLAUDE.md).
+    if (scalar_conjugate_enabled(sc)) then
+        if (c%has_terminal) print *, "initialising conjugate interface..."
+#ifdef USE_OPENMP_OFFLOAD
+        ! The analytic IBM coefficients are computed on the device.
+        !$omp target update from(ibm%coef)
+#endif
+        call init_scalar_conjugate(sc, dns, blk, bc, ibm, c)
+        ! The explicit diffusive limit of the interface. It cannot be formed
+        ! in precompute_peclet_rate (no signed distance yet) and it is NOT a
+        ! per-material alpha: a cut face's coefficient reaches max(kappa) and
+        ! feeds the cell on the other side, whose capacity is the other
+        ! material's -- see scalar_conjugate_peclet_rate.
+        dns%peclet_rate = max(dns%peclet_rate, &
+            scalar_conjugate_peclet_rate(sc, blk, dns, c))
+        ! Cold start only: on a restart the solid field is saved state.
+        if (.not. has_restart_file(dns)) call init_scalar_solid_fields(sc, blk)
+        call scalar_conjugate_to_device(sc)
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target update to(blk%q)
+#endif
+    end if
+
     ! A configured [rans] section builds the SST geometry state (T1: wall
     ! distance + IBM wall cells); [turbulence] model = rans additionally
     ! builds and advances the k-omega transport state (T2).

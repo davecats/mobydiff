@@ -1065,9 +1065,57 @@ immersed boundary. Phased, each phase verified before the next:
   - LANDMINE (cost an hour): a local `nVar` in blocks.f90 SHADOWED the
     use-associated `NVAR` parameter (Fortran is case-insensitive) and silently
     allocated a zero-size dimension. The local is now `nQ`.
-  - Conjugate heat transfer at the immersed interface is the planned third
-    `ibm_wall` mode: `docs/next_session_conjugate.md` (PROPOSAL, not started;
-    derivation in `docs/conjugate/conjugate_ibm.tex`).
+- Conjugate heat transfer at the immersed interface — increment **C1 DONE**
+  (2026-08-27/28, branch `scalar`; plan + every deviation and gate number in
+  the STATUS header of `docs/next_session_conjugate.md`, commands and
+  measurements in `validation/conjugate/README.md`, derivation in
+  `docs/conjugate/conjugate_ibm.tex`). `[scalar.N] ibm_wall = conjugate` is a
+  THIRD mode beside `dirichlet`/`adiabatic` (re-expressing those two through
+  the new arithmetic could not be bit-exact, so they are untouched): the solid
+  stops being a boundary condition and becomes a REAL unknown carrying
+  `solid_k` = κ_s and `solid_rhocp` = C_s (both ≡ 1 in the fluid), plus
+  `solid_init` / `solid_source` / `contact_resistance`. **THE WHOLE SCHEME IS
+  ONE FACE COEFFICIENT**: at a face whose two cell centres straddle the
+  interface, the face diffusivity becomes the distance-weighted harmonic mean
+  `dm/(w/κ_L + (1−w)/κ_R + R_c dm/h)` on the level-set fraction
+  `w = φ_L/(φ_L − φ_R)`; every other face keeps today's kernel line verbatim.
+  The OBLIQUITY LEMMA is why this needs no new data: φ stores the
+  PERPENDICULAR distance, so the direction cosine cancels in the ratio and `w`
+  is the true arm fraction at any orientation, with no normal ever computed —
+  **no new dataset, no case-file format change**. `sc%phi = ±dwall` is
+  ghost-inclusive, signed by the cell-centred IBM marker
+  (`|coef(VAR_P)| > 1e20` is exactly "this centre is in the solid", because
+  `set_ibm_coeff` writes SOLID/Re there and grades only fluid-centred cells),
+  and comes from the two EXISTING dwall producers. Around the coefficient:
+  convection HARD-masked on solid and cut faces with the skew term's
+  divergence built from the SAME masked velocities (so a uniform scalar is
+  still preserved exactly, in the solid too); the flux divergence divided by
+  the local capacity; ν_t in neither the solid nor a cut face; no
+  penalization. HARD CONFIG ERRORS (each silently produces a wrong answer):
+  `remove_solid = true`, `refine_body` without `keep_buried`, `ibm_value`,
+  a `solid_*` key on a non-conjugate scalar, no immersed body, wall functions.
+  The 2:1 precondition is CHECKED at init, not assumed (a cut face may not sit
+  on a coarse/fine block face — the coefficient is a same-level arm).
+  Gates (all PASS, `validation/conjugate/run_gates_c1.sh`): 1D two-material
+  slab with the cut swept through a full cell × κ_s over five decades —
+  max|θ − exact| **≤ 9.7e-15** over 28 pairs, and `w` itself **2.2e-14** vs
+  the analytic cut, rebuilt from the case file without the solver;
+  capacity-independent steady state; contact resistance exact (R_c = 0.25
+  gives **0.0**); `Σ C θ dV` drift **1.2e-16 relative** with the flow on;
+  1 == 4 ranks and CPU == GPU **max_abs 0** on both geometry paths; 5/5 config
+  guards rejected; `[scalar] count = 0` and every `ibm_wall /= conjugate` run
+  **max_abs 0** vs `~/s5c_ref_binaries` on the 7-case and 9-case suites, CPU
+  AND GPU. TWO TIME-STEP FINDINGS, both from gate 1 and both recorded in
+  `scalar_conjugate_peclet_rate`: (1) the explicit limit is NOT the max over
+  materials of `α = κ/C` — a cut face's `k_face` reaches `max(κ_L,κ_R)` but
+  feeds the cell on the OTHER side, whose capacity is the other material's, so
+  a fluid cell against a κ_s = 1000 solid sees 1000× the fluid rate even at
+  α_s = α_f; the rate is built from the ACTUAL face coefficients instead
+  (also 500× less conservative at w = ½); (2) a cut cell attains the
+  Gershgorin factor `ρ ≤ 2A_ii/C_i` that the uniform interior never excites,
+  so its rate is doubled — measured, `pecletmax` 0.3 blows up / 0.2 is stable.
+  NEXT: C2 (the `e_face` indicator and the tangential correction — whether it
+  ever ships enabled is a MEASUREMENT, not a design decision), then C3.
 - ALSO PENDING: **Profile + optimise** the GPU step for the 2:1-refined channel.
   **STEP 1 (re-profile) IS DONE 2026-08-07; step 2 (optimise) is not started.**
   The phase timer is back as a CONFIG key, not an env hook: `[output] profile

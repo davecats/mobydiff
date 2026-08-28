@@ -123,3 +123,11 @@ validation/scalar/*.dat
 # docs/conjugate: the derivation note is BUILT from the .tex (`make` in that
 # directory), so the PDF is a build product, not a source.
 docs/conjugate/*.pdf
+
+# conjugate-interface C1 gate scratch (validation/conjugate/run_gates_c1.sh):
+# the generated case inis, the slab STLs the gate writes per cut position, and
+# the prepare/solve traces. The *.h5 and *.log rules above already cover the
+# case files and snapshots; the tracked sources are the two committed .ini
+# templates, the checkers and the driver.
+validation/conjugate/.*.ini
+validation/conjugate/*.stl

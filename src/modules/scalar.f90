@@ -29,16 +29,21 @@ module scalar
     use, intrinsic :: iso_c_binding
     use :: init, only: dns_type, VAR_U, VAR_V, VAR_W, VAR_P, &
         VAR_S0, SCR_S0, NVAR
-    use :: blocks, only: block_set_type, FACE_CLOSED
+    use :: blocks, only: block_set_type, FACE_CLOSED, FACE_COARSE, FACE_FINE
     use :: boundary, only: boundary_type, NFACES, boundary_face_id, &
         apply_scalar_bc_q, BC_DIRICHLET, BC_NEUMANN, &
         PATCH_GENERIC, PATCH_WALL, PATCH_INLET, PATCH_OUTLET
-    use :: comm, only: comm_type, exchange_halos
+    use :: comm, only: comm_type, exchange_halos, comm_allreduce_sum, comm_allreduce_max
     use :: turbulence, only: turb_type, turbulence_is_enabled
     ! S5a: the log law of the wall is rans.f90's -- kappa and E are
     ! use-associated so the thermal wall function below and the momentum one
     ! (nut_wall_value / omega_wall_blend) can never drift apart.
-    use :: rans, only: WF_KAPPA, WF_E
+    ! C1: the conjugate signed distance IS the RANS wall distance, so its two
+    ! producers are use-associated rather than reimplemented (strategy doc
+    ! Section 8: "no new computation, only a new trigger").
+    use :: rans, only: WF_KAPPA, WF_E, fill_body_distance_analytic
+    use :: ibmm, only: ibm_type, isInBody
+    use :: io, only: read_dwall_blocks
     implicit none
 
     private
@@ -53,6 +58,31 @@ module scalar
     ! Immersed-body wall modes ([scalar.N] ibm_wall); used from S3.
     integer(C_INT), parameter, public :: SC_IBM_DIRICHLET = 0_C_INT
     integer(C_INT), parameter, public :: SC_IBM_ADIABATIC = 1_C_INT
+    ! CONJUGATE heat transfer at the immersed interface (increment C1,
+    ! docs/next_session_conjugate.md). The solid stops being a boundary
+    ! condition and becomes a REAL unknown carrying its own conductivity
+    ! ratio kappa_s = k_s/k_f and capacity ratio C_s = (rho c)_s/(rho c)_f
+    ! (both 1 in the fluid by definition), and a face whose two cell centres
+    ! straddle the interface takes the DISTANCE-WEIGHTED HARMONIC MEAN of the
+    ! two materials' diffusivities. It is a THIRD branch, not a
+    ! generalisation of the other two: S3's dirichlet shipped as an inline
+    ! penalization statement and adiabatic as six face masks, both gated, and
+    ! re-expressing them through this arithmetic could not be bit-exact
+    ! (strategy doc Section 5).
+    integer(C_INT), parameter, public :: SC_IBM_CONJUGATE = 2_C_INT
+
+    ! Grazing-arm guard (strategy doc Section 8, LaTeX note Section 6.6). The
+    ! level-set weight w is exact for a PLANE; for a curved interface the two
+    ! cell centres measure to different nearest points and w carries a
+    ! relative error O(curvature*h/a), with a = cos(angle between the arm and
+    ! the interface normal). Arms nearly TANGENT to the surface therefore
+    ! carry an unreliable w -- and little of the interface flux -- so below
+    ! this direction cosine the face falls back to the plain harmonic mean.
+    real(C_DOUBLE), parameter :: CONJ_MIN_COSINE = 5.0d-2
+    ! Smallest magnitude a SOLID cell's signed distance is allowed to take,
+    ! so that `phi < 0` is an EXACT material test even for a cell centre
+    ! sitting exactly on the surface (see init_scalar_conjugate).
+    real(C_DOUBLE), parameter :: CONJ_MIN_DISTANCE = 1.0d-300
     ! Statistics layouts ([scalar] stats_layout, increment S4): wall-normal
     ! rows x-z averaged (the channel form) or rows of the global (x,y) plane
     ! z averaged (the boundary-layer form). See scalar_stats.f90.
@@ -68,6 +98,26 @@ module scalar
         integer(C_INT), allocatable :: prtModel(:)
         real(C_DOUBLE), allocatable :: source(:), initValue(:), ibmValue(:), inlet(:)
         integer(C_INT), allocatable :: ibmMode(:), initProfile(:)
+        ! Conjugate body mode (increment C1): the solid's material ratios and
+        ! its own initial value / volumetric source, per scalar. kappa and C
+        ! are 1 in the FLUID by definition, so neither needs a field -- the
+        ! sign of phi below selects the material pointwise.
+        real(C_DOUBLE), allocatable :: solidK(:), solidC(:)
+        real(C_DOUBLE), allocatable :: solidInit(:), solidSource(:), contactR(:)
+        ! Host-only: which optional keys the ini actually set, so a solid_*
+        ! key on a non-conjugate scalar (or an ibm_value on a conjugate one)
+        ! is a hard config error rather than a silent no-op.
+        logical, allocatable :: solidKeySet(:), solidInitSet(:), ibmValueSet(:)
+        ! Signed distance to the immersed surface at the cell centres,
+        ! GHOST-INCLUSIVE: phi = +dwall in the fluid, -dwall in the solid,
+        ! the sign taken from the cell-centred IBM marker. This ONE field is
+        ! the entire geometric input of the conjugate scheme (strategy doc
+        ! Section 8: no new dataset, no moby_prepare change, no case-file
+        ! format change -- dwall already exists at the VAR_P position for
+        ! both geometry paths). A 1-cell dummy without a conjugate scalar,
+        ! the nutNone idiom: mapped uniformly, every access mode-guarded.
+        real(C_DOUBLE), allocatable :: phi(:,:,:,:)
+        integer(C_INT) :: nConjugate = 0_C_INT
         ! Per-face boundary rows (n, NFACES): BC_DIRICHLET / BC_NEUMANN with
         ! the face value / normal derivative. They live HERE, not in
         ! boundary_type, so bc keeps its fixed VAR_U:VAR_P shape and the
@@ -120,6 +170,14 @@ module scalar
     public :: scalar_sync, scalar_finish, scalar_transport
     public :: scalar_names, scalar_min_pr, scalar_min_prt
     public :: scalar_section_index, prt_kays, eddy_diffusivity
+    ! Conjugate heat transfer (increment C1): the geometry trigger, the solid
+    ! initial condition, the material-max diffusivity the Peclet limiter
+    ! needs, and the one face coefficient the whole scheme consists of
+    ! (public because scalar_stats.f90 must report the flux the transport
+    ! kernel APPLIED, so it shares this expression rather than copying it).
+    public :: scalar_conjugate_enabled, init_scalar_conjugate
+    public :: init_scalar_solid_fields, scalar_conjugate_to_device
+    public :: scalar_conjugate_peclet_rate, conjugate_face_diffusivity
     ! S5a thermal wall function: the face diffusivity scalar_stats.f90 needs
     ! (its wall flux must be the flux the transport kernel applied), and the
     ! two correlations, public for the host-side unit test.
@@ -158,6 +216,68 @@ contains
         prmin = 1.0d0
         if (sc%n > 0_C_INT) prmin = minval(sc%pr(1:int(sc%n)))
     end function scalar_min_pr
+
+    logical function scalar_conjugate_enabled(sc)
+        type(scalar_type), intent(in) :: sc
+
+        scalar_conjugate_enabled = sc%nConjugate > 0_C_INT
+    end function scalar_conjugate_enabled
+
+    ! Face diffusivity of the conjugate interface scheme -- the ONE new
+    ! coefficient the whole increment consists of (strategy doc Section 1,
+    ! LaTeX note Eq. (6.baseline)). phiL/phiR are the SIGNED distances at the
+    ! two cell centres (positive in the fluid), invd the inverse
+    ! centre-to-centre distance, dm = 1/(Re Pr) the FLUID molecular
+    ! diffusivity and ks = kappa_s the solid-to-fluid conductivity ratio.
+    !
+    !   uncut  ->  kappa*dm: one material across the face, i.e. today's
+    !              kernel line with kappa = 1 in the fluid;
+    !   cut    ->  the DISTANCE-WEIGHTED HARMONIC MEAN dm/(w/k_L + (1-w)/k_R)
+    !              on the level-set fraction w = phiL/(phiL - phiR),
+    !              i.e. two resistances in series.
+    !
+    ! THE OBLIQUITY LEMMA is what makes w usable at any interface
+    ! orientation: phi stores the PERPENDICULAR distance to the surface, not
+    ! the distance along the arm, so both arms are shortened by the same
+    ! direction cosine a = n.e_d and it CANCELS in the ratio. w is then
+    ! exactly the fraction delta_L/h_d that the series resistance needs, with
+    ! no normal ever computed and no per-arm cut record ever stored -- which
+    ! is why this increment adds no dataset. Exact for a plane at any angle.
+    !
+    ! The cut test is the MATERIAL DISAGREEMENT of the two centres rather
+    ! than the strategy doc's phiL*phiR < 0. They are the same test (the sign
+    ! of phi IS the marker), but the marker form cannot be defeated by a cell
+    ! centre lying exactly on the surface -- init_scalar_conjugate keeps a
+    ! solid cell's phi strictly negative for precisely that reason.
+    !
+    ! A contact resistance rc (per unit area, same non-dimensionalisation)
+    ! adds to the series: R = h_d(w/k_L + (1-w)/k_R)/dm + rc, hence the
+    ! rc*dm*invd term. rc = 0 gives exactly the harmonic mean.
+    real(C_DOUBLE) function conjugate_face_diffusivity(dm, phiL, phiR, ks, rc, invd) result(d)
+        !$omp declare target
+        real(C_DOUBLE), intent(in) :: dm, phiL, phiR, ks, rc, invd
+
+        real(C_DOUBLE) :: w, a, kl, kr
+        logical :: sl, sr
+
+        sl = phiL < 0.0d0
+        sr = phiR < 0.0d0
+        kl = merge(ks, 1.0d0, sl)
+        if (sl .eqv. sr) then
+            d = dm*kl
+            return
+        end if
+        kr = merge(ks, 1.0d0, sr)
+        ! a = |phiL - phiR|/h_d is the direction cosine, a free by-product of
+        ! the lemma; guard the grazing arms it identifies.
+        a = abs(phiL - phiR)*invd
+        if (a < CONJ_MIN_COSINE) then
+            w = 0.5d0
+        else
+            w = phiL/(phiL - phiR)
+        end if
+        d = dm/(w/kl + (1.0d0 - w)/kr + rc*dm*invd)
+    end function conjugate_face_diffusivity
 
     ! Smallest turbulent Prandtl number any scalar can reach (the binding
     ! eddy-diffusivity Peclet limit). Under prt_model = kays the correlation
@@ -481,13 +601,34 @@ contains
                 sc%ibmMode(is) = SC_IBM_DIRICHLET
             case ("adiabatic", "neumann")
                 sc%ibmMode(is) = SC_IBM_ADIABATIC
+            case ("conjugate")
+                sc%ibmMode(is) = SC_IBM_CONJUGATE
             case default
-                if (terminal) print *, "error: [scalar.N] ibm_wall must be dirichlet or", &
-                    " adiabatic, input line", line_no
+                if (terminal) print *, "error: [scalar.N] ibm_wall must be dirichlet,", &
+                    " adiabatic or conjugate, input line", line_no
                 error stop "unknown [scalar] ibm_wall"
             end select
         case ("ibm_value")
             sc%ibmValue(is) = read_real_value(value, key, line_no)
+            sc%ibmValueSet(is) = .true.
+        ! Conjugate solid properties (increment C1). All rejected outright on
+        ! a non-conjugate scalar -- see validate_scalar_config.
+        case ("solid_k", "solid_kappa")
+            sc%solidK(is) = read_real_value(value, key, line_no)
+            sc%solidKeySet(is) = .true.
+        case ("solid_rhocp", "solid_capacity")
+            sc%solidC(is) = read_real_value(value, key, line_no)
+            sc%solidKeySet(is) = .true.
+        case ("solid_init", "solid_initial")
+            sc%solidInit(is) = read_real_value(value, key, line_no)
+            sc%solidInitSet(is) = .true.
+            sc%solidKeySet(is) = .true.
+        case ("solid_source")
+            sc%solidSource(is) = read_real_value(value, key, line_no)
+            sc%solidKeySet(is) = .true.
+        case ("contact_resistance")
+            sc%contactR(is) = read_real_value(value, key, line_no)
+            sc%solidKeySet(is) = .true.
         case ("inlet")
             sc%inlet(is) = read_real_value(value, key, line_no)
         case default
@@ -571,6 +712,11 @@ contains
             old%source = sc%source; old%initValue = sc%initValue
             old%ibmValue = sc%ibmValue; old%inlet = sc%inlet
             old%ibmMode = sc%ibmMode; old%initProfile = sc%initProfile
+            old%solidK = sc%solidK; old%solidC = sc%solidC
+            old%solidInit = sc%solidInit; old%solidSource = sc%solidSource
+            old%contactR = sc%contactR
+            old%solidKeySet = sc%solidKeySet; old%solidInitSet = sc%solidInitSet
+            old%ibmValueSet = sc%ibmValueSet
             old%bcType = sc%bcType; old%bcValue = sc%bcValue
             old%bcTypeSet = sc%bcTypeSet; old%bcValueSet = sc%bcValueSet
             old%name = sc%name; old%sectionSeen = sc%sectionSeen
@@ -580,6 +726,9 @@ contains
         allocate(sc%pr(n), sc%prt(n), sc%prtModel(n))
         allocate(sc%source(n), sc%initValue(n), sc%ibmValue(n), sc%inlet(n))
         allocate(sc%ibmMode(n), sc%initProfile(n))
+        allocate(sc%solidK(n), sc%solidC(n), sc%solidInit(n), sc%solidSource(n))
+        allocate(sc%contactR(n))
+        allocate(sc%solidKeySet(n), sc%solidInitSet(n), sc%ibmValueSet(n))
         allocate(sc%bcType(n,NFACES), sc%bcValue(n,NFACES))
         allocate(sc%bcTypeSet(n,NFACES), sc%bcValueSet(n,NFACES))
         allocate(sc%name(n), sc%sectionSeen(n))
@@ -595,6 +744,17 @@ contains
         sc%inlet = 0.0d0
         sc%ibmMode = SC_IBM_DIRICHLET
         sc%initProfile = SC_INIT_UNIFORM
+        ! kappa_s = C_s = 1 is the inert conjugate solid (same material as the
+        ! fluid), which is also the k_s = k_f case where the scheme's dropped
+        ! tangential term vanishes identically -- a useful control.
+        sc%solidK = 1.0d0
+        sc%solidC = 1.0d0
+        sc%solidInit = 0.0d0
+        sc%solidSource = 0.0d0
+        sc%contactR = 0.0d0
+        sc%solidKeySet = .false.
+        sc%solidInitSet = .false.
+        sc%ibmValueSet = .false.
         sc%bcType = BC_NEUMANN
         sc%bcValue = 0.0d0
         sc%bcTypeSet = .false.
@@ -608,6 +768,13 @@ contains
             sc%source(1:nOld) = old%source; sc%initValue(1:nOld) = old%initValue
             sc%ibmValue(1:nOld) = old%ibmValue; sc%inlet(1:nOld) = old%inlet
             sc%ibmMode(1:nOld) = old%ibmMode; sc%initProfile(1:nOld) = old%initProfile
+            sc%solidK(1:nOld) = old%solidK; sc%solidC(1:nOld) = old%solidC
+            sc%solidInit(1:nOld) = old%solidInit
+            sc%solidSource(1:nOld) = old%solidSource
+            sc%contactR(1:nOld) = old%contactR
+            sc%solidKeySet(1:nOld) = old%solidKeySet
+            sc%solidInitSet(1:nOld) = old%solidInitSet
+            sc%ibmValueSet(1:nOld) = old%ibmValueSet
             sc%bcType(1:nOld,:) = old%bcType; sc%bcValue(1:nOld,:) = old%bcValue
             sc%bcTypeSet(1:nOld,:) = old%bcTypeSet
             sc%bcValueSet(1:nOld,:) = old%bcValueSet
@@ -651,9 +818,86 @@ contains
             end do
         end do
 
+        call validate_conjugate_config(sc, dns, terminal)
+
         dns%nScalar = sc%n
         dns%nVar = NVAR + sc%n
     end subroutine validate_scalar_config
+
+    ! Conjugate body mode (increment C1): the per-scalar solid properties and
+    ! the case-level preconditions of docs/next_session_conjugate.md Section
+    ! 12. Every one of these is a HARD ERROR rather than a warning: each
+    ! silently produces a physically wrong answer that no gate in the passive
+    ! set would flag.
+    subroutine validate_conjugate_config(sc, dns, terminal)
+        type(scalar_type), intent(inout) :: sc
+        type(dns_type), intent(in) :: dns
+        logical, intent(in) :: terminal
+
+        integer :: is, nConj
+
+        nConj = 0
+        do is = 1, int(sc%n)
+            if (sc%ibmMode(is) /= SC_IBM_CONJUGATE) then
+                if (sc%solidKeySet(is)) then
+                    if (terminal) print '(a,i0,a)', " error: [scalar.", is, &
+                        "] solid_k / solid_rhocp / solid_init / solid_source /" // &
+                        " contact_resistance need ibm_wall = conjugate"
+                    error stop "[scalar.N] solid property without ibm_wall = conjugate"
+                end if
+                cycle
+            end if
+            nConj = nConj + 1
+            ! The body temperature is an OUTCOME of the conjugate problem,
+            ! not an input -- an ibm_value would be silently ignored.
+            if (sc%ibmValueSet(is)) then
+                if (terminal) print '(a,i0,a)', " error: [scalar.", is, &
+                    "] ibm_value is meaningless with ibm_wall = conjugate:" // &
+                    " the interface temperature is solved for, not imposed"
+                error stop "[scalar.N] ibm_value with ibm_wall = conjugate"
+            end if
+            if (sc%solidK(is) <= 0.0d0) error stop "[scalar.N] solid_k must be positive"
+            if (sc%solidC(is) <= 0.0d0) error stop "[scalar.N] solid_rhocp must be positive"
+            if (sc%contactR(is) < 0.0d0) &
+                error stop "[scalar.N] contact_resistance must be non-negative"
+            ! Default solid initial value = the scalar's own `initial`, so a
+            ! conjugate run with no solid_init starts uniform.
+            if (.not. sc%solidInitSet(is)) sc%solidInit(is) = sc%initValue(is)
+        end do
+        sc%nConjugate = int(nConj, C_INT)
+        if (nConj == 0) return
+
+        if (.not. dns%ibm_enabled) then
+            if (terminal) print *, "error: [scalar.N] ibm_wall = conjugate needs an", &
+                " immersed body ([ibm] enabled = true)"
+            error stop "[scalar] conjugate without an immersed body"
+        end if
+        ! The solid now carries a real temperature field, so a block buried
+        ! inside the body is part of the SOLUTION domain. Removing it deletes
+        ! the solid -- the same class of trap as the A3 penalization-force
+        ! finding (validation/naca0012/README.md).
+        if (dns%block_nb > 0_C_INT .and. dns%block_remove_solid &
+                .and. .not. dns%block_refine_body) then
+            if (terminal) print *, "error: ibm_wall = conjugate needs [blocks]", &
+                " remove_solid = false -- buried blocks carry the solid temperature field"
+            error stop "[scalar] conjugate with [blocks] remove_solid"
+        end if
+        if (dns%block_refine_body .and. .not. dns%block_keep_buried) then
+            if (terminal) print *, "error: ibm_wall = conjugate needs [blocks]", &
+                " keep_buried = true under refine_body -- buried leaves carry", &
+                " the solid temperature field (and the case file must be", &
+                " prepared with it too)"
+            error stop "[scalar] conjugate without [blocks] keep_buried"
+        end if
+        ! Wall functions model an unresolved fluid sublayer; a conjugate
+        ! interface needs the near-wall layer RESOLVED on both sides
+        ! (strategy doc Section 6). Not validated -- so, an error.
+        if (dns%rans_wall_treatment /= 0_C_INT) then
+            if (terminal) print *, "error: ibm_wall = conjugate with [rans]", &
+                " wall_treatment = wall_function is not supported"
+            error stop "[scalar] conjugate with wall functions"
+        end if
+    end subroutine validate_conjugate_config
 
     logical function name_is_reserved(name)
         character(len=*), intent(in) :: name
@@ -770,6 +1014,19 @@ contains
         allocate(sc%nutNone(0:0,0:0,0:0,1))
         sc%nutNone = 0.0d0
 
+        ! Conjugate signed distance: full size (ghost-inclusive) only with a
+        ! conjugate scalar, a 1-cell dummy otherwise -- the nutNone idiom, so
+        ! the device maps stay uniform and every access is mode-guarded. It
+        ! is allocated HERE (before enter_scalar_data maps it) but FILLED
+        ! later by init_scalar_conjugate, which needs the IBM coefficients.
+        if (allocated(sc%phi)) deallocate(sc%phi)
+        if (scalar_conjugate_enabled(sc)) then
+            allocate(sc%phi(0:nx+1,0:ny+1,0:nz+1,blk%nBlocks))
+        else
+            allocate(sc%phi(0:0,0:0,0:0,1))
+        end if
+        sc%phi = 0.0d0
+
         ! Thermal wall function (S5a): the per-scalar constants are pure
         ! functions of (Pr, Pr_t) and always cheap, so they are computed
         ! unconditionally; the y+ FIELD is full size only under wall
@@ -874,6 +1131,365 @@ contains
         end do
     end subroutine init_scalar_fields
 
+    !--------------------------------------------------------------------
+    ! Conjugate interface geometry (increment C1)
+    !--------------------------------------------------------------------
+
+    ! Build the signed distance phi = +dwall (fluid) / -dwall (solid) at
+    ! every cell centre INCLUDING THE GHOSTS, which is the entire geometric
+    ! input of the conjugate scheme.
+    !
+    ! Nothing here is new computation: the magnitude is the RANS wall
+    ! distance, use-associated from its two existing producers
+    ! (fill_body_distance_analytic for the analytic indicator, the case
+    ! file's dwall_blocks tiles for the file path), and the sign is the
+    ! existing cell-centred IBM marker. That is the whole point of the
+    ! baseline -- no new dataset, no moby_prepare change, no case-file format
+    ! change (strategy doc Section 8 / Section 11).
+    !
+    ! THE MARKER: set_ibm_coeff writes SOLID/Re at every cell whose CENTRE is
+    ! inside the body and a graded coefficient only at fluid-centred cells,
+    ! so `|coef(VAR_P)| > SOLID_FACE_THRESHOLD` is exactly "this cell centre
+    ! is in the solid" -- on both geometry paths, and ghost-inclusive on
+    ! both, which is what lets a cut face on a block boundary see both signs.
+    !
+    ! HOST CODE writing a device-mapped array: the caller must push phi (and
+    ! blk%q, if init_scalar_solid_fields ran) to the device afterwards. It
+    ! must also have refreshed the HOST copy of ibm%coef first -- the
+    ! analytic coefficients are computed on the device.
+    subroutine init_scalar_conjugate(sc, dns, blk, bc, ibm, c)
+        type(scalar_type), intent(inout) :: sc
+        type(dns_type), intent(in) :: dns
+        type(block_set_type), intent(in) :: blk
+        type(boundary_type), intent(in) :: bc
+        type(ibm_type), intent(in) :: ibm
+        type(comm_type), intent(in) :: c
+
+        real(C_DOUBLE), parameter :: SOLID_FACE_THRESHOLD = 1.0d20
+        real(C_DOUBLE), allocatable :: dwall(:,:,:,:)
+        integer :: i, j, k, b, nx, ny, nz
+        logical :: found
+        real(C_DOUBLE) :: counts(2)
+
+        if (.not. scalar_conjugate_enabled(sc)) return
+
+        nx = int(blk%nb(1))
+        ny = int(blk%nb(2))
+        nz = int(blk%nb(3))
+        allocate(dwall(0:nx+1,0:ny+1,0:nz+1,blk%nBlocks))
+
+        if (len_trim(dns%ibm_coeff_file) > 0) then
+            call read_dwall_blocks(dwall, found, dns, blk, c%has_terminal)
+            if (.not. found) then
+                if (c%has_terminal) print *, "error: ibm_wall = conjugate needs the wall", &
+                    " distance, but the case file has no dwall_blocks; re-run", &
+                    " moby_prepare (it writes them by default): ", trim(dns%ibm_coeff_file)
+                error stop "conjugate needs dwall_blocks"
+            end if
+        else
+            call fill_body_distance_analytic(dwall, dns, blk, bc, ibm, &
+                c%has_terminal, isInBody)
+        end if
+
+        ! A solid cell is given a STRICTLY negative phi, so that `phi < 0` is
+        ! an exact material test even for a cell centre lying exactly on the
+        ! surface (where dwall is 0). The kernel's cut test is that material
+        ! disagreement, which is why the degenerate case cannot leak into it.
+        counts = 0.0d0
+        do b = 1, int(blk%nBlocks)
+        do k = 0, nz+1
+            do j = 0, ny+1
+                do i = 0, nx+1
+                    if (abs(ibm%coef(i,j,k,VAR_P,b)) > SOLID_FACE_THRESHOLD) then
+                        sc%phi(i,j,k,b) = -max(dwall(i,j,k,b), CONJ_MIN_DISTANCE)
+                        if (i >= 1 .and. i <= nx .and. j >= 1 .and. j <= ny &
+                            .and. k >= 1 .and. k <= nz) counts(1) = counts(1) + 1.0d0
+                    else
+                        sc%phi(i,j,k,b) = dwall(i,j,k,b)
+                    end if
+                end do
+            end do
+        end do
+        end do
+        deallocate(dwall)
+
+        counts(2) = real(count_cut_faces(sc, blk), C_DOUBLE)
+        call comm_allreduce_sum(c, counts)
+        if (c%has_terminal) print '(a,i0,a,i0,a)', &
+            " conjugate interface: ", nint(counts(1)), " solid cells, ", &
+            nint(counts(2)), " cut faces"
+
+        call check_conjugate_refinement(sc, blk, c)
+    end subroutine init_scalar_conjugate
+
+    ! Interior cut faces of one rank (the two cell centres in different
+    ! materials), for the init report. Counted on the low side of each cell
+    ! so no face is counted twice.
+    integer function count_cut_faces(sc, blk) result(n)
+        type(scalar_type), intent(in) :: sc
+        type(block_set_type), intent(in) :: blk
+
+        integer :: i, j, k, b, nx, ny, nz
+        logical :: s0
+
+        nx = int(blk%nb(1))
+        ny = int(blk%nb(2))
+        nz = int(blk%nb(3))
+        n = 0
+        do b = 1, int(blk%nBlocks)
+        do k = 1, nz
+            do j = 1, ny
+                do i = 1, nx
+                    s0 = sc%phi(i,j,k,b) < 0.0d0
+                    if ((sc%phi(i-1,j,k,b) < 0.0d0) .neqv. s0) n = n + 1
+                    if ((sc%phi(i,j-1,k,b) < 0.0d0) .neqv. s0) n = n + 1
+                    if ((sc%phi(i,j,k-1,b) < 0.0d0) .neqv. s0) n = n + 1
+                end do
+            end do
+        end do
+        end do
+    end function count_cut_faces
+
+    ! LANDMINE (strategy doc Section 12): refine_body's one-block
+    ! 26-neighbour buffer is what keeps cut cells away from 2:1 block
+    ! interfaces. The cut-face coefficient is a SAME-LEVEL two-point arm; on
+    ! a coarse/fine block face the halo value is a restriction or a prolong
+    ! of the other level, so neither phi nor the flux means what the scheme
+    ! assumes -- and phi's own halo there is evaluated at THIS block's level's
+    ! ghost coordinate, which is not a neighbouring cell centre at all. Away
+    ! from the interface that is harmless (only the SIGN is read, and a point
+    ! well inside one material has the right one), which is precisely what
+    ! this check enforces. The buffer also keeps curvature*h small, which is
+    ! what makes the level-set weight w trustworthy. CHECK it -- do not
+    ! assume it.
+    subroutine check_conjugate_refinement(sc, blk, c)
+        type(scalar_type), intent(in) :: sc
+        type(block_set_type), intent(in) :: blk
+        type(comm_type), intent(in) :: c
+
+        integer :: i, j, k, b, d, nx, ny, nz
+        integer(C_INT) :: kind
+        real(C_DOUBLE) :: bad(1)
+
+        nx = int(blk%nb(1))
+        ny = int(blk%nb(2))
+        nz = int(blk%nb(3))
+        bad = 0.0d0
+
+        do b = 1, int(blk%nBlocks)
+            do d = 1, 3
+                kind = blk%physLow(d,b)
+                if (kind == FACE_COARSE .or. kind == FACE_FINE) then
+                    select case (d)
+                    case (1)
+                        do k = 1, nz
+                            do j = 1, ny
+                                if ((sc%phi(0,j,k,b) < 0.0d0) .neqv. &
+                                    (sc%phi(1,j,k,b) < 0.0d0)) bad(1) = bad(1) + 1.0d0
+                            end do
+                        end do
+                    case (2)
+                        do k = 1, nz
+                            do i = 1, nx
+                                if ((sc%phi(i,0,k,b) < 0.0d0) .neqv. &
+                                    (sc%phi(i,1,k,b) < 0.0d0)) bad(1) = bad(1) + 1.0d0
+                            end do
+                        end do
+                    case default
+                        do j = 1, ny
+                            do i = 1, nx
+                                if ((sc%phi(i,j,0,b) < 0.0d0) .neqv. &
+                                    (sc%phi(i,j,1,b) < 0.0d0)) bad(1) = bad(1) + 1.0d0
+                            end do
+                        end do
+                    end select
+                end if
+                kind = blk%physHigh(d,b)
+                if (kind == FACE_COARSE .or. kind == FACE_FINE) then
+                    select case (d)
+                    case (1)
+                        do k = 1, nz
+                            do j = 1, ny
+                                if ((sc%phi(nx,j,k,b) < 0.0d0) .neqv. &
+                                    (sc%phi(nx+1,j,k,b) < 0.0d0)) bad(1) = bad(1) + 1.0d0
+                            end do
+                        end do
+                    case (2)
+                        do k = 1, nz
+                            do i = 1, nx
+                                if ((sc%phi(i,ny,k,b) < 0.0d0) .neqv. &
+                                    (sc%phi(i,ny+1,k,b) < 0.0d0)) bad(1) = bad(1) + 1.0d0
+                            end do
+                        end do
+                    case default
+                        do j = 1, ny
+                            do i = 1, nx
+                                if ((sc%phi(i,j,nz,b) < 0.0d0) .neqv. &
+                                    (sc%phi(i,j,nz+1,b) < 0.0d0)) bad(1) = bad(1) + 1.0d0
+                            end do
+                        end do
+                    end select
+                end if
+            end do
+        end do
+
+        call comm_allreduce_sum(c, bad)
+        if (bad(1) <= 0.0d0) return
+        if (c%has_terminal) print '(a,i0,a)', &
+            " error: ibm_wall = conjugate: ", nint(bad(1)), " interface cut faces sit on a" // &
+            " 2:1 block face. The cut-face coefficient is a same-level arm and cannot" // &
+            " read across a refinement interface. Use [blocks] refine_body = true (its" // &
+            " one-block 26-neighbour buffer keeps the surface strictly inside the finest" // &
+            " level), or refine the surface region explicitly."
+        error stop "conjugate interface crosses a 2:1 block face"
+    end subroutine check_conjugate_refinement
+
+    ! The solid's own initial temperature ([scalar.N] solid_init, default =
+    ! `initial`). COLD START ONLY: on a restart the solid field is part of
+    ! the saved state and comes from the file like every other cell.
+    ! Ghost-inclusive, so the halo layer is consistent before the first
+    ! exchange. HOST code writing a device-mapped blk%q -- the caller pushes.
+    subroutine init_scalar_solid_fields(sc, blk)
+        type(scalar_type), intent(in) :: sc
+        type(block_set_type), intent(inout) :: blk
+
+        integer :: is, i, j, k, b, nx, ny, nz
+
+        if (.not. scalar_conjugate_enabled(sc)) return
+
+        nx = int(blk%nb(1))
+        ny = int(blk%nb(2))
+        nz = int(blk%nb(3))
+
+        do is = 1, int(sc%n)
+            if (sc%ibmMode(is) /= SC_IBM_CONJUGATE) cycle
+            do b = 1, int(blk%nBlocks)
+            do k = 0, nz+1
+                do j = 0, ny+1
+                    do i = 0, nx+1
+                        if (sc%phi(i,j,k,b) < 0.0d0) &
+                            blk%q(i,j,k,VAR_S0+is,b) = sc%solidInit(is)
+                    end do
+                end do
+            end do
+            end do
+        end do
+    end subroutine init_scalar_solid_fields
+
+    ! The conjugate body's contribution to the explicit diffusive (Peclet)
+    ! rate, max'ed into dns%peclet_rate by the caller once the interface
+    ! exists.
+    !
+    ! TWO THINGS GATE 1 TAUGHT, both of which cost a NaN before they were
+    ! understood, and neither of which a per-material bound can see:
+    !
+    ! 1. THE LIMIT IS NOT max OVER MATERIALS OF alpha = kappa/C. A cut face
+    !    carries k_face up to max(kappa_L, kappa_R) -- that bound IS the
+    !    strategy doc Section 7 argument that the interface is not stiff --
+    !    but it feeds the cell on the OTHER side, whose capacity belongs to
+    !    the other material. So a fluid cell against a kappa_s = 1000 solid
+    !    sees 1000x the fluid rate even when alpha_s = alpha_f exactly.
+    !    Building the rate from the ACTUAL face coefficients is both correct
+    !    and far less conservative than max(kappa)/min(C): at w = 1/2 and
+    !    kappa_s = 1000 the true penalty is 2x, not 1000x.
+    !
+    ! 2. THE CONVENTION MUST BE THE FULL DIAGONAL, AND A CUT CELL NEEDS THE
+    !    GERSHGORIN FACTOR THE UNIFORM INTERIOR NEVER PAYS.
+    !    precompute_peclet_rate reports alpha/h^2 per direction, i.e. HALF of
+    !    one direction's diagonal; at a cut cell the two faces of a direction
+    !    are not equal, so neither their max nor their mean is half the
+    !    diagonal. Summing all six face terms and dividing by 6 reproduces
+    !    alpha/h^2 exactly for a uniform isotropic cell, so pecletmax keeps
+    !    its meaning -- that is the `diag/6` below.
+    !    But the SPECTRAL RADIUS is bounded by 2*A_ii/C_i (Gershgorin, the
+    !    operator has zero row sum), not by A_ii/C_i, and the existing
+    !    convention is a factor ~1.9 short of that: uniform runs survive only
+    !    because their extreme modes are never excited. An isolated cut cell
+    !    is different -- its row is strongly ASYMMETRIC (a large k_face into a
+    !    neighbour of the other material's capacity), so the worst mode IS
+    !    local and IS attained, and this RK3's real-axis limit is 2.5.
+    !    MEASURED on gate 1: (kappa_s, C_s) = (0.01, 0.01) at w = 0.95 blows
+    !    up at pecletmax 0.3 and is stable at 0.2; (1000, 1000) at w = 0.80
+    !    blows up at 0.4 and is stable at 0.2. Doubling the rate at cut cells
+    !    -- diag/3 instead of diag/6 -- makes the nominal 0.4 behave as the
+    !    measured-stable 0.2 in BOTH, which is exactly the factor Gershgorin
+    !    predicts. Only interface cells pay it; the bulk of a conjugate run
+    !    keeps today's step.
+    real(C_DOUBLE) function scalar_conjugate_peclet_rate(sc, blk, dns, c) result(rate)
+        type(scalar_type), intent(in) :: sc
+        type(block_set_type), intent(in) :: blk
+        type(dns_type), intent(in) :: dns
+        type(comm_type), intent(in) :: c
+
+        integer :: i, j, k, b, is, nx, ny, nz
+        real(C_DOUBLE) :: dm, ks, rc, cc, phc, diag, share, r(1)
+        logical :: solc, cut
+
+        rate = 0.0d0
+        if (.not. scalar_conjugate_enabled(sc)) return
+
+        nx = int(blk%nb(1))
+        ny = int(blk%nb(2))
+        nz = int(blk%nb(3))
+        r = 0.0d0
+
+        do is = 1, int(sc%n)
+            if (sc%ibmMode(is) /= SC_IBM_CONJUGATE) cycle
+            dm = 1.0d0/(dns%re*sc%pr(is))
+            ks = sc%solidK(is)
+            rc = sc%contactR(is)
+            do b = 1, int(blk%nBlocks)
+            do k = 1, nz
+                do j = 1, ny
+                    do i = 1, nx
+                        phc = sc%phi(i,j,k,b)
+                        solc = phc < 0.0d0
+                        cc = merge(sc%solidC(is), 1.0d0, solc)
+                        cut = ((sc%phi(i-1,j,k,b) < 0.0d0) .neqv. solc) &
+                         .or. ((sc%phi(i+1,j,k,b) < 0.0d0) .neqv. solc) &
+                         .or. ((sc%phi(i,j-1,k,b) < 0.0d0) .neqv. solc) &
+                         .or. ((sc%phi(i,j+1,k,b) < 0.0d0) .neqv. solc) &
+                         .or. ((sc%phi(i,j,k-1,b) < 0.0d0) .neqv. solc) &
+                         .or. ((sc%phi(i,j,k+1,b) < 0.0d0) .neqv. solc)
+                        share = merge(3.0d0, 6.0d0, cut)
+                        diag = (conjugate_face_diffusivity(dm, sc%phi(i-1,j,k,b), phc, &
+                                    ks, rc, sc%invDx(i,b))*sc%invDx(i,b) &
+                              + conjugate_face_diffusivity(dm, phc, sc%phi(i+1,j,k,b), &
+                                    ks, rc, sc%invDx(i+1,b))*sc%invDx(i+1,b)) &
+                                *blk%d1x(i,VAR_P,b) &
+                             + (conjugate_face_diffusivity(dm, sc%phi(i,j-1,k,b), phc, &
+                                    ks, rc, sc%invDy(j,b))*sc%invDy(j,b) &
+                              + conjugate_face_diffusivity(dm, phc, sc%phi(i,j+1,k,b), &
+                                    ks, rc, sc%invDy(j+1,b))*sc%invDy(j+1,b)) &
+                                *blk%d1y(j,VAR_P,b) &
+                             + (conjugate_face_diffusivity(dm, sc%phi(i,j,k-1,b), phc, &
+                                    ks, rc, sc%invDz(k,b))*sc%invDz(k,b) &
+                              + conjugate_face_diffusivity(dm, phc, sc%phi(i,j,k+1,b), &
+                                    ks, rc, sc%invDz(k+1,b))*sc%invDz(k+1,b)) &
+                                *blk%d1z(k,VAR_P,b)
+                        r(1) = max(r(1), diag/(share*cc))
+                    end do
+                end do
+            end do
+            end do
+        end do
+
+        call comm_allreduce_max(c, r)
+        rate = r(1)
+    end function scalar_conjugate_peclet_rate
+
+    ! Push the host-filled signed distance to the device (a no-op on the CPU
+    ! build and without a conjugate scalar).
+    subroutine scalar_conjugate_to_device(sc)
+        type(scalar_type), intent(in) :: sc
+
+        if (.not. scalar_conjugate_enabled(sc)) return
+
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target update to(sc%phi)
+#endif
+    end subroutine scalar_conjugate_to_device
+
     subroutine enter_scalar_data(sc)
         type(scalar_type), intent(inout) :: sc
 
@@ -884,7 +1500,8 @@ contains
         !$omp target enter data map(to: sc%pr, sc%prt, sc%prtModel, sc%source, &
         !$omp& sc%initValue, sc%ibmValue, sc%inlet, sc%ibmMode, sc%initProfile, &
         !$omp& sc%bcType, sc%bcValue, sc%invDx, sc%invDy, sc%invDz, sc%nutNone, &
-        !$omp& sc%wfP, sc%wfYpt, sc%wfYplus)
+        !$omp& sc%wfP, sc%wfYpt, sc%wfYplus, sc%phi, sc%solidK, sc%solidC, &
+        !$omp& sc%solidSource, sc%contactR)
 #endif
     end subroutine enter_scalar_data
 
@@ -897,7 +1514,8 @@ contains
         !$omp target exit data map(delete: sc%pr, sc%prt, sc%prtModel, sc%source, &
         !$omp& sc%initValue, sc%ibmValue, sc%inlet, sc%ibmMode, sc%initProfile, &
         !$omp& sc%bcType, sc%bcValue, sc%invDx, sc%invDy, sc%invDz, sc%nutNone, &
-        !$omp& sc%wfP, sc%wfYpt, sc%wfYplus)
+        !$omp& sc%wfP, sc%wfYpt, sc%wfYplus, sc%phi, sc%solidK, sc%solidC, &
+        !$omp& sc%solidSource, sc%contactR)
         !$omp target exit data map(delete: sc)
 #endif
     end subroutine exit_scalar_data
@@ -914,6 +1532,14 @@ contains
         if (allocated(sc%inlet)) deallocate(sc%inlet)
         if (allocated(sc%ibmMode)) deallocate(sc%ibmMode)
         if (allocated(sc%initProfile)) deallocate(sc%initProfile)
+        if (allocated(sc%solidK)) deallocate(sc%solidK)
+        if (allocated(sc%solidC)) deallocate(sc%solidC)
+        if (allocated(sc%solidInit)) deallocate(sc%solidInit)
+        if (allocated(sc%solidSource)) deallocate(sc%solidSource)
+        if (allocated(sc%contactR)) deallocate(sc%contactR)
+        if (allocated(sc%solidKeySet)) deallocate(sc%solidKeySet)
+        if (allocated(sc%solidInitSet)) deallocate(sc%solidInitSet)
+        if (allocated(sc%ibmValueSet)) deallocate(sc%ibmValueSet)
         if (allocated(sc%bcType)) deallocate(sc%bcType)
         if (allocated(sc%bcValue)) deallocate(sc%bcValue)
         if (allocated(sc%bcTypeSet)) deallocate(sc%bcTypeSet)
@@ -934,7 +1560,9 @@ contains
         if (allocated(sc%invDx)) deallocate(sc%invDx)
         if (allocated(sc%invDy)) deallocate(sc%invDy)
         if (allocated(sc%invDz)) deallocate(sc%invDz)
+        if (allocated(sc%phi)) deallocate(sc%phi)
         sc%n = 0_C_INT
+        sc%nConjugate = 0_C_INT
     end subroutine destroy_scalar
 
     !--------------------------------------------------------------------
@@ -993,8 +1621,31 @@ contains
     !     rans.f90 uses for k). The mask is symmetric across a face, so the
     !     flux form still telescopes and the fluid conserves sum(s dV)
     !     exactly.
-    ! With no immersed body (useIbm off) neither branch is taken and the
-    ! arithmetic is the S2 kernel's, byte for byte.
+    !   * conjugate (increment C1, docs/next_session_conjugate.md) -- the
+    !     solid is a REAL unknown. No penalization either; instead
+    !       - the face diffusivity becomes conjugate_face_diffusivity, which
+    !         is kappa*dm within one material and the distance-weighted
+    !         harmonic mean across a cut face. Every UNCUT FLUID face keeps
+    !         today's expression verbatim, which is why the feature is
+    !         untouched away from the body;
+    !       - CONVECTION is hard-masked on every face whose staggered
+    !         velocity node is solid AND on every cut face (u.n = 0 on the
+    !         interface exactly, so this is consistent to second order).
+    !         Relying on the penalised velocity being "small" is not
+    !         acceptable here: the solid now carries a genuine temperature
+    !         field that must not be advected. The skew term's divergence is
+    !         then built from the SAME masked face velocities, so a uniform
+    !         scalar is still preserved exactly;
+    !       - the flux divergence is divided by the local capacity C
+    !         (1 in the fluid, C_s = (rho c)_s/(rho c)_f in the solid), and
+    !         the solid takes its own volumetric source;
+    !       - nu_t enters NEITHER the solid NOR a cut face.
+    !     The interface term is written as a FACE FLUX, never a cell source,
+    !     which is what keeps sum(C s dV) conserved to round-off whatever the
+    !     scheme's accuracy -- and what lets the C2 tangential correction and
+    !     the C4 wedge model drop in without touching anything around them.
+    ! With no immersed body (useIbm off) none of the branches is taken and
+    ! the arithmetic is the S2 kernel's, byte for byte.
     !
     ! The nut ghost cells follow the momentum SGS convention: the halo
     ! exchange fills them across block and rank boundaries, and they stay at
@@ -1046,14 +1697,19 @@ contains
         real(C_DOUBLE), parameter :: SOLID_FACE_THRESHOLD = 1.0d20
 
         integer :: i, j, k, b, is, nx, ny, nz, nBlocks, nScal, var, scr
-        real(C_DOUBLE) :: ire, re, uw, ue, vs, vn, wb, wt, divu
+        real(C_DOUBLE) :: ire, re, uw, ue, vs, vn, wb, wt, divu, divuse
         real(C_DOUBLE) :: s0, conv, diff, rhs, dm, fw, fe, ss, mus, ipr
         real(C_DOUBLE) :: ntw, nte, nts, ntn, ntb, ntt
         real(C_DOUBLE) :: dxw, dxe, dys, dyn, dzb, dzt
-        logical :: skew, useIbm, adiab, wallfn
+        ! Conjugate interface (C1): the six neighbour signed distances and
+        ! this cell's, plus the per-scalar solid properties.
+        real(C_DOUBLE) :: phc, phw, phe, phs, phn, phb, pht, ks, rc
+        logical :: skew, useIbm, adiab, wallfn, anyConj, conjug, solc
+        logical :: cutw, cute, cuts, cutn, cutb, cutt
         logical :: clw, cle, cls, cln, clb, clt
         logical :: solw, sole, sols, soln, solb, solt
         logical :: mw, me, ms, mn, mb, mt
+        logical :: cmw, cme, cms, cmn, cmb, cmt
 
         nx = int(blk%nb(1))
         ny = int(blk%nb(2))
@@ -1069,18 +1725,24 @@ contains
         ! branch is not entered and the S2/S3 arithmetic is reproduced byte
         ! for byte -- sc%wfYplus is then a 1-cell dummy, mapped but unread.
         wallfn = dns%rans_wall_treatment == 1_C_INT
+        ! Conjugate branch (C1): off, sc%phi is a 1-cell dummy and nothing
+        ! below reads it -- the S3 arithmetic is reproduced byte for byte.
+        anyConj = sc%nConjugate > 0_C_INT
 
         !$omp target teams distribute parallel do collapse(4) &
         !$omp& map(to: ire, re, dt_alpha, dt_beta, dt_gamma, skew, useNut, useIbm, &
-        !$omp& nScal, nx, ny, nz, &
+        !$omp& nScal, nx, ny, nz, anyConj, &
         !$omp& blk%q, blk%d1x, blk%d1y, blk%d1z, blk%physLow, blk%physHigh, nut, coef, &
         !$omp& sc%pr, sc%prt, sc%prtModel, sc%source, sc%invDx, sc%invDy, sc%invDz, &
-        !$omp& sc%ibmMode, sc%ibmValue, sc%wfP, sc%wfYpt, sc%wfYplus, wallfn) &
+        !$omp& sc%ibmMode, sc%ibmValue, sc%wfP, sc%wfYpt, sc%wfYplus, wallfn, &
+        !$omp& sc%phi, sc%solidK, sc%solidC, sc%solidSource, sc%contactR) &
         !$omp& map(tofrom: blk%qs, blk%oldrhs) &
-        !$omp& private(i,j,k,b,is,var,scr,uw,ue,vs,vn,wb,wt,divu, &
-        !$omp& s0,conv,diff,rhs,dm,fw,fe,ss,mus,ipr,adiab, &
+        !$omp& private(i,j,k,b,is,var,scr,uw,ue,vs,vn,wb,wt,divu,divuse, &
+        !$omp& s0,conv,diff,rhs,dm,fw,fe,ss,mus,ipr,adiab,conjug,solc,ks,rc, &
+        !$omp& phc,phw,phe,phs,phn,phb,pht, &
+        !$omp& cutw,cute,cuts,cutn,cutb,cutt, &
         !$omp& clw,cle,cls,cln,clb,clt,solw,sole,sols,soln,solb,solt, &
-        !$omp& mw,me,ms,mn,mb,mt, &
+        !$omp& mw,me,ms,mn,mb,mt,cmw,cme,cms,cmn,cmb,cmt, &
         !$omp& ntw,nte,nts,ntn,ntb,ntt,dxw,dxe,dys,dyn,dzb,dzt)
         do b = 1, nBlocks
         do k = 1, nz
@@ -1125,6 +1787,33 @@ contains
                         solt = abs(coef(i,  j,  k+1,VAR_W,b)) > SOLID_FACE_THRESHOLD
                     end if
 
+                    ! Conjugate interface geometry (C1): the six neighbour
+                    ! signed distances and the cut flags. Pure geometry --
+                    ! scalar-independent, so hoisted out of the scalar loop
+                    ! (the level-set weight itself needs no normal at all,
+                    ! the obliquity lemma; see conjugate_face_diffusivity).
+                    phc = 0.0d0; phw = 0.0d0; phe = 0.0d0
+                    phs = 0.0d0; phn = 0.0d0; phb = 0.0d0; pht = 0.0d0
+                    solc = .false.
+                    cutw = .false.; cute = .false.; cuts = .false.
+                    cutn = .false.; cutb = .false.; cutt = .false.
+                    if (anyConj) then
+                        phc = sc%phi(i,  j,  k,  b)
+                        phw = sc%phi(i-1,j,  k,  b)
+                        phe = sc%phi(i+1,j,  k,  b)
+                        phs = sc%phi(i,  j-1,k,  b)
+                        phn = sc%phi(i,  j+1,k,  b)
+                        phb = sc%phi(i,  j,  k-1,b)
+                        pht = sc%phi(i,  j,  k+1,b)
+                        solc = phc < 0.0d0
+                        cutw = (phw < 0.0d0) .neqv. solc
+                        cute = (phe < 0.0d0) .neqv. solc
+                        cuts = (phs < 0.0d0) .neqv. solc
+                        cutn = (phn < 0.0d0) .neqv. solc
+                        cutb = (phb < 0.0d0) .neqv. solc
+                        cutt = (pht < 0.0d0) .neqv. solc
+                    end if
+
                     ! Face eddy viscosities: the same 1/2 (L + R) average the
                     ! momentum SGS correction uses for its face-normal terms.
                     ! Scalar-independent, so they are hoisted out of the
@@ -1151,22 +1840,34 @@ contains
                         ! masks below collapse to the FACE_CLOSED flags and
                         ! the S2 expressions are reproduced exactly.
                         adiab = useIbm .and. sc%ibmMode(is) == SC_IBM_ADIABATIC
+                        conjug = useIbm .and. sc%ibmMode(is) == SC_IBM_CONJUGATE
                         mw = clw .or. (adiab .and. solw)
                         me = cle .or. (adiab .and. sole)
                         ms = cls .or. (adiab .and. sols)
                         mn = cln .or. (adiab .and. soln)
                         mb = clb .or. (adiab .and. solb)
                         mt = clt .or. (adiab .and. solt)
+                        ! The CONVECTIVE masks. They coincide with the
+                        ! diffusive ones in every mode but conjugate, where
+                        ! the solid conducts (diffusion is NOT masked) while
+                        ! nothing at all is advected across a solid or cut
+                        ! face.
+                        cmw = mw .or. (conjug .and. (solw .or. cutw))
+                        cme = me .or. (conjug .and. (sole .or. cute))
+                        cms = ms .or. (conjug .and. (sols .or. cuts))
+                        cmn = mn .or. (conjug .and. (soln .or. cutn))
+                        cmb = mb .or. (conjug .and. (solb .or. cutb))
+                        cmt = mt .or. (conjug .and. (solt .or. cutt))
 
-                        if (adiab) then
-                            conv = (merge(0.0d0, ue*0.5d0*(s0 + blk%q(i+1,j,k,var,b)), me) &
-                                  - merge(0.0d0, uw*0.5d0*(blk%q(i-1,j,k,var,b) + s0), mw)) &
+                        if (adiab .or. conjug) then
+                            conv = (merge(0.0d0, ue*0.5d0*(s0 + blk%q(i+1,j,k,var,b)), cme) &
+                                  - merge(0.0d0, uw*0.5d0*(blk%q(i-1,j,k,var,b) + s0), cmw)) &
                                     *blk%d1x(i,VAR_P,b) &
-                                 + (merge(0.0d0, vn*0.5d0*(s0 + blk%q(i,j+1,k,var,b)), mn) &
-                                  - merge(0.0d0, vs*0.5d0*(blk%q(i,j-1,k,var,b) + s0), ms)) &
+                                 + (merge(0.0d0, vn*0.5d0*(s0 + blk%q(i,j+1,k,var,b)), cmn) &
+                                  - merge(0.0d0, vs*0.5d0*(blk%q(i,j-1,k,var,b) + s0), cms)) &
                                     *blk%d1y(j,VAR_P,b) &
-                                 + (merge(0.0d0, wt*0.5d0*(s0 + blk%q(i,j,k+1,var,b)), mt) &
-                                  - merge(0.0d0, wb*0.5d0*(blk%q(i,j,k-1,var,b) + s0), mb)) &
+                                 + (merge(0.0d0, wt*0.5d0*(s0 + blk%q(i,j,k+1,var,b)), cmt) &
+                                  - merge(0.0d0, wb*0.5d0*(blk%q(i,j,k-1,var,b) + s0), cmb)) &
                                     *blk%d1z(k,VAR_P,b)
                         else
                             conv = (ue*0.5d0*(s0 + blk%q(i+1,j,k,var,b)) &
@@ -1176,7 +1877,22 @@ contains
                                  + (wt*0.5d0*(s0 + blk%q(i,j,k+1,var,b)) &
                                   - wb*0.5d0*(blk%q(i,j,k-1,var,b) + s0))*blk%d1z(k,VAR_P,b)
                         end if
-                        if (skew) conv = conv - s0*divu
+                        ! The skew term must subtract the divergence of the
+                        ! SAME face velocities the convective flux used, or a
+                        ! sealed solid cell would be "advected" by the
+                        ! penalised velocity's residual divergence. With the
+                        ! masked form a uniform scalar stays uniform exactly,
+                        ! in the solid as in the fluid. (The adiabatic mode
+                        ! keeps its shipped, gated arithmetic: divuse = divu.)
+                        divuse = divu
+                        if (skew .and. conjug) &
+                            divuse = (merge(0.0d0, ue, cme) - merge(0.0d0, uw, cmw)) &
+                                        *blk%d1x(i,VAR_P,b) &
+                                   + (merge(0.0d0, vn, cmn) - merge(0.0d0, vs, cms)) &
+                                        *blk%d1y(j,VAR_P,b) &
+                                   + (merge(0.0d0, wt, cmt) - merge(0.0d0, wb, cmb)) &
+                                        *blk%d1z(k,VAR_P,b)
+                        if (skew) conv = conv - s0*divuse
 
                         ! Molecular diffusivity + the eddy part on each face.
                         ! With useNut off every face keeps dm exactly, so the
@@ -1184,7 +1900,42 @@ contains
                         dm = ire/sc%pr(is)
                         dxw = dm; dxe = dm; dys = dm
                         dyn = dm; dzb = dm; dzt = dm
-                        if (useNut .and. wallfn) then
+                        if (conjug) then
+                            ! THE conjugate scheme: one face coefficient.
+                            ! Within one material this is kappa*dm (kappa = 1
+                            ! in the fluid, so a fluid-fluid face is today's
+                            ! line unchanged); across a cut face it is the
+                            ! distance-weighted harmonic mean built on the
+                            ! level-set fraction of the arm.
+                            ks = sc%solidK(is)
+                            rc = sc%contactR(is)
+                            dxw = conjugate_face_diffusivity(dm, phw, phc, ks, rc, sc%invDx(i,b))
+                            dxe = conjugate_face_diffusivity(dm, phc, phe, ks, rc, sc%invDx(i+1,b))
+                            dys = conjugate_face_diffusivity(dm, phs, phc, ks, rc, sc%invDy(j,b))
+                            dyn = conjugate_face_diffusivity(dm, phc, phn, ks, rc, sc%invDy(j+1,b))
+                            dzb = conjugate_face_diffusivity(dm, phb, phc, ks, rc, sc%invDz(k,b))
+                            dzt = conjugate_face_diffusivity(dm, phc, pht, ks, rc, sc%invDz(k+1,b))
+                            ! nu_t enters NEITHER the solid NOR a cut face
+                            ! (strategy doc Section 12): at DNS resolution
+                            ! nu_t -> 0 at the wall anyway, and ibm_aware
+                            ! already zeroes it in solid cells, but the
+                            ! interface coefficient is molecular by
+                            ! construction and must not be polluted.
+                            if (useNut .and. .not. solc) then
+                                if (.not. cutw) dxw = dxw + eddy_diffusivity(ntw, sc%pr(is), &
+                                    sc%prt(is), sc%prtModel(is), re)
+                                if (.not. cute) dxe = dxe + eddy_diffusivity(nte, sc%pr(is), &
+                                    sc%prt(is), sc%prtModel(is), re)
+                                if (.not. cuts) dys = dys + eddy_diffusivity(nts, sc%pr(is), &
+                                    sc%prt(is), sc%prtModel(is), re)
+                                if (.not. cutn) dyn = dyn + eddy_diffusivity(ntn, sc%pr(is), &
+                                    sc%prt(is), sc%prtModel(is), re)
+                                if (.not. cutb) dzb = dzb + eddy_diffusivity(ntb, sc%pr(is), &
+                                    sc%prt(is), sc%prtModel(is), re)
+                                if (.not. cutt) dzt = dzt + eddy_diffusivity(ntt, sc%pr(is), &
+                                    sc%prt(is), sc%prtModel(is), re)
+                            end if
+                        else if (useNut .and. wallfn) then
                             ! Thermal wall function: the face value is built
                             ! from the two CELL diffusivities, because a wall
                             ! cell's is not a function of its nu_t at all.
@@ -1243,12 +1994,25 @@ contains
                             *sc%invDz(k+1,b), mt)
                         diff = diff + (fe - fw)*blk%d1z(k,VAR_P,b)
 
-                        rhs = -conv + diff + sc%source(is)
+                        if (conjug) then
+                            ! Divide the flux divergence by the LOCAL
+                            ! volumetric capacity, and let the solid carry
+                            ! its own volumetric source (Joule heating, ...).
+                            ! C is pointwise here; the fluid-fraction-weighted
+                            ! capacity of a cut cell is increment C3 (it
+                            ! matters for transients, not at steady state).
+                            rhs = (-conv + diff)/merge(sc%solidC(is), 1.0d0, solc) &
+                                + merge(sc%solidSource(is), sc%source(is), solc)
+                        else
+                            rhs = -conv + diff + sc%source(is)
+                        end if
                         ss = s0 + dt_alpha*rhs + dt_beta*blk%oldrhs(i,j,k,scr,b)
                         ! Implicit volume penalization toward the body value
                         ! (dirichlet mode). oldrhs keeps the UNpenalized rhs,
                         ! exactly as the momentum predictor does with mu.
-                        if (useIbm .and. .not. adiab) then
+                        ! The conjugate mode does NOT penalise at all: its
+                        ! solid cells are unknowns, not boundary values.
+                        if (useIbm .and. sc%ibmMode(is) == SC_IBM_DIRICHLET) then
                             ipr = 1.0d0/sc%pr(is)
                             mus = 1.0d0/(1.0d0 + dt_gamma*coef(i,j,k,VAR_P,b)*ipr)
                             ss = ss*mus + (1.0d0 - mus)*sc%ibmValue(is)

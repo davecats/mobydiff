@@ -91,6 +91,11 @@ contains
         ! Passive scalars: the binding molecular diffusivity is
         ! 1/(Re Pr_min), so a Pr < 1 scalar tightens the explicit limit.
         ! Absent / no scalars leaves the rate exactly as before.
+        !
+        ! A CONJUGATE body's contribution cannot be formed here -- it needs
+        ! the signed distance, which needs the IBM coefficients, which do not
+        ! exist yet. scalar_conjugate_peclet_rate is max'ed into
+        ! dns%peclet_rate from moby_solve once the interface is built.
         type(scalar_type), intent(in), optional :: sc
 
         integer :: i, b, nx, ny, nz

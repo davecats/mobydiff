@@ -58,6 +58,14 @@ Reynolds-analogy `θ(y)` built from the snapshot's OWN mean velocity (see its
 header for why that is not circular with the Kader gate); `check_scalar_turb.py`
 holds the three analyses (`channel`, `band`, `rans`).
 
+The THIRD `ibm_wall` mode, `conjugate` (the solid as a real unknown with its
+own conductivity and capacity), is increment **C1** of
+`docs/next_session_conjugate.md` and has its own gate set in
+[`../conjugate/`](../conjugate/README.md). It is a separate branch by design —
+re-expressing `dirichlet`/`adiabatic` through the conjugate cut-face
+arithmetic could not be bit-exact — so every case below is untouched by it,
+and `run_bitexact_s3.sh` gates exactly that.
+
 ## S3 gate cases (the immersed body)
 
 | ini | gate |
