@@ -45,6 +45,11 @@ module blocks
     integer(C_INT), parameter :: DIST_RANKBOX = 0_C_INT
     integer(C_INT), parameter :: DIST_ZORDER  = 1_C_INT
 
+    ! Low bits reserved for the y coordinate in the xz-mode leaf ordering key
+    ! (see leaf_key). Bounds the global ny at 2**21 cells, the same cap
+    ! morton2_key already imposes on x and z.
+    integer, parameter :: LEAF_KEY_YBITS = 21
+
     ! Per-block face kinds held in physLow/physHigh. The momentum starts
     ! and the SOR sweep treat PHYS and CLOSED as no-flux faces; only
     ! FACE_PHYS faces receive boundary conditions; FACE_CLOSED halos are
@@ -1090,12 +1095,34 @@ contains
     end function morton2_key
 
     ! Ordering key of a level-l leaf. xyz mode: the 3D Morton key of the
-    ! finest-lattice coords (Phase 3a, unchanged). xz quadtree mode: the
-    ! CANONICAL mixed form — y tile index in the high bits (42+) above the
-    ! 2D (x,z) Morton key of the finest-lattice coords (x even bits, z odd)
-    ! — i.e. y-major, then plane-filling in x,z. Both ends of every
-    ! exchange and mobygeom's Python mirror derive entry order from this
-    ! SAME curve.
+    ! finest-lattice coords (Phase 3a, unchanged).
+    !
+    ! xz quadtree mode: the 2D (x,z) Morton key of the finest-lattice coords
+    ! (x even bits, z odd) in the HIGH bits, above the y coordinate — i.e.
+    ! plane-filling in x,z, and within each (x,z) column running down y.
+    !
+    ! The y half used to sit ABOVE the x,z key, which made the order y-major.
+    ! In xz mode y is never refined, so a 2:1 interface is necessarily a
+    ! y-plane; a y-major order therefore places every fine block before every
+    ! coarse one, the level change becomes one contiguous cut in key space, and
+    ! the linear rank split (zorder_owner) cuts it every time. Measured on the
+    ! production boundary layer: cross-level peer points were IDENTICAL at 2 and
+    ! 4 ranks (923700 / 923692) because the whole interface was on a rank
+    ! boundary regardless of rank count. Putting y in the LOW bits makes the
+    ! order run down each (x,z) column, so the SAME closed-form linear split
+    ! becomes column-wise and keeps cross-level pairs on one rank: total peer
+    ! area falls 14.5x/10.2x/5.0x at 4/8/16 ranks with load imbalance unchanged
+    ! at 1.000 (tools/partition_analysis.py, docs/next_session_2to1_penalty.md).
+    ! xyz mode is NOT touched: the 3D Morton curve already has that locality
+    ! (cross-level cut 1.4 % at 4 ranks on the 5-level NACA case).
+    !
+    ! Both ends of every exchange derive entry order from this SAME curve, and
+    ! it fixes the leaf-table row order in case and restart files.
+    !
+    ! Bit budget: morton2_key fills bits 0..41 (its loop runs to bit 20, so each
+    ! of x,z is capped at 2**21 finest cells), and y takes the low LEAF_KEY_YBITS
+    ! = 21, so the key tops out at bit 62 and stays positive. y is a plain cell
+    ! index here, bounded by the global ny.
     pure integer(int64) function leaf_key(blk, lmax, l, c) result(key)
         type(block_set_type), intent(in) :: blk
         integer, intent(in) :: lmax, l, c(3)
@@ -1106,7 +1133,8 @@ contains
         if (all(blk%refMask == 1_C_INT)) then
             key = morton_key(cf(1), cf(2), cf(3))
         else
-            key = ior(ishft(int(cf(2), int64), 42), morton2_key(cf(1), cf(3)))
+            key = ior(ishft(morton2_key(cf(1), cf(3)), LEAF_KEY_YBITS), &
+                      int(cf(2), int64))
         end if
     end function leaf_key
 

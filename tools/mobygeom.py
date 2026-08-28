@@ -1667,11 +1667,14 @@ def morton_key2(cx: np.ndarray, cz: np.ndarray) -> np.ndarray:
 def leaf_keys(crd: np.ndarray, lev: np.ndarray, lmax: int, mask: np.ndarray) -> np.ndarray:
     """Canonical leaf ordering keys (blocks.f90 leaf_key): the 3D Morton
     key of the finest-lattice coords (xyz octree), or — xz quadtree — the
-    y tile index in the high bits (42+) above the 2D (x,z) Morton key."""
+    2D (x,z) Morton key in the high bits above y in the low 21, so the order
+    runs down each (x,z) column. (mobygeom is retired; this mirror is kept
+    valid because validation/prepare gates moby_prepare against it.)"""
     cf = crd*(2**((lmax - lev)[:, None]*mask[None, :]))
     if mask.all():
         return morton_key3(cf)
-    return (cf[:, 1].astype(np.int64) << 42) | morton_key2(cf[:, 0], cf[:, 2])
+    return (morton_key2(cf[:, 0], cf[:, 2]).astype(np.int64) << 21) \
+        | cf[:, 1].astype(np.int64)
 
 
 def leaf_level_windows(gnbt, levels, mask, boxes, lines, nb, touch_wlo, touch_wdim,

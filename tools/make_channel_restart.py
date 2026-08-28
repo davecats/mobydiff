@@ -135,13 +135,15 @@ def morton_key2(cx, cz):
 def morton_sort(leaves, lmax=1, mask=(1, 1, 1)):
     """Canonical leaf order (blocks.f90 leaf_key): 3D Morton (xyz octree)
     or the mixed y-major form (xz quadtree: y tile in bits 42+ over the
-    2D x,z Morton key of the finest-lattice coords)."""
+    2D x,z Morton key of the finest-lattice coords in the HIGH bits, above y
+    in the low LEAF_KEY_YBITS -- so the order runs down each (x,z) column; see
+    blocks.f90 leaf_key for why y moved out of the high bits)."""
     def key(leaf):
         lev, cx, cy, cz = leaf
         fx, fy, fz = (2**((lmax - lev)*m) for m in mask)
         if all(mask):
             return morton_key(cx*fx, cy*fy, cz*fz)
-        return ((cy*fy) << 42) | morton_key2(cx*fx, cz*fz)
+        return (morton_key2(cx*fx, cz*fz) << 21) | (cy*fy)
     leaves.sort(key=key)
     return leaves
 
