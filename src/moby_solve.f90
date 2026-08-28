@@ -268,8 +268,10 @@ program moby_solve
     if (dns%profile_phases) call init_step_profiler(step_prof)
     call start_chron(loop_timer)
     do while (run_should_continue(dns, loop_steps))
-        call trim_dt_for_final_time(dns)
-        if (dns%dt <= 0.0d0) exit
+        ! Trim dt onto t_final; false = the remaining time is round-off, not
+        ! a step. dns%dt is deliberately left POSITIVE so the final snapshot
+        ! stays a usable restart (see trim_dt_for_final_time).
+        if (.not. trim_dt_for_final_time(dns)) exit
 
         loop_steps = loop_steps + 1_C_INT
         dns%step_current = dns%step_current + 1_C_INT

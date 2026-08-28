@@ -1109,17 +1109,33 @@ immersed boundary. Phased, each phase verified before the next:
     this is the real mechanism behind the "never restart from the campaign's
     final `*_50001.h5`" landmine, which had been blamed on the niter = 6
     pn-drift mode. Fixed at the gate level (`run_gates_s2.sh last_periodic`);
-    and FIXED in the solver (`trim_dt_for_final_time` zeroes a `remaining`
-    below `FINAL_STEP_FRACTION*dns%dt`, 1e-6, after which the loop's
-    existing `dt <= 0` exit fires). The test must be RELATIVE: an absolute
-    snap at `run_should_continue`'s tolerance would NOT catch this, since
-    the round-off in `t_current` grows like `N eps t_final` (6.9e-11 here)
-    and outruns the fixed 1e-12 floor, while `remaining/dt = 4.9e-08`
-    identifies it scale-free. Gated three ways: inert on all 32
-    bit-exactness case-runs (every suite case is nsteps-terminated),
-    effective on the leg that produced it (10400 steps not 10401,
-    `max|pn|` 9.09 not 1.5e6, last real step bit-identical), and a GENUINE
-    final partial step still taken. Details in §B1.
+    and FIXED in the solver (`trim_dt_for_final_time` suppresses a
+    `remaining` below `FINAL_STEP_FRACTION*dns%dt`, 1e-6). The test must be
+    RELATIVE: an absolute snap at `run_should_continue`'s tolerance would NOT
+    catch this, since the round-off in `t_current` grows like `N eps t_final`
+    (6.9e-11 here) and outruns the fixed 1e-12 floor, while
+    `remaining/dt = 4.9e-08` identifies it scale-free. Gated three ways:
+    inert on all 32 bit-exactness case-runs, effective on the leg that
+    produced it (10400 steps not 10401, `max|pn|` 9.09 not 1.5e6, last real
+    step bit-identical), and a GENUINE final partial step still taken.
+    Details in §B1.
+    **CORRECTED 2026-08-28.** The first form of that fix signalled the end by
+    SETTING `dns%dt = 0` and letting the loop's `dt <= 0` exit fire — but
+    `dns%dt` is written into every snapshot's metadata and read back by the
+    restart, so the final snapshot of a `t_final` run became unusable in a
+    NEW way (`config.f90: time step must be positive`). It traded one bad
+    final restart for another. `trim_dt_for_final_time` is now a LOGICAL
+    FUNCTION that reports "no step left" and never leaves `dt` non-positive;
+    the trajectory is unchanged (same exit step, a genuine partial step still
+    gets `dt = remaining`), only the recorded metadata differs.
+    **And the claim "every suite case is nsteps-terminated" was FALSE**:
+    `run_gates_s2.sh`'s `les_legs()` REWRITES `t_final` in a generated
+    variant, so its `les` and `band` legs are `t_final`-terminated. That is
+    what caught this — `RT_turbles.h5` came out with `dt = 0.0` at
+    `t = 29.999999999975433`, the S2 `les` leg died on the restart, and
+    because that leg deletes `turbles_*.h5` before it fails it took S4 down
+    with it. LESSON: a claim of the form "no case exercises this path" must
+    be checked against the GENERATED inis, not only the committed ones.
   - **`check_scalar_turb.py cmd_band` compares RAW `theta'_rms`**, so the two
     campaigns' wall-flux difference enters the ratio as a global factor:
     measured core ratio 1.0365 == the flux ratio 1.0360, and normalising by

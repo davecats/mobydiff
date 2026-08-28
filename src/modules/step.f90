@@ -754,11 +754,28 @@ contains
         end if
     end function run_should_continue
 
-    subroutine trim_dt_for_final_time(dns)
+    ! Trim dt so the run lands exactly on t_final, and report whether a step
+    ! is left to take at all.
+    !
+    ! IT REPORTS RATHER THAN ZEROING dt, and that is load-bearing: dns%dt is
+    ! written into every snapshot's metadata and read back by the restart, so
+    ! a zero there makes the FINAL snapshot of a t_final run unusable --
+    ! `config.f90: time step must be positive`. Signalling the end by setting
+    ! dns%dt = 0 traded the amplified-pn trap this routine exists to fix for
+    ! that one. FOUND 2026-08-28 by run_gates_s2.sh's `les` leg: les_legs()
+    ! REWRITES t_final in a generated variant, so those legs are t_final-
+    ! terminated even though every committed suite ini is nsteps-terminated
+    ! (the claim in the original write-up), and the relax leg's RT_turbles.h5
+    ! came out with dt = 0.0 at t = 29.999999999975433 -- exactly the step
+    ! this routine suppresses.
+    ! The trajectory is unchanged: the loop still exits at the same step, and
+    ! a genuine final partial step still gets dt = remaining.
+    logical function trim_dt_for_final_time(dns) result(step_remains)
         type(dns_type), intent(inout) :: dns
 
         real(C_DOUBLE) :: remaining
 
+        step_remains = .true.
         if (dns%t_final <= 0.0d0) return
 
         remaining = dns%t_final - dns%t_current
@@ -778,10 +795,15 @@ contains
         ! to be RELATIVE -- an absolute one at the stopping tolerance would not
         ! have caught this (the gap was 25x it) -- while a genuine final
         ! partial step is a meaningful fraction of dt and passes through.
-        if (remaining < FINAL_STEP_FRACTION*dns%dt) remaining = 0.0d0
+        ! Nothing left to take -- including the `already past t_final` case,
+        ! where remaining <= 0 is trivially below the threshold.
+        if (remaining < FINAL_STEP_FRACTION*dns%dt) then
+            step_remains = .false.
+            return
+        end if
 
-        dns%dt = min(dns%dt, max(0.0d0, remaining))
-    end subroutine trim_dt_for_final_time
+        dns%dt = min(dns%dt, remaining)
+    end function trim_dt_for_final_time
 
     subroutine update_timestep_limits(blk, dns, c, turb, sc)
         type(block_set_type), intent(inout) :: blk
