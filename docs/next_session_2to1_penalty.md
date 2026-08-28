@@ -61,7 +61,38 @@ and of the pack/unpack that serve them.
 
 ## The plan, ranked
 
-### P1 — RUN 2026-08-28. It is an `xz`-only defect and the fix is one key function.
+### P1 — ANALYSED AND IMPLEMENTED 2026-08-28 (`4f04f6b`). Timing still to measure.
+
+The key change is in: `leaf_key` (blocks.f90) puts the y tile in the low 21
+bits for xz mode; xyz untouched. Measured on the wire at 2 GPU ranks, refined
+production case:
+
+| | old key | new key |
+|---|---|---|
+| peer send points | 941 700 | **46 000** (20.5×, prediction 20.3×) |
+| per-rank send min/max | 193 700 / 748 000 | **23 000 / 23 000** |
+| same-level (copy-only) fraction | 1.9 % | **98.7 %** |
+| full nv=4 message | 30.134 MB | **1.472 MB** |
+| cross-level peer points | 923 700 | **583** |
+| local copy points | 5 482 980 | 6 378 680 (+16 %) |
+
+Gates: 7-case suite bit-exact CPU **and** GPU (xyz path untouched); the xz
+renumbering is physics-invariant (old vs new key, `max_abs 0` on all fields
+reassembled onto the global lattice); 1 rank == 4 ranks EXACT and CPU == GPU
+EXACT with the new key; `block_nb`'s xz uniform-flow gate still EXACT on an
+unchanged leaf set.
+
+**Still open: the step-time gain.** The same-session 2-GPU A/B was contaminated
+by another user's job holding both GPUs at 95–96 % (ref 1.422, cand 1.381
+s/step, against 0.324 for this config on a free machine), so no gain is quoted.
+Directionally `mpi_wait` fell 29 % and `local_copy` rose 41 %, as designed.
+**Re-run on a free machine** — `nvidia-smi` first, and read `runtime.txt`'s
+drift, not the final average.
+
+The analysis that produced this, kept because it is what makes the change
+defensible:
+
+### The analysis
 
 `tools/partition_analysis.py` reads a leaf table (a `blocks` dataset, or
 `leaftable_test` stdout), rebuilds the 26-neighbour block graph in finest-cell
