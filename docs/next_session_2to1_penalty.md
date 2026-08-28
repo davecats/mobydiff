@@ -46,48 +46,83 @@ lost to imperfect scaling**.
 
 ## Why (c) happens — the diagnosis is precise
 
-**The 2:1 interface always sits ON a rank boundary.** Cross-level peer points
-are *identical* at 2 and 4 ranks — 923 700 vs 923 692, not a function of rank
-count at all. `refine_dims = xz` puts the y tile in the high Morton bits, so
-every fine block precedes every coarse block in the leaf table: the level change
-is one contiguous cut in Morton index and a linear split cannot avoid it. Every
-interface transfer that could be a device-local copy is an MPI message instead,
-and peer traffic costs ~6× a local copy per point here.
+**In `refine_dims = xz`, the 2:1 interface always sits ON a rank boundary.**
+Cross-level peer points are *identical* at 2 and 4 ranks — 923 700 vs 923 692,
+not a function of rank count at all. The xz mixed Morton key puts the y tile in
+bits 42+, so every fine block precedes every coarse block in the leaf table: the
+level change is one contiguous cut in Morton index and a linear split cannot
+avoid it. Every interface transfer that could be a device-local copy is an MPI
+message instead, and peer traffic costs ~6× a local copy per point here.
 
-This is a **partitioning** defect. It is upstream of the phi exchange (45 % of
-GPU bytes), of both velocity shells, and of the pack/unpack that serve them.
+This is a **partitioning** defect, and P1 below has now measured that it is
+**specific to xz mode** — the xyz octree curve does not have it.
+It is upstream of the phi exchange (45 % of GPU bytes), of both velocity shells,
+and of the pack/unpack that serve them.
 
 ## The plan, ranked
 
-### P1 — partition so the interface is not cut. The only large 2:1-specific lever.
+### P1 — RUN 2026-08-28. It is an `xz`-only defect and the fix is one key function.
 
-Ceiling: most of `mpi_wait` becomes `local_copy` at ~1/6 the per-point cost,
-≈ 6 % of the 2-rank step, growing with rank count — and doubling again if
-red-black is ever adopted, since it exchanges per colour.
+`tools/partition_analysis.py` reads a leaf table (a `blocks` dataset, or
+`leaftable_test` stdout), rebuilds the 26-neighbour block graph in finest-cell
+index space and scores candidate partitionings by **shared area**, which is
+what an exchange entry carries. Validated against the solver: its proxy is a
+uniform 1.30× of the measured peer points at 2 ranks, for both the cross-level
+and the total figure.
 
-**Start with an offline analysis that costs no solver work at all.** The leaf
-table is in every case file (`blocks`: origin + level per global id). A script
-that reads it and counts, for a candidate partitioning, how many cross-level
-neighbour pairs would be cross-rank answers the whole design question before a
-line of Fortran is written:
+**Result 1 — the defect is specific to `refine_dims = xz`, and it is not
+general.** Cross-level shared area cut by the current linear split:
 
-- how much of the 923 700 is avoidable at 2, 4, 8, 16 ranks;
-- what a level-aware split costs in load imbalance (blocks per rank spread);
-- whether the answer depends on `refine_dims`, on `refine_body` vs box
-  refinement, and on rank count.
+| case | mode | 4 ranks | 8 ranks | 16 ranks |
+|---|---|---|---|---|
+| boundary layer, wall band | xz | 87.5 % | 100 % | 100 % |
+| compact body-like patch | xz | 0.4 % | 27.9 % | 28.8 % |
+| **NACA 0012 `refine_body`, 25 418 leaves, 5 levels** | **xyz** | **1.4 %** | **4.2 %** | **10.1 %** |
 
-Only then choose the route, because both are structural:
+In **xyz (octree) mode the standard Morton curve already keeps cross-level
+pairs local** — there is nothing to fix for the cylinder/naca/sailplane family,
+and a column-wise partitioner is actively *worse* there (total peer area 3.24 M
+against 2.57 M at 4 ranks, and load imbalance 2.6 at 16). In **xz mode** the
+mixed key puts the y tile in bits 42+, so the curve has no locality along y at
+all, and the interface — which in xz mode is necessarily a y-plane — is cut
+almost entirely.
 
-- **Change the split, keep the curve** — assign blocks so cross-level pairs stay
-  co-resident. Costs the closed-form `zorder_owner/start/count` O(1) ownership
-  lookup that the exchange build relies on; it would become a table.
-- **Change the curve** — interleave the y tile instead of putting it in the high
-  bits. Costs the canonical leaf-table id order, which `moby_prepare`, restart
-  files and `make_channel_restart` all mirror.
+**Result 2 — the fix is to move the y tile to the LOW bits of the xz key.**
+The leaf order then runs down each (x,z) column before moving on, so **the
+existing closed-form `zorder_owner` linear split becomes column-wise for
+free**: no partitioner, no ownership table, no balance heuristic, and load
+imbalance stays exactly 1.000 (an explicit column-wise partitioner reaches
+1.20–2.61 and is strictly worse).
 
-The size report added on 2026-08-28 (`[output] profile` → `comm.f90
-report_exchange_sizes`) makes the before/after directly measurable: watch the
-copy-only prefix fraction rise from 1.9 %.
+Total peer area, current → y-tile-in-low-bits:
+
+| case | 4 ranks | 8 ranks | 16 ranks |
+|---|---|---|---|
+| boundary layer | 1 546 032 → 106 728 (**14.5×**) | 2 535 192 → 249 032 (**10.2×**) | 2 657 600 → 533 640 (**5.0×**) |
+| compact xz patch | 922 112 → 136 976 (6.7×) | 2 119 502 → 333 056 (6.4×) | 4 283 011 → 717 648 (6.0×) |
+
+with cross-level cut falling to 0.1–0.7 % (boundary layer) and 0.4–3.5 %
+(patch).
+
+**Expected step-time gain**, from the 2-rank GPU profile: `mpi_wait` is 7.2 % of
+the step and would nearly vanish; the traffic moves into `local_copy` at ~1/6
+the per-point cost (+0.4 %). Net **≈ 6 % of the 2-rank step, growing with rank
+count**, and doubling again if red-black is adopted, since it exchanges per
+colour.
+
+**Cost, and it is the real decision.** Changing the key changes the canonical
+leaf id order, so the `blocks` table row order changes. What mirrors it:
+`moby_prepare` (writes it), the solver (cross-checks it at read),
+`make_channel_restart`, and every existing xz restart/case file. mobygeom is
+retired, so the mirror set is small — but existing xz files need either
+regeneration or a version flag on the `refine_dims` attribute. **Gate it on
+`refine_dims = xz` only**: xyz must keep its current key, which Result 1 shows
+is already right.
+
+Verification once implemented: the size report (`[output] profile` → `comm.f90
+report_exchange_sizes`) makes it directly measurable — watch the copy-only
+prefix fraction rise from 1.9 %, and the cross-level peer count stop being
+rank-count-independent.
 
 ### P2 — overlap the exchange with compute
 
