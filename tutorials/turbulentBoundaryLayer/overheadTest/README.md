@@ -28,6 +28,8 @@ multiLevel_xz/refined_yp82_rect_jacobi.ini
                                    the same at nb = 64 44 48 (448 leaves,
                                    60.6 M cells, interface at y+ 82 not 99)
 run_overhead.sh                    runs them into runs/<name>/ (gitignored)
+gpu_rank.sh                        per-rank GPU pinning; REQUIRED for any
+                                   multi-GPU run (BIN=./gpu_rank.sh)
 summarise.py                       the two rates, the ratios and the gates
 phase_table.py                     the per-phase table from the profiled runs
 ```
@@ -79,6 +81,17 @@ time and nothing derived from the table can be trusted.
 as `local_copy`. That is the intended reading, not a gap: `local_copy` is
 device-local halo traffic, the MPI buckets are network. Re-run at 4 ranks to
 populate them.
+
+**Multi-rank (2026-08-28, `results_multirank_2026-08-28.md`)**: the refined
+config holds 85 % parallel efficiency on both 2 GPUs and 4 CPU ranks, the volume
+kernels scale perfectly (0.98–1.02), and the **projection exchange is 71–75 % of
+all the time lost**, growing in absolute terms as ranks are added. The exchange
+goes from ~5 % of the step to 17 % on both platforms, `mpi_wait` alone 7–8 %.
+The named cause is that `sync_divergence_halos` is single-rank only, so 15 of
+the 18 per-step velocity refreshes fall back to a full exchange. Multi-GPU runs
+need `gpu_rank.sh`, and every comparison needs its own same-host baseline —
+istmcorax > istmcetus > the local workstation, and even two baselines an hour
+apart on one host differ by ~0.4 %.
 
 `ibm_mu` is the control row: `update_ibm_mu` is a pure pointwise pass over
 halo-carrying arrays, with no stencil and no exchange, so its nb16/base ratio is

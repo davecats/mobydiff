@@ -59,10 +59,31 @@ rank, and the list above serves both configs. Details, and a correction to
 conclusions drawn from the previously-recorded (stale) refined profile:
 `overheadTest/results_refined_rect_2026-08-28.md`.
 
-Unmeasured, and the one place the exchange story may still be alive:
-**multi-rank**. `sync_divergence_halos` is single-rank only, so with MPI peers
-the projection falls back to the full velocity exchange 15 times per step. That
-needs a 4-rank profiled run of the refined config before it can be ranked.
+**MULTI-RANK CHANGES THE RANKING (measured 2026-08-28,
+`overheadTest/results_multirank_2026-08-28.md`).** The refined config on 2 GPUs
+and on 4 CPU ranks, each against a same-host 1-rank baseline: 85 % parallel
+efficiency on both, volume kernels scaling perfectly (momentum 1.02, sweep
+0.99–1.02, apply 0.98–1.00), and **the projection exchange accounting for 71 %
+(GPU) / 75 % (CPU) of all the time lost**. Both projection exchanges get
+*absolutely* more expensive as ranks are added; the whole exchange goes from
+~5 % of the step to 17 % on both platforms, `mpi_wait` alone 7–8 %, `mpi_post`
+nil.
+
+So for any run that is not single-rank, the top item is **partitioning the
+exchange entry list so `sync_divergence_halos` works with peers** — worth an
+estimated 5–6 % of the step already at 2–4 ranks, on the worst-scaling phase,
+with the mechanism named in `pressure_solver.f90`. The `compute_phi` / `apply`
+work above stays the right list for single-rank and for per-rank kernel cost;
+it just is not what limits a parallel run.
+
+Also exposed, both secondary: `bodyforce` scales at 0.68 (GPU) / 0.40 (CPU)
+despite filling a per-block array, and `proj/phi_exchange` scales at 0.32/0.33
+and is latency-bound (18 small scalar exchanges per step), which the divergence
+sync does not help and overlap would.
+
+Multi-GPU runs need `overheadTest/gpu_rank.sh`: the solver never calls
+`omp_set_default_device`, so without per-rank `CUDA_VISIBLE_DEVICES` every rank
+offloads to the same card and it reads as catastrophic scaling.
 
 ---
 

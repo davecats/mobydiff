@@ -15,6 +15,11 @@
 #                        reads clocks, so profiled and unprofiled runs produce
 #                        bit-identical fields -- but keep them in separate
 #                        directories so the plain matrix stays the clean baseline.
+#   NSTEPS=<n>           override [time] nsteps (runtime_interval follows). The
+#                        CPU runs need it: 400 steps of the 60 M-cell refined
+#                        case is 2+ hours at 20 s/step. Phase SHARES converge in
+#                        a few tens of steps; absolute rates from a shortened run
+#                        are only comparable to another run of the same length.
 #   SUFFIX=<tag>         write into runs/<name>_<tag>/ instead of runs/<name>/.
 #                        Use it with BIN to A/B two binaries ON THE SAME DAY --
 #                        machine state drifts, so a gain measured against a
@@ -63,15 +68,26 @@ for cfg in "${configs[@]}"; do
     echo "=== $(basename "$run")  ($(date '+%F %T'))"
     rm -rf "$run"
     mkdir -p "$run"
-    if [ "${PROFILE:-0}" = 1 ]; then
-        if grep -qE '^[[:space:]]*profile[[:space:]]*=' "$abs"; then
-            sed 's/^profile *=.*/profile = true/' "$abs" > "$run/config.ini"
-        else
-            # A config without the key would otherwise run UNPROFILED into a
-            # _prof directory and only surface later as "no profiled runs".
-            # [output] is the last section in these files; append there.
-            cat "$abs" > "$run/config.ini"
-            printf '\n[output]\nprofile = true\n' >> "$run/config.ini"
+    # Any config edit lands in the run directory, so the exact config a run used
+    # sits next to its log.
+    if [ "${PROFILE:-0}" = 1 ] || [ -n "${NSTEPS:-}" ]; then
+        cp "$abs" "$run/config.ini"
+        if [ -n "${NSTEPS:-}" ]; then
+            # Keep ~4 runtime.txt lines so summarise.py can still difference a
+            # marginal rate out of the cumulative average.
+            sed -i -e "s/^nsteps *=.*/nsteps = $NSTEPS/" \
+                   -e "s/^runtime_interval *=.*/runtime_interval = $(( NSTEPS / 4 > 0 ? NSTEPS / 4 : 1 ))/" \
+                   "$run/config.ini"
+        fi
+        if [ "${PROFILE:-0}" = 1 ]; then
+            if grep -qE '^[[:space:]]*profile[[:space:]]*=' "$run/config.ini"; then
+                sed -i 's/^profile *=.*/profile = true/' "$run/config.ini"
+            else
+                # A config without the key would otherwise run UNPROFILED into a
+                # _prof directory and only surface later as "no profiled runs".
+                # [output] is the last section in these files; append there.
+                printf '\n[output]\nprofile = true\n' >> "$run/config.ini"
+            fi
         fi
         abs="$run/config.ini"
     fi
