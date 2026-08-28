@@ -1,5 +1,43 @@
 # Next session — 2:1 interfaces on the red-black SOR projection
 
+## NOTE 2026-08-28 — the communication argument does NOT hold; the compute one does
+
+Measured on the refined boundary-layer config at 2 GPU ranks
+(`overheadTest/results_exchange_diag_2026-08-28.md`). Rounds per substage with
+a 2:1 interface present:
+
+| | per iteration | iters | phi | velocity | total |
+|---|---|---|---|---|---|
+| Jacobi `niter = 6` | 1 phi + 1 velocity | 6 | 6 | 6 | 12 |
+| red-black `niter = 3` | 2 colours × (1 phi + 1 velocity) | 3 | 6 | 6 | **12** |
+
+Red-black needs a communication **per colour**, and §4 gives each colour both a
+cross-level phi exchange and a velocity exchange, so halving the iterations
+cancels exactly against doubling the exchanges per iteration. On a single-level
+grid red-black needs no phi and the count does halve (6 against 12) — but that
+is where red-black already works.
+
+Bytes do not save either, on the current decomposition: red-black's phi is
+cross-level-only, and cross-level is **98.1 %** of the full phi exchange because
+the 2:1 interface always lands on a rank boundary (the `refine_dims = xz` Morton
+order puts the y tile in the high bits, so every fine block precedes every
+coarse one; the cross-level peer count is identical at 2 and 4 ranks).
+
+**The case to make is compute, and it is bigger.** `niter = 3` is 6 half-sweeps
+against Jacobi's 6 `compute_phi` + 6 `apply` passes — roughly half the
+projection arithmetic. `sweep` + `apply` are 46 % of the 2-rank step, so the
+prize is of order 20 % of the step, several times anything the overlap work can
+reach, and it helps single-rank runs equally.
+
+**Do this before writing the 150–250 lines**: measure iterations-to-residual for
+red-black vs damped Jacobi on the existing **single-level** path, where both
+smoothers already run. It costs no new code and it is the number the whole
+increment rests on ("3 SOR ≈ 6 Jacobi" is an expectation, not a measurement).
+§6 already lists it as a gate; promote it to a precondition.
+
+R0 (§3) remains CLOSED — attempted and reverted in `e77c75e`, not bit-exact
+because block metrics differ across a periodic seam.
+
 Branch `boundaryLayer` (or `claude/jacobi-interface`). Goal: **remove the
 `[pressure] solver = redblack` × 2:1-refinement mutual exclusion**
 (`pressure_solver.f90:98-108`) by giving the red-black sweep the one mechanism it

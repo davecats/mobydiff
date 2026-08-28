@@ -83,7 +83,165 @@ cheap diagnostics, in this order:
    `mpi_wait` is transfer. If the barrier is large the ranks are unbalanced and
    overlap will not help — which would reorder everything below.
 
-## The ranked plan
+## PLAN A — overlap the exchange with compute (GPU)
+
+Warranted by the diagnostics: on GPU the wait is pure transfer with zero
+imbalance, so hiding ~24 ms/step of transfer behind ~280 ms/step of compute is
+the right shape of fix. Ceiling: the 7.2 % of the step in `mpi_wait`, plus part
+of `pack`/`unpack`.
+
+### A0 — feasibility probe FIRST (half a day, no design commitment)
+
+The whole plan rests on one unverified assumption: **that an in-flight
+`Isend`/`Irecv` makes progress while a target kernel is running.** The CPU
+measurement (0.46 GB/s, 25× below shared memory) says transfers there progress
+only inside the `Waitall`; if GPU-to-GPU behaves the same way, an interior/shell
+split buys nothing and the answer is asynchronous progress instead.
+
+Probe: post the exchange, launch a deliberately long dummy target kernel, then
+`Waitall`, and see whether `mpi_wait` collapses. Ten lines, throwaway, and it
+decides A1–A3. Do not skip it — this session already had one estimate
+(item 1's "5–6 %") invalidated by an assumption about what the code does.
+
+### A1 — hide the phi exchange behind `jacobi_apply`
+
+The cleanest first target because the dependency is already favourable:
+
+- `jacobi_apply` kernel 1 (`p += phi*idt`, 160 of its 745 µs) reads **no phi
+  halo at all** — it can run entirely during the exchange, with no splitting.
+- kernel 2 reads only `phi(0,j,k)`, `phi(i,0,k)`, `phi(i,j,0)` (the three low
+  halo *face planes*, never edges or corners) and the high plane at outlet and
+  2:1 faces. So cells with `i,j,k >= 2` are independent of the exchange:
+  ~95 % of the block at `nb = 64 44 48`.
+
+Sequence: `pack` → post → **kernel 1 + kernel 2 interior** → `Waitall` →
+`unpack` → kernel 2 boundary shell. `start_halo_exchange` /
+`finish_halo_exchange` are already separate subroutines, so the split exists at
+the call level.
+
+### A2 — hide the velocity exchange behind the next `jacobi_compute_phi`
+
+`jacobi_compute_phi` reads velocity at `(i,j,k)` and the `+1` neighbour per
+dim, so cells with `i <= nb-1` (etc.) do not need the high halo — again ~95 %
+of the block. Same shape as A1, one iteration later in the loop.
+
+### A3 — the same for the post-predictor shell and `momentum`
+
+Only if A1/A2 pay off. `momentum` is the largest single consumer of velocity
+halos and the most invasive to split.
+
+### Costs and gates
+
+Splitting a kernel into interior + shell is a **scheduling change**: identical
+arithmetic per cell, so it must be bit-exact (`max_abs 0`, CPU AND GPU, 7-case
+suite + `validation/block_nb` + 1 rank == 4 ranks). Expect to *lose* some kernel
+efficiency to two launches and a worse shell shape — the shell is a thin slab
+with poor occupancy — so each increment needs its own same-day A/B, and A1 must
+be shown to win before A2 is written.
+
+## PLAN B — the phi exchange (45 % of GPU bytes, 18 rounds/step)
+
+### B0 — what can honestly be sent less
+
+`jacobi_apply` reads only the three low halo face planes plus the high plane at
+interface/outlet faces (§3 of `docs/next_session_redblack_interface.md`). So in
+principle the phi exchange could drop its edge and corner entries and its
+same-level high planes.
+
+**But the measurement says that saves almost nothing here**: 98.1 % of the phi
+bytes on the 2-rank GPU decomposition are *cross-level* entries, which need both
+planes and are exactly what a 2:1 interface must transfer. The reducible part is
+the 1.9 % same-level prefix. **Do not spend a session on B0 for the refined
+case.** It is worth more on single-level multi-rank runs, where the peer traffic
+is 100 % same-level — but there the whole exchange is already small (73 600 pts
+against the refined case's 941 700).
+
+**R0 (compute the phi halo redundantly instead of exchanging it) stays closed.**
+It was attempted and reverted in `e77c75e`: block metrics are not bitwise equal
+across a periodic seam, so the redundantly-computed halo `phi` differs from the
+owner's in the last ulp and the change is not bit-exact. That is a numerics
+change with its own justification burden, not a refactor.
+
+### B1 — the real lever is upstream: the interface sits ON the rank boundary
+
+See `overheadTest/results_exchange_diag_2026-08-28.md`. The cross-level peer
+count is **identical at 2 and 4 ranks** (923 700 / 923 692) because
+`refine_dims = xz` puts the y tile in the high Morton bits, so every fine block
+precedes every coarse block and the level change is one contiguous cut that a
+linear split cannot avoid. The refined case therefore sends 12.8× the peer
+points of the single-level case at 2 ranks despite having 44 % of the cells.
+
+This inflates the phi exchange, both velocity shells and their pack/unpack at
+once, so it is upstream of A and B0 alike. It is also the most structural: it
+costs either the closed-form `zorder_owner/start/count` ownership lookup (change
+the split) or the canonical leaf-table id order that `moby_prepare`, restart
+files and `make_channel_restart` all mirror (change the curve). Honest ceiling:
+most of `mpi_wait` becomes `local_copy` at ~1/6 the per-point cost, ≈ 6 % of the
+2-rank step. Measure what a balanced interface split costs in load imbalance
+before designing either.
+
+## PLAN C — red-black instead of Jacobi: the accounting
+
+The motivation offered was that red-black converges in `niter = 3` where Jacobi
+needs 6, so it should halve the communication. **The round count does not
+halve** — but the compute might, and that is the better reason.
+
+The design is already written: `docs/next_session_redblack_interface.md` §4
+(R1), ~150–250 lines, no new numerics. Its premise is sound and worth repeating
+because it is easy to lose: the *operator* is already SPD and consistent at the
+interface (composite `face_grad`, low-side-owns-face, symmetric relaxation,
+mean-preserving `ifaceRow` transfer). Red-black is a different **splitting** of
+that same `L`, so this is plumbing. The §6c–§6g failures in
+`interface_projection_derivation.md` were failures of the old operator and must
+not be re-fought.
+
+Rounds per substage, with a 2:1 interface present:
+
+| | per iteration | iterations | phi rounds | velocity rounds | total |
+|---|---|---|---|---|---|
+| Jacobi `niter = 6` | 1 phi + 1 velocity | 6 | 6 | 6 | 12 |
+| red-black `niter = 3` | 2 colours × (1 phi + 1 velocity) | 3 | 6 | 6 | **12** |
+
+**Identical.** Red-black needs a communication *per colour*, and with an
+interface each colour needs both a cross-level phi exchange and a velocity
+exchange — so halving the iterations exactly cancels against doubling the
+exchanges per iteration. On a **single-level** grid red-black needs no phi at
+all and the count halves (6 rounds against 12) — but single-level is where
+red-black already works today.
+
+Bytes do not save either on the current decomposition: red-black's phi exchange
+is cross-level-only, which is 98.1 % of the full phi exchange here. It *would*
+save if B1 were fixed.
+
+**Where red-black does win is compute**, and that is the case worth making:
+`niter = 3` is 6 half-sweeps against Jacobi's 6 full `compute_phi` + 6 `apply`
+passes — roughly half the projection arithmetic. `sweep` + `apply` are 46 % of
+the 2-rank step, so the prize is of order **20 % of the step**, several times
+anything in Plan A. It is also the only item here that helps the single-rank
+case equally.
+
+Two caveats to keep honest: "3 iterations of SOR ≈ 6 of damped Jacobi" is an
+expectation, not a measurement — `docs/next_session_redblack_interface.md` §6
+already makes iterations-to-residual a gate, and it should be measured *before*
+the 150–250 lines are written, on the existing single-level red-black path.
+And the `omega` stability limit with an interface present is unknown; §5 has the
+escalation ladder.
+
+## Recommended order
+
+1. **A0**, the progress probe — half a day, and it decides whether Plan A exists
+   at all.
+2. **Iterations-to-residual for red-black vs Jacobi** on the existing
+   single-level path — cheap, no new code, and it sizes Plan C's 20 % before
+   committing to it.
+3. Whichever of A1 / C-R1 those two justify.
+4. B1 (partitioning) once someone is willing to touch the Morton order or the
+   ownership lookup; it is the largest exchange lever but the most structural.
+
+B0 and R0 are closed for the refined case; do not reopen without a decomposition
+where same-level peer traffic dominates.
+
+## The original ranked plan (superseded above, kept for the reasoning)
 
 **1. `sync_divergence_halos` with peers.** ~5–6 % of a multi-rank step at 2–4
 ranks, growing with rank count, on the worst-scaling phase (efficiency

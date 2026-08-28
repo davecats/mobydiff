@@ -103,6 +103,51 @@ size it against the decomposition it will actually run on.
 `jacobi_compute_phi` kernel efficiency and the `bodyforce` trip mask are
 unchanged from `docs/next_session_multirank_exchange.md`.
 
+## Follow-up: the 2:1 interface always sits ON a rank boundary
+
+The 1.9 % copy-only prefix was suspicious enough to test against the same block
+shape without refinement (2-step runs, init line only):
+
+| config | peer pts | same-level | cross-level | cross |
+|---|---|---|---|---|
+| single-level rect, 2 ranks | 73 600 | 73 583 | 17 | 0.0 % |
+| single-level rect, 4 ranks | 220 800 | 220 792 | 8 | 0.0 % |
+| refined, 2 ranks | 941 700 | 18 000 | **923 700** | 98.1 % |
+| refined, 4 ranks | 1 390 900 | 467 208 | **923 692** | 66.4 % |
+
+**The cross-level peer count is identical at 2 and 4 ranks** — 923 700 vs
+923 692. It is not a function of the rank count at all: *the entire 2:1
+interface is on a rank boundary whatever the decomposition.*
+
+The cause is the Morton ordering. In `refine_dims = xz` the y tile sits in the
+high key bits (bits 42+) over the 2D x,z curve, so **every fine block precedes
+every coarse block** in the leaf table: the level change is one contiguous cut
+in Morton index, and a linear split cannot avoid it. The consequence is that
+interface transfers that could be device-local copies are MPI messages instead.
+
+The scale of the penalty: the refined config sends **12.8× the peer points** of
+the single-level config at 2 ranks, while having 60.6 M cells against 138.4 M.
+Peer traffic per point costs ~6× a local copy here (`mpi_wait` 7.2 % of the step
+for 941 700 pts/round against `local_copy` 6.6 % for 5.48 M pts/round).
+
+This is a **partitioning** defect, not an exchange defect, and it is upstream of
+every item on the ranked list — it inflates the phi exchange (45 % of bytes),
+both velocity shells, and the `pack`/`unpack` that serve them. Two directions,
+neither cheap:
+
+- **Change the split, not the curve**: assign blocks to ranks so cross-level
+  pairs stay co-resident. Costs the closed-form `zorder_owner/start/count` O(1)
+  ownership lookup that the whole exchange build relies on.
+- **Change the curve**: interleave the y tile instead of putting it in the high
+  bits, so vertically adjacent blocks are near each other. Costs the canonical
+  leaf-table id order, which `moby_prepare` and `make_channel_restart` mirror
+  and restart files encode.
+
+Measure before choosing: the honest upper bound is "most of `mpi_wait` becomes
+`local_copy` at ~1/6 the per-point cost", i.e. ~6 % of the 2-rank step, and the
+number to check first is what a *balanced* interface split would actually cost
+in load imbalance.
+
 ## Method note
 
 The barrier trick is worth repeating: park it in the `mpi_post` bucket (normally
