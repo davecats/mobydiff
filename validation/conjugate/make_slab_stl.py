@@ -66,11 +66,22 @@ def main():
                     help="deep enough that the bottom face is never the nearest")
     ap.add_argument("--pad", type=float, default=0.5,
                     help="extent beyond the domain in x and z")
+    # The x/z span defaults to +-pad about the ORIGIN, which covers the C1/C3
+    # gates' small boxes. A real channel is 4pi wide, so the span is settable
+    # -- as an addition that keeps the old default, so every existing caller
+    # writes exactly the STL it wrote before.
+    ap.add_argument("--x-range", type=float, nargs=2, default=None,
+                    help="x extent of the slab before padding (default 0 0)")
+    ap.add_argument("--z-range", type=float, nargs=2, default=None,
+                    help="z extent of the slab before padding (default 0 0)")
     a = ap.parse_args()
 
     y0 = a.y_bottom
-    write_stl(a.out, (-a.pad, y0, -a.pad), (a.pad, a.y_top, a.pad))
-    print(f"{a.out}: slab y in [{y0!r}, {a.y_top!r}], padded +-{a.pad} in x,z")
+    x0, x1 = a.x_range if a.x_range else (0.0, 0.0)
+    z0, z1 = a.z_range if a.z_range else (0.0, 0.0)
+    write_stl(a.out, (x0 - a.pad, y0, z0 - a.pad), (x1 + a.pad, a.y_top, z1 + a.pad))
+    print(f"{a.out}: slab y in [{y0!r}, {a.y_top!r}], x in "
+          f"[{x0 - a.pad!r}, {x1 + a.pad!r}], z in [{z0 - a.pad!r}, {z1 + a.pad!r}]")
 
 
 if __name__ == "__main__":

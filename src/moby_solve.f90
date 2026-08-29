@@ -396,8 +396,14 @@ program moby_solve
             end if
 
             ! Scalar substage tail: qs -> q, physical ghosts, one batched
-            ! halo exchange over the scalar variables (no-op off).
+            ! halo exchange over the scalar variables (no-op off). It is timed
+            ! into the SAME bucket as the transport kernel: the two together
+            ! are what a scalar costs, and keeping them apart once hid the
+            ! fact that the tail is the larger of the two.
+            if (dns%profile_phases) step_profile_start = wall_seconds()
             call scalar_finish(sc, blk, bc, c)
+            if (dns%profile_phases) call profiler_add(step_prof, STEP_PROF_SCALAR, &
+                wall_seconds() - step_profile_start)
 
         end do
 
