@@ -82,12 +82,28 @@ reassembled onto the global lattice); 1 rank == 4 ranks EXACT and CPU == GPU
 EXACT with the new key; `block_nb`'s xz uniform-flow gate still EXACT on an
 unchanged leaf set.
 
-**Still open: the step-time gain.** The same-session 2-GPU A/B was contaminated
-by another user's job holding both GPUs at 95–96 % (ref 1.422, cand 1.381
-s/step, against 0.324 for this config on a free machine), so no gain is quoted.
-Directionally `mpi_wait` fell 29 % and `local_copy` rose 41 %, as designed.
-**Re-run on a free machine** — `nvidia-smi` first, and read `runtime.txt`'s
-drift, not the final average.
+**Timing, 2026-08-29** (`overheadTest/results_xzkey_2026-08-29.md`). The GPU
+A/B is STILL NOT DONE: istmcetus' two GPUs were held by another user's `nekrs`
+job through a 6-hour wait window, and it is the only 2-GPU host. A 12-hour
+waiter is armed.
+
+A **CPU 4-rank** A/B did run (the CPU was idle at load 4/128 while the foreign
+job was GPU-bound): peer send points 1 390 900 → 138 000, and **`mpi_wait`
+7.7716 → 0.0853 s/step, a 91× collapse** — from 7.9 % of the step to 0.09 %;
+total exchange 16.5 % → 11.1 %. Absolute step times are NOT usable (~98/91
+s/step against 18.77 for this configuration on a quiet machine, a 5.2×
+inflation from the foreign job's memory traffic), so the −6.7 % step delta is
+indicative only.
+
+**It also corrects the CPU diagnosis.** A 10× byte cut produced a 91× wait cut
+— strongly superlinear, so per-round latency was never the binding term, and
+"latency/progress-bound" was only half right. The mechanism the size report
+exposes: under the old key one rank sent 963 600 points against another's
+101 300, a **9.5× straggler**, and `Waitall` pays for the slowest peer; the new
+key equalises it to 2×. Much of what looked like transfer cost was **exchange
+load imbalance — invisible in the compute-side balance, which was 1.000
+throughout**. Leaf-count balance is not exchange balance; read
+`send pts/rank min … max` on any new decomposition.
 
 The analysis that produced this, kept because it is what makes the change
 defensible:
