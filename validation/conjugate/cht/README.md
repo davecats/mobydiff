@@ -160,9 +160,12 @@ proportional to the LOCAL velocity, `dJ/dy = -f_T u(y)`. Both their walls are
 heated identically, so symmetry forces J = 0 at the centreline.
 
 That is a different physical problem, not a defect in either. It also means
-"their flux falls" — used in an earlier draft here — is shorthand:
-it follows the CUMULATIVE FLOW RATE, which lags a straight line near the wall
-(where u is small) and overtakes it in the core. Computed from this run's own
+that saying their flux "falls **linearly**" — as an earlier draft here and the
+figure caption both did — is wrong as stated: that is the MOMENTUM stress,
+which is linear because its source (the pressure gradient) is uniform. Their
+SCALAR flux follows the cumulative flow rate, because its source is `u(y)`; it
+lags a straight line near the wall, where u is small, and overtakes it in the
+core. Computed from this run's own
 mean velocity profile:
 
 | y+ | J/J_wall, Kasagi form | 1 − y/h | ours |
