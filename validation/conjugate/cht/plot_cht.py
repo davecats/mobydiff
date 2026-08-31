@@ -23,7 +23,7 @@ WITH AN UNCERTAINTY BAR and never as a curve: drawing a reference line through
 four eyeballed points would dress up a reading as data.
 
 AND THE COMPARISON TRAP THIS FIGURE MAKES VISIBLE. Their thermal problem is
-Kasagi's wall-flux formulation, whose flux falls linearly to zero at the
+Kasagi's wall-flux formulation, whose flux falls to zero at the
 centreline; ours holds the flux CONSTANT across the channel. So their variance
 decays toward the centre and ours does not -- panel (b) shows both, and the
 near-wall peak (shaded band) is the only place the two are comparable. The
@@ -259,7 +259,7 @@ def main():
     fig.text(0.008, 0.010,
              "Curves: this work (6 conjugate scalars on one velocity field). Markers: Flageul et al. fig. 5, "
              "read off the plot to $\\pm0.1$ — not tabulated.\n"
-             "Their flux falls linearly to zero at the centreline (Kasagi wall-flux problem); ours is constant "
+             "Their flux falls to zero at the centreline (Kasagi wall-flux problem); ours is constant "
              "across the channel, so only the shaded near-wall band is comparable.",
              color=MUTED, fontsize=8, ha="left", va="bottom")
     fig.tight_layout(rect=(0, 0.055, 1, 0.955))

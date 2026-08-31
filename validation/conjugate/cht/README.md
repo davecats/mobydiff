@@ -141,6 +141,37 @@ The y axis is logarithmic because the wall values span two decades (3.83 down
 to 0.051) — on a linear axis the two high-K cases sit on the axis and cannot
 be told apart, which is precisely the quantity the figure exists to show.
 
+### Why our flux is constant and theirs is not
+
+The steady, x-z homogeneous mean scalar balance is
+
+    dJ/dy = S ,      J = <v'theta'> - D dTheta/dy
+
+so the flux profile is set entirely by the source. **Ours has S = 0** —
+antisymmetric wall temperatures, no volumetric source — so J is CONSTANT:
+heat passes straight through from the hot wall to the cold one and nothing in
+the interior absorbs it. Measured `J(y)/J_wall = 1.0000` everywhere, solid
+slabs included, which is also why the series-resistance model of `reseed_solid.py`
+is exact.
+
+**Theirs has S != 0.** Their eq. (2) carries Kasagi's `f_T u_x`: the mean
+temperature grows downstream, so convection acts as a distributed sink
+proportional to the LOCAL velocity, `dJ/dy = -f_T u(y)`. Both their walls are
+heated identically, so symmetry forces J = 0 at the centreline.
+
+That is a different physical problem, not a defect in either. It also means
+"their flux falls" — used in an earlier draft here — is shorthand:
+it follows the CUMULATIVE FLOW RATE, which lags a straight line near the wall
+(where u is small) and overtakes it in the core. Computed from this run's own
+mean velocity profile:
+
+| y+ | J/J_wall, Kasagi form | 1 − y/h | ours |
+|---|---|---|---|
+| 10 | 0.984 | 0.946 | 1.000 |
+| 60 | 0.744 | 0.671 | 1.000 |
+| 100 | 0.506 | 0.446 | 1.000 |
+| 179 | 0.000 | 0.004 | 1.000 |
+
 ### The outer profile is NOT logarithmic, and that is physics
 
 An earlier draft of this README claimed the mean profile "keeps a log-like
@@ -169,7 +200,7 @@ not, so the molecular part has to grow and the gradient steepens. It is not a
 wake, and it is not a log region.
 
 **This is the same structural difference that makes panel (c)'s outer region
-incomparable**: Flageul's flux falls linearly to zero at the centre, so their
+incomparable**: Flageul's flux falls to zero at the centre, so their
 profile has no such constraint. The two setups can only be compared inside the
 wall layer, which is what the shaded band marks and what
 `check_scalar_turb.py` has always said about the Kader window.
@@ -203,7 +234,7 @@ of which is the conjugate scheme:
 
 * **the thermal problem is not theirs.** Ours is constant-flux-across-the-
   channel (antisymmetric walls); theirs is Kasagi's wall-flux formulation with
-  a mean streamwise gradient, whose flux falls linearly to zero at the centre.
+  a mean streamwise gradient, whose flux falls to zero at the centre.
   That changes the whole outer profile — visible above at y+ = 145, where we
   have 7.96 and they have ~0.8 — and feeds back on the near-wall budget
   through turbulent transport;

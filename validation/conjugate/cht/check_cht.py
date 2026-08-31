@@ -198,7 +198,7 @@ def cmd_thermal(a):
         # channel (antisymmetric walls, no source), so production never
         # switches off and the variance keeps rising to the CENTRELINE -- the
         # global maximum is there, not at y+ ~ 20. Flageul's wall-flux problem
-        # has the flux falling linearly to zero at the centre, so their global
+        # has the flux falling to zero at the centre, so their global
         # maximum IS the near-wall peak. Taking max() over the fluid therefore
         # compares two different quantities, and it made a +11 % near-wall
         # difference read as +40 %.
