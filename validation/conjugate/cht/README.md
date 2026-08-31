@@ -127,18 +127,52 @@ value separately, with a comment saying why.
 
 `./plot_cht.py` — (a) the mean against **Kader's correlation** (a published
 analytic curve, so it is drawn as a curve; dashed where it no longer applies);
-(b) the variance for the K ladder with **Flageul's values as markers with an
-uncertainty bar** — they publish no table, those four numbers were read off
+(b) the LOCAL SLOPE, which is the panel that says what the outer profile is
+actually doing (see below); (c) the variance for the K ladder with **Flageul's
+values as markers with an uncertainty bar** — they publish no table, those four numbers were read off
 their figure 5 to about ±0.1, and drawing a reference *line* through eyeballed
-points would dress a reading up as data; (c) the interface coupling against
+points would dress a reading up as data; (d) the interface coupling against
 wall-normal resolution.
 
-Panel (b) also shows the comparison trap directly: our curves keep rising
+Panel (c) also shows the comparison trap directly: our curves keep rising
 toward the centreline while theirs decay, because our flux is constant across
 the channel and theirs falls to zero. **Only the shaded band is comparable.**
 The y axis is logarithmic because the wall values span two decades (3.83 down
 to 0.051) — on a linear axis the two high-K cases sit on the axis and cannot
 be told apart, which is precisely the quantity the figure exists to show.
+
+### The outer profile is NOT logarithmic, and that is physics
+
+An earlier draft of this README claimed the mean profile "keeps a log-like
+slope where Kader flattens". **It does not**, and panel (b) exists because the
+eye cannot tell on a semilog plot. Measured:
+
+| y+ | dθ⁺/dy⁺ | 1/(Pr_t κ y⁺) | ⟨vθ⟩/J |
+|---|---|---|---|
+| 0.8 | **0.708** | 3.83 | 0.000 |
+| 29 | 0.128 | 0.098 | 0.813 |
+| 100 | **0.0456** ← minimum | 0.0288 | 0.936 |
+| 179 (centre) | **0.0560** | 0.0160 | 0.921 |
+
+The slope equals Pr = 0.71 in the conduction sublayer (exact), follows the log
+law only loosely through the log layer, reaches a **minimum at y⁺ ≈ 97 and
+then turns back up**. A logarithmic profile would keep falling as 1/y⁺.
+
+The mechanism is the last column. This thermal problem holds the TOTAL flux
+constant across the channel, so
+
+    dθ⁺/dy⁺ = Pr / (1 + Pr·D_t/ν),
+
+and the turbulent fraction peaks at 0.936 near y⁺ = 100 and *falls* to 0.921
+at the centreline — the eddy diffusivity drops off there while the flux may
+not, so the molecular part has to grow and the gradient steepens. It is not a
+wake, and it is not a log region.
+
+**This is the same structural difference that makes panel (c)'s outer region
+incomparable**: Flageul's flux falls linearly to zero at the centre, so their
+profile has no such constraint. The two setups can only be compared inside the
+wall layer, which is what the shaded band marks and what
+`check_scalar_turb.py` has always said about the Kader window.
 
 ### The conjugate signature, grid-converged
 

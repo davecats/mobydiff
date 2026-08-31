@@ -113,7 +113,8 @@ def main():
     # ladder, and every one of them converged (see the README's reseed note)
     show = [("a1", 3, 0.1), ("k1", 0, 1.0), ("a2", 4, 10.0), ("a3", 5, 100.0)]
 
-    fig, ax = plt.subplots(1, 3, figsize=(13.4, 4.3), facecolor=SURFACE)
+    fig, axg = plt.subplots(2, 2, figsize=(11.6, 8.0), facecolor=SURFACE)
+    ax = axg.ravel()
     for x in ax:
         x.set_facecolor(SURFACE)
         for sp in ("top", "right"):
@@ -137,15 +138,53 @@ def main():
                textcoords="offset points", ha="right", color=RAMP[2], fontsize=9.5)
     A.annotate("Kader (1981)", xy=(30, kader(np.array([30.0]))[0] - kader(np.array([yp[0]]))[0]),
                xytext=(4, -14), textcoords="offset points", color=ACCENT, fontsize=9.5)
-    A.annotate("dashed: Kader beyond the\nconstant-flux layer it describes",
-               xy=(0.97, 0.05), xycoords="axes fraction", color=MUTED,
+    A.annotate("dashed: Kader beyond the constant-flux\nlayer it describes. Ours rises above it in\n"
+               "the outer region — see (b) for why",
+               xy=(0.96, 0.05), xycoords="axes fraction", color=MUTED,
                fontsize=8, ha="right", va="bottom")
     A.set_xlabel("$y^+$", color=INK2, fontsize=10)
     A.set_ylabel(r"$\theta^+$", color=INK2, fontsize=10)
     A.set_title("(a)  mean temperature", color=INK, fontsize=11, loc="left", pad=8)
 
-    # ---- (b) the variance, with Flageul's read-off values -------------------
-    B = ax[1]
+    # ---- (b) the LOCAL SLOPE: is the profile logarithmic? -------------------
+    # It is not, and this panel is here because the eye cannot tell on a
+    # semilog plot. In this thermal problem the TOTAL flux is constant by
+    # construction, so dtheta+/dy+ = Pr/(1 + Pr D_t/nu): it equals Pr in the
+    # conduction sublayer, follows 1/(Pr_t kappa y+) only through the log
+    # layer, and then TURNS BACK UP toward the centreline because the eddy
+    # diffusivity falls off there while the flux may not. A logarithmic
+    # profile would keep decreasing as 1/y+.
+    Sx = ax[1]
+    d = sweep[0]
+    yp, mean = half(d, d["mean"])
+    thp_ = (d["mean"][d["i0"]] - mean) / d["ttau"]
+    slope = np.gradient(thp_, yp)
+    ypc, conv = half(d, np.zeros_like(d["mean"]))     # placeholder for shape
+    Sx.loglog(yp, slope, "-", color=RAMP[1], lw=2.0, zorder=5)
+    Sx.axhline(PR, color=MUTED, lw=1.4, ls=":", zorder=3)
+    Sx.loglog(yp[yp > 8], 1.0 / (0.85 * 0.41 * yp[yp > 8]), "--", color=ACCENT,
+              lw=1.8, zorder=4)
+    jmin = int(np.argmin(slope[yp > 8])) + int((yp <= 8).sum())
+    Sx.plot([yp[jmin]], [slope[jmin]], "o", ms=8, color=RAMP[3], mfc=SURFACE,
+            mew=2.0, zorder=6)
+    Sx.annotate(f"minimum at $y^+$ = {yp[jmin]:.0f},\nthen it turns back UP",
+                xy=(yp[jmin], slope[jmin]), xytext=(-6, -34),
+                textcoords="offset points", ha="right", color=RAMP[3], fontsize=8.5)
+    Sx.annotate("$Pr$ = 0.71 (conduction)", xy=(0.55, PR), xytext=(0, 6),
+                textcoords="offset points", color=MUTED, fontsize=8.5)
+    Sx.annotate("$1/(Pr_t\\kappa y^+)$  (logarithmic)", xy=(22, 1/(0.85*0.41*22)),
+                xytext=(-6, -20), textcoords="offset points", ha="right",
+                color=ACCENT, fontsize=8.5)
+    Sx.annotate("this work, K = 1", xy=(2.0, slope[int(np.argmin(np.abs(yp-2.0)))]),
+                xytext=(6, -14), textcoords="offset points", color=RAMP[2], fontsize=9)
+    Sx.set_xlabel("$y^+$", color=INK2, fontsize=10)
+    Sx.set_ylabel(r"$d\theta^+/dy^+$", color=INK2, fontsize=10)
+    Sx.set_title("(b)  the profile is NOT logarithmic outside the log layer",
+                 color=INK, fontsize=11, loc="left", pad=8)
+    Sx.set_xlim(0.5, 260)
+
+    # ---- (c) the variance, with Flageul's read-off values -------------------
+    B = ax[2]
     B.axvspan(5, 40, color=GRID, alpha=0.55, zorder=0)
     B.annotate("near-wall peak:\nthe only comparable region", xy=(0.5, 0.985),
                xycoords="axes fraction", color=MUTED, fontsize=8,
@@ -176,12 +215,12 @@ def main():
                color=ACCENT, fontsize=8)
     B.set_xlabel("$y^+$", color=INK2, fontsize=10)
     B.set_ylabel(r"$\langle\theta'^2\rangle/\theta_\tau^2$", color=INK2, fontsize=10)
-    B.set_title("(b)  temperature variance", color=INK, fontsize=11, loc="left", pad=8)
+    B.set_title("(c)  temperature variance", color=INK, fontsize=11, loc="left", pad=8)
     B.set_ylim(0.03, 16)
     B.set_xlim(0.40, 300)
 
     # ---- (c) the interface coupling vs wall-normal resolution --------------
-    C = ax[2]
+    C = ax[3]
     dyp, ratio = [], []
     for path, d_ in zip(a.yconv, a.dyp):
         if not os.path.exists(path):
@@ -211,19 +250,19 @@ def main():
     C.set_xlabel(r"$\Delta y^+$ at the wall   (refining $\rightarrow$)", color=INK2, fontsize=10)
     C.set_ylabel(r"$\langle\theta'^2\rangle_{wall}\,/\,\langle\theta'^2\rangle_{peak}$",
                  color=INK2, fontsize=10)
-    C.set_title("(c)  interface coupling, K = 1", color=INK, fontsize=11, loc="left", pad=8)
+    C.set_title("(d)  interface coupling, K = 1", color=INK, fontsize=11, loc="left", pad=8)
     C.set_ylim(0.15, 0.205)
 
     fig.suptitle("Conjugate heat transfer in a turbulent channel, $Re_\\tau=180$, $Pr=0.71$ "
                  "— against Flageul et al. (2015), $Re_\\tau=149$",
                  color=INK, fontsize=12, x=0.008, ha="left", y=0.985)
-    fig.text(0.008, 0.015,
+    fig.text(0.008, 0.010,
              "Curves: this work (6 conjugate scalars on one velocity field). Markers: Flageul et al. fig. 5, "
              "read off the plot to $\\pm0.1$ — not tabulated.\n"
              "Their flux falls linearly to zero at the centreline (Kasagi wall-flux problem); ours is constant "
              "across the channel, so only the shaded near-wall band is comparable.",
              color=MUTED, fontsize=8, ha="left", va="bottom")
-    fig.tight_layout(rect=(0, 0.075, 1, 0.945))
+    fig.tight_layout(rect=(0, 0.055, 1, 0.955))
     fig.savefig(a.out, dpi=170, facecolor=SURFACE)
     print(f"{a.out} written")
 
