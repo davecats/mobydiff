@@ -121,6 +121,25 @@ agreement is 1 %, not 0.3 %, but is now grid-converged rather than accidental.
 `check_cht.py` takes the peak in `5 < y+ < 40` and reports the centreline
 value separately, with a comment saying why.
 
+### The figure
+
+![conjugate channel validation](cht_validation.png)
+
+`./plot_cht.py` — (a) the mean against **Kader's correlation** (a published
+analytic curve, so it is drawn as a curve; dashed where it no longer applies);
+(b) the variance for the K ladder with **Flageul's values as markers with an
+uncertainty bar** — they publish no table, those four numbers were read off
+their figure 5 to about ±0.1, and drawing a reference *line* through eyeballed
+points would dress a reading up as data; (c) the interface coupling against
+wall-normal resolution.
+
+Panel (b) also shows the comparison trap directly: our curves keep rising
+toward the centreline while theirs decay, because our flux is constant across
+the channel and theirs falls to zero. **Only the shaded band is comparable.**
+The y axis is logarithmic because the wall values span two decades (3.83 down
+to 0.051) — on a linear axis the two high-K cases sit on the axis and cannot
+be told apart, which is precisely the quantity the figure exists to show.
+
 ### The conjugate signature, grid-converged
 
 | dy+ | near-wall peak (y+ ~ 20) | wall, K = 1 | **wall/peak** |
