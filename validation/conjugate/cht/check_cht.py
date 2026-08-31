@@ -47,7 +47,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "scalar")
 NSTAT = 7
 S, SS, US, CLO, JLO, CHI, JHI = range(NSTAT)
 RE, PR = 180.0, 0.71
-Y_LO, Y_HI = 1.0, 3.0
+Y_LO, Y_HI = 0.6, 2.6
 
 # ---------------------------------------------------------------------------
 # THE LITERATURE ANCHOR: Flageul, Benhamadouche, Lamballais & Laurence,
@@ -193,19 +193,35 @@ def cmd_thermal(a):
         # variance down by 1e-3 at y+ = -77).
         sol_lo = rms[:i0] / ttau
         outer = float(sol_lo[0] ** 2) if sol_lo.size else float("nan")
+        # THE PEAK MUST BE THE NEAR-WALL ONE, not the maximum over the fluid.
+        # This case's thermal problem holds the total flux CONSTANT across the
+        # channel (antisymmetric walls, no source), so production never
+        # switches off and the variance keeps rising to the CENTRELINE -- the
+        # global maximum is there, not at y+ ~ 20. Flageul's wall-flux problem
+        # has the flux falling linearly to zero at the centre, so their global
+        # maximum IS the near-wall peak. Taking max() over the fluid therefore
+        # compares two different quantities, and it made a +11 % near-wall
+        # difference read as +40 %.
+        ypw = np.minimum(y - Y_LO, Y_HI - y) * RE
+        band = m & (ypw > 5.0) & (ypw < 40.0)
+        pk_nw = float((rms[band] / ttau).max())
+        yp_nw = float(ypw[band][int(np.argmax(rms[band]))])
         rows.append(dict(name=nm, ks=ks, cs=cs, K=np.sqrt(ks * cs), ttau=ttau,
+                         peak_nw=pk_nw, yp_nw=yp_nw,
                          wall_rms=wall_rms, ti=ti, mean=mean, rms=rms,
                          j0=j0, j1=j1, yp=yp, thp=thp, peak=float(rms[m].max()/ttau),
-                         var_wall=wall_rms ** 2, var_peak=float(rms[m].max()/ttau) ** 2,
+                         var_wall=wall_rms ** 2, var_peak=pk_nw ** 2,
+                         var_centre=float(rms[m].max()/ttau) ** 2,
                          var_outer=outer))
 
     print()
-    print("   scalar  kappa_s      C_s        K     theta_tau   <theta_i>   "
-          "theta'_w/theta_tau   theta'_peak/theta_tau")
+    print("   scalar  kappa_s      C_s        K   theta_tau  <t'2>_wall  "
+          "<t'2>_nwpeak  y+pk   wall/peak   <t'2>_centre")
     for r in rows:
-        print(f"   {r['name']:>5}  {r['ks']:8g} {r['cs']:9g} {r['K']:8.3g} "
-              f"{r['ttau']:11.6f} {r['ti']:11.6f} {r['wall_rms']:15.4f} "
-              f"{r['peak']:22.4f}")
+        print(f"   {r['name']:>5}  {r['ks']:8g} {r['cs']:9g} {r['K']:7.3g} "
+              f"{r['ttau']:10.6f} {r['var_wall']:11.3f} {r['var_peak']:12.3f} "
+              f"{r['yp_nw']:6.1f} {r['var_wall']/max(r['var_peak'],1e-30):11.4f} "
+              f"{r['var_centre']:13.3f}")
 
     ok = True
     by = {r["name"]: r for r in rows}
@@ -274,9 +290,16 @@ def cmd_thermal(a):
             print(f"       <theta'^2>_wall, {lab:<16} {by[nm]['var_wall']:8.2f}"
                   f"  {ref:9.2f}")
     pk = np.mean([r["var_peak"] for r in rows])
-    print(f"       peak <theta'^2> (mean over the sweep) {pk:8.2f}  {f['peak']:9.2f}")
-    print(f"       (the peak is nearly BC-independent in their figure 5, so it "
-          f"tests the thermal DNS, not the interface)")
+    print(f"       NEAR-WALL peak <theta'^2> (mean over sweep) {pk:6.2f}  {f['peak']:9.2f}")
+    ct = np.mean([r["var_centre"] for r in rows])
+    print(f"       ...their global max IS that peak; ours is at the CENTRELINE "
+          f"({ct:.2f}), because our flux is constant across the channel and "
+          f"theirs falls to zero. Do not compare those two.")
+    if "k1" in by:
+        r = by["k1"]
+        print(f"       wall/peak at K = 1 (theta_tau-free, level-free) "
+              f"{r['var_wall']/max(r['var_peak'],1e-30):8.4f}  "
+              f"{f['wall_conjug']/f['peak']:9.4f}")
     if "k1" in by and np.isfinite(by["k1"]["var_outer"]):
         print(f"       variance surviving at our outer solid face (d+ = 36): "
               f"{by['k1']['var_outer']:.3g}  ({100*by['k1']['var_outer']/max(by['k1']['var_wall'],1e-30):.1f} %"
@@ -293,6 +316,8 @@ def main():
 
     p = sub.add_parser("velocity")
     p.add_argument("file")
+    p.add_argument("--interfaces", type=float, nargs=2, default=None,
+                   help="the two grid-aligned interface positions")
     p.set_defaults(func=cmd_velocity)
 
     p = sub.add_parser("thermal")
@@ -300,9 +325,14 @@ def main():
     p.add_argument("--dump", default=None)
     p.add_argument("--mean-tol", type=float, default=5e-3)
     p.add_argument("--collapse-tol", type=float, default=0.10)
+    p.add_argument("--interfaces", type=float, nargs=2, default=None,
+                   help="the two grid-aligned interface positions")
     p.set_defaults(func=cmd_thermal)
 
     a = ap.parse_args()
+    if getattr(a, "interfaces", None):
+        Y_LO, Y_HI = a.interfaces
+        globals()["Y_LO"], globals()["Y_HI"] = Y_LO, Y_HI
     return a.func(a)
 
 

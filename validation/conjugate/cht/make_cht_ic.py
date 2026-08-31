@@ -54,7 +54,7 @@ import make_channel_restart as mkr                           # noqa: E402
 from scalar_tools import BlockGeometry                       # noqa: E402
 
 SRC = os.path.join(ROOT, "tutorials/channel_kmm180/channel_kmm180_restart.h5")
-Y_LO, Y_HI = 1.0, 3.0            # the grid-aligned interfaces
+Y_LO, Y_HI = 0.6, 2.6            # the grid-aligned interfaces
 GAP = Y_HI - Y_LO
 RE, PR = 180.0, 0.71
 VEL = ("un", "vn", "wn", "pn")
@@ -108,7 +108,17 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("template", help="a solver-minted 1-step snapshot of THIS case")
     ap.add_argument("out")
+    ap.add_argument("--interfaces", type=float, nargs=2, default=None,
+                    help="the two grid-aligned interface positions")
+    ap.add_argument("--scalars", default=None,
+                    help="comma-separated subset of the sweep to seed")
     a = ap.parse_args()
+    if a.interfaces:
+        globals()["Y_LO"], globals()["Y_HI"] = a.interfaces
+        globals()["GAP"] = a.interfaces[1] - a.interfaces[0]
+    if a.scalars:
+        keep = set(a.scalars.split(","))
+        globals()["SCALARS"] = [t for t in SCALARS if t[0] in keep]
 
     shutil.copyfile(a.template, a.out)
     with h5py.File(a.out, "r+") as f:

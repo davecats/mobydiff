@@ -30,16 +30,24 @@ y⁺ ≈ 18 and nearly boundary-condition-independent.
 
 ## The case
 
-Re_τ = 180, Pr = 0.71, 4π × 4 × 2π, **128 × 288 × 128 → 128 × 480 × 128**
-(7.9 M cells), **single level — 240 leaves, zero 2:1 interfaces** (this case
-sets no `refine*` key; `nb = 32` is only the block size, and it is required
-because a prepared case file's block table cannot depend on the rank count).
+Re_τ = 180, Pr = 0.71, 4π × 3.2 × 2π, **160 × 384 × 224** (13.8 M cells),
+**single level — 420 leaves, zero 2:1 interfaces** (this case sets no
+`refine*` key; `nb = 32` is only the block size, and it is required because a
+prepared case file's block table cannot depend on the rank count).
 
-* fluid gap exactly 2.0 at y ∈ [1, 3], solid slabs d = h = 1 either side;
+* fluid gap exactly 2.0 at y ∈ [0.6, 2.6], solid slabs d⁺ = 108 either side —
+  **sized from the measurement**: campaign 1 (d⁺ = 180) showed the interface
+  variance down to 0.3–1 % of its interface value by d⁺ = 108 and to 1.6e-7 at
+  d⁺ = 180, so the deepest 70 wall units bought nothing and their cells went
+  into x–z resolution instead;
 * the interface sits **on a cell face**, so w = ½ to the last bit and the
   cut-face coefficient is the textbook two-resistance harmonic mean — *exact*.
   Anything measured here is the conjugate physics, not the IBM approximation;
-* dy⁺ = 1.5 uniform (first cell centre y⁺ = 0.75), dx⁺ = 17.7, dz⁺ = 8.8;
+* dy⁺ = 1.5 uniform (first cell centre y⁺ = 0.75), **dx⁺ = 14.1, dz⁺ = 5.05**
+  — comparable to Flageul's 14.9 and 5.0. Uniform y is forced: the solver has
+  no piecewise or file-based node line, and every analytic family it does have
+  refines at the DOMAIN edges, which here are the solid outer faces. It is
+  also expensive in a way stretching would not fix — see the last section;
 * antisymmetric Dirichlet (+1 / −1) at the **outer solid faces**, no source,
   so the total wall-normal flux is constant across solid and fluid alike;
 * velocity IC: the developed KMM180 field mapped into the gap
@@ -60,8 +68,9 @@ Validated against an **exact law** rather than a reference file: in a steady
 channel the total stress is linear, `−⟨u′v′⟩ + ν dU/dy = u_τ²(1 − y/h)`.
 
 ```
-this run          wall value 0.9964 (exact 1)   max |tau - (1-y/h)| = 0.011  mean 0.007
-U+ centreline 17.950     u'_rms peak 2.587     v'_rms 0.813     w'_rms 1.004
+campaign 2        wall value 0.9915 (exact 1)   max |tau - (1-y/h)| = 0.0050  mean 0.0024
+U+ centreline 18.199 (the textbook Re_tau 180 value)
+u'_rms peak 2.569     v'_rms 0.827     w'_rms 1.052
 first fluid cell (y+ = 0.75):  u+ = 0.769  against y+ = 0.75
 solid cells |u|,|v| ~ 1e-27      wall-face v = 6.6e-12   (no penetration)
 ```
@@ -77,98 +86,158 @@ as a reference.
 
 ## Results
 
-### The conjugate signature — the headline
+Two campaigns and a wall-normal grid-convergence study, all at
+`interfaces on a cell face`, single level:
 
-The wall/peak variance ratio is independent of θ_τ and of the fluid-side
-level, so it isolates what the conjugate wall actually does: damp the
-interface temperature fluctuation relative to the fluid's own.
+| | dx+ | dz+ | dy+ | window (wall units) |
+|---|---|---|---|---|
+| campaign 1 | 17.7 | 8.8 | 1.5 | 3.8e3 |
+| campaign 2 | 14.1 | 5.1 | 1.5 | **2.9e4** (= Flageul's) |
+| y study | 14.1 | 5.1 | 1.5 / 1.0 / **0.75** | 4.5e3 each |
+| Flageul | 14.9 | 5.0 | 0.49 - 4.8 | 2.9e4 |
 
-| K | ⟨θ′²⟩_wall / ⟨θ′²⟩_peak | Flageul |
-|---|---|---|
-| **1 (k1)** | **0.1745** | **0.175** — their conjugate case |
-| 0.1 (a1) | 0.5012 | (isoQ limit 0.667, not reached at K = 0.1) |
-| 100 (a3) | 0.0068 | 0 (isoT limit) |
+### A COMPARISON ERROR, FOUND AND CORRECTED — read this first
 
-**0.3 % on the one number that measures the interface coupling**, at
-identical thermal parameters (κ_s = 1, α_s = 1, d = h), with the ideal limits
-bracketing it correctly.
-
-Absolute values, ⟨θ′²⟩/θ_τ²:
+Campaign 1 reported the temperature variance "37 % high" and a wall/peak ratio
+matching Flageul to 0.3 %. **Both numbers were wrong, for the same reason.**
+The checker took the peak as `max` over the fluid. In THIS case's thermal
+problem the total flux is CONSTANT across the channel (antisymmetric walls, no
+source: measured `J(y)/J_wall = 1.0000` everywhere), so production never
+switches off and the variance keeps rising to the **centreline** — that is
+where the global maximum is. Flageul's wall-flux problem has the flux falling
+linearly to zero at the centre, so their variance decays and their global
+maximum IS the near-wall peak. The two `max`es are different quantities.
 
 ```
-       K = 0.1   1     10(k2) 10(a2) 100(k3) 100(a3)      Flageul
-wall     4.21   1.50   0.26   0.157   0.167   0.059    isoQ 4.2 / conjug 1.1 / isoT 0
-peak     8.40   8.60   8.88   8.75    8.77    8.65     6.3
+   y+     <theta'^2>     J(y)/J_wall
+    5.3      3.21          1.0001
+   20.3      7.07          1.0002     <- the near-wall peak: THIS is Flageul's 6.3
+  144.8      7.96          0.9998
+  177.8      8.79          0.9992     <- the centreline: the old "peak" of 8.8
 ```
+
+Corrected, the near-wall peak is **+11 %**, not +40 %; and the wall/peak ratio
+agreement is 1 %, not 0.3 %, but is now grid-converged rather than accidental.
+`check_cht.py` takes the peak in `5 < y+ < 40` and reports the centreline
+value separately, with a comment saying why.
+
+### The conjugate signature, grid-converged
+
+| dy+ | near-wall peak (y+ ~ 20) | wall, K = 1 | **wall/peak** |
+|---|---|---|---|
+| 1.5 | 7.07 | 1.367 | 0.1933 |
+| 1.0 | 7.02 | 1.290 | 0.1839 |
+| **0.75** | 7.14 | 1.262 | **0.1769** |
+| Flageul | 6.3 | 1.10 | **0.1746** |
+
+**The interface coupling converges monotonically under y-refinement to 1 % of
+the reference.** The ratio is the right quantity: it is free of theta_tau and
+of the fluid-side level, so it isolates what the conjugate wall does — damp
+the interface fluctuation relative to the fluid's own. The brackets are
+ordered correctly around it (K = 0.1 -> 0.523; K = 100 -> 0.0075 against their
+isoT 0).
+
+Note that dy+ = 1.5 IS too coarse at the wall, exactly as expected: it costs
+10 % on the ratio (0.193 vs 0.177). It does not show up in the near-wall peak,
+which is grid-converged to ~2 % across the three levels.
+
+### What is left, and it is physics not numerics
+
+The near-wall peak sits at **7.0-7.1 against 6.3, +11 %**, and it is converged
+in all three directions and in time (campaign 2 has Flageul's full averaging
+window; the y study adds dy+ 0.75). Two structural differences remain, neither
+of which is the conjugate scheme:
+
+* **the thermal problem is not theirs.** Ours is constant-flux-across-the-
+  channel (antisymmetric walls); theirs is Kasagi's wall-flux formulation with
+  a mean streamwise gradient, whose flux falls linearly to zero at the centre.
+  That changes the whole outer profile — visible above at y+ = 145, where we
+  have 7.96 and they have ~0.8 — and feeds back on the near-wall budget
+  through turbulent transport;
+* **Re_tau 180 against their 149.**
+
+Reproducing their formulation needs the Kasagi source term `f_T u_x` (a mean
+streamwise temperature gradient), which this solver does not have. That, not
+resolution, is what a like-for-like comparison of the near-wall peak requires.
 
 ### Internal checks that came out right
 
-* **the fluid resistance is one number.** R_f/2 = Δθ_half/J measured
-  independently from all six conjugate walls: **18.83 … 19.13, spread 1.6 %**.
-  It is a property of the flow, so six different solids agreeing on it is a
-  real check on the interface coefficient;
-* **the mean profile.** θ⁺ within 4–6 % of **Kader's correlation** over the
-  log layer. At y⁺ = 5.25 this run gives 3.094 against the exact conduction
-  value 3.195 — closer than Kader's own blending (2.599), so the apparent
-  20 % "error" there is the correlation, not the run;
-* **the S-curve is monotone** over the converged scalars: θ′_w/θ_τ =
-  2.05 (K = 0.1) → 1.22 (K = 1) → 0.396 (K = 10) → 0.243 (K = 100).
+* **the fluid resistance is one number.** R_f/2 = dtheta_half/J measured
+  independently from all six conjugate walls: **19.06 .. 19.46, spread 4.2 %**
+  (campaign 2 reseed). It is a property of the flow, so six different solids
+  agreeing on it checks the interface coefficient;
+* **capacity does not touch the steady state.** theta_tau across the three
+  kappa_s = 1 scalars: spread **1.7 %** (campaign 2), against 20.9 % in
+  campaign 1 — see the reseed note below;
+* **the velocity is a Re_tau 180 DNS**, validated against an EXACT law rather
+  than a reference file: the steady total stress is linear, and campaign 2
+  holds it to **0.24 % mean, 0.50 % max**, with U+_c = 18.20;
+* **theta+** within 4-6 % of Kader over the log layer.
 
-### Two things that did not come out as designed
+### The effusivity collapse fails, and the paper says why
 
-**1. The high-capacity scalars are not converged, and could not be.** With
-d = h the solid holds most of the resistance (R_s = 128 vs R_f ≈ 38) and its
-mean relaxes on d²/α_s — t ≈ 80 for α_s = α_f, but **8×10³ and 8×10⁵** for
-C_s = 100 and 10⁴. Measured against the exact steady flux
-`J = 2/(2R_s + 2R_f/2)` with the common R_f:
+Same K, different (kappa_s, C_s), campaign 2 wall/peak: K = 10 gives 0.0313
+(k2) against 0.0201 (a2); K = 100 gives 0.0212 (k3) against 0.0075 (a3). The
+design predicted these should collapse. They do not, and Flageul's eq. (12) is
+the reason: the interface response carries
+`R^2 = k_x^2 + k_z^2 + i k_t rho c/lambda_s`, so `lambda_s R` reduces to the
+effusivity `sqrt(lambda_s rho_s c_s)` ONLY when the temporal term dominates.
+Where lateral conduction matters the damping follows the CONDUCTIVITY, so the
+higher-kappa_s wall must damp more at equal K — which is exactly the ordering
+measured. Their physics; the design's claim was wrong.
 
+### The reseed, and why it needs ONE fluid resistance
+
+With a thick wall the solid holds most of the resistance and its mean relaxes
+on d^2/alpha_s — t ~ 8e3 and 8e5 for C_s = 100 and 1e4. It is therefore SET,
+not waited for (the capacity cannot change the steady state at all: C1 gate 1c
+measured that to 1e-13). Campaign 1 used each scalar's OWN fluid-resistance
+estimate, which for a high-capacity wall is contaminated by its frozen
+transient, and left C_s = 100 and 1e4 running 12 % and 20 % off their steady
+flux for the whole window. Campaign 2 measures R_f once and shares it: the
+three kappa_s = 1 scalars then get identical J_steady and theta_i, and the
+theta_tau spread falls to 1.7 %.
+
+
+## Why the grid is uniform, and what it costs
+
+The wall-normal spacing is uniform at dy⁺ = 1.5 — simultaneously too coarse at
+the wall (it costs 10 % on the wall/peak ratio, see above) and finer than
+needed at the centre. Two reasons, and the second is the one that matters for
+the solver's future:
+
+1. **It is not expressible otherwise.** `[grid.y] distribution` offers only
+   analytic families over the whole domain (`uniform`, `cosine`, `tanh`,
+   `natural`, `blayer`, `geometric`); there is no piecewise or file-based node
+   line. In an extended conjugate domain the domain edges are the SOLID OUTER
+   FACES, so `natural`/`tanh` would refine there — exactly backwards. A
+   `channel_slab` distribution (uniform through each slab, stretched inside
+   the gap, a node pinned to each interface) is the fix.
+2. **Stretching would save cells but not time steps.** The explicit diffusive
+   limit sets `dt` from the smallest cell ANYWHERE, so `dt ~ dy_wall^2`
+   whether the grid is stretched or not:
+
+   | dy+ at the wall | dt | steps for one 2.9e4-wall-unit window |
+   |---|---|---|
+   | 1.5 | 1.4e-3 | 112 k |
+   | 0.75 | 3.6e-4 | 447 k |
+   | 0.49 (Flageul) | 1.6e-4 | ~1.0 M |
+
+   Flageul reach dy⁺ = 0.49 only because their wall-normal diffusion is
+   **Crank–Nicolson**; ours is fully explicit. This is why the study above
+   refines y at a SHORT window rather than running one converged case at their
+   spacing, and it is the strongest argument in this whole campaign for
+   implicit (or direction-split implicit) diffusion in the solver.
+
+## Reproducing
+
+```bash
+./run_cht.sh prepare ic develop reseed stats   # campaign 2 (3.5 h on an RTX 5090)
+./run_yconv.sh 1.5 1.0 0.75                    # the y study (4.8 h)
+./check_cht.py velocity cht_vel_stats.h5 --interfaces 0.6 2.6
+./check_cht.py thermal  cht_stats.h5      --interfaces 0.6 2.6
 ```
-a1 0.998   a2 0.996   a3 0.977   k1 0.991        <- converged
-k2 1.120   k3 1.198                              <- NOT converged
-```
 
-`reseed_solid.py` exists for exactly this (the capacity cannot change the
-steady state — C1 gate 1c measured that to 1e-13 — so the solid mean is set,
-not waited for), but it used **each scalar's own** transient-contaminated R_f
-instead of the single fluid value. THE FIX IS ONE LINE: measure R_f once from
-the converged scalars and re-seed every solid with it. The wall/peak ratios
-above survive this (numerator and denominator scale together), which is why
-they are the quantity to read.
-
-**2. The "effusivity collapse" prediction was too naive — and the paper says
-why.** Same K, different (κ_s, C_s):
-
-```
-K = 10:  k2 0.0294  vs  a2 0.0179       K = 100:  k3 0.0191  vs  a3 0.0068
-```
-
-They do not collapse. Flageul's eq. (12) is the reason: the interface response
-carries `R² = k_x² + k_z² + i k_t ρc/λ_s`, so `λ_s R` reduces to the effusivity
-`√(λ_s ρ_s c_s)` **only when the temporal term dominates**. Where the lateral
-conduction term matters, the damping goes with the **conductivity**, and the
-higher-κ_s wall should damp more at equal K — which is exactly the ordering
-measured (a2 damps more than k2, a3 more than k3). So this is their physics,
-not a defect; the design's claim that K alone should collapse the response was
-wrong.
-
-## The open discrepancy
-
-**The fluid-side variance level is ~37 % high for every boundary condition**
-(peak 8.4–8.9 against Flageul's 6.3) — including the ideal limits, so it is
-*not* an interface error. The mean profile is right and the wall/peak ratio is
-right; only the level is off. Most likely cause, from the reference itself:
-this run has dx⁺ = 17.7, dz⁺ = 8.8 against their 14.8, 5.1, and they note that
-"the accurate resolution of the scalar evolution equation is very demanding in
-terms of grid spacing", citing Galantucci et al.'s recommendation of
-Δx⁺ = Δz⁺ = 1 for an accurate ε_θ — an under-resolved scalar dissipation
-leaves the variance too high. Two other candidates not yet excluded: the
-averaging window (t⁺ = 3.8×10³ against their 2.9×10⁴), and the thermal problem
-(constant-Δθ here, Kasagi's mean-streamwise-gradient formulation there).
-
-**Settling it needs a resolution study** — 256 × 480 × 256 at the same
-physical setup, ≈ 4× the cost (~6 h on this GPU). That is the next step, and
-until it is run the correct statement is: *the conjugate interface coupling is
-reproduced (0.3 % on the wall/peak ratio, correct brackets, monotone
-S-curve, consistent fluid resistance); the absolute fluid-side fluctuation
-level is 37 % high for a reason that is common to all four boundary conditions
-and therefore not attributable to the conjugate scheme.*
+`run_corax.sh` drives the same phases on istmcorax (which needs its own cc120
+build and an explicit PATH — it has no modulefile, and `/tmp` is NOT shared
+between the hosts even though the home filesystem is).

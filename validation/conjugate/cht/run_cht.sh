@@ -32,10 +32,16 @@ sel=${1:-all}
 CASE=cht180_nb32.h5
 
 # t per step is ~1.5e-3 (dt = 1.44e-3, set by the cut-cell Peclet limit).
-DEV_STEPS=${DEV_STEPS:-6800}      # t -> ~10.2
-STAT_STEPS=${STAT_STEPS:-14000}   # t -> ~31.3
+DEV_STEPS=${DEV_STEPS:-6800}       # t -> ~10.2
+# Flageul averaged 29000 wall time units; at Re_tau 180 that is t = 161, so
+# the statistics window is 112000 steps at dt = 1.44e-3. The first campaign
+# used 14000 (t = 21) and its second moments were the weakest number in it.
+STAT_STEPS=${STAT_STEPS:-112000}   # t -> ~172, i.e. 29000 wall units of averaging
 SAMPLE=${SAMPLE:-25}
 FLUSH=${FLUSH:-2000}
+# snapshots are decoupled from the statistics flush: at 112000 steps a 2000-step
+# field_interval would write 56 x 1.2 GB of output nobody reads.
+FIELD=${FIELD:-20000}
 
 want() { [ "$sel" = all ] || [ "$sel" = "$1" ]; }
 
@@ -48,9 +54,9 @@ ini() {  # <prefix> <nsteps> <write> <restart> <sample> <flush> <statsfile>
 
 if want prepare; then
     echo "== prepare (single level, no refinement)"
-    $PY ../make_slab_stl.py wall_lo.stl --y-bottom -0.3 --y-top 1.0 \
+    $PY ../make_slab_stl.py wall_lo.stl --y-bottom -0.3 --y-top 0.6 \
         --x-range 0 12.566370614359172 --z-range 0 6.283185307179586 --pad 0.3
-    $PY ../make_slab_stl.py wall_hi.stl --y-bottom 3.0 --y-top 4.3 \
+    $PY ../make_slab_stl.py wall_hi.stl --y-bottom 2.6 --y-top 3.9 \
         --x-range 0 12.566370614359172 --z-range 0 6.283185307179586 --pad 0.3
     ini prep 1 1 - 0 0 x
     sed -e '/^coeff_file/d' -e '/^\[restart\]/,$d' \
@@ -89,7 +95,7 @@ fi
 if want stats; then
     echo "== statistics: t = ~10 .. ~31"
     rm -f cht_stats.h5 cht_vel_stats.h5
-    ini stat "$STAT_STEPS" "$FLUSH" IC_stat.h5 "$SAMPLE" "$FLUSH" cht_stats.h5
+    ini stat "$STAT_STEPS" "$FIELD" IC_stat.h5 "$SAMPLE" "$FLUSH" cht_stats.h5
     time mpirun -n "$RANKS" "$BIN" .stat.ini > stat.log 2>&1 || { tail -15 stat.log; exit 1; }
     grep -E "seconds_per_step" stat.log | tail -1
 fi
