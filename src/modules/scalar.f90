@@ -55,6 +55,20 @@ module scalar
     ! constant prt, or the Kays-Crawford correlation (prt_kays below).
     integer(C_INT), parameter, public :: SC_PRT_CONSTANT = 0_C_INT
     integer(C_INT), parameter, public :: SC_PRT_KAYS = 1_C_INT
+    ! Volumetric source shape ([scalar.N] source_type).
+    !   UNIFORM  s += source                       (the S0 behaviour)
+    !   VELOCITY s += source * u_x                 KASAGI's fully-developed
+    ! channel formulation (Kasagi, Tomita & Kuroda 1992). For a channel with a
+    ! uniform wall flux the mean temperature rises linearly in x, so writing
+    ! T = beta x + theta with theta homogeneous in x turns u.grad T into
+    ! beta u + u.grad theta: the extra term is a source proportional to the
+    ! INSTANTANEOUS streamwise velocity, not the mean. That is the only thing
+    ! separating our bulk-heated channel from the reference DNS
+    ! (validation/conjugate/cht), whose flux profile it reproduces exactly
+    ! instead of approximating it by a uniform source.
+    ! x is the streamwise direction by assumption, as everywhere else here.
+    integer(C_INT), parameter, public :: SC_SRC_UNIFORM  = 0_C_INT
+    integer(C_INT), parameter, public :: SC_SRC_VELOCITY = 1_C_INT
     ! Immersed-body wall modes ([scalar.N] ibm_wall); used from S3.
     integer(C_INT), parameter, public :: SC_IBM_DIRICHLET = 0_C_INT
     integer(C_INT), parameter, public :: SC_IBM_ADIABATIC = 1_C_INT
@@ -105,7 +119,7 @@ module scalar
         real(C_DOUBLE), allocatable :: pr(:), prt(:)
         integer(C_INT), allocatable :: prtModel(:)
         real(C_DOUBLE), allocatable :: source(:), initValue(:), ibmValue(:), inlet(:)
-        integer(C_INT), allocatable :: ibmMode(:), initProfile(:)
+        integer(C_INT), allocatable :: ibmMode(:), initProfile(:), srcType(:)
         ! Conjugate body mode (increment C1): the solid's material ratios and
         ! its own initial value / volumetric source, per scalar. kappa and C
         ! are 1 in the FLUID by definition, so neither needs a field -- the
@@ -847,6 +861,17 @@ contains
             end select
         case ("source")
             sc%source(is) = read_real_value(value, key, line_no)
+        case ("source_type")
+            select case (trim(value))
+            case ("uniform")
+                sc%srcType(is) = SC_SRC_UNIFORM
+            case ("velocity", "kasagi")
+                sc%srcType(is) = SC_SRC_VELOCITY
+            case default
+                if (terminal) print *, "error: [scalar.N] source_type must be", &
+                    " uniform or velocity (= kasagi), input line", line_no
+                error stop "unknown [scalar] source_type"
+            end select
         case ("ibm_wall")
             select case (trim(value))
             case ("dirichlet")
@@ -968,6 +993,7 @@ contains
         if (nOld > 0) then
             old%pr = sc%pr; old%prt = sc%prt; old%prtModel = sc%prtModel
             old%source = sc%source; old%initValue = sc%initValue
+            old%srcType = sc%srcType
             old%ibmValue = sc%ibmValue; old%inlet = sc%inlet
             old%ibmMode = sc%ibmMode; old%initProfile = sc%initProfile
             old%solidK = sc%solidK; old%solidC = sc%solidC
@@ -983,7 +1009,7 @@ contains
 
         allocate(sc%pr(n), sc%prt(n), sc%prtModel(n))
         allocate(sc%source(n), sc%initValue(n), sc%ibmValue(n), sc%inlet(n))
-        allocate(sc%ibmMode(n), sc%initProfile(n))
+        allocate(sc%ibmMode(n), sc%initProfile(n), sc%srcType(n))
         allocate(sc%solidK(n), sc%solidC(n), sc%solidInit(n), sc%solidSource(n))
         allocate(sc%contactR(n), sc%tangCorr(n))
         allocate(sc%solidKeySet(n), sc%solidInitSet(n), sc%ibmValueSet(n))
@@ -997,6 +1023,7 @@ contains
         sc%prt = 0.85d0
         sc%prtModel = SC_PRT_CONSTANT
         sc%source = 0.0d0
+        sc%srcType = SC_SRC_UNIFORM
         sc%initValue = 0.0d0
         sc%ibmValue = 0.0d0
         sc%inlet = 0.0d0
@@ -1027,6 +1054,7 @@ contains
             sc%source(1:nOld) = old%source; sc%initValue(1:nOld) = old%initValue
             sc%ibmValue(1:nOld) = old%ibmValue; sc%inlet(1:nOld) = old%inlet
             sc%ibmMode(1:nOld) = old%ibmMode; sc%initProfile(1:nOld) = old%initProfile
+            sc%srcType(1:nOld) = old%srcType
             sc%solidK(1:nOld) = old%solidK; sc%solidC(1:nOld) = old%solidC
             sc%solidInit(1:nOld) = old%solidInit
             sc%solidSource(1:nOld) = old%solidSource
@@ -1360,8 +1388,10 @@ contains
         if (has_terminal) then
             print *, "passive scalars:", sc%n
             do is = 1, int(sc%n)
-                print '(a,i0,a,a,a,f8.4,a,es10.3)', "   s", is, " '", trim(sc%name(is)), &
-                    "'  pr =", sc%pr(is), "  source =", sc%source(is)
+                print '(a,i0,a,a,a,f8.4,a,es10.3,a)', "   s", is, " '", trim(sc%name(is)), &
+                    "'  pr =", sc%pr(is), "  source =", sc%source(is), &
+                    merge(" * u_x (Kasagi)", "               ", &
+                          sc%srcType(is) == SC_SRC_VELOCITY)
                 if (wall_function) print '(a,f8.4,a,f8.3)', &
                     "      thermal wall function: P =", sc%wfP(is), "  y+_T =", sc%wfYpt(is)
             end do
@@ -2146,6 +2176,7 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target enter data map(to: sc)
         !$omp target enter data map(to: sc%pr, sc%prt, sc%prtModel, sc%source, &
+        !$omp& sc%srcType, &
         !$omp& sc%initValue, sc%ibmValue, sc%inlet, sc%ibmMode, sc%initProfile, &
         !$omp& sc%bcType, sc%bcValue, sc%invDx, sc%invDy, sc%invDz, sc%nutNone, &
         !$omp& sc%cdx, sc%cdy, sc%cdz, &
@@ -2161,6 +2192,7 @@ contains
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target exit data map(delete: sc%pr, sc%prt, sc%prtModel, sc%source, &
+        !$omp& sc%srcType, &
         !$omp& sc%initValue, sc%ibmValue, sc%inlet, sc%ibmMode, sc%initProfile, &
         !$omp& sc%bcType, sc%bcValue, sc%invDx, sc%invDy, sc%invDz, sc%nutNone, &
         !$omp& sc%cdx, sc%cdy, sc%cdz, &
@@ -2177,6 +2209,7 @@ contains
         if (allocated(sc%prt)) deallocate(sc%prt)
         if (allocated(sc%prtModel)) deallocate(sc%prtModel)
         if (allocated(sc%source)) deallocate(sc%source)
+        if (allocated(sc%srcType)) deallocate(sc%srcType)
         if (allocated(sc%initValue)) deallocate(sc%initValue)
         if (allocated(sc%ibmValue)) deallocate(sc%ibmValue)
         if (allocated(sc%inlet)) deallocate(sc%inlet)
@@ -2353,7 +2386,7 @@ contains
 
         integer :: i, j, k, b, is, nx, ny, nz, nBlocks, nScal, var, scr
         real(C_DOUBLE) :: ire, re, uw, ue, vs, vn, wb, wt, divu, divuse
-        real(C_DOUBLE) :: s0, conv, diff, rhs, dm, fw, fe, ss, mus, ipr
+        real(C_DOUBLE) :: s0, conv, diff, rhs, srcVal, dm, fw, fe, ss, mus, ipr
         real(C_DOUBLE) :: ntw, nte, nts, ntn, ntb, ntt
         real(C_DOUBLE) :: dxw, dxe, dys, dyn, dzb, dzt
         ! Conjugate interface (C1): the six neighbour signed distances and
@@ -2396,12 +2429,13 @@ contains
         !$omp& nScal, nx, ny, nz, anyConj, &
         !$omp& sc%cdx, sc%cdy, sc%cdz, sc%tangCorr, &
         !$omp& blk%q, blk%d1x, blk%d1y, blk%d1z, blk%physLow, blk%physHigh, nut, coef, &
-        !$omp& sc%pr, sc%prt, sc%prtModel, sc%source, sc%invDx, sc%invDy, sc%invDz, &
+        !$omp& sc%pr, sc%prt, sc%prtModel, sc%source, sc%srcType, &
+        !$omp& sc%invDx, sc%invDy, sc%invDz, &
         !$omp& sc%ibmMode, sc%ibmValue, sc%wfP, sc%wfYpt, sc%wfYplus, wallfn, &
         !$omp& sc%phi, sc%vfrac, sc%solidK, sc%solidC, sc%solidSource, sc%contactR) &
         !$omp& map(tofrom: blk%qs, blk%oldrhs) &
         !$omp& private(i,j,k,b,is,var,scr,uw,ue,vs,vn,wb,wt,divu,divuse, &
-        !$omp& s0,conv,diff,rhs,dm,fw,fe,ss,mus,ipr,adiab,conjug,solc,ks,rc,tang, &
+        !$omp& s0,conv,diff,rhs,srcVal,dm,fw,fe,ss,mus,ipr,adiab,conjug,solc,ks,rc,tang, &
         !$omp& gtd,gt1,gt2,gpd,gp1,gp2,crw,cre,crs,crn,crb,crt, &
         !$omp& phc,phw,phe,phs,phn,phb,pht, &
         !$omp& cutw,cute,cuts,cutn,cutb,cutt, &
@@ -2816,6 +2850,19 @@ contains
                                               + (crn - crs)*blk%d1y(j,VAR_P,b) &
                                               + (crt - crb)*blk%d1z(k,VAR_P,b)
 
+                        ! The volumetric source. UNIFORM is the S0 constant
+                        ! and reproduces the old arithmetic operand for
+                        ! operand, so that path stays bit-exact. VELOCITY is
+                        ! Kasagi's fully-developed channel source, beta*u_x,
+                        ! built from the p cell's OWN two staggered faces --
+                        ! which the convection term above already loaded, so
+                        ! it costs one add and one multiply. u is the
+                        ! INSTANTANEOUS velocity, which is the whole point:
+                        ! the term comes from u.grad(beta x), not from a mean.
+                        srcVal = sc%source(is)
+                        if (sc%srcType(is) == SC_SRC_VELOCITY) &
+                            srcVal = sc%source(is)*0.5d0*(uw + ue)
+
                         if (conjug) then
                             ! Divide the flux divergence by the cell's own
                             ! volumetric capacity, and let the solid carry its
@@ -2835,13 +2882,13 @@ contains
                             ! (1-f) C_s S_s it is (C_f = 1); at f = 1 and f = 0
                             ! it reduces to the pointwise C1 statement.
                             rhs = (-conv + diff &
-                                   + sc%vfrac(i,j,k,b)*sc%source(is) &
+                                   + sc%vfrac(i,j,k,b)*srcVal &
                                    + (1.0d0 - sc%vfrac(i,j,k,b))*sc%solidC(is) &
                                         *sc%solidSource(is)) &
                                 /(sc%vfrac(i,j,k,b) &
                                   + (1.0d0 - sc%vfrac(i,j,k,b))*sc%solidC(is))
                         else
-                            rhs = -conv + diff + sc%source(is)
+                            rhs = -conv + diff + srcVal
                         end if
                         ss = s0 + dt_alpha*rhs + dt_beta*blk%oldrhs(i,j,k,scr,b)
                         ! Implicit volume penalization toward the body value

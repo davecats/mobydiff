@@ -55,13 +55,25 @@ def main():
     ap.add_argument("infile", help="a developed snapshot on THIS grid")
     ap.add_argument("out")
     ap.add_argument("--source", type=float, default=1.0)
+    ap.add_argument("--kasagi", action="store_true",
+                    help="the source is beta*u_x (Kasagi) rather than uniform, so "
+                         "the wall flux is source*int(u dy) over the half channel "
+                         "-- taken from the SEED's own mean velocity -- instead of "
+                         "source*h. Everything downstream is unchanged: the solid "
+                         "profile is still theta_i = J R_s, exactly.")
     ap.add_argument("--interfaces", type=float, nargs=2, default=(Y_LO, Y_HI))
+    ap.add_argument("--re", type=float, default=RE,
+                    help="Re_tau of the TARGET run. It enters the fluid "
+                         "diffusivity and so the solid resistance R_s = "
+                         "d/(kappa_s D_f): seeding that wrong leaves the "
+                         "high-capacity walls on the wrong steady profile "
+                         "for d^2/alpha_s ~ 5e5 time units.")
     a = ap.parse_args()
 
     ylo, yhi = a.interfaces
     d = ylo                      # slab thickness (the domain is symmetric)
     h = 0.5 * (yhi - ylo)        # half the fluid gap
-    df = 1.0 / (RE * PR)
+    df = 1.0 / (a.re * PR)
     j_wall = a.source * h        # exact: dJ/dy = S over a half-channel
 
     shutil.copyfile(a.infile, a.out)
@@ -84,6 +96,15 @@ def main():
 
         fl = (yc > ylo) & (yc < yhi)
         lo, hi = yc < ylo, yc > yhi
+        if a.kasagi:
+            # dJ/dy = beta <u>, so the wall flux is the CUMULATIVE FLOW RATE of
+            # the half channel, not source*h. Integrate the seed's own profile.
+            low = fl & (yc < 0.5 * (ylo + yhi))
+            dyw = np.diff(ynode)[low]
+            j_wall = a.source * float((umean[low] * dyw).sum())
+            print(f"   kasagi: J_wall = source * int(u dy) = {a.source:g} * "
+                  f"{float((umean[low]*dyw).sum()):.4f} = {j_wall:.6f}")
+        print(f"   Re_tau = {a.re:g}   D_f = {df:.6g}")
         print(f"   source S = {a.source:g}   h = {h:g}  ->  J_wall = {j_wall:.6f} "
               f"(exact, the same for every scalar)   theta_tau = {j_wall:.6f}")
         for nm, ks in SWEEP:
@@ -105,6 +126,13 @@ def main():
                   f" = {ti:10.4f}   theta_centre = {th[fl].max():10.4f}")
         f.attrs["step"] = np.int32(0)
         f.attrs["t_current"] = 0.0
+        # STAMP Re. A restart file carries its own `re` in its metadata and
+        # that value WINS over the ini -- so seeding a Re = 149 run from a
+        # Re = 180 snapshot silently runs at 180, and (this is how it was
+        # caught) the IBM coefficient file, which is Re-specific, is then
+        # rejected as mismatched. Changing Reynolds number means restamping
+        # the IC, not only editing the ini.
+        f.attrs["re"] = float(a.re)
     print(f"{a.out}: scalars re-seeded for bulk heating; u, v, w, p untouched")
 
 
