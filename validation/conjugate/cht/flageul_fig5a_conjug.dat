@@ -1,7 +1,7 @@
 # Flageul, Benhamadouche, Lamballais & Laurence, IJHFF 55 (2015) 34-44,
-# figure 5a, the CONJUGATE case (black solid 'Conjug', G = G_2 = 1).
-# Re_tau = 149, Pr = 0.71.  Digitised by digitize_flageul.py; validated
-# against the same curve in panel 5b (linear x) to 0.02 in <T'^2>.
+# figure 5a, the Conjug (black solid) case.  Re_tau = 149, Pr = 0.71.
+# Digitised by digitize_flageul.py and cross-validated against the same
+# series in panel 5b: max 0.015, rms 0.004 in <T'^2>.
 # y+   <T'^2>/T_tau^2
 0.487958 1.20031
 0.490404 1.19646

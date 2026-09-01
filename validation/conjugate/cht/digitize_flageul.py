@@ -57,18 +57,57 @@ def render(pdf, dpi, out):
     return f"{out}-{PAGE}.png"
 
 
-def black_mask(im, P):
+# The four series are separable by INK COLOUR alone. Conjug is the only
+# achromatic dark ink inside the axes; the others are saturated primaries
+# (measured in the render: exactly (0,128,0), (0,0,255), (255,0,0)).
+SERIES = {
+    # tol = the 5a-vs-5b agreement each series is required to meet. A 2-px
+    # LINE is located to a fraction of a pixel; a SYMBOL centroid is much
+    # coarser, and its bias differs between the panels because the same ~20 px
+    # marker spans very different y+ widths on a log and on a linear axis. The
+    # measured disagreement is therefore spread over the steep regions rather
+    # than being one outlier -- checked, not assumed -- so the brackets are
+    # good to ~0.2-0.4 in <T'^2> where the conjugate line is good to 0.015.
+    "conjug": dict(kind="line",   label="Conjug (black solid)", tol=0.05, floor=0.0),
+    "isoq":   dict(kind="marker", label="isoQ (green x)",       tol=0.45, floor=0.0),
+    # isoT is UNRELIABLE below ~0.3: a '+' spans about +-0.08 in <T'^2>, so
+    # where the curve is that small the symbol straddles the axis and its lower
+    # half is CLIPPED IN THEIR FIGURE. That ink does not exist in the image and
+    # no estimator recovers it; the digitised values there go non-monotone
+    # (0.094, 0.079, 0.122 at y+ 0.5, 0.75, 1.0) instead of following the y^2
+    # an ideal Dirichlet wall must. Use the analytic limit instead: isoT -> 0
+    # at the wall, exactly, by definition of the boundary condition.
+    "isot":   dict(kind="marker", label="isoT (blue +)",        tol=0.45, floor=0.3),
+}
+
+
+def ink_mask(im, P, which):
     r, g, b = im[..., 0], im[..., 1], im[..., 2]
-    chroma = (np.maximum(np.maximum(r, g), b) - np.minimum(np.minimum(r, g), b))
-    blk = (im.mean(2) < 110) & (chroma < 40)       # dark AND achromatic
-    y0, y1, x0, x1 = P["legend"]
-    blk[y0:y1, x0:x1] = False
-    M = 16                                          # tick marks live here
-    blk[:P["YT"] + M, :] = False
-    blk[P["YB"] - M:, :] = False
-    blk[:, :P["XL"] + M] = False
-    blk[:, P["XR"] - M:] = False
-    return blk
+    if which == "conjug":
+        chroma = (np.maximum(np.maximum(r, g), b)
+                  - np.minimum(np.minimum(r, g), b))
+        m = (im.mean(2) < 110) & (chroma < 40)      # dark AND achromatic
+    elif which == "isoq":
+        m = (g > r + 40) & (g > b + 40)
+    elif which == "isot":
+        m = (b > r + 60) & (b > g + 60)
+    else:
+        raise ValueError(which)
+    y0, y1, x0, x1 = P["legend"]                    # the legend carries samples
+    m[y0:y1, x0:x1] = False
+    # The margin exists to drop the frame and its TICK MARKS, which are black.
+    # A colour mask already excludes them, so a coloured series needs only to
+    # be clipped to the panel -- and MUST NOT get the wide margin: it would eat
+    # the lower half of every symbol sitting near the axis and bias the
+    # centroid UPWARD exactly where the isoT curve is smallest. (Symptom: the
+    # digitised isoT went flat, 0.149 -> 0.163, where an ideal Dirichlet wall
+    # must vary like y^2.)
+    M = 16 if which == "conjug" else 2
+    m[:P["YT"] + M, :] = False
+    m[P["YB"] - M:, :] = False
+    m[:, :P["XL"] + M] = False
+    m[:, P["XR"] - M:] = False
+    return m
 
 
 def ticks(dark, P, axis):
@@ -98,17 +137,30 @@ def ticks(dark, P, axis):
     return [float(np.mean(g)) for g in out]
 
 
-def trace(im, P, x_of_px):
-    blk = black_mask(im, P)
+def trace(im, P, x_of_px, which="conjug"):
+    """Column-wise read of one series.
+
+    A LINE is one connected vertical run, so take the longest (stray ink from a
+    crossing series is a shorter run). MARKERS (x and +) are symmetric about
+    their data point, so the column-wise CENTROID of the ink sits on the curve
+    -- and it keeps doing so where neighbouring markers overlap, which they do
+    densely near the peak, whereas a connected-run rule would merge them and
+    read the union's extent instead.
+    """
+    msk = ink_mask(im, P, which)
     a = (Y_VAL[0] - Y_VAL[1]) / (Y_PX[0] - Y_PX[1])
+    kind = SERIES[which]["kind"]
     xs, vs = [], []
     for x in range(P["XL"] + 16, P["XR"] - 16):
-        ys = np.flatnonzero(blk[:, x])
+        ys = np.flatnonzero(msk[:, x])
         if ys.size == 0:
             continue
-        grp = max(np.split(ys, np.flatnonzero(np.diff(ys) > 3) + 1), key=len)
+        if kind == "line":
+            ys = max(np.split(ys, np.flatnonzero(np.diff(ys) > 3) + 1), key=len)
+        elif ys.size < 3:
+            continue                                # antialias speck, not a marker
         xs.append(x_of_px(x))
-        vs.append(Y_VAL[0] + (grp.mean() - Y_PX[0]) * a)
+        vs.append(Y_VAL[0] + (ys.mean() - Y_PX[0]) * a)
     return np.array(xs), np.array(vs)
 
 
@@ -119,7 +171,7 @@ def main():
     ap.add_argument("--pdf", default=os.path.join(here, "..", "..", "..",
                                                   "literature", "flageul.pdf"))
     ap.add_argument("--dpi", type=int, default=600)
-    ap.add_argument("--out", default=os.path.join(here, "flageul_fig5a_conjug.dat"))
+    ap.add_argument("--outdir", default=here)
     a = ap.parse_args()
 
     from PIL import Image
@@ -128,40 +180,47 @@ def main():
         im = np.array(Image.open(png).convert("RGB")).astype(int)
     dark = im.mean(2) < 128
 
-    # ---- left panel: log x. Decades from the three major ticks -------------
+    # ---- axis calibration, once, from the tick marks -----------------------
     tx = ticks(dark, LEFT, "x")
     assert len(tx) == 3, f"expected 3 x decades in fig 5a, got {tx}"
     d = np.diff(tx)
     assert np.allclose(d, d.mean(), rtol=0.02), f"decade spacing not uniform: {d}"
     dec = d.mean()
-    xs, vs = trace(im, LEFT, lambda px: 10.0 ** ((px - tx[0]) / dec))
-
-    # ---- right panel: linear x, the SAME curve -> an independent check -----
-    tr = ticks(dark, RIGHT, "x")
-    tr = [t for t in tr if RIGHT["XL"] + 20 < t < RIGHT["XR"] - 20]   # drop frames
+    tr = [t for t in ticks(dark, RIGHT, "x")
+          if RIGHT["XL"] + 20 < t < RIGHT["XR"] - 20]          # drop the frames
     dr = np.diff(tr)
     assert np.allclose(dr, dr.mean(), rtol=0.02), f"tick spacing not uniform: {dr}"
-    step = dr.mean()                       # px per 20 wall units (labels 20..140)
-    xs2, vs2 = trace(im, RIGHT, lambda px: 20.0 + (px - tr[0]) * 20.0 / step)
+    step = dr.mean()                     # px per 20 wall units (labels 20..140)
 
-    g = np.logspace(np.log10(max(xs.min(), xs2.min())),
-                    np.log10(min(xs.max(), xs2.max())), 300)
-    dev = np.interp(g, xs2, vs2) - np.interp(g, xs, vs)
-    print(f"  panel 5a: {xs.size} columns, y+ {xs.min():.2f}..{xs.max():.0f}")
-    print(f"  panel 5b: {xs2.size} columns, y+ {xs2.min():.1f}..{xs2.max():.0f}")
-    print(f"  CROSS-CHECK 5a vs 5b: max {np.abs(dev).max():.3f}, "
-          f"rms {np.sqrt(np.mean(dev ** 2)):.3f}  (peak {vs.max():.3f} vs {vs2.max():.3f})")
-    assert np.abs(dev).max() < 0.06, "the two panels disagree -- calibration is wrong"
-
-    np.savetxt(a.out, np.c_[xs, vs], fmt="%.6g", header=(
-        "Flageul, Benhamadouche, Lamballais & Laurence, IJHFF 55 (2015) 34-44,\n"
-        "figure 5a, the CONJUGATE case (black solid 'Conjug', G = G_2 = 1).\n"
-        "Re_tau = 149, Pr = 0.71.  Digitised by digitize_flageul.py; validated\n"
-        "against the same curve in panel 5b (linear x) to 0.02 in <T'^2>.\n"
-        "y+   <T'^2>/T_tau^2"))
-    print(f"  wrote {a.out}")
-    print(f"  peak {vs.max():.3f} at y+ {xs[int(np.argmax(vs))]:.1f}; "
-          f"value at y+ 0.75 = {np.interp(0.75, xs, vs):.3f}")
+    for name, spec in SERIES.items():
+        xs, vs = trace(im, LEFT, lambda px: 10.0 ** ((px - tx[0]) / dec), name)
+        xs2, vs2 = trace(im, RIGHT,
+                         lambda px: 20.0 + (px - tr[0]) * 20.0 / step, name)
+        # THE CHECK: the same series, digitised off two panels whose axes have
+        # nothing in common but the y scale.
+        g = np.logspace(np.log10(max(xs.min(), xs2.min())),
+                        np.log10(min(xs.max(), xs2.max())), 300)
+        dev = np.interp(g, xs2, vs2) - np.interp(g, xs, vs)
+        mx, rms = float(np.abs(dev).max()), float(np.sqrt(np.mean(dev ** 2)))
+        out = os.path.join(a.outdir, f"flageul_fig5a_{name}.dat")
+        np.savetxt(out, np.c_[xs, vs], fmt="%.6g", header=(
+            "Flageul, Benhamadouche, Lamballais & Laurence, IJHFF 55 (2015) 34-44,\n"
+            f"figure 5a, the {spec['label']} case.  Re_tau = 149, Pr = 0.71.\n"
+            "Digitised by digitize_flageul.py and cross-validated against the same\n"
+            f"series in panel 5b: max {mx:.3f}, rms {rms:.3f} in <T'^2>.\n"
+            + (f"UNRELIABLE below <T'^2> = {spec['floor']}: the symbol is clipped by\n"
+               "their own axis there. The exact limit is 0 at the wall.\n"
+               if spec["floor"] else "")
+            + "y+   <T'^2>/T_tau^2"))
+        print(f"  {spec['label']:<22} {xs.size:5d} cols  y+ {xs.min():6.2f}..{xs.max():5.0f}"
+              f"   peak {vs.max():6.3f} at y+ {xs[int(np.argmax(vs))]:5.1f}"
+              f"   at y+0.75 {np.interp(0.75, xs, vs):6.3f}"
+              f"   | 5a-vs-5b max {mx:.3f} rms {rms:.3f}")
+        assert mx < spec["tol"], (f"{name}: the two panels disagree by {mx:.3f} "
+                                  f"(> {spec['tol']}) -- calibration is wrong")
+    # keep the historical filename for the conjugate case
+    src = os.path.join(a.outdir, "flageul_fig5a_conjug.dat")
+    print(f"  wrote {src} and the two brackets")
 
 
 if __name__ == "__main__":

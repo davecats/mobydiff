@@ -39,9 +39,11 @@ YLO, YHI = 0.6, 2.6
 NS = 7
 S, SS, US, CLO, JLO, CHI, JHI = range(NS)
 
-# Flageul et al. 2015 fig. 5, conjugate case G = G_2 = 1 (= our k1), read off
-# the plot, so +-0.1 rather than digits.
-FL_PEAK, FL_PEAK_YP, FL_WALL, FL_ERR = 6.3, 18.0, 1.1, 0.1
+# Flageul et al. 2015 fig. 5, DIGITISED (digitize_flageul.py): the conjugate
+# case G = G_2 = 1 (= our k1) plus the two ideal brackets it must lie between.
+HERE = os.path.dirname(os.path.abspath(__file__))
+REF = {k: os.path.join(HERE, f"flageul_fig5a_{k}.dat")
+       for k in ("conjug", "isoq", "isot")}
 
 # validated categorical slots 1/3/2 (see references/palette.md); all three
 # series are direct-labelled, which is also what the aqua's contrast WARN asks
@@ -104,25 +106,32 @@ def main():
         x.grid(True, color=GRID, lw=0.6, zorder=0)
         x.set_axisbelow(True)
         x.set_xscale("log")
-        x.set_xlim(0.7, 180)
+        x.set_xlim(0.45, 180)
         x.set_xlabel(r"$y^+$", color=INK2, fontsize=10)
 
     # ---- (a) the temperature variance, THEIR conjugate case = our k1 -------
     ax[0].plot(cf["yp"], cf["var"], color=C_CONST, lw=2.0, zorder=3)
     ax[0].plot(bk["yp"], bk["var"], color=C_BULK, lw=2.0, zorder=3)
-    ax[0].errorbar([FL_PEAK_YP], [FL_PEAK], yerr=[FL_ERR], color=C_REF, marker="o",
-                   ms=8, mew=0, lw=0, elinewidth=1.6, capsize=3, zorder=5)
-    ax[0].errorbar([0.8], [FL_WALL], yerr=[FL_ERR], color=C_REF, marker="o",
-                   ms=8, mew=0, lw=0, elinewidth=1.6, capsize=3, zorder=5)
-    ax[0].annotate("constant flux\npeak 7.07", (60, 7.6), color=C_CONST,
+    if all(os.path.exists(p) for p in REF.values()):
+        q, t = np.loadtxt(REF["isoq"]), np.loadtxt(REF["isot"])
+        gg = np.logspace(np.log10(max(q[0, 0], t[0, 0])),
+                         np.log10(min(q[-1, 0], t[-1, 0])), 400)
+        tv = np.interp(gg, t[:, 0], t[:, 1])
+        ok = tv >= 0.3        # below this their isoT symbols are axis-clipped
+        ax[0].fill_between(gg[ok], tv[ok], np.interp(gg[ok], q[:, 0], q[:, 1]),
+                           color=C_REF, alpha=0.10, lw=0, zorder=1)
+        c = np.loadtxt(REF["conjug"])
+        ax[0].plot(c[:, 0], c[:, 1], ls=(0, (6, 2.5)), color=C_REF, lw=2.2, zorder=5)
+    ax[0].annotate("constant flux\npeak 7.07", (75, 7.7), color=C_CONST,
                    fontsize=9, ha="center", fontweight="bold")
-    ax[0].annotate("bulk heating\npeak 4.90", (60, 3.0), color=C_BULK,
+    ax[0].annotate("bulk heating\npeak 4.89", (75, 2.7), color=C_BULK,
                    fontsize=9, ha="center", fontweight="bold")
-    ax[0].annotate("Flageul 2015\n(conjugate, $K=1$)", (18, 6.3),
-                   xytext=(6.0, 8.6), color=C_REF, fontsize=9, ha="center",
-                   fontweight="bold",
-                   arrowprops=dict(arrowstyle="-", color=C_REF, lw=1.2))
-    ax[0].set_ylim(0, 9.6)
+    ax[0].annotate("Flageul 2015, digitised: dashed =\n"
+                   "their conjugate case, peak 6.21;\n"
+                   "shaded = their isoT-isoQ brackets",
+                   xy=(0.03, 0.97), xycoords="axes fraction", ha="left",
+                   va="top", color=C_REF, fontsize=8.5, fontweight="bold")
+    ax[0].set_ylim(0, 10.4)
     ax[0].set_ylabel(r"$\langle\theta'^2\rangle/\theta_\tau^2$", color=INK2, fontsize=10)
     ax[0].set_title("(a)  temperature variance, $\\kappa_s=\\alpha_s=1$",
                     color=INK, fontsize=11, loc="left", fontweight="bold")

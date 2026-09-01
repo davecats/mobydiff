@@ -62,9 +62,16 @@ SWEEP = [("k1", 1.0, 1.0), ("k2", 1.0, 100.0), ("k3", 1.0, 1.0e4),
 # the curve where it meets the axis suggested: their first point is at
 # y+ = 0.49 and the curve is still climbing there.
 # isoQ/isoT remain eyeballed brackets, so they stay markers with a bar.
-FL = dict(wall_isoQ=4.2, wall_isoT=0.0, err=0.1)
-REF_DAT = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                       "flageul_fig5a_conjug.dat")
+# All three are digitised now (digitize_flageul.py): the conjugate case from
+# its solid line, and the two IDEAL BRACKETS from their symbol series -- isoQ
+# (green x, the K -> 0 limit) and isoT (blue +, the K -> infinity limit). The
+# brackets are good to ~0.2-0.4 in <T'^2> against ~0.015 for the line, because
+# a symbol centroid is a coarser estimator; both numbers are in the .dat
+# headers, measured by digitising each series off BOTH panels of their fig. 5.
+HERE = os.path.dirname(os.path.abspath(__file__))
+REF_DAT = os.path.join(HERE, "flageul_fig5a_conjug.dat")
+REF_ISOQ = os.path.join(HERE, "flageul_fig5a_isoq.dat")
+REF_ISOT = os.path.join(HERE, "flageul_fig5a_isot.dat")
 
 # validated ordinal ramp (one hue, light->dark with K): see references/palette.md
 RAMP = ["#86b6ef", "#3987e5", "#256abf", "#104281"]
@@ -231,10 +238,28 @@ def main():
 
     # ---- (c) the variance, with Flageul's read-off values -------------------
     B = ax[2]
-    B.axvspan(5, 40, color=GRID, alpha=0.55, zorder=0)
-    B.annotate("near-wall peak", xy=(0.34, 0.985),
-               xycoords="axes fraction", color=MUTED, fontsize=8,
-               ha="center", va="top")
+    # THE BRACKETS, as a band: their four boundary conditions span isoT (ideal
+    # Dirichlet, the wall kills the fluctuation) to isoQ (ideal Neumann, the
+    # wall follows it freely). Any conjugate wall must lie inside, and the band
+    # is the useful statement -- the two edges separately are not.
+    if os.path.exists(REF_ISOQ) and os.path.exists(REF_ISOT):
+        q, t = np.loadtxt(REF_ISOQ), np.loadtxt(REF_ISOT)
+        gg = np.logspace(np.log10(max(q[0, 0], t[0, 0])),
+                         np.log10(min(q[-1, 0], t[-1, 0])), 400)
+        qv, tv = np.interp(gg, q[:, 0], q[:, 1]), np.interp(gg, t[:, 0], t[:, 1])
+        # Draw the isoT edge only where it is DATA. Below <T\'^2> ~ 0.3 their
+        # '+' symbols are clipped by their own axis, so the digitised values
+        # there are a floor, not a measurement (see digitize_flageul.py).
+        ok = tv >= 0.3
+        B.fill_between(gg[ok], tv[ok], qv[ok], color=ACCENT, alpha=0.10, lw=0, zorder=1)
+        B.loglog(gg, qv, ls=":", color=ACCENT, lw=1.3, zorder=5)
+        B.loglog(gg[ok], tv[ok], ls=":", color=ACCENT, lw=1.3, zorder=5)
+        B.annotate("isoQ", xy=(gg[int(0.62*gg.size)], qv[int(0.62*gg.size)]),
+                   xytext=(0, 7), textcoords="offset points", ha="center",
+                   color=ACCENT, fontsize=8.5, zorder=8)
+        B.annotate("isoT", xy=(gg[int(0.30*gg.size)], tv[int(0.30*gg.size)]),
+                   xytext=(2, -12), textcoords="offset points", ha="center",
+                   color=ACCENT, fontsize=8.5, zorder=8)
     for (nm, idx, K), c in zip(show, RAMP):
         d = sweep[idx]
         yp, v = half(d, d["var"])
@@ -258,19 +283,11 @@ def main():
     if os.path.exists(REF_DAT):
         r = np.loadtxt(REF_DAT)
         B.loglog(r[:, 0], r[:, 1], ls=(0, (6, 2.5)), color=ACCENT, lw=2.2, zorder=6)
-        B.annotate("Flageul 2015, conjugate\n(digitised from their fig. 5)",
-                   xy=(r[int(0.55 * len(r)), 0], r[int(0.55 * len(r)), 1]),
-                   xytext=(30, 24), textcoords="offset points", ha="left",
-                   color=ACCENT, fontsize=8.5, zorder=8,
-                   arrowprops=dict(arrowstyle="-", color=ACCENT, lw=1.1))
-    # the two ideal brackets stay eyeballed, so they stay markers with a bar
-    B.errorbar([0.52], [FL["wall_isoQ"]], yerr=FL["err"], fmt="s", ms=7,
-               color=ACCENT, mfc=SURFACE, mew=1.8, capsize=3, zorder=6)
-    B.annotate("their isoQ wall", xy=(0.52, FL["wall_isoQ"]), xytext=(11, 7),
-               textcoords="offset points", ha="left", color=ACCENT, fontsize=8.5)
-    B.annotate("their isoT wall is 0\n(off a log axis)", xy=(0.97, 0.04),
-               xycoords="axes fraction", ha="right", va="bottom",
-               color=ACCENT, fontsize=8)
+        B.annotate("Flageul 2015, digitised:\n"
+                   "dashed = their CONJUGATE case\n"
+                   "dotted band = their IDEAL brackets",
+                   xy=(0.03, 0.97), xycoords="axes fraction", ha="left",
+                   va="top", color=ACCENT, fontsize=8.5, zorder=8)
     B.set_xlabel("$y^+$", color=INK2, fontsize=10)
     B.set_ylabel(r"$\langle\theta'^2\rangle/\theta_\tau^2$", color=INK2, fontsize=10)
     B.set_title("(c)  temperature variance", color=INK, fontsize=11, loc="left", pad=8)

@@ -70,12 +70,15 @@ Y_LO, Y_HI = 0.6, 2.6
 # y+ = 0.49 -- at OUR first cell, y+ = 0.75, their curve reads 1.27. Comparing
 # our y+ = 0.75 cell against their 1.1 compared two different heights.
 # isoQ/isoT stay eyeballed: they are only used as brackets.
-FLAGEUL = dict(re_tau=149, pr=0.71,
-               wall_isoQ=4.2,      # ideal Neumann: the K -> 0 bracket
-               wall_isoT=0.0,      # ideal Dirichlet: the K -> infinity bracket
-               peak=6.208, peak_yp=17.6)
-REF_DAT = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                       "flageul_fig5a_conjug.dat")
+FLAGEUL = dict(re_tau=149, pr=0.71, peak=6.208, peak_yp=17.6)
+# All three series are digitised: the conjugate case from its solid line, the
+# two IDEAL brackets from their symbol series. The brackets are good to
+# ~0.2-0.4 in <T'^2> against 0.015 for the line (a symbol centroid is coarser);
+# each .dat header carries its own measured 5a-vs-5b agreement.
+HERE = os.path.dirname(os.path.abspath(__file__))
+REF_DAT = os.path.join(HERE, "flageul_fig5a_conjug.dat")
+REF_BRACKET = dict(isoQ=os.path.join(HERE, "flageul_fig5a_isoq.dat"),
+                   isoT=os.path.join(HERE, "flageul_fig5a_isot.dat"))
 # Their section 5 derives the scaling this sweep is built to test: at the
 # interface (their eq. 12-13) the wall variance goes like (lambda_f/(R
 # lambda_s))^2 with R^2 = k_x^2 + k_z^2 + i k_t rho c/lambda_s, so the product
@@ -383,11 +386,32 @@ def cmd_thermal(a):
               f"{np.sqrt(np.mean((oo-rr)**2)):.3f}  max {np.abs(oo-rr).max():.3f}"
               f"  bias {np.mean(oo-rr):+.3f}   ({100*np.sqrt(np.mean((oo-rr)**2))/rr.max():.1f}"
               f" % of their peak)")
-    for nm, lab, rv in (("a1", "K = 0.1  -> the isoQ bracket", f["wall_isoQ"]),
-                        ("a3", "K = 100  -> the isoT bracket", f["wall_isoT"])):
-        if nm in by:
-            print(f"       <theta'^2>_wall, {lab:<16} {by[nm]['var_wall']:8.2f}"
-                  f"  {rv:9.2f}   (eyeballed bracket)")
+    # THE BRACKETS, read at the same height as ours. Our K = 0.1 and K = 100
+    # walls approach their two IDEAL limits, so these are the right partners.
+    ypw_b = np.minimum(y - Y_LO, Y_HI - y) * RE
+    for nm, lab, key in (("a1", "K = 0.1  -> their isoQ", "isoQ"),
+                         ("a3", "K = 100 -> their isoT", "isoT")):
+        if nm in by and os.path.exists(REF_BRACKET[key]):
+            b = np.loadtxt(REF_BRACKET[key])
+            if key == "isoT":
+                # NOT at the wall: their isoT symbols are clipped by their own
+                # axis where the curve is small, so the digitised near-wall
+                # values are a floor, not data. Compare at the PEAK, which is
+                # far from the axis -- and state the exact wall limit instead.
+                print(f"       PEAK, {lab:<28} {by[nm]['var_peak']:8.2f}"
+                      f"  {b[:,1].max():9.2f}"
+                      f"   ({100*(by[nm]['var_peak']/b[:,1].max()-1):+.0f} %)")
+                print(f"         (their isoT wall value is exactly 0 by definition;"
+                      f" ours reads {by[nm]['var_wall']:.3f}. Their DIGITISED"
+                      f" near-wall points are clipped by their axis and are not"
+                      f" usable.)")
+                continue
+            yw = float(ypw_b[by[nm]["i0"]])
+            rv = float(np.interp(yw, b[:, 0], b[:, 1]))
+            print(f"       <theta'^2> at y+ {yw:.2f}, {lab:<22}"
+                  f" {by[nm]['var_wall']:8.2f}  {rv:9.2f}"
+                  f"   ({100*(by[nm]['var_wall']/max(rv,1e-9)-1):+.0f} %)"
+                  f"   [peak {b[:,1].max():.2f} at y+ {b[int(np.argmax(b[:,1])),0]:.1f}]")
     # DO NOT average the peak over the sweep. A scalar whose variance still
     # rises to the centreline has no near-wall peak at all, so the band search
     # returns its value at the band EDGE -- a number several times the others,

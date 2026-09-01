@@ -514,3 +514,47 @@ lies between ours over essentially the whole profile, the constant-flux run
 biased high and the bulk-heating one low, with bulk heating **2.4× closer
 overall**. What the digitisation changes is the WALL value — bulk heating is
 −6 % there, not the +9 % reported against the eyeballed 1.1.
+
+## The two ideal brackets, digitised too
+
+`digitize_flageul.py` now extracts all three series — the conjugate case from
+its solid line, and the **isoQ** (green ×, the K → 0 limit) and **isoT** (blue
++, the K → ∞ limit) brackets from their symbol series. Each is digitised off
+BOTH panels of their figure 5 and its own 5a-vs-5b agreement is measured and
+written into the `.dat` header:
+
+| series | peak | at y⁺ 0.75 | 5a vs 5b |
+|---|---|---|---|
+| Conjug (line) | 6.208 @ y⁺ 17.6 | 1.270 | 0.015 max / 0.004 rms |
+| isoQ (× markers) | 6.365 @ y⁺ 16.3 | 4.294 | 0.209 / 0.048 |
+| isoT (+ markers) | 5.777 @ y⁺ 18.5 | (see below) | 0.359 / 0.083 |
+
+A LINE is located to a fraction of a pixel; a SYMBOL CENTROID is much coarser,
+and its bias differs between the panels because the same ~20 px marker spans
+very different y⁺ widths on a log and on a linear axis. So the brackets are
+good to ~0.2–0.4 in ⟨T'²⟩ where the conjugate line is good to 0.015, and the
+script enforces a per-series tolerance rather than one number.
+
+**isoT is UNRELIABLE below ⟨T'²⟩ ≈ 0.3, and that is not fixable.** A `+` spans
+about ±0.08 in ⟨T'²⟩, so where the curve is that small the symbol straddles the
+axis and its lower half is **clipped in their own figure**. That ink is not in
+the image and no estimator recovers it: the digitised values there go
+non-monotone (0.094, 0.079, 0.122 at y⁺ 0.5, 0.75, 1.0) instead of following
+the y² an ideal Dirichlet wall must. The exact limit is known analytically
+anyway — isoT → 0 at the wall, by definition of the boundary condition — so the
+checker compares isoT at its PEAK and states the wall limit, and the figures
+draw the band's lower edge only where it is data.
+
+(Found on the way: an earlier version applied the 16 px frame margin to the
+colour masks too, which ate the lower half of every near-axis symbol and biased
+isoT's wall value from 0.079 up to 0.163. The margin exists to drop the black
+frame and ticks, which a colour mask already excludes — so coloured series get
+a 2 px clip instead. The symptom that exposed it was the checker reporting our
+K = 100 wall as damping *more* than an ideal isothermal one, which is
+impossible.)
+
+With the brackets in, the sweep lands where it should: our K = 0.1 wall sits on
+the isoQ edge (3.97 vs 4.29 at y⁺ 0.75, −8 %) and our K = 100 wall on the isoT
+edge (peak 4.82 vs 5.78, −17 %) — the same ≈20 % peak deficit the conjugate
+case shows, uniform across the sweep, which is the bulk-heating thermal problem
+rather than anything K-dependent.
