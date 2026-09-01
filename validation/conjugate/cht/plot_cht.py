@@ -23,12 +23,14 @@ WITH AN UNCERTAINTY BAR and never as a curve: drawing a reference line through
 four eyeballed points would dress up a reading as data.
 
 AND THE COMPARISON TRAP THIS FIGURE MAKES VISIBLE. Their thermal problem is
-Kasagi's wall-flux formulation, whose flux falls to zero at the
-centreline; ours holds the flux CONSTANT across the channel. So their variance
-decays toward the centre and ours does not -- panel (b) shows both, and the
-near-wall peak (shaded band) is the only place the two are comparable. The
-first pass at this comparison took max() over the whole channel and so
-compared our centreline against their near-wall peak.
+Kasagi's wall-flux formulation, whose flux falls to zero at the centreline. Two
+of ours are drawn: the CONSTANT-FLUX campaign, whose flux is the same at every
+height so its variance never stops rising, and the BULK-HEATING one (dJ/dy = S),
+whose flux vanishes at the centre as theirs does and which therefore peaks near
+the wall and decays. Flageul lies between them -- see the caption. The first
+pass at this comparison took max() over the whole channel and so compared our
+centreline against their near-wall peak; the shaded band is where the
+constant-flux curves may be read.
 """
 
 from __future__ import annotations
@@ -61,6 +63,7 @@ RAMP = ["#86b6ef", "#3987e5", "#256abf", "#104281"]
 INK, INK2, MUTED = "#0b0b0b", "#52514e", "#8b8a85"
 SURFACE = "#fcfcfb"
 ACCENT = "#eb6834"          # the reference, a different job -> a different hue
+OTHER  = "#1baf7a"          # the OTHER thermal problem: a third job, third hue
 GRID = "#e4e3df"
 
 
@@ -106,12 +109,17 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--stats", default="cht_stats.h5")
+    ap.add_argument("--bulk", default="bulk_stats.h5",
+                    help="the BULK-HEATING campaign (dJ/dy = S). Drawn beside "
+                         "the constant-flux one wherever the two differ, "
+                         "because Flageul's flux profile lies between them.")
     ap.add_argument("--yconv", nargs="*", default=["yc1p5_stats.h5", "yc1p0_stats.h5", "yc0p75_stats.h5"])
     ap.add_argument("--dyp", nargs="*", type=float, default=[1.5, 1.0, 0.75])
     ap.add_argument("--out", default="cht_validation.png")
     a = ap.parse_args()
 
     sweep = load(a.stats)
+    bulk = load(a.bulk) if os.path.exists(a.bulk) else None
     # the four K values with alpha_s = 1 (a1, k1, a2, a3): one clean decade
     # ladder, and every one of them converged (see the README's reseed note)
     show = [("a1", 3, 0.1), ("k1", 0, 1.0), ("a2", 4, 10.0), ("a3", 5, 100.0)]
@@ -137,13 +145,28 @@ def main():
     A.semilogx(yp, kd, "-", color=ACCENT, lw=2.0, zorder=3)
     A.semilogx(yp[yp > 40], kd[yp > 40], "--", color=ACCENT, lw=2.0, zorder=3)
     A.semilogx(yp, thp, "-", color=RAMP[1], lw=2.0, zorder=4)
-    A.annotate("this work, K = 1", xy=(yp[-1], thp[-1]), xytext=(-4, 6),
+    A.annotate("constant flux, K = 1", xy=(yp[-1], thp[-1]), xytext=(-4, 6),
                textcoords="offset points", ha="right", color=RAMP[2], fontsize=9.5)
+    if bulk is not None:
+        db = bulk[0]
+        ypb, mb = half(db, db["mean"])
+        # the bulk-heated fluid is HOTTER than its wall, the opposite
+        # sense; abs() measures both along the direction heat flows and
+        # is exact here because each profile is monotone from its wall.
+        thb = np.abs(mb - db["mean"][db["i0"]]) / db["ttau"]
+        A.semilogx(ypb, thb, "-", color=OTHER, lw=2.0, zorder=4)
+        A.annotate("bulk heating, K = 1", xy=(ypb[-1], thb[-1]), xytext=(-4, -16),
+                   textcoords="offset points", ha="right", color=OTHER, fontsize=9.5)
     A.annotate("Kader (1981)", xy=(30, kader(np.array([30.0]))[0] - kader(np.array([yp[0]]))[0]),
                xytext=(4, -14), textcoords="offset points", color=ACCENT, fontsize=9.5)
-    A.annotate("dashed: Kader beyond the constant-flux\nlayer it describes. Ours rises above it in\n"
-               "the outer region — see (b) for why",
-               xy=(0.96, 0.05), xycoords="axes fraction", color=MUTED,
+    # measured, not asserted: max|theta+ - Kader| over the whole profile.
+    # Kader is FITTED to channel/pipe data, whose flux decays in the outer
+    # region -- so it matches the bulk-heated channel, not the literally
+    # constant-flux one, which is the reverse of what its derivation suggests.
+    A.annotate("Kader dashed beyond the layer it describes.\n"
+               "Bulk heating follows it to within 4.3 % of the\n"
+               "centreline value; constant flux departs by 34 % — (b) is why.",
+               xy=(0.98, 0.02), xycoords="axes fraction", color=MUTED,
                fontsize=8, ha="right", va="bottom")
     A.set_xlabel("$y^+$", color=INK2, fontsize=10)
     A.set_ylabel(r"$\theta^+$", color=INK2, fontsize=10)
@@ -178,8 +201,20 @@ def main():
     Sx.annotate("$1/(Pr_t\\kappa y^+)$  (logarithmic)", xy=(22, 1/(0.85*0.41*22)),
                 xytext=(-6, -20), textcoords="offset points", ha="right",
                 color=ACCENT, fontsize=8.5)
-    Sx.annotate("this work, K = 1", xy=(2.0, slope[int(np.argmin(np.abs(yp-2.0)))]),
+    Sx.annotate("constant flux", xy=(2.0, slope[int(np.argmin(np.abs(yp-2.0)))]),
                 xytext=(6, -14), textcoords="offset points", color=RAMP[2], fontsize=9)
+    if bulk is not None:
+        db = bulk[0]
+        ypb, mb = half(db, db["mean"])
+        sb = np.abs(np.gradient(np.abs(mb - db["mean"][db["i0"]]) / db["ttau"], ypb))
+        Sx.loglog(ypb, np.maximum(sb, 2e-3), "-", color=OTHER, lw=2.0, zorder=5)
+        Sx.set_ylim(1.5e-3, 1.4)
+        Sx.annotate("bulk heating: keeps FALLING,\n"
+                    "because $J\\rightarrow0$ at the centre",
+                    xy=(ypb[int(0.82*len(ypb))],
+                        max(sb[int(0.82*len(ypb))], 2e-3)), xytext=(-14, -30),
+                    textcoords="offset points", ha="right", color=OTHER,
+                    fontsize=8.5)
     Sx.set_xlabel("$y^+$", color=INK2, fontsize=10)
     Sx.set_ylabel(r"$d\theta^+/dy^+$", color=INK2, fontsize=10)
     Sx.set_title("(b)  the profile is NOT logarithmic outside the log layer",
@@ -189,7 +224,7 @@ def main():
     # ---- (c) the variance, with Flageul's read-off values -------------------
     B = ax[2]
     B.axvspan(5, 40, color=GRID, alpha=0.55, zorder=0)
-    B.annotate("near-wall peak:\nthe only comparable region", xy=(0.5, 0.985),
+    B.annotate("near-wall peak", xy=(0.34, 0.985),
                xycoords="axes fraction", color=MUTED, fontsize=8,
                ha="center", va="top")
     for (nm, idx, K), c in zip(show, RAMP):
@@ -199,6 +234,18 @@ def main():
         B.annotate(f"K = {K:g}", xy=(yp[0], v[0]), xytext=(7, -1),
                    textcoords="offset points", ha="left", va="center",
                    color=c, fontsize=9.5, zorder=7)
+    # The SAME wall (K = 1) under the other thermal problem. Flageul's peak
+    # falls between the two curves, which is the whole comparison: their flux
+    # profile lies between a constant one and our linear one.
+    if bulk is not None:
+        db = bulk[0]
+        ypb, vb = half(db, db["var"])
+        B.loglog(ypb, vb, "-", color=OTHER, lw=2.0, zorder=5)
+        B.annotate("bulk heating, K = 1\n(peaks near the wall and\ndecays,"
+                   " as theirs does)",
+                   xy=(150, vb[int(np.argmin(np.abs(ypb - 150)))]),
+                   xytext=(-4, -46), textcoords="offset points", ha="right",
+                   color=OTHER, fontsize=8.5, zorder=7)
     # the reference: markers with an uncertainty bar, never a curve
     B.errorbar([0.52], [FL["wall_isoQ"]], yerr=FL["err"], fmt="s", ms=7,
                color=ACCENT, mfc=SURFACE, mew=1.8, capsize=3, zorder=6)
@@ -209,7 +256,7 @@ def main():
     B.annotate("Flageul isoQ wall", xy=(0.52, FL["wall_isoQ"]), xytext=(11, 9),
                textcoords="offset points", ha="left", color=ACCENT, fontsize=8.5)
     B.annotate("Flageul conjugate wall", xy=(0.52, FL["wall_conjug"]),
-               xytext=(11, -12), textcoords="offset points", ha="left",
+               xytext=(2, -20), textcoords="offset points", ha="left",
                color=ACCENT, fontsize=8.5)
     B.annotate("Flageul peak", xy=(FL["peak_yp"], FL["peak"]), xytext=(6, -20),
                textcoords="offset points", ha="left", color=ACCENT, fontsize=8.5)
@@ -253,19 +300,20 @@ def main():
     C.set_xlabel(r"$\Delta y^+$ at the wall   (refining $\rightarrow$)", color=INK2, fontsize=10)
     C.set_ylabel(r"$\langle\theta'^2\rangle_{wall}\,/\,\langle\theta'^2\rangle_{peak}$",
                  color=INK2, fontsize=10)
-    C.set_title("(d)  interface coupling, K = 1", color=INK, fontsize=11, loc="left", pad=8)
+    C.set_title("(d)  interface coupling vs resolution (constant flux)",
+                color=INK, fontsize=11, loc="left", pad=8)
     C.set_ylim(0.15, 0.205)
 
     fig.suptitle("Conjugate heat transfer in a turbulent channel, $Re_\\tau=180$, $Pr=0.71$ "
                  "— against Flageul et al. (2015), $Re_\\tau=149$",
                  color=INK, fontsize=12, x=0.008, ha="left", y=0.985)
     fig.text(0.008, 0.010,
-             "Curves: this work (6 conjugate scalars on one velocity field). Markers: Flageul et al. fig. 5, "
-             "read off the plot to $\\pm0.1$ — not tabulated.\n"
-             "Their flux falls to zero at the centreline (Kasagi wall-flux problem); ours is constant "
-             "across the channel, so only the shaded near-wall band is comparable.",
+             "Curves: this work. Markers: Flageul et al. fig. 5, read off the plot to $\\pm0.1$ — not tabulated.\n"
+             "Blue ramp = the K sweep under CONSTANT FLUX; green = the same K = 1 wall under BULK HEATING. Their Kasagi\n"
+             "flux profile lies BETWEEN the two, and so does their variance: near-wall peak 7.07 / 6.30 (Flageul) / 4.90.\n"
+             "The reference is BRACKETED, so the residual is the thermal problem, not the conjugate scheme.",
              color=MUTED, fontsize=8, ha="left", va="bottom")
-    fig.tight_layout(rect=(0, 0.055, 1, 0.955))
+    fig.tight_layout(rect=(0, 0.085, 1, 0.955))
     fig.savefig(a.out, dpi=170, facecolor=SURFACE)
     print(f"{a.out} written")
 
