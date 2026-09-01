@@ -62,12 +62,20 @@ Y_LO, Y_HI = 0.6, 2.6
 # Values are the temperature VARIANCE <T'^2> normalised by T_tau^2, read from
 # their figure 5 (there is no table; the wall values are where the curves
 # meet the axis, so treat them as +-0.1 rather than as digits).
+# The CONJUGATE case is DIGITISED (digitize_flageul.py -> the .dat below,
+# cross-validated against the same curve in their panel 5b to 0.02), so it is
+# compared as a full profile, not as points. The eyeballed values it replaced
+# were wrong in a way that mattered: the peak is 6.21 not 6.3, and the "wall"
+# value read where the curve meets the axis (1.1) is at THEIR first point,
+# y+ = 0.49 -- at OUR first cell, y+ = 0.75, their curve reads 1.27. Comparing
+# our y+ = 0.75 cell against their 1.1 compared two different heights.
+# isoQ/isoT stay eyeballed: they are only used as brackets.
 FLAGEUL = dict(re_tau=149, pr=0.71,
                wall_isoQ=4.2,      # ideal Neumann: the K -> 0 bracket
-               wall_conjug=1.1,    # THEIR conjugate case, K = 1  -> our k1
                wall_isoT=0.0,      # ideal Dirichlet: the K -> infinity bracket
-               peak=6.3,           # peak <T'^2>, y+ ~ 17-20, all four cases
-               peak_yp=18.0)
+               peak=6.208, peak_yp=17.6)
+REF_DAT = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                       "flageul_fig5a_conjug.dat")
 # Their section 5 derives the scaling this sweep is built to test: at the
 # interface (their eq. 12-13) the wall variance goes like (lambda_f/(R
 # lambda_s))^2 with R^2 = k_x^2 + k_z^2 + i k_t rho c/lambda_s, so the product
@@ -355,15 +363,31 @@ def cmd_thermal(a):
     print(f"\n   (4) vs Flageul et al. 2015 (Re_tau {f['re_tau']}, Pr {f['pr']}, "
           f"their figure 5; our Re_tau 180)")
     print(f"       quantity                          ours      Flageul")
-    if "k1" in by:
+    ref = np.loadtxt(REF_DAT) if os.path.exists(REF_DAT) else None
+    if "k1" in by and ref is not None:
         r = by["k1"]
-        print(f"       <theta'^2>_wall, CONJUGATE K = 1  {r['var_wall']:8.2f}"
-              f"  {f['wall_conjug']:9.2f}   <- their G = G_2 = 1 case")
-    for nm, lab, ref in (("a1", "K = 0.1  -> the isoQ bracket", f["wall_isoQ"]),
-                         ("a3", "K = 100  -> the isoT bracket", f["wall_isoT"])):
+        ypw_all = np.minimum(y - Y_LO, Y_HI - y) * RE
+        yw = float(ypw_all[r["i0"]])                    # OUR first-cell height
+        rw = float(np.interp(yw, ref[:, 0], ref[:, 1]))
+        print(f"       <theta'^2> at y+ = {yw:.2f} (our first cell, matched)"
+              f"  {r['var_wall']:8.2f}  {rw:9.2f}"
+              f"   ({100*(r['var_wall']/rw-1):+.0f} %)  <- their G = G_2 = 1 case")
+        # the whole profile, which the digitised curve makes possible
+        lo, hi = max(ref[0, 0], yw), min(ref[-1, 0], float(ypw_all[m].max()))
+        g = np.logspace(np.log10(lo), np.log10(hi), 200)
+        rr = np.interp(g, ref[:, 0], ref[:, 1])
+        ypk, vk = ypw_all[m], (r["rms"] / r["ttau"])[m]
+        o = np.argsort(ypk)
+        oo = np.interp(g, ypk[o], (vk ** 2)[o])
+        print(f"       FULL PROFILE over {lo:.2f} < y+ < {hi:.0f}:  rms "
+              f"{np.sqrt(np.mean((oo-rr)**2)):.3f}  max {np.abs(oo-rr).max():.3f}"
+              f"  bias {np.mean(oo-rr):+.3f}   ({100*np.sqrt(np.mean((oo-rr)**2))/rr.max():.1f}"
+              f" % of their peak)")
+    for nm, lab, rv in (("a1", "K = 0.1  -> the isoQ bracket", f["wall_isoQ"]),
+                        ("a3", "K = 100  -> the isoT bracket", f["wall_isoT"])):
         if nm in by:
             print(f"       <theta'^2>_wall, {lab:<16} {by[nm]['var_wall']:8.2f}"
-                  f"  {ref:9.2f}")
+                  f"  {rv:9.2f}   (eyeballed bracket)")
     # DO NOT average the peak over the sweep. A scalar whose variance still
     # rises to the centreline has no near-wall peak at all, so the band search
     # returns its value at the band EDGE -- a number several times the others,
@@ -403,11 +427,13 @@ def cmd_thermal(a):
         print(f"       the near-wall peak is the GLOBAL maximum for {at_wall}/"
               f"{len(rows)} scalars (centreline value {ct:.2f}) -- so unlike the "
               f"constant-flux campaign this peak is the same quantity as theirs.")
-    if "k1" in by:
+    if "k1" in by and ref is not None:
         r = by["k1"]
-        print(f"       wall/peak at K = 1 (theta_tau-free, level-free) "
+        yw = float((np.minimum(y - Y_LO, Y_HI - y) * RE)[r["i0"]])
+        rw = float(np.interp(yw, ref[:, 0], ref[:, 1]))
+        print(f"       wall/peak at K = 1, both read at y+ = {yw:.2f} "
               f"{r['var_wall']/max(r['var_peak'],1e-30):8.4f}  "
-              f"{f['wall_conjug']/f['peak']:9.4f}")
+              f"{rw/ref[:,1].max():9.4f}")
     if "k1" in by and np.isfinite(by["k1"]["var_outer"]):
         print(f"       variance surviving at our outer solid face (d+ = 36): "
               f"{by['k1']['var_outer']:.3g}  ({100*by['k1']['var_outer']/max(by['k1']['var_wall'],1e-30):.1f} %"

@@ -453,3 +453,64 @@ problems, since the comparison only means something with the two together:
   two curves — the bracketing, drawn.
 * **(d)** unchanged, and now labelled as what it is: the wall-resolution
   convergence of the CONSTANT-FLUX campaign.
+
+---
+
+# The reference, digitised (2026-09-01)
+
+Everything above rested on FOUR VALUES read off Flageul's figure 5 by eye,
+because the paper tabulates nothing. `digitize_flageul.py` now extracts the
+black solid "Conjug" curve itself into `flageul_fig5a_conjug.dat`.
+
+**How, and how it is checked.** The figure is vector art, but `pdftocairo`
+drops the figure-5 paths, so the page is rendered at 600 dpi and the curves are
+separated BY COLOUR: the other three series are saturated red/green/blue, and
+the Conjug line is the only achromatic dark ink inside the axes. Frames, ticks
+and the legend rectangle are masked; axes are calibrated on the TICK MARKS
+(found on an axis the curves do not touch), whose uniform spacing is asserted.
+**The validation is free and is the point:** figure 5 plots the same curve
+twice, panel (a) on a log x-axis and panel (b) on a linear one. Both are
+digitised independently — different axis type, different calibration, different
+legend mask — and agree to **0.015 max / 0.004 rms**, with the peak landing at
+6.208 in both. A calibration slip would not survive that; the script asserts it.
+
+## TWO OF THE EYEBALLED NUMBERS WERE WRONG, AND ONE MATTERED
+
+| | eyeballed | digitised |
+|---|---|---|
+| peak ⟨T'²⟩ | 6.3 | **6.208** at y⁺ 17.6 |
+| "wall" ⟨T'²⟩ | 1.1 | **1.270** at y⁺ 0.75 |
+
+The peak was close. The wall value was not, and the reason is a height
+mismatch, not a reading error: 1.1 is roughly where their curve meets the axis,
+but **their first data point is at y⁺ = 0.49 and the curve is still climbing**.
+Our first cell is at y⁺ = 0.75, where their curve reads 1.270. The old
+comparison put our y⁺ = 0.75 cell against their y⁺ ≈ 0.49 value.
+
+**This retracts the campaign-2 headline.** The wall/peak ratio was reported as
+converging monotonically under y-refinement to 0.1769 against "their 0.1746",
+i.e. 1 %. Both sides of that were wrong. Their ratio *at their own first point*
+is 0.1933, and at a MATCHED y⁺ = 0.75 it is **0.2045**. Ours at the matched
+height are 0.1953 / 0.1947 / 0.1911 for Δy⁺ = 1.5 / 1.0 / 0.75 — i.e. **4.5 to
+6.6 % below, and not converging toward them.** The apparent convergence was an
+artefact: our first cell moved (0.75 → 0.5 → 0.375) down the rising near-wall
+curve, so the number fell for a reason that had nothing to do with accuracy.
+Panel (d) now reads both sides at y⁺ = 0.75 and plots the old first-cell
+measure in grey, labelled as not comparable.
+
+## The full-profile comparison
+
+Against the digitised curve, over 0.75 < y⁺ < 137:
+
+| | at y⁺ 0.75 | near-wall peak | profile rms | bias |
+|---|---|---|---|---|
+| Flageul (digitised) | 1.270 | 6.208 @ y⁺ 17.6 | — | — |
+| constant flux | 1.37 (+8 %) | 7.07 (+14 %) | 2.02 (32.5 % of their peak) | +1.24 |
+| bulk heating | 1.20 (−6 %) | 4.89 (−21 %) | 0.83 (13.3 %) | −0.63 |
+
+The bracketing survives the correction and is now visible as a curve in panel
+(c) of `cht_validation.png` rather than inferred from three points: their curve
+lies between ours over essentially the whole profile, the constant-flux run
+biased high and the bulk-heating one low, with bulk heating **2.4× closer
+overall**. What the digitisation changes is the WALL value — bulk heating is
+−6 % there, not the +9 % reported against the eyeballed 1.1.

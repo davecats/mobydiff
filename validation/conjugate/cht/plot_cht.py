@@ -55,8 +55,16 @@ SWEEP = [("k1", 1.0, 1.0), ("k2", 1.0, 100.0), ("k3", 1.0, 1.0e4),
          ("a1", 0.1, 0.1), ("a2", 10.0, 10.0), ("a3", 100.0, 100.0)]
 
 # Flageul et al. 2015, figure 5, READ FROM THE PLOT (+-0.1, not digits)
-FL = dict(wall_isoQ=4.2, wall_conjug=1.1, wall_isoT=0.0, peak=6.3, peak_yp=18.0,
-          err=0.1)
+# The CONJUGATE case is no longer read off by eye: flageul_fig5a_conjug.dat is
+# the digitised black solid curve (digitize_flageul.py, validated against the
+# same curve in their panel 5b to 0.02). Its peak is 6.208 at y+ 17.6 -- and
+# its value at OUR first cell, y+ = 0.75, is 1.270, NOT the 1.1 that reading
+# the curve where it meets the axis suggested: their first point is at
+# y+ = 0.49 and the curve is still climbing there.
+# isoQ/isoT remain eyeballed brackets, so they stay markers with a bar.
+FL = dict(wall_isoQ=4.2, wall_isoT=0.0, err=0.1)
+REF_DAT = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                       "flageul_fig5a_conjug.dat")
 
 # validated ordinal ramp (one hue, light->dark with K): see references/palette.md
 RAMP = ["#86b6ef", "#3987e5", "#256abf", "#104281"]
@@ -246,19 +254,19 @@ def main():
                    xy=(150, vb[int(np.argmin(np.abs(ypb - 150)))]),
                    xytext=(-4, -46), textcoords="offset points", ha="right",
                    color=OTHER, fontsize=8.5, zorder=7)
-    # the reference: markers with an uncertainty bar, never a curve
+    # THEIR CONJUGATE CASE, as the digitised curve rather than three points
+    if os.path.exists(REF_DAT):
+        r = np.loadtxt(REF_DAT)
+        B.loglog(r[:, 0], r[:, 1], ls=(0, (6, 2.5)), color=ACCENT, lw=2.2, zorder=6)
+        B.annotate("Flageul 2015, conjugate\n(digitised from their fig. 5)",
+                   xy=(r[int(0.55 * len(r)), 0], r[int(0.55 * len(r)), 1]),
+                   xytext=(30, 24), textcoords="offset points", ha="left",
+                   color=ACCENT, fontsize=8.5, zorder=8,
+                   arrowprops=dict(arrowstyle="-", color=ACCENT, lw=1.1))
+    # the two ideal brackets stay eyeballed, so they stay markers with a bar
     B.errorbar([0.52], [FL["wall_isoQ"]], yerr=FL["err"], fmt="s", ms=7,
                color=ACCENT, mfc=SURFACE, mew=1.8, capsize=3, zorder=6)
-    B.errorbar([0.52], [FL["wall_conjug"]], yerr=FL["err"], fmt="o", ms=7,
-               color=ACCENT, mfc=ACCENT, mew=1.8, capsize=3, zorder=6)
-    B.errorbar([FL["peak_yp"]], [FL["peak"]], yerr=FL["err"], fmt="D", ms=7,
-               color=ACCENT, mfc=SURFACE, mew=1.8, capsize=3, zorder=6)
-    B.annotate("Flageul isoQ wall", xy=(0.52, FL["wall_isoQ"]), xytext=(11, 9),
-               textcoords="offset points", ha="left", color=ACCENT, fontsize=8.5)
-    B.annotate("Flageul conjugate wall", xy=(0.52, FL["wall_conjug"]),
-               xytext=(2, -20), textcoords="offset points", ha="left",
-               color=ACCENT, fontsize=8.5)
-    B.annotate("Flageul peak", xy=(FL["peak_yp"], FL["peak"]), xytext=(6, -20),
+    B.annotate("their isoQ wall", xy=(0.52, FL["wall_isoQ"]), xytext=(11, 7),
                textcoords="offset points", ha="left", color=ACCENT, fontsize=8.5)
     B.annotate("their isoT wall is 0\n(off a log axis)", xy=(0.97, 0.04),
                xycoords="axes fraction", ha="right", va="bottom",
@@ -270,29 +278,43 @@ def main():
     B.set_xlim(0.40, 300)
 
     # ---- (c) the interface coupling vs wall-normal resolution --------------
+    # THE RATIO MUST BE READ AT A MATCHED HEIGHT. Taking each study's own
+    # FIRST CELL compares different y+ -- ours moves with the resolution
+    # (0.75 / 0.5 / 0.375) while theirs sits at 0.49 -- so the ratio appeared
+    # to "converge" onto the reference simply because the sampling point slid
+    # down the rising near-wall curve. Both resolve y+ = 0.75, so read there.
     C = ax[3]
-    dyp, ratio = [], []
+    YQ = 0.75
+    dyp, ratio, raw = [], [], []
     for path, d_ in zip(a.yconv, a.dyp):
         if not os.path.exists(path):
             continue
         s = load(path)[0]
+        ypq, vq = half(s, s["var"])
         dyp.append(d_)
-        ratio.append(s["wall"] / s["peak"])
+        ratio.append(float(np.interp(YQ, ypq, vq)) / s["peak"])
+        raw.append(s["wall"] / s["peak"])
     if len(dyp):
         o = np.argsort(dyp)[::-1]
-        dyp = np.array(dyp)[o]; ratio = np.array(ratio)[o]
+        dyp = np.array(dyp)[o]; ratio = np.array(ratio)[o]; raw = np.array(raw)[o]
         C.plot(dyp, ratio, "-o", color=RAMP[2], lw=2.0, ms=8, zorder=4)
+        C.plot(dyp, raw, "--o", color=MUTED, lw=1.4, ms=5, zorder=3)
         for x_, y_ in zip(dyp, ratio):
             C.annotate(f"{y_:.4f}", xy=(x_, y_), xytext=(0, 9), textcoords="offset points",
                        ha="center", color=RAMP[3], fontsize=9)
-    ref = FL["wall_conjug"] / FL["peak"]
+        C.annotate("grey: each run's own FIRST CELL — not a fixed\n"
+                   "height (0.75/0.5/0.375), so not comparable",
+                   xy=(0.5, 0.055), xycoords="axes fraction",
+                   ha="center", va="bottom", color=MUTED, fontsize=8)
+    r = np.loadtxt(REF_DAT)
+    ref = float(np.interp(YQ, r[:, 0], r[:, 1])) / r[:, 1].max()
     C.axhline(ref, color=ACCENT, lw=2.0, zorder=3)
-    C.axhspan(ref * (1 - 0.09), ref * (1 + 0.09), color=ACCENT, alpha=0.12, zorder=1)
-    C.annotate(f"Flageul  {ref:.4f}", xy=(0.03, ref), xycoords=("axes fraction", "data"),
+    C.axhspan(ref * (1 - 0.03), ref * (1 + 0.03), color=ACCENT, alpha=0.12, zorder=1)
+    C.annotate(f"Flageul  {ref:.4f}  (digitised)", xy=(0.03, ref), xycoords=("axes fraction", "data"),
                xytext=(0, 6), textcoords="offset points", ha="left",
                color=ACCENT, fontsize=9.5)
-    C.annotate("shaded: their $\\pm0.1$ figure read-off", xy=(0.97, 0.04),
-               xycoords="axes fraction", ha="right", va="bottom",
+    C.annotate("shaded: $\\pm3$ %", xy=(0.985, 0.90),
+               xycoords="axes fraction", ha="right", va="top",
                color=ACCENT, fontsize=8)
     C.set_xticks(list(dyp))
     C.set_xticklabels([f"{x:g}" for x in dyp])
@@ -300,25 +322,28 @@ def main():
     C.set_xlabel(r"$\Delta y^+$ at the wall   (refining $\rightarrow$)", color=INK2, fontsize=10)
     C.set_ylabel(r"$\langle\theta'^2\rangle_{wall}\,/\,\langle\theta'^2\rangle_{peak}$",
                  color=INK2, fontsize=10)
-    C.set_title("(d)  interface coupling vs resolution (constant flux)",
+    C.set_title("(d)  interface coupling at a MATCHED $y^+=0.75$ (constant flux)",
                 color=INK, fontsize=11, loc="left", pad=8)
-    C.set_ylim(0.15, 0.205)
+    C.set_ylim(0.168, 0.215)
 
     fig.suptitle("Conjugate heat transfer in a turbulent channel, $Re_\\tau=180$, $Pr=0.71$ "
                  "— against Flageul et al. (2015), $Re_\\tau=149$",
                  color=INK, fontsize=12, x=0.008, ha="left", y=0.985)
     fig.text(0.008, 0.010,
-             "Curves: this work. Markers: Flageul et al. fig. 5, read off the plot to $\\pm0.1$ — not tabulated.\n"
-             "Blue ramp = the K sweep under CONSTANT FLUX; green = the same K = 1 wall under BULK HEATING. Their Kasagi\n"
-             "flux profile lies BETWEEN the two, and so does their variance: near-wall peak 7.07 / 6.30 (Flageul) / 4.90.\n"
-             "The reference is BRACKETED, so the residual is the thermal problem, not the conjugate scheme.",
+             "Curves: this work. Dashed orange: Flageul et al.'s conjugate case DIGITISED from their fig. 5 (their paper\n"
+             "tabulates nothing); cross-validated against the same curve in their panel 5b to 0.02. Blue ramp = the K sweep\n"
+             "under CONSTANT FLUX; green = the same K = 1 wall under BULK HEATING. Their Kasagi flux profile lies BETWEEN\n"
+             "the two, and so does their variance: near-wall peak 7.07 / 6.21 (Flageul) / 4.89. The reference is BRACKETED.",
              color=MUTED, fontsize=8, ha="left", va="bottom")
     fig.tight_layout(rect=(0, 0.085, 1, 0.955))
     fig.savefig(a.out, dpi=170, facecolor=SURFACE)
     print(f"{a.out} written")
 
     # the table view the contrast WARN obliges
-    print("\n  K      <t'2>_wall   <t'2>_nwpeak   wall/peak     (Flageul: 1.10 / 6.3 / 0.1746)")
+    rr = np.loadtxt(REF_DAT)
+    print(f"\n  K      <t'2>_wall   <t'2>_nwpeak   wall/peak     "
+          f"(Flageul digitised: peak {rr[:,1].max():.3f} at y+ "
+          f"{rr[int(np.argmax(rr[:,1])),0]:.1f}; at y+0.75 {np.interp(0.75,rr[:,0],rr[:,1]):.3f})")
     for nm, idx, K in show:
         d = sweep[idx]
         print(f"  {K:6g}   {d['wall']:10.3f}   {d['peak']:12.3f}   {d['wall']/d['peak']:9.4f}")
