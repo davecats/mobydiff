@@ -61,7 +61,7 @@ and of the pack/unpack that serve them.
 
 ## The plan, ranked
 
-### P1 — ANALYSED AND IMPLEMENTED 2026-08-28 (`4f04f6b`). Timing still to measure.
+### P1 — DONE (`4f04f6b`, timing 2026-09-01): −3.63 % of the 2-GPU-rank step.
 
 The key change is in: `leaf_key` (blocks.f90) puts the y tile in the low 21
 bits for xz mode; xyz untouched. Measured on the wire at 2 GPU ranks, refined
@@ -82,34 +82,34 @@ reassembled onto the global lattice); 1 rank == 4 ranks EXACT and CPU == GPU
 EXACT with the new key; `block_nb`'s xz uniform-flow gate still EXACT on an
 unchanged leaf set.
 
-**Timing, 2026-08-29** (`overheadTest/results_xzkey_2026-08-29.md`). The GPU
-A/B is STILL NOT DONE. istmcetus is the only 2-GPU host and it has been
-occupied by other users' jobs continuously through a 6-hour and then a 12-hour
-wait window — first `nekrs`, then `cans` (24 h elapsed and counting), both GPUs
-at 85–99 %. A 24-hour waiter is armed; it runs the A/B itself the moment both
-cards go idle and stay idle for 90 s, recording `nvidia-smi` around each run so
-a repeat contamination is visible rather than silent. **If you want the GPU
-number sooner, the alternatives all change what is being measured**: corax has
-a single GPU, and two ranks sharing one card exercise a different transfer path
-(same-device peer copies) than the 2-GPU case this change targets.
+**Timing — DONE 2026-09-01, clean machine**
+(`overheadTest/results_xzkey_2026-08-29.md`). GPU, 2 ranks, 400 steps a side,
+zero foreign compute apps before and after each run, drift flat:
 
-A **CPU 4-rank** A/B did run (the CPU was idle at load 4/128 while the foreign
-job was GPU-bound): peer send points 1 390 900 → 138 000, and **`mpi_wait`
-7.7716 → 0.0853 s/step, a 91× collapse** — from 7.9 % of the step to 0.09 %;
-total exchange 16.5 % → 11.1 %. Absolute step times are NOT usable (~98/91
-s/step against 18.77 for this configuration on a quiet machine, a 5.2×
-inflation from the foreign job's memory traffic), so the −6.7 % step delta is
-indicative only.
+| | ref | cand | |
+|---|---|---|---|
+| **step** | 0.323940 | 0.312171 | **−3.63 %** |
+| `mpi_wait` | 0.021820 | 0.003003 | **7.3×**, 6.74 % → 0.96 % of step |
+| total exchange | 0.053842 | 0.037001 | 16.6 % → 11.9 % of step |
 
-**It also corrects the CPU diagnosis.** A 10× byte cut produced a 91× wait cut
-— strongly superlinear, so per-round latency was never the binding term, and
-"latency/progress-bound" was only half right. The mechanism the size report
-exposes: under the old key one rank sent 963 600 points against another's
-101 300, a **9.5× straggler**, and `Waitall` pays for the slowest peer; the new
-key equalises it to 2×. Much of what looked like transfer cost was **exchange
-load imbalance — invisible in the compute-side balance, which was 1.000
-throughout**. Leaf-count balance is not exchange balance; read
-`send pts/rank min … max` on any new decomposition.
+Runtime diagnostics identical between the binaries at every output step — the
+renumbering is physics-invariant on the production case at 2 ranks.
+
+**The estimate was 6 %; the answer is 3.63 %, and the gap is instructive.** The
+traffic prediction was exact (20.3× predicted, 20.5× measured) but two things
+eat the conversion to time: `local_copy` rises +0.97 % of the step (the traffic
+moved onto the device, and a local copy is cheap but not free), and the volume
+kernels get 0.37 % slower because the new leaf order changes which blocks are
+memory-adjacent. Together they give back 26 % of the −5.20 % exchange saving.
+**A byte model predicts traffic, not time.**
+
+Earlier, on a contended machine, a CPU 4-rank A/B gave `mpi_wait` 7.7716 →
+0.0853 s/step, a **91×** collapse. The gap between 91× (CPU) and 7.3× (GPU) is
+the straggler: the old key gave the CPU decomposition a 9.5× send-volume spread
+across 3 peers and `Waitall` pays for the slowest, whereas the GPU case has one
+peer per rank and only volume to remove. **Leaf-count balance is not exchange
+balance** — compute balance was 1.000 throughout; read `send pts/rank min … max`
+from the size report on any new decomposition.
 
 The analysis that produced this, kept because it is what makes the change
 defensible:
