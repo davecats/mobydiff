@@ -328,3 +328,107 @@ the solver's future:
 `run_corax.sh` drives the same phases on istmcorax (which needs its own cc120
 build and an explicit PATH — it has no modulefile, and `/tmp` is NOT shared
 between the hosts even though the home filesystem is).
+
+---
+
+# Campaign 3 — BULK HEATING (`cht180_bulk.ini`)
+
+The constant-flux problem above differs from Flageul's *structurally*: their
+source makes the wall-normal flux fall to zero at the centreline, ours holds it
+constant across the channel. That is what made their global variance maximum a
+near-wall peak and ours a centreline value, and it is the root of the
+comparison error recorded further up.
+
+This campaign removes that difference with **no solver code**: `[scalar.N]
+source` already exists and the conjugate kernel weights it by the fluid
+fraction, so a uniform `S = 1` heats only the fluid. Both outer solid faces are
+held at zero instead of ±1. The steady mean balance is then `dJ/dy = S`.
+
+The remaining difference from Flageul is the source's SHAPE — theirs follows
+`u(y)` (Kasagi), ours is uniform. Measured against this run's own mean velocity
+that is ≤ 7 % anywhere and 2.4–3.8 % over the near-wall comparison band,
+against the 100 % difference at the centreline that constant flux gives.
+
+## What the configuration buys
+
+* **`J_wall = S h` EXACTLY, independent of κ_s.** All the heat generated in a
+  half-channel leaves through that wall. So θ_τ is identical for all six
+  scalars *by construction* rather than being an outcome of the wall/fluid
+  series resistance — and the normalised variance cannot be contaminated by a
+  θ_τ that is still converging.
+* **The solid mean is closed-form**, `θ_i = J R_s`. The seed is already the
+  answer, so the reseed phase is GONE — and with it the hardest practical
+  problem of campaigns 1 and 2, where the `C_s = 10⁴` wall could never relax on
+  its `d²/α_s ≈ 8e5` timescale. `run_bulk.sh` has two phases, not four, and no
+  velocity development at all (it seeds from a campaign-2 snapshot on the
+  identical grid).
+
+## Result
+
+Grid, case file and conjugate walls are campaign 2's; only the thermal problem
+differs. 14 000 develop + 64 000 statistics steps (t = 20 → 115, ≈ 18 000 wall
+units), local RTX 3060, 0.68 s/step.
+
+| | ours | Flageul | |
+|---|---|---|---|
+| θ_τ vs the exact `S h` | 1.0019–1.0135 | — | max dev 1.35 % |
+| `dJ/dy = S` | 1.38 % | — | J(centreline) = −0.00002 `S h` |
+| ⟨θ'²⟩_wall, conjugate K = 1 | 1.20 | 1.10 | +9 % |
+| ⟨θ'²⟩_wall, isoQ bracket | 3.97 | 4.20 | −5 % |
+| ⟨θ'²⟩_wall, isoT bracket | 0.043 | 0.0 | |
+| near-wall peak ⟨θ'²⟩, K = 1 | 4.90 | 6.30 | −22 % |
+| wall/peak, K = 1 | 0.244 | 0.175 | +40 % |
+
+**The near-wall peak is now the GLOBAL maximum** for 5 of 6 scalars, so it is
+finally the same quantity Flageul report. And the reference is BRACKETED by our
+two thermal problems: constant flux gives a peak of 7.07 (+12 %), bulk heating
+4.90 (−22 %), Flageul 6.30 — exactly as panel (b) of `bulk_vs_constflux.png`
+predicts from the three flux profiles, since the Kasagi flux lies between a
+constant and our linear one. The wall value moves the same way and lands closer
+(+9 % against campaign 2's +24 %).
+
+So the residual disagreement is NOT a defect in the conjugate scheme; it is the
+thermal problem. Closing it needs the Kasagi `f_T u_x` source (a mean
+streamwise temperature gradient), which this solver has no term for.
+
+## Two findings
+
+**a1 (κ_s = C_s = 0.1) is a different regime and must not be pooled.** Its
+variance never peaks near the wall — it rises to 13.4 at y⁺ ≈ 60 and stays high
+— because a nearly-insulating wall leaves the bulk-heated core with no thermal
+sink for large-scale structure. Verified as physics, not a bug: the flux split
+`J_total = J_conv + J_diff` closes to **0.000 %** against the mean gradient
+measured independently from the profile, and a1 carries LESS of the same total
+flux by convection (0.577 vs k1's 0.611 at y⁺ = 60) and correspondingly more by
+molecular diffusion — its large-scale core structures are poorly correlated
+with the wall-normal velocity, so its eddy diffusivity is genuinely lower and
+its mean gradient steepens to compensate. Its instantaneous *within-plane*
+variance is 6.6 against k1's 0.30, stable across snapshots, so it is spatial
+structure and not a slow drift.
+
+**A REPORTING TRAP OF THE SAME FAMILY AS THE `max()` ONE.** Averaging the peak
+over the sweep gave 6.15 against their 6.30 — a 2 % "agreement" that was pure
+coincidence, produced by a1's 13.17 dragging up five scalars that all sit at
+4.6–4.9. A scalar with no near-wall peak returns its value at the SEARCH BAND
+EDGE, which is not the same quantity. `check_cht.py` now excludes such scalars
+by name and reports the range plus k1 alone (k1 *is* their case). The general
+lesson, twice learned: **never aggregate across cases before checking they are
+the same quantity.**
+
+## Reproducing
+
+```bash
+./run_bulk.sh ic develop stats                       # ~15 h on an RTX 3060
+./check_cht.py thermal bulk_stats.h5 --source 1.0    # switches on the two bulk gates
+./plot_bulk.py --vel cht_vel_stats.h5                # bulk_vs_constflux.png
+```
+
+`--source` also switches gate (1) to the interface-referenced (offset-free)
+form. The absolute solid level carries a slowly-decaying charging transient —
+observed to sort by the EFFUSIVITY K, not by the solid diffusion time (k2/a2
+agree to 1 % and k3/a3 to 0.2 % with their timescales a factor 100 and 10⁴
+apart), i.e. Flageul's eq. (12) showing up in the mean. θ⁺ and the variance are
+both offset-free, so nothing that is compared with the literature depends on
+it. `check_cht.py thermal` still exits FAIL on gate (2), the effusivity
+collapse (15.8 %/39.7 %) — the known and documented physics, unchanged from
+campaign 2, not a bulk-heating result.

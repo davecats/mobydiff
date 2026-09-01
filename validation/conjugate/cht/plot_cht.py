@@ -82,7 +82,10 @@ def load(path):
     for i in range(P.shape[1] // NS):
         mean = P[:, NS * i + S]
         var = np.maximum(P[:, NS * i + SS] - mean ** 2, 0.0)
-        tt = 0.5 * abs(P[i0, NS * i + JLO] + P[i1, NS * i + JHI])
+        # |.| of each face, not of the sum: identical where one flux crosses
+        # the whole channel, but in the bulk-heating problem the two walls
+        # are fed from the interior and their fluxes point OPPOSITE ways.
+        tt = 0.5 * (abs(P[i0, NS * i + JLO]) + abs(P[i1, NS * i + JHI]))
         band = m & (yp > 5.0) & (yp < 40.0)
         out.append(dict(y=y, m=m, yp=yp, mean=mean, var=var / tt ** 2, ttau=tt,
                         i0=i0, i1=i1,
