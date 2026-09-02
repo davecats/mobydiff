@@ -58,16 +58,34 @@ module pressure_solver
     ! phi). Allocated only when Chebyshev is enabled.
     real(C_DOUBLE), allocatable :: delta(:,:,:,:)
 
-    ! Projection diagonal, one value per interior cell. It is a function of the
-    ! face kinds, the grid metrics and ibm%mu ONLY -- and update_ibm_mu runs once
-    ! per RK substage, before the projection -- so it is identical across all
-    ! niter iterations and is computed once per substage instead of once per
-    ! iteration. That removes six branchy face_grad_denom calls, the six mu
-    ! loads and ~11 fp64 operations from the per-iteration kernel, which matters
-    ! because jacobi_compute_phi is SM-throughput-bound (ncu: 82 % SM against
-    ! 46 % DRAM, 128 registers, 33 % occupancy) on a GPU whose fp64 rate is a
-    ! small fraction of its fp32 rate.
-    real(C_DOUBLE), allocatable :: pdenom(:,:,:,:)
+    ! RECIPROCAL of the projection diagonal, one value per interior cell.
+    !
+    ! The diagonal is a function of the face kinds, the grid metrics and ibm%mu
+    ! ONLY -- and update_ibm_mu runs once per RK substage, before the projection
+    ! -- so it is identical across all niter iterations and is formed once per
+    ! substage instead of once per iteration. That alone removed six branchy
+    ! face_grad_denom calls, six mu loads and ~11 fp64 operations from the
+    ! per-iteration kernel (measured: -26 % on the sweep).
+    !
+    ! It is stored INVERTED so the iteration kernel multiplies instead of
+    ! divides. That is a deliberate NUMERICS change, not a refactor: a*(1/b)
+    ! differs from a/b by up to 1 ulp, so the projection is NOT bit-identical to
+    ! code predating 2026-09-02, and "bit-exact vs the previous binary" is no
+    ! longer available as a gate for it. What it buys, measured with ncu: the
+    ! fp64 division was 50.5 % of jacobi_compute_phi (562.94 -> 278.85 us), and
+    ! removing it moves the kernel from SM-bound to DRAM-bound at 89 % of peak,
+    ! i.e. essentially optimal. fp64 divide is a long software sequence on a GPU
+    ! whose fp64 rate is a fraction of its fp32 rate.
+    !
+    ! Why a last-bit change here is safe: phi is an iterative INCREMENT and this
+    ! is its preconditioner diagonal, so the perturbation is many orders below
+    ! the projection's own residual after niter iterations. The operator stays
+    ! SPD -- the diagonal is strictly positive, only its final bit moves -- and
+    ! the SPD pairing with face_grad_corr is untouched, because the CORRECTION
+    ! metric is not involved. A degenerate all-faces-pinned cell produced
+    ! Inf/NaN before (division by an exactly zero diagonal) and still does, now
+    ! via 1/0; the failure mode is unchanged in kind.
+    real(C_DOUBLE), allocatable :: rdenom(:,:,:,:)
 
     ! Does this case have any 2:1 interface face? Face kinds come from the leaf
     ! table and never change during a run, so the answer is computed once and
@@ -154,7 +172,7 @@ contains
 
         t0 = prof_tic()
         call allocate_phi(blk)
-        call allocate_pdenom(blk)
+        call allocate_rdenom(blk)
         if (ps%cheb) call allocate_delta(blk)
 
         ! Per-direction refinement flags ([blocks] refine_dims): a 2:1 face
@@ -195,9 +213,9 @@ contains
         ! (4) apply phi to the pressure and velocity faces, (5) refresh the
         ! velocity (+ pressure on the last iteration) halos for the next
         ! divergence.
-        ! The diagonal is constant across the iterations (see pdenom), so it is
+        ! The diagonal is constant across the iterations (see rdenom), so it is
         ! formed once here rather than inside the loop.
-        call compute_denom(blk, ibm, outLow, outHigh, refd)
+        call compute_rdenom(blk, ibm, outLow, outHigh, refd)
         call prof_toc(proj_prof, PROF_PROJ_SETUP, t0)
 
         do iIter = 1_C_INT, ps%nIter
@@ -308,20 +326,21 @@ contains
 #endif
     end subroutine cheb_combine
 
-    ! Diagonal buffer, same bounds as phi so the two index identically.
-    subroutine allocate_pdenom(blk)
+    ! Reciprocal-diagonal buffer, same bounds as phi so the two index identically.
+    subroutine allocate_rdenom(blk)
         type(block_set_type), intent(in) :: blk
-        if (.not. allocated(pdenom)) then
-            allocate(pdenom(lbound(phi,1):ubound(phi,1), lbound(phi,2):ubound(phi,2), &
+        if (.not. allocated(rdenom)) then
+            allocate(rdenom(lbound(phi,1):ubound(phi,1), lbound(phi,2):ubound(phi,2), &
                             lbound(phi,3):ubound(phi,3), blk%nBlocks))
-            pdenom = 0.0d0
+            rdenom = 0.0d0
 #ifdef USE_OPENMP_OFFLOAD
-            !$omp target enter data map(to: pdenom)
+            !$omp target enter data map(to: rdenom)
 #endif
         end if
-    end subroutine allocate_pdenom
+    end subroutine allocate_rdenom
 
-    ! The projection diagonal: each face's pressure-gradient metric, summed.
+    ! The RECIPROCAL projection diagonal: each face's pressure-gradient metric,
+    ! summed, then inverted.
     ! face_grad returns 0 for a pinned wall face, the coarse-fine gradient 1/d
     ! for a 2:1 interface face (the symmetric composite stencil), and the regular
     ! 1/h otherwise. An OUTLET physical face counts 2*d1f (face_grad_denom): its
@@ -329,10 +348,10 @@ contains
     ! the matching correction in jacobi_apply uses the regular d1f against the
     ! mirrored ghost. Keep the pair consistent: SPD lives there.
     !
-    ! Called ONCE per substage (see the pdenom declaration). The expression is
-    ! the one jacobi_compute_phi used to carry inline, moved verbatim so the
-    ! stored value is bit-identical.
-    subroutine compute_denom(blk, ibm, outLow, outHigh, refd)
+    ! Called ONCE per substage (see the rdenom declaration), and stored inverted
+    ! so the iteration kernel multiplies rather than divides.
+
+    subroutine compute_rdenom(blk, ibm, outLow, outHigh, refd)
         type(block_set_type), intent(in) :: blk
         type(ibm_type), intent(in) :: ibm
         logical(C_BOOL), intent(in) :: outLow(3), outHigh(3), refd(3)
@@ -347,7 +366,7 @@ contains
         !$omp target teams distribute parallel do collapse(4) &
         !$omp& map(to: nx, ny, nz, outLow(1:3), outHigh(1:3), refd(1:3), &
         !$omp& blk%physLow, blk%physHigh, blk%d1x, blk%d1y, blk%d1z, ibm%mu) &
-        !$omp& map(tofrom: pdenom) &
+        !$omp& map(tofrom: rdenom) &
         !$omp& private(i,ip,j,jp,k,kp,b, &
         !$omp& mu_u_i,mu_u_ip,mu_v_j,mu_v_jp,mu_w_k,mu_w_kp)
 #endif
@@ -361,13 +380,13 @@ contains
                     mu_v_j  = ibm%mu(i,j,k,VAR_V,b);  mu_v_jp = ibm%mu(i,jp,k,VAR_V,b)
                     mu_w_k  = ibm%mu(i,j,k,VAR_W,b);  mu_w_kp = ibm%mu(i,j,kp,VAR_W,b)
 
-                    pdenom(i,j,k,b) = &
+                    rdenom(i,j,k,b) = 1.0d0/( &
                             (face_grad_denom(blk%physLow(1,b), i == 1_C_INT, blk%d1x(i,VAR_U,b), outLow(1), refd(1))*mu_u_i &
                            + face_grad_denom(blk%physHigh(1,b), i == nx, blk%d1x(ip,VAR_U,b), outHigh(1), refd(1))*mu_u_ip)*blk%d1x(i,VAR_P,b) &
                           + (face_grad_denom(blk%physLow(2,b), j == 1_C_INT, blk%d1y(j,VAR_V,b), outLow(2), refd(2))*mu_v_j &
                            + face_grad_denom(blk%physHigh(2,b), j == ny, blk%d1y(jp,VAR_V,b), outHigh(2), refd(2))*mu_v_jp)*blk%d1y(j,VAR_P,b) &
                           + (face_grad_denom(blk%physLow(3,b), k == 1_C_INT, blk%d1z(k,VAR_W,b), outLow(3), refd(3))*mu_w_k &
-                           + face_grad_denom(blk%physHigh(3,b), k == nz, blk%d1z(kp,VAR_W,b), outHigh(3), refd(3))*mu_w_kp)*blk%d1z(k,VAR_P,b)
+                           + face_grad_denom(blk%physHigh(3,b), k == nz, blk%d1z(kp,VAR_W,b), outHigh(3), refd(3))*mu_w_kp)*blk%d1z(k,VAR_P,b))
                 end do
             end do
         end do
@@ -375,7 +394,7 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
 #endif
-    end subroutine compute_denom
+    end subroutine compute_rdenom
 
     ! Jacobi step 1: phi(i,j,k) = -omega * div / denom for every interior cell,
     ! from the frozen velocity. denom is the projection diagonal (sum of the
@@ -398,7 +417,7 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do collapse(4) &
         !$omp& map(to: omega, nx, ny, nz, blk%d1x, blk%d1y, blk%d1z) &
-        !$omp& map(tofrom: phi, blk%q, pdenom) &
+        !$omp& map(tofrom: phi, blk%q, rdenom) &
         !$omp& private(i,ip,j,jp,k,kp,b,div)
 #endif
         do b = 1_C_INT, nBlocks
@@ -411,9 +430,10 @@ contains
                         + (blk%q(i,jp,k,VAR_V,b)-blk%q(i,j,k,VAR_V,b))*blk%d1y(j,VAR_P,b) &
                         + (blk%q(i,j,kp,VAR_W,b)-blk%q(i,j,k,VAR_W,b))*blk%d1z(k,VAR_P,b)
 
-                    ! Same division against the same diagonal value as before;
-                    ! compute_denom just formed it once instead of niter times.
-                    phi(i,j,k,b) = -omega*div/pdenom(i,j,k,b)
+                    ! Multiply by the stored RECIPROCAL: see the rdenom
+                    ! declaration for why this is not bit-identical to a divide
+                    ! and why that is the right trade here.
+                    phi(i,j,k,b) = -omega*div*rdenom(i,j,k,b)
                 end do
             end do
         end do
