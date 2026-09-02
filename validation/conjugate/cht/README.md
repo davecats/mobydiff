@@ -558,3 +558,90 @@ the isoQ edge (3.97 vs 4.29 at y⁺ 0.75, −8 %) and our K = 100 wall on the is
 edge (peak 4.82 vs 5.78, −17 %) — the same ≈20 % peak deficit the conjugate
 case shows, uniform across the sweep, which is the bulk-heating thermal problem
 rather than anything K-dependent.
+
+---
+
+# Campaign 4 — LIKE-FOR-LIKE: Kasagi's source at Re_tau = 149
+
+Campaigns 1–3 left two structural differences from Flageul et al., and the
+bracketing in campaign 3 said those differences were the whole residual. This
+campaign removes **both at once** and tests that claim.
+
+* **The source.** `[scalar.N] source_type = velocity` implements Kasagi, Tomita
+  & Kuroda's fully-developed channel source. For a uniform wall flux the mean
+  temperature rises linearly in x, so writing `T = beta x + theta` with theta
+  homogeneous in x turns `u.grad T` into `beta u + u.grad theta`: the extra
+  term is proportional to the **instantaneous** streamwise velocity, not the
+  mean. The mean flux then follows the CUMULATIVE FLOW RATE — their profile
+  exactly, where campaign 3's uniform source only approximated it (measured:
+  the Kasagi flux sits 3–19 % above the linear one).
+* **The Reynolds number.** `re = 149`, matching theirs. The case file is
+  re-prepared at that Re; verified dataset by dataset that the geometry
+  (`blocks`, `dwall_blocks`, node lines) is IDENTICAL and only the coefficients
+  move, by exactly 180/149.
+
+## Result
+
+60 000 statistics steps (t = 36 → 127, ~16 000 wall units), local RTX 3060.
+
+| | ours | Flageul | |
+|---|---|---|---|
+| theta_tau, kappa_s-independent | 0.994–1.006 | — | spread 1.16 % |
+| J(centreline) | +0.0002 | 0 | |
+| ⟨θ'²⟩ at y⁺ 0.62 (matched height) | 1.38 | 1.24 | +12 % |
+| near-wall peak, K = 1 | 5.85 | 6.208 | **−6 %** |
+| **full profile, 0.62 < y⁺ < 137** | | | **rms 0.32 = 5.1 % of their peak** |
+| isoQ bracket at y⁺ 0.62 | 4.42 | 4.30 | +3 % |
+| isoT bracket, at its peak | 5.69 | 5.78 | −2 % |
+| wall/peak, K = 1 | 0.236 | 0.199 | +19 % |
+
+**The full-profile agreement across the three campaigns is 2.02 → 0.83 →
+0.32**, i.e. 32.5 % → 13.4 % → **5.1 %** of their peak. Removing the two
+structural differences removed most of the residual, which is what campaign 3's
+bracketing predicted and is the point of running this case. Both ideal brackets
+now agree to 3 % and 2 %, so the agreement is not specific to K = 1.
+
+## What is left
+
+The residual is a slightly FLATTER near-wall profile: +12 % at the wall against
+−6 % at the peak, i.e. wall/peak +19 %. The most likely remaining cause is
+wall-normal RESOLUTION — Δy⁺ = 1.24 here against their 0.49. They can afford
+0.49 because their wall-normal diffusion is Crank–Nicolson; ours is fully
+explicit, so Δy⁺ is capped by the diffusive stability limit. That is the same
+constraint recorded at the end of the y-refinement study, and it is now the
+single identified obstacle to closing the comparison further — the strongest
+argument in this whole campaign for implicit (or direction-split implicit)
+diffusion.
+
+Secondary: our solid is d⁺ = 89 against their 149, so our wall clips more of
+the low-frequency interface response. That damps θ'_wall, i.e. it has the
+WRONG SIGN to explain a +12 % wall value, so it is not the leading candidate.
+
+## Reproducing
+
+```bash
+./run_kasagi.sh ic ; ./run_kasagi.sh develop ; ./run_kasagi.sh stats   # ~16 h
+./check_cht.py thermal kasagi_stats.h5 --source 1.0 --re 149 --kasagi
+./plot_bulk.py            # bulk_vs_constflux.png, all three campaigns
+```
+
+`--kasagi` relabels gate (0) and drops the linear `dJ/dy = S` test, which does
+not apply when the flux follows the flow rate; `J(centreline) = 0` and a
+kappa_s-independent theta_tau still do.
+
+**TWO TRAPS, both found here.**
+
+1. **A restart file's `re` WINS over the ini.** Seeding a Re = 149 run from a
+   Re = 180 snapshot silently runs at 180. It surfaced only because the IBM
+   coefficient file is Re-specific and was then rejected as mismatched —
+   without that cross-check the run would have looked healthy at the wrong
+   Reynolds number. `make_bulk_ic.py --re` now stamps it (and fixes `R_s` in
+   the seed with it).
+2. **The velocity `stats_file` was a HARD-CODED name** in all three cht inis,
+   so this campaign APPENDED its samples to campaign 3's rather than starting
+   fresh, mixing two Reynolds numbers in one file. Now `@PREFIX@_vel.h5`, per
+   run. Campaign 3's velocity statistics were lost this way; they were a
+   diagnostic, not a committed result (their conclusions are recorded above),
+   and the Re = 149 flow is certified from snapshots instead: the exact steady
+   total-stress law holds to 3.0 % over 3 instantaneous fields (campaign 3's
+   0.24 % came from thousands of time samples) with U⁺_c = 18.3.

@@ -264,8 +264,10 @@ def cmd_thermal(a):
     if a.source is not None:
         h = 0.5 * (Y_HI - Y_LO)
         j_exact = a.source * h
-        print(f"\n   (0) bulk heating S = {a.source:g}, h = {h:g}:  "
-              f"theta_tau must be S h = {j_exact:.6f} for every scalar")
+        lab = "Kasagi source beta*u_x" if a.kasagi else f"bulk heating S = {a.source:g}"
+        print(f"\n   (0) {lab}, h = {h:g}:  theta_tau must be "
+              f"{'kappa_s-INDEPENDENT' if a.kasagi else f'S h = {j_exact:.6f}'} "
+              f"for every scalar")
         tt = np.array([r["ttau"] for r in rows])
         rel = np.abs(tt / j_exact - 1.0)
         for r, e in zip(rows, rel):
@@ -285,10 +287,20 @@ def cmd_thermal(a):
         if np.mean(jm * jref) < 0:
             jm = -jm
         dev = float(np.abs(jm - jref).max() / j_exact)
-        print(f"       dJ/dy = S: max|J - S(y_c - y)|/(S h) over the fluid "
-              f"= {dev*100:.2f} %   (J at the centreline "
-              f"{float(jm[np.argmin(abs(yface-yc_mid))]/j_exact):+.4f} S h)")
-        ok &= dev < a.flux_tol_profile
+        jc = float(jm[np.argmin(abs(yface - yc_mid))] / j_exact)
+        if a.kasagi:
+            # dJ/dy = beta<u>, so J follows the cumulative flow rate and sits
+            # ABOVE the linear profile everywhere -- that deviation IS the
+            # Kasagi-vs-uniform difference, not an error. Only the centreline
+            # zero is a test here.
+            print(f"       J(centreline) = {jc:+.5f} S h (must vanish);  the flux "
+                  f"lies {dev*100:.1f} % above the LINEAR profile, which is the "
+                  f"Kasagi-vs-uniform gap, not an error")
+            ok &= abs(jc) < 0.02
+        else:
+            print(f"       dJ/dy = S: max|J - S(y_c - y)|/(S h) over the fluid "
+                  f"= {dev*100:.2f} %   (J at the centreline {jc:+.4f} S h)")
+            ok &= dev < a.flux_tol_profile
 
     # (1) capacity must not touch the mean
     if all(k in by for k in ("k1", "k2", "k3")):
@@ -364,7 +376,8 @@ def cmd_thermal(a):
     # (4) THE LITERATURE COMPARISON
     f = FLAGEUL
     print(f"\n   (4) vs Flageul et al. 2015 (Re_tau {f['re_tau']}, Pr {f['pr']}, "
-          f"their figure 5; our Re_tau 180)")
+          f"their figure 5; our Re_tau {RE:g}"
+          f"{' -- MATCHED' if abs(RE - f['re_tau']) < 1 else ''})")
     print(f"       quantity                          ours      Flageul")
     ref = np.loadtxt(REF_DAT) if os.path.exists(REF_DAT) else None
     if "k1" in by and ref is not None:
@@ -459,7 +472,8 @@ def cmd_thermal(a):
               f"{r['var_wall']/max(r['var_peak'],1e-30):8.4f}  "
               f"{rw/ref[:,1].max():9.4f}")
     if "k1" in by and np.isfinite(by["k1"]["var_outer"]):
-        print(f"       variance surviving at our outer solid face (d+ = 36): "
+        print(f"       variance surviving at our outer solid face (d+ = "
+              f"{(Y_LO)*RE:.0f}, theirs 149): "
               f"{by['k1']['var_outer']:.3g}  ({100*by['k1']['var_outer']/max(by['k1']['var_wall'],1e-30):.1f} %"
               f" of the interface value) -- their d+ = 149 wall has 1e-3 of it at y+ = -77")
 
@@ -483,6 +497,11 @@ def main():
     p.add_argument("--dump", default=None)
     p.add_argument("--mean-tol", type=float, default=5e-3)
     p.add_argument("--collapse-tol", type=float, default=0.10)
+    p.add_argument("--kasagi", action="store_true",
+                   help="the source is Kasagi's beta*u_x, so the mean flux "
+                        "follows the CUMULATIVE FLOW RATE and the linear "
+                        "dJ/dy = S test does not apply (J(centre) = 0 and a "
+                        "kappa_s-independent theta_tau still do).")
     p.add_argument("--source", type=float, default=None,
                    help="uniform volumetric fluid source S of the BULK-HEATING "
                         "problem (run_bulk.sh). Given, it switches on the two "
@@ -492,6 +511,11 @@ def main():
                         "like-for-like with Flageul instead of noting that ours "
                         "is at the centreline.")
     p.add_argument("--flux-tol", type=float, default=0.02)
+    p.add_argument("--re", type=float, default=None,
+                   help="Re_tau of THIS run, if not 180. It only rescales y+ "
+                        "-- every quantity compared is normalised by theta_tau "
+                        "-- but the near-wall band and the matched-height "
+                        "readings are in y+, so it must be right.")
     p.add_argument("--mean-tol-ref", type=float, default=0.05)
     p.add_argument("--flux-tol-profile", type=float, default=0.05)
     p.add_argument("--interfaces", type=float, nargs=2, default=None,
@@ -499,6 +523,8 @@ def main():
     p.set_defaults(func=cmd_thermal)
 
     a = ap.parse_args()
+    if getattr(a, "re", None):
+        globals()["RE"] = a.re
     if getattr(a, "interfaces", None):
         Y_LO, Y_HI = a.interfaces
         globals()["Y_LO"], globals()["Y_HI"] = Y_LO, Y_HI

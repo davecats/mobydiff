@@ -49,11 +49,12 @@ REF = {k: os.path.join(HERE, f"flageul_fig5a_{k}.dat")
 # series are direct-labelled, which is also what the aqua's contrast WARN asks
 # for.
 C_CONST, C_BULK, C_REF = "#2a78d6", "#1baf7a", "#eb6834"
+C_KAS = "#4a3aa7"           # the like-for-like run: a fourth job, fourth hue
 INK, INK2, MUTED = "#0b0b0b", "#52514e", "#8b8a85"
 SURFACE, GRID = "#fcfcfb", "#e4e3df"
 
 
-def load(path, isc=0):
+def load(path, isc=0, re=RE):
     with h5py.File(path, "r") as f:
         P, y = f["profile"][...], f["coord"][...]
     m = (y > YLO) & (y < YHI)
@@ -63,7 +64,7 @@ def load(path, isc=0):
     var = np.maximum(P[:, NS * isc + SS] - mean ** 2, 0.0)
     # |.| per face: the two wall fluxes point opposite ways under bulk heating
     tt = 0.5 * (abs(P[i0, NS * isc + JLO]) + abs(P[i1, NS * isc + JHI]))
-    yp = np.minimum(y - YLO, YHI - y) * RE
+    yp = np.minimum(y - YLO, YHI - y) * re
     lower = m & (y < 0.5 * (YLO + YHI))
     o = np.argsort(yp[lower])
     return dict(yp=yp[lower][o], var=(var / tt ** 2)[lower][o],
@@ -89,11 +90,17 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--const", default="cht_stats.h5")
     ap.add_argument("--bulk", default="bulk_stats.h5")
+    ap.add_argument("--kasagi", default="kasagi_stats.h5",
+                    help="the LIKE-FOR-LIKE run: Kasagi's beta*u_x source at "
+                         "Re_tau = 149, i.e. both structural differences from "
+                         "Flageul removed at once.")
     ap.add_argument("--vel", default="cht_vel_stats.h5")
     ap.add_argument("--out", default="bulk_vs_constflux.png")
     a = ap.parse_args()
 
     cf, bk = load(a.const), load(a.bulk)
+    # the Kasagi run is at Re_tau = 149, so its y+ uses ITS OWN Re
+    ks = load(a.kasagi, re=149.0) if os.path.exists(a.kasagi) else None
 
     fig, ax = plt.subplots(1, 2, figsize=(11.4, 4.5), facecolor=SURFACE)
     for x in ax:
@@ -112,6 +119,8 @@ def main():
     # ---- (a) the temperature variance, THEIR conjugate case = our k1 -------
     ax[0].plot(cf["yp"], cf["var"], color=C_CONST, lw=2.0, zorder=3)
     ax[0].plot(bk["yp"], bk["var"], color=C_BULK, lw=2.0, zorder=3)
+    if ks is not None:
+        ax[0].plot(ks["yp"], ks["var"], color=C_KAS, lw=2.4, zorder=6)
     if all(os.path.exists(p) for p in REF.values()):
         q, t = np.loadtxt(REF["isoq"]), np.loadtxt(REF["isot"])
         gg = np.logspace(np.log10(max(q[0, 0], t[0, 0])),
@@ -122,10 +131,19 @@ def main():
                            color=C_REF, alpha=0.10, lw=0, zorder=1)
         c = np.loadtxt(REF["conjug"])
         ax[0].plot(c[:, 0], c[:, 1], ls=(0, (6, 2.5)), color=C_REF, lw=2.2, zorder=5)
-    ax[0].annotate("constant flux\npeak 7.07", (75, 7.7), color=C_CONST,
+    ax[0].annotate("constant flux, $Re_\\tau$180\npeak 7.07", (110, 6.6),
+                   xytext=(150, 4.3), color=C_CONST, fontsize=9, ha="center",
+                   fontweight="bold",
+                   arrowprops=dict(arrowstyle="-", color=C_CONST, lw=1.2))
+    ax[0].annotate("bulk heating, $Re_\\tau$180\npeak 4.89", (78, 2.5), color=C_BULK,
                    fontsize=9, ha="center", fontweight="bold")
-    ax[0].annotate("bulk heating\npeak 4.89", (75, 2.7), color=C_BULK,
-                   fontsize=9, ha="center", fontweight="bold")
+    if ks is not None:
+        b = (ks["yp"] > 5) & (ks["yp"] < 40)
+        ax[0].annotate(f"KASAGI source, $Re_\\tau$149, peak {ks['var'][b].max():.2f}\n"
+                       "LIKE-FOR-LIKE: both differences removed",
+                       (19, 5.85), xytext=(46, 8.3), color=C_KAS,
+                       fontsize=9, ha="center", fontweight="bold",
+                       arrowprops=dict(arrowstyle="-", color=C_KAS, lw=1.2))
     ax[0].annotate("Flageul 2015, digitised: dashed =\n"
                    "their conjugate case, peak 6.21;\n"
                    "shaded = their isoT-isoQ brackets",
@@ -142,6 +160,12 @@ def main():
     if os.path.exists(a.vel):
         kyp, kfl = kasagi_flux(a.vel)
         ax[1].plot(kyp, kfl, color=C_REF, lw=2.0, ls=(0, (5, 2)), zorder=4)
+        if ks is not None:
+            ax[1].plot(ks["yp"], np.abs(ks["flux"]), color=C_KAS, lw=2.4, zorder=6)
+            ax[1].annotate("our Kasagi run LANDS on it,\nby construction",
+                           (60, 0.62), xytext=(2.4, 0.20), color=C_KAS, fontsize=9,
+                           ha="center", fontweight="bold",
+                           arrowprops=dict(arrowstyle="-", color=C_KAS, lw=1.2))
         ax[1].annotate("Kasagi source $\\propto u(y)$\n(Flageul's problem)",
                        (30, 0.86), xytext=(3.0, 0.42), color=C_REF, fontsize=9,
                        ha="center", fontweight="bold",
@@ -155,19 +179,21 @@ def main():
     ax[1].set_title("(b)  the flux profile each problem imposes",
                     color=INK, fontsize=11, loc="left", fontweight="bold")
 
-    fig.suptitle("Conjugate heat transfer at an immersed interface, "
-                 "$Re_\\tau=180$, $Pr=0.71$ — the thermal problem sets the "
+    fig.suptitle("Conjugate heat transfer at an immersed interface, $Pr=0.71$ "
+                 "-- the thermal problem sets the "
                  "variance level", color=INK, fontsize=12, fontweight="bold",
                  x=0.012, ha="left", y=0.985)
     fig.text(0.012, 0.005,
-             "Both curves are the same solver, flow, grid and conjugate wall; "
-             "only the thermal problem differs. Flageul's flux profile lies "
-             "between ours, and so does their variance.",
+             "Same solver, grid and conjugate wall throughout; only the thermal problem "
+             "differs. Blue/green BRACKET the reference; PURPLE removes both structural\n"
+             "differences at once -- Kasagi's beta*u_x source AND Re_tau = 149 -- and lands "
+             "on it: full-profile rms 0.32, against 2.02 and 0.83 for the other two.",
              color=MUTED, fontsize=8.5, ha="left")
-    fig.tight_layout(rect=(0, 0.035, 1, 0.945))
+    fig.tight_layout(rect=(0, 0.075, 1, 0.945))
     fig.savefig(a.out, dpi=170, facecolor=SURFACE)
     print(f"{a.out} written")
-    for nm, d in (("constant flux", cf), ("bulk heating ", bk)):
+    for nm, d in ([("constant flux", cf), ("bulk heating ", bk)]
+                  + ([("kasagi Re149", ks)] if ks is not None else [])):
         # the NEAR-WALL peak and the max over the fluid are the same number
         # only when the flux vanishes at the centreline. Print both, always.
         b = (d["yp"] > 5.0) & (d["yp"] < 40.0)
