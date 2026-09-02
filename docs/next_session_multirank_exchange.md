@@ -90,18 +90,44 @@ imbalance, so hiding ~24 ms/step of transfer behind ~280 ms/step of compute is
 the right shape of fix. Ceiling: the 7.2 % of the step in `mpi_wait`, plus part
 of `pack`/`unpack`.
 
-### A0 — feasibility probe FIRST (half a day, no design commitment)
+### A0 — RUN 2026-09-02. IT FAILS. Plan A is CLOSED.
 
-The whole plan rests on one unverified assumption: **that an in-flight
-`Isend`/`Irecv` makes progress while a target kernel is running.** The CPU
-measurement (0.46 GB/s, 25× below shared memory) says transfers there progress
-only inside the `Waitall`; if GPU-to-GPU behaves the same way, an interior/shell
-split buys nothing and the answer is asynchronous progress instead.
+`overheadTest/results_a0probe_2026-09-02.md`. A compute-bound target kernel was
+inserted between the `Isend`/`Irecv` posts and the `MPI_Waitall` (in the
+pre-key-change binary, so the 30 MB rounds are resolvable):
 
-Probe: post the exchange, launch a deliberately long dummy target kernel, then
-`Waitall`, and see whether `mpi_wait` collapses. Ten lines, throwaway, and it
-decides A1–A3. Do not skip it — this session already had one estimate
-(item 1's "5–6 %") invalidated by an assumption about what the code does.
+| | ms/round |
+|---|---|
+| compute-bound work inserted between post and wait | **9.95** |
+| `mpi_wait` without the probe | 0.559 |
+| `mpi_wait` with the probe | **0.611** |
+
+**Nothing was hidden.** The transfer happens inside `MPI_Waitall` and nowhere
+else, so an interior/shell split buys exactly zero. It also retrospectively
+explains why `local_copy` — 0.55 ms/round of device work already sitting
+between post and wait — never hid the 0.56 ms transfer: not DMA contention, no
+progress at all.
+
+No zero-code fallback on this stack: Open MPI 4.1.9a1 (hpcx) exposes only
+`btl_tcp_progress_thread` (TCP, irrelevant intra-node CUDA/UCX) and
+`orte_progress_thread_debug`. The remaining route — `nowait` on every kernel to
+be overlapped plus host-side `MPI_Test` polling — is invasive and fragile under
+nvfortran offload.
+
+**And the prize was already taken by P1.** This plan's ceiling was written as
+"the 7.2 % of the step now in `mpi_wait`". That was the pre-key-change number;
+after the xz key change `mpi_wait` is **0.96 %** of the 2-rank step, while the
+device-local part of the exchange (`local_copy` 7.88 % + `pack` 1.58 % +
+`unpack` 1.40 %) is 10.9 % — 11× larger. **The exchange is now a device-local
+copy problem, not a communication one.**
+
+Three independent reasons not to implement A1–A3, any one sufficient: the
+mechanism does not work, the workaround is invasive with no env fallback, and
+the ceiling is under 1 %. Scope caveat: 2 GPU ranks is the only multi-GPU
+configuration available, and peer traffic grows with rank count — repeat A0 on
+a genuinely many-rank GPU machine before carrying this conclusion there.
+
+The original A1–A3 sketch is kept below for that eventuality.
 
 ### A1 — hide the phi exchange behind `jacobi_apply`
 
