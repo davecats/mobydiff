@@ -58,6 +58,17 @@ module pressure_solver
     ! phi). Allocated only when Chebyshev is enabled.
     real(C_DOUBLE), allocatable :: delta(:,:,:,:)
 
+    ! Projection diagonal, one value per interior cell. It is a function of the
+    ! face kinds, the grid metrics and ibm%mu ONLY -- and update_ibm_mu runs once
+    ! per RK substage, before the projection -- so it is identical across all
+    ! niter iterations and is computed once per substage instead of once per
+    ! iteration. That removes six branchy face_grad_denom calls, the six mu
+    ! loads and ~11 fp64 operations from the per-iteration kernel, which matters
+    ! because jacobi_compute_phi is SM-throughput-bound (ncu: 82 % SM against
+    ! 46 % DRAM, 128 registers, 33 % occupancy) on a GPU whose fp64 rate is a
+    ! small fraction of its fp32 rate.
+    real(C_DOUBLE), allocatable :: pdenom(:,:,:,:)
+
     ! Does this case have any 2:1 interface face? Face kinds come from the leaf
     ! table and never change during a run, so the answer is computed once and
     ! cached. It must be a GLOBAL answer: the red-black path drives a collective
@@ -143,6 +154,7 @@ contains
 
         t0 = prof_tic()
         call allocate_phi(blk)
+        call allocate_pdenom(blk)
         if (ps%cheb) call allocate_delta(blk)
 
         ! Per-direction refinement flags ([blocks] refine_dims): a 2:1 face
@@ -183,11 +195,14 @@ contains
         ! (4) apply phi to the pressure and velocity faces, (5) refresh the
         ! velocity (+ pressure on the last iteration) halos for the next
         ! divergence.
+        ! The diagonal is constant across the iterations (see pdenom), so it is
+        ! formed once here rather than inside the loop.
+        call compute_denom(blk, ibm, outLow, outHigh, refd)
         call prof_toc(proj_prof, PROF_PROJ_SETUP, t0)
 
         do iIter = 1_C_INT, ps%nIter
             t0 = prof_tic()
-            call jacobi_compute_phi(blk, ibm, omega, outLow, outHigh, refd)
+            call jacobi_compute_phi(blk, omega)
             if (ps%cheb) then
                 if (iIter == 1_C_INT) then
                     alpha = 1.0d0/dd
@@ -293,21 +308,35 @@ contains
 #endif
     end subroutine cheb_combine
 
-    ! Jacobi step 1: phi(i,j,k) = -omega * div / denom for every interior cell,
-    ! from the frozen velocity. denom is the projection diagonal (sum of the
-    ! cell's non-pinned face metrics); pinned faces (walls, closed faces) leave
-    ! the diagonal exactly as in the red-black scheme.
-    ! omega: the damping factor. Plain Jacobi passes ps%omega (the increment IS
-    ! phi = -omega*div/denom); Chebyshev passes 1.0 so phi holds the pure
-    ! diagonal-preconditioned residual z = -div/denom (the damping then comes
-    ! from the Chebyshev coefficients).
-    subroutine jacobi_compute_phi(blk, ibm, omega, outLow, outHigh, refd)
-        type(block_set_type), intent(inout) :: blk
+    ! Diagonal buffer, same bounds as phi so the two index identically.
+    subroutine allocate_pdenom(blk)
+        type(block_set_type), intent(in) :: blk
+        if (.not. allocated(pdenom)) then
+            allocate(pdenom(lbound(phi,1):ubound(phi,1), lbound(phi,2):ubound(phi,2), &
+                            lbound(phi,3):ubound(phi,3), blk%nBlocks))
+            pdenom = 0.0d0
+#ifdef USE_OPENMP_OFFLOAD
+            !$omp target enter data map(to: pdenom)
+#endif
+        end if
+    end subroutine allocate_pdenom
+
+    ! The projection diagonal: each face's pressure-gradient metric, summed.
+    ! face_grad returns 0 for a pinned wall face, the coarse-fine gradient 1/d
+    ! for a 2:1 interface face (the symmetric composite stencil), and the regular
+    ! 1/h otherwise. An OUTLET physical face counts 2*d1f (face_grad_denom): its
+    ! phi ghost is MIRRORED, so the flux sensitivity per unit phi_i doubles --
+    ! the matching correction in jacobi_apply uses the regular d1f against the
+    ! mirrored ghost. Keep the pair consistent: SPD lives there.
+    !
+    ! Called ONCE per substage (see the pdenom declaration). The expression is
+    ! the one jacobi_compute_phi used to carry inline, moved verbatim so the
+    ! stored value is bit-identical.
+    subroutine compute_denom(blk, ibm, outLow, outHigh, refd)
+        type(block_set_type), intent(in) :: blk
         type(ibm_type), intent(in) :: ibm
-        real(C_DOUBLE), intent(in) :: omega
         logical(C_BOOL), intent(in) :: outLow(3), outHigh(3), refd(3)
 
-        real(C_DOUBLE) :: denom, div
         real(C_DOUBLE) :: mu_u_i, mu_u_ip, mu_v_j, mu_v_jp, mu_w_k, mu_w_kp
         integer(C_INT) :: i, ip, j, jp, k, kp, b, nBlocks, nx, ny, nz
 
@@ -316,10 +345,10 @@ contains
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do collapse(4) &
-        !$omp& map(to: omega, nx, ny, nz, outLow(1:3), outHigh(1:3), refd(1:3), &
-        !$omp& blk%physLow, blk%physHigh, &
-        !$omp& blk%d1x, blk%d1y, blk%d1z, ibm%mu) map(tofrom: phi, blk%q) &
-        !$omp& private(i,ip,j,jp,k,kp,b,denom,div, &
+        !$omp& map(to: nx, ny, nz, outLow(1:3), outHigh(1:3), refd(1:3), &
+        !$omp& blk%physLow, blk%physHigh, blk%d1x, blk%d1y, blk%d1z, ibm%mu) &
+        !$omp& map(tofrom: pdenom) &
+        !$omp& private(i,ip,j,jp,k,kp,b, &
         !$omp& mu_u_i,mu_u_ip,mu_v_j,mu_v_jp,mu_w_k,mu_w_kp)
 #endif
         do b = 1_C_INT, nBlocks
@@ -332,26 +361,59 @@ contains
                     mu_v_j  = ibm%mu(i,j,k,VAR_V,b);  mu_v_jp = ibm%mu(i,jp,k,VAR_V,b)
                     mu_w_k  = ibm%mu(i,j,k,VAR_W,b);  mu_w_kp = ibm%mu(i,j,kp,VAR_W,b)
 
-                    ! Diagonal: each face's pressure-gradient metric. face_grad
-                    ! returns 0 for a pinned wall face, the coarse-fine gradient
-                    ! 1/d for a 2:1 interface face (the symmetric composite stencil),
-                    ! and the regular 1/h otherwise. An OUTLET physical face counts
-                    ! 2*d1f (face_grad_denom): its phi ghost is MIRRORED, so the
-                    ! flux sensitivity per unit phi_i doubles -- the matching
-                    ! correction in jacobi_apply uses the regular d1f against the
-                    ! mirrored ghost. Keep the pair consistent: SPD lives there.
-                    denom = (face_grad_denom(blk%physLow(1,b), i == 1_C_INT, blk%d1x(i,VAR_U,b), outLow(1), refd(1))*mu_u_i &
+                    pdenom(i,j,k,b) = &
+                            (face_grad_denom(blk%physLow(1,b), i == 1_C_INT, blk%d1x(i,VAR_U,b), outLow(1), refd(1))*mu_u_i &
                            + face_grad_denom(blk%physHigh(1,b), i == nx, blk%d1x(ip,VAR_U,b), outHigh(1), refd(1))*mu_u_ip)*blk%d1x(i,VAR_P,b) &
                           + (face_grad_denom(blk%physLow(2,b), j == 1_C_INT, blk%d1y(j,VAR_V,b), outLow(2), refd(2))*mu_v_j &
                            + face_grad_denom(blk%physHigh(2,b), j == ny, blk%d1y(jp,VAR_V,b), outHigh(2), refd(2))*mu_v_jp)*blk%d1y(j,VAR_P,b) &
                           + (face_grad_denom(blk%physLow(3,b), k == 1_C_INT, blk%d1z(k,VAR_W,b), outLow(3), refd(3))*mu_w_k &
                            + face_grad_denom(blk%physHigh(3,b), k == nz, blk%d1z(kp,VAR_W,b), outHigh(3), refd(3))*mu_w_kp)*blk%d1z(k,VAR_P,b)
+                end do
+            end do
+        end do
+        end do
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp end target teams distribute parallel do
+#endif
+    end subroutine compute_denom
+
+    ! Jacobi step 1: phi(i,j,k) = -omega * div / denom for every interior cell,
+    ! from the frozen velocity. denom is the projection diagonal (sum of the
+    ! cell's non-pinned face metrics); pinned faces (walls, closed faces) leave
+    ! the diagonal exactly as in the red-black scheme.
+    ! omega: the damping factor. Plain Jacobi passes ps%omega (the increment IS
+    ! phi = -omega*div/denom); Chebyshev passes 1.0 so phi holds the pure
+    ! diagonal-preconditioned residual z = -div/denom (the damping then comes
+    ! from the Chebyshev coefficients).
+    subroutine jacobi_compute_phi(blk, omega)
+        type(block_set_type), intent(inout) :: blk
+        real(C_DOUBLE), intent(in) :: omega
+
+        real(C_DOUBLE) :: div
+        integer(C_INT) :: i, ip, j, jp, k, kp, b, nBlocks, nx, ny, nz
+
+        nx = blk%nb(1); ny = blk%nb(2); nz = blk%nb(3)
+        nBlocks = blk%nBlocks
+
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target teams distribute parallel do collapse(4) &
+        !$omp& map(to: omega, nx, ny, nz, blk%d1x, blk%d1y, blk%d1z) &
+        !$omp& map(tofrom: phi, blk%q, pdenom) &
+        !$omp& private(i,ip,j,jp,k,kp,b,div)
+#endif
+        do b = 1_C_INT, nBlocks
+        do k = 1_C_INT, nz
+            do j = 1_C_INT, ny
+                do i = 1_C_INT, nx
+                    ip = i + 1; jp = j + 1; kp = k + 1
 
                     div = (blk%q(ip,j,k,VAR_U,b)-blk%q(i,j,k,VAR_U,b))*blk%d1x(i,VAR_P,b) &
                         + (blk%q(i,jp,k,VAR_V,b)-blk%q(i,j,k,VAR_V,b))*blk%d1y(j,VAR_P,b) &
                         + (blk%q(i,j,kp,VAR_W,b)-blk%q(i,j,k,VAR_W,b))*blk%d1z(k,VAR_P,b)
 
-                    phi(i,j,k,b) = -omega*div/denom
+                    ! Same division against the same diagonal value as before;
+                    ! compute_denom just formed it once instead of niter times.
+                    phi(i,j,k,b) = -omega*div/pdenom(i,j,k,b)
                 end do
             end do
         end do
