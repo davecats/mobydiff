@@ -690,6 +690,12 @@ subroutine apply_grid_axis_value(section, key, value, dns, g, seen, line_no)
         call read_real(value, g%natural_outer_height(dir), line_no)
     case ("subdivided")
         call read_bool(value, g%subdivided(dir), line_no)
+    case ("nodes_file", "node_file", "nodes")
+        ! Read this direction's node line from a file instead of generating
+        ! it. The built-in distributions cluster at the DOMAIN ENDS; a
+        ! conjugate case needs clustering at the two INTERIOR fluid/solid
+        ! interfaces, landing exactly on cell faces.
+        g%nodesFile(dir) = trim(clean_string(value))
     case ("n")
         call read_int(value, dns%globalSize(dir), line_no)
         seen%size(dir) = .true.
