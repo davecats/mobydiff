@@ -1,36 +1,35 @@
 #!/usr/bin/env python3
-"""The conjugate-channel validation figure: mean profiles and variances
-against Flageul et al. (2015).
+"""The conjugate-channel validation figure: OUR LIKE-FOR-LIKE RUN vs Flageul.
 
-    ./plot_cht.py [--out cht_validation.png]
+    ./plot_cht.py [--stats kasagi_stats.h5] [--re 149] [--out cht_validation.png]
 
-THREE PANELS, one question each:
+This shows ONE case of ours -- the like-for-like run: Kasagi's beta*u_x source
+at Re_tau = 149, i.e. the same thermal problem AND the same Reynolds number as
+Flageul et al. (2015). The earlier constant-flux and bulk-heating campaigns
+BRACKETED the reference and are what motivated this one; they are documented in
+README.md and deliberately not drawn here, so that every curve on this figure
+belongs to a single one-to-one comparison.
 
-  (a) theta+(y+)  -- the MEAN, against Kader's correlation. Kader is a
-      published analytic curve, so it is plotted as a curve; it describes the
-      constant-flux wall layer, so it is drawn solid where it applies and
-      dashed beyond.
-  (b) <theta'^2>/theta_tau^2 (y+) -- the VARIANCE, for the K sweep, with
-      Flageul's values as discrete markers.
-  (c) the interface coupling: the wall/near-wall-peak ratio against the
-      wall-normal resolution, which is the quantity that converges to them.
+FOUR PANELS, each a comparison:
 
-HONESTY ABOUT THE REFERENCE. Flageul et al. publish no table; their figure 5
-is a plot. The four values used here -- isoQ wall 4.2, conjugate wall 1.1,
-isoT wall 0, peak 6.3 at y+ ~ 18 -- were read off that figure and are good to
-about +-0.1, NOT to the digits printed. They are therefore drawn as MARKERS
-WITH AN UNCERTAINTY BAR and never as a curve: drawing a reference line through
-four eyeballed points would dress up a reading as data.
+  (a) theta+(y+) against KADER's correlation -- a published analytic curve, so
+      it is drawn as a curve, solid over the wall layer it describes and dashed
+      beyond.
+  (b) the VARIANCE for the kappa_s sweep, against their DIGITISED conjugate
+      curve and the band spanned by their two IDEAL brackets. The headline.
+  (c) the same comparison as a DEVIATION, which is the only way to read a 5 %
+      agreement off a log plot.
+  (d) the interface response against the effusivity K, with their conjugate
+      value and their isoQ asymptote marked -- the sweep is what shows the
+      agreement is not a K = 1 coincidence.
 
-AND THE COMPARISON TRAP THIS FIGURE MAKES VISIBLE. Their thermal problem is
-Kasagi's wall-flux formulation, whose flux falls to zero at the centreline. Two
-of ours are drawn: the CONSTANT-FLUX campaign, whose flux is the same at every
-height so its variance never stops rising, and the BULK-HEATING one (dJ/dy = S),
-whose flux vanishes at the centre as theirs does and which therefore peaks near
-the wall and decays. Flageul lies between them -- see the caption. The first
-pass at this comparison took max() over the whole channel and so compared our
-centreline against their near-wall peak; the shaded band is where the
-constant-flux curves may be read.
+HONESTY ABOUT THE REFERENCE. Flageul et al. tabulate nothing; every reference
+number here is DIGITISED from their figure 5 by digitize_flageul.py and
+cross-validated against the same series in their second panel (0.015 for the
+conjugate line, 0.2-0.4 for the two symbol series). isoT is unusable below
+<T'^2> ~ 0.3, where their symbols are clipped by their own axis -- so that band
+edge is drawn only where it is data, and the exact analytic limit (isoT -> 0 at
+the wall) is used instead of the digitised floor.
 """
 
 from __future__ import annotations
@@ -78,6 +77,7 @@ RAMP = ["#86b6ef", "#3987e5", "#256abf", "#104281"]
 INK, INK2, MUTED = "#0b0b0b", "#52514e", "#8b8a85"
 SURFACE = "#fcfcfb"
 ACCENT = "#eb6834"          # the reference, a different job -> a different hue
+C_US   = "#2a78d6"          # this work, where one curve is drawn
 OTHER  = "#1baf7a"          # the OTHER thermal problem: a third job, third hue
 GRID = "#e4e3df"
 
@@ -123,20 +123,17 @@ def half(d, arr):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--stats", default="cht_stats.h5")
-    ap.add_argument("--bulk", default="bulk_stats.h5",
-                    help="the BULK-HEATING campaign (dJ/dy = S). Drawn beside "
-                         "the constant-flux one wherever the two differ, "
-                         "because Flageul's flux profile lies between them.")
-    ap.add_argument("--yconv", nargs="*", default=["yc1p5_stats.h5", "yc1p0_stats.h5", "yc0p75_stats.h5"])
-    ap.add_argument("--dyp", nargs="*", type=float, default=[1.5, 1.0, 0.75])
+    ap.add_argument("--stats", default="kasagi_stats.h5",
+                    help="the LIKE-FOR-LIKE run: Kasagi source at Re_tau = 149")
+    ap.add_argument("--re", type=float, default=149.0)
     ap.add_argument("--out", default="cht_validation.png")
     a = ap.parse_args()
+    globals()["RE"] = a.re
 
     sweep = load(a.stats)
-    bulk = load(a.bulk) if os.path.exists(a.bulk) else None
-    # the four K values with alpha_s = 1 (a1, k1, a2, a3): one clean decade
-    # ladder, and every one of them converged (see the README's reseed note)
+    ref = np.loadtxt(REF_DAT)
+    isoq, isot = np.loadtxt(REF_ISOQ), np.loadtxt(REF_ISOT)
+    # the four kappa_s = alpha_s cases: one clean decade ladder in K
     show = [("a1", 3, 0.1), ("k1", 0, 1.0), ("a2", 4, 10.0), ("a3", 5, 100.0)]
 
     fig, axg = plt.subplots(2, 2, figsize=(11.6, 8.0), facecolor=SURFACE)
@@ -155,219 +152,151 @@ def main():
     A = ax[0]
     d = sweep[0]
     yp, mean = half(d, d["mean"])
-    thp = (d["mean"][d["i0"]] - mean) / d["ttau"]
+    thp = np.abs(mean - d["mean"][d["i0"]]) / d["ttau"]
     kd = kader(yp) - kader(np.array([yp[0]]))[0]
     A.semilogx(yp, kd, "-", color=ACCENT, lw=2.0, zorder=3)
     A.semilogx(yp[yp > 40], kd[yp > 40], "--", color=ACCENT, lw=2.0, zorder=3)
-    A.semilogx(yp, thp, "-", color=RAMP[1], lw=2.0, zorder=4)
-    A.annotate("constant flux, K = 1", xy=(yp[-1], thp[-1]), xytext=(-4, 6),
-               textcoords="offset points", ha="right", color=RAMP[2], fontsize=9.5)
-    if bulk is not None:
-        db = bulk[0]
-        ypb, mb = half(db, db["mean"])
-        # the bulk-heated fluid is HOTTER than its wall, the opposite
-        # sense; abs() measures both along the direction heat flows and
-        # is exact here because each profile is monotone from its wall.
-        thb = np.abs(mb - db["mean"][db["i0"]]) / db["ttau"]
-        A.semilogx(ypb, thb, "-", color=OTHER, lw=2.0, zorder=4)
-        A.annotate("bulk heating, K = 1", xy=(ypb[-1], thb[-1]), xytext=(-4, -16),
-                   textcoords="offset points", ha="right", color=OTHER, fontsize=9.5)
+    A.semilogx(yp, thp, "-", color=C_US, lw=2.2, zorder=4)
+    A.annotate("this work, $K=1$", xy=(yp[-1], thp[-1]), xytext=(-4, 7),
+               textcoords="offset points", ha="right", color=C_US, fontsize=9.5)
     A.annotate("Kader (1981)", xy=(30, kader(np.array([30.0]))[0] - kader(np.array([yp[0]]))[0]),
-               xytext=(4, -14), textcoords="offset points", color=ACCENT, fontsize=9.5)
-    # measured, not asserted: max|theta+ - Kader| over the whole profile.
-    # Kader is FITTED to channel/pipe data, whose flux decays in the outer
-    # region -- so it matches the bulk-heated channel, not the literally
-    # constant-flux one, which is the reverse of what its derivation suggests.
-    A.annotate("Kader dashed beyond the layer it describes.\n"
-               "Bulk heating follows it to within 4.3 % of the\n"
-               "centreline value; constant flux departs by 34 % — (b) is why.",
-               xy=(0.98, 0.02), xycoords="axes fraction", color=MUTED,
+               xytext=(4, -15), textcoords="offset points", color=ACCENT, fontsize=9.5)
+    dev = np.abs(thp - kd).max() / kd.max()
+    A.annotate(f"Kader dashed beyond the wall layer it describes.\n"
+               f"max departure {100*dev:.1f} % of the centreline value.",
+               xy=(0.98, 0.03), xycoords="axes fraction", color=MUTED,
                fontsize=8, ha="right", va="bottom")
     A.set_xlabel("$y^+$", color=INK2, fontsize=10)
     A.set_ylabel(r"$\theta^+$", color=INK2, fontsize=10)
     A.set_title("(a)  mean temperature", color=INK, fontsize=11, loc="left", pad=8)
 
-    # ---- (b) the LOCAL SLOPE: is the profile logarithmic? -------------------
-    # It is not, and this panel is here because the eye cannot tell on a
-    # semilog plot. In this thermal problem the TOTAL flux is constant by
-    # construction, so dtheta+/dy+ = Pr/(1 + Pr D_t/nu): it equals Pr in the
-    # conduction sublayer, follows 1/(Pr_t kappa y+) only through the log
-    # layer, and then TURNS BACK UP toward the centreline because the eddy
-    # diffusivity falls off there while the flux may not. A logarithmic
-    # profile would keep decreasing as 1/y+.
-    Sx = ax[1]
-    d = sweep[0]
-    yp, mean = half(d, d["mean"])
-    thp_ = (d["mean"][d["i0"]] - mean) / d["ttau"]
-    slope = np.gradient(thp_, yp)
-    ypc, conv = half(d, np.zeros_like(d["mean"]))     # placeholder for shape
-    Sx.loglog(yp, slope, "-", color=RAMP[1], lw=2.0, zorder=5)
-    Sx.axhline(PR, color=MUTED, lw=1.4, ls=":", zorder=3)
-    Sx.loglog(yp[yp > 8], 1.0 / (0.85 * 0.41 * yp[yp > 8]), "--", color=ACCENT,
-              lw=1.8, zorder=4)
-    jmin = int(np.argmin(slope[yp > 8])) + int((yp <= 8).sum())
-    Sx.plot([yp[jmin]], [slope[jmin]], "o", ms=8, color=RAMP[3], mfc=SURFACE,
-            mew=2.0, zorder=6)
-    Sx.annotate(f"minimum at $y^+$ = {yp[jmin]:.0f},\nthen it turns back UP",
-                xy=(yp[jmin], slope[jmin]), xytext=(-6, -34),
-                textcoords="offset points", ha="right", color=RAMP[3], fontsize=8.5)
-    Sx.annotate("$Pr$ = 0.71 (conduction)", xy=(0.55, PR), xytext=(0, 6),
-                textcoords="offset points", color=MUTED, fontsize=8.5)
-    Sx.annotate("$1/(Pr_t\\kappa y^+)$  (logarithmic)", xy=(22, 1/(0.85*0.41*22)),
-                xytext=(-6, -20), textcoords="offset points", ha="right",
-                color=ACCENT, fontsize=8.5)
-    Sx.annotate("constant flux", xy=(2.0, slope[int(np.argmin(np.abs(yp-2.0)))]),
-                xytext=(6, -14), textcoords="offset points", color=RAMP[2], fontsize=9)
-    if bulk is not None:
-        db = bulk[0]
-        ypb, mb = half(db, db["mean"])
-        sb = np.abs(np.gradient(np.abs(mb - db["mean"][db["i0"]]) / db["ttau"], ypb))
-        Sx.loglog(ypb, np.maximum(sb, 2e-3), "-", color=OTHER, lw=2.0, zorder=5)
-        Sx.set_ylim(1.5e-3, 1.4)
-        Sx.annotate("bulk heating: keeps FALLING,\n"
-                    "because $J\\rightarrow0$ at the centre",
-                    xy=(ypb[int(0.82*len(ypb))],
-                        max(sb[int(0.82*len(ypb))], 2e-3)), xytext=(-14, -30),
-                    textcoords="offset points", ha="right", color=OTHER,
-                    fontsize=8.5)
-    Sx.set_xlabel("$y^+$", color=INK2, fontsize=10)
-    Sx.set_ylabel(r"$d\theta^+/dy^+$", color=INK2, fontsize=10)
-    Sx.set_title("(b)  the profile is NOT logarithmic outside the log layer",
-                 color=INK, fontsize=11, loc="left", pad=8)
-    Sx.set_xlim(0.5, 260)
-
-    # ---- (c) the variance, with Flageul's read-off values -------------------
-    B = ax[2]
-    # THE BRACKETS, as a band: their four boundary conditions span isoT (ideal
-    # Dirichlet, the wall kills the fluctuation) to isoQ (ideal Neumann, the
-    # wall follows it freely). Any conjugate wall must lie inside, and the band
-    # is the useful statement -- the two edges separately are not.
-    if os.path.exists(REF_ISOQ) and os.path.exists(REF_ISOT):
-        q, t = np.loadtxt(REF_ISOQ), np.loadtxt(REF_ISOT)
-        gg = np.logspace(np.log10(max(q[0, 0], t[0, 0])),
-                         np.log10(min(q[-1, 0], t[-1, 0])), 400)
-        qv, tv = np.interp(gg, q[:, 0], q[:, 1]), np.interp(gg, t[:, 0], t[:, 1])
-        # Draw the isoT edge only where it is DATA. Below <T\'^2> ~ 0.3 their
-        # '+' symbols are clipped by their own axis, so the digitised values
-        # there are a floor, not a measurement (see digitize_flageul.py).
-        ok = tv >= 0.3
-        B.fill_between(gg[ok], tv[ok], qv[ok], color=ACCENT, alpha=0.10, lw=0, zorder=1)
-        B.loglog(gg, qv, ls=":", color=ACCENT, lw=1.3, zorder=5)
-        B.loglog(gg[ok], tv[ok], ls=":", color=ACCENT, lw=1.3, zorder=5)
-        B.annotate("isoQ", xy=(gg[int(0.62*gg.size)], qv[int(0.62*gg.size)]),
-                   xytext=(0, 7), textcoords="offset points", ha="center",
-                   color=ACCENT, fontsize=8.5, zorder=8)
-        B.annotate("isoT", xy=(gg[int(0.30*gg.size)], tv[int(0.30*gg.size)]),
-                   xytext=(2, -12), textcoords="offset points", ha="center",
-                   color=ACCENT, fontsize=8.5, zorder=8)
+    # ---- (b) THE HEADLINE: the variance sweep vs their curve + brackets -----
+    B = ax[1]
+    gg = np.logspace(np.log10(max(isoq[0, 0], isot[0, 0])),
+                     np.log10(min(isoq[-1, 0], isot[-1, 0])), 400)
+    qv = np.interp(gg, isoq[:, 0], isoq[:, 1])
+    tv = np.interp(gg, isot[:, 0], isot[:, 1])
+    ok = tv >= 0.3          # below this their isoT symbols are axis-clipped
+    B.fill_between(gg[ok], tv[ok], qv[ok], color=ACCENT, alpha=0.10, lw=0, zorder=1)
+    B.loglog(gg, qv, ls=":", color=ACCENT, lw=1.3, zorder=5)
+    B.loglog(gg[ok], tv[ok], ls=":", color=ACCENT, lw=1.3, zorder=5)
+    B.loglog(ref[:, 0], ref[:, 1], ls=(0, (6, 2.5)), color=ACCENT, lw=2.4, zorder=6)
     for (nm, idx, K), c in zip(show, RAMP):
-        d = sweep[idx]
-        yp, v = half(d, d["var"])
-        B.loglog(yp, v, "-", color=c, lw=2.0, zorder=4)
-        B.annotate(f"K = {K:g}", xy=(yp[0], v[0]), xytext=(7, -1),
+        dd = sweep[idx]
+        ypc, v = half(dd, dd["var"])
+        B.loglog(ypc, v, "-", color=c, lw=2.0, zorder=4)
+        B.annotate(f"K = {K:g}", xy=(ypc[0], v[0]), xytext=(8, 0),
                    textcoords="offset points", ha="left", va="center",
-                   color=c, fontsize=9.5, zorder=7)
-    # The SAME wall (K = 1) under the other thermal problem. Flageul's peak
-    # falls between the two curves, which is the whole comparison: their flux
-    # profile lies between a constant one and our linear one.
-    if bulk is not None:
-        db = bulk[0]
-        ypb, vb = half(db, db["var"])
-        B.loglog(ypb, vb, "-", color=OTHER, lw=2.0, zorder=5)
-        B.annotate("bulk heating, K = 1\n(peaks near the wall and\ndecays,"
-                   " as theirs does)",
-                   xy=(150, vb[int(np.argmin(np.abs(ypb - 150)))]),
-                   xytext=(-4, -46), textcoords="offset points", ha="right",
-                   color=OTHER, fontsize=8.5, zorder=7)
-    # THEIR CONJUGATE CASE, as the digitised curve rather than three points
-    if os.path.exists(REF_DAT):
-        r = np.loadtxt(REF_DAT)
-        B.loglog(r[:, 0], r[:, 1], ls=(0, (6, 2.5)), color=ACCENT, lw=2.2, zorder=6)
-        B.annotate("Flageul 2015, digitised:\n"
-                   "dashed = their CONJUGATE case\n"
-                   "dotted band = their IDEAL brackets",
-                   xy=(0.03, 0.97), xycoords="axes fraction", ha="left",
-                   va="top", color=ACCENT, fontsize=8.5, zorder=8)
+                   color=c, fontsize=9.5, zorder=7,
+                   bbox=dict(boxstyle="round,pad=0.12", fc=SURFACE, ec="none",
+                             alpha=0.85))
+    B.annotate("Flageul 2015, digitised:\ndashed = their CONJUGATE case\n"
+               "dotted band = isoT to isoQ,\ntheir two IDEAL brackets",
+               xy=(0.03, 0.97), xycoords="axes fraction", ha="left",
+               va="top", color=ACCENT, fontsize=8.5, zorder=8)
+    # K = 0.1 leaves the band in the CORE. That is documented physics, not a
+    # discrepancy to hide: a near-insulating wall gives the bulk-heated core no
+    # sink for large-scale thermal structure (README, campaign 3). Its WALL
+    # value is the one that compares, and it matches their isoQ to 3 % -- see
+    # panel (d).
+    B.annotate("$K=0.1$ leaves the band in the CORE: a\n"
+               "near-insulating wall gives the core no sink\n"
+               "for large-scale structure. Its WALL value\n"
+               "matches their isoQ to 3 % (panel d).",
+               xy=(0.97, 0.04), xycoords="axes fraction", ha="right",
+               va="bottom", color=MUTED, fontsize=7.8, zorder=8)
     B.set_xlabel("$y^+$", color=INK2, fontsize=10)
     B.set_ylabel(r"$\langle\theta'^2\rangle/\theta_\tau^2$", color=INK2, fontsize=10)
-    B.set_title("(c)  temperature variance", color=INK, fontsize=11, loc="left", pad=8)
-    B.set_ylim(0.03, 16)
+    B.set_title("(b)  temperature variance", color=INK, fontsize=11, loc="left", pad=8)
+    B.set_ylim(0.015, 26)
     B.set_xlim(0.40, 300)
 
-    # ---- (c) the interface coupling vs wall-normal resolution --------------
-    # THE RATIO MUST BE READ AT A MATCHED HEIGHT. Taking each study's own
-    # FIRST CELL compares different y+ -- ours moves with the resolution
-    # (0.75 / 0.5 / 0.375) while theirs sits at 0.49 -- so the ratio appeared
-    # to "converge" onto the reference simply because the sampling point slid
-    # down the rising near-wall curve. Both resolve y+ = 0.75, so read there.
-    C = ax[3]
-    YQ = 0.75
-    dyp, ratio, raw = [], [], []
-    for path, d_ in zip(a.yconv, a.dyp):
-        if not os.path.exists(path):
-            continue
-        s = load(path)[0]
-        ypq, vq = half(s, s["var"])
-        dyp.append(d_)
-        ratio.append(float(np.interp(YQ, ypq, vq)) / s["peak"])
-        raw.append(s["wall"] / s["peak"])
-    if len(dyp):
-        o = np.argsort(dyp)[::-1]
-        dyp = np.array(dyp)[o]; ratio = np.array(ratio)[o]; raw = np.array(raw)[o]
-        C.plot(dyp, ratio, "-o", color=RAMP[2], lw=2.0, ms=8, zorder=4)
-        C.plot(dyp, raw, "--o", color=MUTED, lw=1.4, ms=5, zorder=3)
-        for x_, y_ in zip(dyp, ratio):
-            C.annotate(f"{y_:.4f}", xy=(x_, y_), xytext=(0, 9), textcoords="offset points",
-                       ha="center", color=RAMP[3], fontsize=9)
-        C.annotate("grey: each run's own FIRST CELL — not a fixed\n"
-                   "height (0.75/0.5/0.375), so not comparable",
-                   xy=(0.5, 0.055), xycoords="axes fraction",
-                   ha="center", va="bottom", color=MUTED, fontsize=8)
-    r = np.loadtxt(REF_DAT)
-    ref = float(np.interp(YQ, r[:, 0], r[:, 1])) / r[:, 1].max()
-    C.axhline(ref, color=ACCENT, lw=2.0, zorder=3)
-    C.axhspan(ref * (1 - 0.03), ref * (1 + 0.03), color=ACCENT, alpha=0.12, zorder=1)
-    C.annotate(f"Flageul  {ref:.4f}  (digitised)", xy=(0.03, ref), xycoords=("axes fraction", "data"),
-               xytext=(0, 6), textcoords="offset points", ha="left",
-               color=ACCENT, fontsize=9.5)
-    C.annotate("shaded: $\\pm3$ %", xy=(0.985, 0.90),
-               xycoords="axes fraction", ha="right", va="top",
+    # ---- (c) the same comparison as a DEVIATION ----------------------------
+    # A 5 % agreement is invisible on a log plot; this is where it is read.
+    C = ax[2]
+    d1 = sweep[0]
+    ypc, v = half(d1, d1["var"])
+    lo, hi = max(ref[0, 0], ypc[0]), min(ref[-1, 0], ypc[-1])
+    g = np.logspace(np.log10(lo), np.log10(hi), 300)
+    ours, theirs = np.interp(g, ypc, v), np.interp(g, ref[:, 0], ref[:, 1])
+    rms = np.sqrt(np.mean((ours - theirs)**2))
+    band = 0.05*ref[:, 1].max()
+    C.axhline(0.0, color=ACCENT, lw=2.0, zorder=3)
+    C.axhspan(-band, band, color=ACCENT, alpha=0.10, lw=0, zorder=1)
+    C.semilogx(g, ours - theirs, "-", color=C_US, lw=2.2, zorder=4)
+    C.annotate(f"full-profile rms {rms:.2f}\n= {100*rms/ref[:,1].max():.1f} % of their peak",
+               xy=(0.97, 0.95), xycoords="axes fraction", ha="right", va="top",
+               color=C_US, fontsize=9, fontweight="bold")
+    C.annotate("shaded: $\\pm5$ % of their peak", xy=(0.03, 0.05),
+               xycoords="axes fraction", ha="left", va="bottom",
                color=ACCENT, fontsize=8)
-    C.set_xticks(list(dyp))
-    C.set_xticklabels([f"{x:g}" for x in dyp])
-    C.set_xlim(1.62, 0.63)
-    C.set_xlabel(r"$\Delta y^+$ at the wall   (refining $\rightarrow$)", color=INK2, fontsize=10)
-    C.set_ylabel(r"$\langle\theta'^2\rangle_{wall}\,/\,\langle\theta'^2\rangle_{peak}$",
-                 color=INK2, fontsize=10)
-    C.set_title("(d)  interface coupling at a MATCHED $y^+=0.75$ (constant flux)",
-                color=INK, fontsize=11, loc="left", pad=8)
-    C.set_ylim(0.168, 0.215)
+    C.annotate("the residual is a slightly FLATTER profile:\n"
+               "high at the wall, low at the peak", xy=(0.97, 0.05),
+               xycoords="axes fraction", ha="right", va="bottom",
+               color=MUTED, fontsize=8)
+    C.set_xlabel("$y^+$", color=INK2, fontsize=10)
+    C.set_ylabel(r"$\langle\theta'^2\rangle - {\rm Flageul}$", color=INK2, fontsize=10)
+    C.set_title("(c)  deviation from Flageul, $K=1$", color=INK, fontsize=11,
+                loc="left", pad=8)
+    C.set_ylim(-1.05, 1.05)
 
-    fig.suptitle("Conjugate heat transfer in a turbulent channel, $Re_\\tau=180$, $Pr=0.71$ "
-                 "— against Flageul et al. (2015), $Re_\\tau=149$",
+    # ---- (d) the interface response against the effusivity K ---------------
+    D = ax[3]
+    yq = float(np.minimum(sweep[0]["y"] - YLO, YHI - sweep[0]["y"])[sweep[0]["i0"]] * RE)
+    # The LADDER is the four alpha_s = 1 cases; k2/k3 share K = 10/100 with
+    # a2/a3 at a different alpha_s, so they are the EFFUSIVITY-COLLAPSE
+    # partners and are drawn as separate markers, not joined into the line --
+    # a connected line through a same-K pair would read as a vertical jump.
+    lad = [(np.sqrt(k*c), sweep[i]["wall"]) for nm, i, K in show
+           for _, k, c in [SWEEP[i]]]
+    lad.sort()
+    D.loglog([x for x, _ in lad], [y for _, y in lad], "-o", color=RAMP[2],
+             lw=2.0, ms=8, zorder=4)
+    for nm, i in (("k2", 1), ("k3", 2)):
+        _, k, c = SWEEP[i]
+        D.loglog([np.sqrt(k*c)], [sweep[i]["wall"]], "o", color=RAMP[2],
+                 mfc=SURFACE, mew=2.0, ms=8, zorder=5)
+    D.annotate("hollow: same $K$, different $\\alpha_s$\n"
+               "(the effusivity-collapse spread)", xy=(0.97, 0.05),
+               xycoords="axes fraction", ha="right", va="bottom",
+               color=MUTED, fontsize=8)
+    D.axhline(np.interp(yq, isoq[:, 0], isoq[:, 1]), color=ACCENT, lw=2.0,
+              ls=":", zorder=3)
+    D.annotate("their isoQ ($K\\rightarrow0$ limit)",
+               xy=(0.03, np.interp(yq, isoq[:, 0], isoq[:, 1])),
+               xycoords=("axes fraction", "data"), xytext=(0, 6),
+               textcoords="offset points", color=ACCENT, fontsize=8.5)
+    fc = float(np.interp(yq, ref[:, 0], ref[:, 1]))
+    D.errorbar([1.0], [fc], yerr=[0.05*fc], fmt="D", ms=9, color=ACCENT,
+               mfc=SURFACE, mew=2.0, capsize=3, zorder=6)
+    D.annotate(f"their CONJUGATE case\n$K=1$:  {fc:.2f}", xy=(1.0, fc),
+               xytext=(12, -4), textcoords="offset points", ha="left",
+               color=ACCENT, fontsize=8.5)
+    ours1 = float(sweep[0]["wall"])
+    D.annotate(f"ours {ours1:.2f}  ({100*(ours1/fc-1):+.0f} %)", xy=(1.0, ours1),
+               xytext=(-10, 10), textcoords="offset points", ha="right",
+               color=RAMP[3], fontsize=8.5, fontweight="bold")
+    D.set_xlabel(r"effusivity  $K=\sqrt{\kappa_s C_s}$", color=INK2, fontsize=10)
+    D.set_ylabel(r"$\langle\theta'^2\rangle$ at $y^+=%.2f$" % yq, color=INK2, fontsize=10)
+    D.set_title("(d)  interface response vs effusivity", color=INK, fontsize=11,
+                loc="left", pad=8)
+
+    fig.suptitle("Conjugate heat transfer at an immersed interface, $Re_\\tau=149$, "
+                 "$Pr=0.71$ - one-to-one against Flageul et al. (2015)",
                  color=INK, fontsize=12, x=0.008, ha="left", y=0.985)
     fig.text(0.008, 0.010,
-             "Curves: this work. Dashed orange: Flageul et al.'s conjugate case DIGITISED from their fig. 5 (their paper\n"
-             "tabulates nothing); cross-validated against the same curve in their panel 5b to 0.02. Blue ramp = the K sweep\n"
-             "under CONSTANT FLUX; green = the same K = 1 wall under BULK HEATING. Their Kasagi flux profile lies BETWEEN\n"
-             "the two, and so does their variance: near-wall peak 7.07 / 6.21 (Flageul) / 4.89. The reference is BRACKETED.",
+             "Ours: Kasagi's beta*u_x source at Re_tau = 149 - the SAME thermal problem and the SAME Reynolds number as the reference, so "
+             "every curve here is a\none-to-one comparison. Reference DIGITISED from their fig. 5 (they tabulate nothing), cross-validated against "
+             "their second panel to 0.015.",
              color=MUTED, fontsize=8, ha="left", va="bottom")
-    fig.tight_layout(rect=(0, 0.085, 1, 0.955))
+    fig.tight_layout(rect=(0, 0.045, 1, 0.955))
     fig.savefig(a.out, dpi=170, facecolor=SURFACE)
     print(f"{a.out} written")
-
-    # the table view the contrast WARN obliges
-    rr = np.loadtxt(REF_DAT)
-    print(f"\n  K      <t'2>_wall   <t'2>_nwpeak   wall/peak     "
-          f"(Flageul digitised: peak {rr[:,1].max():.3f} at y+ "
-          f"{rr[int(np.argmax(rr[:,1])),0]:.1f}; at y+0.75 {np.interp(0.75,rr[:,0],rr[:,1]):.3f})")
+    print(f"\n  K       <t'2>_wall (y+ {yq:.2f})   near-wall peak    vs Flageul peak {ref[:,1].max():.3f}")
     for nm, idx, K in show:
-        d = sweep[idx]
-        print(f"  {K:6g}   {d['wall']:10.3f}   {d['peak']:12.3f}   {d['wall']/d['peak']:9.4f}")
-    if len(dyp):
-        print("\n  dy+ at the wall:  " + "  ".join(f"{x:g}" for x in dyp))
-        print("  wall/peak      :  " + "  ".join(f"{r:.4f}" for r in ratio))
-    return 0
+        s = sweep[idx]
+        print(f"  {K:6g}   {s['wall']:16.3f} {s['peak']:16.3f}"
+              f"      ({100*(s['peak']/ref[:,1].max()-1):+.1f} %)")
 
 
 if __name__ == "__main__":

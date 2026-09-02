@@ -622,8 +622,25 @@ WRONG SIGN to explain a +12 % wall value, so it is not the leading candidate.
 ```bash
 ./run_kasagi.sh ic ; ./run_kasagi.sh develop ; ./run_kasagi.sh stats   # ~16 h
 ./check_cht.py thermal kasagi_stats.h5 --source 1.0 --re 149 --kasagi
-./plot_bulk.py            # bulk_vs_constflux.png, all three campaigns
+./plot_cht.py             # cht_validation.png  -- the 4-panel comparison
+./plot_kasagi.py          # kasagi_vs_flageul.png -- flux precondition + variance
 ```
+
+**BOTH FIGURES NOW SHOW ONLY THIS ONE-TO-ONE COMPARISON.** The constant-flux
+and bulk-heating campaigns bracketed the reference and are what motivated this
+run, but they are a different thermal problem, so drawing them beside it
+invites exactly the apples-to-oranges reading this README has had to correct
+twice. They stay documented above and are no longer plotted;
+`bulk_vs_constflux.png` is deleted and `plot_bulk.py` is now `plot_kasagi.py`.
+
+`cht_validation.png`: (a) mean vs Kader, (b) the kappa_s sweep against their
+digitised conjugate curve and isoT-isoQ band, (c) the same comparison as an
+ABSOLUTE deviation -- the only way to read a 5 % agreement off a log plot --
+and (d) the interface response vs effusivity, which is what shows the agreement
+is not a K = 1 coincidence. `kasagi_vs_flageul.png`: (a) the flux profile,
+which is the PRECONDITION -- our measured flux against A*int(<u> dy) from the
+run's own mean velocity, max departure 0.005 -- and (b) the variance on a
+linear axis, where 5 % is actually visible.
 
 `--kasagi` relabels gate (0) and drops the linear `dJ/dy = S` test, which does
 not apply when the flux follows the flow rate; `J(centreline) = 0` and a
