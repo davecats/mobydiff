@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
 """The conjugate-channel validation figure: OUR LIKE-FOR-LIKE RUN vs Flageul.
 
-    ./plot_cht.py [--stats kasagi_stats.h5] [--re 149] [--out cht_validation.png]
+    ./plot_cht.py [--stats flageul_stats.h5] [--re 149] [--interfaces 1.0 3.0]
 
-This shows ONE case of ours -- the like-for-like run: Kasagi's beta*u_x source
-at Re_tau = 149, i.e. the same thermal problem AND the same Reynolds number as
-Flageul et al. (2015). The earlier constant-flux and bulk-heating campaigns
-BRACKETED the reference and are what motivated this one; they are documented in
-README.md and deliberately not drawn here, so that every curve on this figure
-belongs to a single one-to-one comparison.
+This shows ONE case of ours -- the FLAGEUL-MATCHED run: Kasagi's beta*u_x
+source, Re_tau = 149, their grid resolution (dy+ 0.49 -> 4.8, d+ = 149) and
+their outer-wall boundary condition (imposed heat flux). The constant-flux and
+bulk-heating campaigns BRACKETED the reference and the Kasagi/Re_tau-149 run
+closed most of the gap; all three are documented in README.md and deliberately
+not drawn here, so that every curve belongs to a single one-to-one comparison.
+
+The interfaces and Re_tau are OPTIONS, not constants: the earlier campaigns
+sit at 0.6/2.6 and Re_tau 180, and a wrong pair silently shifts every profile
+(they set both the fluid mask and the y+ origin).
 
 FOUR PANELS, each a comparison:
 
@@ -44,8 +48,11 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-RE, PR = 180.0, 0.71
-YLO, YHI = 0.6, 2.6
+# Defaults for the Flageul-MATCHED case (cht149_flageul.ini). The earlier
+# campaigns sat at Re_tau 180 with the interfaces at 0.6/2.6 and a uniform y
+# line; --re and --interfaces cover them.
+RE, PR = 149.0, 0.71
+YLO, YHI = 1.0, 3.0
 NS = 7
 S, SS, US, CLO, JLO, CHI, JHI = range(NS)
 
@@ -53,15 +60,8 @@ S, SS, US, CLO, JLO, CHI, JHI = range(NS)
 SWEEP = [("k1", 1.0, 1.0), ("k2", 1.0, 100.0), ("k3", 1.0, 1.0e4),
          ("a1", 0.1, 0.1), ("a2", 10.0, 10.0), ("a3", 100.0, 100.0)]
 
-# Flageul et al. 2015, figure 5, READ FROM THE PLOT (+-0.1, not digits)
-# The CONJUGATE case is no longer read off by eye: flageul_fig5a_conjug.dat is
-# the digitised black solid curve (digitize_flageul.py, validated against the
-# same curve in their panel 5b to 0.02). Its peak is 6.208 at y+ 17.6 -- and
-# its value at OUR first cell, y+ = 0.75, is 1.270, NOT the 1.1 that reading
-# the curve where it meets the axis suggested: their first point is at
-# y+ = 0.49 and the curve is still climbing there.
-# isoQ/isoT remain eyeballed brackets, so they stay markers with a bar.
-# All three are digitised now (digitize_flageul.py): the conjugate case from
+# All three reference series are DIGITISED (digitize_flageul.py): the conjugate
+# case from
 # its solid line, and the two IDEAL BRACKETS from their symbol series -- isoQ
 # (green x, the K -> 0 limit) and isoT (blue +, the K -> infinity limit). The
 # brackets are good to ~0.2-0.4 in <T'^2> against ~0.015 for the line, because
@@ -123,12 +123,18 @@ def half(d, arr):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--stats", default="kasagi_stats.h5",
-                    help="the LIKE-FOR-LIKE run: Kasagi source at Re_tau = 149")
-    ap.add_argument("--re", type=float, default=149.0)
+    ap.add_argument("--stats", default="flageul_stats.h5",
+                    help="the FLAGEUL-MATCHED run: Kasagi source, Re_tau = 149, "
+                         "their grid resolution and their outer-wall BC")
+    ap.add_argument("--re", type=float, default=RE)
+    ap.add_argument("--interfaces", type=float, nargs=2, default=(YLO, YHI),
+                    help="the two grid-aligned fluid/solid interfaces. They set "
+                         "which rows are fluid AND the y+ origin, so a wrong "
+                         "pair silently shifts every profile.")
     ap.add_argument("--out", default="cht_validation.png")
     a = ap.parse_args()
     globals()["RE"] = a.re
+    globals()["YLO"], globals()["YHI"] = a.interfaces
 
     sweep = load(a.stats)
     ref = np.loadtxt(REF_DAT)

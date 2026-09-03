@@ -72,6 +72,15 @@ FIELD=${FIELD:-20000}
 
 want() { [ "$sel" = all ] || [ "$sel" = "$1" ]; }
 
+# A run is SUCCESSFUL if the solver says so in its own log, not if mpirun
+# returns 0. Teardown can fail long after the physics is finished -- this run
+# lost a whole chained leg to PMIX "NO-PERMISSIONS" errors raised AFTER
+# "main loop ended", with the snapshot already on disk -- so the exit code
+# alone is the wrong test.
+finished() {   # <logfile>
+    grep -q "main loop ended" "$1"
+}
+
 ini() {  # <prefix> <nsteps> <write> <restart> <sample> <flush> <statsfile>
     sed -e "s|@CASE@|$CASE|" -e "s|@PREFIX@|$1|" -e "s|@NSTEPS@|$2|" \
         -e "s|@WRITE@|$3|" -e "s|@RESTART@|$4|" -e "s|@SAMPLE@|$5|" \
@@ -87,7 +96,8 @@ fi
 if want develop; then
     echo "== develop: t = 0 .. ~10 (statistics off)"
     ini Fdev "$DEV_STEPS" "$DEV_STEPS" IC_flageul.h5 0 0 x
-    time mpirun -n "$RANKS" "$BIN" .Fdev.ini > Fdev.log 2>&1 || { tail -15 Fdev.log; exit 1; }
+    time mpirun -n "$RANKS" "$BIN" .Fdev.ini > Fdev.log 2>&1
+    finished Fdev.log || { echo "DEVELOP FAILED"; tail -15 Fdev.log; exit 1; }
     grep -E "seconds_per_step" Fdev.log | tail -1
 fi
 
@@ -95,6 +105,7 @@ if want stats; then
     echo "== statistics"
     rm -f flageul_stats.h5 Fstat_vel.h5
     ini Fstat "$STAT_STEPS" "$FIELD" "Fdev_${DEV_STEPS}.h5" "$SAMPLE" "$FLUSH" flageul_stats.h5
-    time mpirun -n "$RANKS" "$BIN" .Fstat.ini > Fstat.log 2>&1 || { tail -15 Fstat.log; exit 1; }
+    time mpirun -n "$RANKS" "$BIN" .Fstat.ini > Fstat.log 2>&1
+    finished Fstat.log || { echo "STATS FAILED"; tail -15 Fstat.log; exit 1; }
     grep -E "seconds_per_step" Fstat.log | tail -1
 fi

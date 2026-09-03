@@ -662,3 +662,84 @@ kappa_s-independent theta_tau still do.
    and the Re = 149 flow is certified from snapshots instead: the exact steady
    total-stress law holds to 3.0 % over 3 instantaneous fields (campaign 3's
    0.24 % came from thousands of time samples) with U⁺_c = 18.3.
+
+---
+
+# Campaign 5 — FLAGEUL-MATCHED (`cht149_flageul.ini`)  [RUNNING]
+
+Campaign 4 left one identified obstacle: wall-normal resolution. This campaign
+removes it, and the two remaining non-resolution differences with it.
+
+| | Flageul | campaign 4 | **campaign 5** |
+|---|---|---|---|
+| Δy⁺ wall → centre | 0.49 → 4.8 | 1.24 uniform | **0.490 → 4.87** |
+| Δx⁺ | 14.8 | 11.7 | **8.36** |
+| Δz⁺ | 5.1 | 4.18 | **4.18** |
+| d⁺ (solid) | 149 | 89 | **149** |
+| outer solid face | imposed flux | Dirichlet | **imposed flux** |
+
+224³ cells, 343 leaves, nb = 32.
+
+**The y line comes from a file** (`make_ynodes.py` → `ynodes_f149.dat`, read by
+the new `[grid.y] nodes_file`): every built-in distribution clusters at the
+DOMAIN ENDS, and this case needs the two interior fluid/solid interfaces
+resolved AND landing exactly on cell faces. Solid 53 + fluid 118 + solid 53;
+the fluid is a symmetric tanh solved on the REALISED first cell rather than the
+analytic derivative — they differ by 3 % at this stretching, and the realised
+value is what sets both the resolution and the diffusive time-step limit.
+
+**The imposed-flux BC needed no solver code.** `apply_scalar_bc_q`'s
+non-Dirichlet branch is already a general nonzero Neumann, `ghost = interior +
+dn*value`, so `bcValue` is dθ/dy and an imposed flux q is `q/(kappa_s D_f)` —
+per scalar, since kappa_s spans four decades. Measured: J at the outer face is
+**−1.0000 for every scalar**, exactly the prescribed value.
+
+That makes the scalar problem pure Neumann, so the temperature level is free.
+The seed therefore puts **θ = 0 at the interface**, which keeps the
+kappa_s = 0.1 scalar O(10) in the fluid instead of the O(600) the Dirichlet
+version carried — the same physics, far better conditioned for a variance
+computed as ⟨s²⟩ − ⟨s⟩².
+
+## Cost, and why
+
+dt = 3.07e-4 against campaign 4's 1.63e-3: the 0.49 wall spacing costs 6.4× in
+dt, because the explicit diffusive limit is dy². Develop took 80 000 steps
+(12.5 h at 0.561 s/step); the statistics window is 311 000 steps ≈ 48 h for the
+SAME 95.5 time units campaign 4 averaged over. Local RTX 3060.
+
+## Reproducing
+
+```bash
+./make_ynodes.py                                   # the y line
+mpirun -n 8 ../../../build_cpu/moby_prepare .fprep_in.ini cht149_flageul.h5
+./run_flageul.sh ic ; ./run_flageul.sh develop ; ./run_flageul.sh stats
+./check_cht.py thermal flageul_stats.h5 --source 1.0 --re 149 --kasagi \
+    --interfaces 1.0 3.0
+./plot_cht.py ; ./plot_kasagi.py                   # both default to this case
+```
+
+The plot scripts now take `--interfaces`, `--re` and (plot_kasagi) `--source`
+and `--snapshots`, so the earlier campaigns are still reproducible:
+
+```bash
+./plot_cht.py --stats kasagi_stats.h5 --re 149 --interfaces 0.6 2.6
+./plot_kasagi.py --stats kasagi_stats.h5 --interfaces 0.6 2.6 --re 149 \
+    --source 0.064134 --snapshots 'kstat_*0000.h5'
+```
+
+## TWO OPERATIONAL TRAPS, both hit here
+
+1. **A stale binary silently ran a DIFFERENT GRID.** `build_cpu` was rebuilt
+   after `nodes_file` was added and `build_gpu` was not, so the solve ignored
+   the key and fell back to the channel case's natural distribution while
+   `moby_prepare` used the file line. **Nothing caught it**: the
+   coefficient-file check compares lx/ly/lz/re and the block table, but NOT the
+   node lines. It surfaced only as an absurd time step (3.6e-6 instead of
+   3.1e-4). The case file already stores x/y/z_nodes, so the solver could
+   cross-check them at read — **that guard is not implemented**.
+2. **mpirun's exit code is not a success test.** The develop leg finished
+   cleanly, wrote its snapshot, and then failed at MPI teardown with PMIX
+   `NO-PERMISSIONS` errors (a /tmp permissions problem). The driver's
+   `|| exit 1` guard fired on that and the chained statistics leg never
+   started — 12.5 h of correct work sat idle. `run_flageul.sh` now tests for
+   `main loop ended` IN THE LOG instead.

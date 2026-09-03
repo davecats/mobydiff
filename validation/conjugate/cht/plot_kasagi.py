@@ -37,11 +37,13 @@ import matplotlib.pyplot as plt
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                 "..", "..", "scalar"))
 
-RE, PR = 149.0, 0.71                 # the like-for-like run
-YLO, YHI = 0.6, 2.6
+# Defaults for the Flageul-MATCHED case (cht149_flageul.ini); --interfaces,
+# --re and --source cover the earlier campaigns.
+RE, PR = 149.0, 0.71
+YLO, YHI = 1.0, 3.0
 NS = 7
 S, SS, US, CLO, JLO, CHI, JHI = range(NS)
-SOURCE = 0.064134                    # [scalar.N] source of cht149_kasagi.ini
+SOURCE = 0.064631                    # [scalar.N] source of cht149_flageul.ini
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REF = {k: os.path.join(HERE, f"flageul_fig5a_{k}.dat")
@@ -70,7 +72,7 @@ def load(path, isc=0):
                 flux=(P[:, NS * isc + JLO] / tt)[low][o], ttau=tt)
 
 
-def kasagi_shape(pattern="kstat_*0000.h5"):
+def kasagi_shape(pattern="Fstat_*0000.h5"):
     """A*int(<u> dy) from the run's OWN snapshots -- what the source must give."""
     files = sorted(glob.glob(os.path.join(HERE, pattern)))
     if not files:
@@ -102,9 +104,17 @@ def kasagi_shape(pattern="kstat_*0000.h5"):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--stats", default=os.path.join(HERE, "kasagi_stats.h5"))
+    ap.add_argument("--stats", default=os.path.join(HERE, "flageul_stats.h5"))
+    ap.add_argument("--interfaces", type=float, nargs=2, default=(YLO, YHI))
+    ap.add_argument("--re", type=float, default=RE)
+    ap.add_argument("--source", type=float, default=SOURCE)
+    ap.add_argument("--snapshots", default="Fstat_*0000.h5",
+                    help="glob for the run's own snapshots; panel (a) integrates "
+                         "their mean velocity to get the Kasagi flux law")
     ap.add_argument("--out", default=os.path.join(HERE, "kasagi_vs_flageul.png"))
     a = ap.parse_args()
+    globals()["YLO"], globals()["YHI"] = a.interfaces
+    globals()["RE"], globals()["SOURCE"] = a.re, a.source
 
     d = load(a.stats)
     ref = np.loadtxt(REF["conjug"])
@@ -123,7 +133,7 @@ def main():
         x.set_xlabel(r"$y^+$", color=INK2, fontsize=10)
 
     # ---- (a) the flux profile: the precondition ----------------------------
-    ky, kf = kasagi_shape()
+    ky, kf = kasagi_shape(a.snapshots)
     ax[0].semilogx(d["yp"], np.abs(d["flux"]), "-", color=C_US, lw=2.4, zorder=4)
     if ky is not None:
         ax[0].semilogx(ky, kf, ls=(0, (6, 2.5)), color=C_REF, lw=2.2, zorder=5)
