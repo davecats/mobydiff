@@ -380,14 +380,30 @@ def cmd_thermal(a):
           f"{' -- MATCHED' if abs(RE - f['re_tau']) < 1 else ''})")
     print(f"       quantity                          ours      Flageul")
     ref = np.loadtxt(REF_DAT) if os.path.exists(REF_DAT) else None
+    ypw_all = np.minimum(y - Y_LO, Y_HI - y) * RE
+
+    def read_both(row, refdat):
+        """(height, ours, theirs) at the lowest y+ BOTH actually resolve.
+
+        Once our wall spacing beats theirs -- which it does on the
+        Flageul-matched grid, first cell at y+ 0.24 against their first point
+        at 0.49 -- our first cell falls BELOW their data and np.interp
+        silently returns their endpoint. That is the height-mismatch error
+        this comparison has already had to correct twice, arriving from the
+        other side. Clamp to their first point and say which height was used.
+        """
+        yq = max(float(ypw_all[row["i0"]]), float(refdat[0, 0]))
+        o = np.argsort(ypw_all[m])
+        ours = float(np.interp(yq, ypw_all[m][o],
+                               ((row["rms"] / row["ttau"]) ** 2)[m][o]))
+        return yq, ours, float(np.interp(yq, refdat[:, 0], refdat[:, 1]))
+
     if "k1" in by and ref is not None:
         r = by["k1"]
-        ypw_all = np.minimum(y - Y_LO, Y_HI - y) * RE
-        yw = float(ypw_all[r["i0"]])                    # OUR first-cell height
-        rw = float(np.interp(yw, ref[:, 0], ref[:, 1]))
-        print(f"       <theta'^2> at y+ = {yw:.2f} (our first cell, matched)"
-              f"  {r['var_wall']:8.2f}  {rw:9.2f}"
-              f"   ({100*(r['var_wall']/rw-1):+.0f} %)  <- their G = G_2 = 1 case")
+        yw, ourw, rw = read_both(r, ref)
+        print(f"       <theta'^2> at y+ = {yw:.2f} (lowest BOTH resolve)"
+              f"  {ourw:10.2f}  {rw:9.2f}"
+              f"   ({100*(ourw/rw-1):+.0f} %)  <- their G = G_2 = 1 case")
         # the whole profile, which the digitised curve makes possible
         lo, hi = max(ref[0, 0], yw), min(ref[-1, 0], float(ypw_all[m].max()))
         g = np.logspace(np.log10(lo), np.log10(hi), 200)
@@ -401,7 +417,6 @@ def cmd_thermal(a):
               f" % of their peak)")
     # THE BRACKETS, read at the same height as ours. Our K = 0.1 and K = 100
     # walls approach their two IDEAL limits, so these are the right partners.
-    ypw_b = np.minimum(y - Y_LO, Y_HI - y) * RE
     for nm, lab, key in (("a1", "K = 0.1  -> their isoQ", "isoQ"),
                          ("a3", "K = 100 -> their isoT", "isoT")):
         if nm in by and os.path.exists(REF_BRACKET[key]):
@@ -419,11 +434,10 @@ def cmd_thermal(a):
                       f" near-wall points are clipped by their axis and are not"
                       f" usable.)")
                 continue
-            yw = float(ypw_b[by[nm]["i0"]])
-            rv = float(np.interp(yw, b[:, 0], b[:, 1]))
+            yw, ourv, rv = read_both(by[nm], b)
             print(f"       <theta'^2> at y+ {yw:.2f}, {lab:<22}"
-                  f" {by[nm]['var_wall']:8.2f}  {rv:9.2f}"
-                  f"   ({100*(by[nm]['var_wall']/max(rv,1e-9)-1):+.0f} %)"
+                  f" {ourv:8.2f}  {rv:9.2f}"
+                  f"   ({100*(ourv/max(rv,1e-9)-1):+.0f} %)"
                   f"   [peak {b[:,1].max():.2f} at y+ {b[int(np.argmax(b[:,1])),0]:.1f}]")
     # DO NOT average the peak over the sweep. A scalar whose variance still
     # rises to the centreline has no near-wall peak at all, so the band search
@@ -466,10 +480,9 @@ def cmd_thermal(a):
               f"constant-flux campaign this peak is the same quantity as theirs.")
     if "k1" in by and ref is not None:
         r = by["k1"]
-        yw = float((np.minimum(y - Y_LO, Y_HI - y) * RE)[r["i0"]])
-        rw = float(np.interp(yw, ref[:, 0], ref[:, 1]))
+        yw, ourw, rw = read_both(r, ref)
         print(f"       wall/peak at K = 1, both read at y+ = {yw:.2f} "
-              f"{r['var_wall']/max(r['var_peak'],1e-30):8.4f}  "
+              f"{ourw/max(r['var_peak'],1e-30):8.4f}  "
               f"{rw/ref[:,1].max():9.4f}")
     if "k1" in by and np.isfinite(by["k1"]["var_outer"]):
         print(f"       variance surviving at our outer solid face (d+ = "
