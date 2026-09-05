@@ -46,6 +46,11 @@ echo
 # ---------------------------------------------------------------------------
 # 0. Parallel HDF5 (once), with the nvhpc compilers.
 # ---------------------------------------------------------------------------
+# module purge FIRST, exactly as submit.sh does: HoreKa's default Intel
+# toolchain exports FFLAGS="-O2 -xCORE-AVX2", which CMake picks up as
+# CMAKE_Fortran_FLAGS and nvfortran rejects. This runs on the LOGIN node, where
+# build_hdf5.sh compiles with CC=mpicc over nvc and would hit the same wall.
+module purge
 module load toolkit/nvidia-hpc-sdk/25.3
 bash "$CASE_DIR/build_hdf5.sh" "$HDF5_DIR"
 

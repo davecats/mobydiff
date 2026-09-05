@@ -17,17 +17,6 @@
 
 set -euo pipefail
 
-# Strip site toolchain flags: HoreKa's environment exports INTEL flags
-# (e.g. FFLAGS/CFLAGS carrying -xCORE-AVX2) which nvc/nvfortran reject with
-# "Unknown switch". CMake seeds CMAKE_C_FLAGS from CFLAGS, so an inherited
-# value breaks this build exactly as it breaks the solver build. Neither this
-# script nor HDF5 needs them.
-for v in FFLAGS FCFLAGS CFLAGS CXXFLAGS CPPFLAGS LDFLAGS LIBS; do
-    if [ -n "${!v:-}" ]; then
-        echo "unsetting inherited $v=\"${!v}\""
-        unset "$v"
-    fi
-done
 
 HDF5_DIR="${1:-${HDF5_DIR:-$HOME/hdf5}}"
 # HDF5_VERSION is HARDCODED (not read from the environment): a loaded serial-HDF5
@@ -71,7 +60,9 @@ echo "=== HDF5 source: $SRCDIR ==="
 
 # Parallel, C-only, shared. HDF5_ENABLE_PARALLEL needs an MPI C compiler; passing
 # CC=mpicc directly is the simplest route. Fortran/C++/HL/tools/tests/examples off.
-# A cache from a failed configure keeps the flags that failed; start clean.
+# CMake caches the compiler flags on the first configure and reuses them
+# regardless of the environment, so a cache written under the site's Intel
+# defaults survives fixing the modules. Start clean.
 rm -rf cmbuild
 cmake -S "$SRCDIR" -B cmbuild \
     -DCMAKE_C_COMPILER=mpicc \

@@ -112,7 +112,7 @@ and `summary.md` from `collect_profile.py`.
 
 ## Troubleshooting
 
-### `nvfortran-Error-Unknown switch: -xCORE-AVX2` (hit 2026-09-05, fixed)
+### `nvfortran-Error-Unknown switch: -xCORE-AVX2` (hit and fixed 2026-09-05)
 
 CMake's compiler test fails before any solver source is touched:
 
@@ -121,35 +121,45 @@ nvfortran -O2 -xCORE-AVX2 -c .../testFortranCompiler.f
 nvfortran-Error-Unknown switch: -xCORE-AVX2
 ```
 
-`-xCORE-AVX2` is an **Intel** flag. It comes from the site environment, not
-from this repo: HoreKa exports `FFLAGS="-O2 -xCORE-AVX2"`, `sbatch --export=ALL`
-carries it into the job, and `module purge` does **not** clear variables set by
-profile scripts rather than by a module. CMake seeds `CMAKE_Fortran_FLAGS` from
-`FFLAGS` (and `CMAKE_C_FLAGS` from `CFLAGS`), and neither `CMakeLists.txt` nor
-`compile.sh` sets those, so the environment is the only source.
+`-xCORE-AVX2` is an **Intel** flag, and it comes from the site environment, not
+from this repo. HoreKa loads an Intel toolchain by default, which exports
+`FFLAGS="-O2 -xCORE-AVX2"`. CMake seeds `CMAKE_Fortran_FLAGS` from `FFLAGS` (and
+`CMAKE_C_FLAGS` from `CFLAGS`), and neither `CMakeLists.txt` nor `compile.sh`
+pins those, so the environment is the only source.
 
-`submit.sh` and `build_hdf5.sh` now unset `FFLAGS FCFLAGS CFLAGS CXXFLAGS
-CPPFLAGS LDFLAGS LIBS` after the module load and report anything they discard.
-`submit.sh` also **wipes a build directory that has no executable in it**: a
-failed configure leaves a `CMakeCache.txt` holding the bad flags, so reusing it
-would re-apply exactly the poison the resubmission is trying to escape.
+**The fix is `module purge` before `module load`, plus deleting the CMake
+cache.** Both halves are needed, and the second is the one that makes this
+confusing to diagnose:
 
-To recover an already-failed attempt, refresh the package on the cluster and
-resubmit — the pinned solver commit does not change, only these scripts:
+- **`module purge`** removes the Intel environment *coherently* — the flag
+  variables, and equally the `PATH`, `LD_LIBRARY_PATH` and `CPATH` entries that
+  would interfere just as easily. Both `submit.sh` (compute node) and
+  `setup_and_run.sh` (login node, where `build_hdf5.sh` compiles with
+  `CC=mpicc` over `nvc`) now purge first.
+- **Delete the CMake cache.** CMake captures `CMAKE_Fortran_FLAGS` on the
+  **first** configure and reuses the cached value afterwards *regardless of the
+  environment*. So a `build_gpu/` first configured under the Intel defaults
+  keeps `-xCORE-AVX2` even once the modules are right, and the build keeps
+  failing after the environment is fixed. `submit.sh` now wipes a build
+  directory that contains no executable (printing the cached flag line it
+  discards); `build_hdf5.sh` drops its `cmbuild` for the same reason.
+
+Recovery on an already-failed attempt — the pinned solver commit does not
+change, only these scripts:
 
 ```bash
 cd <the package dir>            # a clone: git pull;  rsync'd: re-rsync it
-bash setup_and_run.sh           # re-stages the scripts and resubmits
+rm -rf <CODE_DIR>/build_gpu     # belt and braces; submit.sh does this itself
+bash setup_and_run.sh
 ```
 
-The stale `moby-2to1-code/build_gpu` is removed automatically on the next run;
-delete it by hand only if you want to be certain.
-
-**The general rule this is an instance of:** the solver is built by
-`compile.sh`, which deliberately does not pin optimisation flags, so *any*
-inherited `FFLAGS`/`CFLAGS` silently becomes part of the build. On a new
-machine, check them before the first build — and treat an unexplained flag in
-`CMakeCache.txt` as environmental, not as a repo bug.
+**The general rule this is an instance of:** `compile.sh` deliberately does not
+pin optimisation flags — that is what lets the workstation pre-seed
+`CMAKE_Fortran_FLAGS=-Mnofma` for the bit-exactness gates — so *any* inherited
+`FFLAGS`/`CFLAGS` silently becomes part of the build. On a new machine, purge
+before loading, and treat an unexplained flag in `CMakeCache.txt` as
+environmental rather than as a repo bug. A stale cache will keep it alive long
+after the environment is clean.
 
 ---
 
