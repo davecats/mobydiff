@@ -30,6 +30,21 @@ module purge
 module load toolkit/nvidia-hpc-sdk/25.3
 # cmake (3.26.5) is on PATH by default on HoreKa -- no module needed.
 
+# Strip site toolchain flags from the environment. HoreKa's login environment
+# exports INTEL flags (FFLAGS="-O2 -xCORE-AVX2"), sbatch --export=ALL carries
+# them into the job, and `module purge` does not clear variables set by profile
+# scripts rather than by a module. CMake seeds CMAKE_Fortran_FLAGS from FFLAGS
+# and CMAKE_C_FLAGS from CFLAGS, so nvfortran is handed -xCORE-AVX2 and dies
+# with "Unknown switch" in the compiler-test step, before any of our source is
+# touched. Neither CMakeLists.txt nor compile.sh sets these, so the environment
+# is the only source and unsetting is the whole fix.
+for v in FFLAGS FCFLAGS CFLAGS CXXFLAGS CPPFLAGS LDFLAGS LIBS; do
+    if [ -n "${!v:-}" ]; then
+        echo "unsetting inherited $v=\"${!v}\" (would poison the nvhpc build)"
+        unset "$v"
+    fi
+done
+
 # Parallel (MPI-IO) HDF5, built from source with the same nvhpc toolchain:
 # HoreKa ships only a SERIAL HDF5 module and mobydiff's field I/O is collective.
 export HDF5_ROOT="${HDF5_ROOT:-$HOME/hdf5}"
@@ -46,11 +61,31 @@ export UCX_MEMTYPE_CACHE=n
 export OMP_NUM_THREADS=1
 
 # --- build once, on the compute node (A100 cc80 auto-detected) -------------
+# A build directory without the executable is a FAILED or half-configured
+# build. Its CMakeCache.txt has already captured whatever flags were in the
+# environment at the time, so reusing it re-applies the poison a resubmission
+# is trying to escape. Wipe it and configure clean.
+if [ ! -x "$EXE" ] && [ -d "$CODE_DIR/build_gpu" ]; then
+    echo "=== discarding incomplete build dir $CODE_DIR/build_gpu ==="
+    grep -m1 "^CMAKE_Fortran_FLAGS:" "$CODE_DIR/build_gpu/CMakeCache.txt" 2>/dev/null \
+        | sed 's/^/    cached: /'
+    rm -rf "$CODE_DIR/build_gpu"
+fi
 if [ ! -x "$EXE" ]; then
     echo "=== building the GPU solver in $CODE_DIR ==="
     cd "$CODE_DIR" || exit 1
     echo "commit under test: $(git rev-parse HEAD)"
     git --no-pager log --oneline -1
+    # Fast check that the compiler works as configured, so a bad environment
+    # is reported in seconds with the offending flag rather than as a CMake
+    # compiler-test failure three screens deep.
+    printf 'program t\nend program t\n' > /tmp/moby_fc_check_$$.f90
+    if ! nvfortran ${FFLAGS:-} -o /tmp/moby_fc_check_$$ /tmp/moby_fc_check_$$.f90 2>&1; then
+        echo "ERROR: nvfortran cannot compile a trivial program with FFLAGS='${FFLAGS:-}'." >&2
+        echo "       Clear the site toolchain flags and resubmit." >&2
+        rm -f /tmp/moby_fc_check_$$*; exit 1
+    fi
+    rm -f /tmp/moby_fc_check_$$*
     ./compile.sh gpu || exit 1
 fi
 [ -x "$EXE" ] || { echo "ERROR: build did not produce $EXE" >&2; exit 1; }
