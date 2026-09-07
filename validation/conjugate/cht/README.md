@@ -844,3 +844,90 @@ Two smaller contributions, both real but subordinate:
   at the peak) is read.
 * `cht_validation.png` panel (a) gains the inset described above, so the
   Kader question is answered in the figure rather than only in this file.
+
+---
+
+# The RAW data (2026-09-07) — the comparison stops being digitised
+
+Flageul et al. publish their statistics: **repo.ijs.si/CFLAG/incompact3d**,
+folder `gxay`. `fetch_flageul.py` downloads and converts them (Scilab
+`write_csv` writes COMMA decimals and TAB separators, which numpy reads as
+nonsense if you let it). Column meanings are taken from their `conjug.sce`
+lines 494–502, not guessed.
+
+Their naming maps onto ours as: `gXaY` has X = G = fluid-to-solid DIFFUSIVITY
+ratio → α_s = 1/G, and Y = 1/G₂ with G₂ the solid-to-fluid CONDUCTIVITY ratio →
+κ_s = 1/Y. So C_s = G/Y and K = √G/Y. **Their `g1a1` is κ_s = α_s = C_s = K = 1
+— exactly our k1.**
+
+## FIRST: the digitisation was biased, and every earlier "we are low" was overstated
+
+| | digitised (mine) | RAW (theirs) |
+|---|---|---|
+| peak ⟨T'²⟩ | 6.208 | **5.941** |
+| at y⁺ 0.5 | 1.200 | **1.142** |
+
+Systematically HIGH: rms 0.15, **bias +0.13**, 2.5 % of the peak. The
+line-tracing centroid sat above the curve. Consequence: campaign 5's headline
+"−4 % on the peak" was measured against a curve that was itself 4.5 % high —
+the true figure is **+0.7 %**. The `.dat` files stay in the tree for
+provenance; **nothing should be compared against them now.**
+
+## The detailed comparison (`compare_flageul.py`, `flageul_detail.png`)
+
+Ours vs their g1a1, over 0.5 < y⁺ < 137:
+
+| quantity | rms | max | bias | % of that quantity's peak |
+|---|---|---|---|---|
+| U⁺ | 0.095 | 0.179 | +0.061 | **0.5 %** |
+| θ⁺ | 0.165 | 0.287 | −0.158 | **1.1 %** |
+| u'² | 0.066 | 0.114 | −0.054 | **1.0 %** |
+| v'² | 0.014 | 0.031 | −0.009 | **2.2 %** |
+| w'² | 0.046 | 0.080 | −0.037 | **4.3 %** |
+| −u'v' | 0.004 | 0.009 | −0.003 | **0.6 %** |
+| u'T' | 0.067 | 0.146 | −0.039 | **1.1 %** |
+| **T'²** | 0.130 | 0.186 | +0.034 | **2.2 %** |
+
+This is the first time the VELOCITY has been checked against a trustworthy
+reference — the in-repo `channel_kmm180_stats.h5` is this solver's own
+unconverged output (see the warning above). u'², v'², w'² and −u'v' agree to
+0.6–4.3 %, so the flow is right, and the thermal agreement is not resting on a
+compensating error.
+
+## THEIR OWN DATA DOES NOT COLLAPSE ON THE EFFUSIVITY
+
+Their nine cases include two pairs at equal K:
+
+* K = 1.414: `g05a05` 0.781 vs `g2a1` 0.888 — **14 % apart**
+* K = 0.707: `g05a1` 1.466 vs `g2a2` 1.561 — **6.5 % apart**
+
+So "same effusivity ⇒ same interface response" is not exact in the REFERENCE
+either. `check_cht.py` gate (2) has been failing a 10 % tolerance with 22 %/38 %
+and calling it documented physics; this is the documentation. Our spread is
+larger because our κ_s spans four decades where theirs spans a factor 4.
+
+Across their nine cases our interface variance is **mean +1.0 %, rms 8.0 %,
+max 13 %** — scatter comparable to their own non-collapse.
+
+## THE ONE REAL DISCREPANCY: the variance INSIDE the solid
+
+| depth −y⁺ | ours | theirs | ratio |
+|---|---|---|---|
+| 0 (interface) | 1.147 | 1.042 | 1.10 |
+| 20 | 0.177 | 0.110 | 1.6 |
+| 77 | 0.038 | 0.011 | 3.4 |
+| 145 (outer face) | 0.059 | 0.007 | **8.0** |
+
+Ours decays too slowly and then **turns back up** at the insulated outer face.
+Two hypotheses are already eliminated:
+
+* **not a charging transient** — the solid MEAN is at its exact steady linear
+  profile, slope 0.70986 against their 0.71019 (**0.05 %**);
+* **not the boundary condition or the thickness** — both are matched now.
+
+What is left: our solid is 2nd-order FD on a grid coarsening to Δy⁺ 8.4, where
+theirs is SPECTRAL wall-normal on a Chebyshev grid clustered at both ends; and
+our averaging is 14 200 wall units against their 29 000, which their §2 says
+was chosen specifically to converge the deep solid, where correlation times are
+longest. The upturn at the Neumann face looks like a reflected low-frequency
+mode that has not been averaged out. **Open.**
