@@ -1,0 +1,9 @@
+job          : 5133554 on hkn0417.localdomain
+date         : 2026-09-07 06:47:55 CEST
+nodes        : 4  (hkn[0417,0436,0620,0622])
+commit       : a11e355a47e1535db4f3e9bae0dcc489eaec3567
+commit_subj  : a11e355 Store the reciprocal diagonal and multiply. -4.3% of the step, NOT bit-exact
+dirty        : 0 tracked changes
+compiler     : nvfortran 25.3-0 64-bit target on x86-64 Linux -tp icelake-server 
+hdf5_root    : /home/hk-project-exasim/xt8786/hdf5
+gpu          : NVIDIA A100-SXM4-40GB

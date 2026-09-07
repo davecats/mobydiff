@@ -1,0 +1,62 @@
+=== building the GPU solver in /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-code ===
+commit under test: a11e355a47e1535db4f3e9bae0dcc489eaec3567
+a11e355 Store the reciprocal diagonal and multiply. -4.3% of the step, NOT bit-exact
+MPI Fortran module dir: /hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+HDF5_ROOT: /home/hk-project-exasim/xt8786/hdf5
+-- The Fortran compiler identification is NVHPC 25.3.0
+-- The C compiler identification is NVHPC 25.3.0
+-- Detecting Fortran compiler ABI info
+-- Detecting Fortran compiler ABI info - failed
+-- Check for working Fortran compiler: /software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/compilers/bin/nvfortran
+-- Check for working Fortran compiler: /software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/compilers/bin/nvfortran - broken
+CMake Error at /usr/share/cmake/Modules/CMakeTestFortranCompiler.cmake:59 (message):
+  The Fortran compiler
+
+    "/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/compilers/bin/nvfortran"
+
+  is not able to compile a simple test program.
+
+  It fails with the following output:
+
+    Change Dir: /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-code/build_gpu/CMakeFiles/CMakeScratch/TryCompile-DBPCTi
+    
+    Run Build Command(s):/usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_c7027/fast && /usr/bin/gmake  -f CMakeFiles/cmTC_c7027.dir/build.make CMakeFiles/cmTC_c7027.dir/build
+    gmake[1]: Entering directory '/hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-code/build_gpu/CMakeFiles/CMakeScratch/TryCompile-DBPCTi'
+    Building Fortran object CMakeFiles/cmTC_c7027.dir/testFortranCompiler.f.o
+    /software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/compilers/bin/nvfortran   -O2 -xCORE-AVX2  -c /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-code/build_gpu/CMakeFiles/CMakeScratch/TryCompile-DBPCTi/testFortranCompiler.f -o CMakeFiles/cmTC_c7027.dir/testFortranCompiler.f.o
+    nvfortran-Error-Unknown switch: -xCORE-AVX2
+    gmake[1]: *** [CMakeFiles/cmTC_c7027.dir/build.make:78: CMakeFiles/cmTC_c7027.dir/testFortranCompiler.f.o] Error 1
+    gmake[1]: Leaving directory '/hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-code/build_gpu/CMakeFiles/CMakeScratch/TryCompile-DBPCTi'
+    gmake: *** [Makefile:127: cmTC_c7027/fast] Error 2
+    
+    
+
+  
+
+  CMake will not be able to correctly generate this project.
+Call Stack (most recent call first):
+  CMakeLists.txt:3 (project)
+
+
+-- Configuring incomplete, errors occurred!
+
+============================= JOB FEEDBACK =============================
+
+Job ID: 5130143
+Cluster: hk
+User/Group: xt8786/hk-project-exasim
+Account: hk-project-exasim
+State: FAILED (exit code 1)
+Partition: accelerated
+Nodes: 4
+Cores per node: 80
+Nodelist: hkn[0523,0602,0809,0812]
+CPU Utilized: 00:00:01
+CPU Efficiency: 0.00% of 06:56:00 core-walltime
+Job Wall-clock time: 00:01:18
+Starttime: Sat Sep  5 08:36:39 2026
+Endtime: Sat Sep  5 08:37:57 2026
+Memory Utilized: 35.92 MB
+Memory Efficiency: 0.00% of 1.90 TB (485.84 GB/node)
+Energy Consumed: 406727 Joule / 112.979722222222 Watthours
+Average node power draw: 5214.44871794872 Watt
