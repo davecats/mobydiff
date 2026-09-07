@@ -120,8 +120,17 @@ def main():
     ref = np.loadtxt(REF["conjug"])
     isoq, isot = np.loadtxt(REF["isoq"]), np.loadtxt(REF["isot"])
 
-    fig, ax = plt.subplots(1, 2, figsize=(11.4, 4.6), facecolor=SURFACE)
-    for x in ax:
+    # Panel (b) gets a RESIDUAL STRIP under it, sharing the x axis. Two curves
+    # that agree to 3 % are indistinguishable by eye on the main axes -- which
+    # is the point, but it also means the figure shows the agreement without
+    # letting anyone judge its SIZE or its SHAPE. The strip does both, and it
+    # is where the sign structure (high at the wall, low at the peak) is read.
+    fig = plt.figure(figsize=(11.4, 5.6), facecolor=SURFACE)
+    gs = fig.add_gridspec(2, 2, height_ratios=[3.0, 1.0], hspace=0.08,
+                          wspace=0.22)
+    ax = [fig.add_subplot(gs[:, 0]), fig.add_subplot(gs[0, 1])]
+    res = fig.add_subplot(gs[1, 1], sharex=ax[1])
+    for x in list(ax) + [res]:
         x.set_facecolor(SURFACE)
         for s in ("top", "right"):
             x.spines[s].set_visible(False)
@@ -130,7 +139,11 @@ def main():
         x.tick_params(colors=INK2, labelsize=9)
         x.grid(True, color=GRID, lw=0.6, zorder=0)
         x.set_axisbelow(True)
-        x.set_xlabel(r"$y^+$", color=INK2, fontsize=10)
+    ax[0].set_xlabel(r"$y^+$", color=INK2, fontsize=10)
+    res.set_xlabel(r"$y^+$", color=INK2, fontsize=10)
+    ax[1].tick_params(labelbottom=False)
+    for x in list(ax) + [res]:
+        x.set_xscale("log")
 
     # ---- (a) the flux profile: the precondition ----------------------------
     ky, kf = kasagi_shape(a.snapshots)
@@ -174,9 +187,19 @@ def main():
                    f"shaded: isoT-isoQ brackets",
                    xy=(0.04, 0.80), xycoords="axes fraction", ha="left",
                    va="top", color=C_REF, fontsize=9, fontweight="bold")
-    ax[1].annotate(f"full-profile rms {rms:.2f} = {100*rms/ref[:,1].max():.1f} % of their peak",
-                   xy=(0.5, 0.03), xycoords="axes fraction", ha="center",
-                   va="bottom", color=INK2, fontsize=9, fontweight="bold")
+    # ---- the residual strip ------------------------------------------------
+    band = 0.05 * ref[:, 1].max()
+    res.axhspan(-band, band, color=C_REF, alpha=0.10, lw=0, zorder=1)
+    res.axhline(0.0, color=C_REF, lw=1.8, zorder=3)
+    res.semilogx(g, np.interp(g, d["yp"], d["var"]) - np.interp(g, ref[:, 0], ref[:, 1]),
+                 "-", color=C_US, lw=2.0, zorder=4)
+    res.set_ylim(-0.62, 0.62)
+    res.set_yticks([-0.5, 0.0, 0.5])
+    res.set_ylabel("ours $-$ theirs", color=INK2, fontsize=8.5)
+    res.annotate(f"rms {rms:.2f} = {100*rms/ref[:,1].max():.1f} % of their peak;"
+                 f"  shaded $\\pm5$ %",
+                 xy=(0.5, 0.06), xycoords="axes fraction", ha="center",
+                 va="bottom", color=INK2, fontsize=8, fontweight="bold")
     ax[1].set_xlim(0.45, 160)
     ax[1].set_ylim(0, 7.0)
     ax[1].set_ylabel(r"$\langle\theta'^2\rangle/\theta_\tau^2$", color=INK2, fontsize=10)
@@ -188,12 +211,17 @@ def main():
                  "Flageul et al. (2015)",
                  color=INK, fontsize=12, fontweight="bold", x=0.012, ha="left",
                  y=0.985)
-    fig.text(0.012, 0.006,
-             "Same thermal problem (Kasagi's beta*u_x source) and same Reynolds number as the "
-             "reference, so this is a one-to-one comparison.\nReference DIGITISED from their "
-             "fig. 5 (they tabulate nothing), cross-validated against their second panel to 0.015.",
+    fig.text(0.012, 0.012,
+             "Same thermal problem (Kasagi's beta*u_x source), same Reynolds number, same grid "
+             "resolution and same outer-wall BC as the reference,\nso this is a one-to-one "
+             "comparison. Reference DIGITISED from their fig. 5 (they tabulate nothing), "
+             "cross-validated against their second panel to 0.015.",
              color=MUTED, fontsize=8.5, ha="left", va="bottom")
-    fig.tight_layout(rect=(0, 0.085, 1, 0.945))
+    # subplots_adjust, not tight_layout: with a mixed gridspec (one tall axis
+    # beside a main+residual pair) tight_layout keeps letting the x labels run
+    # into the footnote.
+    fig.subplots_adjust(left=0.065, right=0.985, top=0.855, bottom=0.175,
+                        hspace=0.08, wspace=0.20)
     fig.savefig(a.out, dpi=170, facecolor=SURFACE)
     print(f"{a.out} written   (rms {rms:.3f}, peak {d['var'][b].max():.3f} "
           f"vs {ref[:,1].max():.3f})")

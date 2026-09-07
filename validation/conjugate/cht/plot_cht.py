@@ -131,6 +131,10 @@ def main():
                     help="the two grid-aligned fluid/solid interfaces. They set "
                          "which rows are fluid AND the y+ origin, so a wrong "
                          "pair silently shifts every profile.")
+    ap.add_argument("--vel", default="Fstat_vel.h5",
+                    help="the run's VELOCITY statistics. Panel (a)'s inset needs "
+                         "them: it is what shows the departure from Kader is the "
+                         "flow's low-Re wake and not a scalar error.")
     ap.add_argument("--out", default="cht_validation.png")
     a = ap.parse_args()
     globals()["RE"] = a.re
@@ -163,15 +167,51 @@ def main():
     A.semilogx(yp, kd, "-", color=ACCENT, lw=2.0, zorder=3)
     A.semilogx(yp[yp > 40], kd[yp > 40], "--", color=ACCENT, lw=2.0, zorder=3)
     A.semilogx(yp, thp, "-", color=C_US, lw=2.2, zorder=4)
-    A.annotate("this work, $K=1$", xy=(yp[-1], thp[-1]), xytext=(-4, 7),
+    A.annotate("this work, $K=1$", xy=(yp[-1], thp[-1]), xytext=(-4, 8),
                textcoords="offset points", ha="right", color=C_US, fontsize=9.5)
     A.annotate("Kader (1981)", xy=(30, kader(np.array([30.0]))[0] - kader(np.array([yp[0]]))[0]),
                xytext=(4, -15), textcoords="offset points", color=ACCENT, fontsize=9.5)
+    # WHY WE SIT ABOVE KADER. Kader is a HIGH-Re, constant-flux correlation.
+    # At Re_tau = 149 the FLOW itself sits about one wall unit above the
+    # high-Re log law -- the low-Reynolds-number wake -- and the thermal
+    # profile inherits exactly that. The inset is the evidence: theta+ - Kader
+    # and U+ - (2.44 ln y+ + 5) are plotted together and they overlay, so the
+    # departure is the flow's, not the scalar's. Anything left over is the
+    # scalar-specific error, and it is <= 0.1 theta_tau.
+    if os.path.exists(a.vel):
+        with h5py.File(a.vel, "r") as fv:
+            Pv, yv = fv["profile"][...], fv["coord"][...]
+        mv = (yv > YLO) & (yv < YHI) & (yv < 0.5 * (YLO + YHI))
+        ypv = (yv[mv] - YLO) * RE
+        dU = Pv[mv, 0] - (2.44 * np.log(np.maximum(ypv, 1e-9)) + 5.0)
+        ins = A.inset_axes([0.56, 0.10, 0.40, 0.30])
+        ins.semilogx(yp[yp > 20], (thp - kd)[yp > 20], "-", color=C_US, lw=1.8)
+        ins.semilogx(ypv[ypv > 20], dU[ypv > 20], "--", color=MUTED, lw=1.8)
+        ins.axhline(0, color=GRID, lw=1.0)
+        ins.set_facecolor(SURFACE)
+        for sp in ("top", "right"):
+            ins.spines[sp].set_visible(False)
+        for sp in ("left", "bottom"):
+            ins.spines[sp].set_color(GRID)
+        ins.tick_params(colors=INK2, labelsize=7, length=2)
+        ins.set_ylim(-0.3, 1.9)
+        ins.set_xlim(18, 170)
+        ins.set_xticks([20, 50, 100])
+        ins.set_xticklabels(["20", "50", "100"])
+        # a log axis labels its MINOR ticks too, which turns a 3-tick inset
+        # into an unreadable row of 3x10^1 / 4x10^1 / 6x10^1
+        ins.xaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
+        ins.set_yticks([0, 1])
+        ins.set_title("$\\theta^+\\!-$Kader   vs   $U^+\\!-$log law (grey)\n"
+                      "the same low-$Re$ wake: it is the FLOW's",
+                      color=INK2, fontsize=7.2, pad=3)
+        ins.set_xlabel("$y^+$", color=INK2, fontsize=7, labelpad=1)
     dev = np.abs(thp - kd).max() / kd.max()
-    A.annotate(f"Kader dashed beyond the wall layer it describes.\n"
-               f"max departure {100*dev:.1f} % of the centreline value.",
-               xy=(0.98, 0.03), xycoords="axes fraction", color=MUTED,
-               fontsize=8, ha="right", va="bottom")
+    A.annotate(f"Kader is a HIGH-$Re$, constant-flux correlation;\n"
+               f"this is $Re_\\tau$ 149 with a decaying flux. Max\n"
+               f"departure {100*dev:.1f} % of the centreline value.",
+               xy=(0.03, 0.97), xycoords="axes fraction", color=MUTED,
+               fontsize=8, ha="left", va="top")
     A.set_xlabel("$y^+$", color=INK2, fontsize=10)
     A.set_ylabel(r"$\theta^+$", color=INK2, fontsize=10)
     A.set_title("(a)  mean temperature", color=INK, fontsize=11, loc="left", pad=8)

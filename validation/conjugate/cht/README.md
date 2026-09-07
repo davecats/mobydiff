@@ -805,3 +805,42 @@ visible in the earlier figures:
 `check_cht.py` still exits FAIL on gates (1) and (2): the absolute solid level
 (the charging transient, offset-free form 6.0e-2 against a 5e-2 tolerance) and
 the effusivity collapse (22 %/38 %). Both are documented physics, unchanged.
+
+## The Kader comparison, and why the profile sits above it
+
+Panel (a) shows θ⁺ about 9 % above Kader (1981) at the centreline, and the log
+slope steeper (2.80 against Kader's 2.27 over y⁺ 30–100). That is NOT a scalar
+error, and the check is the momentum profile of the same run:
+
+| y⁺ | θ⁺ − Kader | U⁺ − (2.44 ln y⁺ + 5) |
+|---|---|---|
+| 29 | +0.67 | +0.78 |
+| 51 | +1.07 | +1.11 |
+| 100 | +1.33 | +1.25 |
+| 147 | +1.04 | +0.96 |
+
+**The two departures are the same curve to within ~0.1.** Kader is a HIGH-Re,
+constant-flux correlation; at Re_τ = 149 the FLOW itself sits about one wall
+unit above the high-Re log law (measured wake +0.92, dU⁺/d ln y⁺ = 2.74 against
+2.44), and the thermal profile simply inherits it. So we agree with Kader to
+the extent Kader can be expected to apply, and the scalar-specific residual is
+**≤ 0.1 θ_τ**. The inset in panel (a) plots the two departures together; they
+overlay.
+
+Two smaller contributions, both real but subordinate:
+* the conduction sublayer is EXACT — at y⁺ 0.7 and 1.9 the two agree to 0.007;
+* the largest LOCAL departure is at y⁺ ≈ 5 (+0.51), the buffer layer, where
+  Kader's two-branch blend is weakest;
+* our flux DECAYS (Kasagi source) where Kader assumes it constant. That works
+  in the opposite direction — a decaying flux lowers θ⁺ — so it partly cancels
+  the low-Re excess rather than causing it.
+
+## Figure improvements (2026-09-07)
+
+* `kasagi_vs_flageul.png` panel (b) gains a RESIDUAL STRIP sharing its x axis.
+  Two curves agreeing to 3 % are indistinguishable on the main axes, which is
+  the point but also hides both the SIZE and the SHAPE of the disagreement;
+  the strip shows both, and is where the sign structure (high at the wall, low
+  at the peak) is read.
+* `cht_validation.png` panel (a) gains the inset described above, so the
+  Kader question is answered in the figure rather than only in this file.
