@@ -64,6 +64,9 @@ CASE=cht149_flageul.h5
 SEED=${SEED:-kstat_80000.h5}       # the developed Re_tau 149 Kasagi field
 
 DEV_STEPS=${DEV_STEPS:-80000}     # t -> ~24.5 (dt ~ 3.07e-4)
+EXT_STEPS=${EXT_STEPS:-311000}    # `extend`: doubles the window to ~28400 wall
+                                  # units, matching Flageul's 29000
+EXT_FROM=${EXT_FROM:-Fstat_391000.h5}
 STAT_STEPS=${STAT_STEPS:-311000}  # t -> 95.5, the SAME averaging window
                                   # as the Kasagi run (14200 wall units)
 SAMPLE=${SAMPLE:-25}
@@ -99,6 +102,22 @@ if want develop; then
     time mpirun -n "$RANKS" "$BIN" .Fdev.ini > Fdev.log 2>&1
     finished Fdev.log || { echo "DEVELOP FAILED"; tail -15 Fdev.log; exit 1; }
     grep -E "seconds_per_step" Fdev.log | tail -1
+fi
+
+if want extend; then
+    # CONTINUE the accumulated statistics rather than starting a new window:
+    # read_stats_restart reads the stats file itself, so as long as it is NOT
+    # deleted the sums carry over. The deep-solid variance is limited by the
+    # window length, not by resolution (measured: the instantaneous
+    # within-plane variance there is ~0.012 against an accumulated 0.059, so
+    # the excess is temporal wander the window has not averaged out), which is
+    # why this is the fix and a finer solid grid is not.
+    echo "== extend: +$EXT_STEPS steps, statistics CONTINUED from $EXT_FROM"
+    [ -f flageul_stats.h5 ] || { echo "no flageul_stats.h5 to extend"; exit 1; }
+    ini Fstat "$EXT_STEPS" "$FIELD" "$EXT_FROM" "$SAMPLE" "$FLUSH" flageul_stats.h5
+    time mpirun -n "$RANKS" "$BIN" .Fstat.ini > Fext.log 2>&1
+    finished Fext.log || { echo "EXTEND FAILED"; tail -15 Fext.log; exit 1; }
+    grep -E "seconds_per_step" Fext.log | tail -1
 fi
 
 if want stats; then

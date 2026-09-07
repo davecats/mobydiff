@@ -931,3 +931,41 @@ our averaging is 14 200 wall units against their 29 000, which their §2 says
 was chosen specifically to converge the deep solid, where correlation times are
 longest. The upturn at the Neumann face looks like a reflected low-frequency
 mode that has not been averaged out. **Open.**
+
+## The deep-solid discrepancy is CONVERGENCE, not the grid (2026-09-07)
+
+Before refining the solid grid, the obvious question is whether the excess is
+spatial structure a finer grid could resolve. It is not. Compare the
+time-ACCUMULATED variance with the INSTANTANEOUS within-plane variance from the
+snapshots at the same depth:
+
+| depth y⁺ | accumulated | instantaneous (per snapshot) | Flageul | accum/inst |
+|---|---|---|---|---|
+| −5 | 0.606 | ~0.62 | 0.474 | 1.0 |
+| −40 | 0.064 | ~0.054 | 0.034 | 1.2 |
+| −102 | 0.046 | ~0.014 | 0.0084 | 3.3 |
+| −145 | 0.059 | ~0.012 | 0.0073 | **4.9** |
+
+**The spatially-resolved variance is fine at every depth** — at the outer face
+it is 0.012 against their 0.0073, the same order. What grows with depth is the
+GAP between it and the time-accumulated value, and that gap is the temporal
+wander of the plane mean: the very-low-frequency modes whose correlation time
+grows with depth and which a 14 200-wall-unit window cannot average out. A
+finer solid grid cannot fix a temporal sampling problem.
+
+This is also exactly what Flageul et al. warn about: their §2 says the
+statistics were accumulated "over an interval significantly longer than in
+previous studies (about five times longer)" specifically "to ensure a
+satisfactory statistical convergence deep inside the solid domain".
+
+**So the fix is a longer window, and `run_flageul.sh extend` is it**: it
+restarts from the last snapshot WITHOUT deleting the statistics file, and
+`read_stats_restart` reads that file, so the sums carry over. +311 000 steps
+doubles the window to ~28 400 wall units — matching their 29 000 — for 48.6 h
+against the 88 h a solid-grid refinement would cost.
+
+**The grid refinement remains available and is scoped**: ny 224 → 320 (101
+solid cells each side instead of 53). dt is UNCHANGED, because the minimum
+spacing is at the INTERFACE and that does not move; only the cell count grows,
+16.1 M against 11.2 M, so develop + statistics ≈ 88 h. Worth doing only if the
+longer window fails to close the gap.
