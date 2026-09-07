@@ -665,7 +665,7 @@ kappa_s-independent theta_tau still do.
 
 ---
 
-# Campaign 5 — FLAGEUL-MATCHED (`cht149_flageul.ini`)  [RUNNING]
+# Campaign 5 — FLAGEUL-MATCHED (`cht149_flageul.ini`)  [DONE]
 
 Campaign 4 left one identified obstacle: wall-normal resolution. This campaign
 removes it, and the two remaining non-resolution differences with it.
@@ -743,3 +743,65 @@ and `--snapshots`, so the earlier campaigns are still reproducible:
    `|| exit 1` guard fired on that and the chained statistics leg never
    started — 12.5 h of correct work sat idle. `run_flageul.sh` now tests for
    `main loop ended` IN THE LOG instead.
+
+## Result (2026-09-07)
+
+311 000 statistics steps, 48.6 h at 0.563 s/step, t = 24.5 → 119.9 (the same
+95.5 time units campaign 4 averaged over).
+
+| | ours | Flageul | |
+|---|---|---|---|
+| theta_tau, kappa_s-independent | 1.0008–1.0034 | — | spread **0.25 %** |
+| J(centreline) | −0.00036 | 0 | |
+| **full profile, 0.49 < y⁺ < 137** | | | **rms 0.197 = 3.2 % of their peak** |
+| near-wall peak, K = 1 | 5.99 | 6.208 | **−4 %** |
+| ⟨θ'²⟩ at y⁺ 0.49 | 1.25 | 1.20 | +5 % |
+| isoT bracket, at its peak | 5.69 | 5.78 | −2 % |
+| isoQ bracket at y⁺ 0.45 | 3.58 | 4.28 | −16 % |
+| wall/peak, K = 1 | 0.2096 | 0.1933 | +8 % |
+
+**The four campaigns, full-profile rms against their digitised curve:**
+
+| | rms | % of their peak | k1 peak |
+|---|---|---|---|
+| constant flux, Re_tau 180 | 2.02 | 32.5 % | +14 % |
+| bulk heating, Re_tau 180 | 0.83 | 13.4 % | −21 % |
+| Kasagi, Re_tau 149 | 0.31 | 5.1 % | −6 % |
+| **Flageul-matched** | **0.197** | **3.2 %** | **−4 %** |
+
+## What the resolution match bought, beyond the 5.1 % → 3.2 %
+
+Two QUALITATIVE artefacts of the coarser grids disappeared, and both were
+visible in the earlier figures:
+
+* **Every K now peaks near the wall.** On the coarser grids K = 0.1 rose
+  monotonically to the centreline and had to be excluded from the peak
+  statistics by name. Here all 6 scalars peak at y⁺ 16–19 and the peak is the
+  global maximum for 6/6.
+* **K = 0.1's wall value is now BELOW the ideal-isoQ limit**, where campaign 4
+  put it 3 % ABOVE. A finite-effusivity conjugate wall cannot exceed the
+  K → 0 plateau, so the earlier +3 % was unphysical — an artefact of reading a
+  under-resolved wall cell. The −16 % now reported is the finite-K deficit,
+  which is the right side of the limit; whether −16 % is the RIGHT size is not
+  settled, since K = 0.1 is an approximation to isoQ and not isoQ.
+
+## Two open items
+
+* **The residual is a slightly FLATTER profile**: +5 % at the wall, −4 % at the
+  peak, wall/peak +8 %. It has survived every refinement, so it is no longer
+  attributable to resolution — Δy⁺ is now theirs, Δx⁺ and Δz⁺ are FINER, and
+  the outer BC and solid thickness match. What remains unmatched is the
+  DOMAIN: ours is 1872 × 936 wall units against their 3814 × 1270, i.e. half
+  the streamwise extent. Their own §5 attributes the near-wall conjugate
+  behaviour to very large-scale thermal structures, and reports that the
+  temperature variance is sensitive to the box length — so the domain is the
+  first thing to try, not the grid.
+* **4.8 % of the interface variance survives at our outer solid face**, where
+  their figure 12 has ~1e-3 mid-solid. Same thickness, same BC now. The likely
+  cause is statistical: they averaged 29 000 wall units and say explicitly it
+  was to converge the DEEP SOLID, where the correlation times are longest;
+  ours is 14 200. Not resolved.
+
+`check_cht.py` still exits FAIL on gates (1) and (2): the absolute solid level
+(the charging transient, offset-free form 6.0e-2 against a 5e-2 tolerance) and
+the effusivity collapse (22 %/38 %). Both are documented physics, unchanged.

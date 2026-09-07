@@ -205,10 +205,11 @@ def main():
     # sink for large-scale thermal structure (README, campaign 3). Its WALL
     # value is the one that compares, and it matches their isoQ to 3 % -- see
     # panel (d).
-    B.annotate("$K=0.1$ leaves the band in the CORE: a\n"
-               "near-insulating wall gives the core no sink\n"
-               "for large-scale structure. Its WALL value\n"
-               "matches their isoQ to 3 % (panel d).",
+    B.annotate("Every $K$ now peaks NEAR THE WALL and lies inside\n"
+               "the band. On the coarser earlier grids $K=0.1$ did\n"
+               "neither: it rose to the centreline, and its wall value\n"
+               "sat ABOVE the ideal-isoQ limit, which a finite $K$\n"
+               "cannot do. Both artefacts are gone (panel d).",
                xy=(0.97, 0.04), xycoords="axes fraction", ha="right",
                va="bottom", color=MUTED, fontsize=7.8, zorder=8)
     B.set_xlabel("$y^+$", color=INK2, fontsize=10)
@@ -248,19 +249,28 @@ def main():
 
     # ---- (d) the interface response against the effusivity K ---------------
     D = ax[3]
-    yq = float(np.minimum(sweep[0]["y"] - YLO, YHI - sweep[0]["y"])[sweep[0]["i0"]] * RE)
+    # Read BOTH at the lowest y+ both resolve. On this grid our first cell is
+    # at y+ 0.24 and their data starts at 0.49, so taking our first-cell height
+    # would read off the end of their curve and np.interp would silently return
+    # their endpoint -- the height-mismatch error, arriving from the finer side.
+    ypw0 = np.minimum(sweep[0]["y"] - YLO, YHI - sweep[0]["y"]) * RE
+    yq = max(float(ypw0[sweep[0]["i0"]]), float(ref[0, 0]), float(isoq[0, 0]))
+
+    def wall_at(row):
+        o = np.argsort(ypw0[row["m"]])
+        return float(np.interp(yq, ypw0[row["m"]][o], row["var"][row["m"]][o]))
     # The LADDER is the four alpha_s = 1 cases; k2/k3 share K = 10/100 with
     # a2/a3 at a different alpha_s, so they are the EFFUSIVITY-COLLAPSE
     # partners and are drawn as separate markers, not joined into the line --
     # a connected line through a same-K pair would read as a vertical jump.
-    lad = [(np.sqrt(k*c), sweep[i]["wall"]) for nm, i, K in show
+    lad = [(np.sqrt(k*c), wall_at(sweep[i])) for nm, i, K in show
            for _, k, c in [SWEEP[i]]]
     lad.sort()
     D.loglog([x for x, _ in lad], [y for _, y in lad], "-o", color=RAMP[2],
              lw=2.0, ms=8, zorder=4)
     for nm, i in (("k2", 1), ("k3", 2)):
         _, k, c = SWEEP[i]
-        D.loglog([np.sqrt(k*c)], [sweep[i]["wall"]], "o", color=RAMP[2],
+        D.loglog([np.sqrt(k*c)], [wall_at(sweep[i])], "o", color=RAMP[2],
                  mfc=SURFACE, mew=2.0, ms=8, zorder=5)
     D.annotate("hollow: same $K$, different $\\alpha_s$\n"
                "(the effusivity-collapse spread)", xy=(0.97, 0.05),
@@ -278,7 +288,7 @@ def main():
     D.annotate(f"their CONJUGATE case\n$K=1$:  {fc:.2f}", xy=(1.0, fc),
                xytext=(12, -4), textcoords="offset points", ha="left",
                color=ACCENT, fontsize=8.5)
-    ours1 = float(sweep[0]["wall"])
+    ours1 = wall_at(sweep[0])
     D.annotate(f"ours {ours1:.2f}  ({100*(ours1/fc-1):+.0f} %)", xy=(1.0, ours1),
                xytext=(-10, 10), textcoords="offset points", ha="right",
                color=RAMP[3], fontsize=8.5, fontweight="bold")
