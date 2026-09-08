@@ -139,6 +139,35 @@ def main():
     print("\nProportional in the number of crossings => per-link transport cost.")
     print("Saturating after the FIRST crossing => a single slow link stalls the chain.")
 
+    # A layout with MORE node crossings that is FASTER refutes both of those at
+    # once, and therefore also overrides the Tier-1 verdict above -- which can
+    # only distinguish *transport* from *collective*, and says nothing about a
+    # cause that is not communication at all. Measured 2026-09-08: rect at 8
+    # ranks was 4.1x faster on 4 nodes (3 crossings) than on 2 (1 crossing).
+    print("\n### Monotonicity check\n")
+    contra = []
+    for cfg in {r["cfg"] for r in runs}:
+        for ranks in (2,4,8):
+            pts = [(n, line(cfg,ranks,n)) for n in (1,2,4)]
+            pts = [(n,v) for n,v in pts if v]
+            for (n1,v1),(n2,v2) in zip(pts, pts[1:]):
+                if n2 > n1 and v2 < 0.7*v1:
+                    contra.append((cfg,ranks,n1,v1,n2,v2))
+    if contra:
+        for cfg,ranks,n1,v1,n2,v2 in contra:
+            print(f"- `{cfg}` {ranks} ranks: **{n2} nodes ({v2:.1f} us) is "
+                  f"{v1/v2:.1f}x FASTER than {n1} nodes ({v1:.1f} us)** "
+                  f"despite more node crossings.")
+        print("\n**This REFUTES both a per-link transport cost and a slow-link chain")
+        print("stall, and it overrides the Tier-1 verdict above**: Tier 1 can only")
+        print("separate *transport* from *collective*, and a cause that is not")
+        print("communication at all satisfies it trivially. The variable that")
+        print("changes with the node count here is RANKS PER NODE. Read the blk8")
+        print("probe (node crossing without the device-local copy load) before")
+        print("choosing any fix.")
+    else:
+        print("None: no layout with more node crossings was faster.")
+
     # ---- blk8: node crossing without the local-copy load --------------------
     print("\n## Discriminator — node crossing WITHOUT device-local copy (`blk8_jacobi`)\n")
     print("One block per rank at 8 ranks: same 2-peer chain, same cells, but the")
