@@ -1,0 +1,401 @@
+commit under test: df08a60c9b37a274d0facb00e9a5d9259c698b99
+MPI Fortran module dir: /hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+HDF5_ROOT: /home/hk-project-exasim/xt8786/hdf5
+-- HDF5 include dir: /home/hk-project-exasim/xt8786/hdf5/include
+-- HDF5 C library: /home/hk-project-exasim/xt8786/hdf5/lib/libhdf5.so
+-- Pressure solver: red-black SOR
+-- MPI support: required
+-- MPI wrapper compile flags: -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/hwloc/hwloc201/hwloc/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/event/libevent2022/libevent -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/event/libevent2022/libevent/include -pthread -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+-- MPI wrapper link flags: -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -L/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -Wl,-rpath -Wl,/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -Wl,--enable-new-dtags -lmpi_usempif08 -lmpi_usempi_ignore_tkr -lmpi_mpifh -lmpi
+-- MPI Fortran module dir: /hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+-- Configuring done (0.9s)
+-- Generating done (0.3s)
+-- Build files have been written to: /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-code/build_gpu
+[  1%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/init.f90.o
+[  2%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/init.f90.o
+[  4%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/init.f90.o
+[  5%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/init.f90.o
+[  5%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/init.f90.o
+[  6%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/profiling.f90.o
+[  7%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/profiling.f90.o
+[  8%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/profiling.f90.o
+[  9%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/profiling.f90.o
+[ 10%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/profiling.f90.o
+[ 10%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/blocks.f90.o
+[ 11%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/gpu_runtime.f90.o
+[ 11%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/blocks.f90.o
+[ 12%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/gpu_runtime.f90.o
+[ 12%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/blocks.f90.o
+[ 13%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/gpu_runtime.f90.o
+[ 13%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/blocks.f90.o
+[ 14%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/gpu_runtime.f90.o
+[ 14%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/blocks.f90.o
+[ 15%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/gpu_runtime.f90.o
+[ 15%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/boundary.f90.o
+[ 16%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/flow/boundaryLayer/boundarylayer_profile.f90.o
+[ 18%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/flow/channel/channel_profile.f90.o
+[ 18%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/turbulence.f90.o
+[ 18%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/boundary.f90.o
+[ 20%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/flow/boundaryLayer/boundarylayer_profile.f90.o
+[ 20%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/turbulence.f90.o
+[ 21%] Building Fortran object CMakeFiles/leaftable_test.dir/src/test_leaftable.f90.o
+[ 21%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/flow/channel/channel_profile.f90.o
+[ 21%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/boundary.f90.o
+[ 22%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/boundary.f90.o
+[ 22%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/turbulence.f90.o
+[ 26%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/flow/boundaryLayer/boundarylayer_profile.f90.o
+[ 26%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/turbulence.f90.o
+[ 26%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/flow/boundaryLayer/boundarylayer_profile.f90.o
+[ 28%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/turbulence.f90.o
+[ 28%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/flow/boundaryLayer/boundarylayer_profile.f90.o
+[ 28%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/boundary.f90.o
+[ 30%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/flow/channel/channel_profile.f90.o
+[ 30%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/flow/channel/channel_profile.f90.o
+[ 30%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/flow/channel/channel_profile.f90.o
+[ 31%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/comm.f90.o
+[ 32%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/comm.f90.o
+[ 33%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/comm.f90.o
+[ 34%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/comm.f90.o
+[ 35%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/comm.f90.o
+[ 36%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/io.f90.o
+[ 37%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/io.f90.o
+[ 38%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/io.f90.o
+[ 39%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/io.f90.o
+[ 40%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/io.f90.o
+[ 40%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/bodyforce.f90.o
+[ 41%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/ibm.f90.o
+[ 42%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/flow/channel/channel_stats.f90.o
+[ 42%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/flow/boundaryLayer/boundarylayer_stats.f90.o
+[ 43%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/bodyforce.f90.o
+[ 43%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/ibm.f90.o
+[ 44%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/flow/boundaryLayer/boundarylayer_stats.f90.o
+[ 44%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/flow/channel/channel_stats.f90.o
+[ 46%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/ibm.f90.o
+[ 46%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/bodyforce.f90.o
+[ 46%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/flow/channel/channel_stats.f90.o
+[ 46%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/flow/boundaryLayer/boundarylayer_stats.f90.o
+[ 46%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/bodyforce.f90.o
+[ 47%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/flow/channel/channel_stats.f90.o
+[ 47%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/flow/boundaryLayer/boundarylayer_stats.f90.o
+[ 48%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/ibm.f90.o
+[ 48%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/bodyforce.f90.o
+[ 50%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/ibm.f90.o
+[ 50%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/flow/boundaryLayer/boundarylayer_stats.f90.o
+[ 50%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/flow/channel/channel_stats.f90.o
+[ 50%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/les.f90.o
+[ 52%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/walldist.f90.o
+[ 52%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/step.f90.o
+[ 52%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/pressure_solver.f90.o
+[ 52%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/geometry_stl.f90.o
+[ 52%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/les.f90.o
+[ 54%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/pressure_solver.f90.o
+[ 54%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/geometry_stl.f90.o
+[ 54%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/step.f90.o
+[ 54%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/walldist.f90.o
+[ 54%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/les.f90.o
+[ 56%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/step.f90.o
+[ 56%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/pressure_solver.f90.o
+[ 56%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/geometry_stl.f90.o
+[ 56%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/walldist.f90.o
+[ 56%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/les.f90.o
+[ 57%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/pressure_solver.f90.o
+[ 58%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/geometry_stl.f90.o
+[ 58%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/walldist.f90.o
+[ 58%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/step.f90.o
+[ 58%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/les.f90.o
+[ 60%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/step.f90.o
+[ 60%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/pressure_solver.f90.o
+[ 60%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/walldist.f90.o
+[ 60%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/geometry_stl.f90.o
+[ 61%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/rans.f90.o
+[ 62%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/rans.f90.o
+[ 62%] Building Fortran object CMakeFiles/walldist_test.dir/src/test_walldist.f90.o
+[ 63%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/rans.f90.o
+[ 64%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/rans.f90.o
+[ 65%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/rans.f90.o
+[ 67%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/config.f90.o
+[ 67%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/flow_case_base.f90.o
+[ 68%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/flow_case_base.f90.o
+[ 69%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/config.f90.o
+[ 71%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/config.f90.o
+[ 71%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/flow_case_base.f90.o
+[ 72%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/config.f90.o
+[ 73%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/flow_case_base.f90.o
+[ 75%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/config.f90.o
+[ 75%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/flow_case_base.f90.o
+[ 76%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/flow/generic_flow.f90.o
+[ 77%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/flow/generic_flow.f90.o
+[ 78%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/flow/generic_flow.f90.o
+[ 79%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/flow/generic_flow.f90.o
+[ 80%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/flow/generic_flow.f90.o
+[ 80%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/flow/airfoil/airfoil_flow.f90.o
+[ 80%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/flow/boundaryLayer/boundarylayer_flow.f90.o
+[ 81%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/flow/channel/channel_flow.f90.o
+[ 82%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/flow/boundaryLayer/boundarylayer_flow.f90.o
+[ 82%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/flow/airfoil/airfoil_flow.f90.o
+[ 82%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/flow/channel/channel_flow.f90.o
+[ 82%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/flow/airfoil/airfoil_flow.f90.o
+[ 82%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/flow/boundaryLayer/boundarylayer_flow.f90.o
+[ 82%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/flow/airfoil/airfoil_flow.f90.o
+[ 82%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/flow/boundaryLayer/boundarylayer_flow.f90.o
+[ 83%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/flow/channel/channel_flow.f90.o
+[ 84%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/flow/channel/channel_flow.f90.o
+[ 84%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/flow/boundaryLayer/boundarylayer_flow.f90.o
+[ 84%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/flow/airfoil/airfoil_flow.f90.o
+[ 85%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/flow/channel/channel_flow.f90.o
+[ 86%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/flow_case.f90.o
+[ 87%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/flow_case.f90.o
+[ 88%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/flow_case.f90.o
+[ 89%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/flow_case.f90.o
+[ 90%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/flow_case.f90.o
+[ 91%] Linking Fortran executable leaftable_test
+[ 92%] Linking Fortran executable walldist_test
+[ 92%] Building Fortran object CMakeFiles/moby_prepare.dir/src/moby_prepare.f90.o
+[ 92%] Building Fortran object CMakeFiles/moby_solve.dir/src/moby_solve.f90.o
+[ 92%] Building Fortran object CMakeFiles/transition_test.dir/src/test_transition.f90.o
+[ 93%] Linking Fortran executable transition_test
+[ 94%] Linking Fortran executable moby_prepare
+[ 95%] Linking Fortran executable moby_solve
+[ 97%] Built target leaftable_test
+[ 97%] Built target walldist_test
+[ 98%] Built target transition_test
+[ 99%] Built target moby_prepare
+[100%] Built target moby_solve
+
+========================================
+Build summary: gpu
+========================================
+Build directory       : build_gpu
+Executables           : build_gpu/moby_solve (+ main symlink), build_gpu/moby_prepare
+Fortran compiler      : /software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/compilers/bin/nvfortran
+C compiler            : /software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/compilers/bin/nvc
+Pressure solver       : red-black SOR
+MPI                   : ON
+MPI wrapper compile   : -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/hwloc/hwloc201/hwloc/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/event/libevent2022/libevent -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/event/libevent2022/libevent/include -pthread -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+MPI wrapper link      : -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -L/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -Wl,-rpath -Wl,/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -Wl,--enable-new-dtags -lmpi_usempif08 -lmpi_usempi_ignore_tkr -lmpi_mpifh -lmpi
+MPI Fortran mod dir   : /hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+USE_OPENMP_OFFLOAD    : ON
+USE_IBM_SECONDORDER   : ON
+OPENMP_OFFLOAD_FLAGS  : -mp=gpu
+HDF5_ROOT             : /home/hk-project-exasim/xt8786/hdf5
+HDF5 include dir      : /home/hk-project-exasim/xt8786/hdf5/include
+HDF5 C library        : /home/hk-project-exasim/xt8786/hdf5/lib/libhdf5.so
+========================================
+
+job          : 5138715
+date         : 2026-09-10 00:04:21 CEST
+nodes        : 4  (hkn[0518,0604-0605,0708])
+commit       : df08a60c9b37a274d0facb00e9a5d9259c698b99
+dirty        : 0
+gpu          : NVIDIA A100-SXM4-40GB
+nsteps       : 200
+############ PASS A -- timing + exchange balance ############
+=== placement matrix start 2026-09-10 00:04:22  nsteps=200
+=== rect_jacobi  2 ranks on 1 node(s) = 2/node  (2026-09-10 00:04:22)
+    hosts (1): hkn0518 
+     exchange sizes: peers/rank(max) 1  send pts/rank min 36800 max 36800  total send pts 73600  local copy pts 15316352
+=== rect_jacobi  2 ranks on 2 node(s) = 1/node  (2026-09-10 00:05:51)
+    hosts (2): hkn0518 hkn0604 
+     exchange sizes: peers/rank(max) 1  send pts/rank min 36800 max 36800  total send pts 73600  local copy pts 15316352
+=== base_jacobi  2 ranks on 1 node(s) = 2/node  (2026-09-10 00:07:19)
+    hosts (1): hkn0518 
+     exchange sizes: peers/rank(max) 1  send pts/rank min 34532 max 34532  total send pts 69064  local copy pts 1458888
+=== base_jacobi  2 ranks on 2 node(s) = 1/node  (2026-09-10 00:08:39)
+    hosts (2): hkn0518 hkn0604 
+     exchange sizes: peers/rank(max) 1  send pts/rank min 34532 max 34532  total send pts 69064  local copy pts 1458888
+=== rect_jacobi  4 ranks on 1 node(s) = 4/node  (2026-09-10 00:10:00)
+    hosts (1): hkn0518 
+     exchange sizes: peers/rank(max) 2  send pts/rank min 36800 max 73600  total send pts 220800  local copy pts 15169152
+=== rect_jacobi  4 ranks on 2 node(s) = 2/node  (2026-09-10 00:10:49)
+    hosts (2): hkn0518 hkn0604 
+     exchange sizes: peers/rank(max) 2  send pts/rank min 36800 max 73600  total send pts 220800  local copy pts 15169152
+=== rect_jacobi  4 ranks on 4 node(s) = 1/node  (2026-09-10 00:11:37)
+    hosts (4): hkn0518 hkn0604 hkn0605 hkn0708 
+     exchange sizes: peers/rank(max) 2  send pts/rank min 36800 max 73600  total send pts 220800  local copy pts 15169152
+=== base_jacobi  4 ranks on 1 node(s) = 4/node  (2026-09-10 00:12:25)
+    hosts (1): hkn0518 
+     exchange sizes: peers/rank(max) 3  send pts/rank min 414966 max 414966  total send pts 1659864  local copy pts 1458888
+=== base_jacobi  4 ranks on 2 node(s) = 2/node  (2026-09-10 00:13:11)
+    hosts (2): hkn0518 hkn0604 
+     exchange sizes: peers/rank(max) 3  send pts/rank min 414966 max 414966  total send pts 1659864  local copy pts 1458888
+=== base_jacobi  4 ranks on 4 node(s) = 1/node  (2026-09-10 00:13:56)
+    hosts (4): hkn0518 hkn0604 hkn0605 hkn0708 
+     exchange sizes: peers/rank(max) 3  send pts/rank min 414966 max 414966  total send pts 1659864  local copy pts 1458888
+=== rect_jacobi  8 ranks on 2 node(s) = 4/node  (2026-09-10 00:14:44)
+    hosts (2): hkn0518 hkn0604 
+     exchange sizes: peers/rank(max) 2  send pts/rank min 36800 max 73600  total send pts 515200  local copy pts 14874752
+=== rect_jacobi  8 ranks on 4 node(s) = 2/node  (2026-09-10 00:15:19)
+    hosts (4): hkn0518 hkn0604 hkn0605 hkn0708 
+     exchange sizes: peers/rank(max) 2  send pts/rank min 36800 max 73600  total send pts 515200  local copy pts 14874752
+=== base_jacobi  8 ranks on 2 node(s) = 4/node  (2026-09-10 00:15:48)
+    hosts (2): hkn0518 hkn0604 
+     exchange sizes: peers/rank(max) 7  send pts/rank min 574344 max 574344  total send pts 4594752  local copy pts 0
+=== base_jacobi  8 ranks on 4 node(s) = 2/node  (2026-09-10 00:16:17)
+    hosts (4): hkn0518 hkn0604 hkn0605 hkn0708 
+     exchange sizes: peers/rank(max) 7  send pts/rank min 574344 max 574344  total send pts 4594752  local copy pts 0
+=== refined_yp82_rect_jacobi  2 ranks on 1 node(s) = 2/node  (2026-09-10 00:16:55)
+    hosts (1): hkn0518 
+     exchange sizes: peers/rank(max) 1  send pts/rank min 23000 max 23000  total send pts 46000  local copy pts 6378680
+=== refined_yp82_rect_jacobi  2 ranks on 2 node(s) = 1/node  (2026-09-10 00:17:38)
+    hosts (2): hkn0518 hkn0604 
+     exchange sizes: peers/rank(max) 1  send pts/rank min 23000 max 23000  total send pts 46000  local copy pts 6378680
+=== refined_yp82_rect_jacobi  4 ranks on 1 node(s) = 4/node  (2026-09-10 00:18:21)
+    hosts (1): hkn0518 
+     exchange sizes: peers/rank(max) 2  send pts/rank min 23000 max 46000  total send pts 138000  local copy pts 6286680
+=== refined_yp82_rect_jacobi  4 ranks on 2 node(s) = 2/node  (2026-09-10 00:18:48)
+    hosts (2): hkn0518 hkn0604 
+     exchange sizes: peers/rank(max) 2  send pts/rank min 23000 max 46000  total send pts 138000  local copy pts 6286680
+=== nb16_jacobi  4 ranks on 1 node(s) = 4/node  (2026-09-10 00:19:13)
+    hosts (1): hkn0518 
+     exchange sizes: peers/rank(max) 2  send pts/rank min 42768 max 85536  total send pts 256608  local copy pts 56765088
+=== nb16_jacobi  4 ranks on 2 node(s) = 2/node  (2026-09-10 00:20:15)
+    hosts (2): hkn0518 hkn0604 
+     exchange sizes: peers/rank(max) 2  send pts/rank min 42768 max 85536  total send pts 256608  local copy pts 56765088
+=== blk8_jacobi  4 ranks on 1 node(s) = 4/node  (2026-09-10 00:21:17)
+    hosts (1): hkn0518 
+     exchange sizes: peers/rank(max) 3  send pts/rank min 747600 max 747600  total send pts 2990400  local copy pts 136704
+=== blk8_jacobi  8 ranks on 2 node(s) = 4/node  (2026-09-10 00:22:03)
+    hosts (2): hkn0518 hkn0604 
+     exchange sizes: peers/rank(max) 5  send pts/rank min 382344 max 399432  total send pts 3127104  local copy pts 0
+=== blk8_jacobi  8 ranks on 4 node(s) = 2/node  (2026-09-10 00:22:31)
+    hosts (4): hkn0518 hkn0604 hkn0605 hkn0708 
+     exchange sizes: peers/rank(max) 5  send pts/rank min 382344 max 399432  total send pts 3127104  local copy pts 0
+=== nb16_jacobi  8 ranks on 2 node(s) = 4/node  (2026-09-10 00:23:17)
+    hosts (2): hkn0518 hkn0604 
+     exchange sizes: peers/rank(max) 2  send pts/rank min 42768 max 85536  total send pts 598752  local copy pts 56422944
+=== nb16_jacobi  8 ranks on 4 node(s) = 2/node  (2026-09-10 00:23:59)
+    hosts (4): hkn0518 hkn0604 hkn0605 hkn0708 
+     exchange sizes: peers/rank(max) 2  send pts/rank min 42768 max 85536  total send pts 598752  local copy pts 56422944
+=== blk8_jacobi  4 ranks on 2 node(s) = 2/node  (2026-09-10 00:24:36)
+    hosts (2): hkn0518 hkn0604 
+     exchange sizes: peers/rank(max) 3  send pts/rank min 747600 max 747600  total send pts 2990400  local copy pts 136704
+=== placement matrix done 2026-09-10 00:25:21
+############ PASS B -- barrier: skew vs transfer ############
+=== placement matrix start 2026-09-10 00:25:21  nsteps=200
+=== rect_jacobi  8 ranks on 2 node(s) = 4/node  (2026-09-10 00:25:21)
+    hosts (2): hkn0518 hkn0604 
+     exchange sizes: peers/rank(max) 2  send pts/rank min 36800 max 73600  total send pts 515200  local copy pts 14874752
+=== rect_jacobi  8 ranks on 4 node(s) = 2/node  (2026-09-10 00:25:56)
+    hosts (4): hkn0518 hkn0604 hkn0605 hkn0708 
+     exchange sizes: peers/rank(max) 2  send pts/rank min 36800 max 73600  total send pts 515200  local copy pts 14874752
+=== base_jacobi  8 ranks on 2 node(s) = 4/node  (2026-09-10 00:26:24)
+    hosts (2): hkn0518 hkn0604 
+     exchange sizes: peers/rank(max) 7  send pts/rank min 574344 max 574344  total send pts 4594752  local copy pts 0
+=== nb16_jacobi  8 ranks on 2 node(s) = 4/node  (2026-09-10 00:26:53)
+    hosts (2): hkn0518 hkn0604 
+     exchange sizes: peers/rank(max) 2  send pts/rank min 42768 max 85536  total send pts 598752  local copy pts 56422944
+=== blk8_jacobi  8 ranks on 2 node(s) = 4/node  (2026-09-10 00:27:35)
+    hosts (2): hkn0518 hkn0604 
+     exchange sizes: peers/rank(max) 5  send pts/rank min 382344 max 399432  total send pts 3127104  local copy pts 0
+=== rect_jacobi  4 ranks on 1 node(s) = 4/node  (2026-09-10 00:28:02)
+    hosts (1): hkn0518 
+     exchange sizes: peers/rank(max) 2  send pts/rank min 36800 max 73600  total send pts 220800  local copy pts 15169152
+=== placement matrix done 2026-09-10 00:28:50
+
+# What a rank is waiting for — the be48d44 exchange diagnostics
+
+## Pass A — timing and per-rank wait balance
+
+`wait r0` is the rank-0 bucket every earlier report quoted; min/mean/max
+are that same accumulated `mpi_wait` reduced across ALL ranks, per round.
+
+| run | r x N | /node | s/step | wait r0 | min | mean | max | max/min | argmax | peers | copy pts |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| base_jacobi | 2x1 | 2 | 0.34930 | 53.0 | 53.0 | 62.4 | 71.9 | 1.35 | 1 | 1 | 1458888 |
+| base_jacobi | 2x2 | 1 | 0.34942 | 78.2 | 78.2 | 94.2 | 110.3 | 1.41 | 1 | 1 | 1458888 |
+| base_jacobi | 4x1 | 4 | 0.18656 | 129.2 | 124.8 | 153.3 | 189.3 | 1.52 | 2 | 3 | 1458888 |
+| base_jacobi | 4x2 | 2 | 0.18575 | 123.5 | 123.5 | 144.8 | 176.5 | 1.43 | 2 | 3 | 1458888 |
+| base_jacobi | 4x4 | 1 | 0.20599 | 669.3 | 669.3 | 698.8 | 722.9 | 1.08 | 2 | 3 | 1458888 |
+| base_jacobi | 8x2 | 4 | 0.10261 | 120.1 | 120.1 | 130.6 | 143.6 | 1.20 | 4 | 7 | 0 |
+| base_jacobi | 8x4 | 2 | 0.16060 | 1621.6 | 1621.6 | 1638.5 | 1647.9 | 1.02 | 5 | 7 | 0 |
+| blk8_jacobi | 4x1 | 4 | 0.18985 | 190.6 | 170.7 | 192.5 | 218.2 | 1.28 | 2 | 3 | 136704 |
+| blk8_jacobi | 4x2 | 2 | 0.18903 | 181.5 | 173.1 | 186.9 | 209.9 | 1.21 | 2 | 3 | 136704 |
+| blk8_jacobi | 8x2 | 4 | 0.10015 | 123.4 | 111.8 | 127.3 | 139.9 | 1.25 | 5 | 5 | 0 |
+| blk8_jacobi | 8x4 | 2 | 0.19898 | 2512.0 | 2512.0 | 2610.2 | 2696.1 | 1.07 | 5 | 5 | 0 |
+| nb16_jacobi | 4x1 | 4 | 0.26289 | 59.2 | 59.2 | 74.9 | 85.7 | 1.45 | 2 | 2 | 56765088 |
+| nb16_jacobi | 4x2 | 2 | 0.26358 | 76.9 | 76.9 | 103.1 | 124.0 | 1.61 | 2 | 2 | 56765088 |
+| nb16_jacobi | 8x2 | 4 | 0.17323 | 858.5 | 855.2 | 890.7 | 925.9 | 1.08 | 4 | 2 | 56422944 |
+| nb16_jacobi | 8x4 | 2 | 0.14460 | 175.3 | 175.3 | 200.8 | 206.8 | 1.18 | 7 | 2 | 56422944 |
+| rect_jacobi | 2x1 | 2 | 0.38194 | 49.4 | 49.4 | 60.8 | 72.2 | 1.46 | 1 | 1 | 15316352 |
+| rect_jacobi | 2x2 | 1 | 0.38259 | 77.7 | 77.7 | 94.7 | 111.7 | 1.44 | 1 | 1 | 15316352 |
+| rect_jacobi | 4x1 | 4 | 0.19937 | 60.8 | 60.8 | 72.7 | 83.6 | 1.38 | 1 | 2 | 15169152 |
+| rect_jacobi | 4x2 | 2 | 0.20005 | 78.2 | 78.2 | 94.9 | 107.9 | 1.38 | 2 | 2 | 15169152 |
+| rect_jacobi | 4x4 | 1 | 0.20106 | 120.8 | 120.8 | 138.8 | 146.5 | 1.21 | 1 | 2 | 15169152 |
+| rect_jacobi | 8x2 | 4 | 0.13622 | 738.5 | 734.8 | 768.0 | 802.3 | 1.09 | 4 | 2 | 14874752 |
+| rect_jacobi | 8x4 | 2 | 0.11176 | 149.8 | 149.8 | 177.2 | 185.2 | 1.24 | 7 | 2 | 14874752 |
+| refined_yp82_rect_jacobi | 2x1 | 2 | 0.17861 | 29.8 | 29.8 | 46.4 | 62.9 | 2.11 | 1 | 1 | 6378680 |
+| refined_yp82_rect_jacobi | 2x2 | 1 | 0.17898 | 45.8 | 45.8 | 67.9 | 90.1 | 1.96 | 1 | 1 | 6378680 |
+| refined_yp82_rect_jacobi | 4x1 | 4 | 0.09937 | 45.4 | 45.4 | 59.0 | 73.3 | 1.61 | 1 | 2 | 6286680 |
+| refined_yp82_rect_jacobi | 4x2 | 2 | 0.09953 | 53.8 | 53.8 | 73.7 | 84.9 | 1.58 | 2 | 2 | 6286680 |
+
+### Rank independence (`L2_div` must match across placements)
+
+All configs: identical `L2_div` across every placement at each rank count.
+
+## Pass B — barrier: arrival SKEW vs TRANSFER
+
+`exchange_barrier = true` puts an MPI_Barrier before every Waitall, so
+the barrier absorbs the arrival skew (`skew_barrier`) and what is left
+in `mpi_wait` is transfer. **Serialising — its step times mean nothing.**
+
+| run | r x N | skew/round | transfer/round | skew share | pass-A wait r0 |
+|---|---|---|---|---|---|
+| base_jacobi | 8x2 | 64.8 us | 63.8 us | 50 % | 120.1 us |
+| blk8_jacobi | 8x2 | 83.1 us | 49.1 us | 63 % | 123.4 us |
+| nb16_jacobi | 8x2 | 878.6 us | 1.2 us | 100 % | 858.5 us |
+| rect_jacobi | 4x1 | 63.8 us | 8.7 us | 88 % | 60.8 us |
+| rect_jacobi | 8x2 | 773.0 us | 1.2 us | 100 % | 738.5 us |
+| rect_jacobi | 8x4 | 160.0 us | 7.2 us | 96 % | 149.8 us |
+
+## Verdict, against the pre-registered table
+
+| run | max/min | skew vs transfer | reading |
+|---|---|---|---|
+| base_jacobi 2x1 | 1.35 (rank 1) | - | no barrier pass |
+| base_jacobi 2x2 | 1.41 (rank 1) | - | no barrier pass |
+| base_jacobi 4x1 | 1.52 (rank 2) | - | no barrier pass |
+| base_jacobi 4x2 | 1.43 (rank 2) | - | no barrier pass |
+| base_jacobi 4x4 | 1.08 (rank 2) | - | no barrier pass |
+| base_jacobi 8x2 | 1.20 (rank 4) | 65 / 64 us | **transport** — every rank waits equally, and the wait is transfer |
+| base_jacobi 8x4 | 1.02 (rank 5) | - | no barrier pass |
+| blk8_jacobi 4x1 | 1.28 (rank 2) | - | no barrier pass |
+| blk8_jacobi 4x2 | 1.21 (rank 2) | - | no barrier pass |
+| blk8_jacobi 8x2 | 1.25 (rank 5) | 83 / 49 us | **transport** — every rank waits equally, and the wait is transfer |
+| blk8_jacobi 8x4 | 1.07 (rank 5) | - | no barrier pass |
+| nb16_jacobi 4x1 | 1.45 (rank 2) | - | no barrier pass |
+| nb16_jacobi 4x2 | 1.61 (rank 2) | - | no barrier pass |
+| nb16_jacobi 8x2 | 1.08 (rank 4) | 879 / 1 us | **collective skew** — all ranks late together (upstream imbalance in lockstep) |
+| nb16_jacobi 8x4 | 1.18 (rank 7) | - | no barrier pass |
+| rect_jacobi 2x1 | 1.46 (rank 1) | - | no barrier pass |
+| rect_jacobi 2x2 | 1.44 (rank 1) | - | no barrier pass |
+| rect_jacobi 4x1 | 1.38 (rank 1) | 64 / 9 us | **collective skew** — all ranks late together (upstream imbalance in lockstep) |
+| rect_jacobi 4x2 | 1.38 (rank 2) | - | no barrier pass |
+| rect_jacobi 4x4 | 1.21 (rank 1) | - | no barrier pass |
+| rect_jacobi 8x2 | 1.09 (rank 4) | 773 / 1 us | **collective skew** — all ranks late together (upstream imbalance in lockstep) |
+| rect_jacobi 8x4 | 1.24 (rank 7) | 160 / 7 us | **collective skew** — all ranks late together (upstream imbalance in lockstep) |
+| refined_yp82_rect_jacobi 2x1 | 2.11 (rank 1) | - | no barrier pass |
+| refined_yp82_rect_jacobi 2x2 | 1.96 (rank 1) | - | no barrier pass |
+| refined_yp82_rect_jacobi 4x1 | 1.61 (rank 1) | - | no barrier pass |
+| refined_yp82_rect_jacobi 4x2 | 1.58 (rank 2) | - | no barrier pass |
+=== balance job finished ===
+
+============================= JOB FEEDBACK =============================
+
+Job ID: 5138715
+Cluster: hk
+User/Group: xt8786/hk-project-exasim
+Account: hk-project-exasim
+State: COMPLETED (exit code 0)
+Partition: accelerated
+Nodes: 4
+Cores per node: 80
+Nodelist: hkn[0518,0604-0605,0708]
+CPU Utilized: 01:47:30
+CPU Efficiency: 1.32% of 5-15:44:00 core-walltime
+Job Wall-clock time: 00:25:27
+Starttime: Thu Sep 10 00:03:24 2026
+Endtime: Thu Sep 10 00:28:51 2026
+Memory Utilized: 32.19 GB
+Memory Efficiency: 1.66% of 1.90 TB (485.84 GB/node)
+Energy Consumed: 4506338 Joule / 1251.76055555556 Watthours
+Average node power draw: 2951.10543549443 Watt

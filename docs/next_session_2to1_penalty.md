@@ -1,5 +1,35 @@
 # Next session — reducing the 2:1 penalty
 
+> **STATUS 2026-09-10 — P1 AND THE TRANSPORT OPTIONS ARE AIMED AT NOTHING.**
+> `overheadTest/results_horeka_2026-09-10.md`: the 708-753 us `mpi_wait` that
+> §"Why (c) happens" and P1 were built to remove is **not transport**. An
+> `MPI_Barrier` before the `Waitall` absorbs 100 % of it -- the ranks arrive at
+> the exchange up to ~773 us apart, and once synchronised the blocked transfer
+> completes in 1.2 us, against 63.8 us for the `base_jacobi` decomposition that
+> was supposedly beating it. The blocked exchange moves its bytes ~53x faster
+> than the unblocked one; what it does not do is arrive on time.
+>
+> Consequences for this document: the 19-25 %-of-step prize is real but is a
+> **synchronisation** prize, not a byte-traffic one. P1's *measured* -3.63 % at
+> 2 ranks stands (it removed real bytes and real local-copy work); its
+> extrapolation to 8-16 ranks does not, because the cost there is not bytes.
+> **Do not start a partitioning rewrite or transport tuning on the strength of
+> the exchange numbers in this file.** P2 (overlap) is the one item the new
+> result makes MORE attractive, since hiding the exchange also hides the spread.
+>
+> Two corrections to how the earlier numbers must be read: every `mpi_wait`
+> figure in the 2026-09-07/08/09 reports is **rank 0's**, and rank 0 sits at or
+> near the cross-rank minimum (add 4-25 % for the mean); and aggregate
+> min/max/argmax is **blind to rotating skew** -- `rect` 8x2 shows a healthy
+> `max/min = 1.09` while being 100 % arrival spread, because the late rank
+> rotates.
+>
+> OPEN: what desynchronises four co-resident ranks by ~750 us per round. A
+> timeline probe (`horeka/mechanism/run_nsys.sh`) is the instrument; a second
+> barrier site before `pack` is the cheap follow-up, and needs the workstation
+> bit-exactness gate.
+
+
 Handout, written 2026-08-28 from the session that measured all of it. Read the
 first section before planning anything: it moves the target.
 

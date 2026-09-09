@@ -122,6 +122,14 @@ def main():
         print("`exchange_barrier = true` puts an MPI_Barrier before every Waitall, so")
         print("the barrier absorbs the arrival skew (`skew_barrier`) and what is left")
         print("in `mpi_wait` is transfer. **Serialising — its step times mean nothing.**\n")
+        print("WHAT THIS DOES AND DOES NOT PIN DOWN. A barrier costing X us means the")
+        print("ranks genuinely arrive ~X us apart (an 8-rank barrier on arrived ranks")
+        print("costs tens of us, not hundreds) -- so the SKEW column is a direct")
+        print("measurement. The transfer column is only a LOWER bound on wire time: a")
+        print("transfer that finished during the barrier leaves ~0 behind, so a small")
+        print("residual proves the transfer is not the critical path, not that it was")
+        print("fast in isolation. A LARGE residual is the informative case -- that much")
+        print("transfer remained after every rank had arrived.\n")
         print("| run | r x N | skew/round | transfer/round | skew share | pass-A wait r0 |")
         print("|---|---|---|---|---|---|")
         for k in sorted(Bp, key=lambda k: (k[0], k[1], k[2])):
@@ -150,11 +158,19 @@ def main():
             skewy = sk > 2 * tr
             spread = r["bratio"] > 2
             if not spread and not skewy:
-                verdict = "**transport** — every rank waits equally, and the wait is transfer"
+                verdict = ("**transport** — equal totals and real transfer left after "
+                           "synchronisation; fix in the exchange, not the partitioning")
             elif not spread and skewy:
-                verdict = "**collective skew** — all ranks late together (upstream imbalance in lockstep)"
+                # The combination that aggregate min/max/argmax is BLIND to: a large
+                # per-round arrival spread whose late rank ROTATES, so every rank
+                # accumulates the same total and max/min looks healthy.
+                verdict = ("**rotating skew** — ~%.0f us of per-round arrival spread, "
+                           "but equal per-rank TOTALS (max/min %.2f): the late rank "
+                           "rotates. Not a fixed load imbalance, and not transport."
+                           % (sk, r["bratio"]))
             elif spread and skewy:
-                verdict = "**skew** — everyone waits for one late rank; fix upstream (load balance)"
+                verdict = ("**persistent skew** — everyone waits for the same late rank; "
+                           "fix upstream (load balance / partitioning)")
             else:
                 verdict = "**per-rank transfer** — ranks differ in volume, not arrival"
         print(f"| {r['cfg']} {r['ranks']}x{r['nodes']} | {r['bratio']:.2f} (rank {r['bargmax']}) | {sv} | {verdict} |")
