@@ -25,6 +25,14 @@ MPIRUN_EXTRA="${MPIRUN_EXTRA:-}"
 
 # config:ranks:nodes -- comma-separated, no spaces (word splitting).
 #
+# ROUND 2 (2026-09-09) added nb16_jacobi:8:2, nb16_jacobi:8:4 and
+# blk8_jacobi:4:2. Round 1 refuted all three original hypotheses; nb16 at 8
+# ranks / 4 per node is the missing direct test, since it carries 7.6x
+# rect's copy load per rank on the SAME 2-peer chain at the SAME placement as
+# the reproducible 752 us anomaly. blk8:4:2 completes the (copy, placement)
+# 2x2. Re-running rect_jacobi:8:2 in the same allocation (delete its result
+# directory to force it) removes the cross-job caveat.
+#
 # TIER 5 (blk8_jacobi) is the second discriminator: node crossing WITHOUT the
 # device-local copy load, one block per rank. See its config header.
 # TIER 4 (nb16_jacobi) varies the exchange VOLUME several-fold at a fixed
@@ -59,6 +67,9 @@ nb16_jacobi:4:2
 blk8_jacobi:4:1
 blk8_jacobi:8:2
 blk8_jacobi:8:4
+nb16_jacobi:8:2
+nb16_jacobi:8:4
+blk8_jacobi:4:2
 }"
 
 command -v mpirun >/dev/null || { echo "ERROR: mpirun not on PATH" >&2; exit 1; }

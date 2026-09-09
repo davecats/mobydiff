@@ -11,6 +11,11 @@
 | base_jacobi | 4 | 4 | 1 | 4 | 0.20648 | 662.9 us | 3 | 414966 | 1458888 |
 | base_jacobi | 8 | 2 | 4 | 2 | 0.10249 | 101.2 us | 7 | 574344 | 0 |
 | base_jacobi | 8 | 4 | 2 | 4 | 0.15825 | 1565.5 us | 7 | 574344 | 0 |
+| blk8_jacobi | 4 | 1 | 4 | 1 | 0.18957 | 169.5 us | 3 | 747600 | 136704 |
+| blk8_jacobi | 8 | 2 | 4 | 2 | 0.10011 | 114.1 us | 5 | 399432 | 0 |
+| blk8_jacobi | 8 | 4 | 2 | 4 | 0.20115 | 2597.4 us | 5 | 399432 | 0 |
+| nb16_jacobi | 4 | 1 | 4 | 1 | 0.26266 | 58.2 us | 2 | 85536 | 56765088 |
+| nb16_jacobi | 4 | 2 | 2 | 2 | 0.26395 | 81.1 us | 2 | 85536 | 56765088 |
 | rect_jacobi | 2 | 1 | 2 | 1 | 0.38354 | 23.8 us | 1 | 36800 | 15316352 |
 | rect_jacobi | 2 | 2 | 1 | 2 | 0.38453 | 67.5 us | 1 | 36800 | 15316352 |
 | rect_jacobi | 4 | 1 | 4 | 1 | 0.19941 | 34.6 us | 2 | 73600 | 15169152 |
@@ -60,6 +65,9 @@ number of node boundaries the chain crosses changes.
 | base_jacobi | 8 | - | 101.2 us | 1565.5 us |
 | refined_yp82_rect_jacobi | 2 | 20.8 us | 50.3 us | - |
 | refined_yp82_rect_jacobi | 4 | 47.2 us | 52.4 us | - |
+| nb16_jacobi | 4 | 58.2 us | 81.1 us | - |
+| blk8_jacobi | 4 | 169.5 us | - | - |
+| blk8_jacobi | 8 | - | 114.1 us | 2597.4 us |
 
 Proportional in the number of crossings => per-link transport cost.
 Saturating after the FIRST crossing => a single slow link stalls the chain.
@@ -84,14 +92,21 @@ same-rank copy volume collapses.
 | run | wait/round | local copy pts |
 |---|---|---|
 | rect_jacobi 8x2 | 752.6 us | 14874752 |
+| blk8_jacobi 8x2 | 114.1 us | 0 |
 | base_jacobi 8x2 | 101.2 us | 0 |
 | rect_jacobi 4x1 | 34.6 us | 15169152 |
+| blk8_jacobi 4x1 | 169.5 us | 136704 |
+
+**Local-copy / transfer CONTENTION confirmed**: removing the same-rank
+copy load removes most of the stall at the same placement and topology.
 
 ## Latency or bandwidth — exchange volume at a fixed placement
 
 | run | send pts (max/rank) | wait/round | us per MB |
 |---|---|---|---|
 | rect_jacobi 4x2 | 73600 | 66.4 us | 28.2 |
+| nb16_jacobi 4x2 | 85536 | 81.1 us | 29.6 |
+| blk8_jacobi 8x2 | 399432 | 114.1 us | 8.9 |
 | rect_jacobi 8x2 | 73600 | 752.6 us | 319.5 |
 
 Wait flat against a large change in bytes => latency/serialization.
