@@ -159,7 +159,7 @@ def main():
         for m in mpis:
             mm = re.search(r"rep_(\d+)", m.name)
             rank = int(mm.group(1)) if mm else -1
-            g = sorted(run.glob(f"rep_{rank}_gpu*cuda_gpu_trace*.csv"))
+            g = sorted(run.glob(f"rep_{rank}_*cuda_gpu_trace*.csv"))
             a = analyse_rank(m, g[0] if g else None)
             if not a:
                 continue

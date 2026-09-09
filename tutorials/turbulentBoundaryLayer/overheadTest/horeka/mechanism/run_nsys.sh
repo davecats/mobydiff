@@ -28,6 +28,16 @@ NSYS="${NSYS:-/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/profil
 NSTEPS="${NSTEPS:-40}"
 MPIRUN_EXTRA="${MPIRUN_EXTRA:-}"
 
+# NIC=1 adds --nic-metrics=true (HCA counters). OFF by default and deliberately
+# a SECOND pass, not part of the first: it is a system-scope collector that can
+# fail on permissions and take the profile session with it, and it is only worth
+# having once the first pass has said the wait is genuinely MPI rather than
+# unfinished device work. The nodes carry bonded mlx5 HCAs (ibstat -l), so this
+# is what would show 4 ranks/node saturating a link that 2 ranks/node does not.
+NIC="${NIC:-0}"
+NIC_FLAG=""
+[ "$NIC" = 1 ] && NIC_FLAG="--nic-metrics=true"
+
 # The four cells the timeline has to explain, all at 8 ranks except the last:
 #   rect 8x2  the reproducible 752 us anomaly (4 ranks/node, 1 crossing)
 #   base 8x2  the 101 us control at the SAME placement
@@ -76,7 +86,7 @@ for spec in $SPECS; do
     ( cd "$run" && mpirun -n "$ranks" --map-by "ppr:${per_node}:node" --bind-to core \
         --display-map $MPIRUN_EXTRA \
         "$NSYS" profile --trace=mpi,cuda --mpi-impl=openmpi \
-                --sample=none --cpuctxsw=none --force-overwrite=true \
+                --sample=none --cpuctxsw=none --force-overwrite=true $NIC_FLAG \
                 -o "rep_%q{OMPI_COMM_WORLD_RANK}" \
                 "$EXE" config.ini > run.log 2>&1 )
     rc=$?
@@ -95,12 +105,14 @@ for spec in $SPECS; do
     for rep in "$run"/rep_*.nsys-rep; do
         [ -e "$rep" ] || continue
         b="${rep%.nsys-rep}"
-        "$NSYS" stats --report mpi_event_trace --format csv --force-export=true \
-                -o "${b}_mpi" "$rep" > "${b}_stats.log" 2>&1
-        "$NSYS" stats --report cuda_gpu_trace --format csv --force-export=true \
-                -o "${b}_gpu"  "$rep" >> "${b}_stats.log" 2>&1
+        # BOTH reports in one call: each invocation exports the report to sqlite
+        # first, so two calls would pay that export twice for the same trace.
+        # Writes ${b}_mpi_event_trace.csv and ${b}_cuda_gpu_trace.csv.
+        "$NSYS" stats --report mpi_event_trace,cuda_gpu_trace --format csv \
+                -o "$b" "$rep" > "${b}_stats.log" 2>&1 \
+            || echo "    stats failed for $(basename "$rep") -- see ${b}_stats.log"
     done
-    echo "    csv: $(ls "$run"/*_mpi*.csv 2>/dev/null | wc -l) mpi, $(ls "$run"/*_gpu*.csv 2>/dev/null | wc -l) gpu"
+    echo "    csv: $(ls "$run"/*mpi_event_trace*.csv 2>/dev/null | wc -l) mpi, $(ls "$run"/*cuda_gpu_trace*.csv 2>/dev/null | wc -l) gpu"
     rm -f "$run"/overhead_*.h5
 done
 echo "=== nsys matrix done $(date '+%F %T')"
