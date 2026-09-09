@@ -49,7 +49,11 @@ echo "commit under test: $(git rev-parse HEAD)"
 [ -x "$EXE" ] || { echo "ERROR: no $EXE" >&2; exit 1; }
 
 cd "$RUN_DIR" || exit 1
-RES="$RUN_DIR/results_nsys"
+# RESDIR lets a re-run go to a fresh directory instead of merging with an earlier
+# attempt's reports. NEVER re-stage run_nsys.sh while a job is executing it: bash
+# re-reads a script from byte offsets, so an edit mid-run can splice two versions
+# together. Cancel, stage, resubmit.
+RES="${RESDIR:-$RUN_DIR/results_nsys}"
 mkdir -p "$RES"
 {
     echo "job          : ${SLURM_JOB_ID:-none}"

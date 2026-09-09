@@ -86,11 +86,15 @@ for spec in $SPECS; do
     # mid-report, so only some ranks' traces survive. Wrapping each rank so it
     # always exits 0 keeps every report intact; the run is then judged on
     # "main loop ended" in the log, not on mpirun's status.
+    # The paths are baked in at write time, NOT passed through the environment:
+    # OpenMPI forwards only OMPI_* to REMOTE nodes, so $NSYS/$EXE would be empty
+    # on every node but the first. Only the rank id is left for runtime, and
+    # OpenMPI sets that itself.
     cat > "$run/nsys_wrap.sh" <<WRAP
 #!/bin/bash
-"\$NSYS" profile --trace=cuda --sample=none --cpuctxsw=none \
-    --force-overwrite=true \$NIC_FLAG -o "rep_\${OMPI_COMM_WORLD_RANK}" \
-    "\$EXE" config.ini
+"$NSYS" profile --trace=cuda --sample=none --cpuctxsw=none \
+    --force-overwrite=true $NIC_FLAG -o "rep_\${OMPI_COMM_WORLD_RANK}" \
+    "$EXE" config.ini
 exit 0
 WRAP
     chmod +x "$run/nsys_wrap.sh"
@@ -104,8 +108,7 @@ WRAP
     # a kernel signature: pack -> copy_local -> [gap = post + Waitall] -> unpack,
     # so per-round wait is the gap and GPU idle says whether the wait is device
     # work. Solver-side NVTX would restore the MPI view but is a gated change.
-    ( cd "$run" && NSYS="$NSYS" EXE="$EXE" NIC_FLAG="$NIC_FLAG" \
-      mpirun -n "$ranks" --map-by "ppr:${per_node}:node" --bind-to core \
+    ( cd "$run" && mpirun -n "$ranks" --map-by "ppr:${per_node}:node" --bind-to core \
         --display-map $MPIRUN_EXTRA ./nsys_wrap.sh > run.log 2>&1 )
     rc=$?
     if ! grep -q "main loop ended" "$run/run.log"; then
