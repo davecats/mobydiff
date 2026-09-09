@@ -186,6 +186,11 @@ module init
         character(len=256) :: restart_file = ""
         ! [output] profile: per-phase step timing (profiling.f90), diagnostic only.
         logical(C_BOOL) :: profile_steps = .false._C_BOOL
+        ! [output] exchange_barrier: barrier before every MPI_Waitall, so the
+        ! exchange's ARRIVAL SKEW is measured separately from its TRANSFER.
+        ! Diagnostic; bit-exact but serialising, so step times from such a run
+        ! are not comparable.
+        logical(C_BOOL) :: exchange_barrier = .false._C_BOOL
     end type dns_type
 
     ! Grid generation parameters and the global node lines. The staggered

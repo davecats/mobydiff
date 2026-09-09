@@ -23,6 +23,7 @@ program moby_solve
     use :: rans
     use :: bodyforce
     use :: comm, only: comm_type, comm_init_world, comm_init, comm_finalize, &
+        report_exchange_balance, &
         init_block_exchange, exchange_halos, exchange_scalar_halos, &
         comm_allreduce_sum, comm_allreduce_max
     use :: profiling, only: init_step_profilers, write_step_profilers, prof_tic, prof_toc, &
@@ -305,6 +306,12 @@ program moby_solve
         if (turbulence_is_enabled(turb)) call write_profiler(turb_prof, loop_steps)
         call write_step_profilers(loop_steps, loop_timer%elapsed_seconds)
     end if
+
+    ! Per-rank spread of the exchange wait: three reductions, once, outside the
+    ! loop. The aggregate mpi_wait line cannot tell a slow fabric from one late
+    ! rank; this can. COLLECTIVE -- must sit outside the has_terminal block
+    ! above, which only rank 0 enters; the printing is guarded inside.
+    if (dns%profile_steps) call report_exchange_balance(c)
 
     call write_field(blk, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%omega, &
         turb%nut, sst%k, sst%omg, sst%gam, sst%ret, turb%fd)

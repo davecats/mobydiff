@@ -208,6 +208,11 @@ subroutine apply_config_value(section, key, value, dns, g, turb, les, ps, bc, c,
             ! reads clocks, so results are unaffected either way, but the hooks
             ! should cost nothing in production.
             call read_bool(value, dns%profile_steps, line_no)
+        case ("exchange_barrier")
+            ! Diagnostic: splits exchange arrival skew from transfer. Needs
+            ! `profile` to be on to report anything, and serialises the
+            ! exchange, so never quote a step time from a barrier run.
+            call read_bool(value, dns%exchange_barrier, line_no)
         end select
     case ("restart")
         select case (key_l)

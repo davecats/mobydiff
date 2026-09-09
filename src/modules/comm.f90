@@ -6,7 +6,8 @@ module comm
         leaf_at, level_cells, level_cell_width, occupied_any_level, parent_coord, child_origin
     use :: boundary, only: boundary_type
     use :: profiling, only: prof_tic, prof_toc, exch_prof, &
-        PROF_PACK, PROF_MPI_POST, PROF_MPI_WAIT, PROF_UNPACK, PROF_LOCAL_COPY
+        PROF_PACK, PROF_MPI_POST, PROF_MPI_WAIT, PROF_UNPACK, PROF_LOCAL_COPY, &
+        PROF_SKEW
 #ifdef USE_OPENMP_OFFLOAD
     use omp_lib
 #endif
@@ -36,6 +37,8 @@ module comm
         integer :: cart_size = 1
         integer :: local_rank = 0
         logical :: has_terminal = .true.
+        ! [output] exchange_barrier -- diagnostic, see finish_halo_exchange.
+        logical :: exchangeBarrier = .false.
 
         integer :: dims(3) = [0, 0, 0]
         integer :: coords(3) = [0, 0, 0]
@@ -145,7 +148,7 @@ module comm
 
     public :: comm_init_world, comm_init, comm_finalize
     public :: comm_allreduce_max, comm_allreduce_sum, comm_allreduce_max_int
-    public :: init_block_exchange
+    public :: init_block_exchange, report_exchange_balance
     public :: start_halo_exchange, finish_halo_exchange, exchange_halos, exchange_scalar_halos
     public :: sync_divergence_halos
 
@@ -262,6 +265,42 @@ contains
                 real(sendSum, C_DOUBLE)*32.0d0/1.0d6
         end if
     end subroutine report_exchange_sizes
+
+    ! Per-rank BALANCE of the exchange buckets, printed once at the end of a
+    ! profiled run. The aggregate mpi_wait line cannot distinguish "every rank
+    ! waits a little for a slow fabric" from "every rank waits for ONE late
+    ! rank": the first has min ~ max, the second a wide spread with a stable
+    ! argmax. That distinction is what separates a transport problem from a
+    ! partitioning/skew problem, and no placement sweep can reveal it.
+    !
+    ! Free: three reductions once per run, outside the timed loop.
+    subroutine report_exchange_balance(c)
+        type(comm_type), intent(inout) :: c
+
+        real(C_DOUBLE) :: mine, wmin, wmax, wsum
+        real(C_DOUBLE) :: pair(2), pairMax(2)
+        integer :: ierr
+
+        mine = exch_prof%seconds(PROF_MPI_WAIT)
+        call MPI_Allreduce(mine, wmin, 1, MPI_DOUBLE_PRECISION, MPI_MIN, c%cart_comm, ierr)
+        call MPI_Allreduce(mine, wmax, 1, MPI_DOUBLE_PRECISION, MPI_MAX, c%cart_comm, ierr)
+        call MPI_Allreduce(mine, wsum, 1, MPI_DOUBLE_PRECISION, MPI_SUM, c%cart_comm, ierr)
+        ! MAXLOC names the straggler instead of leaving it to be inferred.
+        ! 2DOUBLE_PRECISION rather than 2INTEGER: the seconds must not be
+        ! quantised to compare ranks that differ by microseconds.
+        pair(1) = mine
+        pair(2) = real(c%cart_rank, C_DOUBLE)
+        call MPI_Allreduce(pair, pairMax, 1, MPI_2DOUBLE_PRECISION, MPI_MAXLOC, &
+            c%cart_comm, ierr)
+
+        if (c%has_terminal) then
+            print '(a,es16.8,a,es16.8,a,es16.8,a,f8.2,a,i0)', &
+                " exchange balance: mpi_wait seconds min ", wmin, " mean ", &
+                wsum/real(max(c%cart_size,1), C_DOUBLE), " max ", wmax, &
+                "  max/min ", merge(wmax/wmin, 0.0d0, wmin > 0.0d0), &
+                "  slowest rank ", nint(pairMax(2))
+        end if
+    end subroutine report_exchange_balance
 
     subroutine init_block_exchange(c, blk, dns)
         type(comm_type), intent(inout) :: c
@@ -512,6 +551,7 @@ contains
         ! "latency- or imbalance-bound". Reduced over ranks so one line
         ! describes the whole run; local_copy points are the on-device
         ! (same-rank) traffic that never becomes a message.
+        c%exchangeBarrier = logical(dns%exchange_barrier)
         if (dns%profile_steps) call report_exchange_sizes(c)
         c%request = MPI_REQUEST_NULL
 
@@ -1195,6 +1235,17 @@ contains
 
         if (c%nPeers > 0) then
             nRequest = 2*c%nPeers
+            ! DIAGNOSTIC, off by default. With the barrier in place every rank
+            ! enters the Waitall at the same instant, so mpi_wait measures the
+            ! TRANSFER and the barrier measures the ARRIVAL SKEW that mpi_wait
+            ! would otherwise have absorbed. It changes scheduling, never
+            ! arithmetic, so fields stay bit-exact -- but it serialises the
+            ! exchange, so never quote a step time from a barrier run.
+            if (c%exchangeBarrier) then
+                t0 = prof_tic()
+                call MPI_Barrier(c%cart_comm, ierr)
+                call prof_toc(exch_prof, PROF_SKEW, t0)
+            end if
             t0 = prof_tic()
             call MPI_Waitall(nRequest, c%request(1:nRequest), MPI_STATUSES_IGNORE, ierr)
             call prof_toc(exch_prof, PROF_MPI_WAIT, t0)
@@ -1275,6 +1326,17 @@ contains
 
         if (c%nPeers > 0) then
             nRequest = 2*c%nPeers
+            ! DIAGNOSTIC, off by default. With the barrier in place every rank
+            ! enters the Waitall at the same instant, so mpi_wait measures the
+            ! TRANSFER and the barrier measures the ARRIVAL SKEW that mpi_wait
+            ! would otherwise have absorbed. It changes scheduling, never
+            ! arithmetic, so fields stay bit-exact -- but it serialises the
+            ! exchange, so never quote a step time from a barrier run.
+            if (c%exchangeBarrier) then
+                t0 = prof_tic()
+                call MPI_Barrier(c%cart_comm, ierr)
+                call prof_toc(exch_prof, PROF_SKEW, t0)
+            end if
             t0 = prof_tic()
             call MPI_Waitall(nRequest, c%request(1:nRequest), MPI_STATUSES_IGNORE, ierr)
             call prof_toc(exch_prof, PROF_MPI_WAIT, t0)
