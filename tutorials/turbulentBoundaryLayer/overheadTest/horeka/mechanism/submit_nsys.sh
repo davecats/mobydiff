@@ -36,6 +36,13 @@ export LD_LIBRARY_PATH="$HDF5_ROOT/lib:${LD_LIBRARY_PATH:-}"
 export UCX_MEMTYPE_CACHE=n
 export OMP_NUM_THREADS=1
 
+# SERIALISE AGAINST THE TIMING JOB. compile.sh only knows one output directory,
+# $CODE_DIR/build_gpu, so two jobs of this campaign running it at once corrupt
+# each other's build. Submit this one with
+#     sbatch --dependency=afterany:<timing job id> ...
+# (or scontrol update jobid=<this> dependency=... if it is already queued).
+# Caught live on 2026-09-09: moby_nsys was queued unconstrained while
+# moby_balance was 35 % through a full rebuild.
 cd "$CODE_DIR" || exit 1
 echo "commit under test: $(git rev-parse HEAD)"
 ./compile.sh gpu || exit 1
