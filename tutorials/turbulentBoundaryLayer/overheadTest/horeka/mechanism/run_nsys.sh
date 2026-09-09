@@ -79,20 +79,40 @@ for spec in $SPECS; do
     sed -i -e "s/^nsteps *=.*/nsteps = $NSTEPS/" \
            -e "s/^runtime_interval *=.*/runtime_interval = $NSTEPS/" "$run/config.ini"
 
+    # THE TEARDOWN SIGSEGV. Under nsys the solver runs to completion -- 40 steps,
+    # "main loop ended", every timing line -- and then segfaults during process
+    # exit, after the final field write. nsys still writes a complete report. The
+    # damage is second-hand: mpirun sees one rank exit 139 and kills its siblings
+    # mid-report, so only some ranks' traces survive. Wrapping each rank so it
+    # always exits 0 keeps every report intact; the run is then judged on
+    # "main loop ended" in the log, not on mpirun's status.
+    cat > "$run/nsys_wrap.sh" <<WRAP
+#!/bin/bash
+"\$NSYS" profile --trace=cuda --sample=none --cpuctxsw=none \
+    --force-overwrite=true \$NIC_FLAG -o "rep_\${OMPI_COMM_WORLD_RANK}" \
+    "\$EXE" config.ini
+exit 0
+WRAP
+    chmod +x "$run/nsys_wrap.sh"
+
     echo "=== $cfg  ${ranks} ranks on ${nodes} node(s) = ${per_node}/node  ($(date '+%F %T'))"
-    # One report per rank. --sample=none/--cpuctxsw=none keep the trace to the
-    # two event streams the question needs; sampling would add noise and bulk
-    # without answering anything here.
-    ( cd "$run" && mpirun -n "$ranks" --map-by "ppr:${per_node}:node" --bind-to core \
-        --display-map $MPIRUN_EXTRA \
-        "$NSYS" profile --trace=mpi,cuda --mpi-impl=openmpi \
-                --sample=none --cpuctxsw=none --force-overwrite=true $NIC_FLAG \
-                -o "rep_%q{OMPI_COMM_WORLD_RANK}" \
-                "$EXE" config.ini > run.log 2>&1 )
+    # --trace=cuda ONLY. MPI tracing produces nothing here: OpenMPI's Fortran
+    # mpi_f08 bindings reach the C layer as PMPI_*, so nsys's interception of the
+    # MPI_* symbols never fires and the report comes back "does not contain MPI
+    # event data". An LD_PRELOAD shim misses it for the same reason. The GPU
+    # timeline still answers the questions that matter, because the exchange has
+    # a kernel signature: pack -> copy_local -> [gap = post + Waitall] -> unpack,
+    # so per-round wait is the gap and GPU idle says whether the wait is device
+    # work. Solver-side NVTX would restore the MPI view but is a gated change.
+    ( cd "$run" && NSYS="$NSYS" EXE="$EXE" NIC_FLAG="$NIC_FLAG" \
+      mpirun -n "$ranks" --map-by "ppr:${per_node}:node" --bind-to core \
+        --display-map $MPIRUN_EXTRA ./nsys_wrap.sh > run.log 2>&1 )
     rc=$?
-    if [ $rc -ne 0 ]; then
-        echo "    FAILED (exit $rc)"; mv "$run/run.log" "$run/run.FAILED.log"; continue
+    if ! grep -q "main loop ended" "$run/run.log"; then
+        echo "    FAILED (exit $rc, no completed main loop)"
+        mv "$run/run.log" "$run/run.FAILED.log"; continue
     fi
+    [ $rc -ne 0 ] && echo "    (mpirun exit $rc -- teardown only, main loop completed)"
     awk '/Data for node:/ {print $4}' "$run/run.log" | sort -u > "$run/hosts.txt"
     got=$(wc -l < "$run/hosts.txt")
     echo "    hosts ($got): $(tr '\n' ' ' < "$run/hosts.txt")"
@@ -108,11 +128,11 @@ for spec in $SPECS; do
         # BOTH reports in one call: each invocation exports the report to sqlite
         # first, so two calls would pay that export twice for the same trace.
         # Writes ${b}_mpi_event_trace.csv and ${b}_cuda_gpu_trace.csv.
-        "$NSYS" stats --report mpi_event_trace,cuda_gpu_trace --format csv \
+        "$NSYS" stats --report cuda_gpu_trace --format csv \
                 -o "$b" "$rep" > "${b}_stats.log" 2>&1 \
             || echo "    stats failed for $(basename "$rep") -- see ${b}_stats.log"
     done
-    echo "    csv: $(ls "$run"/*mpi_event_trace*.csv 2>/dev/null | wc -l) mpi, $(ls "$run"/*cuda_gpu_trace*.csv 2>/dev/null | wc -l) gpu"
+    echo "    csv: $(ls "$run"/*cuda_gpu_trace*.csv 2>/dev/null | wc -l) gpu traces"
     rm -f "$run"/overhead_*.h5
 done
 echo "=== nsys matrix done $(date '+%F %T')"

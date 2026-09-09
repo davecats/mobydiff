@@ -24,10 +24,18 @@
 > `max/min = 1.09` while being 100 % arrival spread, because the late rank
 > rotates.
 >
-> OPEN: what desynchronises four co-resident ranks by ~750 us per round. A
-> timeline probe (`horeka/mechanism/run_nsys.sh`) is the instrument; a second
-> barrier site before `pack` is the cheap follow-up, and needs the workstation
-> bit-exactness gate.
+> A CUDA timeline probe (job 5139026) adds two more eliminations: the GPU is
+> **idle 37 %** of the time in the anomaly regime, so the stall is NOT unfinished
+> device work; and the slowest 1 % of rounds hold only **4-5 %** of the wait, so
+> it is every round rather than a few catastrophic ones.
+>
+> OPEN: what desynchronises four co-resident ranks by ~750 us per round. It is
+> not transport, not device work, not a few bad rounds, not a persistent
+> straggler, and not copy volume. The cheap next instrument is a **second barrier
+> site before `pack`**, which separates skew the exchange creates (its own copy)
+> from skew the rank arrives with -- a solver change needing the workstation
+> bit-exactness gate. Solver-side NVTX would also restore the MPI view that nsys
+> cannot capture here (Fortran `mpi_f08` reaches the C layer as `PMPI_*`).
 
 
 Handout, written 2026-08-28 from the session that measured all of it. Read the

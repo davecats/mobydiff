@@ -1,0 +1,146 @@
+ Data for JOB [25613,1] offset 0 Total slots allocated 8
+
+ ========================   JOB MAP   ========================
+
+ Data for node: hkn0525	Num slots: 4	Max slots: 0	Num procs: 4
+ 	Process OMPI jobid: [25613,1] App: 0 Process rank: 0 Bound: socket 0[core 0[hwt 0-1]]:[BB/../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../..][../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../..]
+ 	Process OMPI jobid: [25613,1] App: 0 Process rank: 1 Bound: socket 0[core 1[hwt 0-1]]:[../BB/../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../..][../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../..]
+ 	Process OMPI jobid: [25613,1] App: 0 Process rank: 2 Bound: socket 0[core 2[hwt 0-1]]:[../../BB/../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../..][../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../..]
+ 	Process OMPI jobid: [25613,1] App: 0 Process rank: 3 Bound: socket 0[core 3[hwt 0-1]]:[../../../BB/../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../..][../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../..]
+
+ =============================================================
+WARNING: Device-side CUDA Event completion trace is currently enabled.
+         This may increase runtime overhead and the likelihood of false
+         dependencies across CUDA Streams. If you wish to avoid this, please
+         disable the feature with --cuda-event-trace=false.
+WARNING: Device-side CUDA Event completion trace is currently enabled.
+         This may increase runtime overhead and the likelihood of false
+         dependencies across CUDA Streams. If you wish to avoid this, please
+         disable the feature with --cuda-event-trace=false.
+WARNING: Device-side CUDA Event completion trace is currently enabled.
+         This may increase runtime overhead and the likelihood of false
+         dependencies across CUDA Streams. If you wish to avoid this, please
+         disable the feature with --cuda-event-trace=false.
+WARNING: Device-side CUDA Event completion trace is currently enabled.
+         This may increase runtime overhead and the likelihood of false
+         dependencies across CUDA Streams. If you wish to avoid this, please
+         disable the feature with --cuda-event-trace=false.
+Collecting data...
+Collecting data...
+Collecting data...
+Collecting data...
+      __. - ~ ~ ~ - .
+_   ,//           __  ' ,
+ \  ||       __--  --    ,   ~~~~
+ , \|____---    o       ~~~    ~~~~
+,    _            __/   ~~ ,  ~~~               mobyDiff
+,       ---/ / __--   ~~   ,~~                  commit: 7aa1c7b
+ ,          /       ~~   ~~
+  ,         ~~~ ~~~     ~~,
+    ,    ~~~           , '
+      ' - , _ _ _ ,  '
+
+
+ reading input data...
+MPI Cartesian dimensions: 2 2 1
+ initialising grid...
+ exchange sizes: peers/rank(max) 2  send pts/rank min 36800 max 73600  total send pts 220800  local copy pts 15169152
+ exchange MB per round (all ranks): scalar nv=1      1.766   copy-only nv=3      5.299   full nv=4      7.066
+ OpenMP target devices available:            4
+ initialising fields...
+ initialising pressure solver...
+ initialising IBM...
+ initialising body force...
+ trip forcing: amp= 3.000E-02 x0= 1.500E+01 ts= 4.000E+00 nmodes=24
+ main loop starting...
+iteration time L2_div global_div Linf_vel CFL Peclet wall_seconds_per_step
+        40   4.00000000E-02   1.06902591E-05   5.00093393E-01   1.00049494E+00   6.73467512E-03   2.09364619E-02   2.21495800E-01
+ main loop ended...
+timing: nsteps 40 loop_seconds   8.86065610E+00 seconds_per_step   2.21516402E-01
+step_timing: momentum calls 120 nsteps 40 seconds   1.57951450E+00 seconds_per_step   3.94878625E-02 seconds_per_call   1.31626208E-02
+step_timing: ibm_mu calls 120 nsteps 40 seconds   3.39701200E-01 seconds_per_step   8.49253000E-03 seconds_per_call   2.83084333E-03
+step_timing: bodyforce calls 120 nsteps 40 seconds   2.24575500E-01 seconds_per_step   5.61438750E-03 seconds_per_call   1.87146250E-03
+step_timing: turbulence calls 0 nsteps 40 seconds   0.00000000E+00 seconds_per_step   0.00000000E+00 seconds_per_call   0.00000000E+00
+step_timing: apply_bc calls 120 nsteps 40 seconds   1.22878000E-02 seconds_per_step   3.07195000E-04 seconds_per_call   1.02398333E-04
+step_timing: vel_exchange calls 120 nsteps 40 seconds   1.32858000E-01 seconds_per_step   3.32145000E-03 seconds_per_call   1.10715000E-03
+step_timing: projection calls 120 nsteps 40 seconds   6.50763400E+00 seconds_per_step   1.62690850E-01 seconds_per_call   5.42302833E-02
+step_timing: io_stats calls 40 nsteps 40 seconds   6.39916000E-02 seconds_per_step   1.59979000E-03 seconds_per_call   1.59979000E-03
+step_timing: total_measured calls 760 nsteps 40 seconds   8.86056260E+00 seconds_per_step   2.21514065E-01 seconds_per_call   1.16586350E-02
+step_timing: coverage measured   8.86056260E+00 loop_seconds   8.86065610E+00 fraction   1.0000
+proj_timing: sweep calls 720 nsteps 40 seconds   1.15125480E+00 seconds_per_step   2.87813700E-02 seconds_per_call   1.59896500E-03
+proj_timing: apply calls 720 nsteps 40 seconds   3.26601210E+00 seconds_per_step   8.16503025E-02 seconds_per_call   4.53612792E-03
+proj_timing: phi_exchange calls 720 nsteps 40 seconds   6.54459900E-01 seconds_per_step   1.63614975E-02 seconds_per_call   9.08972083E-04
+proj_timing: vel_exchange calls 720 nsteps 40 seconds   8.66973800E-01 seconds_per_step   2.16743450E-02 seconds_per_call   1.20413028E-03
+proj_timing: apply_bc calls 720 nsteps 40 seconds   6.83496000E-02 seconds_per_step   1.70874000E-03 seconds_per_call   9.49300000E-05
+proj_timing: setup calls 120 nsteps 40 seconds   5.00254600E-01 seconds_per_step   1.25063650E-02 seconds_per_call   4.16878833E-03
+proj_timing: total_measured calls 3720 nsteps 40 seconds   6.50730480E+00 seconds_per_step   1.62682620E-01 seconds_per_call   1.74927548E-03
+exch_timing: pack calls 1560 nsteps 40 seconds   2.85938300E-01 seconds_per_step   7.14845750E-03 seconds_per_call   1.83293782E-04
+exch_timing: mpi_post calls 1560 nsteps 40 seconds   1.93117000E-02 seconds_per_step   4.82792500E-04 seconds_per_call   1.23792949E-05
+exch_timing: mpi_wait calls 1560 nsteps 40 seconds   3.27188700E-01 seconds_per_step   8.17971750E-03 seconds_per_call   2.09736346E-04
+exch_timing: unpack calls 1560 nsteps 40 seconds   2.51359900E-01 seconds_per_step   6.28399750E-03 seconds_per_call   1.61128141E-04
+exch_timing: local_copy calls 1560 nsteps 40 seconds   7.38799100E-01 seconds_per_step   1.84699775E-02 seconds_per_call   4.73589167E-04
+exch_timing: skew_barrier calls 0 nsteps 40 seconds   0.00000000E+00 seconds_per_step   0.00000000E+00 seconds_per_call   0.00000000E+00
+exch_timing: total_measured calls 7800 nsteps 40 seconds   1.62259770E+00 seconds_per_step   4.05649425E-02 seconds_per_call   2.08025346E-04
+ exchange balance: mpi_wait seconds min   2.65899900E-01 mean   2.91140400E-01 max   3.27188700E-01  max/min     1.23  slowest rank 0
+ current time step:            40    field filename: overhead_40.h5
+[hkn0525:3102657:0:3102657] Caught signal 11 (Segmentation fault: address not mapped to object at address (nil))
+[hkn0525:3102653:0:3102653] Caught signal 11 (Segmentation fault: address not mapped to object at address (nil))
+[hkn0525:3102651:0:3102651] Caught signal 11 (Segmentation fault: address not mapped to object at address (nil))
+[hkn0525:3102646:0:3102646] Caught signal 11 (Segmentation fault: address not mapped to object at address (nil))
+==== backtrace (tid:3102653) ====
+ 0 0x000000000003ebf0 __GI___sigaction()  :0
+=================================
+[hkn0525:3102653] *** Process received signal ***
+[hkn0525:3102653] Signal: Segmentation fault (11)
+[hkn0525:3102653] Signal code:  (-6)
+[hkn0525:3102653] Failing at address: 0x34b22002f57bd
+[hkn0525:3102653] [ 0] /usr/lib64/libc.so.6(+0x3ebf0)[0x14b22963ebf0]
+[hkn0525:3102653] *** End of error message ***
+==== backtrace (tid:3102657) ====
+ 0 0x000000000003ebf0 __GI___sigaction()  :0
+=================================
+[hkn0525:3102657] *** Process received signal ***
+[hkn0525:3102657] Signal: Segmentation fault (11)
+[hkn0525:3102657] Signal code:  (-6)
+[hkn0525:3102657] Failing at address: 0x34b22002f57c1
+[hkn0525:3102657] [ 0] /usr/lib64/libc.so.6(+0x3ebf0)[0x14b821e3ebf0]
+[hkn0525:3102657] *** End of error message ***
+==== backtrace (tid:3102646) ====
+ 0 0x000000000003ebf0 __GI___sigaction()  :0
+=================================
+[hkn0525:3102646] *** Process received signal ***
+[hkn0525:3102646] Signal: Segmentation fault (11)
+[hkn0525:3102646] Signal code:  (-6)
+[hkn0525:3102646] Failing at address: 0x34b22002f57b6
+[hkn0525:3102646] [ 0] /usr/lib64/libc.so.6(+0x3ebf0)[0x1456a523ebf0]
+[hkn0525:3102646] *** End of error message ***
+==== backtrace (tid:3102651) ====
+ 0 0x000000000003ebf0 __GI___sigaction()  :0
+=================================
+[hkn0525:3102651] *** Process received signal ***
+[hkn0525:3102651] Signal: Segmentation fault (11)
+[hkn0525:3102651] Signal code:  (-6)
+[hkn0525:3102651] Failing at address: 0x34b22002f57bb
+[hkn0525:3102651] [ 0] /usr/lib64/libc.so.6(+0x3ebf0)[0x14f4fb43ebf0]
+[hkn0525:3102651] *** End of error message ***
+Generating '/scratch/slurm_tmpdir/job_5139026/nsys-report-03a4.qdstrm'
+Generating '/scratch/slurm_tmpdir/job_5139026/nsys-report-7a9b.qdstrm'
+Generating '/scratch/slurm_tmpdir/job_5139026/nsys-report-50c3.qdstrm'
+Generating '/scratch/slurm_tmpdir/job_5139026/nsys-report-8c58.qdstrm'
+[1/1] [0%                          ] rep_3.nsys-rep[1/1] [0%                          ] rep_3.nsys-rep[1/1] [==21%                       ] rep_3.nsys-rep[1/1] [=16%                        ] rep_3.nsys-rep[1/1] [13%                         ] rep_3.nsys-rep[1/1] [11%                         ] rep_3.nsys-rep[1/1] [10%                         ] rep_3.nsys-rep[1/1] [13%                         ] rep_3.nsys-rep[1/1] [=16%                        ] rep_3.nsys-rep[1/1] [14%                         ] rep_3.nsys-rep[1/1] [=15%                        ] rep_3.nsys-rep[1/1] [13%                         ] rep_3.nsys-rep[1/1] [12%                         ] rep_3.nsys-rep[1/1] [11%                         ] rep_3.nsys-rep[1/1] [=17%                        ] rep_3.nsys-rep[1/1] [0%                          ] rep_0.nsys-rep[1/1] [===24%                      ] rep_3.nsys-rep[1/1] [=====30%                    ] rep_3.nsys-rep[1/1] [=======37%                  ] rep_3.nsys-rep[1/1] [=========43%                ] rep_3.nsys-rep[1/1] [===========50%              ] rep_3.nsys-rep[1/1] [============56%             ] rep_3.nsys-rep[1/1] [==============63%           ] rep_3.nsys-rep[1/1] [================69%         ] rep_3.nsys-rep[1/1] [0%                          ] rep_0.nsys-rep[1/1] [6%                          ] rep_0.nsys-rep[1/1] [13%                         ] rep_0.nsys-rep[1/1] [=15%                        ] rep_0.nsys-rep[1/1] [==================76%       ] rep_3.nsys-rep[1/1] [========================100%] rep_3.nsys-rep[1/1] [=17%                        ] rep_0.nsys-rep[1/1] [===24%                      ] rep_0.nsys-rep[1/1] [=====30%                    ] rep_0.nsys-rep[1/1] [=======37%                  ] rep_0.nsys-rep[1/1] [=========43%                ] rep_0.nsys-rep[1/1] [===========50%              ] rep_0.nsys-rep[1/1] [============56%             ] rep_0.nsys-rep[1/1] [==============63%           ] rep_0.nsys-rep[1/1] [================69%         ] rep_0.nsys-rep[1/1] [========================100%] rep_3.nsys-rep
+Generated:
+	/hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_nsys/rect_jacobi_r4_N1/rep_3.nsys-rep
+[1/1] [==================76%       ] rep_0.nsys-rep[1/1] [========================100%] rep_0.nsys-rep--------------------------------------------------------------------------
+Primary job  terminated normally, but 1 process returned
+a non-zero exit code. Per user-direction, the job has been aborted.
+--------------------------------------------------------------------------
+[1/1] [0%                          ] rep_2.nsys-rep[1/1] [========================100%] rep_0.nsys-rep
+Generated:
+	/hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_nsys/rect_jacobi_r4_N1/rep_0.nsys-rep
+[1/1] [0%                          ] rep_1.nsys-rep--------------------------------------------------------------------------
+mpirun detected that one or more processes exited with non-zero status, thus causing
+the job to be terminated. The first process to do so was:
+
+  Process name: [[25613,1],3]
+  Exit code:    139
+--------------------------------------------------------------------------

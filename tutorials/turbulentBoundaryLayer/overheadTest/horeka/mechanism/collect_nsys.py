@@ -1,196 +1,164 @@
 #!/usr/bin/env python3
-"""Reduce the Nsight Systems traces to the question: what is a rank waiting for?
+"""Reduce the Nsight Systems GPU traces to what the exchange timers cannot say.
 
     collect_nsys.py <results_nsys_dir> [> nsys.md]
 
-Three things the aggregate `exch_timing` buckets cannot answer, one section each:
+NO MPI EVENTS. nsys `--trace=mpi` captures nothing from this solver: OpenMPI's
+Fortran mpi_f08 bindings reach the C layer as PMPI_*, so the interception of the
+MPI_* symbols never fires ("does not contain MPI event data"). An LD_PRELOAD
+shim misses it for the same reason, and solver-side NVTX is a gated change. The
+GPU timeline is enough for the two questions that matter, because the exchange
+has a kernel signature:
 
-  1. IS THE WAIT EVEN MPI?  Every MPI_Waitall interval is intersected with the
-     merged CUDA kernel intervals from the SAME report (same process, same
-     clock). A Waitall that overlaps device activity is waiting for the GPU, not
-     the wire, and no partitioning or transport change would touch it.
+    pack -> copy_local -> [ gap = MPI post + Waitall ] -> unpack
 
-  2. IS IT ALL ROUNDS OR A FEW?  752 us is a mean over 7800 calls; thirty-eight
-     cheap rounds and one catastrophic one give the same mean as uniform
-     slowness and need a different fix. Reported as the share of total wait held
-     by the slowest 1 % and 10 % of calls.
+  1. IS THE WAIT DEVICE WORK?  GPU busy/idle over the steady window. A rank
+     blocked on an unfinished CUDA stream keeps the GPU BUSY; a rank blocked on
+     a peer leaves it IDLE. This is the one hypothesis no timer in the project
+     can test, since every such stall is booked as `mpi_wait` either way.
 
-  3. WHO WAITS, AND AFTER WHAT?  Per-rank wait totals (the balance line,
-     decomposed) and the gap between a rank's last posted request and its entry
-     into Waitall.
+  2. ALL ROUNDS, OR A FEW?  Per-round wait is the pack/copy -> unpack gap. The
+     share held by the slowest 1 % says whether a mean over 7800 calls is a fair
+     description or is hiding a handful of catastrophic rounds.
 
-DELIBERATELY NOT DONE: comparing absolute timestamps ACROSS ranks. nsys aligns
-clocks within a report; across nodes that alignment is not good enough to call
-one rank "late" by microseconds. Everything here is a per-rank duration or a
-same-report overlap. Stdlib only.
+READ SHAPE, NOT MAGNITUDE. Tracing inflates the wait unevenly (measured: base
+120 -> ~690 us, rect 738 -> ~1255 us), so absolute values here must never be
+quoted against an untraced run. Ratios WITHIN one traced run, and the
+distribution shape, are what this file is for. Stdlib only.
 """
-import csv, re, sys
+import csv, re, sys, statistics
 from pathlib import Path
 
 
-def _num(s):
-    try:
-        return float(str(s).replace(",", ""))
-    except (TypeError, ValueError):
-        return None
-
-
-def read_csv(path):
-    """Return (header, rows) with the header sniffed -- nsys column names move
-    between versions, so nothing here hard-codes them."""
-    with open(path, newline="", errors="replace") as fh:
-        r = list(csv.reader(fh))
-    if not r:
-        return [], []
-    return r[0], r[1:]
-
-
-def col(header, *wants):
-    """First column whose name contains all of `wants` (case-insensitive)."""
-    for i, h in enumerate(header):
-        hl = h.lower()
-        if all(w in hl for w in wants):
-            return i
-    return None
-
-
-def intervals(path, start_key=("start",), dur_key=("dur",), name_filter=None, name_key=None):
-    header, rows = read_csv(path)
-    si, di = col(header, *start_key), col(header, *dur_key)
-    ni = col(header, *name_key) if name_key else None
-    if si is None or di is None:
+def load(path):
+    rows = list(csv.reader(open(path, newline="", errors="replace")))
+    if not rows:
         return []
-    out = []
-    for row in rows:
-        if len(row) <= max(si, di, ni if ni is not None else 0):
+    idx = {c.strip(): i for i, c in enumerate(rows[0])}
+    try:
+        ni, di, si = idx["Name"], idx["Duration (ns)"], idx["Start (ns)"]
+    except KeyError:
+        return []
+    ev = []
+    for row in rows[1:]:
+        if len(row) <= max(ni, di, si):
             continue
-        if name_filter is not None and ni is not None:
-            if name_filter not in row[ni]:
-                continue
-        s, d = _num(row[si]), _num(row[di])
-        if s is None or d is None:
-            continue
-        out.append((s, s + d, row[ni] if ni is not None else ""))
-    out.sort()
-    return out
+        try:
+            ev.append((float(row[si]), float(row[di]), row[ni]))
+        except ValueError:
+            pass
+    ev.sort()
+    return ev
 
 
-def merge(iv):
+def steady(ev, frac=0.4):
+    """Drop the first `frac` of the trace: init, and the one ~600 MB map that
+    would otherwise dominate every memcpy statistic."""
+    t0 = ev[0][0]
+    t1 = max(s + d for s, d, _ in ev)
+    cut = t0 + frac * (t1 - t0)
+    return [e for e in ev if e[0] >= cut], (t1 - cut)
+
+
+def merge(ev):
     out = []
-    for s, e, _ in iv:
+    for s, d, _ in ev:
+        e = s + d
         if out and s <= out[-1][1]:
-            if e > out[-1][1]:
-                out[-1][1] = e
+            out[-1][1] = max(out[-1][1], e)
         else:
             out.append([s, e])
     return out
 
 
-def overlap_total(waits, merged):
-    """Total intersection of `waits` with the merged busy set. Both sorted."""
-    tot, j = 0.0, 0
-    for s, e, _ in waits:
-        while j < len(merged) and merged[j][1] <= s:
-            j += 1
-        k = j
-        while k < len(merged) and merged[k][0] < e:
-            tot += min(e, merged[k][1]) - max(s, merged[k][0])
-            k += 1
-    return tot
-
-
-def analyse_rank(mpi_csv, gpu_csv):
-    header, _ = read_csv(mpi_csv)
-    ev = col(header, "event") or col(header, "name")
-    if ev is None:
+def analyse(path):
+    ev = load(path)
+    if not ev:
         return None
-    waits = intervals(mpi_csv, name_filter="Waitall", name_key=("event",) if col(header, "event") is not None else ("name",))
-    if not waits:
+    ss, span = steady(ev)
+    if not ss:
         return None
-    posts = intervals(mpi_csv, name_filter="Isend", name_key=("event",) if col(header, "event") is not None else ("name",))
-    posts += intervals(mpi_csv, name_filter="Irecv", name_key=("event",) if col(header, "event") is not None else ("name",))
-    posts.sort()
-    d = sorted(e - s for s, e, _ in waits)
-    tot = sum(d)
-    r = {"n": len(d), "total_s": tot / 1e9, "mean_us": tot / len(d) / 1e3,
-         "p50_us": d[len(d)//2] / 1e3, "p90_us": d[int(0.9*len(d))] / 1e3,
-         "max_us": d[-1] / 1e3}
-    top1 = max(1, len(d)//100)
-    r["top1pct"] = 100 * sum(d[-top1:]) / tot if tot else 0.0
-    r["top10pct"] = 100 * sum(d[-max(1, len(d)//10):]) / tot if tot else 0.0
-    if gpu_csv and Path(gpu_csv).is_file():
-        k = intervals(gpu_csv, name_key=("name",))
-        if k:
-            ov = overlap_total(waits, merge(k))
-            r["gpu_overlap_pct"] = 100 * ov / tot if tot else 0.0
-            r["gpu_busy_s"] = sum(e - s for s, e in merge(k)) / 1e9
-    # gap from the last posted request to entry into the Waitall that follows it
-    gaps, i = [], 0
-    for s, e, _ in waits:
-        while i + 1 < len(posts) and posts[i+1][0] < s:
-            i += 1
-        if posts and posts[i][1] <= s:
-            gaps.append(s - posts[i][1])
-    if gaps:
-        gaps.sort()
-        r["post_gap_us"] = gaps[len(gaps)//2] / 1e3
+    busy = merge(ss)
+    bt = sum(e - s for s, e in busy)
+    gaps = sorted((busy[i+1][0] - busy[i][1]) for i in range(len(busy)-1))
+    big = [g for g in gaps if g > 50e3]
+    r = {"span_ms": span/1e6, "busy_pct": 100*bt/span,
+         "idle_ms": sum(gaps)/1e6, "nbig": len(big),
+         "big_ms": sum(big)/1e6,
+         "big_med_us": statistics.median(big)/1e3 if big else 0.0,
+         "big_p90_us": big[int(0.9*len(big))]/1e3 if big else 0.0}
+    r["big_share"] = 100*sum(big)/sum(gaps) if gaps else 0.0
+    # per-round wait: last kernel before the Waitall -> the unpack that closes it
+    W, pre = [], None
+    for s, d, n in ss:
+        if "pack_entries" in n and "unpack" not in n:
+            pre = s + d
+        elif "copy_local" in n:
+            pre = s + d
+        elif "unpack" in n and pre is not None:
+            if s >= pre:
+                W.append(s - pre)
+            pre = None
+    if W:
+        W.sort()
+        tot = sum(W)
+        r.update(n=len(W), mean_us=tot/len(W)/1e3, p50_us=W[len(W)//2]/1e3,
+                 p90_us=W[int(0.9*len(W))]/1e3, max_us=W[-1]/1e3,
+                 top1=100*sum(W[-max(1, len(W)//100):])/tot)
+    for key, tag in (("h2d", "Host-to-Device"), ("p2p", "Peer-to-Peer"),
+                     ("copy", "copy_local")):
+        v = [d for _, d, n in ss if tag in n]
+        r[key + "_n"], r[key + "_ms"] = len(v), sum(v)/1e6
     return r
 
 
 def main():
     res = Path(sys.argv[1] if len(sys.argv) > 1 else "results_nsys")
-    runs = sorted(d for d in res.iterdir() if d.is_dir())
-    print("# Timeline probe — what a rank is waiting for inside MPI_Waitall\n")
-    print("Nsight Systems, `--trace=mpi,cuda`, one report per rank. Durations and")
-    print("overlaps are per-report (same process, same clock); no cross-rank")
-    print("timestamp is compared, because nsys clock alignment across nodes is not")
-    print("good enough to call one rank late by microseconds.\n")
-
-    for run in runs:
-        mpis = sorted(run.glob("*mpi_event_trace*.csv"))
-        if not mpis:
+    print("# Timeline probe — is the wait device work, and is it every round?\n")
+    print("No MPI events: OpenMPI's Fortran mpi_f08 bindings reach the C layer as")
+    print("PMPI_*, so nsys's MPI_* interception never fires. The exchange's kernel")
+    print("signature carries the same information: `pack -> copy_local -> [gap =")
+    print("post + Waitall] -> unpack`.\n")
+    print("**READ SHAPE, NOT MAGNITUDE.** Tracing inflates the wait unevenly")
+    print("(measured: base 120 -> ~690 us, rect 738 -> ~1255 us), so no absolute")
+    print("value here may be quoted against an untraced run. Ratios WITHIN one")
+    print("traced run, and the distribution shape, are what this file is for.\n")
+    for run in sorted(d for d in res.iterdir() if d.is_dir()):
+        csvs = sorted(run.glob("rep_*_cuda_gpu_trace.csv"))
+        if not csvs:
             continue
-        hosts = (run / "hosts.txt").read_text().split() if (run / "hosts.txt").is_file() else []
-        void = " **VOID**" if (run / "VOID").is_file() else ""
-        print(f"\n## `{run.name}`{void} — {len(hosts)} node(s): {' '.join(hosts)}\n")
-        print("| rank | Waitall calls | total s | mean | p50 | p90 | max | top 1 % share | top 10 % | **GPU overlap** | post->wait |")
-        print("|---|---|---|---|---|---|---|---|---|---|---|")
+        hosts = (run/"hosts.txt").read_text().split() if (run/"hosts.txt").is_file() else []
+        print(f"\n## `{run.name}` — {len(hosts)} node(s): {' '.join(hosts)}\n")
+        print("| rank | span ms | **GPU busy** | idle ms | gaps>50us | median | p90 | "
+              "share of idle | rounds | mean wait | p50 | top 1 % | H2D n | P2P ms | copy ms |")
+        print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
         rows = []
-        for m in mpis:
-            mm = re.search(r"rep_(\d+)", m.name)
-            rank = int(mm.group(1)) if mm else -1
-            g = sorted(run.glob(f"rep_{rank}_*cuda_gpu_trace*.csv"))
-            a = analyse_rank(m, g[0] if g else None)
+        for c in csvs:
+            m = re.search(r"rep_(\d+)", c.name)
+            a = analyse(c)
             if not a:
                 continue
-            a["rank"] = rank
+            a["rank"] = int(m.group(1)) if m else -1
             rows.append(a)
         for a in sorted(rows, key=lambda a: a["rank"]):
-            ov = f"{a['gpu_overlap_pct']:.1f} %" if "gpu_overlap_pct" in a else "-"
-            pg = f"{a['post_gap_us']:.1f} us" if "post_gap_us" in a else "-"
-            print(f"| {a['rank']} | {a['n']} | {a['total_s']:.3f} | {a['mean_us']:.1f} us "
-                  f"| {a['p50_us']:.1f} | {a['p90_us']:.1f} | {a['max_us']:.1f} "
-                  f"| {a['top1pct']:.0f} % | {a['top10pct']:.0f} % | **{ov}** | {pg} |")
+            g = lambda k, f="{:.1f}": f.format(a[k]) if k in a else "-"
+            print(f"| {a['rank']} | {a['span_ms']:.0f} | **{a['busy_pct']:.1f} %** | "
+                  f"{a['idle_ms']:.0f} | {a['nbig']} | {a['big_med_us']:.0f} us | "
+                  f"{a['big_p90_us']:.0f} | {a['big_share']:.0f} % | {g('n','{:.0f}')} | "
+                  f"{g('mean_us')} us | {g('p50_us')} | {g('top1','{:.0f}')} % | "
+                  f"{a['h2d_n']} | {a['p2p_ms']:.1f} | {a['copy_ms']:.1f} |")
         if rows:
-            tots = [a["total_s"] for a in rows]
-            lo, hi = min(tots), max(tots)
-            arg = max(rows, key=lambda a: a["total_s"])["rank"]
-            print(f"\n- wait spread across ranks: min {lo:.3f} s, max {hi:.3f} s, "
-                  f"**max/min {hi/lo if lo else float('nan'):.2f}**, slowest rank {arg}")
-            ovs = [a["gpu_overlap_pct"] for a in rows if "gpu_overlap_pct" in a]
-            if ovs:
-                print(f"- GPU overlap of the wait: {min(ovs):.1f} – {max(ovs):.1f} % across ranks")
-                if min(ovs) > 50:
-                    print("  - **the wait is device work, not the wire**: the Waitall is")
-                    print("    running concurrently with CUDA kernels on its own GPU.")
-                elif max(ovs) < 10:
-                    print("  - the GPU is idle through the wait: this is genuinely MPI.")
-            t1 = [a["top1pct"] for a in rows]
-            if min(t1) > 40:
-                print(f"- **concentrated**: the slowest 1 % of calls hold "
-                      f"{min(t1):.0f}–{max(t1):.0f} % of all wait — the mean is not the shape.")
-            elif max(t1) < 10:
-                print("- uniform across rounds: no single round dominates.")
+            bp = [a["busy_pct"] for a in rows]
+            print(f"\n- GPU busy {min(bp):.1f}–{max(bp):.1f} % across ranks.")
+            if max(bp) < 85:
+                print("  **The GPU is idle through the wait — the stall is NOT unfinished")
+                print("  device work.** A rank blocked on a CUDA stream would show the GPU busy.")
+            t1 = [a["top1"] for a in rows if "top1" in a]
+            if t1 and max(t1) < 12:
+                print(f"- The slowest 1 % of rounds hold only {min(t1):.0f}–{max(t1):.0f} % of the")
+                print("  wait: it is EVERY round, so a per-round mean is a fair description.")
+            elif t1:
+                print(f"- The slowest 1 % of rounds hold {min(t1):.0f}–{max(t1):.0f} % of the wait.")
     return 0
 
 

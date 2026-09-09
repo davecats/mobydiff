@@ -145,14 +145,64 @@ The inversion reported on 2026-09-09 reproduces on a third node set with a
 different binary. End-to-end, `rect` at 8 ranks is 0.13622 s/step packed and
 0.11176 spread -- **18 % faster on twice the nodes**.
 
+## 5 — The timeline probe: not device work, and every round
+
+Job 5139026, 2 nodes (hkn[0525-0526]), Nsight Systems 2025.1.1, `--trace=cuda`,
+40 steps, one report per rank. Reduced by `mechanism/collect_nsys.py`.
+
+**Two things had to be settled that no timer in this project can settle**, because
+both stalls are booked as `mpi_wait` either way: whether the `Waitall` is really
+blocked on an unfinished CUDA stream, and whether "39 rounds at 740 us" is a fair
+description or a handful of catastrophic rounds hiding in a mean over 7800 calls.
+
+| run | GPU busy | idle | gaps > 50 us | median gap | share of idle | slowest 1 % of rounds |
+|---|---|---|---|---|---|---|
+| `rect` 8x2 (anomaly) | **62.7 / 62.9 %** | 37 % | 1098 / 1877 | **365 / 349 us** | 78 % | **4-5 %** |
+| `base` 8x2 (control) | 79.0 / 79.8 % | 21 % | 1597 / 1673 | 71 / 72 us | 52 % | 16-17 % |
+| `rect` 4x1 (no crossing) | 90.1 % | 10 % | 554 | 98 us | 33 % | 21 % |
+
+- **The stall is NOT device work.** The GPU is idle 37 % of the time in the
+  anomaly regime; a rank blocked on its own CUDA stream would show the GPU busy.
+  The hypothesis that "mpi_wait" was really unfinished offload -- which would have
+  invalidated both the partitioning and the transport plans -- is refuted.
+- **It is every round.** The slowest 1 % of rounds hold only 4-5 % of `rect` 8x2's
+  wait (against 16-21 % in the two faster cases, which are the ones with a spiky
+  tail). The idle piles up in ~1100 gaps of median 365 us, which is the same order
+  as the 773 us arrival spread the barrier measured directly.
+
+**READ SHAPE, NOT MAGNITUDE.** Tracing inflates the wait, and unevenly: `base`
+goes 120 -> ~690 us and `rect` 738 -> ~1255 us. No absolute number in this section
+may be compared with an untraced run; only ratios within one traced run and the
+distribution shape are used above.
+
+### Two instrument failures worth recording
+
+- **nsys `--trace=mpi` captures nothing from this solver.** OpenMPI's Fortran
+  `mpi_f08` bindings reach the C layer as `PMPI_*`, so nsys's interception of the
+  `MPI_*` symbols never fires: `does not contain MPI event data`. An LD_PRELOAD
+  shim misses it for the same reason. Restoring the MPI view needs solver-side
+  NVTX, which is a gated change. The kernel signature `pack -> copy_local ->
+  [gap] -> unpack` recovers the per-round wait without it.
+- **Under nsys the solver segfaults at teardown**, after the main loop, the
+  timing lines and the final field write. The report is written intact; the damage
+  is that mpirun kills the siblings mid-report, so only some ranks survive (6 of 8,
+  4 of 8, 2 of 4 here). `run_nsys.sh` now wraps each rank so it exits 0 and judges
+  the run on `main loop ended` rather than on mpirun's status.
+- Also visible, and not chased: **~1300 host-to-device memcpys per step**, ~2 us
+  each, ~3-4 % of wall in every configuration including the unblocked one. Sub-MB,
+  so almost certainly OpenMP target per-launch argument marshalling rather than
+  data staging. Same in `base` and `rect`, so it is not the mechanism -- but it is
+  a standing 3-4 % that nobody has looked at.
+
 ## What is still open
 
-The mechanism is now located but not identified: **what desynchronises four
-co-resident ranks by ~750 us per round when they carry a device-local copy and
-the node also drives off-node traffic?** A timeline probe (`mechanism/run_nsys.sh`,
-Nsight Systems `--trace=mpi,cuda`, one report per rank) is queued to answer it,
-and it can also settle whether the `Waitall` overlaps CUDA activity -- i.e.
-whether any of this is device work rather than MPI at all.
+The mechanism is located, bounded and characterised, but its SOURCE is not
+identified: **what desynchronises four co-resident ranks by ~750 us per round
+when they carry a device-local copy and the node also drives off-node traffic?**
+
+What the source is NOT, on evidence: not transport (barrier), not device work
+(GPU idle 37 %), not a few bad rounds (slowest 1 % hold 4-5 %), not a persistent
+straggler (per-rank totals equal to 9 %), not copy volume (3.4x buys 1.16x).
 
 The cheapest decisive follow-up after that is a **second barrier site, before the
 `pack`**, which would separate skew that the exchange itself creates (the copy)
