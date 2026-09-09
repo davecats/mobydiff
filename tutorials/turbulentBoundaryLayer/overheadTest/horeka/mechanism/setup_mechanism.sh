@@ -49,6 +49,11 @@ cp -v "$CASE_DIR/build_hdf5.sh" "$RUN_DIR/"
 cp -v "$MECH_DIR/run_placement.sh" "$MECH_DIR/collect_mechanism.py" \
       "$MECH_DIR/submit_mechanism.sh" "$MECH_DIR/README.md" "$RUN_DIR/mechanism/"
 cp -v "$CASE_DIR/configs/"*.ini "$RUN_DIR/configs/"
+cp -v "$CASE_DIR/HANDOUT_cluster_session.md" "$RUN_DIR/" 2>/dev/null || true
+# Staging is the step that silently cost round 1 five runs: the cluster copy of
+# configs/ predated the commit that added blk8/nb16, and run_placement.sh could
+# only report MISSING CONFIG. Name what is there, every time.
+echo "configs staged: $(ls "$RUN_DIR/configs/" | tr '\n' ' ')"
 
 echo "=== submitting ==="
 cd "$RUN_DIR"

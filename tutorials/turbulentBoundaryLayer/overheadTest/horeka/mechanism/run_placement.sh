@@ -23,6 +23,13 @@ CFG="$HERE/../configs"
 NSTEPS="${NSTEPS:-200}"
 MPIRUN_EXTRA="${MPIRUN_EXTRA:-}"
 
+# BARRIER=1 turns on [output] exchange_barrier for every run in this pass,
+# splitting the exchange's arrival SKEW (bucket skew_barrier) from its
+# TRANSFER (what is left in mpi_wait). It serialises the exchange, so a
+# barrier pass is for ATTRIBUTION ONLY -- its step times mean nothing. Write
+# it to its own results directory so the two passes never mix.
+BARRIER="${BARRIER:-0}"
+
 # config:ranks:nodes -- comma-separated, no spaces (word splitting).
 #
 # ROUND 2 (2026-09-09) added nb16_jacobi:8:2, nb16_jacobi:8:4 and
@@ -98,6 +105,18 @@ for spec in $SPECS; do
         sed -i 's/^profile *=.*/profile = true/' "$run/config.ini"
     else
         printf '\n[output]\nprofile = true\n' >> "$run/config.ini"
+    fi
+    if [ "$BARRIER" = 1 ]; then
+        # Anchor to the profile line, which the block above has just guaranteed
+        # exists inside [output]. A blind append to the end of the file would
+        # land in whatever section happens to be last.
+        if grep -qE '^[[:space:]]*exchange_barrier[[:space:]]*=' "$run/config.ini"; then
+            sed -i 's/^exchange_barrier *=.*/exchange_barrier = true/' "$run/config.ini"
+        else
+            sed -i '0,/^profile *=.*/s//&\nexchange_barrier = true/' "$run/config.ini"
+        fi
+        grep -qE '^exchange_barrier *= *true' "$run/config.ini" || {
+            echo "    *** could not set exchange_barrier -- skipping"; continue; }
     fi
     sed -i -e "s/^nsteps *=.*/nsteps = $NSTEPS/" \
            -e "s/^runtime_interval *=.*/runtime_interval = $(( NSTEPS/4 > 0 ? NSTEPS/4 : 1 ))/" \
