@@ -1,0 +1,65 @@
+job    : 5139141
+date   : 2026-09-10 01:43:29 CEST
+nodes  : 2  (hkn[0503-0504])
+commit : c1d5910498b776d09aeacb4ba2d80ce27cb7fa0a
+dirty  : 0
+=== HCA / GPU topology on this node ===
+mlx5_0
+mlx5_1
+mlx5_2
+--- nvidia-smi topo ---
+	[4mGPU0	GPU1	GPU2	GPU3	NIC0	NIC1	NIC2	CPU Affinity	NUMA Affinity	GPU NUMA ID[0m
+GPU0	 X 	NV4	NV4	NV4	NODE	NODE	NODE	0-19,76-95	0		N/A
+GPU1	NV4	 X 	NV4	NV4	NODE	NODE	NODE	0-19,76-95	0		N/A
+GPU2	NV4	NV4	 X 	NV4	SYS	SYS	SYS	38-57,114-133	1		N/A
+GPU3	NV4	NV4	NV4	 X 	SYS	SYS	SYS	38-57,114-133	1		N/A
+NIC0	NODE	NODE	SYS	SYS	 X 	NODE	NODE				
+NIC1	NODE	NODE	SYS	SYS	NODE	 X 	PIX				
+NIC2	NODE	NODE	SYS	SYS	NODE	PIX	 X 				
+
+Legend:
+
+  X    = Self
+  SYS  = Connection traversing PCIe as well as the SMP interconnect between NUMA nodes (e.g., QPI/UPI)
+  NODE = Connection traversing PCIe as well as the interconnect between PCIe Host Bridges within a NUMA node
+  PHB  = Connection traversing PCIe as well as a PCIe Host Bridge (typically the CPU)
+  PXB  = Connection traversing multiple PCIe bridges (without traversing the PCIe Host Bridge)
+  PIX  = Connection traversing at most a single PCIe bridge
+  NV#  = Connection traversing a bonded set of # NVLinks
+
+NIC Legend:
+
+  NIC0: mlx5_0
+  NIC1: mlx5_1
+  NIC2: mlx5_2
+
+=== ucx sweep start 2026-09-10 01:43:31  base_jacobi 8x2 nsteps=200
+=== base : UCX_MEMTYPE_CACHE=n  GPUS=default  (2026-09-10 01:43:31)
+    hosts(2) s/step 1.03413160E-01  wait/round 126.0 us
+       exchange balance: mpi_wait seconds min   9.82762500E-01 mean   1.20262842E+00 max   1.41365070E+00  max/min     1.44  slowest rank 5
+=== goodmap : UCX_MEMTYPE_CACHE=n  GPUS=0,2,3,1  (2026-09-10 01:43:59)
+    hosts(2) s/step 1.02912334E-01  wait/round 129.9 us
+       exchange balance: mpi_wait seconds min   9.06122400E-01 mean   1.08650870E+00 max   1.26882670E+00  max/min     1.40  slowest rank 3
+=== ucx sweep done 2026-09-10 01:44:27
+=== ucx job finished ===
+
+============================= JOB FEEDBACK =============================
+
+Job ID: 5139141
+Cluster: hk
+User/Group: xt8786/hk-project-exasim
+Account: hk-project-exasim
+State: COMPLETED (exit code 0)
+Partition: accelerated
+Nodes: 2
+Cores per node: 80
+Nodelist: hkn[0503-0504]
+CPU Utilized: 00:06:32
+CPU Efficiency: 2.69% of 04:02:40 core-walltime
+Job Wall-clock time: 00:01:31
+Starttime: Thu Sep 10 01:42:56 2026
+Endtime: Thu Sep 10 01:44:27 2026
+Memory Utilized: 14.09 GB
+Memory Efficiency: 1.45% of 971.68 GB (485.84 GB/node)
+Energy Consumed: 182232 Joule / 50.62 Watthours
+Average node power draw: 2002.54945054945 Watt

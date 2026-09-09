@@ -1,4 +1,4 @@
-# The blocked exchange is not slow: it is out of step
+# The block tax was GPU-to-NIC affinity: 20.6 % of the step, from a launch flag
 
 Job 5138715, 4x HoreKa Green nodes (hkn[0518,0604-0605,0708]), commit `df08a60`
 (clean, solver source = `be48d44`), 26 runs of 200 steps in ONE allocation plus
@@ -6,12 +6,23 @@ a 6-run barrier pass. Raw logs in `moby-2to1-run/results_balance/` and
 `results_barrier/`; driver `horeka/mechanism/submit_session.sh`.
 
 **Headline.** The 708-753 us `mpi_wait` that three reports have called "the
-blocked exchange's stall" is **not transport**. An `MPI_Barrier` immediately
-before the `Waitall` absorbs **100 %** of it: the ranks are arriving at the
-exchange up to ~773 us apart, and once they are synchronised the transfer
-completes in **1.2 us**. The `base_jacobi` control -- the configuration that has
-been held up all along as "fast" at 120 us -- has a **63.8 us** real transfer,
-**53x more actual wire time than the case we were trying to speed up.**
+blocked exchange's stall" is **not transport, and not the exchange's fault at
+all**. It is GPU-to-NIC affinity. All three HCAs on a HoreKa Green node sit on
+NUMA 0 with GPU0/GPU1; GPU2 and GPU3 reach every NIC only across the inter-socket
+link, where GPUDirect RDMA does not apply, so a rank on GPU2/GPU3 stages its
+cross-node traffic through host memory. `comm.f90` assigns
+`device = local_rank mod num_devices`, so at 4 ranks/node the Morton chain's two
+cross-node ranks land on GPU3 and GPU0 -- one of them wrong.
+
+**Permuting `CUDA_VISIBLE_DEVICES` so both cross-node ranks get NIC-affine GPUs
+collapses `mpi_wait` 10.6x (745.7 -> 70.2 us) and the step time by 20.6 %
+(0.13651 -> 0.10839 s), with `L2_div` bit-identical.** No solver change, no
+rebuild: a launch-line permutation.
+
+The consequence for this campaign's central claim: **"the block tax explodes at
+the node boundary" was this artifact.** `rect`/`base` at 8 ranks is 1.315 with the
+default GPU map and **1.052** with the corrected one -- exactly its single-GPU
+value of 1.052. There is no node-boundary block tax.
 
 ## Deviation from the handout, and why
 
@@ -194,15 +205,112 @@ distribution shape are used above.
   data staging. Same in `base` and `rect`, so it is not the mechanism -- but it is
   a standing 3-4 % that nobody has looked at.
 
+## 6 — The cause, and a fix that is a launch flag
+
+The GPU traces gave the mechanism away. Per-rank memcpy in `rect` 8x2, steady
+window:
+
+| rank | H2D MB | D2H events | P2P ms | role |
+|---|---|---|---|---|
+| 0,1,2,5,6,7 | 25.3 | ~3195 | 18-32 | intra-node peers only |
+| **3** | **694.2** | **84 945** | 13.6 | holds the cross-node link |
+| **4** | **676.3** | 3 201 | 14.3 | holds the cross-node link |
+
+694 MB over the steady window is ~57 MB/step, which is that configuration's
+ENTIRE exchange volume (1.47 MB/round x 39). The two cross-node ranks are doing a
+device -> host -> network -> host -> device round trip; the six intra-node ranks
+move 25 MB and go GPU-direct over NVLink (`cuda_ipc` P2P). The direction
+asymmetry matches: rank 3 heavy on D2H (the send side), rank 4 heavy on H2D (the
+receive side).
+
+`nvidia-smi topo -m` on a HoreKa Green node says why:
+
+```
+GPU0, GPU1  ->  NIC0/1/2 = NODE   (same NUMA node as all three HCAs)
+GPU2, GPU3  ->  NIC0/1/2 = SYS    (crosses the inter-socket link)
+```
+
+All three HCAs hang off NUMA 0. GPUDirect RDMA does not span the socket hop, so
+a rank on GPU2/GPU3 must stage. `comm.f90:220` assigns
+`device = local_rank mod num_devices`, so at 4 ranks/node the chain's cross-node
+ranks -- LOCAL 3 on the low node, LOCAL 0 on the high one -- get GPU3 and GPU0.
+GPU3 is the wrong one.
+
+### The sweep (job 5139122, 5139140, 5139141; `rect_jacobi` 8x2, 200 steps)
+
+| variant | local0 -> | local3 -> | s/step | wait/round |
+|---|---|---|---|---|
+| default `0,1,2,3` | GPU0 ok | GPU3 **bad** | 0.13651 | 745.7 us |
+| `UCX_MEMTYPE_CACHE=y` | | | 0.13566 | 731.2 |
+| `UCX_IB_GPU_DIRECT_RDMA=y` | | | 0.13616 | 734.5 |
+| `2,3,1,0` | GPU2 **bad** | GPU0 ok | 0.13230 | 603.0 |
+| **`0,2,3,1`** | **GPU0 ok** | **GPU1 ok** | **0.10839** | **70.2** |
+| `0,2,3,1` + cache | ok | ok | 0.10796 | 65.3 |
+
+- **Both cross-node ends must be NIC-affine.** Fixing one end (`2,3,1,0`) buys
+  19 % of the wait; fixing both buys 91 %.
+- **The UCX knobs are irrelevant.** `UCX_MEMTYPE_CACHE` -- set to `n` by every
+  submit script in this campaign since it began -- and forcing GPUDirect RDMA
+  both move the wait by under 2 %. Affinity is the whole story.
+- **Correctness unchanged**: `L2_div` = 1.07282926E-05 in all five variants, and
+  the exchange size report is identical (2 peers, 515 200 send pts, 14 874 752
+  local copy pts). Only the physical card differs.
+
+### Why it hits the BLOCKED decomposition and not the unblocked one
+
+| config @ 8x2 | peers | default | GPU-map fixed | gain |
+|---|---|---|---|---|
+| `rect_jacobi` | 2 | 745.7 us / 0.13651 | **70.2 us / 0.10839** | **20.6 %** |
+| `base_jacobi` | 7 | 126.0 us / 0.10341 | 129.9 us / 0.10291 | none |
+
+A 2-peer Morton chain puts only TWO ranks on the network, and both can be given
+NIC-affine GPUs. A 7-peer Cartesian decomposition puts EVERY rank on the network,
+and only 2 of the 4 GPUs are NIC-affine, so a permutation just moves which ranks
+pay. That is also the placement inversion reported on 2026-09-08 and 09-09: `rect`
+improved when spread because 2 ranks/node lands everyone on GPU0/GPU1 by
+accident, and `base` collapsed when spread because thinning ranks pushes six of
+its seven peers off-node.
+
+### What this does to the block tax
+
+| | 1 rank | 8 ranks 4/node, default map | 8 ranks, map fixed |
+|---|---|---|---|
+| `rect` / `base` | 1.052 | **1.315** | **1.052** |
+
+**There is no node-boundary block tax.** The 1.315 at 8 ranks and 1.504 at 16 in
+`results_horeka_2026-09-07.md` are this artifact, and the "19-25 % of the step"
+prize is collected by a launch flag rather than by a partitioning rewrite.
+
+### Scope, stated honestly
+
+Measured at ONE rank count (8) on ONE configuration (`rect_jacobi`, the 2-peer
+chain) on ONE machine. Not yet measured: 16 ranks, the refined configs, and the
+production boundary-layer case -- though all of them run the same chain
+decomposition and the same `local_rank mod num_devices` assignment, so the same
+mispairing is expected. `0,2,3,1` is specific to a 4-GPU node whose HCAs sit on
+NUMA 0 and to a decomposition whose cross-node ranks are local 0 and local 3; it
+is NOT a general recipe. The general rule is: **place the ranks that own
+cross-node peers on GPUs with a local HCA.**
+
+Per the handout, no production script was changed. `gpu_rank.sh` already exists
+and does exactly this pinning; wiring the right permutation into the launch path
+is the follow-up, and it needs no bit-exactness gate (`L2_div` identical, and
+nothing in the solver moves).
+
 ## What is still open
 
-The mechanism is located, bounded and characterised, but its SOURCE is not
-identified: **what desynchronises four co-resident ranks by ~750 us per round
-when they carry a device-local copy and the node also drives off-node traffic?**
+The source is identified and fixed for the 8-rank chain (section 6). What
+remains:
 
-What the source is NOT, on evidence: not transport (barrier), not device work
-(GPU idle 37 %), not a few bad rounds (slowest 1 % hold 4-5 %), not a persistent
-straggler (per-rank totals equal to 9 %), not copy volume (3.4x buys 1.16x).
+- **Re-measure the campaign at the corrected GPU map.** Every scaling number,
+  block tax and strong-scaling efficiency in the 2026-09-07/08/09 reports was
+  taken at the default map, and section 6 shows what that is worth. 16 ranks and
+  the refined configs are unmeasured.
+- **Wire the permutation into the launch path** (`gpu_rank.sh` already does the
+  pinning) and decide it from the topology rather than hard-coding `0,2,3,1`.
+- **The residual after the fix**: 70 us/round is still ~5 % of the step, and the
+  arrival spread has not gone away, it has shrunk. The barrier site before `pack`
+  would say whether what is left is the exchange's own copy or upstream drift.
 
 The cheapest decisive follow-up after that is a **second barrier site, before the
 `pack`**, which would separate skew that the exchange itself creates (the copy)

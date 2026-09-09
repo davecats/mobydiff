@@ -1,0 +1,143 @@
+ Data for JOB [19918,1] offset 0 Total slots allocated 16
+
+ ========================   JOB MAP   ========================
+
+ Data for node: hkn0507	Num slots: 4	Max slots: 0	Num procs: 4
+ 	Process OMPI jobid: [19918,1] App: 0 Process rank: 0 Bound: socket 0[core 0[hwt 0-1]]:[BB/../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../..][../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../..]
+ 	Process OMPI jobid: [19918,1] App: 0 Process rank: 1 Bound: socket 0[core 1[hwt 0-1]]:[../BB/../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../..][../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../..]
+ 	Process OMPI jobid: [19918,1] App: 0 Process rank: 2 Bound: socket 0[core 2[hwt 0-1]]:[../../BB/../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../..][../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../..]
+ 	Process OMPI jobid: [19918,1] App: 0 Process rank: 3 Bound: socket 0[core 3[hwt 0-1]]:[../../../BB/../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../..][../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../..]
+
+ Data for node: hkn0526	Num slots: 4	Max slots: 0	Num procs: 4
+ 	Process OMPI jobid: [19918,1] App: 0 Process rank: 4 Bound: N/A
+ 	Process OMPI jobid: [19918,1] App: 0 Process rank: 5 Bound: N/A
+ 	Process OMPI jobid: [19918,1] App: 0 Process rank: 6 Bound: N/A
+ 	Process OMPI jobid: [19918,1] App: 0 Process rank: 7 Bound: N/A
+
+ =============================================================
+WARNING: Device-side CUDA Event completion trace is currently enabled.
+         This may increase runtime overhead and the likelihood of false
+         dependencies across CUDA Streams. If you wish to avoid this, please
+         disable the feature with --cuda-event-trace=false.
+WARNING: Device-side CUDA Event completion trace is currently enabled.
+         This may increase runtime overhead and the likelihood of false
+         dependencies across CUDA Streams. If you wish to avoid this, please
+         disable the feature with --cuda-event-trace=false.
+WARNING: Device-side CUDA Event completion trace is currently enabled.
+         This may increase runtime overhead and the likelihood of false
+         dependencies across CUDA Streams. If you wish to avoid this, please
+         disable the feature with --cuda-event-trace=false.
+WARNING: Device-side CUDA Event completion trace is currently enabled.
+         This may increase runtime overhead and the likelihood of false
+         dependencies across CUDA Streams. If you wish to avoid this, please
+         disable the feature with --cuda-event-trace=false.
+WARNING: Device-side CUDA Event completion trace is currently enabled.
+         This may increase runtime overhead and the likelihood of false
+         dependencies across CUDA Streams. If you wish to avoid this, please
+         disable the feature with --cuda-event-trace=false.
+WARNING: Device-side CUDA Event completion trace is currently enabled.
+         This may increase runtime overhead and the likelihood of false
+         dependencies across CUDA Streams. If you wish to avoid this, please
+         disable the feature with --cuda-event-trace=false.
+WARNING: Device-side CUDA Event completion trace is currently enabled.
+         This may increase runtime overhead and the likelihood of false
+         dependencies across CUDA Streams. If you wish to avoid this, please
+         disable the feature with --cuda-event-trace=false.
+WARNING: Device-side CUDA Event completion trace is currently enabled.
+         This may increase runtime overhead and the likelihood of false
+         dependencies across CUDA Streams. If you wish to avoid this, please
+         disable the feature with --cuda-event-trace=false.
+Collecting data...
+Collecting data...
+Collecting data...
+Collecting data...
+Collecting data...
+Collecting data...
+Collecting data...
+Collecting data...
+      __. - ~ ~ ~ - .
+_   ,//           __  ' ,
+ \  ||       __--  --    ,   ~~~~
+ , \|____---    o       ~~~    ~~~~
+,    _            __/   ~~ ,  ~~~               mobyDiff
+,       ---/ / __--   ~~   ,~~                  commit: 7aa1c7b
+ ,          /       ~~   ~~
+  ,         ~~~ ~~~     ~~,
+    ,    ~~~           , '
+      ' - , _ _ _ ,  '
+
+
+ reading input data...
+MPI Cartesian dimensions: 2 2 2
+ initialising grid...
+ exchange sizes: peers/rank(max) 2  send pts/rank min 36800 max 73600  total send pts 515200  local copy pts 14874752
+ exchange MB per round (all ranks): scalar nv=1      4.122   copy-only nv=3     12.365   full nv=4     16.486
+ OpenMP target devices available:            4
+ initialising fields...
+ initialising pressure solver...
+ initialising IBM...
+ initialising body force...
+ trip forcing: amp= 3.000E-02 x0= 1.500E+01 ts= 4.000E+00 nmodes=24
+ main loop starting...
+iteration time L2_div global_div Linf_vel CFL Peclet wall_seconds_per_step
+        40   4.00000000E-02   1.06902591E-05   5.00093393E-01   1.00049494E+00   6.73467512E-03   2.09364619E-02   1.65578220E-01
+ main loop ended...
+timing: nsteps 40 loop_seconds   6.62122920E+00 seconds_per_step   1.65530730E-01
+step_timing: momentum calls 120 nsteps 40 seconds   7.97032800E-01 seconds_per_step   1.99258200E-02 seconds_per_call   6.64194000E-03
+step_timing: ibm_mu calls 120 nsteps 40 seconds   1.73317100E-01 seconds_per_step   4.33292750E-03 seconds_per_call   1.44430917E-03
+step_timing: bodyforce calls 120 nsteps 40 seconds   1.47522000E-01 seconds_per_step   3.68805000E-03 seconds_per_call   1.22935000E-03
+step_timing: turbulence calls 0 nsteps 40 seconds   0.00000000E+00 seconds_per_step   0.00000000E+00 seconds_per_call   0.00000000E+00
+step_timing: apply_bc calls 120 nsteps 40 seconds   9.33600000E-03 seconds_per_step   2.33400000E-04 seconds_per_call   7.78000000E-05
+step_timing: vel_exchange calls 120 nsteps 40 seconds   1.19711100E-01 seconds_per_step   2.99277750E-03 seconds_per_call   9.97592500E-04
+step_timing: projection calls 120 nsteps 40 seconds   5.21750720E+00 seconds_per_step   1.30437680E-01 seconds_per_call   4.34792267E-02
+step_timing: io_stats calls 40 nsteps 40 seconds   1.56713700E-01 seconds_per_step   3.91784250E-03 seconds_per_call   3.91784250E-03
+step_timing: total_measured calls 760 nsteps 40 seconds   6.62113990E+00 seconds_per_step   1.65528498E-01 seconds_per_call   8.71202618E-03
+step_timing: coverage measured   6.62113990E+00 loop_seconds   6.62122920E+00 fraction   1.0000
+proj_timing: sweep calls 720 nsteps 40 seconds   5.89906400E-01 seconds_per_step   1.47476600E-02 seconds_per_call   8.19314444E-04
+proj_timing: apply calls 720 nsteps 40 seconds   1.66067800E+00 seconds_per_step   4.15169500E-02 seconds_per_call   2.30649722E-03
+proj_timing: phi_exchange calls 720 nsteps 40 seconds   1.03097860E+00 seconds_per_step   2.57744650E-02 seconds_per_call   1.43191472E-03
+proj_timing: vel_exchange calls 720 nsteps 40 seconds   1.62538780E+00 seconds_per_step   4.06346950E-02 seconds_per_call   2.25748306E-03
+proj_timing: apply_bc calls 720 nsteps 40 seconds   5.18180000E-02 seconds_per_step   1.29545000E-03 seconds_per_call   7.19694444E-05
+proj_timing: setup calls 120 nsteps 40 seconds   2.58446300E-01 seconds_per_step   6.46115750E-03 seconds_per_call   2.15371917E-03
+proj_timing: total_measured calls 3720 nsteps 40 seconds   5.21721510E+00 seconds_per_step   1.30430378E-01 seconds_per_call   1.40247718E-03
+exch_timing: pack calls 1560 nsteps 40 seconds   2.91765800E-01 seconds_per_step   7.29414500E-03 seconds_per_call   1.87029359E-04
+exch_timing: mpi_post calls 1560 nsteps 40 seconds   2.04206000E-02 seconds_per_step   5.10515000E-04 seconds_per_call   1.30901282E-05
+exch_timing: mpi_wait calls 1560 nsteps 40 seconds   1.72848910E+00 seconds_per_step   4.32122275E-02 seconds_per_call   1.10800583E-03
+exch_timing: unpack calls 1560 nsteps 40 seconds   2.58422200E-01 seconds_per_step   6.46055500E-03 seconds_per_call   1.65655256E-04
+exch_timing: local_copy calls 1560 nsteps 40 seconds   4.49173700E-01 seconds_per_step   1.12293425E-02 seconds_per_call   2.87931859E-04
+exch_timing: skew_barrier calls 0 nsteps 40 seconds   0.00000000E+00 seconds_per_step   0.00000000E+00 seconds_per_call   0.00000000E+00
+exch_timing: total_measured calls 7800 nsteps 40 seconds   2.74827140E+00 seconds_per_step   6.87067850E-02 seconds_per_call   3.52342487E-04
+ exchange balance: mpi_wait seconds min   1.71003310E+00 mean   1.78794231E+00 max   1.87453330E+00  max/min     1.10  slowest rank 4
+ current time step:            40    field filename: overhead_40.h5
+Generating '/scratch/slurm_tmpdir/job_5139028/nsys-report-a6d9.qdstrm'
+Generating '/scratch/slurm_tmpdir/job_5139028/nsys-report-762e.qdstrm'
+Generating '/scratch/slurm_tmpdir/job_5139028/nsys-report-e6be.qdstrm'
+Generating '/scratch/slurm_tmpdir/job_5139028/nsys-report-9678.qdstrm'
+Generating '/scratch/slurm_tmpdir/job_5139028/nsys-report-67d0.qdstrm'
+Generating '/scratch/slurm_tmpdir/job_5139028/nsys-report-9eff.qdstrm'
+[1/1] [0%                          ] rep_0.nsys-rep[1/1] [0%                          ] rep_0.nsys-rep[1/1] [0%                          ] rep_7.nsys-rep[1/1] [0%                          ] rep_5.nsys-rep[1/1] [7%                          ] rep_0.nsys-rep[1/1] [10%                         ] rep_0.nsys-rep[1/1] [0%                          ] rep_6.nsys-rep[1/1] [14%                         ] rep_0.nsys-rep[1/1] [=17%                        ] rep_0.nsys-rep[1/1] [==20%                       ] rep_0.nsys-rep[1/1] [===23%                      ] rep_0.nsys-rep[1/1] [====26%                     ] rep_0.nsys-rep[1/1] [0%                          ] rep_7.nsys-rep[1/1] [0%                          ] rep_2.nsys-rep[1/1] [0%                          ] rep_5.nsys-rep[1/1] [=====30%                    ] rep_0.nsys-rep[1/1] [5%                          ] rep_7.nsys-rep[1/1] [======33%                   ] rep_0.nsys-rep[1/1] [=======36%                  ] rep_0.nsys-repGenerating '/scratch/slurm_tmpdir/job_5139028/nsys-report-0868.qdstrm'
+[1/1] [=======39%                  ] rep_0.nsys-rep[1/1] [0%                          ] rep_6.nsys-rep[1/1] [6%                          ] rep_7.nsys-rep[1/1] [7%                          ] rep_7.nsys-rep[1/1] [========42%                 ] rep_0.nsys-rep[1/1] [8%                          ] rep_6.nsys-rep[1/1] [7%                          ] rep_6.nsys-rep[1/1] [5%                          ] rep_5.nsys-rep[1/1] [6%                          ] rep_5.nsys-rep[1/1] [=========46%                ] rep_0.nsys-rep[1/1] [6%                          ] rep_6.nsys-rep[1/1] [==========49%               ] rep_0.nsys-rep[1/1] [8%                          ] rep_7.nsys-rep[1/1] [5%                          ] rep_6.nsys-rep[1/1] [0%                          ] rep_2.nsys-rep[1/1] [===========52%              ] rep_0.nsys-rep[1/1] [7%                          ] rep_5.nsys-rep[1/1] [============55%             ] rep_0.nsys-rep[1/1] [11%                         ] rep_7.nsys-rep[1/1] [7%                          ] rep_6.nsys-rep[1/1] [10%                         ] rep_5.nsys-rep[1/1] [0%                          ] rep_1.nsys-rep[1/1] [6%                          ] rep_6.nsys-rep[1/1] [7%                          ] rep_6.nsys-rep[1/1] [=============58%            ] rep_0.nsys-rep[1/1] [8%                          ] rep_6.nsys-rep[1/1] [7%                          ] rep_6.nsys-rep[1/1] [8%                          ] rep_6.nsys-rep[1/1] [0%                          ] rep_2.nsys-rep[1/1] [==============62%           ] rep_0.nsys-rep[1/1] [14%                         ] rep_7.nsys-rep[1/1] [5%                          ] rep_2.nsys-rep[1/1] [===============65%          ] rep_0.nsys-rep[1/1] [12%                         ] rep_5.nsys-rep[1/1] [==18%                       ] rep_7.nsys-rep[1/1] [7%                          ] rep_6.nsys-rep[1/1] [=15%                        ] rep_5.nsys-rep[1/1] [================68%         ] rep_0.nsys-rep[1/1] [==21%                       ] rep_7.nsys-rep[1/1] [==18%                       ] rep_5.nsys-rep[1/1] [================71%         ] rep_0.nsys-rep[1/1] [===24%                      ] rep_7.nsys-rep[1/1] [=================74%        ] rep_0.nsys-rep[1/1] [10%                         ] rep_6.nsys-rep[1/1] [==20%                       ] rep_5.nsys-rep[1/1] [====27%                     ] rep_7.nsys-rep[1/1] [===23%                      ] rep_5.nsys-rep[1/1] [=====30%                    ] rep_7.nsys-rep[1/1] [13%                         ] rep_6.nsys-rep[1/1] [====26%                     ] rep_5.nsys-rep[1/1] [======33%                   ] rep_7.nsys-rep[1/1] [6%                          ] rep_2.nsys-rep[1/1] [0%                          ] rep_1.nsys-rep[1/1] [====28%                     ] rep_5.nsys-rep[1/1] [=======36%                  ] rep_7.nsys-rep[1/1] [=16%                        ] rep_6.nsys-rep[1/1] [=====31%                    ] rep_5.nsys-rep[1/1] [=======39%                  ] rep_7.nsys-rep[1/1] [9%                          ] rep_2.nsys-rep[1/1] [==18%                       ] rep_6.nsys-rep[1/1] [0%                          ] rep_1.nsys-rep[1/1] [======34%                   ] rep_5.nsys-rep[1/1] [=========43%                ] rep_7.nsys-rep[1/1] [7%                          ] rep_1.nsys-rep[1/1] [6%                          ] rep_1.nsys-rep[1/1] [==21%                       ] rep_6.nsys-rep[1/1] [=======36%                  ] rep_5.nsys-rep[1/1] [=========46%                ] rep_7.nsys-rep[1/1] [5%                          ] rep_1.nsys-rep[1/1] [===24%                      ] rep_6.nsys-rep[1/1] [==========49%               ] rep_7.nsys-rep[1/1] [=======39%                  ] rep_5.nsys-rep[1/1] [12%                         ] rep_2.nsys-rep[1/1] [====27%                     ] rep_6.nsys-rep[1/1] [========42%                 ] rep_5.nsys-rep[1/1] [===========52%              ] rep_7.nsys-rep[1/1] [=15%                        ] rep_2.nsys-rep[1/1] [=====30%                    ] rep_6.nsys-rep[1/1] [=========44%                ] rep_5.nsys-rep[1/1] [============55%             ] rep_7.nsys-rep[1/1] [==18%                       ] rep_2.nsys-rep[1/1] [=====32%                    ] rep_6.nsys-rep[1/1] [=============58%            ] rep_7.nsys-rep[1/1] [==========47%               ] rep_5.nsys-rep[1/1] [5%                          ] rep_1.nsys-rep[1/1] [==21%                       ] rep_2.nsys-rep[1/1] [==================75%       ] rep_0.nsys-rep[1/1] [========================100%] rep_0.nsys-rep[1/1] [======35%                   ] rep_6.nsys-rep[1/1] [==============61%           ] rep_7.nsys-rep[1/1] [===========50%              ] rep_5.nsys-rep[1/1] [===24%                      ] rep_2.nsys-rep[1/1] [==============64%           ] rep_7.nsys-rep[1/1] [===========52%              ] rep_5.nsys-rep[1/1] [=======38%                  ] rep_6.nsys-rep[1/1] [6%                          ] rep_1.nsys-rep[1/1] [====27%                     ] rep_2.nsys-rep[1/1] [================68%         ] rep_7.nsys-rep[1/1] [============55%             ] rep_5.nsys-rep[1/1] [========41%                 ] rep_6.nsys-rep[1/1] [=====30%                    ] rep_2.nsys-rep[1/1] [================71%         ] rep_7.nsys-rep[1/1] [=============58%            ] rep_5.nsys-rep[1/1] [=========44%                ] rep_6.nsys-rep[1/1] [======33%                   ] rep_2.nsys-rep[1/1] [=================74%        ] rep_7.nsys-rep[1/1] [9%                          ] rep_1.nsys-rep[1/1] [=============60%            ] rep_5.nsys-rep[1/1] [=========46%                ] rep_6.nsys-rep[1/1] [======35%                   ] rep_2.nsys-rep[1/1] [==============63%           ] rep_5.nsys-rep[1/1] [==========49%               ] rep_6.nsys-rep[1/1] [=======38%                  ] rep_2.nsys-rep[1/1] [12%                         ] rep_1.nsys-rep[1/1] [===============66%          ] rep_5.nsys-rep[1/1] [===========52%              ] rep_6.nsys-rep[1/1] [========41%                 ] rep_2.nsys-rep[1/1] [14%                         ] rep_1.nsys-rep[1/1] [================68%         ] rep_5.nsys-rep[1/1] [============55%             ] rep_6.nsys-rep[1/1] [=========44%                ] rep_2.nsys-rep[1/1] [=17%                        ] rep_1.nsys-rep[1/1] [================71%         ] rep_5.nsys-rep[1/1] [=============58%            ] rep_6.nsys-rep[1/1] [==========47%               ] rep_2.nsys-rep[1/1] [=================74%        ] rep_5.nsys-rep[1/1] [==20%                       ] rep_1.nsys-rep[1/1] [=============60%            ] rep_6.nsys-rep[1/1] [===========50%              ] rep_2.nsys-rep[1/1] [===22%                      ] rep_1.nsys-rep[1/1] [==============63%           ] rep_6.nsys-rep[1/1] [===========53%              ] rep_2.nsys-rep[1/1] [====25%                     ] rep_1.nsys-rep[1/1] [============56%             ] rep_2.nsys-rep[1/1] [===============66%          ] rep_6.nsys-rep[1/1] [====28%                     ] rep_1.nsys-rep[1/1] [=============59%            ] rep_2.nsys-rep[1/1] [================69%         ] rep_6.nsys-rep[1/1] [==================75%       ] rep_7.nsys-rep[1/1] [========================100%] rep_7.nsys-rep[1/1] [=====31%                    ] rep_1.nsys-rep[1/1] [==============61%           ] rep_2.nsys-rep[1/1] [=================72%        ] rep_6.nsys-rep[1/1] [=================74%        ] rep_6.nsys-rep[1/1] [==============64%           ] rep_2.nsys-rep[1/1] [======33%                   ] rep_1.nsys-rep[1/1] [===============67%          ] rep_2.nsys-rep[1/1] [=======36%                  ] rep_1.nsys-rep[1/1] [================70%         ] rep_2.nsys-rep[1/1] [=======39%                  ] rep_1.nsys-rep[1/1] [=================73%        ] rep_2.nsys-rep[1/1] [========41%                 ] rep_1.nsys-rep[1/1] [=========44%                ] rep_1.nsys-rep[1/1] [==========47%               ] rep_1.nsys-rep[1/1] [===========50%              ] rep_1.nsys-rep[1/1] [==================75%       ] rep_5.nsys-rep[1/1] [========================100%] rep_5.nsys-rep[1/1] [===========52%              ] rep_1.nsys-rep[1/1] [========================100%] rep_0.nsys-rep
+Generated:
+	/hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_nsys2/rect_jacobi_r8_N2/rep_0.nsys-rep
+[1/1] [============55%             ] rep_1.nsys-rep[1/1] [=============58%            ] rep_1.nsys-rep[1/1] [=============60%            ] rep_1.nsys-rep[1/1] [==================75%       ] rep_6.nsys-rep[1/1] [========================100%] rep_6.nsys-rep[1/1] [==============63%           ] rep_1.nsys-rep[1/1] [===============66%          ] rep_1.nsys-repGenerating '/scratch/slurm_tmpdir/job_5139028/nsys-report-b623.qdstrm'
+[1/1] [==================75%       ] rep_2.nsys-rep[1/1] [========================100%] rep_2.nsys-rep[1/1] [================69%         ] rep_1.nsys-rep[1/1] [================71%         ] rep_1.nsys-rep[1/1] [=================74%        ] rep_1.nsys-rep[1/1] [========================100%] rep_7.nsys-rep
+Generated:
+	/hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_nsys2/rect_jacobi_r8_N2/rep_7.nsys-rep
+[1/1] [==================75%       ] rep_1.nsys-rep[1/1] [========================100%] rep_1.nsys-rep[1/1] [========================100%] rep_5.nsys-rep
+Generated:
+	/hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_nsys2/rect_jacobi_r8_N2/rep_5.nsys-rep
+[1/1] [========================100%] rep_6.nsys-rep
+Generated:
+	/hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_nsys2/rect_jacobi_r8_N2/rep_6.nsys-rep
+[1/1] [========================100%] rep_2.nsys-rep
+Generated:
+	/hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_nsys2/rect_jacobi_r8_N2/rep_2.nsys-rep
+[1/1] [========================100%] rep_1.nsys-rep
+Generated:
+	/hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_nsys2/rect_jacobi_r8_N2/rep_1.nsys-rep
+[1/1] [0%                          ] rep_4.nsys-rep[1/1] [0%                          ] rep_4.nsys-rep[1/1] [=15%                        ] rep_4.nsys-rep[1/1] [13%                         ] rep_4.nsys-rep[1/1] [11%                         ] rep_4.nsys-rep[1/1] [10%                         ] rep_4.nsys-rep[1/1] [9%                          ] rep_4.nsys-rep[1/1] [8%                          ] rep_4.nsys-rep[1/1] [7%                          ] rep_4.nsys-rep[1/1] [6%                          ] rep_4.nsys-rep[1/1] [5%                          ] rep_4.nsys-rep[1/1] [6%                          ] rep_4.nsys-rep[1/1] [5%                          ] rep_4.nsys-rep[1/1] [6%                          ] rep_4.nsys-rep[1/1] [5%                          ] rep_4.nsys-rep[1/1] [8%                          ] rep_4.nsys-rep[1/1] [7%                          ] rep_4.nsys-rep[1/1] [6%                          ] rep_4.nsys-rep[1/1] [5%                          ] rep_4.nsys-rep[1/1] [5%                          ] rep_4.nsys-rep[1/1] [7%                          ] rep_4.nsys-rep[1/1] [9%                          ] rep_4.nsys-rep[1/1] [10%                         ] rep_4.nsys-rep[1/1] [12%                         ] rep_4.nsys-rep[1/1] [13%                         ] rep_4.nsys-rep[1/1] [=15%                        ] rep_4.nsys-rep[1/1] [=16%                        ] rep_4.nsys-rep[1/1] [==18%                       ] rep_4.nsys-rep[1/1] [==20%                       ] rep_4.nsys-rep[1/1] [==21%                       ] rep_4.nsys-rep[1/1] [===23%                      ] rep_4.nsys-rep[1/1] [===24%                      ] rep_4.nsys-rep[1/1] [====26%                     ] rep_4.nsys-rep[1/1] [====28%                     ] rep_4.nsys-rep[1/1] [=====29%                    ] rep_4.nsys-rep[1/1] [=====31%                    ] rep_4.nsys-rep[1/1] [=====32%                    ] rep_4.nsys-rep[1/1] [======34%                   ] rep_4.nsys-rep[1/1] [======35%                   ] rep_4.nsys-rep[1/1] [0%                          ] rep_3.nsys-rep[1/1] [=======37%                  ] rep_4.nsys-rep[1/1] [=======39%                  ] rep_4.nsys-rep[1/1] [========40%                 ] rep_4.nsys-rep[1/1] [========42%                 ] rep_4.nsys-rep[1/1] [=========43%                ] rep_4.nsys-rep[1/1] [=========45%                ] rep_4.nsys-rep[1/1] [=========46%                ] rep_4.nsys-rep[1/1] [==========48%               ] rep_4.nsys-rep[1/1] [===========50%              ] rep_4.nsys-rep[1/1] [===========51%              ] rep_4.nsys-rep[1/1] [===========53%              ] rep_4.nsys-rep[1/1] [============54%             ] rep_4.nsys-rep[1/1] [============56%             ] rep_4.nsys-rep[1/1] [=============58%            ] rep_4.nsys-rep[1/1] [=============59%            ] rep_4.nsys-rep[1/1] [==============61%           ] rep_4.nsys-rep[1/1] [==============62%           ] rep_4.nsys-rep[1/1] [==============64%           ] rep_4.nsys-rep[1/1] [===============65%          ] rep_4.nsys-rep[1/1] [===============67%          ] rep_4.nsys-rep[1/1] [================69%         ] rep_4.nsys-rep[1/1] [================70%         ] rep_4.nsys-rep[1/1] [=================72%        ] rep_4.nsys-rep[1/1] [0%                          ] rep_3.nsys-rep[1/1] [=================73%        ] rep_4.nsys-rep[1/1] [6%                          ] rep_3.nsys-rep[1/1] [7%                          ] rep_3.nsys-rep[1/1] [8%                          ] rep_3.nsys-rep[1/1] [10%                         ] rep_3.nsys-rep[1/1] [11%                         ] rep_3.nsys-rep[1/1] [12%                         ] rep_3.nsys-rep[1/1] [14%                         ] rep_3.nsys-rep[1/1] [=15%                        ] rep_3.nsys-rep[1/1] [=17%                        ] rep_3.nsys-rep[1/1] [==18%                       ] rep_3.nsys-rep[1/1] [==19%                       ] rep_3.nsys-rep[1/1] [==21%                       ] rep_3.nsys-rep[1/1] [===22%                      ] rep_3.nsys-rep[1/1] [===23%                      ] rep_3.nsys-rep[1/1] [====25%                     ] rep_3.nsys-rep[1/1] [====26%                     ] rep_3.nsys-rep[1/1] [==================75%       ] rep_4.nsys-rep[1/1] [========================100%] rep_4.nsys-rep[1/1] [====27%                     ] rep_3.nsys-rep[1/1] [=====29%                    ] rep_3.nsys-rep[1/1] [=====30%                    ] rep_3.nsys-rep[1/1] [=====32%                    ] rep_3.nsys-rep[1/1] [======33%                   ] rep_3.nsys-rep[1/1] [======34%                   ] rep_3.nsys-rep[1/1] [=======36%                  ] rep_3.nsys-rep[1/1] [=======37%                  ] rep_3.nsys-rep[1/1] [=======38%                  ] rep_3.nsys-rep[1/1] [========40%                 ] rep_3.nsys-rep[1/1] [========41%                 ] rep_3.nsys-rep[1/1] [=========43%                ] rep_3.nsys-rep[1/1] [=========44%                ] rep_3.nsys-rep[1/1] [=========45%                ] rep_3.nsys-rep[1/1] [==========47%               ] rep_3.nsys-rep[1/1] [==========48%               ] rep_3.nsys-rep[1/1] [==========49%               ] rep_3.nsys-rep[1/1] [===========51%              ] rep_3.nsys-rep[1/1] [===========52%              ] rep_3.nsys-rep[1/1] [===========53%              ] rep_3.nsys-rep[1/1] [============55%             ] rep_3.nsys-rep[1/1] [============56%             ] rep_3.nsys-rep[1/1] [=============58%            ] rep_3.nsys-rep[1/1] [=============59%            ] rep_3.nsys-rep[1/1] [=============60%            ] rep_3.nsys-rep[1/1] [==============62%           ] rep_3.nsys-rep[1/1] [==============63%           ] rep_3.nsys-rep[1/1] [==============64%           ] rep_3.nsys-rep[1/1] [===============66%          ] rep_3.nsys-rep[1/1] [===============67%          ] rep_3.nsys-rep[1/1] [================68%         ] rep_3.nsys-rep[1/1] [================70%         ] rep_3.nsys-rep[1/1] [================71%         ] rep_3.nsys-rep[1/1] [=================73%        ] rep_3.nsys-rep[1/1] [=================74%        ] rep_3.nsys-rep[1/1] [========================100%] rep_4.nsys-rep
+Generated:
+	/hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_nsys2/rect_jacobi_r8_N2/rep_4.nsys-rep
+[1/1] [==================75%       ] rep_3.nsys-rep[1/1] [========================100%] rep_3.nsys-rep[1/1] [========================100%] rep_3.nsys-rep
+Generated:
+	/hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_nsys2/rect_jacobi_r8_N2/rep_3.nsys-rep

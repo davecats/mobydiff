@@ -1,41 +1,44 @@
 # Next session — reducing the 2:1 penalty
 
-> **STATUS 2026-09-10 — P1 AND THE TRANSPORT OPTIONS ARE AIMED AT NOTHING.**
-> `overheadTest/results_horeka_2026-09-10.md`: the 708-753 us `mpi_wait` that
-> §"Why (c) happens" and P1 were built to remove is **not transport**. An
-> `MPI_Barrier` before the `Waitall` absorbs 100 % of it -- the ranks arrive at
-> the exchange up to ~773 us apart, and once synchronised the blocked transfer
-> completes in 1.2 us, against 63.8 us for the `base_jacobi` decomposition that
-> was supposedly beating it. The blocked exchange moves its bytes ~53x faster
-> than the unblocked one; what it does not do is arrive on time.
+> **STATUS 2026-09-10 — THE BLOCK TAX WAS GPU-TO-NIC AFFINITY. P1 IS OFF.**
+> `overheadTest/results_horeka_2026-09-10.md`. All three HCAs on a HoreKa Green
+> node sit on NUMA 0 with GPU0/GPU1; GPU2/GPU3 reach a NIC only across the
+> inter-socket link, where GPUDirect RDMA does not apply, so a rank there stages
+> its cross-node traffic through host memory (traced: 694 MB/steady window = the
+> config's entire exchange volume, against 25 MB on intra-node ranks).
+> `comm.f90:220` assigns `device = local_rank mod num_devices`, so at 4 ranks/node
+> the Morton chain's cross-node ranks land on GPU3 and GPU0 — one of them wrong.
 >
-> Consequences for this document: the 19-25 %-of-step prize is real but is a
-> **synchronisation** prize, not a byte-traffic one. P1's *measured* -3.63 % at
-> 2 ranks stands (it removed real bytes and real local-copy work); its
-> extrapolation to 8-16 ranks does not, because the cost there is not bytes.
-> **Do not start a partitioning rewrite or transport tuning on the strength of
-> the exchange numbers in this file.** P2 (overlap) is the one item the new
-> result makes MORE attractive, since hiding the exchange also hides the spread.
+> **Permuting `CUDA_VISIBLE_DEVICES` to `0,2,3,1` collapses `mpi_wait` 10.6x
+> (745.7 → 70.2 us) and the step 20.6 % (0.13651 → 0.10839 s), `L2_div`
+> bit-identical, no rebuild.** Both cross-node ends must be NIC-affine: fixing one
+> buys 19 % of the wait, both buys 91 %. `UCX_MEMTYPE_CACHE` (set to `n` by every
+> submit script here) and forcing GPUDirect RDMA move it under 2 %.
 >
-> Two corrections to how the earlier numbers must be read: every `mpi_wait`
-> figure in the 2026-09-07/08/09 reports is **rank 0's**, and rank 0 sits at or
-> near the cross-rank minimum (add 4-25 % for the mean); and aggregate
-> min/max/argmax is **blind to rotating skew** -- `rect` 8x2 shows a healthy
-> `max/min = 1.09` while being 100 % arrival spread, because the late rank
-> rotates.
+> **The block tax `rect`/`base` at 8 ranks is 1.315 with the default map and 1.052
+> with the corrected one — its single-GPU value. There is no node-boundary block
+> tax**, and the "19–25 % of the step" prize is collected by a launch flag. P1's
+> partitioning rewrite and the transport options in this file address a cost that
+> does not exist; **do not start either**. P2 (overlap) is untouched by this.
 >
-> A CUDA timeline probe (job 5139026) adds two more eliminations: the GPU is
-> **idle 37 %** of the time in the anomaly regime, so the stall is NOT unfinished
-> device work; and the slowest 1 % of rounds hold only **4-5 %** of the wait, so
-> it is every round rather than a few catastrophic ones.
+> Why it hits the blocked decomposition only: a 2-peer chain puts two ranks on the
+> network and both can be placed well; a 7-peer Cartesian decomposition puts all
+> of them on the network and only 2 of 4 GPUs are NIC-affine, so `base` gains
+> nothing from a permutation. That is also the 09-08/09-09 placement inversion —
+> `rect` improved when spread because 2 ranks/node lands on GPU0/GPU1 by accident.
 >
-> OPEN: what desynchronises four co-resident ranks by ~750 us per round. It is
-> not transport, not device work, not a few bad rounds, not a persistent
-> straggler, and not copy volume. The cheap next instrument is a **second barrier
-> site before `pack`**, which separates skew the exchange creates (its own copy)
-> from skew the rank arrives with -- a solver change needing the workstation
-> bit-exactness gate. Solver-side NVTX would also restore the MPI view that nsys
-> cannot capture here (Fortran `mpi_f08` reaches the C layer as `PMPI_*`).
+> How it was found, and what the earlier instrument missed: the barrier split
+> showed the wait was arrival spread, not transport (`rect` 8x2: 773 us skew,
+> 1.2 us transfer; `base`: 64.8 / 63.8). CUDA traces showed the GPU idle 37 % of
+> the time, so it was not unfinished device work, and the per-rank memcpy table
+> named the two staging ranks. Also: every `mpi_wait` figure in the 09-07/08/09
+> reports is **rank 0's**, and rank 0 sits at or near the cross-rank minimum; and
+> aggregate min/max/argmax is **blind to rotating skew** (`rect` 8x2 reads a
+> healthy max/min = 1.09 while being 100 % arrival spread).
+>
+> NEXT: re-measure the campaign at the corrected map (16 ranks and the refined
+> configs are unmeasured); decide the permutation from the topology instead of
+> hard-coding `0,2,3,1`; and note ~70 us/round still remains.
 
 
 Handout, written 2026-08-28 from the session that measured all of it. Read the
