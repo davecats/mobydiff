@@ -64,6 +64,9 @@ CASE=cht149_flageul.h5
 SEED=${SEED:-kstat_80000.h5}       # the developed Re_tau 149 Kasagi field
 
 DEV_STEPS=${DEV_STEPS:-80000}     # t -> ~24.5 (dt ~ 3.07e-4)
+SETTLE_STEPS=${SETTLE_STEPS:-65000}    # t -> 20, at the correct capacities
+CLEAN_STEPS=${CLEAN_STEPS:-650000}    # t -> 220: a 200-t.u. window = 29800
+                                      # wall units, matching their 29000
 EXT_STEPS=${EXT_STEPS:-311000}    # `extend`: doubles the window to ~28400 wall
                                   # units, matching Flageul's 29000
 EXT_FROM=${EXT_FROM:-Fstat_391000.h5}
@@ -102,6 +105,34 @@ if want develop; then
     time mpirun -n "$RANKS" "$BIN" .Fdev.ini > Fdev.log 2>&1
     finished Fdev.log || { echo "DEVELOP FAILED"; tail -15 Fdev.log; exit 1; }
     grep -E "seconds_per_step" Fdev.log | tail -1
+fi
+
+# ---------------------------------------------------------------------------
+# THE THREE-LEG PLAN. The first statistics campaign was contaminated: the solid
+# diffusion time is d^2/alpha_s ~ 106 time units and the window was t = 24..120,
+# i.e. LESS THAN ONE such time, started from a 24-time-unit develop leg. The
+# damage is measurable -- decomposing the deep-solid variance into spatial and
+# temporal parts, the temporal term falls by a factor 45 when the transient is
+# dropped, and the outer-face value goes from 4.6x the reference to 1.2x.
+#   settle  : run at the CORRECT capacities with no statistics, after
+#             reseed_solid_exact.py has put every solid on its exact steady
+#             mean and the source has been corrected to balance the outflux
+#   clean   : statistics FROM ZERO over one uncontaminated window
+if want settle; then
+    echo "== settle: $SETTLE_STEPS steps at the correct capacities, statistics OFF"
+    ini Cdev "$SETTLE_STEPS" "$SETTLE_STEPS" IC_clean.h5 0 0 x
+    time mpirun -n "$RANKS" "$BIN" .Cdev.ini > Cdev.log 2>&1
+    finished Cdev.log || { echo "SETTLE FAILED"; tail -15 Cdev.log; exit 1; }
+    grep -E "seconds_per_step" Cdev.log | tail -1
+fi
+
+if want clean; then
+    echo "== clean statistics FROM ZERO ($CLEAN_STEPS steps)"
+    rm -f flageul_clean.h5 Cstat_vel.h5
+    ini Cstat "$CLEAN_STEPS" "$FIELD" "Cdev_${SETTLE_STEPS}.h5" "$SAMPLE" "$FLUSH" flageul_clean.h5
+    time mpirun -n "$RANKS" "$BIN" .Cstat.ini > Cstat.log 2>&1
+    finished Cstat.log || { echo "CLEAN FAILED"; tail -15 Cstat.log; exit 1; }
+    grep -E "seconds_per_step" Cstat.log | tail -1
 fi
 
 if want extend; then

@@ -969,3 +969,52 @@ solid cells each side instead of 53). dt is UNCHANGED, because the minimum
 spacing is at the INTERFACE and that does not move; only the cell count grows,
 16.1 M against 11.2 M, so develop + statistics ≈ 88 h. Worth doing only if the
 longer window fails to close the gap.
+
+## IT WAS THE TRANSIENT, and the fix is a three-leg run (2026-09-09)
+
+The "convergence" diagnosis above was only half right. Decomposing the
+deep-solid variance into a SPATIAL part (within-plane) and a TEMPORAL part
+(variance of the plane mean across snapshots) separates a sampling problem from
+a transient:
+
+| depth y⁺ | window | spatial | temporal | total | Flageul |
+|---|---|---|---|---|---|
+| −145 | all, t > 30 | 0.0109 | **0.0227** | 0.0336 | 0.0073 |
+| −145 | t > 120 only | 0.0083 | **0.0005** | **0.0088** | 0.0073 |
+| −100 | all | 0.0129 | 0.0145 | 0.0273 | 0.0085 |
+| −100 | t > 120 only | 0.0091 | 0.0006 | **0.0097** | 0.0085 |
+
+**The temporal term falls by a factor 45** when the transient is dropped, and
+the outer-face value goes from 4.6× the reference to **1.2×**. Not 1/T sampling
+noise, and not the box.
+
+**Why it was there.** The solid diffusion time is d²/α_s = 1/D_f ≈ **106 time
+units**, and the statistics window was t = 24.5 → 120 — LESS THAN ONE — started
+from a develop leg of only 24.5. The solid was still relaxing throughout. The
+snapshot means show it directly: at y⁺ = −145 the plane mean moves −102.26 →
+−101.65 over t = 31 → 92, then creeps.
+
+**A second, smaller cause, now fixed.** The residual creep after t = 120 is a
+generation/removal imbalance: `source` had been set from the PREVIOUS run's
+bulk velocity, so generation exceeded the imposed outflux by **0.30 %**. The
+predicted level drift, −7.5e-4 per time unit, matches the measured −9.3e-4.
+`source` is now 0.064932, from this run's own ∫⟨u⟩dy.
+
+### The three legs
+
+1. **`reseed_solid_exact.py`** — put every solid on its EXACT steady mean, in
+   closed form. At steady state the solid profile is linear with slope
+   J/(κ_s D_f) and its LEVEL is a pure-Neumann null-space mode carrying no
+   physics, so the transient is removed by replacing the mean and leaving the
+   fluctuations alone (subtracting a y-dependent mean leaves θ' untouched, and
+   the operator is linear). *This is leg 1's goal reached without running it:*
+   a capacity-accelerated leg would cost ~76 h and would still leave the
+   κ_s = 1, C_s = 10⁴ scalar unequilibrated, since its α_s = 10⁻⁴ gives
+   d²/α_s ~ 10⁶ time units. Measured shifts: 0.10–0.49 θ_τ.
+2. **`run_flageul.sh settle`** — 65 000 steps (t → 20) at the CORRECT
+   capacities, statistics off, with the corrected source.
+3. **`run_flageul.sh clean`** — statistics FROM ZERO, 650 000 steps, a
+   **200-time-unit window = 29 800 wall units**, matching their 29 000.
+
+715 000 steps ≈ **112 h (4.7 days)**. The contaminated statistics are kept as
+`flageul_stats.h5` / `flageul_stats_311k.h5` for the before/after.
