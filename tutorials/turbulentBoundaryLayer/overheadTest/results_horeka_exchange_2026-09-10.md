@@ -181,16 +181,20 @@ points for `local_copy`, cross-level points for `copy_cross`:
 
 Adding it up at 8 ranks:
 
-| | fixed (launch) | volume | total |
-|---|---|---|---|
-| `rect_jacobi` | 9.66 ms/step (58 %) | 7.06 ms | 16.72 ms |
-| `refined_yp82` | **11.73 ms/step (80 %)** | 2.97 ms | 14.71 ms |
+Volume is priced with `base_jacobi`'s wide-span slopes (0.090 ns/pt for pack,
+0.074 for unpack — the narrow-span configs cannot resolve a slope) and each
+config's own copy slope:
 
-**The two configurations pay almost the same launch bill — 9.7 against 11.7 ms —
+| | fixed (launch) | volume | total | check vs measured |
+|---|---|---|---|---|
+| `rect_jacobi` | 9.27 ms/step (55 %) | 7.47 ms | 16.74 ms | 16.72 |
+| `refined_yp82` | **11.61 ms/step (79 %)** | 3.09 ms | 14.69 ms | 14.71 |
+
+**The two configurations pay almost the same launch bill — 9.3 against 11.6 ms —
 and it is the whole difference.** `refined_yp82` carries 44 % of the cells, so
 its volume term collapses from 7.1 to 3.0 ms while the launch term does not move.
-`nb16_jacobi` is the control on the other side: `nb = 16` gives 3.7x `rect`'s
-copy volume, its fixed bill stays ~10 ms and its volume term is 29 ms — at fine
+`nb16_jacobi` is the control on the other side: `nb = 16` gives 3.8x `rect`'s
+copy volume, its fixed bill stays ~9 ms and its volume term is 29 ms — at fine
 granularity, volume still dominates.
 
 **So the fixed per-launch bill is ~10–12 ms/step in EVERY configuration, and it
@@ -252,13 +256,14 @@ is measured; what it consists of is not identified here.**
 
 There are ~141 exchange kernel launches per step (39 pack, 39 unpack, 39
 same-level copy, 24 cross-level copy) costing **10–12 ms/step in every
-configuration measured** — 9.7 ms for the single-level case, 11.7 ms for the
-refined one, ~10 ms for `nb16`. Against the projection's `jacobi_compute_phi`,
-which launches at **19 us**, roughly 8 ms/step of that is not obviously necessary.
+configuration measured** — 9.3 ms for the single-level case, 11.6 ms for the
+refined one, ~9 ms for `nb16`. Against the projection's `jacobi_compute_phi`,
+which launches at **19 us**, 7.0 ms/step (`rect`) to 8.9 ms/step (`refined`) of
+that is not obviously necessary.
 
 Ranked by size, and by how well this data supports them:
 
-1. **Find and remove the per-launch cost.** ~8 ms/step, 13 % of the refined
+1. **Find and remove the per-launch cost.** 7.0–8.9 ms/step, 15 % of the refined
    8-rank step and ~19 % projected at 16. Not refinement-specific — every blocked
    configuration pays it. **This is not yet actionable: the first step is a
    per-kernel nsys timeline** (nsys works on this solver for CUDA tracing;
