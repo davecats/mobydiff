@@ -876,15 +876,33 @@ immersed boundary. Phased, each phase verified before the next:
   gone velocity-active through outlet faces); dt detunes it. The case ships
   accel-off. Latent risk for long chebyshev+outlet runs (cylinder/naca
   horizons were too short to show it).
-- ALSO PENDING: **Profile + optimise** the GPU step for the 2:1-refined channel.
-  The last hard profile is STALE (the reflux that was 23% is removed; the
-  `MOBY_PHASETIME` timer is deleted): re-profile first with a minimal removable
-  phase timer, then attack the dominant cost (likely the projection's
-  per-Jacobi-iteration halo exchanges). Every change is a scheduling refactor and
-  must stay bit-exact. Full plan + next-session prompt in
-  `docs/next_session_profiling.md` (Phase-4 overlap sketch in
-  `docs/nonblocking_overlap_strategy.md`, which predates the Chebyshev-Jacobi
-  solver and needs updating).
+- Rank-to-GPU mapping + campaign re-measurement (DONE 2026-09-10, branch
+  `optimiseBlockRefinement_parentBoundaryLayer`). The 708-753 us `mpi_wait` that
+  three reports called "the blocked exchange's stall" was GPU AFFINITY: **the two
+  ends of a cross-node link must sit in the same affinity class** (mixed 604 us,
+  both-far-but-matched 81, both-near 75 — matching is worth ~8x, NIC-affinity a
+  further ~1.3x). `comm.f90 select_target_device` now serves a node's first and
+  last local ranks first, identically on every node (node-homogeneity is
+  load-bearing: a per-node order cost base_jacobi 14%); `MOBY_GPU_ORDER` overrides
+  the device order; single-node runs keep the identity mapping. Campaign
+  re-measured, 46 runs in one allocation: 1/2/4 ranks and base_jacobi move ±0.3%
+  (the control), while at 8/16 ranks rect +19.4/+24.5%, refined_yp82
+  +21.4/+26.8%, red-black +25.3/+29.1%, refined_big +13.6/+20.7%. **Block tax
+  1.310 → 1.059 (8 ranks), 1.499 → 1.130 (16) — there is no node-boundary block
+  tax**, and `results_horeka_2026-09-07.md` carries a SUPERSEDED-IN-PART header.
+  The 2:1 headline is untouched (0.98 coarse-cell-equivalents at 4 ranks).
+  `tools/moby_tune.sh` finds the mapping by measurement on a new machine (it
+  recovers the affinity classes with no topology input); `tools/h5maxdiff` does
+  field comparison where h5py/h5diff are unavailable. Diagnostics from this track:
+  `exchange balance:` line and `[output] exchange_barrier` (skew vs transfer).
+- ALSO PENDING: **the 2:1 path at scale is a DEVICE-LOCAL exchange problem.** At
+  16 ranks the refined channel spends 40% of the step in the exchange, of which
+  `pack + unpack + local_copy` is 31.7% and `mpi_wait` only 7.7%; the refined case
+  does 82% of the single-level twin's exchange work while carrying 44% of its
+  cells (**1.9x per cell**), and that factor is the 2:1 cost at scale. Handout,
+  with pre-registered readings, in `docs/next_session_2to1_performance.md`; the
+  older `docs/next_session_profiling.md` and the Phase-4 sketch in
+  `docs/nonblocking_overlap_strategy.md` predate all of this.
 
 ## Verification
 
