@@ -74,3 +74,30 @@ timed in its own bucket instead of inferred from a difference, (c) the op split
 that says how many points are cross-level at all, and (d) A0 at 8 and 16 ranks.
 The predictions written before those runs are in
 `horeka/exchange/PREREGISTERED.md`.
+
+## 3 — Phase 2: A0 repeated at 8 ranks. It fails again, harder.
+
+A0 (2026-09-02) inserted a compute-bound target kernel between the `Isend`/
+`Irecv` posts and the `MPI_Waitall` at **2** GPU ranks and found that nothing was
+hidden. Its own text asked for a repeat on a genuinely many-rank machine before
+the conclusion was carried, because the message sizes, peer counts and transports
+all change. Repeated here on 2 nodes, 8 ranks, 100 steps, job 5139461 — a
+5.7 ms kernel against waits of 49 and 75 us, i.e. **76–116x** the quantity it
+would have to hide:
+
+| case | probe us/round | `mpi_wait` us/round, no probe | with probe | | s/step no probe | with probe |
+|---|---|---|---|---|---|---|
+| `refined_yp82_rect_jacobi` 8x2 | 5701.5 | 49.1 | **70.7** | **1.44x** | 0.060138 | 0.283078 |
+| `rect_jacobi` 8x2 | 5700.4 | 75.0 | **79.4** | **1.06x** | 0.109144 | 0.331868 |
+
+**The wait goes UP, never down.** And the step time rises by 0.2229 s = 39 x
+5.7 ms exactly: the probe kernel is serialised into the step in full, with no
+part of it overlapping anything. There is no asynchrony to exploit here at all —
+not a partial one, not a small one.
+
+So the 2-rank conclusion carries: **the transfer happens inside `MPI_Waitall`
+and nowhere else, and P2 (overlap) is closed** on this stack. The scope caveat
+the 2-rank probe attached to itself is now discharged rather than inherited.
+The mild degradation (6 % and 44 %) is the same contention the 2-rank probe saw
+(9 %).
+
