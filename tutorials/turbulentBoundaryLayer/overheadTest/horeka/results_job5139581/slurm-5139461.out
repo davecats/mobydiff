@@ -1,0 +1,479 @@
+=== building /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-headref (703e62d)
+MPI Fortran module dir: /hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+HDF5_ROOT: /home/hk-project-exasim/xt8786/hdf5
+-- The Fortran compiler identification is NVHPC 25.3.0
+-- The C compiler identification is NVHPC 25.3.0
+-- Detecting Fortran compiler ABI info
+-- Detecting Fortran compiler ABI info - done
+-- Check for working Fortran compiler: /software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/compilers/bin/nvfortran - skipped
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/compilers/bin/nvc - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- HDF5 include dir: /home/hk-project-exasim/xt8786/hdf5/include
+-- HDF5 C library: /home/hk-project-exasim/xt8786/hdf5/lib/libhdf5.so
+-- Pressure solver: red-black SOR
+-- MPI support: required
+-- MPI wrapper compile flags: -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/hwloc/hwloc201/hwloc/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/event/libevent2022/libevent -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/event/libevent2022/libevent/include -pthread -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+-- MPI wrapper link flags: -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -L/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -Wl,-rpath -Wl,/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -Wl,--enable-new-dtags -lmpi_usempif08 -lmpi_usempi_ignore_tkr -lmpi_mpifh -lmpi
+-- MPI Fortran module dir: /hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+-- Found OpenMP_Fortran: -mp  
+-- Found OpenMP: TRUE  found components: Fortran 
+-- Configuring done (2.2s)
+-- Generating done (0.1s)
+-- Build files have been written to: /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-headref/build_gpu
+[  1%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/init.f90.o
+[  2%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/chron.f90.o
+[  3%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/init.f90.o
+[  3%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/flow/case_config_helpers.f90.o
+[  4%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/chron.f90.o
+[  4%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/flow/case_config_helpers.f90.o
+[  6%] Building C object CMakeFiles/moby_solve.dir/src/modules/field_hdf5.c.o
+[  6%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/init.f90.o
+[  6%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/chron.f90.o
+[  6%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/flow/case_config_helpers.f90.o
+[  6%] Building C object CMakeFiles/moby_prepare.dir/src/modules/field_hdf5.c.o
+[  7%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/init.f90.o
+[  8%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/flow/case_config_helpers.f90.o
+[  8%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/flow/case_config_helpers.f90.o
+[  8%] Building C object CMakeFiles/leaftable_test.dir/src/modules/field_hdf5.c.o
+[  9%] Building C object CMakeFiles/transition_test.dir/src/modules/field_hdf5.c.o
+[  9%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/chron.f90.o
+[ 10%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/chron.f90.o
+[ 10%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/init.f90.o
+[ 10%] Building C object CMakeFiles/walldist_test.dir/src/modules/field_hdf5.c.o
+[ 11%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/profiling.f90.o
+[ 12%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/profiling.f90.o
+[ 13%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/profiling.f90.o
+[ 14%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/profiling.f90.o
+[ 15%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/profiling.f90.o
+"/hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-headref/src/modules/field_hdf5.c", line 75: warning: function "create_serial_file" was declared but never referenced [declared_but_not_referenced]
+  static hid_t create_serial_file(const char *filename)
+               ^
+
+"/hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-headref/src/modules/field_hdf5.c", line 75: warning: function "create_serial_file" was declared but never referenced [declared_but_not_referenced]
+  static hid_t create_serial_file(const char *filename)
+               ^
+
+"/hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-headref/src/modules/field_hdf5.c", line 75: warning: function "create_serial_file" was declared but never referenced [declared_but_not_referenced]
+  static hid_t create_serial_file(const char *filename)
+               ^
+
+"/hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-headref/src/modules/field_hdf5.c", line 75: warning: function "create_serial_file" was declared but never referenced [declared_but_not_referenced]
+  static hid_t create_serial_file(const char *filename)
+               ^
+
+Remark: individual warnings can be suppressed with "--diag_suppress <warning-name>"
+
+Remark: individual warnings can be suppressed with "--diag_suppress <warning-name>"
+
+Remark: individual warnings can be suppressed with "--diag_suppress <warning-name>"
+
+Remark: individual warnings can be suppressed with "--diag_suppress <warning-name>"
+
+"/hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-headref/src/modules/field_hdf5.c", line 75: warning: function "create_serial_file" was declared but never referenced [declared_but_not_referenced]
+  static hid_t create_serial_file(const char *filename)
+               ^
+
+Remark: individual warnings can be suppressed with "--diag_suppress <warning-name>"
+
+[ 17%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/gpu_runtime.f90.o
+[ 17%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/blocks.f90.o
+[ 17%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/blocks.f90.o
+[ 18%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/blocks.f90.o
+[ 18%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/gpu_runtime.f90.o
+[ 18%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/gpu_runtime.f90.o
+[ 18%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/blocks.f90.o
+[ 19%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/gpu_runtime.f90.o
+[ 19%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/blocks.f90.o
+[ 20%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/gpu_runtime.f90.o
+[ 20%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/boundary.f90.o
+[ 22%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/boundary.f90.o
+[ 22%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/flow/boundaryLayer/boundarylayer_profile.f90.o
+[ 23%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/turbulence.f90.o
+[ 23%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/flow/channel/channel_profile.f90.o
+[ 24%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/flow/channel/channel_profile.f90.o
+[ 26%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/flow/boundaryLayer/boundarylayer_profile.f90.o
+[ 26%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/turbulence.f90.o
+[ 26%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/boundary.f90.o
+[ 29%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/turbulence.f90.o
+[ 29%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/flow/boundaryLayer/boundarylayer_profile.f90.o
+[ 29%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/flow/channel/channel_profile.f90.o
+[ 30%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/turbulence.f90.o
+[ 30%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/boundary.f90.o
+[ 32%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/flow/boundaryLayer/boundarylayer_profile.f90.o
+[ 32%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/flow/channel/channel_profile.f90.o
+[ 32%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/boundary.f90.o
+[ 35%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/turbulence.f90.o
+[ 35%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/flow/boundaryLayer/boundarylayer_profile.f90.o
+[ 35%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/flow/channel/channel_profile.f90.o
+[ 35%] Building Fortran object CMakeFiles/leaftable_test.dir/src/test_leaftable.f90.o
+[ 36%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/comm.f90.o
+[ 37%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/comm.f90.o
+[ 38%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/comm.f90.o
+[ 39%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/comm.f90.o
+[ 40%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/comm.f90.o
+[ 41%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/io.f90.o
+[ 42%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/io.f90.o
+[ 43%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/io.f90.o
+[ 44%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/io.f90.o
+[ 45%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/io.f90.o
+[ 45%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/bodyforce.f90.o
+[ 47%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/flow/channel/channel_stats.f90.o
+[ 47%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/ibm.f90.o
+[ 47%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/flow/boundaryLayer/boundarylayer_stats.f90.o
+[ 47%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/bodyforce.f90.o
+[ 48%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/bodyforce.f90.o
+[ 48%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/ibm.f90.o
+[ 50%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/bodyforce.f90.o
+[ 50%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/flow/boundaryLayer/boundarylayer_stats.f90.o
+[ 50%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/flow/channel/channel_stats.f90.o
+[ 52%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/flow/channel/channel_stats.f90.o
+[ 52%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/flow/boundaryLayer/boundarylayer_stats.f90.o
+[ 52%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/ibm.f90.o
+[ 52%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/ibm.f90.o
+[ 52%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/flow/channel/channel_stats.f90.o
+[ 53%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/flow/boundaryLayer/boundarylayer_stats.f90.o
+[ 53%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/bodyforce.f90.o
+[ 55%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/flow/boundaryLayer/boundarylayer_stats.f90.o
+[ 55%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/flow/channel/channel_stats.f90.o
+[ 55%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/ibm.f90.o
+[ 55%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/les.f90.o
+[ 57%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/pressure_solver.f90.o
+[ 57%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/geometry_stl.f90.o
+[ 57%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/les.f90.o
+[ 57%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/step.f90.o
+[ 57%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/walldist.f90.o
+[ 57%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/step.f90.o
+[ 59%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/pressure_solver.f90.o
+[ 59%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/walldist.f90.o
+[ 59%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/geometry_stl.f90.o
+[ 59%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/les.f90.o
+[ 61%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/step.f90.o
+[ 61%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/walldist.f90.o
+[ 61%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/pressure_solver.f90.o
+[ 61%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/geometry_stl.f90.o
+[ 61%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/les.f90.o
+[ 63%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/geometry_stl.f90.o
+[ 63%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/pressure_solver.f90.o
+[ 63%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/walldist.f90.o
+[ 63%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/step.f90.o
+[ 63%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/les.f90.o
+[ 65%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/walldist.f90.o
+[ 65%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/geometry_stl.f90.o
+[ 65%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/step.f90.o
+[ 65%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/pressure_solver.f90.o
+[ 66%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/rans.f90.o
+[ 67%] Building Fortran object CMakeFiles/walldist_test.dir/src/test_walldist.f90.o
+[ 67%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/rans.f90.o
+[ 68%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/rans.f90.o
+[ 69%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/rans.f90.o
+[ 70%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/rans.f90.o
+[ 72%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/config.f90.o
+[ 72%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/flow_case_base.f90.o
+[ 74%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/config.f90.o
+[ 74%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/flow_case_base.f90.o
+[ 76%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/flow_case_base.f90.o
+[ 76%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/config.f90.o
+[ 78%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/config.f90.o
+[ 78%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/flow_case_base.f90.o
+[ 80%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/config.f90.o
+[ 80%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/flow_case_base.f90.o
+[ 81%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/flow/generic_flow.f90.o
+[ 82%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/flow/generic_flow.f90.o
+[ 83%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/flow/generic_flow.f90.o
+[ 84%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/flow/generic_flow.f90.o
+[ 85%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/flow/generic_flow.f90.o
+[ 85%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/flow/airfoil/airfoil_flow.f90.o
+[ 86%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/flow/boundaryLayer/boundarylayer_flow.f90.o
+[ 86%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/flow/channel/channel_flow.f90.o
+[ 86%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/flow/airfoil/airfoil_flow.f90.o
+[ 87%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/flow/boundaryLayer/boundarylayer_flow.f90.o
+[ 87%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/flow/channel/channel_flow.f90.o
+[ 87%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/flow/airfoil/airfoil_flow.f90.o
+[ 88%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/flow/boundaryLayer/boundarylayer_flow.f90.o
+[ 88%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/flow/channel/channel_flow.f90.o
+[ 88%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/flow/airfoil/airfoil_flow.f90.o
+[ 89%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/flow/boundaryLayer/boundarylayer_flow.f90.o
+[ 89%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/flow/channel/channel_flow.f90.o
+[ 89%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/flow/airfoil/airfoil_flow.f90.o
+[ 89%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/flow/boundaryLayer/boundarylayer_flow.f90.o
+[ 90%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/flow/channel/channel_flow.f90.o
+[ 91%] Building Fortran object CMakeFiles/walldist_test.dir/src/modules/flow_case.f90.o
+[ 92%] Building Fortran object CMakeFiles/transition_test.dir/src/modules/flow_case.f90.o
+[ 93%] Building Fortran object CMakeFiles/leaftable_test.dir/src/modules/flow_case.f90.o
+[ 94%] Building Fortran object CMakeFiles/moby_prepare.dir/src/modules/flow_case.f90.o
+[ 95%] Building Fortran object CMakeFiles/moby_solve.dir/src/modules/flow_case.f90.o
+[ 96%] Linking Fortran executable walldist_test
+[ 96%] Building Fortran object CMakeFiles/moby_solve.dir/src/moby_solve.f90.o
+[ 97%] Linking Fortran executable leaftable_test
+[ 97%] Building Fortran object CMakeFiles/transition_test.dir/src/test_transition.f90.o
+[ 97%] Building Fortran object CMakeFiles/moby_prepare.dir/src/moby_prepare.f90.o
+[ 98%] Linking Fortran executable transition_test
+[ 99%] Linking Fortran executable moby_solve
+[100%] Linking Fortran executable moby_prepare
+[100%] Built target leaftable_test
+[100%] Built target walldist_test
+[100%] Built target transition_test
+[100%] Built target moby_solve
+[100%] Built target moby_prepare
+
+========================================
+Build summary: gpu
+========================================
+Build directory       : build_gpu
+Executables           : build_gpu/moby_solve (+ main symlink), build_gpu/moby_prepare
+Fortran compiler      : /software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/compilers/bin/nvfortran
+C compiler            : /software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/compilers/bin/nvc
+Pressure solver       : red-black SOR
+MPI                   : ON
+MPI wrapper compile   : -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/hwloc/hwloc201/hwloc/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/event/libevent2022/libevent -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/event/libevent2022/libevent/include -pthread -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+MPI wrapper link      : -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -L/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -Wl,-rpath -Wl,/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -Wl,--enable-new-dtags -lmpi_usempif08 -lmpi_usempi_ignore_tkr -lmpi_mpifh -lmpi
+MPI Fortran mod dir   : /hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+USE_OPENMP_OFFLOAD    : ON
+USE_IBM_SECONDORDER   : ON
+OPENMP_OFFLOAD_FLAGS  : -mp=gpu
+HDF5_ROOT             : /home/hk-project-exasim/xt8786/hdf5
+HDF5 include dir      : /home/hk-project-exasim/xt8786/hdf5/include
+HDF5 C library        : /home/hk-project-exasim/xt8786/hdf5/lib/libhdf5.so
+========================================
+
+=== building /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-code (ac8e2bc)
+MPI Fortran module dir: /hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+HDF5_ROOT: /home/hk-project-exasim/xt8786/hdf5
+-- HDF5 include dir: /home/hk-project-exasim/xt8786/hdf5/include
+-- HDF5 C library: /home/hk-project-exasim/xt8786/hdf5/lib/libhdf5.so
+-- Pressure solver: red-black SOR
+-- MPI support: required
+-- MPI wrapper compile flags: -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/hwloc/hwloc201/hwloc/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/event/libevent2022/libevent -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/event/libevent2022/libevent/include -pthread -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+-- MPI wrapper link flags: -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -L/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -Wl,-rpath -Wl,/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -Wl,--enable-new-dtags -lmpi_usempif08 -lmpi_usempi_ignore_tkr -lmpi_mpifh -lmpi
+-- MPI Fortran module dir: /hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+-- Configuring done (0.6s)
+-- Generating done (0.4s)
+-- Build files have been written to: /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-code/build_gpu
+[  1%] Linking Fortran executable walldist_test
+[  2%] Linking Fortran executable moby_prepare
+[  5%] Linking Fortran executable transition_test
+[  5%] Linking Fortran executable moby_solve
+[  5%] Linking Fortran executable leaftable_test
+[ 72%] Built target moby_prepare
+[ 79%] Built target walldist_test
+[ 82%] Built target transition_test
+[ 95%] Built target leaftable_test
+[100%] Built target moby_solve
+
+========================================
+Build summary: gpu
+========================================
+Build directory       : build_gpu
+Executables           : build_gpu/moby_solve (+ main symlink), build_gpu/moby_prepare
+Fortran compiler      : /software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/compilers/bin/nvfortran
+C compiler            : /software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/compilers/bin/nvc
+Pressure solver       : red-black SOR
+MPI                   : ON
+MPI wrapper compile   : -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/hwloc/hwloc201/hwloc/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/event/libevent2022/libevent -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/event/libevent2022/libevent/include -pthread -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+MPI wrapper link      : -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -L/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -Wl,-rpath -Wl,/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -Wl,--enable-new-dtags -lmpi_usempif08 -lmpi_usempi_ignore_tkr -lmpi_mpifh -lmpi
+MPI Fortran mod dir   : /hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+USE_OPENMP_OFFLOAD    : ON
+USE_IBM_SECONDORDER   : ON
+OPENMP_OFFLOAD_FLAGS  : -mp=gpu
+HDF5_ROOT             : /home/hk-project-exasim/xt8786/hdf5
+HDF5 include dir      : /home/hk-project-exasim/xt8786/hdf5/include
+HDF5 C library        : /home/hk-project-exasim/xt8786/hdf5/lib/libhdf5.so
+========================================
+
+job    : 5139461
+date   : 2026-09-10 13:54:48 CEST
+nodes  : 2  (hkn[0401,0403])
+commit : ac8e2bcce3a7d41ef543f70e0e425153d43bbd0c
+dirty  : 0
+ref    : 703e62d4595dfc25c593d7a8db99035a5f9af6aa
+gpu    : NVIDIA A100-SXM4-40GB
+############ PASS G: bit-exactness against /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-headref/build_gpu/moby_solve ############
+=== gate rect_jacobi ref (2026-09-10 13:54:49)
+    hosts: hkn0401 
+=== gate rect_jacobi new (2026-09-10 13:55:03)
+    hosts: hkn0401 
+--- h5maxdiff rect_jacobi
+comparing /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_exchange/gate_rect_jacobi_ref/overhead_20.h5 vs /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_exchange/gate_rect_jacobi_new/overhead_20.h5
+  un           n=138412032    max_abs=0
+  vn           n=138412032    max_abs=0
+  wn           n=138412032    max_abs=0
+  pn           n=138412032    max_abs=0
+OK: worst max_abs = 0 over 4 dataset(s)
+=== gate refined_yp82_rect_jacobi ref (2026-09-10 13:55:18)
+    hosts: hkn0401 
+=== gate refined_yp82_rect_jacobi new (2026-09-10 13:55:26)
+    hosts: hkn0401 
+--- h5maxdiff refined_yp82_rect_jacobi
+comparing /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_exchange/gate_refined_yp82_rect_jacobi_ref/overhead_20.h5 vs /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_exchange/gate_refined_yp82_rect_jacobi_new/overhead_20.h5
+  un           n=60555264     max_abs=0
+  vn           n=60555264     max_abs=0
+  wn           n=60555264     max_abs=0
+  pn           n=60555264     max_abs=0
+OK: worst max_abs = 0 over 4 dataset(s)
+############ PASS 1: exchange volume by op ############
+=== op base_jacobi n=1 (2026-09-10 13:55:36)
+    hosts: hkn0401 
+     exchange sizes: peers/rank(max) 0  send pts/rank min 0 max 0  total send pts 0  local copy pts 1458888
+     exchange by op: copy      local pts      1458888 entries          2  send pts            0 entries          0
+     exchange by op: restrict  local pts            0 entries          0  send pts            0 entries          0
+     exchange by op: prolong   local pts            0 entries          0  send pts            0 entries          0
+############ PASS 2: A0 overlap probe ############
+=== a0 refined_yp82_rect_jacobi:8:2 base (2026-09-10 13:56:59)
+    hosts: hkn0401 hkn0403 
+    exch_timing: mpi_wait calls 3900 nsteps 100 seconds   1.91529600E-01 seconds_per_step   1.91529600E-03 seconds_per_call   4.91101538E-05
+    exch_timing: a0_probe calls 0 nsteps 100 seconds   0.00000000E+00 seconds_per_step   0.00000000E+00 seconds_per_call   0.00000000E+00
+=== a0 refined_yp82_rect_jacobi:8:2 probe (2026-09-10 13:57:12)
+    hosts: hkn0401 hkn0403 
+    exch_timing: mpi_wait calls 3900 nsteps 100 seconds   2.75594200E-01 seconds_per_step   2.75594200E-03 seconds_per_call   7.06651795E-05
+    exch_timing: a0_probe calls 3900 nsteps 100 seconds   2.22359590E+01 seconds_per_step   2.22359590E-01 seconds_per_call   5.70152795E-03
+=== a0 rect_jacobi:8:2 base (2026-09-10 13:57:46)
+    hosts: hkn0401 hkn0403 
+    exch_timing: mpi_wait calls 3900 nsteps 100 seconds   2.92495700E-01 seconds_per_step   2.92495700E-03 seconds_per_call   7.49988974E-05
+    exch_timing: a0_probe calls 0 nsteps 100 seconds   0.00000000E+00 seconds_per_step   0.00000000E+00 seconds_per_call   0.00000000E+00
+=== a0 rect_jacobi:8:2 probe (2026-09-10 13:58:03)
+    hosts: hkn0401 hkn0403 
+    exch_timing: mpi_wait calls 3900 nsteps 100 seconds   3.09728300E-01 seconds_per_step   3.09728300E-03 seconds_per_call   7.94175128E-05
+    exch_timing: a0_probe calls 3900 nsteps 100 seconds   2.22314345E+01 seconds_per_step   2.22314345E-01 seconds_per_call   5.70036782E-03
+=== a0 refined_yp82_rect_jacobi:4:1 base (2026-09-10 13:58:43)
+    hosts: hkn0401 
+    exch_timing: mpi_wait calls 3900 nsteps 100 seconds   2.12410800E-01 seconds_per_step   2.12410800E-03 seconds_per_call   5.44643077E-05
+    exch_timing: a0_probe calls 0 nsteps 100 seconds   0.00000000E+00 seconds_per_step   0.00000000E+00 seconds_per_call   0.00000000E+00
+=== a0 refined_yp82_rect_jacobi:4:1 probe (2026-09-10 13:58:59)
+    hosts: hkn0401 
+    exch_timing: mpi_wait calls 3900 nsteps 100 seconds   2.38152600E-01 seconds_per_step   2.38152600E-03 seconds_per_call   6.10647692E-05
+    exch_timing: a0_probe calls 3900 nsteps 100 seconds   2.22206053E+01 seconds_per_step   2.22206053E-01 seconds_per_call   5.69759110E-03
+    hosts: hkn0401 
+    exch_timing: mpi_wait calls 3900 nsteps 100 seconds   2.14651600E-01 seconds_per_step   2.14651600E-03 seconds_per_call   5.50388718E-05
+    exch_timing: a0_probe calls 0 nsteps 100 seconds   0.00000000E+00 seconds_per_step   0.00000000E+00 seconds_per_call   0.00000000E+00
+/hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-code/tutorials/turbulentBoundaryLayer/overheadTest/horeka/exchange/run_exchange.sh: line 145: syntax error near unexpected token `done'
+/hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-code/tutorials/turbulentBoundaryLayer/overheadTest/horeka/exchange/run_exchange.sh: line 145: `    done'
+
+# Exchange op split, per-round cost, and the A0 probe at scale
+
+```
+job    : 5139461
+date   : 2026-09-10 13:54:48 CEST
+nodes  : 2  (hkn[0401,0403])
+commit : ac8e2bcce3a7d41ef543f70e0e425153d43bbd0c
+dirty  : 0
+ref    : 703e62d4595dfc25c593d7a8db99035a5f9af6aa
+gpu    : NVIDIA A100-SXM4-40GB
+```
+
+## Gate -- fields against the pre-change binary
+
+**gate_rect_jacobi**
+
+```
+comparing /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_exchange/gate_rect_jacobi_ref/overhead_20.h5 vs /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_exchange/gate_rect_jacobi_new/overhead_20.h5
+  un           n=138412032    max_abs=0
+  vn           n=138412032    max_abs=0
+  wn           n=138412032    max_abs=0
+  pn           n=138412032    max_abs=0
+OK: worst max_abs = 0 over 4 dataset(s)
+```
+
+**gate_refined_yp82_rect_jacobi**
+
+```
+comparing /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_exchange/gate_refined_yp82_rect_jacobi_ref/overhead_20.h5 vs /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_exchange/gate_refined_yp82_rect_jacobi_new/overhead_20.h5
+  un           n=60555264     max_abs=0
+  vn           n=60555264     max_abs=0
+  wn           n=60555264     max_abs=0
+  pn           n=60555264     max_abs=0
+OK: worst max_abs = 0 over 4 dataset(s)
+```
+
+
+## Pass 1a -- exchange volume by op (points summed over ranks)
+
+| run | peers/rank | local copy | local restrict | local prolong | send copy | send restrict | send prolong | cross-level % |
+|---|---|---|---|---|---|---|---|---|
+| base_jacobi_n1 | 0 | 1,458,888 | 0 | 0 | 0 | 0 | 0 | 0.00 % |
+
+## Pass 1b -- entries, and points per entry
+
+| run | copy entries | cross entries | pts/entry copy | pts/entry cross |
+|---|---|---|---|---|
+| base_jacobi_n1 | 2 | 0 | - | - |
+
+## Pass 1c -- microseconds per exchange ROUND, against points per round
+
+Points are PER RANK (the printed totals divided by the rank count);
+times are rank 0's. `local_copy` is same-level only, `copy_cross` is
+the 2:1 restrict/prolong kernel (exactly zero on a single-level grid).
+
+| run | s/step | local pts/rank | send pts/rank | pack us | unpack us | local_copy us | copy_cross us | mpi_wait us | rounds/step |
+|---|---|---|---|---|---|---|---|---|---|
+| base_jacobi_n1 | 0.684979 | 1,458,888 | 0 | 0.0 | 0.0 | 111.0 | 0.1 | 0.0 | 0 |
+
+### The same, as a share of the step
+
+| run | exchange total s/step | % of step | device-local % | mpi_wait % |
+|---|---|---|---|---|
+| base_jacobi_n1 | 0.002665 | 0.4 % | 0.4 % | 0.0 % |
+
+## Pass 1d -- fixed vs per-point cost, per config
+
+Least squares of microseconds-per-round on points-per-rank over the
+rank counts of one config. The INTERCEPT is what one exchange round
+costs with no points to move; the SLOPE is the marginal point. Only
+configs measured at 3+ rank counts are fitted.
+
+| config | bucket | rank counts | pts/rank span | fixed us/round | ns/pt | worst residual |
+|---|---|---|---|---|---|---|
+
+## Pass 2 -- the A0 overlap probe
+
+If an in-flight transfer progressed while the probe kernel ran, `mpi_wait`
+would collapse toward zero as `a0_probe` grows.
+
+| case | probe us/round | mpi_wait us/round | vs its baseline | s/step |
+|---|---|---|---|---|
+| rect_jacobi_r8N2_base | 0.0 | 75.0 | - | 0.109144 |
+| rect_jacobi_r8N2_probe | 5700.4 | 79.4 | 1.06x | 0.331868 |
+| refined_yp82_rect_jacobi_r4N1_base | 0.0 | 54.5 | - | 0.100094 |
+| refined_yp82_rect_jacobi_r4N1_probe | 0.0 | 55.0 | 1.01x | 0.100179 |
+| refined_yp82_rect_jacobi_r8N2_base | 0.0 | 49.1 | - | 0.060138 |
+| refined_yp82_rect_jacobi_r8N2_probe | 5701.5 | 70.7 | 1.44x | 0.283078 |
+
+## L2_div -- the correctness check
+
+| run | last L2_div |
+|---|---|
+| a0_rect_jacobi_r8N2_base | 1.11230086E-05 |
+| a0_rect_jacobi_r8N2_probe | 1.11230086E-05 |
+| a0_refined_yp82_rect_jacobi_r4N1_base | 2.13035041E-05 |
+| a0_refined_yp82_rect_jacobi_r4N1_probe | 2.13035041E-05 |
+| a0_refined_yp82_rect_jacobi_r8N2_base | 2.13035041E-05 |
+| a0_refined_yp82_rect_jacobi_r8N2_probe | 2.13035041E-05 |
+| gate_rect_jacobi_new | 1.06618625E-05 |
+| gate_rect_jacobi_ref | 1.06618625E-05 |
+| gate_refined_yp82_rect_jacobi_new | 1.43477585E-05 |
+| gate_refined_yp82_rect_jacobi_ref | 1.43477585E-05 |
+| op_base_jacobi_n1 | 1.11230086E-05 |
+=== exchange job finished ===
+
+============================= JOB FEEDBACK =============================
+
+Job ID: 5139461
+Cluster: hk
+User/Group: xt8786/hk-project-exasim
+Account: hk-project-exasim
+State: COMPLETED (exit code 0)
+Partition: dev_accelerated
+Nodes: 2
+Cores per node: 80
+Nodelist: hkn[0401,0403]
+CPU Utilized: 00:23:09
+CPU Efficiency: 2.37% of 16:18:40 core-walltime
+Job Wall-clock time: 00:06:07
+Starttime: Thu Sep 10 13:53:47 2026
+Endtime: Thu Sep 10 13:59:54 2026
+Memory Utilized: 27.02 GB
+Memory Efficiency: 2.78% of 971.68 GB (485.84 GB/node)
+Energy Consumed: 562386 Joule / 156.218333333333 Watthours
+Average node power draw: 1532.38692098093 Watt
