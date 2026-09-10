@@ -1,0 +1,26 @@
+      __. - ~ ~ ~ - .
+_   ,//           __  ' ,
+ \  ||       __--  --    ,   ~~~~
+ , \|____---    o       ~~~    ~~~~
+,    _            __/   ~~ ,  ~~~               mobyDiff
+,       ---/ / __--   ~~   ,~~                  commit: 7aa1c7b
+ ,          /       ~~   ~~
+  ,         ~~~ ~~~     ~~,
+    ,    ~~~           , '
+      ' - , _ _ _ ,  '
+
+
+ reading input data...
+MPI Cartesian dimensions: 1 1 1
+ gpu binding (this node): 0->dev0   MOBY_GPU_ORDER unset (devices used in index order)
+ initialising grid...
+ block refinement:         1600 leaves,         1536 refined
+ OpenMP target devices available:            4
+ initialising fields...
+ initialising pressure solver...
+ Chebyshev-Jacobi projection: lmin=  4.0151E-04 lmax=  2.0000E+00
+ initialising IBM...
+ main loop starting...
+ main loop ended...
+timing: nsteps 200 loop_seconds   3.17190690E+00 seconds_per_step   1.58595345E-02
+ current time step:           200    field filename: channel_field_200.h5

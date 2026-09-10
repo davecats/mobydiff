@@ -1,0 +1,197 @@
+MPI Fortran module dir: /hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+HDF5_ROOT: /home/hk-project-exasim/xt8786/hdf5
+-- HDF5 include dir: /home/hk-project-exasim/xt8786/hdf5/include
+-- HDF5 C library: /home/hk-project-exasim/xt8786/hdf5/lib/libhdf5.so
+-- Pressure solver: red-black SOR
+-- MPI support: required
+-- MPI wrapper compile flags: -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/hwloc/hwloc201/hwloc/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/event/libevent2022/libevent -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/event/libevent2022/libevent/include -pthread -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+-- MPI wrapper link flags: -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -L/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -Wl,-rpath -Wl,/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -Wl,--enable-new-dtags -lmpi_usempif08 -lmpi_usempi_ignore_tkr -lmpi_mpifh -lmpi
+-- MPI Fortran module dir: /hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+-- Configuring done (0.8s)
+-- Generating done (0.6s)
+-- Build files have been written to: /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-code/build_gpu
+[  1%] Linking Fortran executable moby_prepare
+[  5%] Linking Fortran executable walldist_test
+[  5%] Linking Fortran executable transition_test
+[  5%] Linking Fortran executable leaftable_test
+[  5%] Linking Fortran executable moby_solve
+[ 86%] Built target transition_test
+[ 95%] Built target moby_solve
+[ 97%] Built target leaftable_test
+[100%] Built target walldist_test
+[100%] Built target moby_prepare
+
+========================================
+Build summary: gpu
+========================================
+Build directory       : build_gpu
+Executables           : build_gpu/moby_solve (+ main symlink), build_gpu/moby_prepare
+Fortran compiler      : /software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/compilers/bin/nvfortran
+C compiler            : /software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/compilers/bin/nvc
+Pressure solver       : red-black SOR
+MPI                   : ON
+MPI wrapper compile   : -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/hwloc/hwloc201/hwloc/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/event/libevent2022/libevent -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/event/libevent2022/libevent/include -pthread -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+MPI wrapper link      : -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -L/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -Wl,-rpath -Wl,/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -Wl,--enable-new-dtags -lmpi_usempif08 -lmpi_usempi_ignore_tkr -lmpi_mpifh -lmpi
+MPI Fortran mod dir   : /hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+USE_OPENMP_OFFLOAD    : ON
+USE_IBM_SECONDORDER   : ON
+OPENMP_OFFLOAD_FLAGS  : -mp=gpu
+HDF5_ROOT             : /home/hk-project-exasim/xt8786/hdf5
+HDF5 include dir      : /home/hk-project-exasim/xt8786/hdf5/include
+HDF5 C library        : /home/hk-project-exasim/xt8786/hdf5/lib/libhdf5.so
+========================================
+
+job    : 5139976
+date   : 2026-09-10 18:46:07 CEST
+nodes  : 1  (hkn0403)
+commit : 83d3a01ff9038dcbb61bd90d1aa3c2459e8cf648
+dirty  : 0
+ref    : build_gpu/moby_solve.ref (pre-059248e, production flags)
+nsteps : 200
+=== map gate start 2026-09-10 18:46:08  nsteps=200
+--- min_channel  channel_field_200.h5
+    comparing /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_mapgate/min_channel_ref/channel_field_200.h5 vs /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_mapgate/min_channel_new/channel_field_200.h5
+      un           n=819200       max_abs=0
+      vn           n=819200       max_abs=0
+      wn           n=819200       max_abs=0
+      pn           n=819200       max_abs=0
+    OK: worst max_abs = 0 over 4 dataset(s)
+--- min_channel1  channel_field_200.h5
+    comparing /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_mapgate/min_channel1_ref/channel_field_200.h5 vs /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_mapgate/min_channel1_new/channel_field_200.h5
+      un           n=819200       max_abs=0
+      vn           n=819200       max_abs=0
+      wn           n=819200       max_abs=0
+      pn           n=819200       max_abs=0
+    OK: worst max_abs = 0 over 4 dataset(s)
+--- beltrami_slaby  beltrami_200.h5
+    comparing /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_mapgate/beltrami_slaby_ref/beltrami_200.h5 vs /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_mapgate/beltrami_slaby_new/beltrami_200.h5
+      un           n=1179648      max_abs=0
+      vn           n=1179648      max_abs=0
+      wn           n=1179648      max_abs=0
+      pn           n=1179648      max_abs=0
+    OK: worst max_abs = 0 over 4 dataset(s)
+--- les_ibm  channel_ibm_200.h5
+    comparing /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_mapgate/les_ibm_ref/channel_ibm_200.h5 vs /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_mapgate/les_ibm_new/channel_ibm_200.h5
+      un           n=327680       max_abs=0
+      vn           n=327680       max_abs=0
+      wn           n=327680       max_abs=0
+      pn           n=327680       max_abs=0
+      nut          n=327680       max_abs=0
+    OK: worst max_abs = 0 over 5 dataset(s)
+--- turb180  turb180_200.h5
+    comparing /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_mapgate/turb180_ref/turb180_200.h5 vs /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_mapgate/turb180_new/turb180_200.h5
+      un           n=6144         max_abs=0
+      vn           n=6144         max_abs=0
+      wn           n=6144         max_abs=0
+      pn           n=6144         max_abs=0
+      nut          n=6144         max_abs=0
+      k            n=6144         max_abs=0
+      omega        n=6144         max_abs=0
+    OK: worst max_abs = 0 over 7 dataset(s)
+--- wf180_y30  wf180_y30_200.h5
+    comparing /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_mapgate/wf180_y30_ref/wf180_y30_200.h5 vs /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_mapgate/wf180_y30_new/wf180_y30_200.h5
+      un           n=384          max_abs=0
+      vn           n=384          max_abs=0
+      wn           n=384          max_abs=0
+      pn           n=384          max_abs=0
+      nut          n=384          max_abs=0
+      k            n=384          max_abs=0
+      omega        n=384          max_abs=0
+    OK: worst max_abs = 0 over 7 dataset(s)
+--- lam30t  lam30t_200.h5
+    comparing /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_mapgate/lam30t_ref/lam30t_200.h5 vs /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_mapgate/lam30t_new/lam30t_200.h5
+      un           n=8192         max_abs=0
+      vn           n=8192         max_abs=0
+      wn           n=8192         max_abs=0
+      pn           n=8192         max_abs=0
+      nut          n=8192         max_abs=0
+      k            n=8192         max_abs=0
+      omega        n=8192         max_abs=0
+      gamma        n=8192         max_abs=0
+      rethetat     n=8192         max_abs=0
+    OK: worst max_abs = 0 over 9 dataset(s)
+=== map gate done 2026-09-10 18:50:09
+=== summary ===
+--- beltrami_slaby
+comparing /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_mapgate/beltrami_slaby_ref/beltrami_200.h5 vs /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_mapgate/beltrami_slaby_new/beltrami_200.h5
+  un           n=1179648      max_abs=0
+  vn           n=1179648      max_abs=0
+  wn           n=1179648      max_abs=0
+  pn           n=1179648      max_abs=0
+OK: worst max_abs = 0 over 4 dataset(s)
+--- lam30t
+comparing /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_mapgate/lam30t_ref/lam30t_200.h5 vs /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_mapgate/lam30t_new/lam30t_200.h5
+  un           n=8192         max_abs=0
+  vn           n=8192         max_abs=0
+  wn           n=8192         max_abs=0
+  pn           n=8192         max_abs=0
+  nut          n=8192         max_abs=0
+  k            n=8192         max_abs=0
+  omega        n=8192         max_abs=0
+  gamma        n=8192         max_abs=0
+  rethetat     n=8192         max_abs=0
+OK: worst max_abs = 0 over 9 dataset(s)
+--- les_ibm
+comparing /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_mapgate/les_ibm_ref/channel_ibm_200.h5 vs /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_mapgate/les_ibm_new/channel_ibm_200.h5
+  un           n=327680       max_abs=0
+  vn           n=327680       max_abs=0
+  wn           n=327680       max_abs=0
+  pn           n=327680       max_abs=0
+  nut          n=327680       max_abs=0
+OK: worst max_abs = 0 over 5 dataset(s)
+--- min_channel1
+comparing /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_mapgate/min_channel1_ref/channel_field_200.h5 vs /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_mapgate/min_channel1_new/channel_field_200.h5
+  un           n=819200       max_abs=0
+  vn           n=819200       max_abs=0
+  wn           n=819200       max_abs=0
+  pn           n=819200       max_abs=0
+OK: worst max_abs = 0 over 4 dataset(s)
+--- min_channel
+comparing /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_mapgate/min_channel_ref/channel_field_200.h5 vs /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_mapgate/min_channel_new/channel_field_200.h5
+  un           n=819200       max_abs=0
+  vn           n=819200       max_abs=0
+  wn           n=819200       max_abs=0
+  pn           n=819200       max_abs=0
+OK: worst max_abs = 0 over 4 dataset(s)
+--- turb180
+comparing /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_mapgate/turb180_ref/turb180_200.h5 vs /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_mapgate/turb180_new/turb180_200.h5
+  un           n=6144         max_abs=0
+  vn           n=6144         max_abs=0
+  wn           n=6144         max_abs=0
+  pn           n=6144         max_abs=0
+  nut          n=6144         max_abs=0
+  k            n=6144         max_abs=0
+  omega        n=6144         max_abs=0
+OK: worst max_abs = 0 over 7 dataset(s)
+--- wf180_y30
+comparing /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_mapgate/wf180_y30_ref/wf180_y30_200.h5 vs /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_mapgate/wf180_y30_new/wf180_y30_200.h5
+  un           n=384          max_abs=0
+  vn           n=384          max_abs=0
+  wn           n=384          max_abs=0
+  pn           n=384          max_abs=0
+  nut          n=384          max_abs=0
+  k            n=384          max_abs=0
+  omega        n=384          max_abs=0
+OK: worst max_abs = 0 over 7 dataset(s)
+=== map gate job finished ===
+
+============================= JOB FEEDBACK =============================
+
+Job ID: 5139976
+Cluster: hk
+User/Group: xt8786/hk-project-exasim
+Account: hk-project-exasim
+State: COMPLETED (exit code 0)
+Partition: dev_accelerated
+Nodes: 1
+Cores per node: 80
+Nodelist: hkn0403
+CPU Utilized: 00:04:30
+CPU Efficiency: 1.21% of 06:13:20 core-walltime
+Job Wall-clock time: 00:04:40
+Starttime: Thu Sep 10 18:45:29 2026
+Endtime: Thu Sep 10 18:50:09 2026
+Memory Utilized: 2.32 GB
+Memory Efficiency: 0.48% of 485.84 GB (485.84 GB/node)
+Energy Consumed: 279836 Joule / 77.7322222222222 Watthours
+Average node power draw: 999.414285714286 Watt

@@ -330,3 +330,71 @@ Ranked by size, and by how well this data supports them:
    For the **Jacobi** path that constraint does not bind, so folding it into
    `jacobi_apply`'s second kernel is worth checking — but it is a solver change
    with a bit-exactness gate, not a scheduling one, and it should wait for (1).
+
+## 9 — The gates
+
+**The diagnostics are bit-exact.** New binary against the pre-change one, both
+built on the same node in the same job, 4 ranks, 20 steps (Pass G of job
+5139461):
+
+| case | datasets | worst max_abs |
+|---|---|---|
+| `rect_jacobi` (138 412 032 points) | un vn wn pn | **0** |
+| `refined_yp82_rect_jacobi` (60 555 264 points) | un vn wn pn | **0** |
+
+`L2_div` is identical across every pair in the matrix, and `exchange sizes` is
+unchanged: the op counters are init-time integers and prints, and `copy_cross`
+only moves a `prof_toc` from outside `copy_local_entries` to inside it.
+
+**And `select_target_device`'s owed gate is discharged** (job 5139976). The
+mapping change of `059248e` shipped with "still owed: the workstation
+bit-exactness gate (nofma, 7-case suite)"; the workstation is not reachable from
+HoreKa, so the suite ran here against `build_gpu/moby_solve.ref` — the pre-change
+binary the campaign left behind, verified by `strings` to carry no
+`MOBY_GPU_ORDER` and so to predate `059248e`. **nofma is deliberately NOT used**:
+it exists to stop the compiler inventing 1–2 ulp differences between two
+textually different sources that are arithmetically identical, and here the
+arithmetic source is byte-identical between the two binaries — only the integer
+choosing a physical GPU differs — so both contract the same way and a
+production-flag comparison is strictly tighter. 200 steps each:
+
+| case | ranks | datasets compared | worst max_abs |
+|---|---|---|---|
+| `min_channel` (blocks + 2:1 + Chebyshev) | 4 | un vn wn pn | **0** |
+| `min_channel` | 1 | un vn wn pn | **0** |
+| Beltrami y-slab | 1 | un vn wn pn | **0** |
+| `les_ibm` channel (file IBM + WALE) | 1 | + nut | **0** |
+| `turb180` (SST, resolved) | 1 | + nut k omega | **0** |
+| `wf180_y30` (SST wall functions) | 1 | + nut k omega | **0** |
+| `lam30t` (γ–Re_θt transition) | 1 | + nut k omega gamma rethetat | **0** |
+
+The one case of the standard list this does not cover is **`les_ibm` +
+`refine_body`**: it restarts from `IC_refine.h5`, which `setup.sh` generates and
+the repository does not carry, and HoreKa has no h5py to make one.
+
+Because that gate runs the CURRENT binary against the pre-`059248e` one, it
+covers three changes at once — the rank-to-GPU mapping, the op-split and
+`copy_cross` diagnostics, and the removal of the A0 probe.
+
+## 10 — Housekeeping
+
+The A0 probe was throwaway and is **deleted** (`comm.f90`, `profiling.f90`).
+`copy_cross` stays: it is a permanent diagnostic, and it changes the meaning of
+one existing bucket — **`exch_timing local_copy` is now SAME-LEVEL copies only**,
+exactly zero on a single-level grid. Every earlier single-level `local_copy`
+number stays comparable; earlier refined ones do not, and section 2's table says
+so where it uses them.
+
+Two driver faults are recorded because both produced results that looked like
+successes:
+
+- `sbatch --export` splits its value on commas, so `OP_SPECS="a:1,4,8 b:1,4,8"`
+  reached the job as `OP_SPECS=a:1`. Job 5139461's Pass 1 ran **one config of
+  twelve** and exited cleanly. Rank lists now use `+`.
+- Editing `run_exchange.sh` at 13:58:06 while job 5139461 was executing it made
+  bash resume at the wrong byte offset and re-launch the last A0 case without its
+  probe, overwriting that case's `run.log`. The campaign had already learned this
+  (`c1d5910`, "never edit a staged script mid-run") and relied on discipline;
+  both submit scripts now **stage their driver into `$RUN_DIR` and run the copy**,
+  so the source tree can be edited while a job is in flight. The 8x2 A0 pairs
+  finished before the edit and are the ones quoted; the 4x1 control was re-run.
