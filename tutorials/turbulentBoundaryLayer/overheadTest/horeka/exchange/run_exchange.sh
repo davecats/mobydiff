@@ -96,17 +96,20 @@ fi
 
 ##########################  PASS 1 -- the op split  ##########################
 has_pass 1 && echo "############ PASS 1: exchange volume by op ############"
-# config:rank-list. The two twins the handout asks for (rect / refined_yp82) plus
+# config:rank-list, ranks joined by "+". NOT by a comma: sbatch --export splits
+# its value on commas, so a comma here silently truncates OP_SPECS to its first
+# entry -- which is exactly what happened in job 5139461.
+# The two twins the handout asks for (rect / refined_yp82) plus
 # a VOLUME SWEEP at fixed rank count: base_jacobi (unblocked, zero local copy,
 # 7-11 peers), nb16_jacobi (nb = 16, ~4x rect's copy load) and refined_big. Time
 # per exchange CALL against points per call over that spread separates a fixed
 # per-round cost from a per-point one -- which no single pair of configs can.
 # refined_big holds ~39 GB of field state, so 1 rank does not fit on A100-40.
-for entry in ${OP_SPECS:-base_jacobi:4,16 rect_jacobi:1,4,16 nb16_jacobi:4,16 \
-                        refined_yp82_rect_jacobi:1,4,16 refined_big_rect_jacobi:4,16}; do
+for entry in ${OP_SPECS:-base_jacobi:4+16 rect_jacobi:1+4+16 nb16_jacobi:4+16 \
+                        refined_yp82_rect_jacobi:1+4+16 refined_big_rect_jacobi:4+16}; do
     has_pass 1 || continue
     cfg="${entry%%:*}"; ranks="${entry#*:}"
-    for n in ${ranks//,/ }; do
+    for n in ${ranks//+/ }; do
         run="$RES/op_${cfg}_n${n}"
         [ -f "$run/run.log" ] && { echo "--- skip $cfg n=$n (done)"; continue; }
         stage "$cfg" "$run" "$NSTEPS_P1" || { echo "MISSING CONFIG $cfg"; continue; }
