@@ -23,7 +23,7 @@ EXE="${1:?usage: run_mapgate.sh <new_exe> <ref_exe> <results_dir>}"
 REF="${2:?usage: run_mapgate.sh <new_exe> <ref_exe> <results_dir>}"
 RES="${3:?usage: run_mapgate.sh <new_exe> <ref_exe> <results_dir>}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT="$(cd "$HERE/../../../../.." && pwd)"
+ROOT="${MOBY_ROOT:-$(cd "$HERE/../../../../.." && pwd)}"
 H5MAXDIFF="${H5MAXDIFF:-$ROOT/tools/h5maxdiff}"
 NSTEPS="${NSTEPS:-200}"
 

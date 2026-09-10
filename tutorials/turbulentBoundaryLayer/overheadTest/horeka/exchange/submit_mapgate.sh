@@ -17,7 +17,11 @@
 set -uo pipefail
 
 CODE_DIR="${CODE_DIR:?}"; RUN_DIR="${RUN_DIR:?}"
-EXCH="$CODE_DIR/tutorials/turbulentBoundaryLayer/overheadTest/horeka/exchange"
+SRC="$CODE_DIR/tutorials/turbulentBoundaryLayer/overheadTest/horeka/exchange"
+# Run a STAGED copy -- see submit_exchange.sh for why.
+EXCH="$RUN_DIR/mapgate_staged"
+rm -rf "$EXCH"; mkdir -p "$EXCH"
+cp "$SRC"/run_mapgate.sh "$EXCH/"
 
 module purge
 module load toolkit/nvidia-hpc-sdk/25.3
@@ -42,7 +46,7 @@ RES="${RESDIR:-$RUN_DIR/results_mapgate}"; mkdir -p "$RES"
     echo "nsteps : ${NSTEPS:-200}"
 } | tee "$RES/provenance.txt"
 
-bash "$EXCH/run_mapgate.sh" "$EXE" "$REF" "$RES"
+MOBY_ROOT="$CODE_DIR" bash "$EXCH/run_mapgate.sh" "$EXE" "$REF" "$RES"
 echo "=== summary ==="
 for f in "$RES"/*.txt; do
     [ "$(basename "$f")" = provenance.txt ] && continue

@@ -22,7 +22,7 @@ EXE="${1:?usage: run_exchange.sh <exe> <results_dir>}"
 RES="${2:?usage: run_exchange.sh <exe> <results_dir>}"
 REF="${REF:-}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CFG="$HERE/../configs"
+CFG="${CFG_DIR:-$HERE/../configs}"
 H5MAXDIFF="${H5MAXDIFF:-$HERE/../../../../../tools/h5maxdiff}"
 
 NSTEPS_P1="${NSTEPS_P1:-200}"      # as the re-measured campaign

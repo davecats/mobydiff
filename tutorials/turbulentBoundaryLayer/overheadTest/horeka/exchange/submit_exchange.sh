@@ -21,7 +21,16 @@
 set -uo pipefail
 
 CODE_DIR="${CODE_DIR:?}"; RUN_DIR="${RUN_DIR:?}"; REF_DIR="${REF_DIR:?}"
-EXCH="$CODE_DIR/tutorials/turbulentBoundaryLayer/overheadTest/horeka/exchange"
+SRC="$CODE_DIR/tutorials/turbulentBoundaryLayer/overheadTest/horeka/exchange"
+
+# STAGE the driver, and run the COPY. bash reads a script incrementally by byte
+# offset, so editing the file a running job is executing makes it resume at the
+# wrong place -- in job 5139461 that silently re-launched the last A0 case
+# without its probe. The campaign learned this once already (c1d5910); this is
+# the fix rather than the discipline.
+EXCH="$RUN_DIR/exchange_staged"
+rm -rf "$EXCH"; mkdir -p "$EXCH"
+cp "$SRC"/run_exchange.sh "$SRC"/run_mapgate.sh "$SRC"/collect_exchange.py "$EXCH/"
 
 module purge
 module load toolkit/nvidia-hpc-sdk/25.3
@@ -51,6 +60,7 @@ RES="${RESDIR:-$RUN_DIR/results_exchange}"; mkdir -p "$RES"
 } | tee "$RES/provenance.txt"
 
 REF="$REF" H5MAXDIFF="$CODE_DIR/tools/h5maxdiff" \
+    CFG_DIR="$SRC/../configs" \
     bash "$EXCH/run_exchange.sh" "$EXE" "$RES"
 
 python3 "$EXCH/collect_exchange.py" "$RES" > "$RES/exchange.md" 2>&1 \
