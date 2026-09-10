@@ -58,8 +58,9 @@ Read, in this order — each closes a door you would otherwise re-open:
    scope caveat that Phase 2 below discharges
 4. `CLAUDE.md`
 
-**`select_target_device` is assumed to have passed the workstation gate.** If it
-has not, run it before trusting any timing here.
+**`select_target_device` HAS NOW PASSED ITS GATE** (2026-09-10, job 5139976): the
+7-case suite on HoreKa against the pre-change binary, all seven at max_abs 0. The
+sentence this replaces said the gate was assumed; it had not been run.
 
 ## What is closed, and must not be reopened
 

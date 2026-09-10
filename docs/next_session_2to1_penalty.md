@@ -76,7 +76,13 @@
 > single-node runs keep the identity mapping exactly. Measured ref vs new, back to
 > back: rect 8x2 **-20.4 %**, rect 16x4 **-26.3 %**, refined_yp82 16x4 **-26.7 %**,
 > base_jacobi 16x4 +1.0 % (noise), single node unchanged. Fields bit-exact
-> (max_abs 0, 138 M points) — but the WORKSTATION GATE IS STILL OWED.
+> (max_abs 0, 138 M points). **GATE DISCHARGED 2026-09-10** (job 5139976): the
+> 7-case suite runs on HoreKa rather than the unreachable workstation, against
+> `build_gpu/moby_solve.ref`, and all seven PASS at max_abs 0 incl. every RANS
+> scalar — deliberately WITHOUT nofma, because the arithmetic source is
+> byte-identical between the two binaries and a production-flag comparison is
+> therefore strictly tighter. Not covered: `les_ibm` + `refine_body`, whose
+> `IC_refine.h5` `setup.sh` generates and the repo does not carry.
 >
 > **Block tax rect/base: 1.505 -> 1.098 at 16 ranks, 1.315 -> 1.058 at 8. There is
 > no node-boundary block tax**, and the "19-25 % of the step" prize is collected by
@@ -111,8 +117,7 @@
 > is untouched — its honest 4-rank cost is 0.98 coarse-cell-equivalents either
 > way — and `results_horeka_2026-09-07.md` now carries a SUPERSEDED-IN-PART note.
 >
-> NEXT: the workstation gate; run moby_tune on any new machine before trusting the
-> built-in order (on HoreKa it happens to be right, which is exactly what would
+> NEXT: run moby_tune on any new machine before trusting the built-in order (on HoreKa it happens to be right, which is exactly what would
 > hide a bug elsewhere); and the ~10 % of the step still in `mpi_wait` at 16 ranks
 > is now the same for blocked and unblocked — a P2 (overlap) target, not a
 > partitioning one.
