@@ -895,13 +895,38 @@ immersed boundary. Phased, each phase verified before the next:
   recovers the affinity classes with no topology input); `tools/h5maxdiff` does
   field comparison where h5py/h5diff are unavailable. Diagnostics from this track:
   `exchange balance:` line and `[output] exchange_barrier` (skew vs transfer).
-- ALSO PENDING: **the 2:1 path at scale is a DEVICE-LOCAL exchange problem.** At
-  16 ranks the refined channel spends 40% of the step in the exchange, of which
-  `pack + unpack + local_copy` is 31.7% and `mpi_wait` only 7.7%; the refined case
-  does 82% of the single-level twin's exchange work while carrying 44% of its
-  cells (**1.9x per cell**), and that factor is the 2:1 cost at scale. Handout,
-  with pre-registered readings, in `docs/next_session_2to1_performance.md`; the
-  older `docs/next_session_profiling.md` and the Phase-4 sketch in
+- The 2:1 exchange at scale — ATTRIBUTED (2026-09-10, jobs 5139461/5139581,
+  `overheadTest/results_horeka_exchange_2026-09-10.md`). The "1.9x exchange per
+  cell" is **not volume of any kind**: the refined case exchanges 0.954x the
+  points PER CELL of its single-level twin, and cross-level points are
+  **16.43% of the total at 1, 4 and 8 ranks alike** (16.38% on a case with 4x the
+  leaves) — the Morton split does not cut the interface. Nor is it a per-point
+  penalty: the new `exch_timing copy_cross` bucket (the cross-level kernel timed
+  apart from `local_copy`, which now means SAME-LEVEL only and is 0 on a
+  single-level grid) puts a cross-level point at 0.114–0.115 ns against a
+  same-level point's 0.097–0.107 — **1.15x, not 2–4x**. The cost is **kernel
+  LAUNCHES**: each carries a fixed cost before it moves anything (same-level copy
+  56–67 us, cross-level copy 84.6–87.3, pack ~92–114, unpack ~83–100, against the
+  projection's `jacobi_compute_phi` at 19), and there are ~141 per step (39 pack +
+  39 unpack + 39 same-copy + **24** cross-copy) = 9.7 ms/step for `rect_jacobi`
+  and 11.7 for `refined_yp82` — 80% of the refined case's device-local exchange
+  and the entire difference between the twins, who pay the same launch bill on
+  138 M and 61 M cells. `base_jacobi` with zero local copy points reads **0.1 us**,
+  which is what makes it per-LAUNCH rather than per-round. The 2:1 interface's own
+  exchange cost is 2.03 ms/step of launch against 0.36 ms of transfer — **85%
+  launch, 15% data**. Also: **A0 re-run at 8 ranks fails again** (5.7 ms of
+  compute between the posts and the Waitall leaves `mpi_wait` at 1.06–1.44x of
+  baseline and adds exactly 39 x 5.7 ms to the step) — **P2/overlap is CLOSED**
+  and the 2-rank probe's scope caveat is discharged. NEXT: an nsys per-kernel
+  timeline of what those 60–100 us are — the fixed cost correlates with the number
+  of mapped arrays but NOT proportionally, and
+  `overheadTest/horeka/exchange/PREREGISTERED.md` records that fitting a mechanism
+  to that correlation was one step from being this campaign's third wrong
+  mechanism. Cheap concrete win meanwhile: fold the local copy into the pack
+  kernel (independent, both before the `Waitall`, 2.3 ms/step, bit-exact).
+  Recommended AGAINST: fusing the cross-level kernel into the same-level one — it
+  saves 2.0 ms of launch but puts the interface gather's ~128 registers on all 39
+  rounds. `docs/next_session_profiling.md` and the Phase-4 sketch in
   `docs/nonblocking_overlap_strategy.md` predate all of this.
 
 ## Verification
