@@ -1,0 +1,25 @@
+      __. - ~ ~ ~ - .
+_   ,//           __  ' ,
+ \  ||       __--  --    ,   ~~~~
+ , \|____---    o       ~~~    ~~~~
+,    _            __/   ~~ ,  ~~~               mobyDiff
+,       ---/ / __--   ~~   ,~~                  commit: 7aa1c7b
+ ,          /       ~~   ~~
+  ,         ~~~ ~~~     ~~,
+    ,    ~~~           , '
+      ' - , _ _ _ ,  '
+
+
+ reading input data...
+MPI Cartesian dimensions: 1 1 1
+ gpu binding (this node): 0->dev0   MOBY_GPU_ORDER unset (devices used in index order)
+ initialising grid...
+ block refinement:         2304 leaves,         2048 refined
+ OpenMP target devices available:            4
+ initialising fields...
+ initialising pressure solver...
+ initialising IBM...
+ main loop starting...
+ main loop ended...
+timing: nsteps 200 loop_seconds   8.88097739E+01 seconds_per_step   4.44048869E-01
+ current time step:           200    field filename: beltrami_200.h5

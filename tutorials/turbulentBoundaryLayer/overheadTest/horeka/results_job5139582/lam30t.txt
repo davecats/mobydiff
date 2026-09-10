@@ -1,0 +1,11 @@
+comparing /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_mapgate/lam30t_ref/lam30t_200.h5 vs /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_mapgate/lam30t_new/lam30t_200.h5
+  un           n=8192         max_abs=0
+  vn           n=8192         max_abs=0
+  wn           n=8192         max_abs=0
+  pn           n=8192         max_abs=0
+  nut          n=8192         max_abs=0
+  k            n=8192         max_abs=0
+  omega        n=8192         max_abs=0
+  gamma        n=8192         max_abs=0
+  rethetat     n=8192         max_abs=0
+OK: worst max_abs = 0 over 9 dataset(s)

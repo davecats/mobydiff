@@ -1,0 +1,9 @@
+comparing /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_mapgate/turb180_ref/turb180_200.h5 vs /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_mapgate/turb180_new/turb180_200.h5
+  un           n=6144         max_abs=0
+  vn           n=6144         max_abs=0
+  wn           n=6144         max_abs=0
+  pn           n=6144         max_abs=0
+  nut          n=6144         max_abs=0
+  k            n=6144         max_abs=0
+  omega        n=6144         max_abs=0
+OK: worst max_abs = 0 over 7 dataset(s)

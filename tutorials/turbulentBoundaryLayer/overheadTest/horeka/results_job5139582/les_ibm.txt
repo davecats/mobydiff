@@ -1,0 +1,3 @@
+comparing /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_mapgate/les_ibm_ref/channel_ibm_stats.h5 vs /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_mapgate/les_ibm_new/channel_ibm_stats.h5
+FAIL: no common datasets compared
+FAIL: worst max_abs = 0 over 0 dataset(s)

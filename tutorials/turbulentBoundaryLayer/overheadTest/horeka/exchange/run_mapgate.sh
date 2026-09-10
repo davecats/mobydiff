@@ -27,13 +27,15 @@ ROOT="${MOBY_ROOT:-$(cd "$HERE/../../../../.." && pwd)}"
 H5MAXDIFF="${H5MAXDIFF:-$ROOT/tools/h5maxdiff}"
 NSTEPS="${NSTEPS:-200}"
 
-# name : ini (relative to the repo root) : ranks. The standard 7-case list.
+# name : ini (relative to the repo root) : ranks. The standard 7-case list, minus
+# les_ibm + refine_body: that case restarts from IC_refine.h5, which setup.sh
+# generates and the repository does not carry, and HoreKa has no h5py to make one.
+# It is the one case of the list this gate does not cover.
 CASES="${CASES:-
 min_channel:tutorials/min_channel/input_gpu.ini:4
 min_channel1:tutorials/min_channel/input_gpu.ini:1
 beltrami_slaby:validation/beltrami/slab_y.ini:1
 les_ibm:validation/channel_interface/les_ibm/channel_ibm.ini:1
-les_ibm_refine:validation/channel_interface/les_ibm/channel_ibm_refine.ini:1
 turb180:validation/rans_sst/turb180.ini:1
 wf180_y30:validation/rans_sst/wf180_y30.ini:1
 lam30t:validation/rans_sst/lam30t.ini:1
@@ -64,9 +66,12 @@ for entry in $CASES; do
         rc=$?
         [ $rc -ne 0 ] && { echo "  $name $side FAILED (exit $rc) -- see $run/run.log"; continue; }
     done
+    # <prefix>_<step>.h5 ONLY: a bare <prefix>_*.h5 also matches the case's
+    # <prefix>_stats.h5, which sorts last and has no field datasets in common --
+    # that is how the les_ibm case reported "no common datasets" in job 5139582.
     pfx=$(awk -F= '/^field_prefix/ {gsub(/ /,"",$2); print $2}' "$RES/${name}_new/config.ini" 2>/dev/null)
-    a=$(ls "$RES/${name}_ref/${pfx}"_*.h5 2>/dev/null | tail -1)
-    b=$(ls "$RES/${name}_new/${pfx}"_*.h5 2>/dev/null | tail -1)
+    a=$(ls "$RES/${name}_ref/${pfx}"_[0-9]*.h5 2>/dev/null | tail -1)
+    b=$(ls "$RES/${name}_new/${pfx}"_[0-9]*.h5 2>/dev/null | tail -1)
     if [ -n "$a" ] && [ -n "$b" ]; then
         echo "--- $name  $(basename "$a")"
         "$H5MAXDIFF" "$a" "$b" | tee "$RES/${name}.txt" | sed 's/^/    /'

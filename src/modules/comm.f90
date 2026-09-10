@@ -7,7 +7,7 @@ module comm
     use :: boundary, only: boundary_type
     use :: profiling, only: prof_tic, prof_toc, exch_prof, &
         PROF_PACK, PROF_MPI_POST, PROF_MPI_WAIT, PROF_UNPACK, PROF_LOCAL_COPY, &
-        PROF_SKEW, PROF_COPY_CROSS, PROF_A0
+        PROF_SKEW, PROF_COPY_CROSS
 #ifdef USE_OPENMP_OFFLOAD
     use omp_lib
 #endif
@@ -22,8 +22,6 @@ module comm
     ! face-staggered dimension, ...); PROLONG injects the covering coarse
     ! value. Sampling happens on the SOURCE side (pack/local copy), so the
     ! wire always carries destination-point values.
-    ! THROWAWAY (A0 overlap probe).
-    integer, parameter :: A0_POINTS = 262144
     integer, parameter :: OP_COPY = 0
     integer, parameter :: OP_RESTRICT = 1
     integer, parameter :: OP_PROLONG = 2
@@ -41,10 +39,6 @@ module comm
         logical :: has_terminal = .true.
         ! [output] exchange_barrier -- diagnostic, see finish_halo_exchange.
         logical :: exchangeBarrier = .false.
-        ! THROWAWAY (A0 overlap probe, MOBY_A0_PROBE). Delete after the
-        ! measurement together with a0_probe_work.
-        integer :: a0Iter = 0
-        real(C_DOUBLE), allocatable :: a0buf(:)
 
         integer :: dims(3) = [0, 0, 0]
         integer :: coords(3) = [0, 0, 0]
@@ -721,7 +715,6 @@ contains
         ! describes the whole run; local_copy points are the on-device
         ! (same-rank) traffic that never becomes a message.
         c%exchangeBarrier = logical(dns%exchange_barrier)
-        call a0_probe_init(c)
         if (dns%profile_steps) call report_exchange_sizes(c)
         c%request = MPI_REQUEST_NULL
 
@@ -1393,55 +1386,6 @@ contains
         c%exchangeActive = .true.
     end subroutine start_halo_exchange
 
-    ! === THROWAWAY DIAGNOSTIC: the A0 overlap probe ===
-    ! Does an in-flight MPI transfer progress while a target kernel runs? A
-    ! COMPUTE-bound kernel is inserted between the Isend/Irecv posts and the
-    ! Waitall; if the transfer progresses, mpi_wait collapses. Compute-bound on
-    ! purpose: local_copy is memory-bound, so a memory-bound probe could hide a
-    ! failure to progress behind DMA contention. Enabled by MOBY_A0_PROBE=<iters>.
-    ! DELETE THIS AND ITS PROF_A0 BUCKET once the measurement is written up.
-    subroutine a0_probe_init(c)
-        type(comm_type), intent(inout) :: c
-
-        character(len=32) :: val
-        integer :: stat, n
-
-        if (allocated(c%a0buf)) return
-        call get_environment_variable("MOBY_A0_PROBE", val, status=stat)
-        if (stat /= 0) return
-        read(val, *, iostat=stat) n
-        if (stat /= 0 .or. n <= 0) return
-        c%a0Iter = n
-        allocate(c%a0buf(A0_POINTS))
-        c%a0buf = 1.0d0
-#ifdef USE_OPENMP_OFFLOAD
-        !$omp target enter data map(to: c%a0buf)
-#endif
-        if (c%has_terminal) print '(a,i0,a,i0,a)', &
-            " A0 PROBE ACTIVE: ", n, " iterations over ", A0_POINTS, " points per round"
-    end subroutine a0_probe_init
-
-    subroutine a0_probe_work(c)
-        type(comm_type), intent(inout) :: c
-
-        integer :: i, it
-        real(C_DOUBLE) :: x, t0
-
-        if (c%a0Iter <= 0) return
-        t0 = prof_tic()
-#ifdef USE_OPENMP_OFFLOAD
-        !$omp target teams distribute parallel do private(x, it)
-#endif
-        do i = 1, A0_POINTS
-            x = c%a0buf(i)
-            do it = 1, c%a0Iter
-                x = x*0.9999999d0 + 1.0d-9
-            end do
-            c%a0buf(i) = x
-        end do
-        call prof_toc(exch_prof, PROF_A0, t0)
-    end subroutine a0_probe_work
-
     subroutine finish_halo_exchange(c, blk)
         type(comm_type), intent(inout) :: c
         type(block_set_type), intent(inout) :: blk
@@ -1450,8 +1394,6 @@ contains
         real(C_DOUBLE) :: t0
 
         if (.not. c%exchangeActive) return
-
-        call a0_probe_work(c)
 
         if (c%nPeers > 0) then
             nRequest = 2*c%nPeers
@@ -1542,8 +1484,6 @@ contains
 
         ! Times itself: same-level into local_copy, cross-level into copy_cross.
         call copy_local_scalar_entries(c, scalar, blk)
-
-        call a0_probe_work(c)
 
         if (c%nPeers > 0) then
             nRequest = 2*c%nPeers

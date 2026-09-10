@@ -1,0 +1,7 @@
+job    : 5139582
+date   : 2026-09-10 18:36:29 CEST
+nodes  : 1  (hkn0403)
+commit : 3b8ad4932a5e67cf8d4164a41966fd66ee202ab0
+dirty  : 0
+ref    : build_gpu/moby_solve.ref (pre-059248e, production flags)
+nsteps : 200

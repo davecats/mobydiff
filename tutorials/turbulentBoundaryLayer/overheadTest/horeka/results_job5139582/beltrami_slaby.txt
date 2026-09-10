@@ -1,0 +1,6 @@
+comparing /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_mapgate/beltrami_slaby_ref/beltrami_200.h5 vs /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_mapgate/beltrami_slaby_new/beltrami_200.h5
+  un           n=1179648      max_abs=0
+  vn           n=1179648      max_abs=0
+  wn           n=1179648      max_abs=0
+  pn           n=1179648      max_abs=0
+OK: worst max_abs = 0 over 4 dataset(s)
