@@ -1,0 +1,7 @@
+job    : 5139351
+date   : 2026-09-10 09:54:29 CEST
+nodes  : 4  (hkn[0503-0505,0507])
+commit : eec334bbd115d3cbf7695fdb43ef60f327b5c75d
+dirty  : 0
+nsteps : 200
+layout : --map-by numa --bind-to core (as the 2026-09-07 campaign)

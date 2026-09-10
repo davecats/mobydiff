@@ -42,9 +42,21 @@
 > threshold is 5 %, set from node-to-node variation — a 4 % winner at 16 ranks
 > lost at 8, so the ranking between two matched classes is not a stable property.
 >
-> NEXT: the workstation gate; re-measure the campaign at the new mapping; run
-> moby_tune on any new machine before trusting the built-in order (on HoreKa it
-> happens to be right, which is exactly what would hide a bug elsewhere).
+> CAMPAIGN RE-MEASURED (job 5139351, 46 runs, one allocation, ref and new side by
+> side): 1/2/4-rank runs move by ±0.2 % (the mapping is inert without cross-node
+> links) and `base_jacobi` by ±0.3 % at every rank count. At 8/16 ranks
+> `rect_jacobi` +19.4/+24.5 %, `refined_yp82` +21.4/+26.8 %, red-black
+> +25.3/+29.1 %, `refined_big` +13.6/+20.7 %. Strong-scaling efficiency at 16
+> ranks: `rect` 50 → 66 %, `refined_yp82` 36 → 49 %, `refined_big` 64 → 81 %.
+> **Block tax 1.310 → 1.059 (8 ranks) and 1.499 → 1.130 (16).** The 2:1 headline
+> is untouched — its honest 4-rank cost is 0.98 coarse-cell-equivalents either
+> way — and `results_horeka_2026-09-07.md` now carries a SUPERSEDED-IN-PART note.
+>
+> NEXT: the workstation gate; run moby_tune on any new machine before trusting the
+> built-in order (on HoreKa it happens to be right, which is exactly what would
+> hide a bug elsewhere); and the ~10 % of the step still in `mpi_wait` at 16 ranks
+> is now the same for blocked and unblocked — a P2 (overlap) target, not a
+> partitioning one.
 
 
 Handout, written 2026-08-28 from the session that measured all of it. Read the

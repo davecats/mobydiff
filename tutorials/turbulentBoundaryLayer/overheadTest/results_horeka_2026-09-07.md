@@ -1,5 +1,15 @@
 # HoreKa: the 2:1 machinery is free, the RANK SPLIT is the problem
 
+> **SUPERSEDED IN PART, 2026-09-10 — read `results_horeka_2026-09-10.md` first.**
+> Every number below was measured with `device = local_rank mod num_devices`,
+> which mismatches GPU affinity classes at every node boundary and costs 20-27 %
+> of the step at 8-16 ranks. **"Headline 2 — the block tax explodes at the node
+> boundary" is that artifact**: the tax is 1.310/1.499 with the old mapping and
+> 1.059/1.130 with the corrected one, and the strong-scaling and `mpi_wait`
+> tables move with it. HEADLINE 1 (the 2:1 machinery is free) SURVIVES -- its
+> honest 4-rank number is unchanged at 0.98 -- and so does Headline 3's
+> direction. The 46-run re-measurement is section 9 of the 09-10 report.
+
 4x HoreKa Green nodes = 16x A100-SXM4-40GB, job 5133554, commit `a11e355`
 (clean tree), 23 runs of 400 steps, no failures. Package + driver:
 `overheadTest/horeka/`; raw logs in its `moby-2to1-run/results/`.

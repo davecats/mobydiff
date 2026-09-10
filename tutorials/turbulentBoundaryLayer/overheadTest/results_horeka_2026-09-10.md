@@ -372,6 +372,109 @@ where a tuner fits node variation instead of an optimum. Tune once per machine
 and put the printed line in a submit script; do not re-tune inside a production
 run, or its performance stops being reproducible.
 
+## 9 — The campaign, re-measured (job 5139351)
+
+The full 23-run matrix, run twice in ONE allocation on hkn[0503-0505,+]:
+reference binary and new, `run_matrix.sh` unchanged, `--map-by numa --bind-to
+core`, 200 steps. The two columns differ only in the rank-to-GPU mapping.
+`collect_scaling.py` was validated first by pointing it at the committed
+2026-09-07 data, where it reproduces that report's printed tables exactly.
+
+### Single-node runs are untouched, which is the control
+
+| ranks | `base` | `rect` | `refined_yp82` | `redblack` | `refined_big` |
+|---|---|---|---|---|---|
+| 1 | +0.2 % | +0.0 % | -0.1 % | -0.0 % | - |
+| 2 | +0.0 % | -0.0 % | +0.0 % | +0.0 % | - |
+| 4 | -0.0 % | +0.0 % | -0.0 % | -0.2 % | -0.1 % |
+
+Every 1/2/4-rank run is within +-0.2 % -- noise. The mapping is inert until there
+are cross-node links, exactly as the rule intends, and `base_jacobi` stays inert
+at ALL rank counts (+0.3 % / -0.2 % at 8 / 16) because its 7 peers put every rank
+on the network.
+
+### Where it does bite
+
+| config | 8 ranks | 16 ranks |
+|---|---|---|
+| `rect_jacobi` | **+19.4 %** | **+24.5 %** |
+| `refined_yp82_rect_jacobi` | **+21.4 %** | **+26.8 %** |
+| `refined_yp82_rect_redblack` | **+25.3 %** | **+29.1 %** |
+| `refined_big_rect_jacobi` | **+13.6 %** | **+20.7 %** |
+| `base_jacobi` (control) | +0.3 % | -0.2 % |
+
+Per-round `mpi_wait`, ref -> new: `rect` 700.5 -> 76.8 us (n=8), 707.8 -> 175.6
+(n=16); `refined_big` 782.2 -> 80.6 and 810.7 -> 126.7; `base` 130.8 -> 122.7 and
+147.4 -> 149.6.
+
+### Block tax — there is no node-boundary tax
+
+| ranks | Mcell/GPU | tax ref | **tax new** |
+|---|---|---|---|
+| 1 | 138.41 | 1.050 | 1.052 |
+| 2 | 69.21 | 1.095 | 1.095 |
+| 4 | 34.60 | 1.072 | 1.071 |
+| 8 | 17.30 | 1.310 | **1.059** |
+| 16 | 8.65 | 1.499 | **1.130** |
+
+The 2026-09-07 report's "block tax explodes at the node boundary -- 1.315 at 8,
+1.504 at 16" reproduces exactly in the `ref` column and **disappears** in the new
+one. What remains at 16 ranks (1.130) is a real but modest tax on a case carrying
+only 8.65 Mcell/GPU.
+
+### Strong-scaling efficiency
+
+| config | 1 | 2 | 4 | 8 | 16 |
+|---|---|---|---|---|---|
+| `base_jacobi` | 100 % | 98 % | 92 % | 83 % | 71 % |
+| `rect_jacobi` ref | 100 % | 94 % | 90 % | 67 % | 50 % |
+| `rect_jacobi` **new** | 100 % | 94 % | 90 % | **83 %** | **66 %** |
+| `refined_yp82` ref | 100 % | 91 % | 81 % | 53 % | 36 % |
+| `refined_yp82` **new** | 100 % | 91 % | 81 % | **68 %** | **49 %** |
+| `redblack` ref | 100 % | 90 % | 79 % | 47 % | 31 % |
+| `redblack` **new** | 100 % | 90 % | 79 % | **63 %** | **44 %** |
+| `refined_big` ref | - | - | 100 % | 81 % | 64 % |
+| `refined_big` **new** | - | - | 100 % | **94 %** | **81 %** |
+
+The blocked single-level case now scales exactly like the unblocked one at 8
+ranks (83 % both) and nearly so at 16 (66 vs 71 %). `refined_big` reaches 81 % at
+16 GPUs against the 64 % published.
+
+### Headline 1 — the 2:1 machinery, corrected
+
+| ranks | binary | ns per EXTRA cell | vs coarse-cell average |
+|---|---|---|---|
+| 4 | ref / new | 1.4143 / 1.4171 | 0.981x / **0.983x** |
+| 8 | ref / new | 0.7684 / 0.7397 | 0.790x / **0.944x** |
+| 16 | ref / new | 0.4364 / 0.3793 | 0.672x / **0.774x** |
+
+The 4-rank number -- the honest one, since neither twin is starved there -- is
+unchanged at 0.98, so **the central 2:1 result survives untouched: the added cells
+cost what the coarse cells beside them cost.** The sub-1 values at 8 and 16 ranks
+move toward 1 (0.790 -> 0.944, 0.672 -> 0.774): part of what looked like
+"refinement gets cheaper with rank count" was the single-level twin being
+penalised harder by the bad mapping, not the refined case being efficient.
+
+### Headline 3 — red-black against Jacobi
+
+| binary | 1 | 2 | 4 | 8 | 16 |
+|---|---|---|---|---|---|
+| ref | 0.762 | 0.764 | 0.783 | 0.857 | 0.886 |
+| **new** | 0.761 | 0.764 | 0.784 | **0.814** | **0.858** |
+
+Red-black keeps more of its advantage than the published numbers suggested
+(0.858 against 0.886 at 16 ranks). The direction of the 2026-09-07 conclusion is
+unchanged -- the advantage still erodes with rank count, 0.76 -> 0.86 -- but it
+erodes less once the exchange is not being penalised.
+
+### What the re-measurement does NOT change
+
+The 2:1 machinery result, the finding that red-black trades exchange rounds
+one-for-one rather than reducing them, and the 39-rounds-per-step invariant. Two
+caveats stand: this is 200 steps, not the campaign's 400, so absolute s/step runs
+slightly high (ratios within the matrix are unaffected, and both binaries ran at
+the same nsteps); and it is one machine.
+
 ## What is still open
 
 The source is identified, corrected and fixed automatically (sections 6-7). What
