@@ -317,6 +317,61 @@ match exactly here, so it is expected to pass, but it has not been run.
 | old mapping | 1.052 | 1.315 | **1.505** |
 | new mapping | 1.052 | 1.058 | **1.098** |
 
+## 8 — `moby_tune`: the mapping, found by measurement
+
+`tools/moby_tune.sh` sweeps candidate device orders on the real case and reports
+the best with its margin. It exists because the ANALYSIS route failed twice in
+this session -- the first mechanism ("both ends need a NIC-affine GPU") was wrong
+and the first rule (per-node degree sort) regressed `base_jacobi` 14 % -- while
+timing six short runs cannot be wrong about which mapping is faster.
+
+The search space is exactly C(ndev,2). `select_target_device` serves a node's
+first local rank from `MOBY_GPU_ORDER[0]` and its last from `[1]`, identically on
+every node, so every cross-node link joins those two devices: the question is
+which unordered PAIR should lead. Six candidates on a 4-GPU node, ~25 s each.
+
+### Calibration (job 5139342, `rect_jacobi`, 40 steps/trial)
+
+| leading pair | 8 ranks / 2 nodes | 16 ranks / 4 nodes |
+|---|---|---|
+| 0,2 | 738.3 us | 734.4 us |
+| 0,3 | 739.9 | 749.8 |
+| 1,2 | 740.7 | 729.6 |
+| 1,3 | 756.7 | 751.1 |
+| **0,1** | **77.0** | 153.6 |
+| **2,3** | 100.8 | **85.9** |
+
+**The tuner recovers the affinity classes with no topology input.** The four mixed
+pairs land at 730-757 us and the two matched pairs at 77-101 -- precisely the
+`{0,1} | {2,3}` split that `nvidia-smi topo -m` shows, found by measurement alone.
+That is the property that makes it portable: on a machine nobody has profiled it
+needs no model of the fabric.
+
+It also declined correctly where it should: at 8 ranks the built-in order is
+already best (gain 0.28 %), and on a single node it refuses to tune at all.
+
+### What the calibration taught the tool
+
+At 16 ranks the tuner initially recommended `2,3` on a 4.07 % gain -- but at 8
+ranks that same pair LOST to `0,1`. **The ranking between two equally-matched
+classes is not a stable node property**, and 4 % sits inside the ~6 % node-to-node
+variation this campaign has documented. The tie threshold therefore defaults to
+**5 %**, set from measured node-to-node variation rather than from
+within-allocation repeatability, and a gain between 1x and 2x the threshold is
+reported as MARGINAL with an instruction to confirm it in a separate allocation.
+With that threshold both calibration cases read as ties and the tool recommends
+keeping the built-in order -- which is the correct answer here, since the built-in
+rule already lands on a matched pair.
+
+### Scope
+
+It tunes the device mapping only -- not `nb`, not the rank count, not the
+decomposition. Those interact with the case rather than the machine, change
+memory footprint and leaf tables, and their effects sit in the few-percent band
+where a tuner fits node variation instead of an optimum. Tune once per machine
+and put the printed line in a submit script; do not re-tune inside a production
+run, or its performance stops being reproducible.
+
 ## What is still open
 
 The source is identified, corrected and fixed automatically (sections 6-7). What

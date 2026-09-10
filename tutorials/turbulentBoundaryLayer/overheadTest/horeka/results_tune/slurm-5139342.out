@@ -1,0 +1,88 @@
+job   : 5139342
+nodes : hkn[0503-0505,0507]
+commit: 059248e9863f5ce7b92d5b8e87636a7f840c7275
+
+############ 8 ranks / 2 nodes ############
+=== moby_tune: 8 ranks on 2 node(s) = 4/node, 40 steps
+    case /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/configs/rect_jacobi.ini
+
+  built-in       (no MOBY_GPU_ORDER) s/step 1.11835700E-01   wait/round 78.8 us   (4 device(s) visible)
+  pair 0,1       MOBY_GPU_ORDER=0,1 s/step 1.11280525E-01   wait/round 77.0 us
+  pair 0,2       MOBY_GPU_ORDER=0,2 s/step 1.39346850E-01   wait/round 738.3 us
+  pair 0,3       MOBY_GPU_ORDER=0,3 s/step 1.39286930E-01   wait/round 739.9 us
+  pair 1,2       MOBY_GPU_ORDER=1,2 s/step 1.39727575E-01   wait/round 740.7 us
+  pair 1,3       MOBY_GPU_ORDER=1,3 s/step 1.39814550E-01   wait/round 756.7 us
+  pair 2,3       MOBY_GPU_ORDER=2,3 s/step 1.12915950E-01   wait/round 100.8 us
+
+--- repeat of the incumbent and the leader, to separate a margin from drift ---
+  built-in       repeat  s/step 1.11530625E-01   wait/round 74.0 us
+  pair 0,1       repeat  s/step 1.11460525E-01   wait/round 71.3 us
+
+=== result
+  incumbent   : built-in  (s/step 1.11683162e-01)
+  best        : pair 0,1  (s/step 1.11370525e-01)
+  runner-up   : built-in  (s/step 1.11683162e-01)
+  gain vs incumbent : 0.28 %   (tie threshold 3.0 %)
+  lead over runner-up: 0.28 %
+
+  Nothing to gain: the best candidate is within noise of what the solver
+  already does. Keep the built-in order -- a deterministic default beats
+  a coin flip.
+      (set nothing)
+
+############ 16 ranks / 4 nodes ############
+=== moby_tune: 16 ranks on 4 node(s) = 4/node, 40 steps
+    case /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/configs/rect_jacobi.ini
+
+  built-in       (no MOBY_GPU_ORDER) s/step 6.91560500E-02   wait/round 157.3 us   (4 device(s) visible)
+  pair 0,1       MOBY_GPU_ORDER=0,1 s/step 6.85508775E-02   wait/round 153.6 us
+  pair 0,2       MOBY_GPU_ORDER=0,2 s/step 9.40856775E-02   wait/round 734.4 us
+  pair 0,3       MOBY_GPU_ORDER=0,3 s/step 9.39335525E-02   wait/round 749.8 us
+  pair 1,2       MOBY_GPU_ORDER=1,2 s/step 9.41087225E-02   wait/round 729.6 us
+  pair 1,3       MOBY_GPU_ORDER=1,3 s/step 9.40023025E-02   wait/round 751.1 us
+  pair 2,3       MOBY_GPU_ORDER=2,3 s/step 6.62786300E-02   wait/round 85.9 us
+
+--- repeat of the incumbent and the leader, to separate a margin from drift ---
+  built-in       repeat  s/step 6.92434025E-02   wait/round 166.8 us
+  pair 2,3       repeat  s/step 6.64863950E-02   wait/round 104.5 us
+
+=== result
+  incumbent   : built-in  (s/step 6.91997262e-02)
+  best        : pair 2,3  (s/step 6.63825125e-02)
+  runner-up   : pair 0,1  (s/step 6.85508775E-02)
+  gain vs incumbent : 4.07 %   (tie threshold 3.0 %)
+  lead over runner-up: 3.27 %
+
+  Put this in your submit script, once, for this machine:
+      export MOBY_GPU_ORDER=2,3
+
+############ single node: must decline to tune ############
+=== moby_tune: 4 ranks on 1 node(s) = 4/node, 40 steps
+    case /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/configs/rect_jacobi.ini
+
+  built-in       (no MOBY_GPU_ORDER) s/step 2.04686727E-01   wait/round 64.3 us   (4 device(s) visible)
+
+Single node: there are no cross-node links to protect, and
+select_target_device keeps the identity mapping. Nothing to tune.
+=== tune job finished ===
+
+============================= JOB FEEDBACK =============================
+
+Job ID: 5139342
+Cluster: hk
+User/Group: xt8786/hk-project-exasim
+Account: hk-project-exasim
+State: COMPLETED (exit code 0)
+Partition: accelerated
+Nodes: 4
+Cores per node: 80
+Nodelist: hkn[0503-0505,0507]
+CPU Utilized: 00:26:16
+CPU Efficiency: 2.03% of 21:36:00 core-walltime
+Job Wall-clock time: 00:04:03
+Starttime: Thu Sep 10 09:27:13 2026
+Endtime: Thu Sep 10 09:31:16 2026
+Memory Utilized: 26.90 GB
+Memory Efficiency: 1.38% of 1.90 TB (485.84 GB/node)
+Energy Consumed: 524743 Joule / 145.761944444444 Watthours
+Average node power draw: 2159.43621399177 Watt

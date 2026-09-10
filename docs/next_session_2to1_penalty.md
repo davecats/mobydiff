@@ -34,9 +34,17 @@
 > rotating skew** (rect 8x2 reads a healthy max/min = 1.09 while being 100 %
 > arrival spread).
 >
-> NEXT: the workstation gate; re-measure the campaign at the new mapping; derive
-> the device order from `/sys` topology instead of assuming the default order is
-> right (it happens to be, here — exactly what hides a bug on the next machine).
+> `tools/moby_tune.sh` closes the portability half: it sweeps the C(ndev,2)
+> candidate device orders on the real case and **recovers the affinity classes
+> with no topology input** (calibrated on HoreKa: the four mixed pairs measure
+> 730–757 us, the two matched pairs 77–101). Tune once per machine, put the
+> printed line in a submit script, never re-tune inside a production run. Its tie
+> threshold is 5 %, set from node-to-node variation — a 4 % winner at 16 ranks
+> lost at 8, so the ranking between two matched classes is not a stable property.
+>
+> NEXT: the workstation gate; re-measure the campaign at the new mapping; run
+> moby_tune on any new machine before trusting the built-in order (on HoreKa it
+> happens to be right, which is exactly what would hide a bug elsewhere).
 
 
 Handout, written 2026-08-28 from the session that measured all of it. Read the
