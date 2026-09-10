@@ -56,3 +56,68 @@ bill.
   anticipated.
 - 2 refuted ⇒ partitioning is back on the table for the refined case specifically.
 - 5 refuted ⇒ P2 reopens and everything else waits.
+
+---
+
+## Addendum, still before the run: the fits, and a sharper set of predictions
+
+Fitting the committed `results_scaling/new/` logs properly — microseconds per
+exchange ROUND against points per rank, **excluding the 1-rank runs** (they have
+no peers, so `pack`/`unpack` are identically zero and the copy kernel is an order
+of magnitude larger than at any other rank count):
+
+| config | pack fixed | unpack fixed | local_copy fixed | local_copy ns/pt | worst residual |
+|---|---|---|---|---|---|
+| `base_jacobi` (34.5k–574k send pts) | **95.9** | **86.8** | — | — | 2.6 us |
+| `rect_jacobi` | 101.5 | 93.6 | **56.1** | 0.098 | 1.3 us |
+| `refined_yp82_rect_jacobi` | 98.4 | 85.5 | **114.5** | 0.099 | 0.9 us |
+| `refined_big_rect_jacobi` | 103.6 | 97.5 | **109.8** | 0.101 | 1.6 us |
+| `refined_yp82_rect_redblack` | 97.3 | 85.1 | **117.9** | 0.099 | 1.7 us |
+
+Residuals of 1–3 us on numbers of 60–120 us across a 17x span of points: the
+affine model is not being forced.
+
+Three things fall out, all of them BEFORE any new measurement:
+
+1. **The marginal point costs the same everywhere** — 0.098–0.101 ns in every
+   configuration, refined or not, `nb = 16` or `nb = 64 44 48`. There is no
+   per-point penalty for the 2:1 interface.
+2. **The fixed per-round cost is 250–300 us** (pack + unpack + copy), against
+   39 rounds: 9.8 ms/step for `rect`, 11.6 ms/step for `refined_yp82` — **14 %
+   and 28 %** of their 16-rank steps. At 16 ranks the two configurations spend
+   the SAME absolute device-local exchange time (13.24 vs 13.29 ms/step) while
+   carrying 138.41 M and 60.56 M cells. That identity IS the "1.9x per cell".
+3. **The refined case's copy intercept is double the single-level one** (114.5 /
+   109.8 / 117.9 against 56.1). The obvious candidate is the cross-level kernel:
+   a SECOND launch, in the 21 rounds per step that carry one.
+
+### The map-clause count, and the number this session can falsify
+
+Counting `map(...)` items in each kernel and weighting by the 21 velocity /
+18 scalar rounds per step:
+
+| bucket | items (weighted) | fixed us | us per map item |
+|---|---|---|---|
+| `local_copy` (same level) | 10.1 | 56.1 | **5.55** |
+| `unpack` | 16.4 | 93.6 | **5.71** |
+| `pack` | 18.6 | 101.5 | **5.46** |
+
+Three kernels, map counts spanning 1.8x, and a per-item cost agreeing to 3 %.
+Most of those clauses are REDUNDANT: the arrays they name are already resident
+from `init_block_exchange`'s `target enter data`, and the scalars would be
+firstprivate without a clause. nsys already saw **~1300 host-to-device memcpys
+per step at ~2 us** in every configuration and nobody chased them.
+
+**Prediction 6, the sharp one.** The new `copy_cross` bucket weights 21 items
+(velocity) and 19 (scalar) over its 21 launches per step, i.e. 20.1 — so at
+5.5 us per item it should read **110 us per call**. Independently, the same
+number falls out of the old aggregate: `(114.5 − 56.1) × 39/21 = 108.5 us`.
+**If `copy_cross` comes back at 105–115 us per call, four independent kernels
+agree on ~5.5 us per map-clause item and the mechanism is named. If it comes
+back well outside that, the map-clause reading is wrong** and the fixed cost is
+something else (kernel-launch latency, register pressure, an implicit sync) that
+a timeline would have to find.
+
+Either way the A/B that settles it is one run: strip the redundant clauses from
+one kernel and re-fit its intercept. That is a scheduling change, so it must be
+bit-exact — and it is NOT part of this session's deliverable.
