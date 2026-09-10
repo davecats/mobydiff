@@ -196,3 +196,85 @@ granularity, volume still dominates.
 **So the fixed per-launch bill is ~10–12 ms/step in EVERY configuration, and it
 becomes the dominant term exactly when strong scaling has shrunk the per-rank
 volume — which is the regime 2:1 refinement puts you in by design.**
+
+## 6 — The pre-registered scorecard
+
+`horeka/exchange/PREREGISTERED.md` was written and committed before the runs.
+
+| # | prediction | outcome |
+|---|---|---|
+| 1 | cross-level ≤ 20 % of the refined case's exchange points | **CONFIRMED** — 16.43 % |
+| 2 | the op split is rank-count independent | **CONFIRMED** — 16.43 % at 1, 4 and 8 ranks, to four figures |
+| 3 | `copy_cross` costs 2–4x per point what `local_copy` does | **REFUTED** — 1.15x (0.114 vs 0.100 ns/pt). Its 32 % share of copy time is real but comes from the launch, not the point |
+| 4 | pack/unpack per round vary < 2x while their points vary > 10x | **CONFIRMED** — 1.68x against 16.6x |
+| 5 | A0 fails again at scale | **CONFIRMED** — waits at 1.06x, 1.14x, 1.44x of baseline; never below 1 |
+| 6 | `copy_cross` reads 105–115 us per call | **PARTIAL** — 114.7 at 4 ranks, 99.6 at 8; the prediction ignored that the quantity has a volume term. Its intercept is 84.6 us |
+
+Prediction 3 is the informative failure: it was the handout's own third branch,
+and the instrument built to test it (the `copy_cross` bucket) says the per-point
+costs are within 15 % of each other.
+
+Prediction 6 was written to test a mechanism — "5.5 us per map-clause item" —
+that a control in the second PREREGISTERED addendum had already refuted before
+the run, using `jacobi_compute_phi` (10 map items, 19 us intercept) against
+`copy_local_same_level` (11 items, 56 us). Counting only NON-scalar map items
+tightens it (6 → 3.2 us each for the sweep; 8.5–15 → 5.6–7.4 us each for the four
+exchange kernels), but a 2.3x spread over a 2.5x range in count is a correlate,
+not a cause, and revising a hypothesis to fit the datapoint that killed it is how
+this campaign produced its previous two wrong mechanisms. **The per-launch cost
+is measured; what it consists of is not identified here.**
+
+## 7 — What these numbers do NOT support
+
+- **Not "the 2:1 interface transfer is expensive."** It is 16.4 % of the points
+  at 1.15x the per-point cost — 0.36 ms/step of actual transfer at 8 ranks.
+- **Not per-level block size (P3) as the exchange lever.** The refined case
+  already exchanges 0.95x the points per cell of its single-level twin, its
+  volume term is the smaller half (3.0 of 14.7 ms), and bigger coarse blocks
+  would not change the number of exchange ROUNDS at all — which is what the
+  launch bill is multiplied by. P3 may still be right for *compute*; it is not
+  the answer to this.
+- **Not partitioning.** The op split is invariant across 1, 4 and 8 ranks, so the
+  Morton chain is not cutting the interface, and `mpi_wait` is 55–89 us/round
+  (2–4 % of the step) with the corrected GPU mapping.
+- **Not overlap.** Section 3.
+- **Not a mechanism for the per-launch cost.** Correlated with the number of
+  mapped arrays; not proportional to it; not traced.
+- **Not 16 ranks.** Everything above is 1/4/8 ranks in one allocation, because
+  the 4-node queue is three days out. The committed 16-rank logs of job 5139351
+  give the same picture through the older aggregate bucket (13.24 vs 13.29 ms/step
+  of device-local exchange on 138.41 M and 60.56 M cells), and the split
+  projected to 16 ranks gives 11.7 ms/step of launch cost = **28 % of the refined
+  step** — but that projection has not been measured. Job 5139583 is queued for it.
+- **One machine, one node type**, as always.
+
+## 8 — The lever, and the experiment that would confirm it
+
+There are ~141 exchange kernel launches per step (39 pack, 39 unpack, 39
+same-level copy, 24 cross-level copy) costing **10–12 ms/step in every
+configuration measured** — 9.7 ms for the single-level case, 11.7 ms for the
+refined one, ~10 ms for `nb16`. Against the projection's `jacobi_compute_phi`,
+which launches at **19 us**, roughly 8 ms/step of that is not obviously necessary.
+
+Ranked by size, and by how well this data supports them:
+
+1. **Find and remove the per-launch cost.** ~8 ms/step, 13 % of the refined
+   8-rank step and ~19 % projected at 16. Not refinement-specific — every blocked
+   configuration pays it. **This is not yet actionable: the first step is a
+   per-kernel nsys timeline** (nsys works on this solver for CUDA tracing;
+   `results_horeka_2026-09-10.md` §5) to see what those 60–100 us are made of,
+   plus a map-clause / hoisted-`target data` A/B on ONE kernel. Do the timeline
+   first; do not implement from the correlation.
+2. **Fold the local copy into the pack kernel.** They are independent and both
+   run before the `Waitall`, so one launch could do both: 39 launches × ~60 us =
+   **2.3 ms/step**, bit-exact, no numerics. The cheapest concrete win here.
+3. **Fewer rounds.** 39/step, each costing ~240 us of launch alone. Halving the
+   18 phi exchanges would save ~4.5 ms/step — but that is a numerics change and
+   needs a convergence argument, not a bit-exactness gate.
+4. **Fusing the cross-level kernel into the same-level one is NOT recommended**
+   on this data. It would save 24 × 84.6 us = 2.0 ms/step of launch, but the two
+   were split deliberately: the interface gather needs ~128 registers and runs at
+   a third of the light kernel's occupancy (measured with ncu, recorded in
+   `copy_local_same_level`'s comment). Paying that on all 39 rounds against a
+   same-level volume term of only 2.5 ms/step would very likely lose more than
+   the 2.0 ms it saves.
