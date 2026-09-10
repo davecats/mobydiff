@@ -101,3 +101,98 @@ the 2-rank probe attached to itself is now discharged rather than inherited.
 The mild degradation (6 % and 44 %) is the same contention the 2-rank probe saw
 (9 %).
 
+## 4 — Phase 1: the op split. Cross-level is 16.4 % of the points, at every rank count
+
+Job 5139581, 2 nodes (hkn[0401,0403]), 100 steps, all runs in ONE allocation.
+Points summed over ranks, from the new `exchange by op` line:
+
+| config | ranks | same-level | restrict | prolong | cross-level share |
+|---|---|---|---|---|---|
+| `rect_jacobi` | 1 / 4 / 8 | 15.39 M / 15.39 M / 15.39 M | 0 | 0 | 0 |
+| `nb16_jacobi` | 1 / 4 / 8 | 57.02 M / 57.02 M / 57.02 M | 0 | 0 | 0 |
+| `refined_yp82_rect_jacobi` | 1 | 5 369 280 | 211 000 | 844 400 | **16.43 %** |
+| | 4 | 5 369 280 | 211 000 | 844 400 | **16.43 %** |
+| | 8 | 5 369 280 | 211 000 | 844 400 | **16.43 %** |
+| `refined_big_rect_jacobi` | 4 / 8 | 21.56 M | 843 200 | 3 378 400 | **16.38 %** |
+
+(The per-rank split between "local copy" and "send" moves with rank count; the
+totals above are invariant, as they must be — the same halo points, some promoted
+from a device copy to a message.)
+
+**Prediction 1 confirmed** (≤ 20 %) and **prediction 2 confirmed**: 16.43 % at 1,
+4 and 8 ranks, identical to four figures, and 16.38 % on a case with 4x the
+leaves. The interface is a geometric property of the leaf table and the Morton
+split does not cut it. Prolong outnumbers restrict 4:1, as the 2:1 geometry
+requires — four fine destinations per coarse source face.
+
+Entries tell a different story from points: **3 288 cross-level entries against
+5 780 same-level ones — 36 % of the entries for 16 % of the points** (321 against
+929 points each). A coarse face fed by four fine sub-entries is four small
+transfers, and that ratio is what the next section makes expensive.
+
+## 5 — Where the refined case's exchange time actually goes
+
+Per exchange ROUND, rank 0, 8 ranks on 2 nodes, one allocation. `local_copy` is
+now the same-level kernel alone; `copy_cross` is the 2:1 restrict/prolong kernel,
+which launches **24 times per step** (6 full velocity exchanges + 18 scalar) where
+everything else launches 39:
+
+| config | s/step | pack | unpack | local_copy | copy_cross | mpi_wait | device-local ms/step | % of step |
+|---|---|---|---|---|---|---|---|---|
+| `base_jacobi` | 0.103252 | 165.5 | 125.0 | 0.1 | 0.1 | 133.7 | 11.35 | 11.0 % |
+| `rect_jacobi` | 0.109302 | 100.3 | 91.6 | 237.3 | 0.1 | 76.9 | 16.72 | 15.3 % |
+| `nb16_jacobi` | 0.141611 | 100.9 | 97.0 | 813.0 | 0.2 | 81.3 | 39.36 | 27.8 % |
+| `refined_yp82_rect_jacobi` | 0.060292 | 99.7 | 85.7 | 130.0 | **99.6** | 55.6 | 14.71 | **24.4 %** |
+| `refined_big_rect_jacobi` | 0.186315 | 104.1 | 95.5 | 334.9 | **148.0** | 88.9 | 24.42 | 13.1 % |
+
+**`rect_jacobi` spends 16.72 ms/step of device-local exchange on 138.41 M cells;
+`refined_yp82` spends 14.71 ms on 60.56 M.** 88 % of the work for 44 % of the
+cells, while moving 42 % of the points. That is the handout's 1.9x, measured
+inside one allocation with the same binary.
+
+### The split that explains it
+
+Two-point fits (4 and 8 ranks) with the RIGHT x for each kernel — same-level
+points for `local_copy`, cross-level points for `copy_cross`:
+
+| config | kernel | fixed us per launch | ns per point |
+|---|---|---|---|
+| `rect_jacobi` | same-level copy | **56.3** | 0.097 |
+| `nb16_jacobi` | same-level copy | **58.5** | 0.107 |
+| `refined_big` | same-level copy | **58.5** | 0.106 |
+| `refined_yp82` | same-level copy | **66.7** | 0.100 |
+| `refined_yp82` | **cross-level copy** | **84.6** | **0.114** |
+| `refined_big` | **cross-level copy** | **87.3** | **0.115** |
+| `base_jacobi` (widest send span) | pack | **114.0** | 0.090 |
+| `base_jacobi` | unpack | **82.5** | 0.074 |
+
+- **A cross-level point costs 0.114–0.115 ns against a same-level point's
+  0.097–0.107 — 1.15x, not 2–4x.** Prediction 3, and with it the handout's third
+  branch as written ("the per-point cost differs between op kinds"), is
+  **REFUTED**. The 2:1 transfer is not expensive per point.
+- **The cross-level kernel costs 84.6–87.3 us per LAUNCH before it moves
+  anything**, and it launches 24 times per step. At 8 ranks that is 2.03 ms/step
+  of pure launch against 0.36 ms of actual transfer: **85 % of the 2:1
+  interface's exchange cost is the extra kernel launch, not the data.**
+- The fixed cost is a per-LAUNCH cost, not a per-round one, and `base_jacobi`
+  proves it: at 8 ranks it has exactly **zero** local copy points, the kernel is
+  skipped, and the bucket reads **0.1 us** — while the same kernel with 364 722
+  points at 4 ranks costs 82.1 us.
+
+Adding it up at 8 ranks:
+
+| | fixed (launch) | volume | total |
+|---|---|---|---|
+| `rect_jacobi` | 9.66 ms/step (58 %) | 7.06 ms | 16.72 ms |
+| `refined_yp82` | **11.73 ms/step (80 %)** | 2.97 ms | 14.71 ms |
+
+**The two configurations pay almost the same launch bill — 9.7 against 11.7 ms —
+and it is the whole difference.** `refined_yp82` carries 44 % of the cells, so
+its volume term collapses from 7.1 to 3.0 ms while the launch term does not move.
+`nb16_jacobi` is the control on the other side: `nb = 16` gives 3.7x `rect`'s
+copy volume, its fixed bill stays ~10 ms and its volume term is 29 ms — at fine
+granularity, volume still dominates.
+
+**So the fixed per-launch bill is ~10–12 ms/step in EVERY configuration, and it
+becomes the dominant term exactly when strong scaling has shrunk the per-rank
+volume — which is the regime 2:1 refinement puts you in by design.**
