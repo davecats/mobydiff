@@ -7,7 +7,7 @@ module comm
     use :: boundary, only: boundary_type
     use :: profiling, only: prof_tic, prof_toc, exch_prof, &
         PROF_PACK, PROF_MPI_POST, PROF_MPI_WAIT, PROF_UNPACK, PROF_LOCAL_COPY, &
-        PROF_SKEW
+        PROF_SKEW, PROF_COPY_CROSS, PROF_A0
 #ifdef USE_OPENMP_OFFLOAD
     use omp_lib
 #endif
@@ -22,6 +22,8 @@ module comm
     ! face-staggered dimension, ...); PROLONG injects the covering coarse
     ! value. Sampling happens on the SOURCE side (pack/local copy), so the
     ! wire always carries destination-point values.
+    ! THROWAWAY (A0 overlap probe).
+    integer, parameter :: A0_POINTS = 262144
     integer, parameter :: OP_COPY = 0
     integer, parameter :: OP_RESTRICT = 1
     integer, parameter :: OP_PROLONG = 2
@@ -39,6 +41,10 @@ module comm
         logical :: has_terminal = .true.
         ! [output] exchange_barrier -- diagnostic, see finish_halo_exchange.
         logical :: exchangeBarrier = .false.
+        ! THROWAWAY (A0 overlap probe, MOBY_A0_PROBE). Delete after the
+        ! measurement together with a0_probe_work.
+        integer :: a0Iter = 0
+        real(C_DOUBLE), allocatable :: a0buf(:)
 
         integer :: dims(3) = [0, 0, 0]
         integer :: coords(3) = [0, 0, 0]
@@ -62,6 +68,13 @@ module comm
         integer :: nLocalPts = 0
         integer :: nLocalCopyPts = 0
         integer :: nLocalCopyEntries = 0
+        ! Volume and entry count split by transfer op (index OP_COPY/OP_RESTRICT/
+        ! OP_PROLONG). Diagnostics only, filled at init: it is what separates
+        ! "the refined case exchanges more because its blocks are small" from
+        ! "... because the 2:1 interface transfer is expensive", and the totals
+        ! alone cannot.
+        integer :: localPtsOp(0:2) = 0, localEntOp(0:2) = 0
+        integer :: sendPtsOp(0:2) = 0, sendEntOp(0:2) = 0
         ! Same-level +axis neighbour slot per block and dim, 0 = none (physical,
         ! closed, cross-level or off-rank). Drives sync_divergence_halos, the
         ! minimal mid-iteration velocity refresh the Jacobi projection needs.
@@ -369,6 +382,10 @@ contains
 
         integer :: sendPts, copyPts, localPts, peers, ierr
         integer :: sendMin, sendMax, sendSum, copySum, localSum, peerMax
+        integer :: lPtsOp(0:2), lEntOp(0:2), sPtsOp(0:2), sEntOp(0:2)
+        character(len=8), parameter :: opName(0:2) = &
+            [character(len=8) :: "copy", "restrict", "prolong"]
+        integer :: o
 
         sendPts = c%peerSendOff(c%nPeers)
         copyPts = c%peerSendCopyOff(c%nPeers)
@@ -380,6 +397,10 @@ contains
         call MPI_Allreduce(copyPts, copySum, 1, MPI_INTEGER, MPI_SUM, c%cart_comm, ierr)
         call MPI_Allreduce(localPts, localSum, 1, MPI_INTEGER, MPI_SUM, c%cart_comm, ierr)
         call MPI_Allreduce(peers, peerMax, 1, MPI_INTEGER, MPI_MAX, c%cart_comm, ierr)
+        call MPI_Allreduce(c%localPtsOp, lPtsOp, 3, MPI_INTEGER, MPI_SUM, c%cart_comm, ierr)
+        call MPI_Allreduce(c%localEntOp, lEntOp, 3, MPI_INTEGER, MPI_SUM, c%cart_comm, ierr)
+        call MPI_Allreduce(c%sendPtsOp, sPtsOp, 3, MPI_INTEGER, MPI_SUM, c%cart_comm, ierr)
+        call MPI_Allreduce(c%sendEntOp, sEntOp, 3, MPI_INTEGER, MPI_SUM, c%cart_comm, ierr)
         if (c%has_terminal) then
             print '(a,i0,a,i0,a,i0,a,i0,a,i0)', &
                 " exchange sizes: peers/rank(max) ", peerMax, &
@@ -393,6 +414,16 @@ contains
                 real(sendSum, C_DOUBLE)*8.0d0/1.0d6, "   copy-only nv=3 ", &
                 real(copySum, C_DOUBLE)*24.0d0/1.0d6, "   full nv=4 ", &
                 real(sendSum, C_DOUBLE)*32.0d0/1.0d6
+            ! Split by op. Same-level COPY volume scales with the block SURFACE
+            ! (i.e. with block granularity); RESTRICT/PROLONG volume scales with
+            ! the 2:1 interface AREA. Which of the two carries the refined case's
+            ! exchange decides where its cost can be attacked.
+            do o = 0, 2
+                print '(a,a8,a,i12,a,i10,a,i12,a,i10)', &
+                    " exchange by op: ", opName(o), &
+                    "  local pts ", lPtsOp(o), " entries ", lEntOp(o), &
+                    "  send pts ", sPtsOp(o), " entries ", sEntOp(o)
+            end do
         end if
     end subroutine report_exchange_sizes
 
@@ -457,6 +488,10 @@ contains
         do pass = 1, 2
             nLocal = 0
             c%nLocalPts = 0
+            c%localPtsOp = 0
+            c%localEntOp = 0
+            c%sendPtsOp = 0
+            c%sendEntOp = 0
 
             ! Local entries: my blocks' halos served by my own blocks
             ! (including the periodic wrap inside a single rank). Round 1
@@ -492,6 +527,8 @@ contains
                                 c%lOff(nLocal) = c%lOff(nLocal-1) + pts
                             end if
                             c%nLocalPts = c%nLocalPts + pts
+                            c%localPtsOp(opc(cand)) = c%localPtsOp(opc(cand)) + pts
+                            c%localEntOp(opc(cand)) = c%localEntOp(opc(cand)) + 1
                         end do
                     end do
                 end do
@@ -592,6 +629,8 @@ contains
                                     c%sOff(nSend) = c%sOff(nSend-1) + pts
                                 end if
                                 c%peerSendOff(p) = c%peerSendOff(p) + pts
+                                c%sendPtsOp(opc(cand)) = c%sendPtsOp(opc(cand)) + pts
+                                c%sendEntOp(opc(cand)) = c%sendEntOp(opc(cand)) + 1
                             end do
                         end do
                     end do
@@ -682,6 +721,7 @@ contains
         ! describes the whole run; local_copy points are the on-device
         ! (same-rank) traffic that never becomes a message.
         c%exchangeBarrier = logical(dns%exchange_barrier)
+        call a0_probe_init(c)
         if (dns%profile_steps) call report_exchange_sizes(c)
         c%request = MPI_REQUEST_NULL
 
@@ -1337,22 +1377,70 @@ contains
             call prof_toc(exch_prof, PROF_MPI_POST, t0)
         end if
 
-        t0 = prof_tic()
         ! Same-rank block-pair copies overlap with the messages in flight. Two
         ! passes for a full exchange: same-level copies first fill the coarse-block
         ! halos, THEN the cross-level prolong/restrict run so the prolong tangential
         ! interpolation can read the (now valid) coarse tangential neighbour. A
         ! copy-only exchange (the projection's per-colour sweep) is same-level only.
+        ! Each phase times itself (local_copy / copy_cross).
         if (c%copyOnly) then
             call copy_local_entries(c, blk, 1)
         else
             call copy_local_entries(c, blk, 1)
             call copy_local_entries(c, blk, 2)
         end if
-        call prof_toc(exch_prof, PROF_LOCAL_COPY, t0)
 
         c%exchangeActive = .true.
     end subroutine start_halo_exchange
+
+    ! === THROWAWAY DIAGNOSTIC: the A0 overlap probe ===
+    ! Does an in-flight MPI transfer progress while a target kernel runs? A
+    ! COMPUTE-bound kernel is inserted between the Isend/Irecv posts and the
+    ! Waitall; if the transfer progresses, mpi_wait collapses. Compute-bound on
+    ! purpose: local_copy is memory-bound, so a memory-bound probe could hide a
+    ! failure to progress behind DMA contention. Enabled by MOBY_A0_PROBE=<iters>.
+    ! DELETE THIS AND ITS PROF_A0 BUCKET once the measurement is written up.
+    subroutine a0_probe_init(c)
+        type(comm_type), intent(inout) :: c
+
+        character(len=32) :: val
+        integer :: stat, n
+
+        if (allocated(c%a0buf)) return
+        call get_environment_variable("MOBY_A0_PROBE", val, status=stat)
+        if (stat /= 0) return
+        read(val, *, iostat=stat) n
+        if (stat /= 0 .or. n <= 0) return
+        c%a0Iter = n
+        allocate(c%a0buf(A0_POINTS))
+        c%a0buf = 1.0d0
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target enter data map(to: c%a0buf)
+#endif
+        if (c%has_terminal) print '(a,i0,a,i0,a)', &
+            " A0 PROBE ACTIVE: ", n, " iterations over ", A0_POINTS, " points per round"
+    end subroutine a0_probe_init
+
+    subroutine a0_probe_work(c)
+        type(comm_type), intent(inout) :: c
+
+        integer :: i, it
+        real(C_DOUBLE) :: x, t0
+
+        if (c%a0Iter <= 0) return
+        t0 = prof_tic()
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target teams distribute parallel do private(x, it)
+#endif
+        do i = 1, A0_POINTS
+            x = c%a0buf(i)
+            do it = 1, c%a0Iter
+                x = x*0.9999999d0 + 1.0d-9
+            end do
+            c%a0buf(i) = x
+        end do
+        call prof_toc(exch_prof, PROF_A0, t0)
+    end subroutine a0_probe_work
 
     subroutine finish_halo_exchange(c, blk)
         type(comm_type), intent(inout) :: c
@@ -1362,6 +1450,8 @@ contains
         real(C_DOUBLE) :: t0
 
         if (.not. c%exchangeActive) return
+
+        call a0_probe_work(c)
 
         if (c%nPeers > 0) then
             nRequest = 2*c%nPeers
@@ -1450,9 +1540,10 @@ contains
             call prof_toc(exch_prof, PROF_MPI_POST, t0)
         end if
 
-        t0 = prof_tic()
+        ! Times itself: same-level into local_copy, cross-level into copy_cross.
         call copy_local_scalar_entries(c, scalar, blk)
-        call prof_toc(exch_prof, PROF_LOCAL_COPY, t0)
+
+        call a0_probe_work(c)
 
         if (c%nPeers > 0) then
             nRequest = 2*c%nPeers
@@ -1573,8 +1664,18 @@ contains
         type(block_set_type), intent(inout) :: blk
         integer, intent(in) :: phase
 
-        if (phase /= 2) call copy_local_same_level(c, blk)
-        if (phase /= 1) call copy_local_cross_level(c, blk)
+        real(C_DOUBLE) :: t0
+
+        if (phase /= 2) then
+            t0 = prof_tic()
+            call copy_local_same_level(c, blk)
+            call prof_toc(exch_prof, PROF_LOCAL_COPY, t0)
+        end if
+        if (phase /= 1) then
+            t0 = prof_tic()
+            call copy_local_cross_level(c, blk)
+            call prof_toc(exch_prof, PROF_COPY_CROSS, t0)
+        end if
     end subroutine copy_local_entries
 
     ! Same-level block-pair copies (the entry-list prefix, and on a single-level
@@ -1763,17 +1864,21 @@ contains
         integer :: di, dj, dk, sfr, pn, ss, ds
         integer :: b1, b2, b3, og1, og2, og3, np1, np2, np3, s1, s2, s3
         real(C_DOUBLE) :: val, wa1, wb1, wa2, wb2, wa3, wb3
+        real(C_DOUBLE) :: t0
 
         ! Same-level prefix in its own light kernel, exactly as for the velocity
         ! exchange (see copy_local_same_level for the occupancy argument). For a
         ! COPY entry lGC is 1 in every dim and lPhiN is 0, so the general body
         ! below reduces to this copy -- bit-exact by construction.
+        t0 = prof_tic()
         call copy_local_scalar_same_level(c, scalar)
+        call prof_toc(exch_prof, PROF_LOCAL_COPY, t0)
 
         pLo = c%nLocalCopyPts
         pHi = c%nLocalPts
         if (pHi <= pLo) return
         sfr = merge(1, 0, c%phiIfaceRow)
+        t0 = prof_tic()
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
@@ -1838,6 +1943,7 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
 #endif
+        call prof_toc(exch_prof, PROF_COPY_CROSS, t0)
     end subroutine copy_local_scalar_entries
 
     ! Same-level scalar copies: the scalar twin of copy_local_same_level.

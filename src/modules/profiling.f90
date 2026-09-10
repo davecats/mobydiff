@@ -67,12 +67,21 @@ module profiling
     integer, parameter, public :: PROF_MPI_POST = 2     ! Irecv/Isend (incl. use_device_addr)
     integer, parameter, public :: PROF_MPI_WAIT = 3
     integer, parameter, public :: PROF_UNPACK = 4
-    integer, parameter, public :: PROF_LOCAL_COPY = 5   ! same-rank block-pair copies
+    integer, parameter, public :: PROF_LOCAL_COPY = 5   ! same-rank SAME-LEVEL block-pair copies
     ! Diagnostic only, and only non-zero under [output] exchange_barrier: the
     ! MPI_Barrier placed immediately before the Waitall. It absorbs the ranks'
     ! ARRIVAL SKEW, so whatever is left in mpi_wait afterwards is transfer.
     ! Splitting those two is the whole point -- aggregate mpi_wait contains both.
     integer, parameter, public :: PROF_SKEW = 6
+    ! Same-rank CROSS-LEVEL (2:1 restrict/prolong) copies. Split out from
+    ! local_copy because they are a different kernel with a different cost per
+    ! point -- the interface gather needs ~128 registers and runs at a third of
+    ! the same-level kernel's occupancy -- and the aggregate could not show it.
+    ! Zero on a single-level grid, so single-level local_copy numbers stay
+    ! comparable with every earlier report.
+    integer, parameter, public :: PROF_COPY_CROSS = 7
+    ! THROWAWAY (A0 overlap probe). Delete with the probe in comm.f90.
+    integer, parameter, public :: PROF_A0 = 8
 
     type(profiler_type), save, public :: step_prof, proj_prof, exch_prof
     logical, save :: profEnabled = .false.
@@ -93,7 +102,7 @@ contains
              "apply_bc", "setup"])
         call init_profiler(exch_prof, "exch_timing", &
             [character(len=24) :: "pack", "mpi_post", "mpi_wait", "unpack", "local_copy", &
-             "skew_barrier"])
+             "skew_barrier", "copy_cross", "a0_probe"])
     end subroutine init_step_profilers
 
     logical function profiling_enabled()
