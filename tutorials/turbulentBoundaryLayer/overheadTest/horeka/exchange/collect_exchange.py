@@ -137,6 +137,39 @@ def main():
         print(f"| {name[3:]} | {tot:.6f} | {100*tot/r['sstep']:.1f} % | "
               f"{100*dev/r['sstep']:.1f} % | {100*w/r['sstep']:.1f} % |")
 
+    print("\n## Pass 1d -- fixed vs per-point cost, per config\n")
+    print("Least squares of microseconds-per-round on points-per-rank over the")
+    print("rank counts of one config. The INTERCEPT is what one exchange round")
+    print("costs with no points to move; the SLOPE is the marginal point. Only")
+    print("configs measured at 3+ rank counts are fitted.\n")
+    print("| config | bucket | rank counts | pts/rank span | fixed us/round | ns/pt | worst residual |")
+    print("|" + "---|" * 7)
+    cfgs = {}
+    for name, r in runs.items():
+        if not name.startswith("op_") or "sstep" not in r:
+            continue
+        cfgs.setdefault(re.sub(r"_n\d+$", "", name[3:]), []).append(r)
+    for cfg, rs in cfgs.items():
+        if len(rs) < 3:
+            continue
+        for bucket, xkey in (("pack", "send"), ("unpack", "send"),
+                             ("local_copy", "local"), ("copy_cross", "local")):
+            xs = [r.get(xkey, 0) / r["ranks"] for r in rs]
+            ys = [per_call(r, bucket) for r in rs]
+            if max(ys) <= 0 or max(xs) == min(xs):
+                continue
+            n = len(xs)
+            sx, sy = sum(xs), sum(ys)
+            sxx = sum(x * x for x in xs)
+            sxy = sum(x * y for x, y in zip(xs, ys))
+            den = n * sxx - sx * sx
+            b = (n * sxy - sx * sy) / den
+            a = (sy - b * sx) / n
+            resid = max(abs(y - (a + b * x)) for x, y in zip(xs, ys))
+            print(f"| {cfg} | {bucket} | {','.join(str(r['ranks']) for r in rs)} | "
+                  f"{min(xs):,.0f}-{max(xs):,.0f} | {a:.1f} | {b*1e3:.3f} | "
+                  f"{resid:.1f} us |")
+
     print("\n## Pass 2 -- the A0 overlap probe\n")
     print("If an in-flight transfer progressed while the probe kernel ran, `mpi_wait`")
     print("would collapse toward zero as `a0_probe` grows.\n")
