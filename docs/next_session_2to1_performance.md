@@ -1,5 +1,43 @@
 # Handout — the 2:1 path at scale: it is a DEVICE-LOCAL exchange problem
 
+> **STATUS 2026-09-10 — PHASES 1 AND 2 DONE. THE ANSWER IS NONE OF THE THREE
+> PRE-REGISTERED BRANCHES.** `overheadTest/results_horeka_exchange_2026-09-10.md`,
+> jobs 5139461 / 5139581.
+>
+> Phase 2 first: **A0 fails again at 8 ranks** — 5.7 ms of compute between the
+> posts and the `Waitall` leaves `mpi_wait` at 1.06–1.44x of baseline and adds
+> exactly 39 x 5.7 ms to the step. **P2 (overlap) is closed**, and the 2-rank
+> probe's scope caveat with it.
+>
+> Phase 1 retires all three readings in the table below. Branch 1 and 2 both
+> assume there is extra volume to find and there is not: the refined case
+> exchanges **0.954x the points PER CELL** of its single-level twin, and
+> cross-level points are **16.43 % of the total at 1, 4 and 8 ranks alike**.
+> Branch 3 ("the per-point cost differs between op kinds") was tested with the
+> instrument it asked for — the cross-level kernel timed in its own `copy_cross`
+> bucket — and is **refuted**: 0.114–0.115 ns per cross-level point against
+> 0.097–0.107 per same-level one, **1.15x**.
+>
+> **What it is instead: kernel LAUNCHES.** ~141 per step (39 pack + 39 unpack +
+> 39 same-level copy + 24 cross-level copy), each carrying 56–114 us before it
+> moves anything, against the projection's `jacobi_compute_phi` at 19 us. That is
+> 9.3 ms/step for `rect_jacobi` and 11.6 for `refined_yp82` — 79 % of the refined
+> case's device-local exchange, and the entire difference between twins that pay
+> the same launch bill on 138 M and 61 M cells. The 2:1 interface's own share is
+> 2.03 ms of launch against 0.36 ms of transfer.
+>
+> **Phase 3 is therefore NOT P3 (per-level block size)**: bigger coarse blocks cut
+> the volume term, which is the smaller half, and do not change the number of
+> rounds at all. Next step is an **nsys per-kernel timeline** of what the 60–100 us
+> consist of — read `overheadTest/horeka/exchange/PREREGISTERED.md` first, which
+> records a plausible mechanism ("~5.5 us per map-clause item") being refuted by a
+> control before it could be published.
+>
+> Outstanding: the 16-rank repeat (the 4-node queue was three days out; 1/4/8
+> ranks in one allocation is what this rests on, with the committed 16-rank
+> aggregates agreeing).
+
+
 Written 2026-09-10 from the session that fixed the rank-to-GPU mapping. Read the
 first section before planning anything: the target has moved again.
 
