@@ -296,14 +296,15 @@ is measured; what it consists of is not identified here.**
 There are ~141 exchange kernel launches per step (39 pack, 39 unpack, 39
 same-level copy, 24 cross-level copy) costing **10–12 ms/step in every
 configuration measured** — 9.3 ms for the single-level case, 11.6 ms for the
-refined one, ~9 ms for `nb16`. Against the projection's `jacobi_compute_phi`,
-which launches at **24–26 us** in this same allocation, 7.0 ms/step (`rect`) to 8.9 ms/step (`refined`) of
-that is not obviously necessary.
+refined one, ~9 ms for `nb16` — plus 18 `interface_correct` launches in the
+projection on refined grids. Against `jacobi_compute_phi`, which launches at
+**24–26 us** in this same allocation, **7.0 ms/step (`rect`) to 10.5 ms/step
+(`refined`, including `interface_correct`)** of that is not obviously necessary.
 
 Ranked by size, and by how well this data supports them:
 
-1. **Find and remove the per-launch cost.** 7.0–8.9 ms/step, 15 % of the refined
-   8-rank step and ~19 % projected at 16. Not refinement-specific — every blocked
+1. **Find and remove the per-launch cost.** 7.0–10.5 ms/step, 17 % of the refined
+   8-rank step and ~25 % projected at 16. Not refinement-specific — every blocked
    configuration pays it. **This is not yet actionable: the first step is a
    per-kernel nsys timeline** (nsys works on this solver for CUDA tracing;
    `results_horeka_2026-09-10.md` §5) to see what those 60–100 us are made of,
@@ -322,3 +323,10 @@ Ranked by size, and by how well this data supports them:
    `copy_local_same_level`'s comment). Paying that on all 39 rounds against a
    same-level volume term of only 2.5 ms/step would very likely lose more than
    the 2.0 ms it saves.
+5. **`interface_correct` is the same shape as (4) but the trade is different.**
+   It is 18 launches × ~91 us = 1.63 ms/step doing three planes per block, and it
+   is a SEPARATE pass for a stated reason: red-black needs it applied after a phi
+   exchange that cannot happen inside its sweep (comment in `interface_correct`).
+   For the **Jacobi** path that constraint does not bind, so folding it into
+   `jacobi_apply`'s second kernel is worth checking — but it is a solver change
+   with a bit-exactness gate, not a scheduling one, and it should wait for (1).
