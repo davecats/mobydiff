@@ -1,19 +1,20 @@
-# The exchange at scale is a per-ROUND cost, not a per-cell or per-point one
+# The exchange at scale is a per-LAUNCH cost, not a per-cell or per-point one
 
-<!-- DRAFT: sections 3 onward are filled from job 5139461 (dev_accelerated) and
-     the 16-rank follow-up. Sections 1-2 are arithmetic on committed logs and are
-     final. -->
+Phases 1 and 2 of `docs/next_session_2to1_performance.md`. Jobs 5139461 and
+5139581 (HoreKa `dev_accelerated`, hkn[0401,0403], 2 nodes, 1/4/8 ranks, 100
+steps, everything below in ONE allocation unless it says otherwise); sections 1
+and 2 are arithmetic on the committed 16-rank logs of job 5139351.
 
-Phases 1 and 2 of `docs/next_session_2to1_performance.md`. The handout set the
-target as "the refined case does 82 % of the single-level twin's exchange work
-while carrying 44 % of its cells — that factor ~1.9 is the 2:1 interface's cost
-at scale, it is device-local, and it is the target", and pre-registered three
-branches: cross-level volume, copy volume, or a per-point cost difference
-between op kinds.
+The handout set the target as "the refined case does 82 % of the single-level
+twin's exchange work while carrying 44 % of its cells — that factor ~1.9 is the
+2:1 interface's cost at scale, it is device-local, and it is the target", and
+pre-registered three branches: cross-level volume, copy volume, or a per-point
+cost difference between op kinds.
 
-**None of the three is what the data says.** The exchange at 16 ranks is bought
-almost entirely by the *number of exchange rounds* multiplied by a fixed cost per
-kernel launch, and by nothing about the mesh at all.
+**None of the three is what the data says.** The exchange at scale is bought by
+the *number of kernel launches* multiplied by a fixed cost each carries before it
+moves anything, and by nothing about the mesh at all. The 2:1 interface's own
+share of it is 85 % launch and 15 % data.
 
 ## 1 — The 1.9x is not extra points, and this was already in the repository
 
@@ -48,6 +49,11 @@ their copy kernel is an order of magnitude larger than at any other rank count):
 | `refined_big_rect_jacobi` | 103.6 | 97.5 | **109.8** | 0.101 | 1.6 us |
 | `refined_yp82_rect_redblack` | 97.3 | 85.1 | **117.9** | 0.099 | 1.7 us |
 
+The `local_copy` column is the PRE-SPLIT aggregate — that binary timed the
+same-level and cross-level kernels into one bucket — which is why the three
+refined rows read roughly double the single-level one. Section 5 separates them
+and shows the doubling is the second kernel's launch.
+
 Residuals of 1–3 us on numbers of 60–120 us, across a 17x span in points: the
 affine split is not being forced onto the data. Reading it:
 
@@ -56,7 +62,9 @@ affine split is not being forced onto the data. Reading it:
   interface carries **no per-point penalty**, which retires the handout's third
   branch as it was written.
 - **The fixed part is 250–300 us per round**, and there are 39 rounds in every
-  step of every configuration ever measured here. That is 9.8 ms/step for
+  step of every configuration ever measured here. (Section 5 sharpens this: it is
+  a cost per kernel LAUNCH, not per round — a round whose copy kernel has no work
+  is skipped and costs 0.1 us.) That is 9.8 ms/step for
   `rect_jacobi` and 11.6 ms/step for `refined_yp82` — **14 % and 28 %** of their
   16-rank steps.
 - At 16 ranks the two configurations spend **the same absolute device-local
