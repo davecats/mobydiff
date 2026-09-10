@@ -209,6 +209,35 @@ granularity, volume still dominates.
 becomes the dominant term exactly when strong scaling has shrunk the per-rank
 volume — which is the regime 2:1 refinement puts you in by design.**
 
+### A third launch cost, outside the exchange
+
+The same fit on the projection buckets of the same runs (us per call against
+Mcell per rank, 4 and 8 ranks):
+
+| config | `sweep` fixed | ps/cell | `apply` fixed | ps/cell |
+|---|---|---|---|---|
+| `base_jacobi` | 25.0 us | 43.3 | 33.7 us | 121.7 |
+| `rect_jacobi` | 23.9 | 44.0 | 46.1 | 127.7 |
+| `nb16_jacobi` | 24.4 | 46.4 | 51.6 | 139.9 |
+| `refined_yp82_rect_jacobi` | 25.9 | 43.9 | **136.7** | 128.0 |
+| `refined_big_rect_jacobi` | 7.0 | 44.5 | **88.5** | 129.8 |
+
+`sweep` (`jacobi_compute_phi`, a single kernel with 6 mapped arrays) launches at
+**24–26 us** whatever the mesh, and its 43–46 ps/cell is identical everywhere.
+That is the cheapest launch in the solver and the reference the exchange kernels'
+56–114 us should be read against.
+
+`apply` is 46 us on the single-level case and **137 us on the refined one**.
+`jacobi_apply` launches `interface_correct` as an extra kernel, and only when
+interfaces are present; that kernel touches three planes per block — nb² work
+against the sweep's nb³ — so it is almost pure launch. **~91 us x 18 calls =
+1.63 ms/step**, a third refinement-specific launch cost, in the projection rather
+than the exchange.
+
+Adding the two refinement-specific ones: **2.03 ms (cross-level copy) + 1.63 ms
+(interface_correct) = 3.66 ms/step, 6.1 % of the refined 8-rank step, and almost
+all of it is kernel launches rather than work.** That is the 2:1 tax at scale.
+
 ## 6 — The pre-registered scorecard
 
 `horeka/exchange/PREREGISTERED.md` was written and committed before the runs.
@@ -266,7 +295,7 @@ There are ~141 exchange kernel launches per step (39 pack, 39 unpack, 39
 same-level copy, 24 cross-level copy) costing **10–12 ms/step in every
 configuration measured** — 9.3 ms for the single-level case, 11.6 ms for the
 refined one, ~9 ms for `nb16`. Against the projection's `jacobi_compute_phi`,
-which launches at **19 us**, 7.0 ms/step (`rect`) to 8.9 ms/step (`refined`) of
+which launches at **24–26 us** in this same allocation, 7.0 ms/step (`rect`) to 8.9 ms/step (`refined`) of
 that is not obviously necessary.
 
 Ranked by size, and by how well this data supports them:
