@@ -121,3 +121,40 @@ a timeline would have to find.
 Either way the A/B that settles it is one run: strip the redundant clauses from
 one kernel and re-fit its intercept. That is a scheduling change, so it must be
 bit-exact — and it is NOT part of this session's deliverable.
+
+---
+
+## Second addendum, still before the run: evidence AGAINST my own mechanism
+
+Before treating "5.5 us per map-clause item" as the mechanism, the same fit was
+run on the kernels OUTSIDE the exchange, from the same committed logs —
+microseconds per call against Mcell per rank:
+
+| config | kernel | calls/step | Mcell/rank span | fixed us | ps/cell | worst residual |
+|---|---|---|---|---|---|---|
+| `rect_jacobi` | `sweep` (`jacobi_compute_phi`, **10 map items**) | 18 | 8.65–138.41 | **18.9** | 44.4 | 4.3 us |
+| `refined_yp82` | `sweep` | 18 | 3.78–60.56 | 21.2 | 44.3 | 6.2 us |
+| `refined_big` | `sweep` | 18 | 15.14–60.56 | 15.8 | 44.4 | 3.3 us |
+| `rect_jacobi` | `momentum` (**25 map items**) | 3 | 8.65–138.41 | 11.2 | 378 | 52 us (poor) |
+
+`jacobi_compute_phi` carries **10** map items and a ~19 us intercept;
+`copy_local_same_level` carries **11** and a ~56 us intercept. Three times the
+fixed cost for the same number of clauses. **The map-item count is not the
+explanatory variable**, and the 5 % agreement across the three exchange kernels
+is very likely a coincidence of three kernels whose map counts happen to track
+their complexity.
+
+A second warning sign, from the same data: the affine model does NOT extrapolate
+to 1 rank. `rect_jacobi`'s copy kernel at 1 rank moves 15.39 M points in 772 us
+(50 ps/pt) where the 2–16-rank fit predicts 1564 us. And at nearly the same size
+`nb16_jacobi` at 4 ranks moves 14.19 M points in 1577 us (111 ps/pt) — the same
+kernel, 2.2x the rate difference, driven by entry structure and coalescing. So
+the "slope" is a property of a config's entry shape and the "intercept" is the
+small-size end of a concave curve, not necessarily a launch cost.
+
+**Prediction 6 stands as a number** (`copy_cross` at 105–115 us per call) because
+it also follows from the old aggregate by an independent route. But confirming
+it would NOT name the mechanism; it would only confirm that the cross-level
+kernel is a second per-round call of the same order as the first. The mechanism
+needs a timeline, and this file records that I was one step from publishing a
+third wrong one.
