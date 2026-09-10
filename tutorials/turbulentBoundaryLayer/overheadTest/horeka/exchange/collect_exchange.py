@@ -145,7 +145,8 @@ def main():
     for name, r in sorted(runs.items()):
         if not name.startswith("a0_") or "sstep" not in r:
             continue
-        base = runs.get(name.rsplit("_", 1)[0] + "_base", {})
+        base = runs.get(name.rsplit("_", 1)[0] + "_base", {}) \
+            if name.endswith("_probe") else {}
         w = per_call(r, "mpi_wait")
         p = per_call(r, "a0_probe")
         wb = per_call(base, "mpi_wait") if base else 0.0
