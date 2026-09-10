@@ -1,5 +1,53 @@
 # Next session — reducing the 2:1 penalty
 
+> **STATUS 2026-09-10 (later) — P2 (OVERLAP) IS CLOSED. THE EXCHANGE COST AT
+> SCALE IS KERNEL LAUNCHES.** `overheadTest/results_horeka_exchange_2026-09-10.md`,
+> jobs 5139461 / 5139581.
+>
+> **A0 repeated at 8 ranks / 2 nodes and fails again**, harder than at 2: a 5.7 ms
+> compute-bound kernel between the Isend/Irecv posts and the Waitall — 76–116x the
+> wait it would have to hide — leaves `mpi_wait` at **1.06x / 1.14x / 1.44x** of
+> baseline, never below 1, and the step time rises by exactly 39 x 5.7 ms. The
+> probe is serialised in full; there is no asynchrony to exploit. The 2-rank
+> probe's own scope caveat ("repeat on a genuinely many-rank GPU machine") is
+> **discharged, not inherited**. P2 is closed and nothing in this file is left
+> standing.
+>
+> **What replaces it.** The handout's "1.9x exchange per cell" is not volume of
+> any kind: the refined case exchanges **0.954x the points PER CELL** of its
+> single-level twin, and **cross-level points are 16.43 % of the total at 1, 4 and
+> 8 ranks alike** (16.38 % on a case with 4x the leaves) — the Morton split does
+> not cut the interface. Timing the cross-level kernel separately (new
+> `exch_timing copy_cross` bucket) **refutes the handout's third branch too**: a
+> cross-level point costs 0.114–0.115 ns against a same-level point's
+> 0.097–0.107, i.e. **1.15x, not 2–4x**.
+>
+> The cost is **kernel LAUNCHES**. Each launch carries a fixed cost before it
+> moves anything — same-level copy 56–67 us, cross-level copy 84.6–87.3 us, pack
+> ~92–114, unpack ~83–100, against the projection's `jacobi_compute_phi` at 19 us
+> — and there are ~141 of them per step (39 pack + 39 unpack + 39 same-copy +
+> **24** cross-copy). That is **9.7 ms/step for `rect_jacobi` and 11.7 ms for
+> `refined_yp82`**, i.e. 80 % of the refined case's device-local exchange at 8
+> ranks and the entire difference between the two: they pay the same launch bill,
+> and the refined case pays it on 44 % of the cells. `base_jacobi` proves the cost
+> is per-LAUNCH: with zero local copy points at 8 ranks the kernel is skipped and
+> the bucket reads **0.1 us**.
+>
+> The 2:1 interface's own exchange cost is therefore **2.03 ms/step of launch
+> against 0.36 ms of transfer — 85 % launch, 15 % data.**
+>
+> **NEXT, and do not skip the first step:** an nsys per-kernel timeline of what
+> those 60–100 us consist of. The fixed cost CORRELATES with the number of mapped
+> arrays but not proportionally (3.2 us each for the 6-array sweep kernel,
+> 5.6–7.4 for the 8.5–15-array exchange kernels), and `PREREGISTERED.md` records
+> that fitting a mechanism to that correlation was one step from being this
+> campaign's third wrong mechanism. Concrete cheap win meanwhile: **fold the local
+> copy into the pack kernel** (independent, both before the Waitall, one launch
+> instead of two, 2.3 ms/step, bit-exact). Recommended AGAINST: fusing the
+> cross-level kernel into the same-level one — it saves 2.0 ms of launch but puts
+> the interface gather's ~128 registers on all 39 rounds, and ncu already measured
+> that at a third of the light kernel's occupancy.
+
 > **STATUS 2026-09-10 — FIXED IN THE SOLVER. P1 IS OFF.**
 > `overheadTest/results_horeka_2026-09-10.md`. The stall was GPU affinity, not the
 > exchange: **the two ends of a cross-node link must sit in the same GPU affinity

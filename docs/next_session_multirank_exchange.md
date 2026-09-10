@@ -92,6 +92,17 @@ of `pack`/`unpack`.
 
 ### A0 — RUN 2026-09-02. IT FAILS. Plan A is CLOSED.
 
+> **RE-RUN 2026-09-10 AT 8 RANKS / 2 NODES. IT FAILS AGAIN, AND THE SCOPE CAVEAT
+> BELOW IS DISCHARGED.** `overheadTest/results_horeka_exchange_2026-09-10.md` §3,
+> job 5139461. A 5.7 ms compute-bound kernel between the posts and the Waitall —
+> 76–116x the wait it would have to hide — leaves `mpi_wait` at 1.06x (`rect` 8x2),
+> 1.14x (`refined` 4x1) and 1.44x (`refined` 8x2) of its baseline, never below 1,
+> while the step time rises by exactly 39 x 5.7 ms. The probe is serialised into
+> the step in full: not partial overlap, no asynchrony at all. **Plan A stays
+> closed and the "repeat on a genuinely many-rank GPU machine" caveat at the end
+> of this section is now spent, not inherited.**
+
+
 `overheadTest/results_a0probe_2026-09-02.md`. A compute-bound target kernel was
 inserted between the `Isend`/`Irecv` posts and the `MPI_Waitall` (in the
 pre-key-change binary, so the 30 MB rounds are resolvable):
