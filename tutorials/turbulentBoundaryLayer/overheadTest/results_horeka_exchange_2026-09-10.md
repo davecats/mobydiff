@@ -288,7 +288,10 @@ is measured; what it consists of is not identified here.**
   give the same picture through the older aggregate bucket (13.24 vs 13.29 ms/step
   of device-local exchange on 138.41 M and 60.56 M cells), and the split
   projected to 16 ranks gives 11.7 ms/step of launch cost = **28 % of the refined
-  step** — but that projection has not been measured. Job 5139583 is queued for it.
+  step** — but that projection has not been measured. **Job 5139977 is queued for
+  it** (4 nodes, Pass G + Pass 1 at 16 ranks, results into
+  `$RUN_DIR/results_exchange16`); at submission Slurm estimated its start five
+  days out, so whoever reads this next should collect it rather than re-run it.
 - **One machine, one node type**, as always.
 
 ## 8 — The lever, and the experiment that would confirm it
