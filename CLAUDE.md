@@ -914,7 +914,14 @@ immersed boundary. Phased, each phase verified before the next:
   138 M and 61 M cells. `base_jacobi` with zero local copy points reads **0.1 us**,
   which is what makes it per-LAUNCH rather than per-round. The 2:1 interface's own
   exchange cost is 2.03 ms/step of launch against 0.36 ms of transfer — **85%
-  launch, 15% data**. Also: **A0 re-run at 8 ranks fails again** (5.7 ms of
+  launch, 15% data** — and a THIRD launch cost sits outside the exchange:
+  `jacobi_compute_phi` launches at 24-26 us whatever the mesh (the cheapest launch
+  in the solver, 43-46 ps/cell everywhere) while `jacobi_apply` is 46 us
+  single-level and **137 us refined**, because it launches `interface_correct`
+  whenever interfaces are present and that kernel does nb^2 work against the
+  sweep's nb^3 — 91 us x 18 calls = **1.63 ms/step**. Refinement-specific total
+  **3.66 ms/step = 6.1% of the refined 8-rank step, almost all launches: that is
+  the 2:1 tax at scale.** Also: **A0 re-run at 8 ranks fails again** (5.7 ms of
   compute between the posts and the Waitall leaves `mpi_wait` at 1.06–1.44x of
   baseline and adds exactly 39 x 5.7 ms to the step) — **P2/overlap is CLOSED**
   and the 2-rank probe's scope caveat is discharged. NEXT: an nsys per-kernel

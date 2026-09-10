@@ -36,6 +36,17 @@
 > The 2:1 interface's own exchange cost is therefore **2.03 ms/step of launch
 > against 0.36 ms of transfer — 85 % launch, 15 % data.**
 >
+> **A THIRD launch cost sits outside the exchange.** The same fit on the
+> projection buckets: `jacobi_compute_phi` (one kernel, 6 mapped arrays) launches
+> at **24–26 us** whatever the mesh with an identical 43–46 ps/cell — the cheapest
+> launch in the solver and the reference the exchange kernels should be read
+> against — while `jacobi_apply` is 46 us fixed single-level and **137 us
+> refined**, because it launches `interface_correct` as an extra kernel whenever
+> interfaces are present, and that kernel does nb² work against the sweep's nb³.
+> **91 us x 18 calls = 1.63 ms/step.** With the cross-level copy's 2.03 ms that is
+> **3.66 ms/step = 6.1 % of the refined 8-rank step of refinement-specific cost,
+> almost all of it launches rather than work. That is the 2:1 tax at scale.**
+>
 > **NEXT, and do not skip the first step:** an nsys per-kernel timeline of what
 > those 60–100 us consist of. The fixed cost CORRELATES with the number of mapped
 > arrays but not proportionally (3.2 us each for the 6-array sweep kernel,
