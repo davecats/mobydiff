@@ -1,44 +1,42 @@
 # Next session — reducing the 2:1 penalty
 
-> **STATUS 2026-09-10 — THE BLOCK TAX WAS GPU-TO-NIC AFFINITY. P1 IS OFF.**
-> `overheadTest/results_horeka_2026-09-10.md`. All three HCAs on a HoreKa Green
-> node sit on NUMA 0 with GPU0/GPU1; GPU2/GPU3 reach a NIC only across the
-> inter-socket link, where GPUDirect RDMA does not apply, so a rank there stages
-> its cross-node traffic through host memory (traced: 694 MB/steady window = the
-> config's entire exchange volume, against 25 MB on intra-node ranks).
-> `comm.f90:220` assigns `device = local_rank mod num_devices`, so at 4 ranks/node
-> the Morton chain's cross-node ranks land on GPU3 and GPU0 — one of them wrong.
+> **STATUS 2026-09-10 — FIXED IN THE SOLVER. P1 IS OFF.**
+> `overheadTest/results_horeka_2026-09-10.md`. The stall was GPU affinity, not the
+> exchange: **the two ends of a cross-node link must sit in the same GPU affinity
+> class**. On HoreKa Green all three HCAs sit on NUMA 0 with GPU0/GPU1 while
+> GPU2/GPU3 reach a NIC only across the inter-socket link, and the old
+> `device = local_rank mod num_devices` paired a node's LAST local rank with the
+> next node's FIRST (dev3 against dev0) — the mismatched case. Measured, wait per
+> round: mixed 604/604 us, both-far-but-matched 81 us, both-near 75 us. **Matching
+> is worth ~8x; being on the NIC-affine side a further ~1.3x.** "Both ends need a
+> local HCA" was the first reading and is WRONG — both-bad-but-matched is fast.
 >
-> **Permuting `CUDA_VISIBLE_DEVICES` to `0,2,3,1` collapses `mpi_wait` 10.6x
-> (745.7 → 70.2 us) and the step 20.6 % (0.13651 → 0.10839 s), `L2_div`
-> bit-identical, no rebuild.** Both cross-node ends must be NIC-affine: fixing one
-> buys 19 % of the wait, both buys 91 %. `UCX_MEMTYPE_CACHE` (set to `n` by every
-> submit script here) and forcing GPUDirect RDMA move it under 2 %.
+> `comm.f90 select_target_device` now serves a node's first and last local ranks
+> first, identically on every node (node-homogeneity is load-bearing: a per-node
+> order cost base_jacobi 14 %). `MOBY_GPU_ORDER` overrides the device order;
+> single-node runs keep the identity mapping exactly. Measured ref vs new, back to
+> back: rect 8x2 **-20.4 %**, rect 16x4 **-26.3 %**, refined_yp82 16x4 **-26.7 %**,
+> base_jacobi 16x4 +1.0 % (noise), single node unchanged. Fields bit-exact
+> (max_abs 0, 138 M points) — but the WORKSTATION GATE IS STILL OWED.
 >
-> **The block tax `rect`/`base` at 8 ranks is 1.315 with the default map and 1.052
-> with the corrected one — its single-GPU value. There is no node-boundary block
-> tax**, and the "19–25 % of the step" prize is collected by a launch flag. P1's
-> partitioning rewrite and the transport options in this file address a cost that
-> does not exist; **do not start either**. P2 (overlap) is untouched by this.
->
-> Why it hits the blocked decomposition only: a 2-peer chain puts two ranks on the
-> network and both can be placed well; a 7-peer Cartesian decomposition puts all
-> of them on the network and only 2 of 4 GPUs are NIC-affine, so `base` gains
-> nothing from a permutation. That is also the 09-08/09-09 placement inversion —
-> `rect` improved when spread because 2 ranks/node lands on GPU0/GPU1 by accident.
+> **Block tax rect/base: 1.505 -> 1.098 at 16 ranks, 1.315 -> 1.058 at 8. There is
+> no node-boundary block tax**, and the "19-25 % of the step" prize is collected by
+> the device mapping. P1's partitioning rewrite and the transport options in this
+> file address a cost that does not exist; **do not start either**. P2 (overlap) is
+> untouched and is now the only item here the finding leaves standing.
 >
 > How it was found, and what the earlier instrument missed: the barrier split
-> showed the wait was arrival spread, not transport (`rect` 8x2: 773 us skew,
-> 1.2 us transfer; `base`: 64.8 / 63.8). CUDA traces showed the GPU idle 37 % of
-> the time, so it was not unfinished device work, and the per-rank memcpy table
-> named the two staging ranks. Also: every `mpi_wait` figure in the 09-07/08/09
-> reports is **rank 0's**, and rank 0 sits at or near the cross-rank minimum; and
-> aggregate min/max/argmax is **blind to rotating skew** (`rect` 8x2 reads a
-> healthy max/min = 1.09 while being 100 % arrival spread).
+> showed the wait was arrival spread, not transport (rect 8x2: 773 us skew, 1.2 us
+> transfer). CUDA traces showed the GPU idle 37 %, so it was not unfinished device
+> work, and the per-rank memcpy table named the two staging ranks. Also: every
+> `mpi_wait` figure in the 09-07/08/09 reports is **rank 0's**, and rank 0 sits at
+> or near the cross-rank minimum; and aggregate min/max/argmax is **blind to
+> rotating skew** (rect 8x2 reads a healthy max/min = 1.09 while being 100 %
+> arrival spread).
 >
-> NEXT: re-measure the campaign at the corrected map (16 ranks and the refined
-> configs are unmeasured); decide the permutation from the topology instead of
-> hard-coding `0,2,3,1`; and note ~70 us/round still remains.
+> NEXT: the workstation gate; re-measure the campaign at the new mapping; derive
+> the device order from `/sys` topology instead of assuming the default order is
+> right (it happens to be, here — exactly what hides a bug on the next machine).
 
 
 Handout, written 2026-08-28 from the session that measured all of it. Read the

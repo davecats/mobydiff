@@ -43,5 +43,11 @@ mkdir -p "$RES"
 echo "=== HCA / GPU topology on this node ==="
 { ibstat -l; echo "--- nvidia-smi topo ---"; nvidia-smi topo -m; } 2>&1 | tee "$RES/topology.txt"
 
-bash "$RUN_DIR/mechanism/run_ucx.sh" "$EXE" "$RES"
+# CONFIGS (space separated, never commas -- sbatch --export eats those) runs the
+# same variant sweep over several configs in one allocation, which is how a
+# placement claim gets its control: the blocked chain and the 7-peer Cartesian
+# reference have to be measured on the same machine state.
+for cfg in ${CONFIGS:-${CONFIG:-rect_jacobi}}; do
+    CONFIG="$cfg" bash "$RUN_DIR/mechanism/run_ucx.sh" "$EXE" "$RES"
+done
 echo "=== ucx job finished ==="

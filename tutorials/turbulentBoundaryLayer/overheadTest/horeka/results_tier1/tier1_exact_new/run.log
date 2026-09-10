@@ -1,0 +1,73 @@
+ Data for JOB [4565,1] offset 0 Total slots allocated 16
+
+ ========================   JOB MAP   ========================
+
+ Data for node: hkn0707	Num slots: 4	Max slots: 0	Num procs: 4
+ 	Process OMPI jobid: [4565,1] App: 0 Process rank: 0 Bound: socket 0[core 0[hwt 0-1]]:[BB/../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../..][../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../..]
+ 	Process OMPI jobid: [4565,1] App: 0 Process rank: 1 Bound: socket 0[core 1[hwt 0-1]]:[../BB/../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../..][../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../..]
+ 	Process OMPI jobid: [4565,1] App: 0 Process rank: 2 Bound: socket 0[core 2[hwt 0-1]]:[../../BB/../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../..][../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../..]
+ 	Process OMPI jobid: [4565,1] App: 0 Process rank: 3 Bound: socket 0[core 3[hwt 0-1]]:[../../../BB/../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../..][../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../..]
+
+ Data for node: hkn0708	Num slots: 4	Max slots: 0	Num procs: 4
+ 	Process OMPI jobid: [4565,1] App: 0 Process rank: 4 Bound: N/A
+ 	Process OMPI jobid: [4565,1] App: 0 Process rank: 5 Bound: N/A
+ 	Process OMPI jobid: [4565,1] App: 0 Process rank: 6 Bound: N/A
+ 	Process OMPI jobid: [4565,1] App: 0 Process rank: 7 Bound: N/A
+
+ =============================================================
+      __. - ~ ~ ~ - .
+_   ,//           __  ' ,
+ \  ||       __--  --    ,   ~~~~
+ , \|____---    o       ~~~    ~~~~
+,    _            __/   ~~ ,  ~~~               mobyDiff
+,       ---/ / __--   ~~   ,~~                  commit: 7aa1c7b
+ ,          /       ~~   ~~
+  ,         ~~~ ~~~     ~~,
+    ,    ~~~           , '
+      ' - , _ _ _ ,  '
+
+
+ reading input data...
+MPI Cartesian dimensions: 2 2 2
+ gpu binding (this node): 0->dev0 1->dev2 2->dev3 3->dev1   MOBY_GPU_ORDER unset (devices used in index order)
+ initialising grid...
+ exchange sizes: peers/rank(max) 2  send pts/rank min 36800 max 73600  total send pts 515200  local copy pts 14874752
+ exchange MB per round (all ranks): scalar nv=1      4.122   copy-only nv=3     12.365   full nv=4     16.486
+ OpenMP target devices available:            4
+ initialising fields...
+ initialising pressure solver...
+ initialising IBM...
+ initialising body force...
+ trip forcing: amp= 3.000E-02 x0= 1.500E+01 ts= 4.000E+00 nmodes=24
+ main loop starting...
+ current time step:            50    field filename: overhead_50.h5
+iteration time L2_div global_div Linf_vel CFL Peclet wall_seconds_per_step
+        50   5.00000000E-02   1.09170901E-05   6.39547757E-01   1.00071352E+00   6.73467512E-03   2.09364619E-02   1.23385400E-01
+ main loop ended...
+timing: nsteps 50 loop_seconds   6.17090990E+00 seconds_per_step   1.23418198E-01
+step_timing: momentum calls 150 nsteps 50 seconds   9.85839200E-01 seconds_per_step   1.97167840E-02 seconds_per_call   6.57226133E-03
+step_timing: ibm_mu calls 150 nsteps 50 seconds   2.05147100E-01 seconds_per_step   4.10294200E-03 seconds_per_call   1.36764733E-03
+step_timing: bodyforce calls 150 nsteps 50 seconds   1.76073500E-01 seconds_per_step   3.52147000E-03 seconds_per_call   1.17382333E-03
+step_timing: turbulence calls 0 nsteps 50 seconds   0.00000000E+00 seconds_per_step   0.00000000E+00 seconds_per_call   0.00000000E+00
+step_timing: apply_bc calls 150 nsteps 50 seconds   1.03716000E-02 seconds_per_step   2.07432000E-04 seconds_per_call   6.91440000E-05
+step_timing: vel_exchange calls 150 nsteps 50 seconds   8.35609000E-02 seconds_per_step   1.67121800E-03 seconds_per_call   5.57072667E-04
+step_timing: projection calls 150 nsteps 50 seconds   4.03562260E+00 seconds_per_step   8.07124520E-02 seconds_per_call   2.69041507E-02
+step_timing: io_stats calls 50 nsteps 50 seconds   6.74210100E-01 seconds_per_step   1.34842020E-02 seconds_per_call   1.34842020E-02
+step_timing: total_measured calls 950 nsteps 50 seconds   6.17082500E+00 seconds_per_step   1.23416500E-01 seconds_per_call   6.49560526E-03
+step_timing: coverage measured   6.17082500E+00 loop_seconds   6.17090990E+00 fraction   1.0000
+proj_timing: sweep calls 900 nsteps 50 seconds   7.06835400E-01 seconds_per_step   1.41367080E-02 seconds_per_call   7.85372667E-04
+proj_timing: apply calls 900 nsteps 50 seconds   2.02899290E+00 seconds_per_step   4.05798580E-02 seconds_per_call   2.25443656E-03
+proj_timing: phi_exchange calls 900 nsteps 50 seconds   4.12282100E-01 seconds_per_step   8.24564200E-03 seconds_per_call   4.58091222E-04
+proj_timing: vel_exchange calls 900 nsteps 50 seconds   5.42727300E-01 seconds_per_step   1.08545460E-02 seconds_per_call   6.03030333E-04
+proj_timing: apply_bc calls 900 nsteps 50 seconds   5.72326000E-02 seconds_per_step   1.14465200E-03 seconds_per_call   6.35917778E-05
+proj_timing: setup calls 150 nsteps 50 seconds   2.87218200E-01 seconds_per_step   5.74436400E-03 seconds_per_call   1.91478800E-03
+proj_timing: total_measured calls 4650 nsteps 50 seconds   4.03528850E+00 seconds_per_step   8.07057700E-02 seconds_per_call   8.67803978E-04
+exch_timing: pack calls 1950 nsteps 50 seconds   1.95500000E-01 seconds_per_step   3.91000000E-03 seconds_per_call   1.00256410E-04
+exch_timing: mpi_post calls 1950 nsteps 50 seconds   1.37190000E-02 seconds_per_step   2.74380000E-04 seconds_per_call   7.03538462E-06
+exch_timing: mpi_wait calls 1950 nsteps 50 seconds   1.58765600E-01 seconds_per_step   3.17531200E-03 seconds_per_call   8.14182564E-05
+exch_timing: unpack calls 1950 nsteps 50 seconds   1.79827500E-01 seconds_per_step   3.59655000E-03 seconds_per_call   9.22192308E-05
+exch_timing: local_copy calls 1950 nsteps 50 seconds   4.63203700E-01 seconds_per_step   9.26407400E-03 seconds_per_call   2.37540359E-04
+exch_timing: skew_barrier calls 0 nsteps 50 seconds   0.00000000E+00 seconds_per_step   0.00000000E+00 seconds_per_call   0.00000000E+00
+exch_timing: total_measured calls 9750 nsteps 50 seconds   1.01101580E+00 seconds_per_step   2.02203160E-02 seconds_per_call   1.03693928E-04
+ exchange balance: mpi_wait seconds min   1.52478000E-01 mean   1.76018125E-01 max   2.09428800E-01  max/min     1.37  slowest rank 7
+ current time step:            50    field filename: overhead_50.h5

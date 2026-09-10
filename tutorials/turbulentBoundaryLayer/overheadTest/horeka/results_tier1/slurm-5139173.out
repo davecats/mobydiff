@@ -1,0 +1,32 @@
+job   : 5139173
+nodes : hkn[0621,0633]
+commit: dd7419fca25e4e57871681a3ded732ab0c179e8d
+run                    binary           pinning        s/step / wait per round
+ref_none               ref              4 visible      1.36638900E-01  wait 753.5 us  (ndev 4)
+ref_identity           ref              0,1,2,3        1.31482340E-01  wait 604.4 us  (ndev 1)
+ref_boundary           ref              0,2,3,1        1.08237035E-01  wait 73.4 us  (ndev 1)
+new_none               new              4 visible      1.08267080E-01  wait 79.3 us  (ndev 4) 0->dev1(off0) 1->dev2(off0) 2->dev3(off0) 3->dev0(off1)   MOBY_GPU_ORDER unset (devices used in index order)
+new_identity           new              0,1,2,3        1.31623421E-01  wait 607.3 us  (ndev 1)
+new_boundary           new              0,2,3,1        1.08226105E-01  wait 75.8 us  (ndev 1)
+=== confound job finished ===
+
+============================= JOB FEEDBACK =============================
+
+Job ID: 5139173
+Cluster: hk
+User/Group: xt8786/hk-project-exasim
+Account: hk-project-exasim
+State: COMPLETED (exit code 0)
+Partition: accelerated
+Nodes: 2
+Cores per node: 80
+Nodelist: hkn[0621,0633]
+CPU Utilized: 00:22:19
+CPU Efficiency: 3.69% of 10:05:20 core-walltime
+Job Wall-clock time: 00:03:47
+Starttime: Thu Sep 10 03:40:55 2026
+Endtime: Thu Sep 10 03:44:42 2026
+Memory Utilized: 14.68 GB
+Memory Efficiency: 1.51% of 971.68 GB (485.84 GB/node)
+Energy Consumed: 455920 Joule / 126.644444444444 Watthours
+Average node power draw: 2008.45814977974 Watt

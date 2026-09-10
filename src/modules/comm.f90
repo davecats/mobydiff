@@ -213,16 +213,146 @@ contains
 
         call MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL, local_comm, ierr)
         call MPI_Comm_rank(local_comm, c%local_rank, ierr)
+        call select_target_device(c, local_comm)
         call MPI_Comm_free(local_comm, ierr)
-
-#ifdef USE_OPENMP_OFFLOAD
-        if (omp_get_num_devices() > 0) then
-            call omp_set_default_device(mod(c%local_rank, omp_get_num_devices()))
-        end if
-#endif
 
         c%initialized = .true.
     end subroutine comm_init
+
+    ! Give the ranks that own CROSS-NODE links the devices listed first, using
+    ! the same order on every node.
+    !
+    ! WHY. The two ends of a cross-node link must sit in the same GPU affinity
+    ! class or the transfer collapses. Measured on HoreKa Green, whose three HCAs
+    ! all sit on NUMA 0 beside GPU0/GPU1 while GPU2/GPU3 reach a NIC only across
+    ! the inter-socket link (rect_jacobi, 8 ranks, 4 per node, wait per round):
+    !
+    !     ends on dev3 <-> dev0   mixed classes        604 us
+    !     ends on dev0 <-> dev2   mixed classes        604 us
+    !     ends on dev3 <-> dev2   both far from a NIC   81 us
+    !     ends on dev1 <-> dev0   both beside a NIC     75 us
+    !
+    ! So MATCHING is what matters -- 8x -- and being on the NIC-affine side is a
+    ! further ~1.3x on the wait, about 1 % of the step. Both-far-but-matched is
+    ! fine. The previous `device = local_rank mod ndev` pairs a node's LAST local
+    ! rank with the next node's FIRST, i.e. dev(ppn-1) against dev0, which is the
+    ! mixed case: worth 20.7 % of the step at 8 ranks and 26 % at 16
+    ! (overheadTest/results_horeka_2026-09-10.md).
+    !
+    ! THE RULE. In a linearly split decomposition the ranks holding cross-node
+    ! links are a node's FIRST and LAST local ranks, so they are served first:
+    ! local 0, local ppn-1, then the rest in order. Applied identically on every
+    ! node, which is the load-bearing part -- an order that varies per node (for
+    ! instance one derived from each node's measured off-node degree, which the
+    ! first version of this routine did) hands a many-peer decomposition mixed
+    ! class pairs on most of its links and costs 14 %.
+    !
+    ! WHICH DEVICES are best is not discoverable without a vendor topology API,
+    ! so it is an input, not a guess: MOBY_GPU_ORDER lists device ids best-first
+    ! (e.g. "0,1,2,3"). Unset, the order is 0,1,2,... which is right whenever the
+    ! HCAs sit beside the first GPUs and, because the rule matches the ends
+    ! either way, no worse than the old round-robin otherwise. It is deployment
+    ! configuration rather than a case parameter, hence an environment variable
+    ! and not an ini key: the same case file must stay portable across machines.
+    !
+    ! Single-node runs keep the old identity mapping exactly -- there are no
+    ! cross-node links to protect, so there is nothing to reorder.
+    subroutine select_target_device(c, local_comm)
+        type(comm_type), intent(in) :: c
+        type(MPI_Comm), intent(in) :: local_comm
+
+#ifdef USE_OPENMP_OFFLOAD
+        integer :: ndev, ppn, ierr, i, pos, dev, ln
+        integer, allocatable :: devAll(:), pref(:)
+        character(len=256) :: spec
+
+        ndev = omp_get_num_devices()
+        if (ndev <= 0) return
+
+        call MPI_Comm_size(local_comm, ppn, ierr)
+        call device_preference(ndev, pref)
+
+        if (c%world_size <= ppn .or. ppn < 3) then
+            ! One node (or too few ranks for the ends to differ): nothing to
+            ! protect, so keep the historical round-robin untouched.
+            pos = c%local_rank
+        else
+            ! Boundary-first: local 0, local ppn-1, then 1, 2, ... ppn-2.
+            if (c%local_rank == 0) then
+                pos = 0
+            else if (c%local_rank == ppn - 1) then
+                pos = 1
+            else
+                pos = c%local_rank + 1
+            end if
+        end if
+        dev = pref(modulo(pos, size(pref)) + 1)
+        call omp_set_default_device(dev)
+
+        ! The audit line. On unfamiliar hardware this is what turns a silent
+        ! mispairing into something a user can see.
+        allocate(devAll(ppn))
+        call MPI_Allgather(dev, 1, MPI_INTEGER, devAll, 1, MPI_INTEGER, local_comm, ierr)
+        call get_environment_variable("MOBY_GPU_ORDER", spec, ln)
+        if (c%has_terminal .and. ndev > 1) then
+            write(*,'(a)', advance="no") " gpu binding (this node):"
+            do i = 1, ppn
+                write(*,'(1x,i0,a,i0)', advance="no") i - 1, "->dev", devAll(i)
+            end do
+            if (ln > 0) then
+                write(*,'(a)') "   MOBY_GPU_ORDER=" // trim(spec)
+            else
+                write(*,'(a)') "   MOBY_GPU_ORDER unset (devices used in index order)"
+            end if
+        end if
+        deallocate(devAll, pref)
+#endif
+    end subroutine select_target_device
+
+#ifdef USE_OPENMP_OFFLOAD
+    ! Device ids best-first. MOBY_GPU_ORDER may name any subset; devices it does
+    ! not mention follow in index order, so a partial list ("the good ones are 0
+    ! and 1") is a complete answer and the rest still get used.
+    subroutine device_preference(ndev, pref)
+        integer, intent(in) :: ndev
+        integer, allocatable, intent(out) :: pref(:)
+
+        character(len=256) :: spec
+        integer :: ln, i, j, n, d, ios
+        character(len=32) :: tok
+
+        allocate(pref(ndev))
+        n = 0
+        call get_environment_variable("MOBY_GPU_ORDER", spec, ln)
+        if (ln > 0) then
+            do i = 1, len_trim(spec)
+                if (spec(i:i) == ',') spec(i:i) = ' '
+            end do
+            do
+                spec = adjustl(spec)
+                if (len_trim(spec) == 0) exit
+                j = index(spec, ' ')
+                tok = spec(1:j-1)
+                spec = spec(j:)
+                read(tok, *, iostat=ios) d
+                if (ios /= 0) cycle
+                if (d < 0 .or. d >= ndev) cycle
+                if (n > 0) then
+                    if (any(pref(1:n) == d)) cycle
+                end if
+                n = n + 1
+                pref(n) = d
+            end do
+        end if
+        do d = 0, ndev - 1
+            if (n > 0) then
+                if (any(pref(1:n) == d)) cycle
+            end if
+            n = n + 1
+            pref(n) = d
+        end do
+    end subroutine device_preference
+#endif
 
     ! Enumerate the block-pair exchange entries (Section 5 of the strategy
     ! document). For each (destination block, 26-direction) pair the source

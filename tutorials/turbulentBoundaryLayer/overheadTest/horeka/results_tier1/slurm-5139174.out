@@ -1,0 +1,31 @@
+--- pinned pairs (ref binary): does MIXED class predict slow? ---
+pin_mixed_2v1              1.31190016E-01  wait   603.9 us  
+pin_bothbad_3v2            1.09469830E-01  wait    80.8 us  
+pin_bothgood_1v0           1.08237820E-01  wait    74.7 us  
+--- new binary, first preference swept (both ends always take pref[0]) ---
+auto_pref0                 1.08273340E-01  wait    81.9 us   0->dev1(off0) 1->dev2(off0) 2->dev3(off0) 3->dev0(off1)   
+auto_pref1                 1.08324890E-01  wait    70.9 us   0->dev0(off0) 1->dev2(off0) 2->dev3(off0) 3->dev1(off1)   
+auto_pref2                 1.09440690E-01  wait    95.4 us   0->dev0(off0) 1->dev1(off0) 2->dev3(off0) 3->dev2(off1)   
+auto_pref3                 1.09566325E-01  wait   101.9 us   0->dev0(off0) 1->dev1(off0) 2->dev2(off0) 3->dev3(off1)   
+=== class job finished ===
+
+============================= JOB FEEDBACK =============================
+
+Job ID: 5139174
+Cluster: hk
+User/Group: xt8786/hk-project-exasim
+Account: hk-project-exasim
+State: COMPLETED (exit code 0)
+Partition: accelerated
+Nodes: 2
+Cores per node: 80
+Nodelist: hkn[0621,0633]
+CPU Utilized: 00:24:26
+CPU Efficiency: 3.80% of 10:42:40 core-walltime
+Job Wall-clock time: 00:04:01
+Starttime: Thu Sep 10 03:47:08 2026
+Endtime: Thu Sep 10 03:51:09 2026
+Memory Utilized: 14.64 GB
+Memory Efficiency: 1.51% of 971.68 GB (485.84 GB/node)
+Energy Consumed: 481081 Joule / 133.633611111111 Watthours
+Average node power draw: 1996.1867219917 Watt

@@ -110,3 +110,4 @@ validation/channel_interface/les/runs/
 # recreates. The RESULTS are committed separately as results_job<jobid>/.
 tutorials/turbulentBoundaryLayer/overheadTest/horeka/moby-2to1-code/
 tutorials/turbulentBoundaryLayer/overheadTest/horeka/moby-2to1-run/
+tools/h5maxdiff

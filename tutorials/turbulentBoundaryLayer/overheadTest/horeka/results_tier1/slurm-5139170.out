@@ -1,0 +1,82 @@
+job    : 5139170
+date   : 2026-09-10 03:24:56 CEST
+nodes  : 4  (hkn[0707-0708,0713-0714])
+commit : dd7419fca25e4e57871681a3ded732ab0c179e8d
+dirty  : 2
+=== HCA / GPU topology on this node ===
+mlx5_0
+mlx5_1
+mlx5_2
+--- nvidia-smi topo ---
+	[4mGPU0	GPU1	GPU2	GPU3	NIC0	NIC1	NIC2	CPU Affinity	NUMA Affinity	GPU NUMA ID[0m
+GPU0	 X 	NV4	NV4	NV4	NODE	NODE	NODE	0-19,76-95	0		N/A
+GPU1	NV4	 X 	NV4	NV4	NODE	NODE	NODE	0-19,76-95	0		N/A
+GPU2	NV4	NV4	 X 	NV4	SYS	SYS	SYS	38-57,114-133	1		N/A
+GPU3	NV4	NV4	NV4	 X 	SYS	SYS	SYS	38-57,114-133	1		N/A
+NIC0	NODE	NODE	SYS	SYS	 X 	NODE	NODE				
+NIC1	NODE	NODE	SYS	SYS	NODE	 X 	PIX				
+NIC2	NODE	NODE	SYS	SYS	NODE	PIX	 X 				
+
+Legend:
+
+  X    = Self
+  SYS  = Connection traversing PCIe as well as the SMP interconnect between NUMA nodes (e.g., QPI/UPI)
+  NODE = Connection traversing PCIe as well as the interconnect between PCIe Host Bridges within a NUMA node
+  PHB  = Connection traversing PCIe as well as a PCIe Host Bridge (typically the CPU)
+  PXB  = Connection traversing multiple PCIe bridges (without traversing the PCIe Host Bridge)
+  PIX  = Connection traversing at most a single PCIe bridge
+  NV#  = Connection traversing a bonded set of # NVLinks
+
+NIC Legend:
+
+  NIC0: mlx5_0
+  NIC1: mlx5_1
+  NIC2: mlx5_2
+
+=== ucx sweep start 2026-09-10 03:24:58  rect_jacobi 16x4 nsteps=200
+=== default : UCX_MEMTYPE_CACHE=n  GPUS=default  (2026-09-10 03:24:59)
+    hosts(4) s/step 9.15111350E-02  wait/round 760.4 us
+       exchange balance: mpi_wait seconds min   5.86740820E+00 mean   6.16125553E+00 max   6.30760780E+00  max/min     1.08  slowest rank 4
+=== boundary : UCX_MEMTYPE_CACHE=n  GPUS=0,2,3,1  (2026-09-10 03:25:26)
+    hosts(4) s/step 6.75661790E-02  wait/round 174.0 us
+       exchange balance: mpi_wait seconds min   1.35698310E+00 mean   1.50996822E+00 max   1.70544000E+00  max/min     1.26  slowest rank 7
+=== ucx sweep done 2026-09-10 03:25:45
+=== ucx sweep start 2026-09-10 03:25:45  base_jacobi 16x4 nsteps=200
+=== default : UCX_MEMTYPE_CACHE=n  GPUS=default  (2026-09-10 03:25:45)
+    hosts(4) s/step 5.97909595E-02  wait/round 147.4 us
+       exchange balance: mpi_wait seconds min   1.04455330E+00 mean   1.15999599E+00 max   1.29543980E+00  max/min     1.24  slowest rank 13
+=== boundary : UCX_MEMTYPE_CACHE=n  GPUS=0,2,3,1  (2026-09-10 03:26:03)
+    hosts(4) s/step 6.01757145E-02  wait/round 154.9 us
+       exchange balance: mpi_wait seconds min   1.14187560E+00 mean   1.24736029E+00 max   1.37908710E+00  max/min     1.21  slowest rank 15
+=== ucx sweep done 2026-09-10 03:26:22
+=== ucx sweep start 2026-09-10 03:26:22  refined_yp82_rect_jacobi 16x4 nsteps=200
+=== default : UCX_MEMTYPE_CACHE=n  GPUS=default  (2026-09-10 03:26:22)
+    hosts(4) s/step 5.74979900E-02  wait/round 473.3 us
+       exchange balance: mpi_wait seconds min   3.69185670E+00 mean   3.93073112E+00 max   4.05640940E+00  max/min     1.10  slowest rank 12
+=== boundary : UCX_MEMTYPE_CACHE=n  GPUS=0,2,3,1  (2026-09-10 03:26:41)
+    hosts(4) s/step 4.07809795E-02  wait/round 71.9 us
+       exchange balance: mpi_wait seconds min   5.60820400E-01 mean   7.09695431E-01 max   8.60654600E-01  max/min     1.53  slowest rank 7
+=== ucx sweep done 2026-09-10 03:26:55
+=== ucx job finished ===
+
+============================= JOB FEEDBACK =============================
+
+Job ID: 5139170
+Cluster: hk
+User/Group: xt8786/hk-project-exasim
+Account: hk-project-exasim
+State: COMPLETED (exit code 0)
+Partition: accelerated
+Nodes: 4
+Cores per node: 80
+Nodelist: hkn[0707-0708,0713-0714]
+CPU Utilized: 00:24:53
+CPU Efficiency: 3.01% of 13:46:40 core-walltime
+Job Wall-clock time: 00:02:35
+Starttime: Thu Sep 10 03:24:20 2026
+Endtime: Thu Sep 10 03:26:55 2026
+Memory Utilized: 25.30 GB
+Memory Efficiency: 1.30% of 1.90 TB (485.84 GB/node)
+The task which had the largest memory consumption differs by 100.26% from the average task max memory consumption
+Energy Consumed: 441021 Joule / 122.505833333333 Watthours
+Average node power draw: 2845.29677419355 Watt
