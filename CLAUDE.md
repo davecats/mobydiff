@@ -945,12 +945,24 @@ immersed boundary. Phased, each phase verified before the next:
   kernels move 8-148 B and cost 5-22 us against the exchange kernels' 62-88. The
   arrays are ALREADY resident from `init_block_exchange`'s `target enter data`, so
   none of the ~10 kB per launch is data the device needs. **Recoverable
-  7.8-9.4 ms/step = 19-23% of the refined 16-rank step.** Fix: stop referencing
-  `c%component` inside target regions (local arrays or dummy arguments, so the map
-  list holds plain present arrays). NEXT: ONE kernel first —
-  `copy_local_same_level` — checking the 7952 B block disappears and its bracket
-  falls from 62 us toward the ~20 us floor; scheduling change, so bit-exact,
-  7-case suite + Pass G, CPU and GPU. `horeka/exchange/analyse_launch_traffic.py`
+  7.8-9.4 ms/step = 19-23% of the refined 16-rank step.** FIXED (2026-09-11, job
+  5142027, same report §7): **`comm_type` was the ONLY derived type in the solver
+  that did not map its PARENT object** — `blk`, `bf`, `bc`, `g`, `ibm`, `sst`,
+  `turb` all do, it is the convention this file states, and comm.f90 was the one
+  place it was missed, so there was no device copy of `c` for the components to
+  attach into. One line each way (`map(to: c)` before the component maps,
+  `map(delete: c)` after), plus a local copy of `activeVars` — the ONE thing a
+  kernel reads from `c` that changes per call, which a resident `c` would
+  otherwise leave stale. Measured: H2D per exchange-kernel launch **14–23 copies
+  / ~10 kB → 0–1 copies / 0–16 B**; per step 3484 copies and 1.13 MB → 456 and
+  ~0; per-launch fixed cost pack **88.9→18.3** us, unpack 78.5→18.0, same-level
+  copy 62.8→14.6, cross-level 81.6→18.3 — every exchange kernel now at the floor
+  the projection kernels already had, with the two `c`-free controls moving 0.8 %.
+  Step at 4 ranks: refined **−8.36 %**, single-level **−3.37 %**, against 8.51 and
+  6.62 ms/step predicted from the per-launch table. BIT-EXACT (max_abs 0) on both
+  production cases and all 7 suite cases incl. every RANS scalar. 8/16 ranks
+  queued (job 5142047) — the launch bill is rank-independent, so the same
+  absolute ~8.6 ms should be ~20 % of the refined 16-rank step. `horeka/exchange/analyse_launch_traffic.py`
   reproduces the per-launch traffic table from an nsys sqlite export. Cheap concrete win meanwhile: fold the local copy into the pack
   kernel (independent, both before the `Waitall`, 2.3 ms/step, bit-exact).
   Recommended AGAINST: fusing the cross-level kernel into the same-level one — it

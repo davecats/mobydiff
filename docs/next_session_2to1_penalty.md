@@ -72,8 +72,20 @@
 > intercepts to 1 % on two configs whose device times differ by 3x, so the
 > "fixed per launch" reading now rests on two methods.
 >
-> **Estimated recoverable: 7.8–9.4 ms/step = 19–23 % of the refined 16-rank
-> step.** Fix direction: stop referencing `c%component` inside the target regions
+> **FIXED 2026-09-11 (job 5142027), one line.** `comm_type` was the only derived
+> type in the solver that did not map its PARENT object; every other one does, and
+> that is why `blk%q` cost 8 B where `c%lOff` cost 7 952. `map(to: c)` before the
+> component maps and `map(delete: c)` after, plus a local copy of `activeVars`
+> (the one thing a kernel reads from `c` that changes per call, which a resident
+> `c` would leave stale). H2D per exchange-kernel launch **14–23 copies / ~10 kB →
+> 0–1 / 0–16 B**; per-launch fixed cost pack 88.9→18.3 us, unpack 78.5→18.0,
+> same-level copy 62.8→14.6, cross-level 81.6→18.3; step at 4 ranks refined
+> **−8.36 %**, single-level −3.37 %, matching the per-launch ledger to 1.5 % and
+> 5 %. **Bit-exact** (max_abs 0) on both production cases and all seven suite
+> cases. 8/16 ranks queued as job 5142047.
+>
+> Superseded estimate: recoverable 7.8–9.4 ms/step = 19–23 % of the refined
+> 16-rank step. Fix direction: stop referencing `c%component` inside the target regions
 > — bind what each kernel needs to local arrays outside, or pass them as dummy
 > arguments, so the map list holds plain already-present arrays instead of a
 > derived type. **Next step is ONE kernel, not six**: hoist
