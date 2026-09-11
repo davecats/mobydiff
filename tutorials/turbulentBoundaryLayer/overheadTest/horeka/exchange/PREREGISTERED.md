@@ -158,3 +158,45 @@ it would NOT name the mechanism; it would only confirm that the cross-level
 kernel is a second per-round call of the same order as the first. The mechanism
 needs a timeline, and this file records that I was one step from publishing a
 third wrong one.
+
+---
+
+## Third addendum — pre-registered readings for the nsys timeline (job 5141872)
+
+Written before the trace came back. The quantity being explained is the
+per-launch fixed cost measured on 2026-09-10: same-level copy 56–67 us,
+cross-level copy 84.6–87.3, pack ~92–114, unpack ~83–100, against
+`jacobi_compute_phi` at 24–26.
+
+**The control first.** `jacobi_compute_phi` at 4 ranks on `refined_yp82` should
+show a device duration of ~665 us against a host bracket of ~690 — i.e. **the
+cheapest kernel in the solver should still cost ~25 us of host-side time per
+launch**. If it does not — if its host bracket and device duration agree — then
+the 24–26 us intercept is not launch overhead at all and everything built on the
+"fixed per launch" reading needs re-examining.
+
+**The number that decides the mechanism: H2D copies per launch.** If the fixed
+cost is OpenMP `map`-clause marshalling, each launch should be preceded by one
+small host-to-device copy per mapped item that needs one, and the count should
+track the kernel's map list — *not* the map count I used in the first addendum
+(which the sweep control refuted) but the count of items that actually require a
+transfer. Counting derived-type components and module arrays separately from
+plain scalars:
+
+| kernel | map items | of which derived-type components / module arrays | predicted H2D per launch |
+|---|---|---|---|
+| `jacobi_compute_phi` | 10 | 4 components + 2 module arrays | **4–6** |
+| `copy_local_same_level` | 11 | 9 components | **9–11** |
+| `pack_entries` | 20 | 15 | **15–17** |
+| `unpack_entries` | 21 | 15 | **15–17** |
+| `copy_local_cross_level` | 21 | 16 | **16–18** |
+
+nsys already reported ~1300 H2D copies per step at ~2 us in every configuration
+(`results_horeka_2026-09-10.md` §5, "not chased"); ~200 kernel launches per step
+makes that ~6.5 per launch on average, which is the right order for this table.
+
+| outcome | conclusion |
+|---|---|
+| counts track the component column, sweep low and pack/unpack high | **the fixed cost is map-clause marshalling**, and the fix is to stop re-mapping resident arrays every launch (hoisted `target data`, or device pointers). The first addendum's mechanism was right in kind and wrong in the variable it was counted against. |
+| counts are flat across kernels | marshalling is NOT it; look at the API summary for what else scales — `cuLaunchKernel` argument setup, or an implicit synchronise per region. |
+| device duration ≈ host bracket for the exchange kernels | the "fixed cost" is device work after all, the kernels are simply inefficient at small sizes, and **sections 5 and 8 of the report are wrong**. |
