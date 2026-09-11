@@ -1,0 +1,7 @@
+job    : 5139977
+date   : 2026-09-11 15:52:49 CEST
+nodes  : 4  (hkn[0420,0428,0435,0516])
+commit : e0542a53a25db0e453dd0f2cf9afba360821ed02
+dirty  : 0
+ref    : 703e62d4595dfc25c593d7a8db99035a5f9af6aa
+gpu    : NVIDIA A100-SXM4-40GB

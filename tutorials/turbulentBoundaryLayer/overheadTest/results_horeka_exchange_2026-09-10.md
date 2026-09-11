@@ -283,15 +283,8 @@ is measured; what it consists of is not identified here.**
 - **Not overlap.** Section 3.
 - **Not a mechanism for the per-launch cost.** Correlated with the number of
   mapped arrays; not proportional to it; not traced.
-- **Not 16 ranks.** Everything above is 1/4/8 ranks in one allocation, because
-  the 4-node queue is three days out. The committed 16-rank logs of job 5139351
-  give the same picture through the older aggregate bucket (13.24 vs 13.29 ms/step
-  of device-local exchange on 138.41 M and 60.56 M cells), and the split
-  projected to 16 ranks gives 11.7 ms/step of launch cost = **28 % of the refined
-  step** — but that projection has not been measured. **Job 5139977 is queued for
-  it** (4 nodes, Pass G + Pass 1 at 16 ranks, results into
-  `$RUN_DIR/results_exchange16`); at submission Slurm estimated its start five
-  days out, so whoever reads this next should collect it rather than re-run it.
+- **16 ranks is now measured too** (section 11, job 5139977) and agrees; sections
+  4–8 nonetheless rest on the 1/4/8-rank allocation and should be read that way.
 - **One machine, one node type**, as always.
 
 ## 8 — The lever, and the experiment that would confirm it
@@ -401,3 +394,58 @@ successes:
   both submit scripts now **stage their driver into `$RUN_DIR` and run the copy**,
   so the source tree can be edited while a job is in flight. The 8x2 A0 pairs
   finished before the edit and are the ones quoted; the 4x1 control was re-run.
+
+## 11 — 16 ranks, measured (job 5139977, 4 nodes, hkn[0420,0428,0435,0516])
+
+The 4-node allocation landed a day after the rest of this report was written.
+Same binary, same drivers, 100 steps; Pass G re-run inside it is `max_abs 0` on
+both cases again.
+
+**The op split holds at a fourth rank count: 16.43 %** (`refined_yp82`) and
+16.38 % (`refined_big`), the same four figures as at 1, 4 and 8.
+
+| config @ 16 ranks | s/step | pack | unpack | local_copy | copy_cross | mpi_wait | device-local ms/step | % of step |
+|---|---|---|---|---|---|---|---|---|
+| `base_jacobi` | 0.061008 | 130.5 | 105.6 | 0.1 | 0.1 | 165.9 | 9.21 | 15.1 % |
+| `rect_jacobi` | 0.066560 | 100.6 | 91.6 | 145.1 | 0.2 | 138.7 | **13.18** | 19.8 % |
+| `nb16_jacobi` | 0.083823 | 101.7 | 97.6 | 431.7 | 0.2 | 160.6 | 24.64 | 29.4 % |
+| `refined_yp82_rect_jacobi` | 0.041729 | 100.3 | 86.9 | 93.1 | **95.3** | 86.0 | **13.23** | **31.7 %** |
+| `refined_big_rect_jacobi` | 0.106302 | 105.7 | 95.0 | 192.0 | **116.1** | 105.8 | 18.07 | 17.0 % |
+
+**`rect_jacobi` 13.18 ms/step, `refined_yp82` 13.23 ms/step — the same device-local
+exchange time on 138.41 M and 60.56 M cells, measured directly.** Section 1
+inferred this from the committed aggregates (13.24 / 13.29); it is now a
+same-allocation measurement with the buckets split.
+
+### The 4-and-8-rank fits predict 16 ranks
+
+Nothing here was refitted. The intercepts and slopes of sections 5 and 5b,
+evaluated at the 16-rank point counts:
+
+| quantity | predicted | measured | error |
+|---|---|---|---|
+| `rect` `sweep` | 404.5 us | 405.6 | −0.3 % |
+| `refined` `sweep` | 192.1 | 192.5 | −0.2 % |
+| `rect` `apply` | 1150.7 | 1152.8 | −0.2 % |
+| `refined` `apply` | 621.2 | 619.9 | +0.2 % |
+| `nb16` same-level copy | 431.3 | 431.7 | −0.1 % |
+| `rect` same-level copy | 142.9 | 145.1 | −1.5 % |
+| `refined` same-level copy | 96.0 | 93.1 | +3.1 % |
+| `refined` cross-level copy | 92.1 | 95.3 | −3.4 % |
+
+Four projection numbers to 0.3 % and four exchange numbers to 3.4 %, across a
+2x extrapolation in rank count. The "fixed per launch + linear in points"
+description is not a curve-fit through three points; it predicts.
+
+### The bill at 16 ranks
+
+| | launch-fixed | % of step |
+|---|---|---|
+| `rect_jacobi` | 9.25 ms/step | 13.9 % |
+| `refined_yp82` | 11.66 ms/step | **27.9 %** |
+| `refined_yp82` + `interface_correct` | **13.28 ms/step** | **31.8 %** |
+
+**Just under a third of the refined 16-rank step is kernel-launch fixed cost**,
+against 1.7 ms/step of actual halo data movement. The projection in section 7
+said 28 %; measured 27.9 % (31.8 % with `interface_correct`). Every conclusion of
+sections 4–8 stands at 16 ranks.
