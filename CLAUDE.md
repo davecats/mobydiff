@@ -935,12 +935,23 @@ immersed boundary. Phased, each phase verified before the next:
   against 1.7 ms/step of actual halo data movement. Also: **A0 re-run at 8 ranks fails again** (5.7 ms of
   compute between the posts and the Waitall leaves `mpi_wait` at 1.06–1.44x of
   baseline and adds exactly 39 x 5.7 ms to the step) — **P2/overlap is CLOSED**
-  and the 2-rank probe's scope caveat is discharged. NEXT: an nsys per-kernel
-  timeline of what those 60–100 us are — the fixed cost correlates with the number
-  of mapped arrays but NOT proportionally, and
-  `overheadTest/horeka/exchange/PREREGISTERED.md` records that fitting a mechanism
-  to that correlation was one step from being this campaign's third wrong
-  mechanism. Cheap concrete win meanwhile: fold the local copy into the pack
+  and the 2-rank probe's scope caveat is discharged. MECHANISM NAMED (2026-09-11, job
+  5141872, `overheadTest/results_kernel_timeline_2026-09-11.md`): **every launch of
+  an exchange kernel copies the ENTIRE `comm_type` object host-to-device — 7952 B,
+  all 45 of its array descriptors — plus 14-23 separate descriptor/scalar copies**,
+  whatever the kernel names. 26 rank-1 descriptors x 152 B + 19 rank-2 x 200 B =
+  7752 B accounts for the block; the trace's other copy sizes (8/152/200 B) are
+  scalars and the two descriptor ranks. No other kernel pays one — the projection
+  kernels move 8-148 B and cost 5-22 us against the exchange kernels' 62-88. The
+  arrays are ALREADY resident from `init_block_exchange`'s `target enter data`, so
+  none of the ~10 kB per launch is data the device needs. **Recoverable
+  7.8-9.4 ms/step = 19-23% of the refined 16-rank step.** Fix: stop referencing
+  `c%component` inside target regions (local arrays or dummy arguments, so the map
+  list holds plain present arrays). NEXT: ONE kernel first —
+  `copy_local_same_level` — checking the 7952 B block disappears and its bracket
+  falls from 62 us toward the ~20 us floor; scheduling change, so bit-exact,
+  7-case suite + Pass G, CPU and GPU. `horeka/exchange/analyse_launch_traffic.py`
+  reproduces the per-launch traffic table from an nsys sqlite export. Cheap concrete win meanwhile: fold the local copy into the pack
   kernel (independent, both before the `Waitall`, 2.3 ms/step, bit-exact).
   Recommended AGAINST: fusing the cross-level kernel into the same-level one — it
   saves 2.0 ms of launch but puts the interface gather's ~128 registers on all 39

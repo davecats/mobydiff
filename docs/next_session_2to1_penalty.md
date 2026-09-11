@@ -56,7 +56,32 @@
 > **3.66 ms/step = 6.1 % of the refined 8-rank step of refinement-specific cost,
 > almost all of it launches rather than work. That is the 2:1 tax at scale.**
 >
-> **NEXT, and do not skip the first step:** an nsys per-kernel timeline of what
+> **THE TIMELINE IS RUN (2026-09-11, job 5141872,
+> `overheadTest/results_kernel_timeline_2026-09-11.md`) AND THE MECHANISM IS
+> NAMED: every launch of an exchange kernel copies the ENTIRE `comm_type` object
+> host-to-device — 7 952 bytes, all 45 of its array descriptors — plus 14–23
+> separate descriptor and scalar copies, whatever the kernel actually names.** No
+> other kernel in the solver pays one: the projection kernels move 8–148 B per
+> launch and cost 5–22 us against the exchange kernels' 62–88. The arithmetic
+> identifies the block exactly — 26 rank-1 descriptors at 152 B + 19 rank-2 at
+> 200 B = 7 752 B, the rest being the type's scalars and handles — and the three
+> copy sizes in the trace (8 / 152 / 200 B) are scalars, rank-1 and rank-2
+> descriptors. The arrays are ALREADY resident from `init_block_exchange`'s
+> `target enter data`; none of the 10 kB per launch is data the device needs.
+> Independently, (untraced bracket − traced device time) reproduces the affine-fit
+> intercepts to 1 % on two configs whose device times differ by 3x, so the
+> "fixed per launch" reading now rests on two methods.
+>
+> **Estimated recoverable: 7.8–9.4 ms/step = 19–23 % of the refined 16-rank
+> step.** Fix direction: stop referencing `c%component` inside the target regions
+> — bind what each kernel needs to local arrays outside, or pass them as dummy
+> arguments, so the map list holds plain already-present arrays instead of a
+> derived type. **Next step is ONE kernel, not six**: hoist
+> `copy_local_same_level`'s `c%` references and check that the 7 952 B block
+> disappears and its bracket falls from 62 us toward the ~20 us floor. Scheduling
+> change ⇒ bit-exact, 7-case suite + production Pass G, CPU and GPU.
+>
+> Superseded below: an nsys per-kernel timeline of what
 > those 60–100 us consist of. The fixed cost CORRELATES with the number of mapped
 > arrays but not proportionally (3.2 us each for the 6-array sweep kernel,
 > 5.6–7.4 for the 8.5–15-array exchange kernels), and `PREREGISTERED.md` records
