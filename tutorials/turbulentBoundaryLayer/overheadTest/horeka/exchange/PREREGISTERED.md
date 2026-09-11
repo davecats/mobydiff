@@ -200,3 +200,22 @@ makes that ~6.5 per launch on average, which is the right order for this table.
 | counts track the component column, sweep low and pack/unpack high | **the fixed cost is map-clause marshalling**, and the fix is to stop re-mapping resident arrays every launch (hoisted `target data`, or device pointers). The first addendum's mechanism was right in kind and wrong in the variable it was counted against. |
 | counts are flat across kernels | marshalling is NOT it; look at the API summary for what else scales — `cuLaunchKernel` argument setup, or an implicit synchronise per region. |
 | device duration ≈ host bracket for the exchange kernels | the "fixed cost" is device work after all, the kernels are simply inefficient at small sizes, and **sections 5 and 8 of the report are wrong**. |
+
+---
+
+## Fourth addendum — the A/B for `map(to: c)` (job 5142027)
+
+Written after submitting, before any result. The change is one line plus the
+`activeVars` local copy it forces.
+
+| # | prediction | what refutes it |
+|---|---|---|
+| 1 | the **7 952 B copy disappears** from every exchange kernel's histogram | it is still there ⇒ `map(to: c)` is not the mechanism; revert |
+| 2 | H2D copies/launch fall from 14–23 to **~1–3**, bytes/launch from ~10 kB to **~100 B** | a partial fall ⇒ the parent copy is gone but the per-component descriptor copies are not, and the remaining ones need hoisting too |
+| 3 | per-launch brackets fall from pack 88 / unpack 78 / copy 62 / cross 81 us toward the **5–25 us floor** the projection kernels already achieve | brackets unchanged ⇒ the traffic was never the cost, and §5 of the timeline report is wrong about what the 62–88 us buys |
+| 4 | **max_abs 0** on Pass G and all seven suite cases | any nonzero ⇒ the attach is not happening and the device is reading host addresses, or `activeVars` is stale somewhere I did not find |
+| 5 | at 4 ranks the refined step falls ~8 % (0.100 → ~0.092 s); the headline 19–23 % is a **16-rank** claim and is NOT tested here | a fall much larger than 8 % at 4 ranks would mean something else moved too |
+
+Prediction 4 is the one that matters most: `comm_type` holds MPI handles and
+allocatable components that are never attached (`request`, `peerRank`), and if
+nvfortran mishandles any of that the device will be reading host addresses.
