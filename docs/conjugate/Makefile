@@ -4,17 +4,20 @@
 #   make distclean-> also remove the pdf
 # Needs pdflatex + latexmk with tikz/pgfplots (texlive-pictures).
 
-DOC = conjugate_ibm
+# conjugate_ibm          the DESIGN note: alternatives, the full derivation,
+#                        the corner model -- why the scheme looks as it does
+# conjugate_ibm_asbuilt  the AS-BUILT note: only what the code does today
+DOCS = conjugate_ibm conjugate_ibm_asbuilt
 
-all: $(DOC).pdf
+all: $(addsuffix .pdf,$(DOCS))
 
-$(DOC).pdf: $(DOC).tex
-	latexmk -pdf -interaction=nonstopmode -halt-on-error $(DOC).tex
+%.pdf: %.tex
+	latexmk -pdf -interaction=nonstopmode -halt-on-error $<
 
 clean:
-	latexmk -c $(DOC).tex
+	$(foreach d,$(DOCS),latexmk -c $(d).tex;)
 
 distclean:
-	latexmk -C $(DOC).tex
+	$(foreach d,$(DOCS),latexmk -C $(d).tex;)
 
 .PHONY: all clean distclean

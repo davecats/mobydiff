@@ -1,4 +1,20 @@
-# Conjugate heat transfer at an immersed interface — derivation note
+# Conjugate heat transfer at an immersed interface
+
+**Two documents, and they answer different questions.**
+
+| file | question it answers |
+|---|---|
+| `conjugate_ibm_asbuilt.tex` → `.pdf` | **What does the code do?** 6 pages: the face coefficient, the fluid-fraction capacity, the time-step bound, the configuration surface and its guards, the two diagnostics, what ships DISABLED and why, what was never built, and the validation status. |
+| `conjugate_ibm.tex` → `.pdf` | **Why does it look like that?** 30+ pages of design note: three source methods, the exact cut-face flux with its tangential term, the COCO corner route, alternatives weighed and rejected. |
+
+Start with the as-built note. Go to the design note only when you need the
+derivation behind a choice, or are reopening something it rejected — and read
+§8 of the as-built note first, because two of the design note's routes
+(the tangential correction, the corner model) were measured and are not in use.
+
+---
+
+## The design note
 
 `conjugate_ibm.tex` is the long-form companion to
 [`../next_session_conjugate.md`](../next_session_conjugate.md): the full
