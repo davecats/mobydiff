@@ -32,7 +32,7 @@ export UCX_MEMTYPE_CACHE=n OMP_NUM_THREADS=1
 cd "$CODE_DIR" || exit 1
 ./compile.sh gpu || exit 1
 EXE="$CODE_DIR/build_gpu/moby_solve"
-REF="$CODE_DIR/build_gpu/moby_solve.ref"
+REF="${REF_EXE:-$CODE_DIR/build_gpu/moby_solve.ref}"
 [ -x "$EXE" ] && [ -x "$REF" ] || { echo "ERROR: missing binary" >&2; exit 1; }
 
 RES="${RESDIR:-$RUN_DIR/results_mapgate}"; mkdir -p "$RES"
@@ -42,7 +42,7 @@ RES="${RESDIR:-$RUN_DIR/results_mapgate}"; mkdir -p "$RES"
     echo "nodes  : ${SLURM_JOB_NUM_NODES:-?}  (${SLURM_JOB_NODELIST:-?})"
     echo "commit : $(git -C "$CODE_DIR" rev-parse HEAD)"
     echo "dirty  : $(git -C "$CODE_DIR" status --porcelain -uno | wc -l)"
-    echo "ref    : build_gpu/moby_solve.ref (pre-059248e, production flags)"
+    echo "ref    : $REF"
     echo "nsteps : ${NSTEPS:-200}"
 } | tee "$RES/provenance.txt"
 

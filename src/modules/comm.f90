@@ -730,6 +730,14 @@ contains
         end do
 
 #ifdef USE_OPENMP_OFFLOAD
+        ! THE PARENT OBJECT FIRST, then the components that attach into it --
+        ! the idiom enter_block_data already uses for blk, and the reason blk%q
+        ! costs a kernel an 8-byte pointer copy per launch while c%lOff used to
+        ! cost 7952: with no device copy of c to attach to, every target region
+        ! naming a c% component had to marshal the WHOLE object, all 45 array
+        ! descriptors of it, on every launch (measured:
+        ! results_kernel_timeline_2026-09-11.md).
+        !$omp target enter data map(to: c)
         !$omp target enter data map(to: c%dsSlot)
         !$omp target enter data map(to: &
         !$omp& c%lPointEntry, c%sPointEntry, c%rPointEntry, &
@@ -758,6 +766,7 @@ contains
             !$omp& c%sGA, c%sGB, c%sGS, c%sGC, c%sDstLo, c%sPhiN, &
             !$omp& c%peerSendOff, c%peerRecvOff, c%peerSendCopyOff, c%peerRecvCopyOff, &
             !$omp& c%rSlot, c%rPeer, c%rLo, c%rExt, c%rDir, c%rWp, c%rWpDst, c%rOff, c%rNrm)
+            !$omp target exit data map(delete: c)
 #endif
             deallocate(c%sendbuf, c%recvbuf)
             deallocate(c%lPointEntry, c%sPointEntry, c%rPointEntry)
@@ -1641,10 +1650,16 @@ contains
 
         integer :: gp, v, e, pt, ni, nj, nPts, nv, qj, qk
         integer :: di, dj, dk, var, si, sj, sk, ds, ss
+        integer(C_INT) :: av(NVAR)
 
         nPts = c%nLocalCopyPts
         nv = c%nActiveVars
         if (nPts <= 0 .or. nv <= 0) return
+        ! activeVars changes on every call, and c is now resident: a plain
+        ! map(to: c%activeVars) would find it inside the device copy of c and
+        ! leave the STALE value there. Take a local copy so the kernel maps a
+        ! fresh 16-byte array instead -- exactly the transfer this used to do.
+        av = c%activeVars
 
         ! ONE thread per halo POINT, with the variables looped INSIDE the thread.
         ! Measured against the two obvious alternatives (A6000, 1.18 M points):
@@ -1659,7 +1674,7 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
         !$omp& map(to: nPts, nv, c%lOff, c%lPointEntry, c%lSrcSlot, c%lDstSlot, &
-        !$omp& c%lDstLo, c%lExt, c%lGB, c%activeVars) &
+        !$omp& c%lDstLo, c%lExt, c%lGB, av) &
         !$omp& map(tofrom: blk%q) &
         !$omp& private(e,pt,ni,nj,di,dj,dk,qj,qk,v,var,si,sj,sk,ds,ss)
 #endif
@@ -1682,7 +1697,7 @@ contains
             ds = c%lDstSlot(e)
             ss = c%lSrcSlot(e)
             do v = 1, nv
-                var = int(c%activeVars(v))
+                var = int(av(v))
                 blk%q(di, dj, dk, var, ds) = blk%q(si, sj, sk, var, ss)
             end do
         end do
@@ -1702,18 +1717,24 @@ contains
         integer :: b1, b2, b3, s1, s2, s3, og1, og2, og3, np1, np2, np3
         real(C_DOUBLE) :: val, wa1, wb1, wa2, wb2, wa3, wb3
         logical :: doBlend
+        integer(C_INT) :: av(NVAR)
 
         nv = c%nActiveVars
         pLo = c%nLocalCopyPts*nv
         pHi = c%nLocalPts*nv
         if (pHi <= pLo) return
         sf = merge(1, 0, c%syncFace)
+        ! activeVars changes on every call, and c is now resident: a plain
+        ! map(to: c%activeVars) would find it inside the device copy of c and
+        ! leave the STALE value there. Take a local copy so the kernel maps a
+        ! fresh 16-byte array instead -- exactly the transfer this used to do.
+        av = c%activeVars
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
         !$omp& map(to: pLo, pHi, nv, sf, c%nLocal, c%lOff, c%lPointEntry, c%lSrcSlot, c%lDstSlot, &
         !$omp& c%lDstLo, c%lExt, c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lWp, c%lWpDst, &
-        !$omp& c%lNrm, c%activeVars) &
+        !$omp& c%lNrm, av) &
         !$omp& map(tofrom: blk%q) &
         !$omp& private(p,gp,v,e,pt,ni,nj,di,dj,dk,var,b1,b2,b3,s1,s2,s3,val,doBlend, &
         !$omp& og1,og2,og3,np1,np2,np3,wa1,wb1,wa2,wb2,wa3,wb3)
@@ -1728,7 +1749,7 @@ contains
             di = c%lDstLo(1,e) + modulo(pt, ni)
             dj = c%lDstLo(2,e) + modulo(pt/ni, nj)
             dk = c%lDstLo(3,e) + pt/(ni*nj)
-            var = int(c%activeVars(v+1))
+            var = int(av(v+1))
             ! Per-dim 2-point weighted gather. The constant-1/2 interface INJECTS
             ! the velocity prolong (the energy-conserving transfer): the covering
             ! coarse value is placed at the fine halo. lGC==2 (non-normal component)
@@ -1929,17 +1950,23 @@ contains
         integer :: di, dj, dk, var, peer, pos, nv, totalItems, copyOnly
         integer :: b1, b2, b3, c1, c2, c3, s1, s2, s3
         real(C_DOUBLE) :: val
+        integer(C_INT) :: av(NVAR)
 
         nv = c%nActiveVars
         totalItems = merge(c%peerSendCopyOff(c%nPeers), c%peerSendOff(c%nPeers), c%copyOnly)*nv
         if (totalItems == 0) return
         copyOnly = merge(1, 0, c%copyOnly)
+        ! activeVars changes on every call, and c is now resident: a plain
+        ! map(to: c%activeVars) would find it inside the device copy of c and
+        ! leave the STALE value there. Take a local copy so the kernel maps a
+        ! fresh 16-byte array instead -- exactly the transfer this used to do.
+        av = c%activeVars
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
         !$omp& map(to: totalItems, nv, copyOnly, c%nPeers, c%nSend, c%sOff, c%sPointEntry, c%sSlot, c%sPeer, &
         !$omp& c%sDstLo, c%sExt, c%sGA, c%sGB, c%sGS, c%sGC, &
-        !$omp& c%peerSendOff, c%peerSendCopyOff, c%activeVars, blk%q) &
+        !$omp& c%peerSendOff, c%peerSendCopyOff, av, blk%q) &
         !$omp& map(tofrom: c%sendbuf) &
         !$omp& private(p,gp,v,e,pt,ni,nj,di,dj,dk,var,peer,pos,b1,b2,b3,c1,c2,c3,s1,s2,s3,val)
 #endif
@@ -1959,7 +1986,7 @@ contains
             di = c%sDstLo(1,e) + modulo(pt, ni)
             dj = c%sDstLo(2,e) + modulo(pt/ni, nj)
             dk = c%sDstLo(3,e) + pt/(ni*nj)
-            var = int(c%activeVars(v+1))
+            var = int(av(v+1))
             b1 = ishft(c%sGA(1,e)*di + c%sGB(1,e), -c%sGS(1,e))
             b2 = ishft(c%sGA(2,e)*dj + c%sGB(2,e), -c%sGS(2,e))
             b3 = ishft(c%sGA(3,e)*dk + c%sGB(3,e), -c%sGS(3,e))
@@ -1991,18 +2018,24 @@ contains
         integer :: i, j, k, var, peer, pos, nv, totalItems, copyOnly, sf
         real(C_DOUBLE) :: val
         logical :: doBlend
+        integer(C_INT) :: av(NVAR)
 
         nv = c%nActiveVars
         totalItems = merge(c%peerRecvCopyOff(c%nPeers), c%peerRecvOff(c%nPeers), c%copyOnly)*nv
         if (totalItems == 0) return
         copyOnly = merge(1, 0, c%copyOnly)
         sf = merge(1, 0, c%syncFace)
+        ! activeVars changes on every call, and c is now resident: a plain
+        ! map(to: c%activeVars) would find it inside the device copy of c and
+        ! leave the STALE value there. Take a local copy so the kernel maps a
+        ! fresh 16-byte array instead -- exactly the transfer this used to do.
+        av = c%activeVars
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
         !$omp& map(to: totalItems, nv, copyOnly, sf, c%nPeers, c%nRecv, c%rOff, c%rPointEntry, c%rSlot, c%rPeer, &
         !$omp& c%rLo, c%rExt, c%rDir, c%rWp, c%rWpDst, c%rNrm, &
-        !$omp& c%peerRecvOff, c%peerRecvCopyOff, c%activeVars, c%recvbuf) &
+        !$omp& c%peerRecvOff, c%peerRecvCopyOff, av, c%recvbuf) &
         !$omp& map(tofrom: blk%q) &
         !$omp& private(p,gp,v,e,pt,ni,nj,i,j,k,var,peer,pos,val,doBlend)
 #endif
@@ -2020,7 +2053,7 @@ contains
             i = c%rLo(1,e) + modulo(pt, ni)
             j = c%rLo(2,e) + modulo(pt/ni, nj)
             k = c%rLo(3,e) + pt/(ni*nj)
-            var = int(c%activeVars(v+1))
+            var = int(av(v+1))
             peer = c%rPeer(e)
             pos = (gp - c%peerRecvOff(peer-1))*nv + v + 1
             val = c%recvbuf(pos,peer)
