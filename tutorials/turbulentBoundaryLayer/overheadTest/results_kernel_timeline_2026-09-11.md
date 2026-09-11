@@ -177,3 +177,112 @@ the 7-case suite plus the production-case Pass G, CPU and GPU.
 - **4 ranks, one node, one machine.** The fixed cost is a per-launch constant
   measured at 2, 4, 8 and 16 ranks, so the dissection should carry — but it was
   dissected at 4.
+
+---
+
+# 7 — The A/B: one line, and the traffic is gone
+
+Job 5142027, same partition and node class, both binaries built in the same job
+from a worktree at the pre-change commit (`365af76`) and the working tree.
+`refined_yp82_rect_jacobi` and `rect_jacobi`, 4 ranks on one node, 30 steps.
+
+The change is one line, plus the `activeVars` local copy it forces:
+
+```fortran
+!$omp target enter data map(to: c)      ! before the component maps
+!$omp target exit  data map(delete: c)  ! after them
+```
+
+**`comm_type` was the only derived type in the solver that did not map its parent
+object.** `blocks.f90` (`blk`), `bodyforce.f90` (`bf`), `boundary.f90` (`bc`),
+`gpu_runtime.f90` (`g`), `ibm.f90` (`ibm`), `rans.f90` (`sst`) and
+`turbulence.f90` (`turb`) all do — it is the convention CLAUDE.md states and the
+codebase otherwise follows everywhere. `init_block_exchange` mapped only the
+components, so there was no device copy of `c` for them to attach into, and every
+target region naming a `c%` component had to marshal the whole object.
+
+## Host-to-device traffic per launch
+
+| kernel | before | after |
+|---|---|---|
+| `comm_pack_entries` | 14.0 copies, 10 264 B | **1.0 copy, 16 B** |
+| `comm_unpack_entries` | 23.0, 10 192 B | **1.0, 16 B** |
+| `comm_copy_local_same_level` | 21.0, 9 264 B | **1.0, 16 B** |
+| `comm_copy_local_cross_level` | 22.0, 10 472 B | **1.0, 16 B** |
+| `comm_pack_scalar_entries` | 14.0, 10 264 B | **0** |
+| `comm_unpack_scalar_entries` | 20.0, 9 400 B | **0** |
+| `comm_copy_local_scalar_same_level` | 21.0, 9 264 B | **0** |
+| `comm_copy_local_scalar_entries` | 19.0, 9 968 B | **0** |
+| whole step | **3 484 copies, 1.13 MB, 6.85 ms of device time** | **456 copies, ~0 MB, 0.53 ms** |
+
+The 7 952-byte block is gone from every kernel. The single 16-byte copy that
+remains on the four velocity kernels is `av`, the `activeVars` local; the scalar
+variants do not read it and copy nothing at all. GPU busy fraction over the
+window rises from 68.7 % to 81.6 %.
+
+## The per-launch cost
+
+Untraced brackets, with the traced device duration subtracted as in section 2:
+
+| bucket | bracket before | bracket after | **fixed before** | **fixed after** |
+|---|---|---|---|---|
+| `pack` | 101.5 us | **31.2** | 88.9 | **18.3** |
+| `unpack` | 87.8 | **27.7** | 78.5 | **18.0** |
+| `local_copy` | 199.5 | **151.7** | 62.8 | **14.6** |
+| `copy_cross` | 116.9 | **53.8** | 81.6 | **18.3** |
+| `sweep` (control) | 697.6 | 692.1 | 8.7 | 3.3 |
+| `apply` (control) | 2095.0 | 2078.8 | — | — |
+
+**Every exchange kernel's per-launch cost collapses to 14–18 us — the floor the
+projection kernels already achieved.** The two controls, which never touched `c`,
+move by 0.8 %.
+
+## Step time, and the ledger
+
+| config, 4 ranks | before | after | change |
+|---|---|---|---|
+| `refined_yp82_rect_jacobi` | 0.103324 s/step | **0.094688** | **−8.36 %** |
+| `rect_jacobi` | 0.206870 | **0.199901** | **−3.37 %** |
+
+Predicted from the per-launch table (39 pack + 39 unpack + 39 same-copy + 24
+cross): **8.51 ms/step** for the refined case and **6.62** for the single-level
+one. Measured: **8.64** and **6.97**. The ledger closes to 1.5 % and 5 %.
+
+`rect_jacobi` gains less because its volume term is four times larger, so the
+same absolute saving is a smaller share — which is the whole point of section 5
+of `results_horeka_exchange_2026-09-10.md`: the launch bill is fixed, and it
+dominates exactly where strong scaling has shrunk the per-rank volume.
+
+## Gates — bit-exact
+
+Against the pre-change binary built in the same job:
+
+| gate | cases | worst max_abs |
+|---|---|---|
+| Pass G, production | `rect_jacobi` (138 412 032 pts), `refined_yp82` (60 555 264 pts) | **0** |
+| 7-case suite | min_channel ×2 (1 and 4 ranks), Beltrami y-slab, les_ibm, turb180, wf180_y30, lam30t — incl. nut, k, omega, gamma, rethetat | **0** |
+
+Prediction 4 was the one worth worrying about: `comm_type` holds MPI handles and
+allocatable components that are never attached (`request`, `peerRank`). nvfortran
+maps the object bytewise, attaches the components that are mapped after it, and
+leaves the rest with host addresses that no device code reads. It is exact.
+
+## 8 — The scorecard, and what is left
+
+| # | prediction | outcome |
+|---|---|---|
+| 1 | the 7 952 B copy disappears | **CONFIRMED** — gone from all eight comm kernels |
+| 2 | copies/launch 14–23 → ~1–3, bytes → ~100 B | **CONFIRMED, exceeded** — 0–1 copies, 0–16 B |
+| 3 | brackets fall toward the 5–25 us floor | **CONFIRMED** — 14–18 us |
+| 4 | max_abs 0 on Pass G and all seven suite cases | **CONFIRMED** |
+| 5 | ~8 % off the refined step at 4 ranks | **CONFIRMED** — 8.36 % |
+
+Not tested here, and the number the campaign actually cares about: **16 ranks**,
+where the same absolute ~8.6 ms/step saving falls on a 41.7 ms step, i.e. ~20 %.
+The launch bill is rank-independent by construction — it is the same per-launch
+constant at 2, 4, 8 and 16 — so it should carry, but it has not been measured.
+
+Also untouched, and now the largest single remaining launch cost:
+`interface_correct` is **3 kernels per call, 54 launches/step**, and
+`jacobi_apply` is 2 more. Their per-launch cost is already at the floor, so this
+is a kernel-count question, not a marshalling one.
