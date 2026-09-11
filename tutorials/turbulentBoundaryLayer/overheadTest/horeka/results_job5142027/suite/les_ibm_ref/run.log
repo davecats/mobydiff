@@ -1,0 +1,39 @@
+      __. - ~ ~ ~ - .
+_   ,//           __  ' ,
+ \  ||       __--  --    ,   ~~~~
+ , \|____---    o       ~~~    ~~~~
+,    _            __/   ~~ ,  ~~~               mobyDiff
+,       ---/ / __--   ~~   ,~~                  commit: 7aa1c7b
+ ,          /       ~~   ~~
+  ,         ~~~ ~~~     ~~,
+    ,    ~~~           , '
+      ' - , _ _ _ ,  '
+
+
+ reading input data...
+ reading restart metadata: IC.h5
+MPI Cartesian dimensions: 1 1 1
+ gpu binding (this node): 0->dev0   MOBY_GPU_ORDER unset (devices used in index order)
+ initialising grid...
+ coefficient file has no block_active table; keeping all blocks
+ OpenMP target devices available:            4
+ initialising fields...
+ reading restart fields: IC.h5
+ initialising pressure solver...
+ Chebyshev-Jacobi projection: lmin=  1.0276E-03 lmax=  2.0000E+00
+ initialising IBM...
+ reading IBM coefficients: ibm_coeff.h5
+ initialising turbulence model...
+ main loop starting...
+iteration time meanpx meanpz flowratex flowratez volume_k volume_epsilon wall_seconds_per_step
+        50   2.50000000E-02   1.00000000E+00   0.00000000E+00   1.24392647E+01  -1.12322465E-02   1.17024035E+00   2.20819708E+00   1.00241360E-02
+       100   5.00000000E-02   1.00000000E+00   0.00000000E+00   1.24405051E+01  -1.13080431E-02   1.18290015E+00   2.23497388E+00   9.67057900E-03
+       150   7.50000000E-02   1.00000000E+00   0.00000000E+00   1.24417296E+01  -1.13772001E-02   1.19581114E+00   2.27181763E+00   9.55608467E-03
+       200   1.00000000E-01   1.00000000E+00   0.00000000E+00   1.24429068E+01  -1.14390871E-02   1.20801417E+00   2.31234766E+00   9.49352950E-03
+ main loop ended...
+timing: nsteps 200 loop_seconds   1.89828010E+00 seconds_per_step   9.49140050E-03
+turb_timing: nut_update calls 600 nsteps 200 seconds   8.19761000E-02 seconds_per_step   4.09880500E-04 seconds_per_call   1.36626833E-04
+turb_timing: nut_exchange calls 600 nsteps 200 seconds   4.75965000E-02 seconds_per_step   2.37982500E-04 seconds_per_call   7.93275000E-05
+turb_timing: sgs_correction calls 600 nsteps 200 seconds   7.88721000E-02 seconds_per_step   3.94360500E-04 seconds_per_call   1.31453500E-04
+turb_timing: total_measured calls 1800 nsteps 200 seconds   2.08444700E-01 seconds_per_step   1.04222350E-03 seconds_per_call   1.15802611E-04
+ current time step:           200    field filename: channel_ibm_200.h5

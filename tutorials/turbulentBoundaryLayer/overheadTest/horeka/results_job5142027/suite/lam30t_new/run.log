@@ -1,0 +1,34 @@
+      __. - ~ ~ ~ - .
+_   ,//           __  ' ,
+ \  ||       __--  --    ,   ~~~~
+ , \|____---    o       ~~~    ~~~~
+,    _            __/   ~~ ,  ~~~               mobyDiff
+,       ---/ / __--   ~~   ,~~                  commit: 7aa1c7b
+ ,          /       ~~   ~~
+  ,         ~~~ ~~~     ~~,
+    ,    ~~~           , '
+      ' - , _ _ _ ,  '
+
+
+ reading input data...
+MPI Cartesian dimensions: 1 1 1
+ gpu binding (this node): 0->dev0   MOBY_GPU_ORDER unset (devices used in index order)
+ initialising grid...
+ OpenMP target devices available:            4
+ initialising fields...
+ initialising pressure solver...
+ initialising IBM...
+ initialising RANS geometry...
+ RANS geometry: 0 IBM wall cells, 0 solid cells
+ RANS domain face y_min: wall (inferred)
+ RANS domain face y_max: wall (inferred)
+ WARNING: dtmax   2.00E-02 exceeds the explicit eddy-diffusion bound ~  4.44E-04 for the AMBIENT nut in the finest cells (Peclet limiter is molecular-only) -- expect early blow-up if the ambient reaches them
+ initialising turbulence model...
+ main loop starting...
+ main loop ended...
+timing: nsteps 200 loop_seconds   8.81904100E-01 seconds_per_step   4.40952050E-03
+turb_timing: nut_update calls 600 nsteps 200 seconds   1.72476300E-01 seconds_per_step   8.62381500E-04 seconds_per_call   2.87460500E-04
+turb_timing: nut_exchange calls 600 nsteps 200 seconds   9.34380000E-03 seconds_per_step   4.67190000E-05 seconds_per_call   1.55730000E-05
+turb_timing: sgs_correction calls 600 nsteps 200 seconds   1.47024000E-02 seconds_per_step   7.35120000E-05 seconds_per_call   2.45040000E-05
+turb_timing: total_measured calls 1800 nsteps 200 seconds   1.96522500E-01 seconds_per_step   9.82612500E-04 seconds_per_call   1.09179167E-04
+ current time step:           200    field filename: lam30t_200.h5

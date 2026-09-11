@@ -1,0 +1,6 @@
+comparing /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_ab/suite/min_channel1_ref/channel_field_200.h5 vs /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_ab/suite/min_channel1_new/channel_field_200.h5
+  un           n=819200       max_abs=0
+  vn           n=819200       max_abs=0
+  wn           n=819200       max_abs=0
+  pn           n=819200       max_abs=0
+OK: worst max_abs = 0 over 4 dataset(s)

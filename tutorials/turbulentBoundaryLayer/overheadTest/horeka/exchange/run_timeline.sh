@@ -40,6 +40,9 @@ NSTEPS="${NSTEPS:-30}"
 # still has peers (and therefore pack/unpack) is the cleanest place to dissect
 # it, with no cross-node traffic in the timeline at all.
 SPECS="${SPECS:-refined_yp82_rect_jacobi:4:1 rect_jacobi:4:1}"
+# "A B" by default; "A" alone skips nsys, which is what a plain
+# before/after step-time comparison at another rank count needs.
+TL_PASSES="${TL_PASSES:-A B}"
 
 command -v mpirun >/dev/null || { echo "ERROR: mpirun not on PATH" >&2; exit 1; }
 [ -x "$EXE" ]  || { echo "ERROR: solver not executable: $EXE" >&2; exit 1; }
@@ -77,6 +80,7 @@ for spec in $SPECS; do
     fi
 
     ############ pass B -- nsys ############
+    case " $TL_PASSES " in *" B "*) ;; *) continue;; esac
     run="$RES/nsys_${cfg}_r${ranks}N${nodes}"
     [ -f "$run/run.log" ] && { echo "--- skip nsys $spec (done)"; continue; }
     stage "$cfg" "$run" || continue

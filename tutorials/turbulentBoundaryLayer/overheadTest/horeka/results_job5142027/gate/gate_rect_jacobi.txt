@@ -1,0 +1,6 @@
+comparing /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_ab/gate/gate_rect_jacobi_ref/overhead_20.h5 vs /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_ab/gate/gate_rect_jacobi_new/overhead_20.h5
+  un           n=138412032    max_abs=0
+  vn           n=138412032    max_abs=0
+  wn           n=138412032    max_abs=0
+  pn           n=138412032    max_abs=0
+OK: worst max_abs = 0 over 4 dataset(s)

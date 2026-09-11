@@ -1,0 +1,6 @@
+job    : 5142027
+date   : 2026-09-11 18:49:24 CEST
+nodes  : 1  (hkn0402)
+new    : 93299c63a8bb3f10618712edee1d7959a7c11a67  dirty 0
+ref    : 365af767dd290bcdaf951a4409fb9acd9edd2154
+gpu    : NVIDIA A100-SXM4-40GB
