@@ -36,6 +36,15 @@
 > The 2:1 interface's own exchange cost is therefore **2.03 ms/step of launch
 > against 0.36 ms of transfer — 85 % launch, 15 % data.**
 >
+> **16 RANKS MEASURED (job 5139977, 2026-09-11) and everything holds.** Cross-level
+> 16.43 % at a fourth rank count; `rect_jacobi` 13.18 ms/step and `refined_yp82`
+> 13.23 ms/step of device-local exchange on 138.41 M and 60.56 M cells — the
+> headline is now a direct measurement, not an inference. The 4-and-8-rank fits,
+> unrefitted, predict the 16-rank projection kernels to **0.3 %** and the exchange
+> kernels to **3.4 %**. Launch-fixed bill: 9.25 ms/step for `rect` (13.9 % of the
+> step), 11.66 for `refined` (27.9 %), **13.28 with `interface_correct` = 31.8 %**,
+> against 1.7 ms/step of actual halo data movement.
+>
 > **A THIRD launch cost sits outside the exchange.** The same fit on the
 > projection buckets: `jacobi_compute_phi` (one kernel, 6 mapped arrays) launches
 > at **24–26 us** whatever the mesh with an identical 43–46 ps/cell — the cheapest

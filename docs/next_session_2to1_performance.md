@@ -33,9 +33,12 @@
 > records a plausible mechanism ("~5.5 us per map-clause item") being refuted by a
 > control before it could be published.
 >
-> Outstanding: the 16-rank repeat (the 4-node queue was three days out; 1/4/8
-> ranks in one allocation is what this rests on, with the committed 16-rank
-> aggregates agreeing).
+> **16 ranks measured 2026-09-11** (job 5139977) and every conclusion holds: the
+> op split reads 16.43 % at a fourth rank count, `rect` and `refined` spend 13.18
+> and 13.23 ms/step of device-local exchange on 138.41 M and 60.56 M cells, and
+> the 4/8-rank fits predict the 16-rank kernels to 0.3 % (projection) and 3.4 %
+> (exchange) without refitting. **31.8 % of the refined 16-rank step is
+> launch-fixed cost.** Nothing is outstanding.
 
 
 Written 2026-09-10 from the session that fixed the rank-to-GPU mapping. Read the

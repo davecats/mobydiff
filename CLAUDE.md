@@ -927,7 +927,12 @@ immersed boundary. Phased, each phase verified before the next:
   whenever interfaces are present and that kernel does nb^2 work against the
   sweep's nb^3 — 91 us x 18 calls = **1.63 ms/step**. Refinement-specific total
   **3.66 ms/step = 6.1% of the refined 8-rank step, almost all launches: that is
-  the 2:1 tax at scale.** Also: **A0 re-run at 8 ranks fails again** (5.7 ms of
+  the 2:1 tax at scale.** CONFIRMED AT 16 RANKS (job 5139977): cross-level 16.43%
+  at a fourth rank count, `rect` 13.18 and `refined_yp82` 13.23 ms/step of
+  device-local exchange on 138.41 M and 60.56 M cells, and the 4/8-rank fits
+  predict the 16-rank projection kernels to 0.3% and the exchange kernels to 3.4%
+  without refitting. **31.8% of the refined 16-rank step is launch-fixed cost**
+  against 1.7 ms/step of actual halo data movement. Also: **A0 re-run at 8 ranks fails again** (5.7 ms of
   compute between the posts and the Waitall leaves `mpi_wait` at 1.06–1.44x of
   baseline and adds exactly 39 x 5.7 ms to the step) — **P2/overlap is CLOSED**
   and the 2-rank probe's scope caveat is discharged. NEXT: an nsys per-kernel
