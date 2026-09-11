@@ -1,0 +1,188 @@
+MPI Fortran module dir: /hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+HDF5_ROOT: /home/hk-project-exasim/xt8786/hdf5
+-- HDF5 include dir: /home/hk-project-exasim/xt8786/hdf5/include
+-- HDF5 C library: /home/hk-project-exasim/xt8786/hdf5/lib/libhdf5.so
+-- Pressure solver: red-black SOR
+-- MPI support: required
+-- MPI wrapper compile flags: -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/hwloc/hwloc201/hwloc/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/event/libevent2022/libevent -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/event/libevent2022/libevent/include -pthread -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+-- MPI wrapper link flags: -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -L/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -Wl,-rpath -Wl,/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -Wl,--enable-new-dtags -lmpi_usempif08 -lmpi_usempi_ignore_tkr -lmpi_mpifh -lmpi
+-- MPI Fortran module dir: /hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+-- Configuring done (0.8s)
+-- Generating done (0.5s)
+-- Build files have been written to: /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-code/build_gpu
+[ 78%] Built target moby_prepare
+[ 94%] Built target moby_solve
+[ 94%] Built target leaftable_test
+[100%] Built target transition_test
+[100%] Built target walldist_test
+
+========================================
+Build summary: gpu
+========================================
+Build directory       : build_gpu
+Executables           : build_gpu/moby_solve (+ main symlink), build_gpu/moby_prepare
+Fortran compiler      : /software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/compilers/bin/nvfortran
+C compiler            : /software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/compilers/bin/nvc
+Pressure solver       : red-black SOR
+MPI                   : ON
+MPI wrapper compile   : -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/hwloc/hwloc201/hwloc/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/event/libevent2022/libevent -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/event/libevent2022/libevent/include -pthread -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+MPI wrapper link      : -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -L/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -Wl,-rpath -Wl,/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -Wl,--enable-new-dtags -lmpi_usempif08 -lmpi_usempi_ignore_tkr -lmpi_mpifh -lmpi
+MPI Fortran mod dir   : /hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+USE_OPENMP_OFFLOAD    : ON
+USE_IBM_SECONDORDER   : ON
+OPENMP_OFFLOAD_FLAGS  : -mp=gpu
+HDF5_ROOT             : /home/hk-project-exasim/xt8786/hdf5
+HDF5 include dir      : /home/hk-project-exasim/xt8786/hdf5/include
+HDF5 C library        : /home/hk-project-exasim/xt8786/hdf5/lib/libhdf5.so
+========================================
+
+job    : 5141872
+date   : 2026-09-11 17:18:05 CEST
+nodes  : 1  (hkn0402)
+commit : f7a597a88927151e36f25ef1ddb0c5507a4fde34
+dirty  : 0
+gpu    : NVIDIA A100-SXM4-40GB
+nsteps : 30
+NVIDIA Nsight Systems version 2025.1.1.131-251135540420v0
+=== timeline start 2026-09-11 17:18:06  nsteps=30
+=== host refined_yp82_rect_jacobi 4x1 (2026-09-11 17:18:06)
+    proj_timing: sweep calls 540 nsteps 30 seconds   3.77205400E-01 seconds_per_step   1.25735133E-02 seconds_per_call   6.98528519E-04
+    proj_timing: apply calls 540 nsteps 30 seconds   1.13173670E+00 seconds_per_step   3.77245567E-02 seconds_per_call   2.09580870E-03
+    proj_timing: phi_exchange calls 540 nsteps 30 seconds   2.61064500E-01 seconds_per_step   8.70215000E-03 seconds_per_call   4.83452778E-04
+    proj_timing: vel_exchange calls 540 nsteps 30 seconds   2.98335500E-01 seconds_per_step   9.94451667E-03 seconds_per_call   5.52473148E-04
+=== nsys refined_yp82_rect_jacobi 4x1 (2026-09-11 17:18:17)
+    csv: 6 reports
+=== host rect_jacobi 4x1 (2026-09-11 17:18:37)
+    proj_timing: sweep calls 540 nsteps 30 seconds   8.38835800E-01 seconds_per_step   2.79611933E-02 seconds_per_call   1.55339963E-03
+    proj_timing: apply calls 540 nsteps 30 seconds   2.41820890E+00 seconds_per_step   8.06069633E-02 seconds_per_call   4.47816463E-03
+    proj_timing: phi_exchange calls 540 nsteps 30 seconds   2.88998200E-01 seconds_per_step   9.63327333E-03 seconds_per_call   5.35181852E-04
+    proj_timing: vel_exchange calls 540 nsteps 30 seconds   4.66083000E-01 seconds_per_step   1.55361000E-02 seconds_per_call   8.63116667E-04
+=== nsys rect_jacobi 4x1 (2026-09-11 17:18:51)
+    csv: 6 reports
+=== timeline done 2026-09-11 17:19:15
+
+# What the per-launch fixed cost is made of
+
+```
+job    : 5141872
+date   : 2026-09-11 17:18:05 CEST
+nodes  : 1  (hkn0402)
+commit : f7a597a88927151e36f25ef1ddb0c5507a4fde34
+dirty  : 0
+gpu    : NVIDIA A100-SXM4-40GB
+nsteps : 30
+```
+
+
+## rect_jacobi_r4N1
+
+Steady window 5292 ms = 23.1 steps; GPU busy 81.2 % of it.
+
+### Per kernel: what the host pays, and what the device does
+
+| kernel | launches/step | device us/launch | H2D copies before each | bucket | host us/launch (untraced) | host − device |
+|---|---|---|---|---|---|---|
+| `comm_pack_entries` | 21.0 | **18.9** | 14.0 | `pack` | 102.9 | 84.0 |
+| `comm_pack_scalar_entries` | 18.0 | **9.6** | 14.0 | `pack` | 102.9 | 93.3 |
+| `comm_unpack_entries` | 21.0 | **22.2** | 21.0 | `unpack` | 92.8 | 70.6 |
+| `comm_unpack_scalar_entries` | 18.0 | **6.8** | 16.0 | `unpack` | 92.8 | 86.1 |
+| `comm_copy_local_same_level` | 21.0 | **504.8** | 21.0 | `local_copy` | 426.3 | -78.5 |
+| `comm_copy_local_scalar_same_level` | 18.0 | **198.8** | 21.0 | `local_copy` | 426.3 | 227.4 |
+| `pressure_solver_jacobi_compute_phi` | 18.0 | **1568.5** | 11.8 | `sweep` | 1553.4 | -15.1 |
+| `pressure_solver_jacobi_apply` | 36.0 | **2234.3** | 2.0 | `apply` | 4478.2 | 2243.9 |
+
+(The `bucket` column repeats for the velocity and scalar variants that
+share one profiler bucket; its host figure is their average, so compare
+it against the two device figures together, not against either alone.)
+
+### Host-to-device copies
+
+- **2736 per step**, 0.34 kB each on average (0.94 MB/step in total)
+- 1.99 us each on the device, 5.45 ms/step of device time
+
+### CUDA API calls per step (counts exact; DURATIONS INFLATED BY TRACING)
+
+| API | calls/step | avg us (inflated) | share of API time |
+|---|---|---|---|
+| `cuStreamSynchronize` | 299 | 744.78 | 70.7 % |
+| `cuMemcpyHtoDAsync_v2` | 3569 | 13.27 | 15.0 % |
+| `cuMemcpyDtoHAsync_v2` | 154 | 257.53 | 12.6 % |
+| `cuMemsetD32Async` | 691 | 1.92 | 0.4 % |
+| `cuLaunchKernel` | 298 | 4.43 | 0.4 % |
+| `cuMemHostAlloc` | 0 | 22670.09 | 0.3 % |
+| `cuEventQuery` | 1756 | 0.42 | 0.2 % |
+| `cuMemAlloc_v2` | 5 | 43.95 | 0.1 % |
+| `cuMemcpyDtoDAsync_v2` | 51 | 3.51 | 0.1 % |
+| `cuMemRetainAllocationHandle` | 110 | 1.58 | 0.1 % |
+| `cuModuleLoadDataEx` | 0 | 2696.48 | 0.0 % |
+| `cuEventRecord` | 51 | 2.30 | 0.0 % |
+
+
+## refined_yp82_rect_jacobi_r4N1
+
+Steady window 2685 ms = 22.7 steps; GPU busy 70.3 % of it.
+
+### Per kernel: what the host pays, and what the device does
+
+| kernel | launches/step | device us/launch | H2D copies before each | bucket | host us/launch (untraced) | host − device |
+|---|---|---|---|---|---|---|
+| `comm_pack_entries` | 21.0 | **15.3** | 14.0 | `pack` | 100.3 | 85.0 |
+| `comm_pack_scalar_entries` | 18.0 | **9.5** | 14.0 | `pack` | 100.3 | 90.8 |
+| `comm_unpack_entries` | 21.0 | **11.8** | 23.0 | `unpack` | 87.0 | 75.2 |
+| `comm_unpack_scalar_entries` | 18.0 | **6.3** | 20.0 | `unpack` | 87.0 | 80.7 |
+| `comm_copy_local_same_level` | 21.0 | **195.5** | 21.0 | `local_copy` | 199.0 | 3.5 |
+| `comm_copy_local_scalar_same_level` | 18.0 | **68.0** | 21.0 | `local_copy` | 199.0 | 131.0 |
+| `comm_copy_local_cross_level` | 6.0 | **74.6** | 22.0 | `copy_cross` | 116.7 | 42.1 |
+| `comm_copy_local_scalar_entries` | 18.0 | **22.2** | 19.0 | `copy_cross` | 116.7 | 94.5 |
+| `pressure_solver_jacobi_compute_phi` | 18.0 | **688.8** | 11.8 | `sweep` | 698.5 | 9.7 |
+| `pressure_solver_jacobi_apply` | 36.0 | **977.2** | 2.0 | `apply` | 2095.8 | 1118.6 |
+| `pressure_solver_interface_correct` | 54.0 | **10.8** | 3.0 | `apply` | 2095.8 | 2085.0 |
+
+(The `bucket` column repeats for the velocity and scalar variants that
+share one profiler bucket; its host figure is their average, so compare
+it against the two device figures together, not against either alone.)
+
+### Host-to-device copies
+
+- **3484 per step**, 0.32 kB each on average (1.13 MB/step in total)
+- 1.96 us each on the device, 6.84 ms/step of device time
+
+### CUDA API calls per step (counts exact; DURATIONS INFLATED BY TRACING)
+
+| API | calls/step | avg us (inflated) | share of API time |
+|---|---|---|---|
+| `cuStreamSynchronize` | 408 | 248.92 | 64.2 % |
+| `cuMemcpyHtoDAsync_v2` | 4624 | 6.32 | 18.5 % |
+| `cuMemcpyDtoHAsync_v2` | 188 | 111.64 | 13.3 % |
+| `cuMemsetD32Async` | 1021 | 1.88 | 1.2 % |
+| `cuLaunchKernel` | 407 | 4.31 | 1.1 % |
+| `cuMemHostAlloc` | 0 | 21992.23 | 0.6 % |
+| `cuEventQuery` | 1217 | 0.43 | 0.3 % |
+| `cuMemRetainAllocationHandle` | 113 | 1.73 | 0.1 % |
+| `cuMemcpyDtoDAsync_v2` | 52 | 3.48 | 0.1 % |
+| `cuMemAlloc_v2` | 5 | 36.68 | 0.1 % |
+| `cuEventRecord` | 52 | 2.47 | 0.1 % |
+| `cuModuleLoadDataEx` | 0 | 2753.20 | 0.1 % |
+
+=== timeline job finished ===
+
+============================= JOB FEEDBACK =============================
+
+Job ID: 5141872
+Cluster: hk
+User/Group: xt8786/hk-project-exasim
+Account: hk-project-exasim
+State: COMPLETED (exit code 0)
+Partition: dev_accelerated
+Nodes: 1
+Cores per node: 80
+Nodelist: hkn0402
+CPU Utilized: 00:03:25
+CPU Efficiency: 2.37% of 02:24:00 core-walltime
+Job Wall-clock time: 00:01:48
+Starttime: Fri Sep 11 17:17:28 2026
+Endtime: Fri Sep 11 17:19:16 2026
+Memory Utilized: 29.64 GB
+Memory Efficiency: 6.10% of 485.84 GB (485.84 GB/node)
+Energy Consumed: 77460 Joule / 21.5166666666667 Watthours
+Average node power draw: 717.222222222222 Watt
