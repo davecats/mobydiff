@@ -286,3 +286,68 @@ Also untouched, and now the largest single remaining launch cost:
 `interface_correct` is **3 kernels per call, 54 launches/step**, and
 `jacobi_apply` is 2 more. Their per-launch cost is already at the floor, so this
 is a kernel-count question, not a marshalling one.
+
+---
+
+# 9 — At scale: 20 % off the refined 16-rank step (job 5142047)
+
+4 nodes, both binaries built in the same job, 100 steps, untraced (pass A only).
+
+| config | ranks | before s/step | after s/step | change | saved |
+|---|---|---|---|---|---|
+| `refined_yp82_rect_jacobi` | **16** | 0.041403 | **0.033066** | **−20.14 %** | 8.34 ms |
+| `refined_yp82_rect_jacobi` | 8 | 0.060222 | **0.051884** | **−13.84 %** | 8.34 ms |
+| `rect_jacobi` | 16 | 0.067445 | **0.061236** | −9.21 % | 6.21 ms |
+| `rect_jacobi` | 8 | 0.109259 | **0.102321** | −6.35 % | 6.94 ms |
+
+**The absolute saving is rank-independent**, which is the prediction that matters:
+8.64 / 8.34 / 8.34 ms/step for the refined case at 4 / 8 / 16 ranks, and
+6.97 / 6.94 / 6.21 for the single-level one. It is a per-launch constant times a
+launch count that does not change with the mesh or the decomposition, so it lands
+on whatever the step happens to be — 8 % of a 4-rank step, **20 % of a 16-rank
+one**. The 19–23 % estimated in §5 from the per-launch table is met at 20.1 %.
+
+Per exchange round at 16 ranks, `refined_yp82` (`copy_cross` quoted per CALL, it
+launches 24 times per step against everything else's 39):
+
+| bucket | before | after |
+|---|---|---|
+| `pack` | 99.4 us | **31.4** |
+| `unpack` | 86.2 | **27.4** |
+| `local_copy` | 93.1 | **45.5** |
+| `copy_cross` (per call) | 95.1 | **31.2** |
+| **device-local exchange** | **13.15 ms/step = 31.8 % of the step** | **4.82 ms/step = 14.6 %** |
+
+`results_horeka_exchange_2026-09-10.md` §11 measured that 13.15 ms and observed
+that `rect_jacobi` spent the *same* 13.18 ms on 2.3x the cells — the identity
+that was the whole "1.9x per cell". It is now 4.82 against 8.44 ms.
+
+## The 2:1 per-cell tax, as a side effect
+
+| ranks | before | after |
+|---|---|---|
+| 8 | 1.260 | **1.159** |
+| 16 | 1.403 | **1.234** |
+
+(refined ns/cell ÷ single-level ns/cell, same block shape, same solver.) Removing
+a cost that is per-launch rather than per-cell helps the case with fewer cells
+per launch more — so the refinement tax at 16 ranks falls from 1.40 to 1.23
+without anything about the 2:1 machinery changing.
+
+## What is still true, and what is now open
+
+- **The 2:1 interface's own exchange cost is unchanged in kind**: 16.43 % of the
+  points at 1.15x the per-point cost, plus its extra launches. Those launches are
+  now cheap, so what is left of it is close to the data it actually moves.
+- **`mpi_wait` is untouched** by this and is now a larger share of a smaller step.
+- **The largest remaining launch count is the projection's**, not the exchange's:
+  `interface_correct` is 3 kernels per call × 18 calls = 54 launches/step and
+  `jacobi_apply` 36 more. Their per-launch cost was already at the floor, so that
+  is a kernel-count question — fusing the three `interface_correct` passes — not a
+  marshalling one, and it is worth ~1 ms/step at most.
+- **Not re-measured after the fix**: the op split, `base_jacobi`, `nb16_jacobi`,
+  red-black, and every scaling-efficiency and block-tax number in
+  `results_horeka_2026-09-10.md` §9. All of them predate a change worth 6–8 ms on
+  every step of every blocked configuration, and the campaign's own rule is that
+  anything compared must come from one allocation. **The scaling matrix needs
+  re-running before any of those tables is quoted again.**
