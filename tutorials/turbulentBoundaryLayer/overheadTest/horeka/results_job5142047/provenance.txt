@@ -1,0 +1,5 @@
+job    : 5142047
+date   : 2026-09-12 06:41:46 CEST
+nodes  : 4  (hkn[0534,0721,0727-0728])
+new    : 6b18d9e5d78ecfc3d99135a6440b4a61eef458c9
+ref    : 365af767dd290bcdaf951a4409fb9acd9edd2154

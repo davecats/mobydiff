@@ -960,9 +960,19 @@ immersed boundary. Phased, each phase verified before the next:
   the projection kernels already had, with the two `c`-free controls moving 0.8 %.
   Step at 4 ranks: refined **−8.36 %**, single-level **−3.37 %**, against 8.51 and
   6.62 ms/step predicted from the per-launch table. BIT-EXACT (max_abs 0) on both
-  production cases and all 7 suite cases incl. every RANS scalar. 8/16 ranks
-  queued (job 5142047) — the launch bill is rank-independent, so the same
-  absolute ~8.6 ms should be ~20 % of the refined 16-rank step. `horeka/exchange/analyse_launch_traffic.py`
+  production cases and all 7 suite cases incl. every RANS scalar. CONFIRMED AT SCALE
+  (job 5142047, 4 nodes, both binaries in one allocation): refined **−20.14 %** at
+  16 ranks and −13.84 % at 8; single-level −9.21 % and −6.35 %. **The absolute
+  saving is rank-independent** — 8.64/8.34/8.34 ms/step refined at 4/8/16 ranks,
+  6.97/6.94/6.21 single-level — a per-launch constant times a fixed launch count,
+  landing on whatever the step is. Device-local exchange at 16 ranks **13.15 →
+  4.82 ms/step (31.8 % → 14.6 % of the step)**, and the 2:1 per-cell tax at 16
+  ranks falls **1.403 → 1.234** as a side effect (removing a per-LAUNCH cost helps
+  the case with fewer cells per launch more). **BEWARE: every scaling-efficiency
+  and block-tax table in `results_horeka_2026-09-10.md` §9 predates this and must
+  not be quoted until the matrix is re-run.** Largest launch count left is the
+  projection's (`interface_correct` 3 kernels × 18 calls + `jacobi_apply` 36),
+  already at the per-launch floor — a kernel-count question worth ~1 ms/step. `horeka/exchange/analyse_launch_traffic.py`
   reproduces the per-launch traffic table from an nsys sqlite export. Cheap concrete win meanwhile: fold the local copy into the pack
   kernel (independent, both before the `Waitall`, 2.3 ms/step, bit-exact).
   Recommended AGAINST: fusing the cross-level kernel into the same-level one — it

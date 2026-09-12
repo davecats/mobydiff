@@ -82,7 +82,12 @@
 > same-level copy 62.8→14.6, cross-level 81.6→18.3; step at 4 ranks refined
 > **−8.36 %**, single-level −3.37 %, matching the per-launch ledger to 1.5 % and
 > 5 %. **Bit-exact** (max_abs 0) on both production cases and all seven suite
-> cases. 8/16 ranks queued as job 5142047.
+> cases. **AT SCALE (job 5142047): refined −20.14 % at 16 ranks, −13.84 % at 8;
+> single-level −9.21 % and −6.35 %. The absolute saving is rank-independent
+> (8.64/8.34/8.34 ms/step refined at 4/8/16), device-local exchange at 16 ranks
+> 13.15 → 4.82 ms/step, and the 2:1 per-cell tax 1.403 → 1.234.** Every
+> scaling-efficiency and block-tax table in `results_horeka_2026-09-10.md` §9
+> predates this and must be re-run before it is quoted again.
 >
 > Superseded estimate: recoverable 7.8–9.4 ms/step = 19–23 % of the refined
 > 16-rank step. Fix direction: stop referencing `c%component` inside the target regions

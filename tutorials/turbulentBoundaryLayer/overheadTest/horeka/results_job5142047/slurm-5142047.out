@@ -1,0 +1,163 @@
+=== building /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-headref (365af76)
+MPI Fortran module dir: /hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+HDF5_ROOT: /home/hk-project-exasim/xt8786/hdf5
+-- HDF5 include dir: /home/hk-project-exasim/xt8786/hdf5/include
+-- HDF5 C library: /home/hk-project-exasim/xt8786/hdf5/lib/libhdf5.so
+-- Pressure solver: red-black SOR
+-- MPI support: required
+-- MPI wrapper compile flags: -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/hwloc/hwloc201/hwloc/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/event/libevent2022/libevent -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/event/libevent2022/libevent/include -pthread -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+-- MPI wrapper link flags: -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -L/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -Wl,-rpath -Wl,/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -Wl,--enable-new-dtags -lmpi_usempif08 -lmpi_usempi_ignore_tkr -lmpi_mpifh -lmpi
+-- MPI Fortran module dir: /hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+-- Configuring done (1.0s)
+-- Generating done (0.6s)
+-- Build files have been written to: /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-headref/build_gpu
+[ 68%] Built target leaftable_test
+[ 96%] Built target moby_solve
+[ 98%] Built target walldist_test
+[ 99%] Built target transition_test
+[100%] Built target moby_prepare
+
+========================================
+Build summary: gpu
+========================================
+Build directory       : build_gpu
+Executables           : build_gpu/moby_solve (+ main symlink), build_gpu/moby_prepare
+Fortran compiler      : /software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/compilers/bin/nvfortran
+C compiler            : /software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/compilers/bin/nvc
+Pressure solver       : red-black SOR
+MPI                   : ON
+MPI wrapper compile   : -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/hwloc/hwloc201/hwloc/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/event/libevent2022/libevent -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/event/libevent2022/libevent/include -pthread -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+MPI wrapper link      : -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -L/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -Wl,-rpath -Wl,/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -Wl,--enable-new-dtags -lmpi_usempif08 -lmpi_usempi_ignore_tkr -lmpi_mpifh -lmpi
+MPI Fortran mod dir   : /hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+USE_OPENMP_OFFLOAD    : ON
+USE_IBM_SECONDORDER   : ON
+OPENMP_OFFLOAD_FLAGS  : -mp=gpu
+HDF5_ROOT             : /home/hk-project-exasim/xt8786/hdf5
+HDF5 include dir      : /home/hk-project-exasim/xt8786/hdf5/include
+HDF5 C library        : /home/hk-project-exasim/xt8786/hdf5/lib/libhdf5.so
+========================================
+
+=== building /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-code (6b18d9e)
+MPI Fortran module dir: /hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+HDF5_ROOT: /home/hk-project-exasim/xt8786/hdf5
+-- HDF5 include dir: /home/hk-project-exasim/xt8786/hdf5/include
+-- HDF5 C library: /home/hk-project-exasim/xt8786/hdf5/lib/libhdf5.so
+-- Pressure solver: red-black SOR
+-- MPI support: required
+-- MPI wrapper compile flags: -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/hwloc/hwloc201/hwloc/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/event/libevent2022/libevent -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/event/libevent2022/libevent/include -pthread -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+-- MPI wrapper link flags: -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -L/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -Wl,-rpath -Wl,/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -Wl,--enable-new-dtags -lmpi_usempif08 -lmpi_usempi_ignore_tkr -lmpi_mpifh -lmpi
+-- MPI Fortran module dir: /hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+-- Configuring done (0.6s)
+-- Generating done (0.6s)
+-- Build files have been written to: /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-code/build_gpu
+[ 20%] Built target moby_solve
+[ 81%] Built target transition_test
+[ 99%] Built target moby_prepare
+[ 99%] Built target walldist_test
+[100%] Built target leaftable_test
+
+========================================
+Build summary: gpu
+========================================
+Build directory       : build_gpu
+Executables           : build_gpu/moby_solve (+ main symlink), build_gpu/moby_prepare
+Fortran compiler      : /software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/compilers/bin/nvfortran
+C compiler            : /software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/compilers/bin/nvc
+Pressure solver       : red-black SOR
+MPI                   : ON
+MPI wrapper compile   : -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/hwloc/hwloc201/hwloc/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/event/libevent2022/libevent -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/event/libevent2022/libevent/include -pthread -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+MPI wrapper link      : -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -L/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -Wl,-rpath -Wl,/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -Wl,--enable-new-dtags -lmpi_usempif08 -lmpi_usempi_ignore_tkr -lmpi_mpifh -lmpi
+MPI Fortran mod dir   : /hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+USE_OPENMP_OFFLOAD    : ON
+USE_IBM_SECONDORDER   : ON
+OPENMP_OFFLOAD_FLAGS  : -mp=gpu
+HDF5_ROOT             : /home/hk-project-exasim/xt8786/hdf5
+HDF5 include dir      : /home/hk-project-exasim/xt8786/hdf5/include
+HDF5 C library        : /home/hk-project-exasim/xt8786/hdf5/lib/libhdf5.so
+========================================
+
+job    : 5142047
+date   : 2026-09-12 06:41:46 CEST
+nodes  : 4  (hkn[0534,0721,0727-0728])
+new    : 6b18d9e5d78ecfc3d99135a6440b4a61eef458c9
+ref    : 365af767dd290bcdaf951a4409fb9acd9edd2154
+############ before ############
+NVIDIA Nsight Systems version 2025.1.1.131-251135540420v0
+=== timeline start 2026-09-12 06:41:46  nsteps=100
+=== host refined_yp82_rect_jacobi 16x4 (2026-09-12 06:41:46)
+    proj_timing: sweep calls 1800 nsteps 100 seconds   3.44841200E-01 seconds_per_step   3.44841200E-03 seconds_per_call   1.91578444E-04
+    proj_timing: apply calls 1800 nsteps 100 seconds   1.11117050E+00 seconds_per_step   1.11117050E-02 seconds_per_call   6.17316944E-04
+    proj_timing: phi_exchange calls 1800 nsteps 100 seconds   8.43510500E-01 seconds_per_step   8.43510500E-03 seconds_per_call   4.68616944E-04
+    proj_timing: vel_exchange calls 1800 nsteps 100 seconds   7.31023700E-01 seconds_per_step   7.31023700E-03 seconds_per_call   4.06124278E-04
+=== host rect_jacobi 16x4 (2026-09-12 06:41:59)
+    proj_timing: sweep calls 1800 nsteps 100 seconds   7.30455800E-01 seconds_per_step   7.30455800E-03 seconds_per_call   4.05808778E-04
+    proj_timing: apply calls 1800 nsteps 100 seconds   2.07447430E+00 seconds_per_step   2.07447430E-02 seconds_per_call   1.15248572E-03
+    proj_timing: phi_exchange calls 1800 nsteps 100 seconds   9.43111300E-01 seconds_per_step   9.43111300E-03 seconds_per_call   5.23950722E-04
+    proj_timing: vel_exchange calls 1800 nsteps 100 seconds   9.32705200E-01 seconds_per_step   9.32705200E-03 seconds_per_call   5.18169556E-04
+=== host refined_yp82_rect_jacobi 8x2 (2026-09-12 06:42:12)
+    proj_timing: sweep calls 1800 nsteps 100 seconds   6.45748300E-01 seconds_per_step   6.45748300E-03 seconds_per_call   3.58749056E-04
+    proj_timing: apply calls 1800 nsteps 100 seconds   1.98859190E+00 seconds_per_step   1.98859190E-02 seconds_per_call   1.10477328E-03
+    proj_timing: phi_exchange calls 1800 nsteps 100 seconds   7.91405400E-01 seconds_per_step   7.91405400E-03 seconds_per_call   4.39669667E-04
+    proj_timing: vel_exchange calls 1800 nsteps 100 seconds   8.10452200E-01 seconds_per_step   8.10452200E-03 seconds_per_call   4.50251222E-04
+=== host rect_jacobi 8x2 (2026-09-12 06:42:24)
+    proj_timing: sweep calls 1800 nsteps 100 seconds   1.41477260E+00 seconds_per_step   1.41477260E-02 seconds_per_call   7.85984778E-04
+    proj_timing: apply calls 1800 nsteps 100 seconds   4.05513950E+00 seconds_per_step   4.05513950E-02 seconds_per_call   2.25285528E-03
+    proj_timing: phi_exchange calls 1800 nsteps 100 seconds   8.09501400E-01 seconds_per_step   8.09501400E-03 seconds_per_call   4.49723000E-04
+    proj_timing: vel_exchange calls 1800 nsteps 100 seconds   1.07484230E+00 seconds_per_step   1.07484230E-02 seconds_per_call   5.97134611E-04
+=== timeline done 2026-09-12 06:42:42
+############ after ############
+NVIDIA Nsight Systems version 2025.1.1.131-251135540420v0
+=== timeline start 2026-09-12 06:42:42  nsteps=100
+=== host refined_yp82_rect_jacobi 16x4 (2026-09-12 06:42:42)
+    proj_timing: sweep calls 1800 nsteps 100 seconds   3.47519400E-01 seconds_per_step   3.47519400E-03 seconds_per_call   1.93066333E-04
+    proj_timing: apply calls 1800 nsteps 100 seconds   1.11891870E+00 seconds_per_step   1.11891870E-02 seconds_per_call   6.21621500E-04
+    proj_timing: phi_exchange calls 1800 nsteps 100 seconds   4.54595300E-01 seconds_per_step   4.54595300E-03 seconds_per_call   2.52552944E-04
+    proj_timing: vel_exchange calls 1800 nsteps 100 seconds   3.47193400E-01 seconds_per_step   3.47193400E-03 seconds_per_call   1.92885222E-04
+=== host rect_jacobi 16x4 (2026-09-12 06:42:52)
+    proj_timing: sweep calls 1800 nsteps 100 seconds   7.30790200E-01 seconds_per_step   7.30790200E-03 seconds_per_call   4.05994556E-04
+    proj_timing: apply calls 1800 nsteps 100 seconds   2.07738060E+00 seconds_per_step   2.07738060E-02 seconds_per_call   1.15410033E-03
+    proj_timing: phi_exchange calls 1800 nsteps 100 seconds   6.27037000E-01 seconds_per_step   6.27037000E-03 seconds_per_call   3.48353889E-04
+    proj_timing: vel_exchange calls 1800 nsteps 100 seconds   6.59681000E-01 seconds_per_step   6.59681000E-03 seconds_per_call   3.66489444E-04
+=== host refined_yp82_rect_jacobi 8x2 (2026-09-12 06:43:05)
+    proj_timing: sweep calls 1800 nsteps 100 seconds   6.46918900E-01 seconds_per_step   6.46918900E-03 seconds_per_call   3.59399389E-04
+    proj_timing: apply calls 1800 nsteps 100 seconds   1.99331760E+00 seconds_per_step   1.99331760E-02 seconds_per_call   1.10739867E-03
+    proj_timing: phi_exchange calls 1800 nsteps 100 seconds   3.82318900E-01 seconds_per_step   3.82318900E-03 seconds_per_call   2.12399389E-04
+    proj_timing: vel_exchange calls 1800 nsteps 100 seconds   4.47550600E-01 seconds_per_step   4.47550600E-03 seconds_per_call   2.48639222E-04
+=== host rect_jacobi 8x2 (2026-09-12 06:43:16)
+    proj_timing: sweep calls 1800 nsteps 100 seconds   1.41295340E+00 seconds_per_step   1.41295340E-02 seconds_per_call   7.84974111E-04
+    proj_timing: apply calls 1800 nsteps 100 seconds   4.05058320E+00 seconds_per_step   4.05058320E-02 seconds_per_call   2.25032400E-03
+    proj_timing: phi_exchange calls 1800 nsteps 100 seconds   5.01946000E-01 seconds_per_step   5.01946000E-03 seconds_per_call   2.78858889E-04
+    proj_timing: vel_exchange calls 1800 nsteps 100 seconds   7.46373100E-01 seconds_per_step   7.46373100E-03 seconds_per_call   4.14651722E-04
+=== timeline done 2026-09-12 06:43:33
+=== summary: s/step and per-round buckets ===
+before  rect_jacobi_r16N4                  s/step 6.74449610E-02  pack=100.5 unpack=90.9 local_copy=144.4 copy_cross=0.0 
+before  rect_jacobi_r8N2                   s/step 1.09259351E-01  pack=100.3 unpack=91.3 local_copy=237.0 copy_cross=0.0 
+before  refined_yp82_rect_jacobi_r16N4     s/step 4.14027500E-02  pack=99.4 unpack=86.2 local_copy=93.1 copy_cross=58.5 
+before  refined_yp82_rect_jacobi_r8N2      s/step 6.02217510E-02  pack=99.3 unpack=86.5 local_copy=129.7 copy_cross=61.8 
+after   rect_jacobi_r16N4                  s/step 6.12356900E-02  pack=34.1 unpack=33.9 local_copy=97.0 copy_cross=0.0 
+after   rect_jacobi_r8N2                   s/step 1.02321360E-01  pack=33.1 unpack=33.6 local_copy=190.6 copy_cross=0.0 
+after   refined_yp82_rect_jacobi_r16N4     s/step 3.30656890E-02  pack=31.4 unpack=27.4 local_copy=45.5 copy_cross=19.2 
+after   refined_yp82_rect_jacobi_r8N2      s/step 5.18842890E-02  pack=31.8 unpack=28.1 local_copy=81.4 copy_cross=23.9 
+=== ab16 job finished ===
+
+============================= JOB FEEDBACK =============================
+
+Job ID: 5142047
+Cluster: hk
+User/Group: xt8786/hk-project-exasim
+Account: hk-project-exasim
+State: COMPLETED (exit code 0)
+Partition: accelerated
+Nodes: 4
+Cores per node: 80
+Nodelist: hkn[0534,0721,0727-0728]
+CPU Utilized: 00:14:48
+CPU Efficiency: 1.83% of 13:30:40 core-walltime
+Job Wall-clock time: 00:02:32
+Starttime: Sat Sep 12 06:41:02 2026
+Endtime: Sat Sep 12 06:43:34 2026
+Memory Utilized: 25.15 GB
+Memory Efficiency: 1.29% of 1.90 TB (485.84 GB/node)
+The task which had the largest memory consumption differs by 100.08% from the average task max memory consumption
+Energy Consumed: 434244 Joule / 120.623333333333 Watthours
+Average node power draw: 2856.86842105263 Watt
