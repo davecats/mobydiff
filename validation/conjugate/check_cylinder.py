@@ -330,7 +330,8 @@ def cmd_dipole(a):
                         ("area1soft", "STAGE0 k_area + 1s SOFT "),
                         ("area1sx", "STAGE1 k_area + 1s EXTEND"),
                         ("area1sm", "STAGE1 k_area + 1s MCUT  "),
-                        ("area1sd", "STAGE1 k_area + 1s SPLIT ")):
+                        ("area1sd", "STAGE1 k_area + 1s SPLIT "),
+                        ("area1sext", "STAGE1b k_area + 1s EXTEND")):
         total = np.zeros(shape)
         band = np.zeros(shape, dtype=bool)
         defined = np.ones(shape, dtype=bool)

@@ -1018,6 +1018,72 @@ step, not a result.
    faces, so it wants a different ESTIMATE there, not a smaller correction
    everywhere.
 
+
+### Stage 1b, THE TEST — every row beats the baseline, planes exactly
+
+`./run_gates_c2.sh residual`. Cut-cell |div| rms on the exact field, whose
+exact divergence is zero. This is what the cell balance sees, and it is the
+measurement that decided C2.
+
+| plane, h = 1/256 (theta = 20, 30, 35 deg; r = 0.01, 1, inf) | C1 baseline | `k_area` + shipped | **STAGE 1b** | gain |
+|---|---|---|---|---|
+| kappa_s = 10, 18 rows | 4.1 - 598 | 0.16 - 38 | **1.1e-7 - 1.6e-6** | 3e6 - 3e9 |
+| kappa_s = 10^3 | 672 - 8.1e4 | 1.9e-5 - 5.8e3 | **1.6e-6 - 1.4e-4** | 6e6 - 2e9 |
+
+| curved (dipole + quadrupole) | n = 64 | 128 | 256 | gain at n = 256 |
+|---|---|---|---|---|
+| kappa_s = 0.01: C1 | 9.7 / 20.0 | 21.7 / 42.5 | 41.3 / 85.7 | |
+| **STAGE 1b** | **1.08 / 1.03** | **1.07 / 0.97** | **1.11 / 1.02** | **37 / 84** |
+| kappa_s = 10: C1 | 7.6 / 16.6 | 13.5 / 30.7 | 31.0 / 67.0 | |
+| **STAGE 1b** | **0.71 / 0.84** | **0.72 / 0.82** | **0.71 / 0.84** | **44 / 80** |
+| kappa_s = 10^3: C1 | 10.2 / 22.4 | 23.2 / 47.4 | 45.4 / 94.0 | |
+| **STAGE 1b** | **0.93 / 1.63** | **1.13 / 1.65** | **1.08 / 1.89** | **42 / 50** |
+
+**NEVER WORSE, on all 36 rows** — three plane angles, two curved geometries,
+five decades of contrast, three grids. A plane interface is solved EXACTLY at
+any angle, contrast and tangential ratio. On a curved interface the residual is
+**BOUNDED** (0.7 - 1.9, flat in both h and kappa_s) where the C1 baseline grows
+like 1/h, so the gain IMPROVES with refinement -- 11 -> 21 -> 42 at kappa_s =
+10^3. That is a complete reversal of C2's verdict, whose best variant was
+40-65x WORSE than dropping the term.
+
+**What it is made of** (`face_flux_field` mode `area1sext`), in the order the
+measurements forced:
+
+1. `k_area`, the face AREA-weighted multiplier, applied at every CLIPPED face
+   (C2's own proposal -- it was never the problem);
+2. the stage-0 one-sided `s_t` at MARKER-CUT faces, closed against the face's
+   own normal flux -- inside the existing one-deep halo;
+3. a DIRECT projection at clipped-only faces, which need no closure (the arm
+   lies in one material) and must not have one (they are the grazing faces,
+   where 1/n_d is ill conditioned);
+4. the stage-1b extension sweep, carrying `s_t` into faces whose arm lies in
+   the FLUID and which therefore cannot see a quantity scaling as
+   `2/(1 + kappa_s)`.
+
+**Two caveats, unchanged and honest.** The curved residual is BOUNDED, not
+converging: ~1 against an uncut background of 3.6e-3 at n = 256, so cut cells
+still carry a far larger truncation error than the interior -- the 1/h growth
+is removed, pointwise consistency is not achieved. And the extension needs up
+to 4 sweeps, i.e. a stencil reaching ~4 cells for ~12 % of clipped faces; most
+need one. Since the closure is LINEAR in T with purely geometric coefficients
+and phi is static, the whole thing collapses to a per-face (cell, weight) list
+precomputed at init -- one sparse gather at runtime, no iteration -- but the
+reach is a halo-DEPTH question for the solver.
+
+**FOUR BUGS OF MINE, all of which read as "the new mode equals the baseline"
+or as a silent regression** -- recorded because the checker now has eleven
+modes and the next one will hit them too: a `detail` block dedented out of
+scope so the correction was never applied; `"area1sg".endswith("1s")` false;
+a gate applied AFTER the value it gates; and `usable` requiring BOTH sides'
+closures when only the selected side is used, which disqualified faces whose
+solid-side estimate was perfect and cost the curved high-contrast case a
+factor 30. The last two interact: promoting every solid-side-viewable face
+into `usable` is load-bearing (1.08 vs 32.5) but is only SAFE once `usable`
+tests the selected side alone -- promoting with the two-sided test turned an
+exact plane result at 20 degrees into 2.19. Isolate one edit at a time; the
+bisect that found this took four runs and no guessing.
+
 ---
 
 ## C3 — the fraction-weighted capacity, the Nusselt diagnostic, and the time step

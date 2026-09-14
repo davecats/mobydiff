@@ -3,7 +3,7 @@
 # e_face, and the correction behind [scalar.N] tangential_correction
 # (docs/next_session_conjugate.md Section 10, increment C2).
 #
-#   ./run_gates_c2.sh [flux|indicator|bvp|cylinder|stzero|dt|c1|all]
+#   ./run_gates_c2.sh [flux|indicator|bvp|cylinder|stzero|residual|dt|c1|all]
 #
 # Environment: BIN   (default ../../build_cpu/moby_solve)
 #              PREP  (the moby_prepare next to BIN)
@@ -253,6 +253,45 @@ if want stzero; then
         [ $? -eq 0 ] || status=1
         run $PY ./check_st.py multipole --tag cyl --radius 0.25 --kappa "$ka" --mode 2
         [ $? -eq 0 ] || status=1
+    done
+fi
+
+# --- (3c) STAGE 1b: the residual table, which is THE test ------------------
+# Everything upstream measures an s_t error. This measures what the cell
+# balance sees -- the cut-cell truncation residual on the exact field, whose
+# exact value is zero -- and it is the measurement that decided C2.
+#
+# Read the table as: C1 baseline | k_area + the SHIPPED s_t (C2's "way out")
+# | + the stage-0 one-sided s_t | + stage 1b's split and extension. Planes
+# should be EXACT; curved cases should be BOUNDED where the baseline grows
+# like 1/h, and never worse at any contrast.
+if want residual; then
+    echo "== (3c) stage 1b: the cut-cell truncation residual"
+    # THREE angles, because 45 degrees is degenerate: there the C1 baseline is
+    # accidentally EXACT (1e-09 where 30 degrees reads 5.18), so it
+    # discriminates nothing. 20 and 35 are generated here; 30 comes from the
+    # flux gate above.
+    for th in 20 35; do
+        [ -f "obl${th}_256.h5" ] && continue
+        oblique_case "$th" 256 "obl${th}_256" || { report 1; continue; }
+    done
+    for th in 20 30 35; do
+        for ka in 10.0 1000.0; do
+            for r in 0.01 1.0; do
+                run $PY ./check_oblique.py residual "obl${th}_256.h5" --theta "$th" \
+                    --x0 0.5 --y0 0.5117 --kappa "$ka" --q-n 1.0 --amp "$r"
+            done
+            run $PY ./check_oblique.py residual "obl${th}_256.h5" --theta "$th" \
+                --x0 0.5 --y0 0.5117 --kappa "$ka" --q-n 0.0 --amp 1.0
+        done
+    done
+    for ka in 0.01 10.0 1000.0; do
+        for n in 64 128 256; do
+            for md in 2 1; do
+                run $PY ./check_cylinder.py dipole "cyl_$n.h5" --radius 0.25 \
+                    --kappa "$ka" --mode "$md"
+            done
+        done
     done
 fi
 

@@ -62,6 +62,7 @@ SOLID_THRESHOLD = 1.0e20
 MIN_COSINE = 5.0e-2          # scalar.f90 CONJ_MIN_COSINE
 MIN_GRADPHI = 1.0e-2         # scalar.f90 CONJ_MIN_GRADPHI
 SPREAD_GATE = float(os.environ.get("MOBY_SPREAD_GATE", "0.1"))   # never-worse gate
+EXTEND_SWEEPS = 4            # stage 1b: sweeps of the s_t extension
 
 
 class Plane:
@@ -290,7 +291,16 @@ def onesided_core(gtd, kface, a, nd, kap, P):
     ndx = np.where(graze, 1.0, nd)
     ax = np.where(graze, 1.0, a)
     A = (1.0 - nd * nd) / (ndx * kap)
-    return (-A * gtd * kface / ax - P / ndx) / (1.0 - A * kface / ax), ~graze
+    with np.errstate(divide="ignore", invalid="ignore"):
+        st = (-A * gtd * kface / ax - P / ndx) / (1.0 - A * kface / ax)
+    # The denominator is 1 + (a positive number) WHEN a = -n_d |grad phi|
+    # exactly. A discrete grad phi does not always honour that sign relation
+    # -- near the medial axis the two disagree -- so the guard is checked,
+    # not argued. An unguarded NaN here is not local: the stage-1b extension
+    # averages neighbours, so one poisons a whole neighbourhood, and on a
+    # plane at 20 degrees that turned an EXACT scheme (5.4e-07) into 2.19.
+    finite = np.isfinite(st)
+    return np.where(finite, st, 0.0), ~graze & finite
 
 
 def onesided(m, mode="flux", side="both"):
@@ -549,7 +559,8 @@ def cmd_residual(a):
                         ("area1soft", "STAGE0 k_area + 1s SOFT "),
                         ("area1sx", "STAGE1 k_area + 1s EXTEND"),
                         ("area1sm", "STAGE1 k_area + 1s MCUT  "),
-                        ("area1sd", "STAGE1 k_area + 1s SPLIT ")):
+                        ("area1sd", "STAGE1 k_area + 1s SPLIT "),
+                        ("area1sext", "STAGE1b k_area + 1s EXTEND")):
         total = np.zeros(shape)
         band = np.zeros(shape, dtype=bool)
         defined = np.ones(shape, dtype=bool)
@@ -678,7 +689,13 @@ def face_flux_field(phi, temp, centres, plane, d, mode, detail=False):
             st_hi, u_hi = onesided_core(gtd, kface, a_cos, nd, kr, p_hi)
             pick_lo = pl_ < pr_
             st1 = np.where(pick_lo, st_lo, st_hi)
-            usable = np.where(pick_lo, ok_lo, ok_hi) & u_lo & u_hi & ok
+            # Only the SELECTED side has to be usable -- requiring both was a
+            # bug once the finite guard went into onesided_core: a face whose
+            # solid-side closure is perfect was being disqualified by its
+            # fluid-side one, and on the curved kappa_s = 1e3 case that cost a
+            # factor 30. The two branches that genuinely read BOTH sides (the
+            # spread) re-impose it below.
+            usable = np.where(pick_lo, ok_lo, ok_hi) & np.where(pick_lo, u_lo, u_hi) & ok
             if mode.endswith("soft"):
                 # SOFT THRESHOLDING, and it has NO tunable constant. The two
                 # sides estimate the same quantity, so |s_t^lo - s_t^hi| is an
@@ -691,6 +708,7 @@ def face_flux_field(phi, temp, centres, plane, d, mode, detail=False):
                 # the hard gate below whose threshold had to be fitted.
                 spread = np.abs(st_lo - st_hi)
                 st1 = np.sign(st1) * np.maximum(np.abs(st1) - spread, 0.0)
+                usable = usable & u_lo & u_hi      # this branch reads BOTH sides
             if mode.endswith("g"):
                 # THE NEVER-WORSE GATE. Both sides estimate the SAME quantity
                 # (s_t is continuous), so |s_t^lo - s_t^hi| is a free estimate
@@ -701,7 +719,8 @@ def face_flux_field(phi, temp, centres, plane, d, mode, detail=False):
                 # loses 2x. Falling back to NO correction (not to the shipped
                 # s_t, whose own error would come back) is what makes the
                 # fallback exactly the C1 baseline.
-                usable = usable & (np.abs(st_lo - st_hi) < SPREAD_GATE * np.abs(st1))
+                usable = usable & u_lo & u_hi \
+                    & (np.abs(st_lo - st_hi) < SPREAD_GATE * np.abs(st1))
             if mode.endswith("d"):
                 # THE RIGHT BRANCH FOR EACH FACE, and each is used exactly
                 # where it is well conditioned.
@@ -746,6 +765,60 @@ def face_flux_field(phi, temp, centres, plane, d, mode, detail=False):
                 # marker-cut faces and 6.2e-3 on the 424 clipped-only ones,
                 # and those 424 carry the ENTIRE high-contrast defect.
                 usable = usable & cut
+            if mode.endswith("ext"):
+                # STAGE 1b's estimator, in full. Two branches plus a sweep.
+                #
+                # (i) THE SPLIT. The closure divides by n_d, which is fine at a
+                # MARKER-CUT face (an interface that separates the two centres
+                # along d has |n_d| median 0.87) but not at a CLIPPED-ONLY one,
+                # where the interface is nearly perpendicular to the face
+                # (median 0.23). There the arm lies wholly in one material, so
+                # gtd IS that material's d-derivative and the projection is
+                # direct, with no division at all.
+                #
+                # (ii) THE EXTENSION, which is the one that matters. s_t scales
+                # with the SOLID-side amplitude (|grad_t T| ~ 2/(1 + kappa_s)
+                # at the interface), so a face whose arm lies in the FLUID is
+                # extracting a tiny quantity from an O(1) field by
+                # cancellation: measured 1905 % at kappa_s = 1e3 against 1.0 %
+                # for a solid arm, and those 128 faces of 1032 carried the
+                # WHOLE high-contrast defect. s_t is continuous along the
+                # interface, so sweep the value in from the faces that do have
+                # a solid-side view. Tangentially there is nothing to take --
+                # zero such faces have a marker-cut tangential neighbour, they
+                # are a different family -- hence all six neighbours.
+                p_sel = np.where(pick_lo, p_lo, p_hi)
+                st1 = np.where(cut, st1, gtd*(1.0 - nd*nd) - nd*p_sel)
+                fa = face_area_fraction(0.5 * (pl_ + pr_), n1s, n2s,
+                                        cd[tang[0]], cd[tang[1]])
+                clipped = (fa > 1.0e-12) & (fa < 1.0 - 1.0e-12)
+                ok_sel = np.where(pick_lo, ok_lo, ok_hi) & ok
+                bad = clipped & ~cut & (pl_ > 0.0)
+                known = ((cut | (clipped & ~cut & (pl_ <= 0.0)))
+                         & ok_sel & np.isfinite(st1))
+                known0 = known.copy()
+                for _ in range(EXTEND_SWEEPS):
+                    if not (bad & ~known).any():
+                        break
+                    num = np.zeros_like(st1)
+                    den = np.zeros_like(st1)
+                    for axq in range(3):
+                        for sh in (-1, 1):
+                            kk = np.roll(known, sh, axis=axq)
+                            num = num + np.where(kk, np.roll(st1, sh, axis=axq), 0.0)
+                            den = den + np.where(kk, 1.0, 0.0)
+                    m = bad & ~known & (den > 0.0)
+                    st1 = np.where(m, num/np.where(den > 0.0, den, 1.0), st1)
+                    known = known | m
+                # Promote every face with a solid-side view, not only the
+                # ones the sweep filled. Measured, isolated against all the
+                # other edits: promoting only the filled faces costs the
+                # curved kappa_s = 1e3 case a factor 30 (1.08 -> 32.5). The
+                # faces this reaches are marker-cut ones whose SELECTED-side
+                # closure is fine but which `usable` had rejected; their
+                # alternative is the shipped de-bias, which at a same-material
+                # face corrects nothing at all.
+                usable = usable | known
             st = np.where(usable, st1,
                           0.0 if (mode.endswith("g") or mode.endswith("soft"))
                           else st)
