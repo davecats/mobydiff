@@ -110,8 +110,11 @@ Per between-iteration round (15 of the 18): **267 µs saved** on `rect` 8×2,
 **The 4-rank miss has a named cause, and it is not this change's own bucket.**
 `phi_exchange` — whose volume the change does not touch at all — went
 **+7.3 % (`rect`) and +9.6 % (`refined`) at 4 ranks**, while going −1.7 % and
-−2.9 % at 8. That is +0.49 and +0.42 ms — **7 % of the `rect` 4-rank gain and
-15 % of the `refined` one**, and it is most of why those two fell short.
+−2.9 % at 8. That is +0.49 and +0.42 ms — 7 % of the `rect` 4-rank gain and
+15 % of the `refined` one — and it accounts for **essentially the whole
+shortfall**: `rect`'s step missed the band's lower edge by 0.46 ms and
+`refined`'s by 0.43 ms, against `phi_exchange` regressions of 0.49 and 0.42 ms.
+Without it both 4-rank cases would have landed inside the band.
 
 The entry REORDERING is the only thing that can explain it. The scalar exchange
 walks points in entry order, and where the copies used to run all 26 directions
