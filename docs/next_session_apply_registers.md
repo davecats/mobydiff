@@ -14,12 +14,13 @@
 > **L1 was not taken** and should not be: it costs a launch and the threshold it
 > was for is already crossed. **L3/L4 are moot.**
 >
+> **At 16 ranks (job 5145120, 4 nodes): step −8.2 % / −6.5 %, `apply` −21.3 % /
+> −18.7 %, its share 34.7 → 29.7 % and 33.9 → 29.5 %.** The forecast made before
+> that job ran was right to 0.3 ms and 0.7 percentage points.
+>
 > Full report, with what the numbers do not support and the next lever
 > (`compute_rdenom`, 110 registers, the same hoist verbatim):
 > `tutorials/turbulentBoundaryLayer/overheadTest/results_apply_registers_2026-09-14.md`.
-> The 16-rank A/B (job **5145120**, built from the pinned worktree
-> `$WS/moby-2to1-applynew` at `6708193`) is still queued; §6 there is a
-> prediction, not a measurement.
 >
 > Everything below is the handout as written, kept for the reasoning it records.
 

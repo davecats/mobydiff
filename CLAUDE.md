@@ -1023,10 +1023,15 @@ immersed boundary. Phased, each phase verified before the next:
   points) and the 7-case suite at max_abs 0 incl. every RANS scalar, CPU and GPU,
   deliberately WITHOUT nofma. L1 (splitting the high-face planes into their own
   kernel) was NOT taken and should not be -- it costs a launch and the threshold
-  it was for is already crossed. The 16-rank A/B (job 5145120, built from a
-  PINNED worktree so later work cannot contaminate it) was still queued on
-  `accelerated` when this was written, so the 16-rank figures in that report's
-  section 6 are a PREDICTION, not a measurement. NEXT, and cheap:
+  it was for is already crossed. AT 16 RANKS (job 5145120, 4 nodes, `new`
+  built from a PINNED worktree so later work could not contaminate it): step
+  **-8.2% / -6.5%**, apply **-21.3% / -18.7%**, its share **34.7 -> 29.7%** and
+  **33.9 -> 29.5%** -- and the forecast written before that job ran was right to
+  0.3 ms and 0.7 percentage points, with its stated caveat firing in the stated
+  direction (the refined case's fractional gain softens from 20.9% at 4 ranks to
+  18.7% at 16, as 3.8 Mcell/GPU stops filling the machine). The same logs settle
+  what `results_horeka_2026-09-14.md` section 6 said was owed: apply at 16 ranks
+  IS 34.7% / 33.9% of the step, as inferred. NEXT, and cheap:
   **`compute_rdenom` is at 110 registers**, the highest in the projection, and
   `proj_timing: setup` is ~2.3 ms/step at 16 ranks -- `face_grad_denom` is static
   in exactly the same way, so the same hoist applies verbatim and is bit-exact by

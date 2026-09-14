@@ -1,9 +1,10 @@
 # `jacobi_apply` k2: 88 registers became 64, and the time followed
 
 Jobs 5145099 (registers + 4-rank A/B + every gate), 5145100 (ncu, both binaries,
-same node) and 5145114 (8-rank A/B, dev partition). A100-SXM4-40GB, HoreKa.
+same node), 5145114 (8-rank A/B, dev partition) and 5145120 (8- and 16-rank A/B,
+4 nodes). A100-SXM4-40GB, HoreKa.
 `ref` = `e07b8d3`, `new` = `25c13ab`. Raw runs in `horeka/results_job5145099/`,
-`results_job5145100/`, `results_job5145114/`. The readings were written down
+`results_job5145100/`, `results_job5145114/`, `results_job5145120/`. The readings were written down
 first, in `horeka/exchange/PREREGISTERED_apply.md`.
 
 `results_ncu_apply_2026-09-14.md` ended with a hypothesis and no plan: k2 is
@@ -114,25 +115,44 @@ about the same way. In percentage terms this one is nearly rank-independent so
 far (−7.8 to −8.6 % of the step at both 4 and 8), because the step shrinks at
 about the same rate as the saving.
 
-## 6 — What is predicted at 16 ranks, and not yet measured
+## 6 — 16 ranks: the prediction, and what it turned into
 
-The 4-node job (**5145120**) is queued behind the `accelerated` partition, three
-days out at submission. It builds from a PINNED worktree at `6708193`
-(`$WS/moby-2to1-applynew`), not from the live tree, so that further work on the
-projection cannot silently contaminate a job that runs days later — the first
-submission (5145101) did read the live tree and was cancelled and replaced for
-exactly that reason. From the committed pre-change phase table (job 5142973, `new`
-column), at 16 ranks `apply` is **20.77 ms of a 60.31 ms step (34.4 %)** for
-`rect` and **11.06 of 33.44 (33.1 %)** for `refined_yp82` — which, incidentally,
-is the measurement that `results_horeka_2026-09-14.md` §6 said was still owed:
-the ~34 % figure inferred there by subtraction is confirmed by the run logs.
+Written as a prediction before job 5145120 ran, and kept in that order so the
+forecast can be graded rather than quietly replaced.
 
-If the fractional reduction holds at 16 ranks, `apply` becomes ~16.2 / ~8.8 ms,
-i.e. **~4.5 / ~2.2 ms/step saved, −7.5 % / −6.6 % of the step**, and `apply`'s
-share falls to about 28 %. **This is a prediction.** It may come out lower: at 16
-ranks each GPU holds 8.6 / 3.8 Mcell, so the kernel has fewer waves to fill and
-occupancy buys less. Job 5145120 settles it; until it reports, no 16-rank number
-from this change should be quoted.
+**Predicted**, from the committed pre-change phase table (job 5142973, `new`
+column: `apply` = 20.77 ms of a 60.31 ms step for `rect`, 11.06 of 33.44 for
+`refined_yp82`) and the fractional reductions measured at 4 and 8 ranks:
+`apply` → ~16.2 / ~8.8 ms, i.e. **~4.5 / ~2.2 ms/step saved, −7.5 % / −6.6 % of
+the step**, share falling to about 28 % — with the caveat that it might come out
+lower, because at 16 ranks each GPU holds only 8.6 / 3.8 Mcell and the kernel has
+fewer waves to fill.
+
+**Measured** (job 5145120, 4 nodes, `hkn[0436,0530,0533,0630]`, 100 steps,
+before and after in one allocation, `new` built from a worktree pinned at
+`6708193` so later work could not contaminate it):
+
+| case | step | `apply` | `apply` share | `sweep` (control) |
+|---|---|---|---|---|
+| `rect_jacobi` 16×4 | 59.91 → 55.02 ms **−8.2 %** | 20.76 → 16.34 **−21.3 %** | 34.7 → **29.7 %** | +0.6 % |
+| `refined_yp82` 16×4 | 32.91 → 30.78 ms **−6.5 %** | 11.17 → 9.08 **−18.7 %** | 33.9 → **29.5 %** | −0.1 % |
+| `rect_jacobi` 8×2 | 102.54 → 93.90 **−8.4 %** | 40.60 → 31.81 **−21.7 %** | 39.6 → 33.9 % | +0.7 % |
+| `refined_yp82` 8×2 | 51.78 → 47.71 **−7.9 %** | 19.90 → 15.94 **−19.9 %** | 38.4 → 33.4 % | +0.0 % |
+
+The forecast was right to **0.3 ms and 0.7 percentage points** on both cases
+(4.42 / 2.09 ms saved against 4.5 / 2.2 predicted; −8.2 / −6.5 % against
+−7.5 / −6.6 %), and the caveat fired in the direction stated: the refined case's
+fractional `apply` reduction softens from 20.9 % at 4 ranks to **18.7 %** at 16,
+as its per-GPU 3.8 Mcell stops filling the machine. Its 8-rank rows reproduce job
+5145114's to 0.3 % — a third allocation agreeing with the other two.
+
+The `before` column also settles what `results_horeka_2026-09-14.md` §6 said was
+owed: `apply` at 16 ranks is **34.7 % / 33.9 %** of the step, against the ~34 %
+inferred there by subtraction.
+
+(The first submission of this job, 5145101, would have rebuilt `new` from the
+live working tree days later, and was cancelled and replaced for that reason.)
+
 
 ## 7 — Gates
 
@@ -160,8 +180,10 @@ and HoreKa has no h5py. Unchanged from previous campaigns.
 - **Not that the kernel got cheaper.** It moves the same bytes — 10.31
   doubles/cell, unchanged — and that is still 1.29x its source-counted minimum of
   8. Nothing was reclaimed; the same traffic is merely issued by more warps.
-- **Not a 16-rank result.** §6 is arithmetic on a measured fraction, flagged as
-  such.
+- **Not a per-kernel 16-rank result.** §6's step and bucket times are measured,
+  but the ncu occupancy/DRAM pair behind them comes from a single rank holding a
+  whole GPU. Whether k2 still reaches 46 % occupancy on 3.8 Mcell is not
+  measured — the softer 18.7 % there suggests not entirely.
 - **Not a claim about `interface_correct`, the exchange or `mpi_wait`.** None is
   touched, and `mpi_wait`'s *share* will have grown again simply because the step
   is smaller — as it did after the `map(to: c)` fix.
