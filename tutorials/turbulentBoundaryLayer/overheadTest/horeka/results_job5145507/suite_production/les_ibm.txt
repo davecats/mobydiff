@@ -1,0 +1,7 @@
+comparing /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_rdenom/suite/les_ibm_ref/channel_ibm_200.h5 vs /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_rdenom/suite/les_ibm_new/channel_ibm_200.h5
+  un           n=327680       max_abs=1.6342482922482304e-13   ** DIFFERS **
+  vn           n=327680       max_abs=3.397282455352979e-14   ** DIFFERS **
+  wn           n=327680       max_abs=3.4861002973229915e-14   ** DIFFERS **
+  pn           n=327680       max_abs=1.4606094111968559e-12   ** DIFFERS **
+  nut          n=327680       max_abs=1.6477704617434696e-15   ** DIFFERS **
+FAIL: worst max_abs = 1.4606094111968559e-12 over 5 dataset(s)

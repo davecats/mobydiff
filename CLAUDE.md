@@ -1031,11 +1031,33 @@ immersed boundary. Phased, each phase verified before the next:
   direction (the refined case's fractional gain softens from 20.9% at 4 ranks to
   18.7% at 16, as 3.8 Mcell/GPU stops filling the machine). The same logs settle
   what `results_horeka_2026-09-14.md` section 6 said was owed: apply at 16 ranks
-  IS 34.7% / 33.9% of the step, as inferred. NEXT, and cheap:
-  **`compute_rdenom` is at 110 registers**, the highest in the projection, and
-  `proj_timing: setup` is ~2.3 ms/step at 16 ranks -- `face_grad_denom` is static
-  in exactly the same way, so the same hoist applies verbatim and is bit-exact by
-  the same argument.
+  IS 34.7% / 33.9% of the step, as inferred. **THE SAME LEVER, TAKEN ON THE OTHER TWO
+  PROJECTION KERNELS (2026-09-14, jobs 5145507/5145518,
+  `results_rdenom_registers_2026-09-14.md`): `compute_rdenom` 110 -> 80,
+  `jacobi_compute_phi` 94 -> 80.** `face_grad_denom` and the divergence metric
+  `d1?(idx,VAR_P,b)` are static in exactly the same way, so they join the tables
+  as `dnLow`/`dnHigh`/`d1P` (d1P MUST stay a separate factor: the diagonal is
+  `(dnLow*mu + dnHigh*mu)*d1P` and folding it in would distribute the multiply).
+  ncu: rdenom **-27.5%** (DRAM 28.9 -> 39.8% of peak, occupancy 23.7 -> 35.0),
+  phi **-14.1%** (53.8 -> 62.3, 29.1 -> 35.0), the two apply kernels unmoved to
+  0.1% as controls. `sweep` **-12%**, `setup` **-19%**, STEP **-2.2 to -2.7%** at
+  4 and 8 ranks (16 not measured; scaling gives ~-2%). FOUND BY THE REGISTER
+  TABLE, NOT THE PHASE TABLE: **`compute_rdenom` had never been profiled** and
+  was running at 28.9% of peak DRAM -- the worst in the solver -- because at 3
+  calls/step it never ranked in a bucket. It is now COMPUTE-limited (SM 49.6% >
+  DRAM 39.8%): the remaining cost is very likely its per-cell fp64 divide, the
+  one the reciprocal-rdenom change removed from compute_phi for -50.5% of that
+  kernel. That is the next thing to look at, with ncu before any code.
+  **GATE LANDMINE, and it bit here:** this change MOVES expressions, so the
+  compiler fuses `a*b+c` differently on the two sides and the PRODUCTION-flag
+  comparison fails at 1e-15..1e-12 with nothing wrong. It needs
+  `-Mnofma -gpu=nofma` on BOTH sides -- which this machine had no build for:
+  `compile.sh` gained `cpu_nofma`/`gpu_nofma` modes (production modes byte-
+  identical to before) and `horeka/exchange/submit_nofma_gate.sh` runs Pass G +
+  the 7-case suite with them: all 9 comparisons **max_abs 0**. Use the
+  production-flag gate ONLY when the arithmetic source is byte-identical between
+  the two binaries (a device index, a launch parameter); use the nofma gate for
+  anything that moves an expression.
   Probe: `horeka/exchange/run_ncu.sh` (ncu needs
   `--bind-to none`; `--page raw` is WIDE; the solver's stdout lands in ncu.csv). `horeka/exchange/analyse_launch_traffic.py`
   reproduces the per-launch traffic table from an nsys sqlite export. Cheap concrete win meanwhile: fold the local copy into the pack

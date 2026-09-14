@@ -1,0 +1,6 @@
+comparing /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_rdenom/suite/beltrami_slaby_ref/beltrami_200.h5 vs /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_rdenom/suite/beltrami_slaby_new/beltrami_200.h5
+  un           n=1179648      max_abs=1.4876988529977098e-14   ** DIFFERS **
+  vn           n=1179648      max_abs=1.532107773982716e-14   ** DIFFERS **
+  wn           n=1179648      max_abs=1.6653345369377348e-14   ** DIFFERS **
+  pn           n=1179648      max_abs=4.3853809472693683e-14   ** DIFFERS **
+FAIL: worst max_abs = 4.3853809472693683e-14 over 4 dataset(s)

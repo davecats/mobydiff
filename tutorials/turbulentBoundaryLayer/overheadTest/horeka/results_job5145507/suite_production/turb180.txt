@@ -1,0 +1,9 @@
+comparing /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_rdenom/suite/turb180_ref/turb180_200.h5 vs /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_rdenom/suite/turb180_new/turb180_200.h5
+  un           n=6144         max_abs=3.5527136788005009e-14   ** DIFFERS **
+  vn           n=6144         max_abs=6.1559373050468214e-15   ** DIFFERS **
+  wn           n=6144         max_abs=6.7689496085704931e-15   ** DIFFERS **
+  pn           n=6144         max_abs=1.7894193071743558e-13   ** DIFFERS **
+  nut          n=6144         max_abs=3.5665914666083154e-15   ** DIFFERS **
+  k            n=6144         max_abs=3.4416913763379853e-15   ** DIFFERS **
+  omega        n=6144         max_abs=7.2759576141834259e-12   ** DIFFERS **
+FAIL: worst max_abs = 7.2759576141834259e-12 over 7 dataset(s)

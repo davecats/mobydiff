@@ -1,0 +1,7 @@
+job    : 5145518
+date   : 2026-09-14 17:05:25 CEST
+nodes  : 1  (hkn0402)
+new    : 294cbb75324b5ab05fce3ee98c0f34865b1d2154  dirty 0
+ref    : 6708193730ad1eee528c4b9ab798ff9b47e6e697
+flags  : -Mnofma -gpu=nofma, BOTH sides
+gpu    : NVIDIA A100-SXM4-40GB

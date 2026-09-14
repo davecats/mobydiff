@@ -1,0 +1,9 @@
+comparing /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_rdenom/suite/wf180_y30_ref/wf180_y30_200.h5 vs /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_rdenom/suite/wf180_y30_new/wf180_y30_200.h5
+  un           n=384          max_abs=4.2632564145606011e-14   ** DIFFERS **
+  vn           n=384          max_abs=1.9479454492507087e-14   ** DIFFERS **
+  wn           n=384          max_abs=2.2458915917650614e-14   ** DIFFERS **
+  pn           n=384          max_abs=2.5958835775385936e-13   ** DIFFERS **
+  nut          n=384          max_abs=5.9674487573602164e-16   ** DIFFERS **
+  k            n=384          max_abs=8.4376949871511897e-15   ** DIFFERS **
+  omega        n=384          max_abs=7.1054273576010019e-14   ** DIFFERS **
+FAIL: worst max_abs = 2.5958835775385936e-13 over 7 dataset(s)

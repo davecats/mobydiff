@@ -1,0 +1,6 @@
+comparing /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_rdenom/gate/gate_refined_yp82_rect_jacobi_ref/overhead_20.h5 vs /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-run/results_rdenom/gate/gate_refined_yp82_rect_jacobi_new/overhead_20.h5
+  un           n=60555264     max_abs=3.5527136788005009e-15   ** DIFFERS **
+  vn           n=60555264     max_abs=1.4007892068512717e-15   ** DIFFERS **
+  wn           n=60555264     max_abs=1.2533499247149875e-15   ** DIFFERS **
+  pn           n=60555264     max_abs=4.5257067604314013e-13   ** DIFFERS **
+FAIL: worst max_abs = 4.5257067604314013e-13 over 4 dataset(s)
