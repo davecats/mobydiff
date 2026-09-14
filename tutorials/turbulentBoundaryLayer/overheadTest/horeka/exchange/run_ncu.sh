@@ -25,6 +25,16 @@ CFG="${CFG_DIR:-$HERE/../configs}"
 NCU="${NCU:-/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/profilers/Nsight_Compute/ncu}"
 NSTEPS="${NSTEPS:-6}"
 CONFIGS="${CONFIGS:-refined_yp82_rect_jacobi}"
+# Which kernels, and where to start. --launch-skip counts MATCHING launches, so
+# the two must be chosen together. Defaults: jacobi_apply's two kernels and
+# jacobi_compute_phi = 54 matching launches per step (3 substages x 6 iterations
+# x 3 kernels), so 108 skips two full steps and the profiled ones are steady.
+# Adding compute_rdenom makes it 57/step (one per substage, ahead of that
+# substage's 18), so its pair is 114/19 = skip two steps, profile exactly one
+# substage: 1 rdenom + 6 x (phi, apply k1, apply k2).
+KERNEL_RE="${KERNEL_RE:-jacobi_apply|jacobi_compute_phi}"
+LAUNCH_SKIP="${LAUNCH_SKIP:-108}"
+LAUNCH_COUNT="${LAUNCH_COUNT:-12}"
 
 # DRAM bytes actually moved, the sector/request ratio that exposes coalescing,
 # and the two throughput percentages that say which limit is being hit.
@@ -59,16 +69,16 @@ for cfg in $CONFIGS; do
     echo "=== ncu $cfg ($(date '+%F %T'))"
     ( cd "$run" && mpirun -n 1 --bind-to none "$NCU" --target-processes all \
         --csv --page raw --metrics "$METRICS" \
-        --kernel-name 'regex:jacobi_apply|jacobi_compute_phi' \
-        --launch-skip 108 --launch-count 12 \
+        --kernel-name "regex:$KERNEL_RE" \
+        --launch-skip "$LAUNCH_SKIP" --launch-count "$LAUNCH_COUNT" \
         "$EXE" config.ini > ncu.csv 2> ncu.log )
     rc=$?
     # Singleton MPI fallback if the launcher is the problem rather than ncu.
     if [ $rc -ne 0 ] && ! grep -q jacobi "$run/ncu.csv" 2>/dev/null; then
         echo "    mpirun path failed; retrying without a launcher"
         ( cd "$run" && "$NCU" --csv --page raw --metrics "$METRICS" \
-            --kernel-name 'regex:jacobi_apply|jacobi_compute_phi' \
-            --launch-skip 108 --launch-count 12 \
+            --kernel-name "regex:$KERNEL_RE" \
+            --launch-skip "$LAUNCH_SKIP" --launch-count "$LAUNCH_COUNT" \
             "$EXE" config.ini > ncu.csv 2> ncu.log )
         rc=$?
     fi

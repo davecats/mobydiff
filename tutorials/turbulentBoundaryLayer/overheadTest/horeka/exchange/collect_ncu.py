@@ -9,9 +9,18 @@ launch with ~280 metric columns. (The long "Metric Name/Metric Value" shape is
 
 `jacobi_compute_phi` is the control -- the kernel already known to sit near its
 limit -- so the others are read against it, not against a spec sheet. Minimum
-traffic is counted from the source in doubles per cell: 5 for compute_phi
-(3 velocity + rdenom read, phi write), 3 for apply k1 (phi read, p read+write),
-8 for apply k2 (phi + mu read, 3 velocity read+write).
+traffic is counted from the source in doubles per cell, each array counted ONCE
+per cell however many neighbour accesses it has (the +1 neighbour is the next
+cell's own value): 5 for compute_phi (3 velocity + rdenom read, phi write),
+3 for apply k1 (phi read, p read+write), 8 for apply k2 (phi + mu read,
+3 velocity read+write), 4 for compute_rdenom (3 mu read, rdenom write).
+
+The MIN keys are matched against the kernel name with its `F1L<line>` part
+REMOVED: nvfortran names a kernel after the source line of its target construct,
+so keying on the line number makes the table silently lose its `min` column the
+moment anything above it in the file moves (it did, in job 5145100). The
+trailing ordinal (`_14_`, `_16_`) is the construct's index in the file and is
+stable as long as no target region is added before it.
 """
 import csv
 import re
@@ -20,7 +29,14 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-MIN = {"jacobi_compute_phi": 5, "jacobi_apply__F1L470": 3, "jacobi_apply__F1L502": 8}
+MIN = {"jacobi_compute_phi": 5, "compute_rdenom": 4,
+       "jacobi_apply__14": 3, "jacobi_apply__16": 8}
+
+
+def unline(name):
+    """Kernel name with nvfortran's source-line stamp removed."""
+    return re.sub(r"__F1L\d+_", "__", name)
+
 COLS = [("gpu__time_duration.sum", "us", 1e-3),
         ("dram__bytes_read.sum", None, None), ("dram__bytes_write.sum", None, None),
         ("l1tex__average_t_sectors_per_request_pipe_lsu_mem_global_op_ld.ratio", "ld sect/req", 1),
@@ -99,7 +115,7 @@ def main():
             if cells:
                 rd, wr = m(rs, "dram__bytes_read.sum"), m(rs, "dram__bytes_write.sum")
                 d = (rd + wr) / cells / 8 if rd is not None and wr is not None else None
-                key = next((kk for kk in MIN if kk in short), None)
+                key = next((kk for kk in MIN if kk in unline(short)), None)
                 cellsrow += [f"{d:.2f}" if d else "-",
                              str(MIN.get(key, "-")),
                              f"**{d/MIN[key]:.2f}x**" if (d and key) else "-"]

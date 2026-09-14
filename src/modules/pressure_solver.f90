@@ -87,31 +87,51 @@ module pressure_solver
     ! via 1/0; the failure mode is unchanged in kind.
     real(C_DOUBLE), allocatable :: rdenom(:,:,:,:)
 
-    ! Velocity-face CORRECTION metric, precomputed per (block, face-normal index).
+    ! STATIC face metric tables, precomputed per (face-normal index, direction,
+    ! block) and shared by the two volume kernels of the projection.
     !
-    ! The value jacobi_apply's face kernel needs at a face is
-    ! face_grad_corr(face kind, at-boundary, d1f, outlet, refined) -- a function
-    ! of the block and the index along the face NORMAL only, not of the two
-    ! tangential indices the collapse(4) loop also spans. Evaluating it inside
-    ! the kernel therefore recomputed the same branchy expression nb^2 times per
-    ! value and, worse, kept physLow/physHigh/d1x/d1y/d1z/outLow/outHigh/refd
-    ! live across the whole loop body: the kernel was register-limited at 88
-    ! registers/thread, 29.6 % occupancy and 44 % of peak DRAM against its
-    ! sibling pressure kernel's 65 % at 59 registers (see
-    ! overheadTest/results_ncu_apply_2026-09-14.md). Hoisting is bit-exact by
-    ! construction -- identical expression, identical inputs, evaluated once.
+    ! Every metric these kernels need at a face is
+    ! face_grad_corr / face_grad_denom (face kind, at-boundary, d1f, outlet,
+    ! refined) -- a function of the block and the index along the face NORMAL
+    ! only, never of the two tangential indices the collapse(4) loops also span.
+    ! Evaluating them inside a kernel therefore recomputed the same branchy
+    ! expression nb^2 times per value and, worse, kept
+    ! physLow/physHigh/d1x/d1y/d1z/outLow/outHigh/refd live across the whole loop
+    ! body. That is what made both kernels register-limited, and cost real time:
+    ! jacobi_apply's face kernel went 88 -> 64 registers, 29.6 -> 46.0 %
+    ! occupancy, 42.5 -> 60.5 % of peak DRAM and -29.8 % on the clock with its
+    ! traffic unchanged to the last digit (measured, ncu, both binaries on one
+    ! node: overheadTest/results_apply_registers_2026-09-14.md).
     !
-    ! cfLow(idx,d,b) carries the interface zeroing already (2:1 interface faces
-    ! are corrected by interface_correct instead, not here). cfHigh(d,b) is zero
-    ! unless the block's high face in d is an OUTLET physical face -- the only
-    ! high face this kernel owns.
+    ! Hoisting is bit-exact by construction -- identical expression, identical
+    ! inputs, evaluated once instead of nb^2 times.
     !
-    ! Both are STATIC, unlike rdenom: face kinds come from the leaf table and
-    ! the metrics from the node lines, and neither changes during a run (rdenom
-    ! follows ibm%mu, which update_ibm_mu rewrites every substage). So they are
-    ! formed ONCE on the host and mapped.
+    !   cfLow/cfHigh   jacobi_apply's velocity-face CORRECTION metric.
+    !                  cfLow(idx,d,b) carries the interface zeroing already (2:1
+    !                  interface faces are corrected by interface_correct, not
+    !                  there); cfHigh(d,b) is zero unless the block's high face
+    !                  in d is an OUTLET physical face -- the only high face
+    !                  that kernel owns, so one value per block suffices.
+    !   dnLow/dnHigh   compute_rdenom's DIAGONAL metric, both faces, every index
+    !                  (the high face enters the diagonal at every cell, not
+    !                  only at the block boundary -- hence the full index range
+    !                  here where cfHigh needs one value).
+    !   d1P            the cell's own divergence metric d1?(idx,VAR_P,b), the
+    !                  last thing that kept all three d1 arrays live in
+    !                  compute_rdenom. It MUST stay a separate factor: the
+    !                  diagonal is (dnLow*mu + dnHigh*mu)*d1P, and folding d1P
+    !                  into dnLow/dnHigh would distribute the multiply and move
+    !                  the last bits.
+    !
+    ! All of them are STATIC, unlike rdenom: face kinds come from the leaf table
+    ! and the metrics from the node lines, and neither changes during a run
+    ! (rdenom follows ibm%mu, which update_ibm_mu rewrites every substage). So
+    ! they are formed ONCE on the host and mapped once.
     real(C_DOUBLE), allocatable :: cfLow(:,:,:)   ! (1:maxval(nb), 3, nBlocks)
     real(C_DOUBLE), allocatable :: cfHigh(:,:)    ! (3, nBlocks)
+    real(C_DOUBLE), allocatable :: dnLow(:,:,:)   ! (1:maxval(nb), 3, nBlocks)
+    real(C_DOUBLE), allocatable :: dnHigh(:,:,:)  ! (1:maxval(nb), 3, nBlocks)
+    real(C_DOUBLE), allocatable :: d1P(:,:,:)     ! (1:maxval(nb), 3, nBlocks)
 
     ! Does this case have any 2:1 interface face? Face kinds come from the leaf
     ! table and never change during a run, so the answer is computed once and
@@ -241,8 +261,8 @@ contains
         ! divergence.
         ! The diagonal is constant across the iterations (see rdenom), so it is
         ! formed once here rather than inside the loop.
-        call allocate_face_corr(blk, outLow, outHigh, refd)
-        call compute_rdenom(blk, ibm, outLow, outHigh, refd)
+        call init_face_metrics(blk, outLow, outHigh, refd)
+        call compute_rdenom(blk, ibm)
         call prof_toc(proj_prof, PROF_PROJ_SETUP, t0)
 
         do iIter = 1_C_INT, ps%nIter
@@ -366,20 +386,25 @@ contains
         end if
     end subroutine allocate_rdenom
 
-    ! Fill the static face-correction metrics (see the cfLow declaration) and
-    ! map them. Called from pressure_projection once the outlet/refinement flags
-    ! are known; it returns immediately on every later call because nothing it
-    ! reads can change during a run.
-    subroutine allocate_face_corr(blk, outLow, outHigh, refd)
+    ! Fill the static face metric tables (see their declaration) and map them.
+    ! Called from pressure_projection once the outlet/refinement flags are known;
+    ! it returns immediately on every later call because nothing it reads can
+    ! change during a run.
+    subroutine init_face_metrics(blk, outLow, outHigh, refd)
         type(block_set_type), intent(in) :: blk
         logical(C_BOOL), intent(in) :: outLow(3), outHigh(3), refd(3)
 
         integer(C_INT) :: b, d, idx, n
 
         if (allocated(cfLow)) return
-        allocate(cfLow(maxval(blk%nb),3,blk%nBlocks), cfHigh(3,blk%nBlocks))
+        allocate(cfLow(maxval(blk%nb),3,blk%nBlocks), cfHigh(3,blk%nBlocks), &
+                 dnLow(maxval(blk%nb),3,blk%nBlocks), dnHigh(maxval(blk%nb),3,blk%nBlocks), &
+                 d1P(maxval(blk%nb),3,blk%nBlocks))
         cfLow = 0.0d0
         cfHigh = 0.0d0
+        dnLow = 0.0d0
+        dnHigh = 0.0d0
+        d1P = 0.0d0
 
         do b = 1_C_INT, blk%nBlocks
             do d = 1_C_INT, 3_C_INT
@@ -387,6 +412,11 @@ contains
                 do idx = 1_C_INT, n
                     cfLow(idx,d,b) = face_grad_corr(blk%physLow(d,b), idx == 1_C_INT, &
                         d1_normal(blk, d, idx, b), outLow(d), refd(d))
+                    dnLow(idx,d,b) = face_grad_denom(blk%physLow(d,b), idx == 1_C_INT, &
+                        d1_normal(blk, d, idx, b), outLow(d), refd(d))
+                    dnHigh(idx,d,b) = face_grad_denom(blk%physHigh(d,b), idx == n, &
+                        d1_normal(blk, d, idx + 1_C_INT, b), outHigh(d), refd(d))
+                    d1P(idx,d,b) = d1_divergence(blk, d, idx, b)
                 end do
                 ! Interface faces belong to interface_correct: zero rather than
                 ! a second predicate, exactly as the kernel used to do.
@@ -400,13 +430,13 @@ contains
         end do
 
 #ifdef USE_OPENMP_OFFLOAD
-        !$omp target enter data map(to: cfLow, cfHigh)
+        !$omp target enter data map(to: cfLow, cfHigh, dnLow, dnHigh, d1P)
 #endif
-    end subroutine allocate_face_corr
+    end subroutine init_face_metrics
 
     ! The face metric d1f of direction d at face index idx of block b, for the
-    ! velocity component normal to that face. Host-side helper for
-    ! allocate_face_corr only.
+    ! velocity component NORMAL to that face, and the cell's own divergence
+    ! metric in direction d. Host-side helpers for init_face_metrics only.
     real(C_DOUBLE) function d1_normal(blk, d, idx, b)
         type(block_set_type), intent(in) :: blk
         integer(C_INT), intent(in) :: d, idx, b
@@ -420,6 +450,19 @@ contains
         end if
     end function d1_normal
 
+    real(C_DOUBLE) function d1_divergence(blk, d, idx, b)
+        type(block_set_type), intent(in) :: blk
+        integer(C_INT), intent(in) :: d, idx, b
+
+        if (d == 1_C_INT) then
+            d1_divergence = blk%d1x(idx,VAR_P,b)
+        else if (d == 2_C_INT) then
+            d1_divergence = blk%d1y(idx,VAR_P,b)
+        else
+            d1_divergence = blk%d1z(idx,VAR_P,b)
+        end if
+    end function d1_divergence
+
     ! The RECIPROCAL projection diagonal: each face's pressure-gradient metric,
     ! summed, then inverted.
     ! face_grad returns 0 for a pinned wall face, the coarse-fine gradient 1/d
@@ -432,10 +475,9 @@ contains
     ! Called ONCE per substage (see the rdenom declaration), and stored inverted
     ! so the iteration kernel multiplies rather than divides.
 
-    subroutine compute_rdenom(blk, ibm, outLow, outHigh, refd)
+    subroutine compute_rdenom(blk, ibm)
         type(block_set_type), intent(in) :: blk
         type(ibm_type), intent(in) :: ibm
-        logical(C_BOOL), intent(in) :: outLow(3), outHigh(3), refd(3)
 
         real(C_DOUBLE) :: mu_u_i, mu_u_ip, mu_v_j, mu_v_jp, mu_w_k, mu_w_kp
         integer(C_INT) :: i, ip, j, jp, k, kp, b, nBlocks, nx, ny, nz
@@ -443,10 +485,13 @@ contains
         nx = blk%nb(1); ny = blk%nb(2); nz = blk%nb(3)
         nBlocks = blk%nBlocks
 
+        ! dnLow/dnHigh/d1P are the face_grad_denom and divergence metrics
+        ! precomputed per (normal index, direction, block) -- see their
+        ! declaration for why that is bit-exact and why d1P stays a separate
+        ! factor. Only ibm%mu, which changes every substage, is still read here.
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do collapse(4) &
-        !$omp& map(to: nx, ny, nz, outLow(1:3), outHigh(1:3), refd(1:3), &
-        !$omp& blk%physLow, blk%physHigh, blk%d1x, blk%d1y, blk%d1z, ibm%mu) &
+        !$omp& map(to: nx, ny, nz, dnLow, dnHigh, d1P, ibm%mu) &
         !$omp& map(tofrom: rdenom) &
         !$omp& private(i,ip,j,jp,k,kp,b, &
         !$omp& mu_u_i,mu_u_ip,mu_v_j,mu_v_jp,mu_w_k,mu_w_kp)
@@ -462,12 +507,9 @@ contains
                     mu_w_k  = ibm%mu(i,j,k,VAR_W,b);  mu_w_kp = ibm%mu(i,j,kp,VAR_W,b)
 
                     rdenom(i,j,k,b) = 1.0d0/( &
-                            (face_grad_denom(blk%physLow(1,b), i == 1_C_INT, blk%d1x(i,VAR_U,b), outLow(1), refd(1))*mu_u_i &
-                           + face_grad_denom(blk%physHigh(1,b), i == nx, blk%d1x(ip,VAR_U,b), outHigh(1), refd(1))*mu_u_ip)*blk%d1x(i,VAR_P,b) &
-                          + (face_grad_denom(blk%physLow(2,b), j == 1_C_INT, blk%d1y(j,VAR_V,b), outLow(2), refd(2))*mu_v_j &
-                           + face_grad_denom(blk%physHigh(2,b), j == ny, blk%d1y(jp,VAR_V,b), outHigh(2), refd(2))*mu_v_jp)*blk%d1y(j,VAR_P,b) &
-                          + (face_grad_denom(blk%physLow(3,b), k == 1_C_INT, blk%d1z(k,VAR_W,b), outLow(3), refd(3))*mu_w_k &
-                           + face_grad_denom(blk%physHigh(3,b), k == nz, blk%d1z(kp,VAR_W,b), outHigh(3), refd(3))*mu_w_kp)*blk%d1z(k,VAR_P,b))
+                            (dnLow(i,1,b)*mu_u_i + dnHigh(i,1,b)*mu_u_ip)*d1P(i,1,b) &
+                          + (dnLow(j,2,b)*mu_v_j + dnHigh(j,2,b)*mu_v_jp)*d1P(j,2,b) &
+                          + (dnLow(k,3,b)*mu_w_k + dnHigh(k,3,b)*mu_w_kp)*d1P(k,3,b))
                 end do
             end do
         end do
@@ -495,9 +537,11 @@ contains
         nx = blk%nb(1); ny = blk%nb(2); nz = blk%nb(3)
         nBlocks = blk%nBlocks
 
+        ! d1P is the same divergence metric d1?(idx,VAR_P,b), gathered into one
+        ! table by init_face_metrics -- one array base here instead of three.
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do collapse(4) &
-        !$omp& map(to: omega, nx, ny, nz, blk%d1x, blk%d1y, blk%d1z) &
+        !$omp& map(to: omega, nx, ny, nz, d1P) &
         !$omp& map(tofrom: phi, blk%q, rdenom) &
         !$omp& private(i,ip,j,jp,k,kp,b,div)
 #endif
@@ -507,9 +551,9 @@ contains
                 do i = 1_C_INT, nx
                     ip = i + 1; jp = j + 1; kp = k + 1
 
-                    div = (blk%q(ip,j,k,VAR_U,b)-blk%q(i,j,k,VAR_U,b))*blk%d1x(i,VAR_P,b) &
-                        + (blk%q(i,jp,k,VAR_V,b)-blk%q(i,j,k,VAR_V,b))*blk%d1y(j,VAR_P,b) &
-                        + (blk%q(i,j,kp,VAR_W,b)-blk%q(i,j,k,VAR_W,b))*blk%d1z(k,VAR_P,b)
+                    div = (blk%q(ip,j,k,VAR_U,b)-blk%q(i,j,k,VAR_U,b))*d1P(i,1,b) &
+                        + (blk%q(i,jp,k,VAR_V,b)-blk%q(i,j,k,VAR_V,b))*d1P(j,2,b) &
+                        + (blk%q(i,j,kp,VAR_W,b)-blk%q(i,j,k,VAR_W,b))*d1P(k,3,b)
 
                     ! Multiply by the stored RECIPROCAL: see the rdenom
                     ! declaration for why this is not bit-identical to a divide
