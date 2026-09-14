@@ -7,12 +7,23 @@
 # workstation is not reachable from HoreKa, so the suite is run here instead,
 # against the pre-change binary, on the SAME node in the SAME allocation.
 #
-# NOFMA IS NOT USED, DELIBERATELY. -Mnofma exists to stop the compiler inventing
-# 1-2 ulp differences between two textually different sources that are
-# arithmetically identical. Here the arithmetic source is BYTE-IDENTICAL between
-# the two binaries -- only the integer that picks a physical GPU changes -- so
-# both sides contract identically and a production-flag comparison is a strictly
-# tighter test than a nofma one. Any nonzero max_abs is a real difference.
+# THE FLAGS ARE THE CALLER'S CHOICE, and the choice matters. This script runs
+# whatever two binaries it is handed.
+#
+#   * For the change it was written for (select_target_device), the arithmetic
+#     source was BYTE-IDENTICAL between the two binaries -- only the integer that
+#     picks a physical GPU changed -- so both sides contract identically and a
+#     PRODUCTION-flag comparison is strictly tighter than a nofma one. That is
+#     what submit_mapgate.sh / submit_apply.sh do.
+#   * For a change that MOVES an expression (a hoisted metric, a precomputed
+#     table, a reordered sum), the compiler is free to fuse a*b+c differently on
+#     the two sides and a production-flag comparison fails at 1e-15..1e-12 with
+#     nothing wrong. That needs -Mnofma -gpu=nofma on BOTH sides:
+#     submit_nofma_gate.sh, and `./compile.sh gpu_nofma`. This happened -- job
+#     5145507, the dnLow/dnHigh/d1P hoist.
+#
+# Whichever is used, any nonzero max_abs under the right flags is a real
+# difference.
 #
 # Every case is a single-node run, which is exactly where the rule reduces to the
 # identity map; the multi-node fields were already gated max_abs 0 at 8x2 in

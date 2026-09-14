@@ -125,6 +125,11 @@ configure_and_build() {
     local name="$1"
     local build_dir="$2"
     local offload="$3"
+    # Optional 4th/5th: extra Fortran flags and an explicit offload flag string.
+    # Used only by the nofma modes; empty for a production build, which is what
+    # keeps those byte-identical to what they were before these modes existed.
+    local extra_fflags="${4:-}"
+    local offload_override="${5:-}"
 
     export FC="${FC:-${MPI_FC_WRAPPER:-mpifort}}"
     export CC="${CC:-${MPI_C_WRAPPER:-mpicc}}"
@@ -181,6 +186,12 @@ configure_and_build() {
         -DMPI_FORTRAN_MODULE_DIR="$mpi_fortran_module_dir"
         -DUSE_OPENMP_OFFLOAD="$offload"
     )
+    if [ -n "$extra_fflags" ]; then
+        cmake_args+=(-DCMAKE_Fortran_FLAGS="$extra_fflags")
+    fi
+    if [ -n "$offload_override" ]; then
+        cmake_args+=(-DOPENMP_OFFLOAD_FLAGS="$offload_override")
+    fi
 
     cmake "${cmake_args[@]}"
 
@@ -188,6 +199,17 @@ configure_and_build() {
     print_build_summary "$name" "$build_dir"
 }
 
+# The *_nofma modes are the BIT-EXACTNESS GATE builds of CLAUDE.md's
+# "Verification" section, in their own directories so a production build is never
+# disturbed. Default FMA contraction lets the compiler fuse a*b+c differently on
+# either side of a refactor, which moves the last 1-2 bits for arithmetically
+# identical source; -Mnofma / -gpu=nofma takes that freedom away, so a surviving
+# difference is a real one. Build BOTH sides of a comparison this way.
+#
+# Not every refactor needs them: a change that leaves the arithmetic
+# byte-identical (e.g. only an integer that picks a device) is better compared at
+# production flags, which is strictly tighter. A change that moves an expression
+# -- a hoisted metric, a precomputed table -- generally does need them.
 case "$mode" in
     cpu)
         configure_and_build "cpu" "build_cpu" OFF
@@ -195,10 +217,18 @@ case "$mode" in
     gpu)
         configure_and_build "gpu" "build_gpu" ON
         ;;
+    cpu_nofma)
+        configure_and_build "cpu (nofma gate)" "build_cpu_nofma" OFF "-Mnofma"
+        ;;
+    gpu_nofma)
+        configure_and_build "gpu (nofma gate)" "build_gpu_nofma" ON "-Mnofma" "-mp=gpu -gpu=nofma"
+        ;;
     *)
-        echo "Usage: $0 [cpu|gpu]" >&2
+        echo "Usage: $0 [cpu|gpu|cpu_nofma|gpu_nofma]" >&2
         echo "MPI is always enabled. GPU builds require a GPU-aware MPI stack." >&2
         echo "Set HDF5_ROOT=/path/to/parallel-hdf5 if CMake cannot find HDF5." >&2
+        echo "The *_nofma modes build the bit-exactness gate binaries into" >&2
+        echo "build_{cpu,gpu}_nofma; see CLAUDE.md \"Verification\"." >&2
         exit 1
         ;;
 esac
