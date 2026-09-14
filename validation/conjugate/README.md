@@ -1084,6 +1084,66 @@ tests the selected side alone -- promoting with the two-sided test turned an
 exact plane result at 20 degrees into 2.19. Isolate one edit at a time; the
 bisect that found this took four runs and no guessing.
 
+
+### THE CONVERGENCE TEST — the baseline is FIRST ORDER on a curved interface
+
+`./run_gates_c2.sh converge`. Everything above measures a truncation residual
+or an `s_t` error. Neither is a statement about the SOLUTION: the residual
+lives on a codimension-one set, and a conservative scheme can damp it. This
+solves the discrete conjugate BVP and refines.
+
+**The problem.** A conducting cylinder in a harmonic far field (`Multipole`):
+exact solution known in both materials, `div(k grad T) = 0`, Dirichlet data
+from the exact solution on the two outer cell layers, interface far from the
+boundary. **Solved EXACTLY, not iteratively** -- every scheme here is linear in
+T with purely geometric coefficients (phi is static), so the matrix is
+recovered by graph colouring and solved directly; no Krylov tolerance enters
+the measured error. The recovery is checked against the operator itself
+(2e-16), because a stencil wider than the colouring radius would otherwise
+attribute entries to the wrong column *silently*.
+
+**Observed L2 / Linf order, grids 32-256** (quadrupole):
+
+| κ_s | C1 baseline | | STAGE 1b | | L2 error ratio at n=256 |
+|---|---|---|---|---|---|
+| | L2 | Linf | L2 | Linf | |
+| 0.01 | 1.11 | 0.94 | **2.00** | 1.60 | 16.6x |
+| 0.1 | 1.10 | 0.92 | **2.04** | 1.62 | 41.0x |
+| 2 | 1.07 | 0.86 | **1.87** | 1.60 | 23.2x |
+| 10 | **1.00** | 0.87 | **1.87** | 1.56 | 22.8x |
+| 100 | 1.36 | 1.34 | **1.97** | 1.47 | 4.6x |
+| 1000 | 1.89 | 1.65 | **1.99** | 1.49 | 1.4x |
+
+At κ_s = 10 over `n = 64...512` -- an EIGHTFOLD refinement range -- the
+baseline reads **0.999** and stage 1b **1.92**, with the gap widening as it
+must: 23x at n = 256, **42x at n = 512**. The DIPOLE reproduces all of it
+(baseline 1.03-1.09, stage 1b 2.09-2.11).
+
+**Three things follow.**
+
+1. **The C1 baseline as shipped is FIRST ORDER at a curved conjugate
+   interface**, across the whole physically interesting contrast range. The
+   as-built note said the solution order there had not been measured; it has
+   now, and this is a correction to it (`docs/conjugate/conjugate_ibm_asbuilt`
+   §6).
+2. **The conservative cell balance damps the non-converging face error by
+   exactly one power of h.** The face flux plateaus at O(r) with observed
+   order -0.01; the solution is first order, not stalled. That is worth
+   knowing on its own -- it is the quantitative content of "the flux is
+   conservative, so partial cancellation is plausible".
+3. **The baseline's WORST case is moderate contrast, not high**, which is the
+   opposite of what the face-flux and residual measurements suggest. It
+   recovers second order as κ_s → ∞ for a physical reason:
+   `|grad_t T| ~ 2/(1 + κ_s)` at the interface, so in the isothermal limit the
+   dropped term vanishes on its own. Stage 1b is second order at every
+   contrast, so its gain is largest exactly where the baseline is weakest.
+
+**A degeneracy check that passes**: at κ_s = 1 there is no contrast, the exact
+field is `x^2 - y^2`, the discrete Laplacian reproduces a quadratic exactly,
+and both schemes sit at round-off (2.5e-16) and are BIT-IDENTICAL. An
+"observed order" fitted to round-off is noise, and the sweep reports one
+(-1.30) -- which is why the row is a control and not a data point.
+
 ---
 
 ## C3 — the fraction-weighted capacity, the Nusselt diagnostic, and the time step

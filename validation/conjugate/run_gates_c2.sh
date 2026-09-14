@@ -3,7 +3,7 @@
 # e_face, and the correction behind [scalar.N] tangential_correction
 # (docs/next_session_conjugate.md Section 10, increment C2).
 #
-#   ./run_gates_c2.sh [flux|indicator|bvp|cylinder|stzero|residual|dt|c1|all]
+#   ./run_gates_c2.sh [flux|indicator|bvp|cylinder|stzero|residual|converge|dt|c1|all]
 #
 # Environment: BIN   (default ../../build_cpu/moby_solve)
 #              PREP  (the moby_prepare next to BIN)
@@ -293,6 +293,43 @@ if want residual; then
             done
         done
     done
+fi
+
+# --- (3d) THE CONVERGENCE TEST on a curved interface ----------------------
+# Everything above measures a truncation residual or an s_t error. This solves
+# the discrete conjugate BVP on a conducting cylinder in a harmonic far field
+# and refines it, which is the only statement about the SOLUTION.
+#
+# Needs cyl_32 and cyl_512 beyond the flux gate's 64/128/256.
+if want converge; then
+    echo "== (3d) SOLUTION convergence on a curved interface"
+    for n in 32 512; do
+        [ -f "cyl_$n.h5" ] && continue
+        lz=$($PY -c "print(repr(4.0/$n))")
+        $PY ./make_geometry_stl.py cylinder "cyl_$n.stl" --centre 0.5 0.5 \
+            --radius 0.25 --facets 16384 --z0 -0.25 \
+            --z1 "$($PY -c "print(repr(4.0/$n + 0.25))")" > /dev/null
+        sed -e "s|@STL@|cyl_$n.stl|" -e "s|@CASE@|cyl_$n.h5|" -e "s|@PREFIX@|cyl_$n|" \
+            -e "s|@NX@|$n|" -e "s|@NY@|$n|" -e "s|@NZ@|4|" \
+            -e "s|@LX@|1.0|" -e "s|@LY@|1.0|" -e "s|@LZ@|$lz|" -e "s|@NB@|4|" \
+            -e "s|@KAPPA@|10.0|" -e "s|@CAP@|1.0|" -e "s|@NSTEPS@|1|" -e "s|@WRITE@|1|" \
+            -e "s|@GX@|0.0|" -e "s|@GY@|0.0|" -e "s|@DT@|1.0e-5|" -e "s|@IND@|0|" \
+            -e "s|@TANG@|false|" oblique.ini > ".cyl_$n.full.ini"
+        sed '/^coeff_file/d' ".cyl_$n.full.ini" > ".cyl_$n.prep.ini"
+        mpirun -n "$RANKS" "$PREP" ".cyl_$n.prep.ini" "cyl_$n.h5" \
+            > "cyl_$n.prep.log" 2>&1 || { tail -5 "cyl_$n.prep.log"; report 1; }
+    done
+    # kappa_s = 1 is the degeneracy check, not a data point: with no contrast
+    # the exact field is x^2 - y^2, which the discrete Laplacian reproduces
+    # exactly, so both schemes must sit at round-off and be IDENTICAL.
+    for ka in 1.0 0.1 10.0 1000.0; do
+        for md in 2 1; do
+            run $PY ./check_convergence.py --kappa "$ka" --mode "$md" \
+                --grids 32 64 128 256 --verify
+        done
+    done
+    run $PY ./check_convergence.py --kappa 10 --mode 2 --grids 64 128 256 512 \
+        --schemes base area1sext
 fi
 
 # --- (4) the time-step penalty of the correction ---------------------------

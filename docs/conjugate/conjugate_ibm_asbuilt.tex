@@ -290,12 +290,15 @@ $1.56\times$ and that case runs.
 \label{sec:order}
 %======================================================================
 
-The scheme is \textbf{second order}, and the condition is a geometric one: the
-local temperature gradient must be interface-\emph{normal} at the cut face.
-That is exact when the interface normal is a grid direction, and approached in
-a resolved thermal layer at any orientation. Where it fails --- an obliquely
-cut face carrying a genuine tangential gradient --- the cut-face flux error
-does not converge at all. Each statement below is measured.
+The scheme is \textbf{second order where the interface is flat or the local
+temperature gradient is interface-normal, and first order at a curved
+interface carrying a genuine tangential gradient.} The condition is geometric,
+not a matter of resolution. It is exact --- not merely second order --- when
+the interface normal is a grid direction, which covers every flat-wall case
+including all of the channel validation in \S\ref{sec:validation}. At an
+obliquely cut face carrying a tangential gradient the cut-face flux error does
+not converge at all; the conservative cell balance damps that into a
+first-order \emph{solution} error, measured below. Each statement is measured.
 
 \begin{center}
 \begin{tabular}{p{6.1cm}p{4.0cm}l}
@@ -345,11 +348,57 @@ refinement, i.e.\ flat. It scales exactly linearly with $r$
 ($3.56\times10^{-2}$, $3.56\times10^{-1}$, $3.56$ at $r=0.01,0.1,1$).
 
 So at such a face the error \textbf{plateaus at $O(r)$} rather than reducing.
-This is a consistency error on a codimension-one set, so how much of it
-survives into the solution norm is not settled here --- the flux is
-conservative, and no global refinement study has been run for an oblique
-interface with $r>0$. What is settled is the flux itself, and that it does not
-converge.
+This is a consistency error on a codimension-one set, and how much of it
+survives into the solution norm has now been measured.
+
+\paragraph{The solution order on a curved interface: \textbf{one}.}
+\emph{Measured 2026-09-15, and it is a correction to what this section
+previously left open.} The discrete conjugate BVP is solved on a conducting
+cylinder in a harmonic far field --- exact solution known in both materials,
+Dirichlet data from it, no source --- and refined. Every scheme here is linear
+in $T$ with purely geometric coefficients, so its matrix is recovered exactly
+by graph colouring (checked against the operator to $2\times10^{-16}$) and
+solved directly: no iterative tolerance enters the error.
+
+\begin{center}
+\begin{tabular}{lcccc}
+\toprule
+& \multicolumn{2}{c}{as implemented (\S\ref{sec:face})}
+& \multicolumn{2}{c}{with a converging $s_t$} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}
+$\kappa_s$ & $L_2$ & $L_\infty$ & $L_2$ & $L_\infty$ \\
+\midrule
+0.01 & 1.11 & 0.94 & 2.00 & 1.60 \\
+0.1  & 1.10 & 0.92 & 2.04 & 1.62 \\
+2    & 1.07 & 0.86 & 1.87 & 1.60 \\
+10   & \textbf{1.00} & 0.91 & \textbf{1.92} & 1.78 \\
+100  & 1.36 & 1.34 & 1.97 & 1.47 \\
+1000 & 1.89 & 1.65 & 1.99 & 1.49 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent
+Grids $n=32,64,128,256$ (the $\kappa_s=10$ row over $n=64\ldots512$, an
+eightfold range, where the as-implemented order is $0.999$). A second geometry
+--- the dipole rather than the quadrupole --- reproduces it: $1.03$--$1.09$
+against $2.09$--$2.11$.
+
+Three things follow. First, the conservative finite-volume structure
+\emph{does} damp the non-converging face error, by exactly one power of $h$:
+an $O(1)$ flux error on a codimension-one set becomes a first-order solution
+error, not a stalled one. Second, \textbf{first order is the honest
+description of the scheme at a curved conjugate interface} over the whole
+physically interesting contrast range. Third, the baseline recovers second
+order only as $\kappa_s\to\infty$, and for a physical reason rather than a
+numerical one: $|\grad_t T|$ at the interface scales as $2/(1+\kappa_s)$, so
+in the isothermal limit the term being dropped vanishes on its own. The
+scheme's \emph{worst} case is therefore moderate contrast, not high --- the
+opposite of what the face-flux measurements suggest.
+
+The right-hand columns are not implemented; they are what a converging
+tangential estimate delivers, measured on the same problems
+(\texttt{validation/conjugate/README.md}, stages 0--1b).
 
 \paragraph{Why that was accepted.}
 Because $r\sim10^{-2}$ in a resolved thermal layer, the plateau sits near

@@ -1,7 +1,9 @@
 # The tangential-term escalation (route B) — implementation plan
 
 STATUS: **stages 0, 1 and 1b DONE. GATE 2 = TIER 1 (never worse, on all 36
-rows).** Stages 2-5 (the Fortran) remain unstarted and are a deliberate
+rows), and the SOLUTION convergence test passes: the C1 baseline as shipped is
+FIRST ORDER at a curved conjugate interface (measured 0.999 over an eightfold
+refinement range) and stage 1b restores SECOND ORDER (1.92).** Stages 2-5 (the Fortran) remain unstarted and are a deliberate
 decision, not a blocker -- see "What to do with this" at the end.
 Written 2026-09-14 on branch `scalar`; stages 0-1 the same day, all in Python,
 no solver and no Fortran. Measurements and tables in
