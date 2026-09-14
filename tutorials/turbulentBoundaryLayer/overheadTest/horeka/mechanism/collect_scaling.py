@@ -93,11 +93,17 @@ def main():
         r = src.get((c, n))
         return r.get(k) if r else None
 
-    print("# The campaign, re-measured at the corrected rank-to-GPU mapping\n")
-    print("Same 23-run matrix as `results_horeka_2026-09-07.md` (`run_matrix.sh`,")
-    print("`--map-by numa --bind-to core`, 400 steps), run twice in ONE allocation:")
-    print("`ref` is the pre-change binary (`device = local_rank mod ndev`), `new`")
-    print("the topology-aware mapping. The two columns differ only in the mapping.\n")
+    print("# The campaign, re-measured\n")
+    print("The 23-run matrix (`run_matrix.sh`, `--map-by numa --bind-to core`), run")
+    print("TWICE IN ONE ALLOCATION -- `ref` is the pre-change binary, `new` the")
+    print("post-change one, and the two columns differ only in that change. WHICH")
+    print("change is recorded in the run directory's provenance.txt, not here: this")
+    print("collector has now served two of them (the rank-to-GPU mapping, 2026-09-10,")
+    print("and the comm_type parent map, 2026-09-14), and hard-coding either into the")
+    print("header is how a table gets quoted against the wrong question.\n")
+    prov = Path(sys.argv[2]).parent / "provenance.txt"
+    if prov.is_file():
+        print("```\n" + prov.read_text().strip() + "\n```\n")
 
     print("## s/step, and what the mapping is worth\n")
     print("| config | ranks | ref | new | gain |")
@@ -156,7 +162,7 @@ def main():
                 row.append("-" if t is None else f"{100*t0*n0/(t*n):.0f} %")
             print(f"| `{c}` ({tag}) | " + " | ".join(row) + " |")
 
-    print("\n## Headline 1 — the 2:1 machinery, like for like\n")
+    print("\n## Headline 1 -- the 2:1 machinery, like for like\n")
     print("`refined_big_rect_jacobi` shares grid, block shape and solver with")
     print("`rect_jacobi`; it just refines one y-tile. Cost of the ADDED cells")
     print("against the coarse cells beside them:\n")

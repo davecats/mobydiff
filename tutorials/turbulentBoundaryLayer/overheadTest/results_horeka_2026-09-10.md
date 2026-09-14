@@ -1,5 +1,18 @@
 # The block tax was GPU-to-NIC affinity: 20.6 % of the step, from a launch flag
 
+> **SUPERSEDED IN PART, 2026-09-14.** Section 9's scaling tables — s/step, block
+> tax, strong-scaling efficiency, the 2:1 machinery headline and the red-black
+> ratio — were all measured before the `comm_type` parent-map fix
+> (`results_kernel_timeline_2026-09-11.md`), which removed 6–8 ms from every step
+> of every blocked configuration. **Use `results_horeka_2026-09-14.md` instead**;
+> its `ref` column reproduces this file's numbers, so what is here is correct for
+> the binary it measured and wrong for the current one. Two conclusions changed:
+> the 2:1 machinery costs **1.004** coarse-cell-equivalents at 4 ranks, not 0.98,
+> and red-black's advantage erodes to **0.81** at 16 ranks, not 0.86. Sections
+> 1–8 (the mapping mechanism, `moby_tune`, the barrier split, the nsys timeline)
+> are unaffected.
+
+
 Job 5138715, 4x HoreKa Green nodes (hkn[0518,0604-0605,0708]), commit `df08a60`
 (clean, solver source = `be48d44`), 26 runs of 200 steps in ONE allocation plus
 a 6-run barrier pass. Raw logs in `moby-2to1-run/results_balance/` and
