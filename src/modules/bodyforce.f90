@@ -94,6 +94,16 @@ module bodyforce
         ! (4.4-5.5 % of the step at 16 ranks, measured).
         integer(C_INT), allocatable :: trip_blocks(:)
         integer(C_INT) :: n_trip_blocks = 0_C_INT
+        ! The spanwise functions g_k(z) and g_{k+1}(z), tabulated per
+        ! (k, listed block). They are the nmodes-term Fourier sums the field
+        ! kernel used to evaluate PER CELL -- 2*nmodes transcendentals each --
+        ! although they depend on z alone. Worse, they only change when the
+        ! random walk advances, once per trip_ts (hundreds of steps), so they
+        ! are refreshed then and not per substage. The per-cell blend
+        ! (1-b)g_k + b g_{k+1} still happens in the field kernel, because b(t)
+        ! does change every substage.
+        real(C_DOUBLE), allocatable :: trip_g(:,:), trip_gp1(:,:)  ! (nz, n_trip_blocks)
+        logical(C_BOOL) :: trip_span_valid = .false.
     end type bodyforce_type
 
 contains
@@ -229,6 +239,8 @@ contains
             end if
         end do
         bf%n_trip_blocks = n
+        if (n > 0_C_INT) allocate(bf%trip_g(blk%nb(3), n), bf%trip_gp1(blk%nb(3), n))
+        bf%trip_span_valid = .false.
     end subroutine select_trip_blocks
 
     ! Draw a unit-rms random spanwise function: nmodes Fourier coefficients
@@ -259,7 +271,9 @@ contains
         if (allocated(bf%trip_ak)) deallocate(bf%trip_ak, bf%trip_bk, &
             bf%trip_akp1, bf%trip_bkp1)
         if (allocated(bf%trip_blocks)) deallocate(bf%trip_blocks)
+        if (allocated(bf%trip_g)) deallocate(bf%trip_g, bf%trip_gp1)
         bf%n_trip_blocks = 0_C_INT
+        bf%trip_span_valid = .false.
         bf%trip_kindex = -1_C_INT
     end subroutine destroy_bodyforce
 
@@ -273,6 +287,9 @@ contains
         if (allocated(bf%trip_blocks)) then
             !$omp target enter data map(to: bf%trip_blocks)
         end if
+        if (allocated(bf%trip_g)) then
+            !$omp target enter data map(to: bf%trip_g, bf%trip_gp1)
+        end if
     end subroutine enter_bodyforce_data
 
     subroutine exit_bodyforce_data(bf)
@@ -280,6 +297,9 @@ contains
 
         if (.not. allocated(bf%f)) return
 
+        if (allocated(bf%trip_g)) then
+            !$omp target exit data map(delete: bf%trip_g, bf%trip_gp1)
+        end if
         if (allocated(bf%trip_blocks)) then
             !$omp target exit data map(delete: bf%trip_blocks)
         end if
@@ -399,11 +419,12 @@ contains
         type(block_set_type), intent(in) :: blk
         real(C_DOUBLE), intent(in) :: t
 
-        integer(C_INT) :: kidx
+        integer(C_INT) :: kidx, kbefore
         real(C_DOUBLE) :: p, bstep
 
         ! Advance the walk until g_k / g_{k+1} bracket [k*ts, (k+1)*ts] ∋ t.
         kidx = int(floor(t/bf%trip_ts), C_INT)
+        kbefore = bf%trip_kindex
         do while (bf%trip_kindex < kidx)
             bf%trip_ak = bf%trip_akp1
             bf%trip_bk = bf%trip_bkp1
@@ -411,12 +432,61 @@ contains
             bf%trip_kindex = bf%trip_kindex + 1_C_INT
         end do
 
+        ! The spanwise sums depend only on the coefficients just (re)drawn, so
+        ! they are retabulated here and not once per substage.
+        if (bf%trip_kindex /= kbefore .or. .not. bf%trip_span_valid) then
+            call fill_trip_span(bf, blk)
+            bf%trip_span_valid = .true.
+        end if
+
         p = t/bf%trip_ts - real(kidx, C_DOUBLE)
         bstep = p*p*(3.0d0 - 2.0d0*p)        ! 3p^2 - 2p^3, C^1 smooth step
 
-        call fill_trip_kernel(bf, blk, bstep, bf%trip_ak, bf%trip_bk, &
-            bf%trip_akp1, bf%trip_bkp1)
+        call fill_trip_kernel(bf, blk, bstep)
     end subroutine fill_trip
+
+    ! Tabulate g_k(z) and g_{k+1}(z) over the listed blocks' z lines. The sums
+    ! are formed in the same order, from the same coefficients, as the per-cell
+    ! version they replace, so the field they produce is bit-identical.
+    subroutine fill_trip_span(bf, blk)
+        type(bodyforce_type), intent(inout) :: bf
+        type(block_set_type), intent(in) :: blk
+
+        integer :: k, b, bb, m, nz, nTrip, nm
+        real(C_DOUBLE) :: z, arg, w, gk, gkp1
+
+        nTrip = int(bf%n_trip_blocks)
+        if (nTrip == 0) return
+        nz = int(blk%nb(3))
+        nm = int(bf%trip_nmodes)
+        w = 8.0d0*atan(1.0d0)/bf%trip_lz         ! 2*pi/Lz
+
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target teams distribute parallel do collapse(2) &
+        !$omp& map(to: w, nm, nz, nTrip, blk%z, bf%trip_blocks, &
+        !$omp& bf%trip_ak(1:nm), bf%trip_bk(1:nm), &
+        !$omp& bf%trip_akp1(1:nm), bf%trip_bkp1(1:nm)) &
+        !$omp& map(to: bf%trip_g, bf%trip_gp1) &
+        !$omp& private(k,b,bb,m,z,arg,gk,gkp1)
+#endif
+        do bb = 1, nTrip
+            do k = 1, nz
+                b = int(bf%trip_blocks(bb))
+                z = blk%z(k, VAR_V, b)
+                gk = 0.0d0; gkp1 = 0.0d0
+                do m = 1, nm
+                    arg = w*real(m, C_DOUBLE)*z
+                    gk   = gk   + bf%trip_ak(m)  *cos(arg) + bf%trip_bk(m)  *sin(arg)
+                    gkp1 = gkp1 + bf%trip_akp1(m)*cos(arg) + bf%trip_bkp1(m)*sin(arg)
+                end do
+                bf%trip_g(k,bb)   = gk
+                bf%trip_gp1(k,bb) = gkp1
+            end do
+        end do
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp end target teams distribute parallel do
+#endif
+    end subroutine fill_trip_span
 
     ! Device kernel: fill bf%f's v-component from the (small) coefficient
     ! arrays, evaluating the Gaussian envelope and the spanwise Fourier sum
@@ -428,53 +498,44 @@ contains
     ! bf%f = 0.0d0 at allocation, so rewriting them every substage stored two
     ! thirds of a domain-sized array to no effect. Both restrictions write
     ! exactly the values that were there before -- this is bit-exact.
-    subroutine fill_trip_kernel(bf, blk, bstep, ak, bk, akp1, bkp1)
+    subroutine fill_trip_kernel(bf, blk, bstep)
         type(bodyforce_type), intent(inout) :: bf
         type(block_set_type), intent(in) :: blk
-        real(C_DOUBLE), intent(in) :: bstep, ak(:), bk(:), akp1(:), bkp1(:)
+        real(C_DOUBLE), intent(in) :: bstep
 
-        integer :: i, j, k, b, bb, m, nx, ny, nz, nTrip, nm
-        real(C_DOUBLE) :: x, y, z, ex, env, arg, w, gk, gkp1
+        integer :: i, j, k, b, bb, nx, ny, nz, nTrip
+        real(C_DOUBLE) :: x, y, ex, env
         real(C_DOUBLE) :: amp, x0, lx, ly
 
         nTrip = int(bf%n_trip_blocks)
         if (nTrip == 0) return
 
         nx = int(blk%nb(1)); ny = int(blk%nb(2)); nz = int(blk%nb(3))
-        nm = int(bf%trip_nmodes)
         amp = bf%trip_amp; x0 = bf%trip_x0; lx = bf%trip_lx; ly = bf%trip_ly
-        w = 8.0d0*atan(1.0d0)/bf%trip_lz         ! 2*pi/Lz
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do collapse(4) &
-        !$omp& map(to: bstep, amp, x0, lx, ly, w, nm, nx, ny, nz, nTrip, &
-        !$omp& ak(1:nm), bk(1:nm), akp1(1:nm), bkp1(1:nm), blk%x, blk%y, blk%z, &
-        !$omp& bf%trip_blocks) &
+        !$omp& map(to: bstep, amp, x0, lx, ly, nx, ny, nz, nTrip, &
+        !$omp& blk%x, blk%y, bf%trip_blocks, bf%trip_g, bf%trip_gp1) &
         !$omp& map(to: bf%f) &
-        !$omp& private(i,j,k,b,bb,m,x,y,z,ex,env,arg,gk,gkp1)
+        !$omp& private(i,j,k,b,bb,x,y,ex,env)
 #endif
         do bb = 1, nTrip
         do k = 1, nz
             do j = 1, ny
                 do i = 1, nx
                     b = int(bf%trip_blocks(bb))
-                    ! v (VAR_V) lives at blk%{x,y,z}(:,VAR_V,b).
+                    ! v (VAR_V) lives at blk%{x,y}(:,VAR_V,b); the z dependence
+                    ! is entirely in the tabulated spanwise functions.
                     x = blk%x(i, VAR_V, b)
                     y = blk%y(j, VAR_V, b)
-                    z = blk%z(k, VAR_V, b)
                     ex = -((x - x0)/lx)**2 - (y/ly)**2
                     if (ex < -50.0d0) then
                         bf%f(i,j,k,VAR_V,b) = 0.0d0
                     else
                         env = exp(ex)
-                        gk = 0.0d0; gkp1 = 0.0d0
-                        do m = 1, nm
-                            arg = w*real(m, C_DOUBLE)*z
-                            gk   = gk   + ak(m)  *cos(arg) + bk(m)  *sin(arg)
-                            gkp1 = gkp1 + akp1(m)*cos(arg) + bkp1(m)*sin(arg)
-                        end do
                         bf%f(i,j,k,VAR_V,b) = amp*env* &
-                            ((1.0d0 - bstep)*gk + bstep*gkp1)
+                            ((1.0d0 - bstep)*bf%trip_g(k,bb) + bstep*bf%trip_gp1(k,bb))
                     end if
                 end do
             end do
