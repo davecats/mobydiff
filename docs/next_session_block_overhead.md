@@ -263,14 +263,21 @@ had already removed most of what this saves.
 
 **Two restrictions, both deliberate:**
 - **Same-level only**, exactly like the copy-only exchange it replaces. A block
-  whose +axis face is a 2:1 interface has `dsSlot = 0` and keeps the halo it
-  had; cross-level transfer happens once per substage, not per iteration.
+  whose +axis face is a 2:1 interface keeps the halo it had; cross-level
+  transfer happens once per substage, not per iteration.
 - **Single rank only** (`c%nPeers == 0`). With peers those planes must come over
   MPI, and the message IS the saving, so it needs the entry list partitioned
   into a per-peer suffix first (the `copyOnly` prefix logic, mirrored). Multi-
   rank keeps the old path: correct, just not faster. **That fallback is also the
   gate**: `1 rank == 4 ranks` now compares the NEW path against the OLD one and
   they are bit-identical.
+
+> **SUPERSEDED 2026-09-15.** The second restriction is gone: the entry list now
+> carries a third enumeration round (`entry_round`) putting the pure `+axis`
+> same-level face copies first, so a divergence round is a per-peer prefix and
+> runs with peers. `dsSlot` and its three kernels went with it — the local half
+> is the same prefix, one kernel. See
+> `overheadTest/results_divhalo_2026-09-15.md`.
 
 **Gates**: 7-case suite `max_abs 0` CPU AND GPU vs `e77c75e`; `validation/block_nb`
 all pass; 1 rank == 4 ranks exact. The geometry is verified from the gather map

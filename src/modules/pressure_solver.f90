@@ -300,16 +300,14 @@ contains
                 ! Last iteration: the full shell, all four variables, with the
                 ! cross-level transfers -- this is what the next substage reads.
                 call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W, VAR_P])
-            else if (c%nPeers == 0) then
+            else
                 ! Between iterations only the divergence stencil reads the
                 ! velocity halo, so refresh just q(nb+1) per dim, normal
-                ! component (see comm.f90 sync_divergence_halos). Single-rank
-                ! only: with peers the same planes would have to come over MPI,
-                ! and the message is the whole point of the saving, so that
-                ! needs the entry list partitioned first.
+                ! component (see comm.f90 sync_divergence_halos): the same-rank
+                ! prefix as one kernel, the off-rank prefix as one message per
+                ! peer, a sixth of the copy-only round's bytes at the same
+                ! three kernel launches.
                 call sync_divergence_halos(c, blk)
-            else
-                call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W], interp=.false.)
             end if
             call prof_toc(proj_prof, PROF_PROJ_VEL_EXCHANGE, t0)
         end do

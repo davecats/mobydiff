@@ -26,12 +26,12 @@
 !                 (step_timing's `vel_exchange` and `turbulence`, proj_timing's
 !                 `phi_exchange` and `vel_exchange`).
 !
-! ONE EXCEPTION to that nesting: comm.f90's sync_divergence_halos is a direct
-! kernel, not an exchange, so it is counted in proj_timing's `vel_exchange` but
-! NOT in exch_timing. On a single-rank run it replaces 15 of the 18 per-step
-! velocity exchanges, so exch_timing's total is a SUBSET of the exchange buckets
-! above it rather than equal to them. Do not read the shortfall as a lost
-! measurement.
+! comm.f90's sync_divergence_halos -- the reduced mid-iteration velocity
+! refresh, 15 of the 18 per-step velocity rounds -- is an exchange like any
+! other and fills the same exch_timing buckets (one pack, one local copy, one
+! unpack per round), so the round COUNTS there are unchanged by it. What
+! changed is the volume: a divergence round carries one component of the
+! +axis faces instead of three components of the whole shell.
 !
 ! At ONE rank there are no peers, so pack/mpi_post/mpi_wait/unpack are exactly
 ! zero and the whole exchange shows up as local_copy -- which is the intended
