@@ -30,7 +30,12 @@ from collections import defaultdict
 from pathlib import Path
 
 MIN = {"jacobi_compute_phi": 5, "compute_rdenom": 4,
-       "jacobi_apply__14": 3, "jacobi_apply__16": 8}
+       "jacobi_apply__14": 3, "jacobi_apply__16": 8,
+       # step_momentum's two kernels: the predictor reads q (4 variables) and
+       # mu (3), reads and writes oldrhs (3+3) and writes qs (3) = 16; the
+       # copy-back reads qs (3) and writes q (3) = 6. The Laplacian and metric
+       # tables are 1-D per block and are not counted.
+       "step_momentum__6": 16, "step_momentum__8": 6}
 
 
 def unline(name):
