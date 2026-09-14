@@ -49,6 +49,14 @@ done
 NEW="$CODE_DIR/build_gpu/moby_solve"; REF="$REF_DIR/build_gpu/moby_solve"
 [ -x "$NEW" ] && [ -x "$REF" ] || { echo "ERROR: missing binary" >&2; exit 1; }
 
+# h5maxdiff is a build product, not a tracked file, so a FRESH WORKTREE does not
+# have it -- and Pass G deletes its snapshots whether or not the comparison ran,
+# so a missing comparator silently costs the gate (job 5145805). Build it here.
+H5MAXDIFF="$CODE_DIR/tools/h5maxdiff"
+[ -x "$H5MAXDIFF" ] || gcc -O2 -o "$H5MAXDIFF" "$CODE_DIR/tools/h5maxdiff.c" \
+    -I"$HDF5_ROOT/include" -L"$HDF5_ROOT/lib" -lhdf5 -Wl,-rpath,"$HDF5_ROOT/lib" \
+    || { echo "ERROR: could not build h5maxdiff" >&2; exit 1; }
+
 RES="${RESDIR:-$RUN_DIR/results_divhalo}"; mkdir -p "$RES"
 {
     echo "job    : ${SLURM_JOB_ID:-none}"
@@ -68,11 +76,11 @@ for side in before after; do
 done
 
 echo "############ 2: Pass G -- production cases, bit-exact ############"
-REF="$REF" H5MAXDIFF="$CODE_DIR/tools/h5maxdiff" CFG_DIR="$SRC/../configs" \
+REF="$REF" H5MAXDIFF="$H5MAXDIFF" CFG_DIR="$SRC/../configs" \
     PASSES="G" NSTEPS_GATE=20 bash "$STG/run_exchange.sh" "$NEW" "$RES/gate"
 
 echo "############ 3: the 7-case suite ############"
-MOBY_ROOT="$CODE_DIR" NSTEPS=200 \
+MOBY_ROOT="$CODE_DIR" H5MAXDIFF="$H5MAXDIFF" NSTEPS=200 \
     bash "$STG/run_mapgate.sh" "$NEW" "$REF" "$RES/suite"
 
 echo "=== summary: s/step, the projection buckets and the exchange volumes ==="

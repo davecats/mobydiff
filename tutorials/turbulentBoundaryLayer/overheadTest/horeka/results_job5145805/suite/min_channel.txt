@@ -1,0 +1,6 @@
+comparing tutorials/turbulentBoundaryLayer/overheadTest/horeka/exchange/../results_job5145805_tmp/suite/min_channel_ref/channel_field_200.h5 vs tutorials/turbulentBoundaryLayer/overheadTest/horeka/exchange/../results_job5145805_tmp/suite/min_channel_new/channel_field_200.h5
+  un           n=819200       max_abs=0
+  vn           n=819200       max_abs=0
+  wn           n=819200       max_abs=0
+  pn           n=819200       max_abs=0
+OK: worst max_abs = 0 over 4 dataset(s)
