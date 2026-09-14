@@ -39,6 +39,7 @@ module blocks
     public :: parent_coord, child_origin
     public :: DIST_RANKBOX, DIST_ZORDER
     public :: FACE_OPEN, FACE_PHYS, FACE_CLOSED, FACE_COARSE, FACE_FINE
+    public :: LAP_M, LAP_0, LAP_P
 
     ! Block ownership: one block per rank box (default), or the global
     ! Z-order lattice split linearly over the ranks ([blocks] nb).
@@ -55,6 +56,9 @@ module blocks
     ! FACE_PHYS faces receive boundary conditions; FACE_CLOSED halos are
     ! zeroed once at init; COARSE/FINE mark 2:1 level interfaces.
     integer(C_INT), parameter :: FACE_OPEN   = 0_C_INT
+    ! Stencil offsets into lapX/lapY/lapZ: minus / centre / plus.
+    integer, parameter :: LAP_M = 1, LAP_0 = 2, LAP_P = 3
+
     integer(C_INT), parameter :: FACE_PHYS   = 1_C_INT
     integer(C_INT), parameter :: FACE_CLOSED = 2_C_INT
     integer(C_INT), parameter :: FACE_COARSE = 3_C_INT
@@ -128,9 +132,17 @@ module blocks
         ! grid_type with one trailing block index.
         real(C_DOUBLE), allocatable :: x(:,:,:), y(:,:,:), z(:,:,:)       ! (-1:nb+2,NVAR,nBlocks)
         real(C_DOUBLE), allocatable :: d1x(:,:,:), d1y(:,:,:), d1z(:,:,:) ! (0:nb+1,NVAR,nBlocks)
-        real(C_DOUBLE), allocatable :: lapXm(:,:,:), lapX0(:,:,:), lapXp(:,:,:)
-        real(C_DOUBLE), allocatable :: lapYm(:,:,:), lapY0(:,:,:), lapYp(:,:,:)
-        real(C_DOUBLE), allocatable :: lapZm(:,:,:), lapZ0(:,:,:), lapZp(:,:,:)
+        ! Three-point Laplacian coefficients, the stencil offset FIRST:
+        ! lapX(LAP_M/LAP_0/LAP_P, index, var, block). They used to be nine
+        ! separate arrays, which is nine array bases live across the whole of
+        ! step_momentum's fused predictor -- and that kernel is register-bound
+        ! at 128 registers, 24 % occupancy and 32.5 % of peak DRAM against its
+        ! own sibling's 41 % / 74 % at 66 registers (ncu, job 5145549). Three
+        ! bases instead of nine, and the stencil triple for one index is now
+        ! contiguous.
+        real(C_DOUBLE), allocatable :: lapX(:,:,:,:)   ! (3, 0:nx+1, NVAR, nBlocks)
+        real(C_DOUBLE), allocatable :: lapY(:,:,:,:)   ! (3, 0:ny+1, NVAR, nBlocks)
+        real(C_DOUBLE), allocatable :: lapZ(:,:,:,:)   ! (3, 0:nz+1, NVAR, nBlocks)
 
         ! Flow state with one halo cell per side (second-order stencils).
         real(C_DOUBLE), allocatable :: q(:,:,:,:,:)      ! (0:nb+1,...,NVAR,nBlocks)
@@ -264,37 +276,34 @@ contains
         allocate(blk%x(-1:nx+2,NVAR,blk%nBlocks), blk%d1x(0:nx+1,NVAR,blk%nBlocks))
         allocate(blk%y(-1:ny+2,NVAR,blk%nBlocks), blk%d1y(0:ny+1,NVAR,blk%nBlocks))
         allocate(blk%z(-1:nz+2,NVAR,blk%nBlocks), blk%d1z(0:nz+1,NVAR,blk%nBlocks))
-        allocate(blk%lapXm(0:nx+1,NVAR,blk%nBlocks), blk%lapX0(0:nx+1,NVAR,blk%nBlocks), &
-                 blk%lapXp(0:nx+1,NVAR,blk%nBlocks))
-        allocate(blk%lapYm(0:ny+1,NVAR,blk%nBlocks), blk%lapY0(0:ny+1,NVAR,blk%nBlocks), &
-                 blk%lapYp(0:ny+1,NVAR,blk%nBlocks))
-        allocate(blk%lapZm(0:nz+1,NVAR,blk%nBlocks), blk%lapZ0(0:nz+1,NVAR,blk%nBlocks), &
-                 blk%lapZp(0:nz+1,NVAR,blk%nBlocks))
+        allocate(blk%lapX(3,0:nx+1,NVAR,blk%nBlocks))
+        allocate(blk%lapY(3,0:ny+1,NVAR,blk%nBlocks))
+        allocate(blk%lapZ(3,0:nz+1,NVAR,blk%nBlocks))
 
         do b = 1, int(blk%nBlocks)
             if (blk%distMode == DIST_ZORDER) then
                 lcol = int(blk%level(b)) + 1
                 call slice_grid_direction(blk%lineX(:,lcol), blk%x(:,:,b), blk%d1x(:,:,b), &
-                    blk%lapXm(:,:,b), blk%lapX0(:,:,b), blk%lapXp(:,:,b), &
+                    blk%lapX(LAP_M,:,:,b), blk%lapX(LAP_0,:,:,b), blk%lapX(LAP_P,:,:,b), &
                     level_cells(dns, 1, blk%level(b)), blk%origin(1,b) + 1_C_INT, nx, &
                     dns%leng(1), periodic(1), 1)
                 call slice_grid_direction(blk%lineY(:,lcol), blk%y(:,:,b), blk%d1y(:,:,b), &
-                    blk%lapYm(:,:,b), blk%lapY0(:,:,b), blk%lapYp(:,:,b), &
+                    blk%lapY(LAP_M,:,:,b), blk%lapY(LAP_0,:,:,b), blk%lapY(LAP_P,:,:,b), &
                     level_cells(dns, 2, blk%level(b)), blk%origin(2,b) + 1_C_INT, ny, &
                     dns%leng(2), periodic(2), 2)
                 call slice_grid_direction(blk%lineZ(:,lcol), blk%z(:,:,b), blk%d1z(:,:,b), &
-                    blk%lapZm(:,:,b), blk%lapZ0(:,:,b), blk%lapZp(:,:,b), &
+                    blk%lapZ(LAP_M,:,:,b), blk%lapZ(LAP_0,:,:,b), blk%lapZ(LAP_P,:,:,b), &
                     level_cells(dns, 3, blk%level(b)), blk%origin(3,b) + 1_C_INT, nz, &
                     dns%leng(3), periodic(3), 3)
             else
                 call slice_grid_direction(g%xNode, blk%x(:,:,b), blk%d1x(:,:,b), &
-                    blk%lapXm(:,:,b), blk%lapX0(:,:,b), blk%lapXp(:,:,b), &
+                    blk%lapX(LAP_M,:,:,b), blk%lapX(LAP_0,:,:,b), blk%lapX(LAP_P,:,:,b), &
                     dns%globalSize(1), blk%origin(1,b) + 1_C_INT, nx, dns%leng(1), periodic(1), 1)
                 call slice_grid_direction(g%yNode, blk%y(:,:,b), blk%d1y(:,:,b), &
-                    blk%lapYm(:,:,b), blk%lapY0(:,:,b), blk%lapYp(:,:,b), &
+                    blk%lapY(LAP_M,:,:,b), blk%lapY(LAP_0,:,:,b), blk%lapY(LAP_P,:,:,b), &
                     dns%globalSize(2), blk%origin(2,b) + 1_C_INT, ny, dns%leng(2), periodic(2), 2)
                 call slice_grid_direction(g%zNode, blk%z(:,:,b), blk%d1z(:,:,b), &
-                    blk%lapZm(:,:,b), blk%lapZ0(:,:,b), blk%lapZp(:,:,b), &
+                    blk%lapZ(LAP_M,:,:,b), blk%lapZ(LAP_0,:,:,b), blk%lapZ(LAP_P,:,:,b), &
                     dns%globalSize(3), blk%origin(3,b) + 1_C_INT, nz, dns%leng(3), periodic(3), 3)
             end if
         end do
@@ -332,15 +341,9 @@ contains
         if (allocated(blk%d1x)) deallocate(blk%d1x)
         if (allocated(blk%d1y)) deallocate(blk%d1y)
         if (allocated(blk%d1z)) deallocate(blk%d1z)
-        if (allocated(blk%lapXm)) deallocate(blk%lapXm)
-        if (allocated(blk%lapX0)) deallocate(blk%lapX0)
-        if (allocated(blk%lapXp)) deallocate(blk%lapXp)
-        if (allocated(blk%lapYm)) deallocate(blk%lapYm)
-        if (allocated(blk%lapY0)) deallocate(blk%lapY0)
-        if (allocated(blk%lapYp)) deallocate(blk%lapYp)
-        if (allocated(blk%lapZm)) deallocate(blk%lapZm)
-        if (allocated(blk%lapZ0)) deallocate(blk%lapZ0)
-        if (allocated(blk%lapZp)) deallocate(blk%lapZp)
+        if (allocated(blk%lapX)) deallocate(blk%lapX)
+        if (allocated(blk%lapY)) deallocate(blk%lapY)
+        if (allocated(blk%lapZ)) deallocate(blk%lapZ)
         if (allocated(blk%q)) deallocate(blk%q)
         if (allocated(blk%qs)) deallocate(blk%qs)
         if (allocated(blk%oldrhs)) deallocate(blk%oldrhs)
@@ -375,9 +378,7 @@ contains
         !$omp target enter data map(to: &
         !$omp& blk%origin, blk%physLow, blk%physHigh, &
         !$omp& blk%x, blk%y, blk%z, blk%d1x, blk%d1y, blk%d1z, &
-        !$omp& blk%lapXm, blk%lapX0, blk%lapXp, &
-        !$omp& blk%lapYm, blk%lapY0, blk%lapYp, &
-        !$omp& blk%lapZm, blk%lapZ0, blk%lapZp, &
+        !$omp& blk%lapX, blk%lapY, blk%lapZ, &
         !$omp& blk%q, blk%qs, blk%oldrhs)
 #endif
     end subroutine enter_block_data
@@ -389,9 +390,7 @@ contains
         !$omp target exit data map(delete: &
         !$omp& blk%origin, blk%physLow, blk%physHigh, &
         !$omp& blk%x, blk%y, blk%z, blk%d1x, blk%d1y, blk%d1z, &
-        !$omp& blk%lapXm, blk%lapX0, blk%lapXp, &
-        !$omp& blk%lapYm, blk%lapY0, blk%lapYp, &
-        !$omp& blk%lapZm, blk%lapZ0, blk%lapZp, &
+        !$omp& blk%lapX, blk%lapY, blk%lapZ, &
         !$omp& blk%q, blk%qs, blk%oldrhs)
         !$omp target exit data map(delete: blk)
 #endif

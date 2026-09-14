@@ -15,7 +15,8 @@ module step
     use, intrinsic :: iso_c_binding
     use :: init, only: dns_type, VAR_U, VAR_V, VAR_W, VAR_P, NVEL, &
         CFL_COURANT, CFL_PECLET, NCFL
-    use :: blocks, only: block_set_type, FACE_PHYS, FACE_CLOSED, FACE_COARSE, FACE_FINE
+    use :: blocks, only: block_set_type, FACE_PHYS, FACE_CLOSED, FACE_COARSE, FACE_FINE, &
+        LAP_M, LAP_0, LAP_P
     use :: ibmm, only: ibm_type
     use :: comm, only: comm_type, comm_allreduce_max
     use :: turbulence, only: turb_type, turbulence_is_enabled, TURB_PROF_SGS
@@ -154,8 +155,7 @@ contains
         !$omp& map(to: dt_alpha, dt_beta, dt_gamma, &
         !$omp& ire, forcing(1:3), skew, &
         !$omp& blk%physLow, blk%d1x, blk%d1y, blk%d1z, &
-        !$omp& blk%lapXm, blk%lapX0, blk%lapXp, blk%lapYm, blk%lapY0, blk%lapYp, &
-        !$omp& blk%lapZm, blk%lapZ0, blk%lapZp, blk%q, ibm%mu) &
+        !$omp& blk%lapX, blk%lapY, blk%lapZ, blk%q, ibm%mu) &
         !$omp& map(tofrom: blk%qs, blk%oldrhs) &
         !$omp& private(i,j,k,b,ip,im,jp,jm,kp,km,uStartX,vStartY,wStartZ, &
         !$omp& uu_p,uu_m,uv_p,uv_m,uw_p,uw_m, &
@@ -193,15 +193,15 @@ contains
                         uw_m = (blk%q(i,j,km,VAR_U,b) + blk%q(i,j,k,VAR_U,b)) &
                              * (blk%q(im,j,k,VAR_W,b) + blk%q(i,j,k,VAR_W,b))
 
-                        diff_ux = blk%lapXm(i,VAR_U,b)*blk%q(im,j,k,VAR_U,b) &
-                                + blk%lapX0(i,VAR_U,b)*blk%q(i,j,k,VAR_U,b) &
-                                + blk%lapXp(i,VAR_U,b)*blk%q(ip,j,k,VAR_U,b)
-                        diff_uy = blk%lapYm(j,VAR_U,b)*blk%q(i,jm,k,VAR_U,b) &
-                                + blk%lapY0(j,VAR_U,b)*blk%q(i,j,k,VAR_U,b) &
-                                + blk%lapYp(j,VAR_U,b)*blk%q(i,jp,k,VAR_U,b)
-                        diff_uz = blk%lapZm(k,VAR_U,b)*blk%q(i,j,km,VAR_U,b) &
-                                + blk%lapZ0(k,VAR_U,b)*blk%q(i,j,k,VAR_U,b) &
-                                + blk%lapZp(k,VAR_U,b)*blk%q(i,j,kp,VAR_U,b)
+                        diff_ux = blk%lapX(LAP_M,i,VAR_U,b)*blk%q(im,j,k,VAR_U,b) &
+                                + blk%lapX(LAP_0,i,VAR_U,b)*blk%q(i,j,k,VAR_U,b) &
+                                + blk%lapX(LAP_P,i,VAR_U,b)*blk%q(ip,j,k,VAR_U,b)
+                        diff_uy = blk%lapY(LAP_M,j,VAR_U,b)*blk%q(i,jm,k,VAR_U,b) &
+                                + blk%lapY(LAP_0,j,VAR_U,b)*blk%q(i,j,k,VAR_U,b) &
+                                + blk%lapY(LAP_P,j,VAR_U,b)*blk%q(i,jp,k,VAR_U,b)
+                        diff_uz = blk%lapZ(LAP_M,k,VAR_U,b)*blk%q(i,j,km,VAR_U,b) &
+                                + blk%lapZ(LAP_0,k,VAR_U,b)*blk%q(i,j,k,VAR_U,b) &
+                                + blk%lapZ(LAP_P,k,VAR_U,b)*blk%q(i,j,kp,VAR_U,b)
 
                         dpx = (blk%q(i,j,k,VAR_P,b)-blk%q(im,j,k,VAR_P,b))*blk%d1x(i,VAR_U,b)
 
@@ -249,15 +249,15 @@ contains
                         vw_m = (blk%q(i,j,km,VAR_V,b) + blk%q(i,j,k,VAR_V,b)) &
                              * (blk%q(i,jm,k,VAR_W,b) + blk%q(i,j,k,VAR_W,b))
 
-                        diff_vx = blk%lapXm(i,VAR_V,b)*blk%q(im,j,k,VAR_V,b) &
-                                + blk%lapX0(i,VAR_V,b)*blk%q(i,j,k,VAR_V,b) &
-                                + blk%lapXp(i,VAR_V,b)*blk%q(ip,j,k,VAR_V,b)
-                        diff_vy = blk%lapYm(j,VAR_V,b)*blk%q(i,jm,k,VAR_V,b) &
-                                + blk%lapY0(j,VAR_V,b)*blk%q(i,j,k,VAR_V,b) &
-                                + blk%lapYp(j,VAR_V,b)*blk%q(i,jp,k,VAR_V,b)
-                        diff_vz = blk%lapZm(k,VAR_V,b)*blk%q(i,j,km,VAR_V,b) &
-                                + blk%lapZ0(k,VAR_V,b)*blk%q(i,j,k,VAR_V,b) &
-                                + blk%lapZp(k,VAR_V,b)*blk%q(i,j,kp,VAR_V,b)
+                        diff_vx = blk%lapX(LAP_M,i,VAR_V,b)*blk%q(im,j,k,VAR_V,b) &
+                                + blk%lapX(LAP_0,i,VAR_V,b)*blk%q(i,j,k,VAR_V,b) &
+                                + blk%lapX(LAP_P,i,VAR_V,b)*blk%q(ip,j,k,VAR_V,b)
+                        diff_vy = blk%lapY(LAP_M,j,VAR_V,b)*blk%q(i,jm,k,VAR_V,b) &
+                                + blk%lapY(LAP_0,j,VAR_V,b)*blk%q(i,j,k,VAR_V,b) &
+                                + blk%lapY(LAP_P,j,VAR_V,b)*blk%q(i,jp,k,VAR_V,b)
+                        diff_vz = blk%lapZ(LAP_M,k,VAR_V,b)*blk%q(i,j,km,VAR_V,b) &
+                                + blk%lapZ(LAP_0,k,VAR_V,b)*blk%q(i,j,k,VAR_V,b) &
+                                + blk%lapZ(LAP_P,k,VAR_V,b)*blk%q(i,j,kp,VAR_V,b)
 
                         dpy = (blk%q(i,j,k,VAR_P,b)-blk%q(i,jm,k,VAR_P,b))*blk%d1y(j,VAR_V,b)
 
@@ -300,15 +300,15 @@ contains
                         wv_m = (blk%q(i,jm,k,VAR_W,b) + blk%q(i,j,k,VAR_W,b)) &
                              * (blk%q(i,j,km,VAR_V,b) + blk%q(i,j,k,VAR_V,b))
 
-                        diff_wx = blk%lapXm(i,VAR_W,b)*blk%q(im,j,k,VAR_W,b) &
-                                + blk%lapX0(i,VAR_W,b)*blk%q(i,j,k,VAR_W,b) &
-                                + blk%lapXp(i,VAR_W,b)*blk%q(ip,j,k,VAR_W,b)
-                        diff_wy = blk%lapYm(j,VAR_W,b)*blk%q(i,jm,k,VAR_W,b) &
-                                + blk%lapY0(j,VAR_W,b)*blk%q(i,j,k,VAR_W,b) &
-                                + blk%lapYp(j,VAR_W,b)*blk%q(i,jp,k,VAR_W,b)
-                        diff_wz = blk%lapZm(k,VAR_W,b)*blk%q(i,j,km,VAR_W,b) &
-                                + blk%lapZ0(k,VAR_W,b)*blk%q(i,j,k,VAR_W,b) &
-                                + blk%lapZp(k,VAR_W,b)*blk%q(i,j,kp,VAR_W,b)
+                        diff_wx = blk%lapX(LAP_M,i,VAR_W,b)*blk%q(im,j,k,VAR_W,b) &
+                                + blk%lapX(LAP_0,i,VAR_W,b)*blk%q(i,j,k,VAR_W,b) &
+                                + blk%lapX(LAP_P,i,VAR_W,b)*blk%q(ip,j,k,VAR_W,b)
+                        diff_wy = blk%lapY(LAP_M,j,VAR_W,b)*blk%q(i,jm,k,VAR_W,b) &
+                                + blk%lapY(LAP_0,j,VAR_W,b)*blk%q(i,j,k,VAR_W,b) &
+                                + blk%lapY(LAP_P,j,VAR_W,b)*blk%q(i,jp,k,VAR_W,b)
+                        diff_wz = blk%lapZ(LAP_M,k,VAR_W,b)*blk%q(i,j,km,VAR_W,b) &
+                                + blk%lapZ(LAP_0,k,VAR_W,b)*blk%q(i,j,k,VAR_W,b) &
+                                + blk%lapZ(LAP_P,k,VAR_W,b)*blk%q(i,j,kp,VAR_W,b)
 
                         dpz = (blk%q(i,j,k,VAR_P,b)-blk%q(i,j,km,VAR_P,b))*blk%d1z(k,VAR_W,b)
 
