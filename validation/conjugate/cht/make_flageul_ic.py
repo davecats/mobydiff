@@ -44,7 +44,13 @@ SWEEP = [("k1", 1.0), ("k2", 1.0), ("k3", 1.0),
 
 
 def assemble(f, name):
-    """Blocks -> one global array (nx, ny, nz)."""
+    """Blocks -> one global array (nx, ny, nz).
+
+    The block datasets are stored (nbz, nby, nbx) -- scalar_tools.mesh says so
+    -- so each tile is transposed on the way in. Without that, x and z are
+    swapped WITHIN each block while the blocks themselves land correctly,
+    which yields a field that looks plausible but is tiled.
+    """
     geo = BlockGeometry(f)
     nb = geo.nb
     bl = f["blocks"][...]
@@ -54,7 +60,7 @@ def assemble(f, name):
     g = np.zeros((nx, ny, nz))
     d = f[name]
     for b, (ox, oy, oz, _) in enumerate(bl):
-        g[ox:ox + nb[0], oy:oy + nb[1], oz:oz + nb[2]] = d[b]
+        g[ox:ox + nb[0], oy:oy + nb[1], oz:oz + nb[2]] = d[b].transpose(2, 1, 0)
     return g
 
 
@@ -64,7 +70,7 @@ def scatter(f, name, g):
     bl = f["blocks"][...]
     out = np.zeros(f[name].shape)
     for b, (ox, oy, oz, _) in enumerate(bl):
-        out[b] = g[ox:ox + nb[0], oy:oy + nb[1], oz:oz + nb[2]]
+        out[b] = g[ox:ox + nb[0], oy:oy + nb[1], oz:oz + nb[2]].transpose(2, 1, 0)
     f[name][...] = out
 
 

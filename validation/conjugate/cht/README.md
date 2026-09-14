@@ -1068,3 +1068,40 @@ while the peak itself is +0.7 % and the whole profile 2.4 %. It survived
 matching Δy⁺, the outer BC, the solid thickness and now the averaging window,
 so the remaining candidate is the DOMAIN: 1872 × 936 wall units against their
 3814 × 1270.
+
+## Instantaneous wall temperature fluctuation (`wall_fluctuation.png`)
+
+`plot_wall_fluctuation.py` draws θ' in the first fluid cell (y⁺ = 0.24) as a
+plan view, for three walls that share ONE velocity field and differ only in
+effusivity. Two rows, because one scale cannot show both facts:
+
+* **shared scale** — the amplitude collapses: rms **1.98 → 1.11 → 0.074** θ_τ
+  from K = 0.1 to 100, a factor 27. The near-isothermal wall is nearly blank,
+  which is the result, not a rendering failure.
+* **each by its own rms** — the streaks do not change shape. The same
+  turbulence writes the same footprint on every wall; only the wall's
+  effusivity decides how much of it survives.
+
+Colour is a diverging map (two hues, neutral midpoint) because θ' is signed.
+
+### A BUG THIS FIGURE CAUGHT: the block dataset order
+
+The first version showed a checkerboard of block-sized tiles. It was not the
+solver: **block datasets are stored `(nbz, nby, nbx)`** — as
+`scalar_tools.BlockGeometry.mesh` documents — so an x–z slice must be
+TRANSPOSED before placement. Without that, each tile is internally transposed
+while the tiles themselves land correctly, which yields a plausible-looking
+field that is wrong.
+
+It does not fail loudly, so it needs a positive check: **the mean |∂/∂x| across
+a block boundary must match the mean inside a block.** It was 5–8× larger
+(and 15–38× in z); transposed, it is 0.9–1.2.
+
+`make_flageul_ic.py` had the same error in `assemble`/`scatter`, so the initial
+condition for this campaign had x and z swapped within each block. Both are
+fixed. **It did not affect any result**: that IC was followed by an 80 000-step
+develop leg and 715 000 further steps, and the velocity statistics now match
+the reference to 0.4–0.9 %, so the scramble was long gone. Nor did it touch any
+earlier diagnostic — every one of those reduced over a whole plane (mean,
+variance) or over the y profile via `mean(axis=(0, 2))`, and y is the middle
+index in **both** conventions, so all of them were invariant to the error.
