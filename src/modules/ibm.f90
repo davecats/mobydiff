@@ -96,6 +96,25 @@ module ibmm
 
 !$omp declare target(isInBody, distance3, bisection, add_neighbor_coeff)
 
+    ! Is every penalization coefficient zero on this rank? Then mu is exactly
+    ! 1/(1 + dt*0) = 1 for every entry, whatever dt_gamma is -- which is also
+    ! what init_ibm already wrote -- so the per-substage refresh writes back the
+    ! values mu already holds and can be skipped entirely. On a case with no
+    ! immersed body that kernel was an fp64 DIVIDE per ghost-inclusive cell x 3
+    ! components x 3 substages, 3.2-3.8 % of the step at 16 ranks (measured), all
+    ! of it producing the constant 1.
+    !
+    ! The answer is a LOCAL one and correctly so: mu is pointwise, so a rank
+    ! whose own coefficients are all zero has mu = 1 regardless of what any other
+    ! rank holds, and the field values are bit-identical either way.
+    !
+    ! Computed once, on the first call: coef is final before the first substage
+    ! (set_ibm_coeff runs at init and nothing writes coef afterwards) and the
+    ! check must run on the DEVICE, because the analytic path fills coef there
+    ! and leaves the host copy stale. Cached like pressure_solver's ifaceAny.
+    logical, save :: muKnown = .false.
+    logical, save :: muIsUnit = .false.
+
 contains
 
 !========================
@@ -1158,6 +1177,14 @@ contains
         integer :: ix, iy, iz, var, b, nBlocks
         integer :: ilo, ihi, jlo, jhi, klo, khi
 
+        ! See the muIsUnit declaration: with no body anywhere on this rank the
+        ! kernel below writes 1.0 into every entry of a mu that is already 1.0.
+        if (.not. muKnown) then
+            muIsUnit = ibm_coef_all_zero(ibm)
+            muKnown = .true.
+        end if
+        if (muIsUnit) return
+
         nBlocks = size(ibm%coef,5)
         ilo = lbound(ibm%coef,1)
         ihi = ubound(ibm%coef,1)
@@ -1187,5 +1214,45 @@ contains
         !$omp end target teams distribute parallel do
 #endif
     end subroutine update_ibm_mu
+
+    ! Device-side "is coef identically zero on this rank?". One pass, once per
+    ! run. It must read the DEVICE copy: the analytic path fills coef with a
+    ! target kernel and never copies it back.
+    logical function ibm_coef_all_zero(ibm)
+        type(ibm_type), intent(in) :: ibm
+
+        integer :: ix, iy, iz, var, b, nBlocks
+        integer :: ilo, ihi, jlo, jhi, klo, khi
+        real(C_DOUBLE) :: peak
+
+        nBlocks = size(ibm%coef,5)
+        ilo = lbound(ibm%coef,1); ihi = ubound(ibm%coef,1)
+        jlo = lbound(ibm%coef,2); jhi = ubound(ibm%coef,2)
+        klo = lbound(ibm%coef,3); khi = ubound(ibm%coef,3)
+        peak = 0.0d0
+
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target teams distribute parallel do collapse(5) &
+        !$omp& map(to: ilo, ihi, jlo, jhi, klo, khi, nBlocks, ibm%coef) &
+        !$omp& map(tofrom: peak) reduction(max: peak) &
+        !$omp& private(ix,iy,iz,var,b)
+#endif
+        do b = 1, nBlocks
+        do var = VAR_U, VAR_W
+            do iz = klo, khi
+                do iy = jlo, jhi
+                    do ix = ilo, ihi
+                        peak = max(peak, abs(ibm%coef(ix,iy,iz,var,b)))
+                    end do
+                end do
+            end do
+        end do
+        end do
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp end target teams distribute parallel do
+#endif
+
+        ibm_coef_all_zero = peak == 0.0d0
+    end function ibm_coef_all_zero
 
 end module ibmm
