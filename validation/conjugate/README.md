@@ -788,6 +788,96 @@ number rather than from the idea. `check_oblique.py residual` and
 
 ---
 
+## Stage 0 of the route-B escalation — a one-sided `s_t` CONVERGES
+
+**KILL GATE 1 PASSES.** The plan is `docs/next_session_tangential.md`; this is
+its first stage, and it overturns the finding that closed C2 — that the `s_t`
+estimate on a curved interface cannot be repaired.
+
+```bash
+./run_gates_c2.sh stzero          # needs no solver; the case files above suffice
+```
+
+### What was measured
+
+`s_t = e_d·∇_tT` and **T is continuous across Γ**, so its surface gradient is
+single-valued: only `∂_nT` jumps, and either side estimates the same number.
+The shipped estimator instead differences `T` ACROSS the interface and removes
+the straddle in closed form — a de-bias derived for a PLANE, which is exactly
+why it does not converge on a curved one. A same-side stencil never straddles,
+so there is nothing to de-bias.
+
+**It fits the existing one-deep halo**, which is the reason C2 did not try it:
+`conjugate_tangential`'s DEVIATION comment rules out same-side least squares
+because a full 3D fit needs the far cell's far neighbour. It is not needed. One
+material layer gives the two coordinate-tangential derivatives within it, and
+the missing third component closes against the side's own normal derivative
+`∂_nT = q_n/κ`:
+
+```
+s_t = A q_n - B,    A = (1 - n_d^2)/(n_d kappa),   B = (n_1 t1 + n_2 t2)/n_d
+```
+
+with `q_n` from either the face balance (`flux`, linear in `s_t`, denominator
+provably `>= 1`) or from demanding the two sides agree (`agree`, which
+eliminates `q_n` outright: `q_n = (P_f - P_s)/[(1 - n_d^2)(1/k_f - 1/k_s)]`).
+Both are in `check_oblique.onesided`.
+
+### The numbers (rms error as % of the exact `s_t`; `check_st.py`)
+
+The plane is the unit test, not the gate: the field is piecewise LINEAR and φ
+is exact, so a one-sided estimator must return the geometry floor — **it does,
+7.4e-10 absolute against a signal of 0.658**, where the shipped de-bias leaves
+4.3 % and the raw projection 7.1 %, neither converging.
+
+The gate is the curved interface. `multipole --mode 2` exists because **the
+dipole's interior is exactly LINEAR** (`gamma r cos t = gamma x`), which would
+flatter any solid-side score; at m = 2 neither side is linear.
+
+| quadrupole, κ_s = 10 | h=1/64 | 1/128 | 1/256 | order |
+|---|---|---|---|---|
+| raw projection | 37.3 % | 51.2 % | 34.5 % | 0.06 |
+| **shipped de-bias** | **36.0 %** | **25.6 %** | **21.8 %** | **0.37** |
+| one-sided, fluid side | 42.3 % | 22.1 % | 11.1 % | 0.97 |
+| **one-sided, solid side** | **1.96 %** | **1.04 %** | **0.44 %** | **1.08** |
+| one-sided, `agree` | 11.6 % | 5.92 % | 2.97 % | 0.98 |
+
+and at κ_s = 10³, where C2 concluded there is "no signal left to estimate":
+shipped 4014/2800/2461 %, **solid side 2.99/1.45/0.95 %, order 0.83**.
+
+**The side rule, swept over six decades** (m = 2, h = 1/256):
+
+| κ_s | 0.001 | 0.01 | 0.1 | 0.5 | 2 | 10 | 1000 |
+|---|---|---|---|---|---|---|---|
+| shipped | 1.65 % | 1.65 % | 1.60 % | 1.05 % | 2.27 % | 21.8 % | 2461 % |
+| fluid | 5.19 % | 3.23 % | 1.23 % | 0.41 % | 1.75 % | 11.1 % | 1164 % |
+| **solid** | **0.65 %** | **0.64 %** | **0.59 %** | **0.50 %** | **0.38 %** | **0.44 %** | **0.95 %** |
+
+The solid (body-INTERIOR) side is uniformly best and essentially
+contrast-independent, and the fluid side's error is `~κ_s ×` the solid's at
+high contrast — which is the whole of C2's defect 3. Neither conductivity nor
+linearity explains it (it holds at κ_s < 1 and at m = 2); the working
+hypothesis is that the interior harmonic `r^m` is the smoother of the two near
+Γ, while the exterior carries the decaying `r^-m` multipole whose normal
+derivatives grow. **That hypothesis is not yet tested on a CONCAVE body, where
+"interior" and "solid" come apart** — do that before hardwiring the side.
+
+### Two defects in the C2 gate found on the way
+
+1. **`Dipole.ratio` returned `|tan t|`, the κ_s = 1 form.** The tangential and
+   fluid-normal gradients at `r = a` carry `(1 + β)` and `(1 - β)`, and
+   `(1+β)/(1-β) = 1/κ_s`, so the fluid-side ratio — the quantity `Plane`
+   controls directly, and the one the whole decision is defined on — is
+   `|tan t|/κ_s`. FIXED. **Consequence: the position-resolved crossover in
+   table (a) above was binned a DECADE too high.** Its "local ratio ≈ 0.1"
+   is really ≈ 0.01, i.e. at the DNS-like ratio rather than a decade above it.
+   The C2 verdict was reached partly on that number.
+2. **The dipole's linear interior** would have made any solid-side estimator
+   look exact for free. `Multipole` (verified: `[T] = 0`, `[k ∂_nT] = 0`,
+   `grad_outer` against finite differences) is the de-flattered replacement.
+
+---
+
 ## C3 — the fraction-weighted capacity, the Nusselt diagnostic, and the time step
 
 Three items that share one cost: the capacity and the time-step convention

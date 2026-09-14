@@ -166,6 +166,30 @@ def face_measure(phi, centres, plane, d, interior_margin=0):
                       + (field[sl(0, ax, 1)] - field[sl(0, ax, -1)])) \
             / (2.0 * cd[direction])
 
+    def layer_tangential(field, direction, off):
+        """The tangential derivative WITHIN one material layer: the cells at
+        the face-normal offset `off` (-1 = L, 0 = R) and their two tangential
+        neighbours, keeping only neighbours on the SAME SIDE of the interface.
+
+        This is the whole point of the one-sided estimator -- `tangential()`
+        above averages the two layers and so straddles wherever the interface
+        crosses the stencil, which is the bias `debias()` then has to model.
+        Nothing here is wider than the +-1 stencil face_measure already
+        trims for, so it fits the solver's EXISTING one-deep halo.
+
+        Returns the derivative and whether it could be formed at all."""
+        ax = 2 - direction
+        h = cd[direction]
+        c, pc = field[sl(off)], phi[sl(off)]
+        fp, pp = field[sl(off, ax, 1)], phi[sl(off, ax, 1)]
+        fm, pm = field[sl(off, ax, -1)], phi[sl(off, ax, -1)]
+        solid = pc < 0.0
+        okp, okm = (pp < 0.0) == solid, (pm < 0.0) == solid
+        g = np.where(okp & okm, (fp - fm) / (2.0 * h),          # centred, O(h^2)
+                     np.where(okp, (fp - c) / h,                # one-sided, O(h)
+                              np.where(okm, (c - fm) / h, 0.0)))
+        return g, okp | okm
+
     gtd = (temp[hi] - temp[lo]) * invd
     gt1 = tangential(temp, tang[0])
     gt2 = tangential(temp, tang[1])
@@ -178,6 +202,23 @@ def face_measure(phi, centres, plane, d, interior_margin=0):
     dn = (gpd * gtd + gp1 * gt1 + gp2 * gt2) / safe
     nd = np.where(ok, gpd / safe, 0.0)
     st_num = np.where(ok, gtd - nd * dn, 0.0)
+
+    # The two one-sided estimates, projected onto the in-plane normal:
+    # P^sigma = n_1 t1^sigma + n_2 t2^sigma is the only combination the
+    # closures need (see onesided()).
+    n1 = np.where(ok, gp1 / safe, 0.0)
+    n2 = np.where(ok, gp2 / safe, 0.0)
+    gl1, al1 = layer_tangential(temp, tang[0], -1)
+    gl2, al2 = layer_tangential(temp, tang[1], -1)
+    gh1, ah1 = layer_tangential(temp, tang[0], 0)
+    gh2, ah2 = layer_tangential(temp, tang[1], 0)
+    lo_fluid = phi[lo] > 0.0
+    p_lo, p_hi = n1 * gl1 + n2 * gl2, n1 * gh1 + n2 * gh2
+    ok_lo, ok_hi = al1 & al2, ah1 & ah2
+    p_f = np.where(lo_fluid, p_lo, p_hi)
+    p_s = np.where(lo_fluid, p_hi, p_lo)
+    ok_f = np.where(lo_fluid, ok_lo, ok_hi)
+    ok_s = np.where(lo_fluid, ok_hi, ok_lo)
 
     pl, pr = phi[lo], phi[hi]
     cut = (pl < 0.0) != (pr < 0.0)
@@ -203,6 +244,8 @@ def face_measure(phi, centres, plane, d, interior_margin=0):
                 kloc=np.where(pl + pr < 0.0, plane.kappa, 1.0),
                 kl=kl, kr=kr, nd=nd[cut], gtd=gtd[cut],
                 dt=(temp[hi] - temp[lo])[cut], st_num=st_num[cut],
+                pf=p_f[cut], ps=p_s[cut], okf=ok_f[cut], oks=ok_s[cut],
+                ksolid=np.where(pl < 0.0, kl, kr),
                 st_exact=plane.s_t(d))
 
 
@@ -222,6 +265,112 @@ def debias(m):
     c = m["kface"] * (1.0 / m["kr"] - 1.0 / m["kl"]) \
         * (0.5 - m["w"]) * (1.0 - m["nd"] * m["nd"])
     return (m["st_num"] - c * m["gtd"]) / (1.0 - c)
+
+
+def onesided(m, mode="flux", side="both"):
+    """s_t from cells on ONE side of the interface only -- the stage-0
+    candidate of docs/next_session_tangential.md.
+
+    WHY IT IS WELL POSED. s_t = e_d.grad T - n_d (n.grad T) = e_d.grad_t T,
+    and T is CONTINUOUS across the interface, so its surface gradient is
+    single-valued: only d_n T jumps. Both sides therefore estimate the SAME
+    number, which is what lets a same-side stencil -- which never straddles,
+    and so needs no de-bias -- replace debias() altogether.
+
+    THE CLOSURE, and why it fits the existing one-deep halo. One material
+    layer gives the two coordinate-tangential derivatives t1, t2 within it
+    (face_measure.layer_tangential), but not the third component g_d, which
+    would need a second cell along d -- the two-deep halo conjugate_
+    tangential's DEVIATION comment assumed was required. It is not: with
+    P = n_1 t1 + n_2 t2 and the side's normal derivative d_n T = q_n/kappa,
+
+        g_d = (q_n/kappa - P)/n_d        and       s_t = g_d - n_d q_n/kappa
+            =>  s_t = A q_n - B,   A = (1 - n_d^2)/(n_d kappa),  B = P/n_d.
+
+    Two ways to supply q_n, both closed-form:
+
+    `flux`  the face's own balance, dT = a q R + h_d s_t (the note's n runs
+            L -> R, grad phi points into the fluid, hence the sign), which is
+            linear in s_t:
+
+                s_t = (-A Q0 - B)/(1 - A k_face/a),   Q0 = dT/(a R).
+
+            UNCONDITIONALLY well posed, and more strongly than the shipped
+            de-bias: a = -n_d |grad phi| makes A k_face/a = -(1 - n_d^2)
+            k_face/(n_d^2 kappa |grad phi|), so the denominator is 1 + (a
+            positive number) >= 1 for every material pair, cut position and
+            orientation.
+
+    `agree` demand the two sides return the same s_t, which eliminates q_n
+            outright and needs no face balance at all:
+
+                q_n = (P_f - P_s)/[(1 - n_d^2)(1/kappa_f - 1/kappa_s)]
+
+            i.e. the normal flux read off the JUMP in tangential derivatives.
+            Degenerate exactly where it carries no information (equal
+            materials; n_d -> +-1, where s_t = 0 anyway) -- so it is a
+            candidate to MEASURE, not to assume.
+
+    Returns (s_t, usable). `usable` is false where the side's tangential
+    neighbours are not available (thin bodies, high curvature) or the face is
+    grazing; the caller falls back to debias() there and must COUNT it.
+    """
+    nd, a, kface = m["nd"], m["a"], m["kface"]
+    ks, kf = m["ksolid"], 1.0                  # the fluid is kappa = 1 here
+    one_m = 1.0 - nd * nd
+    graze = np.abs(nd) < MIN_COSINE
+    ndx = np.where(graze, 1.0, nd)             # never divide by the guard
+
+    def st_of(q_n, kap, P):
+        return (q_n / kap) * one_m / ndx - P / ndx
+
+    if mode == "agree":
+        den = one_m * (1.0 / kf - 1.0 / ks)
+        bad = np.abs(den) < 1.0e-12
+        q = (m["pf"] - m["ps"]) / np.where(bad, 1.0, den)
+        st_f, st_s = st_of(q, kf, m["pf"]), st_of(q, ks, m["ps"])
+        usable = m["okf"] & m["oks"] & ~graze & ~bad
+    elif mode == "flux":
+        Q0 = m["dt"] / (a * m["res"])
+        def branch(kap, P):
+            A = one_m / (ndx * kap)
+            return (-A * Q0 - P / ndx) / (1.0 - A * kface / a)
+        st_f, st_s = branch(kf, m["pf"]), branch(ks, m["ps"])
+        usable = ~graze
+    else:
+        raise ValueError(mode)
+
+    if side == "fluid":
+        st, usable = st_f, usable & m["okf"]
+    elif side == "solid":
+        st, usable = st_s, usable & m["oks"]
+    elif side == "kmax":
+        # The side whose kappa is LARGER. The closure's own error enters
+        # through q_n/kappa, so the stiffer material suppresses it and the
+        # estimate is carried by the directly measured P -- which is why the
+        # solid side wins at kappa_s = 1e3 and must LOSE when the solid is
+        # the insulator. Selecting on kappa rather than on material is what
+        # makes the rule geometry- and contrast-agnostic.
+        hi_solid = ks > kf
+        st = np.where(hi_solid, st_s, st_f)
+        usable = usable & np.where(hi_solid, m["oks"], m["okf"])
+    elif side == "both":
+        # average where both sides are available, else whichever is
+        st = np.where(m["okf"] & m["oks"], 0.5 * (st_f + st_s),
+                      np.where(m["okf"], st_f, st_s))
+        usable = usable & (m["okf"] | m["oks"])
+    else:
+        raise ValueError(side)
+    return np.where(usable, st, debias(m)), usable
+
+
+def onesided_spread(m, mode="flux"):
+    """|s_t^fluid - s_t^solid|. Both estimate the same continuous quantity,
+    so their disagreement is a FREE confidence indicator -- and the mechanism
+    by which a correction can be made never-worse (gate 2, tier 1)."""
+    f, _ = onesided(m, mode, "fluid")
+    s, _ = onesided(m, mode, "solid")
+    return np.abs(f - s)
 
 
 def collect(case, plane, margin=0):

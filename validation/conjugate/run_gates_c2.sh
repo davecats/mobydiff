@@ -3,7 +3,7 @@
 # e_face, and the correction behind [scalar.N] tangential_correction
 # (docs/next_session_conjugate.md Section 10, increment C2).
 #
-#   ./run_gates_c2.sh [flux|indicator|bvp|cylinder|dt|c1|all]
+#   ./run_gates_c2.sh [flux|indicator|bvp|cylinder|stzero|dt|c1|all]
 #
 # Environment: BIN   (default ../../build_cpu/moby_solve)
 #              PREP  (the moby_prepare next to BIN)
@@ -228,6 +228,31 @@ if want cylinder; then
                 --kappa "$ka" --emit c2_dip.dat
             [ $? -eq 0 ] || status=1
         done
+    done
+fi
+
+# --- (3b) STAGE 0: does a ONE-SIDED s_t converge? --------------------------
+# KILL GATE 1 of docs/next_session_tangential.md. The shipped de-bias models
+# the straddle of the arm difference and is derived for a PLANE, so on a
+# curved interface it does not converge (43/54/46 %, gate (2) above). A
+# same-side stencil never straddles, and s_t is CONTINUOUS across the
+# interface so either side estimates the same number. This measures whether
+# that converges -- everything downstream depends on it.
+#
+# The plane is the unit test (piecewise-linear field + exact phi => a
+# one-sided estimator must return the geometry floor); the CURVED cases are
+# the gate. `multipole --mode 2` exists because the dipole's interior is
+# exactly LINEAR, which would flatter any solid-side score.
+if want stzero; then
+    echo "== (3b) stage 0: one-sided s_t, the convergence gate"
+    run $PY ./check_st.py plane --tag obl30 --theta 30 --kappa 10 \
+        --q-n 1.0 --amp 1.0 --tolerance 1.0e-8
+    [ $? -eq 0 ] || status=1
+    for ka in 10.0 1000.0; do
+        run $PY ./check_st.py cylinder  --tag cyl --radius 0.25 --kappa "$ka"
+        [ $? -eq 0 ] || status=1
+        run $PY ./check_st.py multipole --tag cyl --radius 0.25 --kappa "$ka" --mode 2
+        [ $? -eq 0 ] || status=1
     done
 fi
 

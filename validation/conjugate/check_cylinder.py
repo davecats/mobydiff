@@ -120,8 +120,20 @@ class Dipole:
         return -self.g*np.cos(theta)*2.0*self.kappa/(1.0 + self.kappa)
 
     def ratio(self, theta):
-        """|grad_t T|/|d_n T| at the interface = |tan t|."""
-        return np.abs(np.tan(theta))
+        """|grad_t T|/|d_n T| measured on the FLUID side -- the same quantity
+        `r` that Plane controls directly, so that the plane and the body are
+        binned on ONE definition.
+
+        FIXED 2026-09-14: this returned |tan t|, which is the kappa_s = 1
+        form. At r = a the tangential gradient is (1 + beta) and the fluid
+        normal gradient (1 - beta), and (1+beta)/(1-beta) = 1/kappa_s, so
+
+            |grad_t T|/|d_n T| = |tan t|/kappa_s.
+
+        The old form overstated the ratio by the full contrast, i.e. by a
+        DECADE at kappa_s = 10 -- which is what the README's position-resolved
+        crossover was binned on. See the README's C2 correction note."""
+        return np.abs(np.tan(theta))/self.kappa
 
     def grad_outer(self, theta):
         """grad T at r = a, from the fluid side (its TANGENTIAL part is the
@@ -141,6 +153,76 @@ class Dipole:
         """face_measure's constant-s_t hook. A curved interface has no single
         value, and this measurement does not use it -- NaN so that any
         accidental consumer shows up instead of silently reading a wrong 0."""
+        return float("nan")
+
+
+class Multipole:
+    """The cylinder in a mode-m harmonic far field -- the Dipole generalised,
+    and the reason it exists is that the DIPOLE'S INTERIOR IS LINEAR.
+
+        T_out = (r^m + beta a^2m r^-m) cos(m t),   beta = (1 - k)/(1 + k)
+        T_in  = gamma r^m cos(m t),                gamma = 2/(1 + k)
+
+    Both harmonic, [T] = 0 and [k d_r T] = 0 at r = a, no source -- so the
+    exact divergence is zero and every measurement the Dipole supports
+    carries over.
+
+    WHY IT MATTERS FOR THE ONE-SIDED ESTIMATOR. At m = 1 the interior is
+    gamma r cos t = gamma x, exactly LINEAR, so a same-side stencil inside
+    the body is exact by construction and any solid-side score is flattered
+    by the test problem rather than earned. At m = 2 the interior is
+    gamma (x^2 - y^2) and NEITHER side is linear, so the two sides are
+    scored on equal terms. Measure on m = 2 before believing a side.
+    """
+
+    def __init__(self, cx, cy, radius, kappa, mode=2, grad=1.0):
+        self.c = (cx, cy)
+        self.a = radius
+        self.kappa = kappa
+        self.m = int(mode)
+        self.g = grad
+        self.beta = (1.0 - kappa)/(1.0 + kappa)
+        self.gamma = 2.0/(1.0 + kappa)
+
+    def _polar(self, x, y):
+        X, Y = x - self.c[0], y - self.c[1]
+        return np.sqrt(np.maximum(X*X + Y*Y, 1.0e-300)), np.arctan2(Y, X)
+
+    def temperature(self, x, y, z):
+        r, t = self._polar(x, y)
+        m, a = self.m, self.a
+        rs = np.maximum(r, 1.0e-300)
+        outer = (rs**m + self.beta*a**(2*m)*rs**(-m))*np.cos(m*t)
+        inner = self.gamma*rs**m*np.cos(m*t)
+        return self.g*np.where(r <= a, inner, outer)
+
+    def theta(self, x, y):
+        return self._polar(x, y)[1]
+
+    def q_r(self, theta):
+        """k d_r T at r = a, outward -- continuous across the interface."""
+        m, a = self.m, self.a
+        return self.g*m*a**(m - 1)*(1.0 - self.beta)*np.cos(m*theta)
+
+    def ratio(self, theta):
+        """|grad_t T|/|d_n T| on the FLUID side = |tan(m t)|/kappa_s."""
+        return np.abs(np.tan(self.m*theta))/self.kappa
+
+    def grad_outer(self, theta):
+        """grad T at r = a from the fluid side."""
+        m, a = self.m, self.a
+        dr = self.g*m*a**(m - 1)*(1.0 - self.beta)*np.cos(m*theta)
+        dt = -self.g*m*a**(m - 1)*(1.0 + self.beta)*np.sin(m*theta)
+        c, s = np.cos(theta), np.sin(theta)
+        return dr*c - dt*s, dr*s + dt*c, np.zeros_like(dr)
+
+    def s_t_exact(self, theta, d):
+        g = self.grad_outer(theta)
+        n = (np.cos(theta), np.sin(theta), np.zeros_like(theta))
+        dn = sum(n[q]*g[q] for q in range(3))
+        return g[d] - n[d]*dn
+
+    def s_t(self, d):
         return float("nan")
 
 
