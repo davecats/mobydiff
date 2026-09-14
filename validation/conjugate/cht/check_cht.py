@@ -76,6 +76,15 @@ FLAGEUL = dict(re_tau=149, pr=0.71, peak=6.208, peak_yp=17.6)
 # ~0.2-0.4 in <T'^2> against 0.015 for the line (a symbol centroid is coarser);
 # each .dat header carries its own measured 5a-vs-5b agreement.
 HERE = os.path.dirname(os.path.abspath(__file__))
+# THE CONJUGATE CASE NOW COMES FROM THEIR RAW DATA, not from a digitisation of
+# their figure: that digitisation was biased HIGH (rms 0.15, bias +0.13, peak
+# 6.208 against the true 5.941), so comparing against it overstated every
+# "ours is low" by ~4.5 %. flageul_data/g1a1_fluct1.dat is their published
+# g1a1 -- kappa_s = alpha_s = C_s = K = 1, exactly our k1 -- with y+ in column
+# 0 and T'^2 in column 7. The two IDEAL brackets have no raw counterpart
+# (their repository publishes conjugate cases only), so those stay digitised
+# and are used only as brackets.
+RAW = os.path.join(HERE, "flageul_data", "g1a1_fluct1.dat")
 REF_DAT = os.path.join(HERE, "flageul_fig5a_conjug.dat")
 REF_BRACKET = dict(isoQ=os.path.join(HERE, "flageul_fig5a_isoq.dat"),
                    isoT=os.path.join(HERE, "flageul_fig5a_isot.dat"))
@@ -378,8 +387,17 @@ def cmd_thermal(a):
     print(f"\n   (4) vs Flageul et al. 2015 (Re_tau {f['re_tau']}, Pr {f['pr']}, "
           f"their figure 5; our Re_tau {RE:g}"
           f"{' -- MATCHED' if abs(RE - f['re_tau']) < 1 else ''})")
+    if os.path.exists(RAW):
+        _r = np.loadtxt(RAW)
+        ref = np.column_stack([_r[:, 0], _r[:, 7]])
+        ref_src = "their RAW g1a1 data"
+    elif os.path.exists(REF_DAT):
+        ref = np.loadtxt(REF_DAT)
+        ref_src = "digitised (BIASED +0.13; prefer the raw data)"
+    else:
+        ref, ref_src = None, "none"
+    print(f"       conjugate reference: {ref_src}")
     print(f"       quantity                          ours      Flageul")
-    ref = np.loadtxt(REF_DAT) if os.path.exists(REF_DAT) else None
     ypw_all = np.minimum(y - Y_LO, Y_HI - y) * RE
 
     def read_both(row, refdat):
@@ -447,17 +465,18 @@ def cmd_thermal(a):
     # five scalars that do peak near the wall all sit at 4.6-4.9.) This is the
     # same failure as taking max() over the fluid, one level down: an
     # aggregate over cases that are not the same quantity.
+    refpk = float(ref[:, 1].max()) if ref is not None else f["peak"]
     genuine = [r for r in rows if r["var_peak"] >= r["var_centre"] - 1e-12]
     excluded = [r["name"] for r in rows if r not in genuine]
     if genuine:
         lo = min(r["var_peak"] for r in genuine)
         hi = max(r["var_peak"] for r in genuine)
         print(f"       NEAR-WALL peak <theta'^2>, the {len(genuine)} scalars that "
-              f"HAVE one: {lo:.2f} - {hi:.2f}  {f['peak']:9.2f}")
+              f"HAVE one: {lo:.2f} - {hi:.2f}  {refpk:9.2f}")
     if "k1" in by:
         print(f"       ...of which k1 IS their case (kappa_s = alpha_s = 1): "
-              f"{by['k1']['var_peak']:8.2f}  {f['peak']:9.2f}"
-              f"   ({100*(by['k1']['var_peak']/f['peak']-1):+.0f} %)")
+              f"{by['k1']['var_peak']:8.2f}  {refpk:9.2f}"
+              f"   ({100*(by['k1']['var_peak']/refpk-1):+.1f} %)")
     if excluded:
         print(f"       EXCLUDED, no near-wall peak (variance still rising at the "
               f"centreline): {', '.join(excluded)} -- reported separately, not "

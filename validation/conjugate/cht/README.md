@@ -1018,3 +1018,53 @@ predicted level drift, −7.5e-4 per time unit, matches the measured −9.3e-4.
 
 715 000 steps ≈ **112 h (4.7 days)**. The contaminated statistics are kept as
 `flageul_stats.h5` / `flageul_stats_311k.h5` for the before/after.
+
+## Result of the three-leg rerun (2026-09-14) — the deep solid is fixed
+
+650 000 clean steps, 101.5 h at 0.562 s/step, window t = 20 → 219 =
+**29 684 wall units**, matching their 29 000.
+
+**The deep-solid discrepancy is gone.**
+
+| depth y⁺ | contaminated | **clean** | Flageul | clean/theirs |
+|---|---|---|---|---|
+| −5 | 0.618 | 0.593 | 0.485 | 1.22 |
+| −40 | 0.064 | 0.044 | 0.034 | 1.28 |
+| −77 | 0.038 | **0.0113** | 0.0113 | **1.00** |
+| −102 | 0.047 | 0.0075 | 0.0083 | 0.90 |
+| −145 (outer face) | **0.0586** | **0.0063** | 0.0073 | **0.86** |
+
+At the outer face the ratio goes from 8.0 to **0.86** — now slightly BELOW
+theirs — and at y⁺ −77 it is exact. What remains is the solid within ~y⁺ 40 of
+the interface reading 22–28 % high, which is the fluid side's near-wall excess
+(+11 % at y⁺ 0.24) conducted inward, not a separate problem.
+
+**The flux-balance correction also worked**: θ_τ is now κ_s-independent to
+**0.003 %** across the sweep (it was 0.25 %), and J(centreline) is ~0.
+
+Against their RAW data, over 0.24 < y⁺ < 147:
+
+| quantity | clean | previous (contaminated) |
+|---|---|---|
+| U⁺ | **0.4 %** | 0.5 % |
+| θ⁺ | 1.2 % | 1.1 % |
+| u'² | **0.9 %** | 1.0 % |
+| v'² | **1.8 %** | 2.2 % |
+| w'² | **3.8 %** | 4.3 % |
+| −u'v' | **0.4 %** | 0.6 % |
+| u'T' | 1.3 % | 1.1 % |
+| T'² | 2.4 % | 2.2 % |
+| **near-wall peak, K = 1** | **5.98 vs 5.94 = +0.7 %** | — |
+
+`check_cht.py` now takes the conjugate reference from
+`flageul_data/g1a1_fluct1.dat` (their raw g1a1) rather than the biased
+digitisation, and derives the reference peak from it. The two IDEAL brackets
+have no raw counterpart — their repository publishes conjugate cases only — so
+those stay digitised and are used only as brackets.
+
+**What is left is one thing, and it is near-wall, not deep**: ⟨T'²⟩ is +11 % at
+y⁺ 0.24 and wall/peak is +10 %, i.e. a slightly FLATTER near-wall profile,
+while the peak itself is +0.7 % and the whole profile 2.4 %. It survived
+matching Δy⁺, the outer BC, the solid thickness and now the averaging window,
+so the remaining candidate is the DOMAIN: 1872 × 936 wall units against their
+3814 × 1270.
