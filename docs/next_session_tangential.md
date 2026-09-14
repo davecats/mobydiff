@@ -1,6 +1,22 @@
 # The tangential-term escalation (route B) — implementation plan
 
-STATUS: PLANNED, nothing implemented. Written 2026-09-14 on branch `scalar`.
+STATUS: **stage 0 DONE (kill gate 1 PASSED), stage 1 DONE (gate 2 = tier 2).**
+Written 2026-09-14 on branch `scalar`; stages 0-1 the same day, all in Python,
+no solver and no Fortran. Measurements and tables in
+`validation/conjugate/README.md` ("Stage 0 of the route-B escalation" and
+"Stage 1"); `./run_gates_c2.sh stzero` re-runs the convergence gate.
+
+**Where it stands.** The one-sided `s_t` converges on a curved interface
+(order 0.83-1.08 against the shipped estimator's -0.05 to 0.37) and is
+0.38-0.95 % across six decades of contrast against the shipped 1.65-2461 %.
+With `k_area` it makes the scheme EXACT on a plane at every ratio and contrast
+(6-9 orders below the baseline) and 7-63× better on a curved interface at
+moderate contrast, improving with refinement. It is 1.4-11× WORSE at high
+contrast on a curved interface, and `s_t` is no longer the cause -- the same
+`s_t` with the `k_loc` multiplier sits at baseline parity. **The remaining
+blocker is the MULTIPLIER on a curved high-contrast interface, and stages 2-5
+below are on hold until it is resolved.** Do not start the Fortran work first:
+its cost is identical either way and the gating quantity is the unknown one.
 
 Prerequisite reading, in order: `validation/conjugate/README.md` sections
 "C2 — measuring the tangential term", "the way out, measured" and "…and the

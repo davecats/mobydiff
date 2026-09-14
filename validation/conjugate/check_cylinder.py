@@ -237,7 +237,12 @@ def cmd_dipole(a):
         O(h^2) Laplacian truncation, which is what the cut cells must be
         compared against).
     """
-    dip = Dipole(a.centre[0], a.centre[1], a.radius, a.kappa, a.grad)
+    # mode 1 is the Dipole (kept: the shipped gate quotes it), but its
+    # interior is exactly LINEAR, so any solid-side estimator is flattered
+    # there. mode >= 2 uses Multipole, where neither side is linear.
+    dip = (Dipole(a.centre[0], a.centre[1], a.radius, a.kappa, a.grad)
+           if a.mode == 1 else
+           Multipole(a.centre[0], a.centre[1], a.radius, a.kappa, a.mode, a.grad))
     phi, centres = load_phi(a.case)
     shape = phi.shape
     gk, gj, gi = np.meshgrid(*[np.arange(s) for s in shape], indexing="ij")
@@ -303,7 +308,11 @@ def cmd_dipole(a):
     print("   cut-cell truncation residual (exact divergence is zero):")
     for mode, label in (("base", "C1 baseline   k_face"),
                         ("mid",  "C2 shipped    k_loc "),
-                        ("area", "PROPOSED      k_area")):
+                        ("area", "PROPOSED      k_area"),
+                        ("mid1s", "STAGE0 k_loc  + 1-sided"),
+                        ("area1s", "STAGE0 k_area + 1-sided"),
+                        ("area1sg", "STAGE0 k_area + 1s GATED"),
+                        ("area1soft", "STAGE0 k_area + 1s SOFT ")):
         total = np.zeros(shape)
         band = np.zeros(shape, dtype=bool)
         defined = np.ones(shape, dtype=bool)
@@ -399,6 +408,8 @@ def main():
     p = sub.add_parser("dipole")
     p.add_argument("case")
     p.add_argument("--radius", type=float, required=True)
+    p.add_argument("--mode", type=int, default=1,
+                   help="harmonic mode: 1 = the dipole (LINEAR interior), >=2 = Multipole")
     p.add_argument("--kappa", type=float, required=True)
     p.add_argument("--grad", type=float, default=1.0)
     p.add_argument("--centre", type=float, nargs=2, default=(0.5, 0.5))

@@ -61,6 +61,7 @@ from scalar_tools import BlockGeometry                       # noqa: E402
 SOLID_THRESHOLD = 1.0e20
 MIN_COSINE = 5.0e-2          # scalar.f90 CONJ_MIN_COSINE
 MIN_GRADPHI = 1.0e-2         # scalar.f90 CONJ_MIN_GRADPHI
+SPREAD_GATE = float(os.environ.get("MOBY_SPREAD_GATE", "0.1"))   # never-worse gate
 
 
 class Plane:
@@ -166,30 +167,6 @@ def face_measure(phi, centres, plane, d, interior_margin=0):
                       + (field[sl(0, ax, 1)] - field[sl(0, ax, -1)])) \
             / (2.0 * cd[direction])
 
-    def layer_tangential(field, direction, off):
-        """The tangential derivative WITHIN one material layer: the cells at
-        the face-normal offset `off` (-1 = L, 0 = R) and their two tangential
-        neighbours, keeping only neighbours on the SAME SIDE of the interface.
-
-        This is the whole point of the one-sided estimator -- `tangential()`
-        above averages the two layers and so straddles wherever the interface
-        crosses the stencil, which is the bias `debias()` then has to model.
-        Nothing here is wider than the +-1 stencil face_measure already
-        trims for, so it fits the solver's EXISTING one-deep halo.
-
-        Returns the derivative and whether it could be formed at all."""
-        ax = 2 - direction
-        h = cd[direction]
-        c, pc = field[sl(off)], phi[sl(off)]
-        fp, pp = field[sl(off, ax, 1)], phi[sl(off, ax, 1)]
-        fm, pm = field[sl(off, ax, -1)], phi[sl(off, ax, -1)]
-        solid = pc < 0.0
-        okp, okm = (pp < 0.0) == solid, (pm < 0.0) == solid
-        g = np.where(okp & okm, (fp - fm) / (2.0 * h),          # centred, O(h^2)
-                     np.where(okp, (fp - c) / h,                # one-sided, O(h)
-                              np.where(okm, (c - fm) / h, 0.0)))
-        return g, okp | okm
-
     gtd = (temp[hi] - temp[lo]) * invd
     gt1 = tangential(temp, tang[0])
     gt2 = tangential(temp, tang[1])
@@ -206,19 +183,12 @@ def face_measure(phi, centres, plane, d, interior_margin=0):
     # The two one-sided estimates, projected onto the in-plane normal:
     # P^sigma = n_1 t1^sigma + n_2 t2^sigma is the only combination the
     # closures need (see onesided()).
-    n1 = np.where(ok, gp1 / safe, 0.0)
-    n2 = np.where(ok, gp2 / safe, 0.0)
-    gl1, al1 = layer_tangential(temp, tang[0], -1)
-    gl2, al2 = layer_tangential(temp, tang[1], -1)
-    gh1, ah1 = layer_tangential(temp, tang[0], 0)
-    gh2, ah2 = layer_tangential(temp, tang[1], 0)
+    p_lo, ok_lo, p_hi, ok_hi = side_projections(
+        temp, phi, sl, cd, tang, np.where(ok, gp1 / safe, 0.0),
+        np.where(ok, gp2 / safe, 0.0))
     lo_fluid = phi[lo] > 0.0
-    p_lo, p_hi = n1 * gl1 + n2 * gl2, n1 * gh1 + n2 * gh2
-    ok_lo, ok_hi = al1 & al2, ah1 & ah2
-    p_f = np.where(lo_fluid, p_lo, p_hi)
-    p_s = np.where(lo_fluid, p_hi, p_lo)
-    ok_f = np.where(lo_fluid, ok_lo, ok_hi)
-    ok_s = np.where(lo_fluid, ok_hi, ok_lo)
+    p_f, ok_f = np.where(lo_fluid, p_lo, p_hi), np.where(lo_fluid, ok_lo, ok_hi)
+    p_s, ok_s = np.where(lo_fluid, p_hi, p_lo), np.where(lo_fluid, ok_hi, ok_lo)
 
     pl, pr = phi[lo], phi[hi]
     cut = (pl < 0.0) != (pr < 0.0)
@@ -265,6 +235,62 @@ def debias(m):
     c = m["kface"] * (1.0 / m["kr"] - 1.0 / m["kl"]) \
         * (0.5 - m["w"]) * (1.0 - m["nd"] * m["nd"])
     return (m["st_num"] - c * m["gtd"]) / (1.0 - c)
+
+
+def layer_tangential(field, phi, sl, h, ax, off):
+    """The tangential derivative WITHIN one material layer: the cell at the
+    face-normal offset `off` (-1 = L, 0 = R) and its two neighbours along
+    array axis `ax`, keeping only neighbours on the SAME SIDE of the
+    interface. Nothing here is wider than the +-1 stencil the callers already
+    trim for, so it fits the solver's EXISTING one-deep halo.
+
+    This never straddles the interface, which is the whole point: the shipped
+    debias() exists only to model a straddle that need not be incurred.
+    """
+    c, pc = field[sl(off)], phi[sl(off)]
+    fp, pp = field[sl(off, ax, 1)], phi[sl(off, ax, 1)]
+    fm, pm = field[sl(off, ax, -1)], phi[sl(off, ax, -1)]
+    solid = pc < 0.0
+    okp, okm = (pp < 0.0) == solid, (pm < 0.0) == solid
+    g = np.where(okp & okm, (fp - fm) / (2.0 * h),        # centred, O(h^2)
+                 np.where(okp, (fp - c) / h,              # one-sided, O(h)
+                          np.where(okm, (c - fm) / h, 0.0)))
+    return g, okp | okm
+
+
+def side_projections(temp, phi, sl, cd, tang, n1, n2):
+    """P = n_1 t1 + n_2 t2 on the L layer and on the R layer, with whether
+    each could be formed. The CALLER selects, because the right choice
+    differs between the two consumers -- see face_flux_field."""
+    out = []
+    for off in (-1, 0):
+        g1, a1 = layer_tangential(temp, phi, sl, cd[tang[0]], 2 - tang[0], off)
+        g2, a2 = layer_tangential(temp, phi, sl, cd[tang[1]], 2 - tang[1], off)
+        out.append((n1 * g1 + n2 * g2, a1 & a2))
+    return out[0][0], out[0][1], out[1][0], out[1][1]
+
+
+def onesided_core(gtd, kface, a, nd, kap, P):
+    """s_t on ONE side by the `flux` closure, as flat arrays -- the core
+    shared by onesided() (cut faces only) and face_flux_field() (every face),
+    so the two can never drift apart.
+
+        s_t = A q_n - B,   A = (1 - n_d^2)/(n_d kappa),   B = P/n_d
+        q_n = -(dT - h_d s_t)/(a R)   =>   s_t = (-A Q0 - B)/(1 - A k/a)
+
+    with Q0 = dT/(a R) = gtd k_face/a. The denominator is 1 + (a positive
+    number) >= 1 because a = -n_d |grad phi|, so this is unconditionally well
+    posed -- more strongly than the shipped de-bias, which needs the
+    geometric argument that 1 - c >= 1/2.
+
+    Returns (s_t, usable); `usable` is false on grazing faces, where a
+    d-direction projection is genuinely ill-determined.
+    """
+    graze = (np.abs(nd) < MIN_COSINE) | (np.abs(a) < MIN_COSINE)
+    ndx = np.where(graze, 1.0, nd)
+    ax = np.where(graze, 1.0, a)
+    A = (1.0 - nd * nd) / (ndx * kap)
+    return (-A * gtd * kface / ax - P / ndx) / (1.0 - A * kface / ax), ~graze
 
 
 def onesided(m, mode="flux", side="both"):
@@ -331,12 +357,9 @@ def onesided(m, mode="flux", side="both"):
         st_f, st_s = st_of(q, kf, m["pf"]), st_of(q, ks, m["ps"])
         usable = m["okf"] & m["oks"] & ~graze & ~bad
     elif mode == "flux":
-        Q0 = m["dt"] / (a * m["res"])
-        def branch(kap, P):
-            A = one_m / (ndx * kap)
-            return (-A * Q0 - P / ndx) / (1.0 - A * kface / a)
-        st_f, st_s = branch(kf, m["pf"]), branch(ks, m["ps"])
-        usable = ~graze
+        st_f, uf = onesided_core(m["gtd"], kface, a, nd, kf, m["pf"])
+        st_s, us = onesided_core(m["gtd"], kface, a, nd, ks, m["ps"])
+        usable = uf & us
     else:
         raise ValueError(mode)
 
@@ -519,7 +542,11 @@ def cmd_residual(a):
           f"  ratio = {float('inf') if a.q_n == 0 else a.amp / a.q_n:g}")
     for mode, label in (("base", "C1 baseline   k_face"),
                         ("mid",  "C2 shipped    k_loc "),
-                        ("area", "PROPOSED      k_area")):
+                        ("area", "PROPOSED      k_area"),
+                        ("mid1s", "STAGE0 k_loc  + 1-sided"),
+                        ("area1s", "STAGE0 k_area + 1-sided"),
+                        ("area1sg", "STAGE0 k_area + 1s GATED"),
+                        ("area1soft", "STAGE0 k_area + 1s SOFT ")):
         total = np.zeros(shape)
         band = np.zeros(shape, dtype=bool)
         defined = np.ones(shape, dtype=bool)
@@ -579,6 +606,8 @@ def face_flux_field(phi, temp, centres, plane, d, mode):
     mode = "base"  C1: F = k_face (T_R - T_L)/h
            "mid"   C2 as shipped: + s_t (k_loc - k_face), k_loc = the material
                    at the face MIDPOINT, at marker-cut faces
+           "mid1s"/"area1s"  the same two multipliers, but with STAGE 0's
+                   ONE-SIDED s_t (check_st.py) instead of the shipped de-bias
            "area"  the proposal: + s_t (k_area - k_face) at EVERY face, with
                    k_area the AREA-weighted mean over the face -- which is
                    what the cell balance actually wants (see the README).
@@ -623,7 +652,57 @@ def face_flux_field(phi, temp, centres, plane, d, mode):
         st = np.where(ok, gtd - nd * (gpd * gtd + gp1 * gt1 + gp2 * gt2) / safe, 0.0)
         c = kface * (1.0 / kr - 1.0 / kl) * (0.5 - w) * (1.0 - nd * nd)
         st = (st - c * gtd) / (1.0 - c)
-        if mode == "mid":
+        if "1s" in mode:
+            # STAGE 0's estimator: same-side tangential differences on the
+            # SOLID side, closed against that side's own normal derivative.
+            # Falls back to the shipped de-bias where it is not usable, which
+            # is what the solver would do.
+            # THE LAYER, and its OWN kappa. At a marker-cut face the choice
+            # is "the solid side" (stage 0: 0.38-0.95 % across six decades of
+            # contrast, against the shipped 1.65-2461 %). But k_area must be
+            # applied at every face the interface CLIPS, and at a clipped face
+            # whose two centres agree there IS no solid cell along d -- so the
+            # rule generalises to "the more solid-ward layer", i.e. the smaller
+            # phi, which reduces to the solid one exactly when there is one.
+            # Using kappa_s there regardless -- the first version of this --
+            # reads a fluid layer with the solid's conductivity and makes the
+            # residual WORSE than the baseline it is correcting.
+            n1s, n2s = np.where(ok, gp1 / safe, 0.0), np.where(ok, gp2 / safe, 0.0)
+            p_lo, ok_lo, p_hi, ok_hi = side_projections(temp, phi, sl, cd, tang,
+                                                        n1s, n2s)
+            a_cos = gap * invd
+            st_lo, u_lo = onesided_core(gtd, kface, a_cos, nd, kl, p_lo)
+            st_hi, u_hi = onesided_core(gtd, kface, a_cos, nd, kr, p_hi)
+            pick_lo = pl_ < pr_
+            st1 = np.where(pick_lo, st_lo, st_hi)
+            usable = np.where(pick_lo, ok_lo, ok_hi) & u_lo & u_hi & ok
+            if mode.endswith("soft"):
+                # SOFT THRESHOLDING, and it has NO tunable constant. The two
+                # sides estimate the same quantity, so |s_t^lo - s_t^hi| is an
+                # estimate of the error in s_t; shrinking the estimate by its
+                # own error bar,
+                #     s_t_used = sign(s_t) max(0, |s_t| - spread),
+                # applies the full correction where the sides agree, none
+                # where the disagreement swallows the signal, and interpolates
+                # smoothly between -- no cliff, and nothing to tune, unlike
+                # the hard gate below whose threshold had to be fitted.
+                spread = np.abs(st_lo - st_hi)
+                st1 = np.sign(st1) * np.maximum(np.abs(st1) - spread, 0.0)
+            if mode.endswith("g"):
+                # THE NEVER-WORSE GATE. Both sides estimate the SAME quantity
+                # (s_t is continuous), so |s_t^lo - s_t^hi| is a free estimate
+                # of the error -- and where it exceeds the estimate itself the
+                # correction is guesswork. Measured on the quadrupole at
+                # h = 1/256: spread/|s_t| = 0.11 at kappa_s = 10, where the
+                # correction wins 33x, and 11.6 at kappa_s = 1e3, where it
+                # loses 2x. Falling back to NO correction (not to the shipped
+                # s_t, whose own error would come back) is what makes the
+                # fallback exactly the C1 baseline.
+                usable = usable & (np.abs(st_lo - st_hi) < SPREAD_GATE * np.abs(st1))
+            st = np.where(usable, st1,
+                          0.0 if (mode.endswith("g") or mode.endswith("soft"))
+                          else st)
+        if mode.startswith("mid"):
             kloc = np.where(pl_ + pr_ < 0.0, plane.kappa, 1.0)
             F = F + np.where(cut, st * (kloc - kface), 0.0)
         else:

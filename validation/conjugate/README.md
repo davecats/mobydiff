@@ -876,6 +876,68 @@ derivatives grow. **That hypothesis is not yet tested on a CONCAVE body, where
    look exact for free. `Multipole` (verified: `[T] = 0`, `[k ∂_nT] = 0`,
    `grad_outer` against finite differences) is the de-flattered replacement.
 
+
+### Stage 1 — the multiplier, and where the escalation now stops
+
+`k_area` + the stage-0 `s_t`, scored on the CUT-CELL TRUNCATION RESIDUAL (the
+exact divergence is zero, so anything left is the scheme's; this is what the
+cell balance sees, and it is the measurement that decided C2).
+
+| case (h = 1/256 unless noted) | C1 baseline | `k_area` + shipped `s_t` | `k_area` + 1-sided | gain |
+|---|---|---|---|---|
+| plane κ_s=10, r=0.01 | 5.18 | 34.4 | **1.8e-6** | 2.8e6 |
+| plane κ_s=10, r=1 | 518 | 34.4 | **1.8e-6** | 2.9e8 |
+| plane κ_s=10, r=∞ | 518 | 3.9e-7 | **3.7e-7** | 1.4e9 |
+| plane κ_s=10³, r=0.01 | 764 | 4875 | **1.4e-4** | 5.4e6 |
+| quadrupole κ_s=10, n=64/128/256 | 7.6 / 13.5 / 31.0 | 5.5 / 10.8 / 19.2 | **1.07 / 1.40 / 0.92** | 7 / 10 / **34** |
+| dipole κ_s=10, n=64/128/256 | 16.6 / 30.7 / 67.0 | 10.1 / 22.8 / 41.4 | **1.13 / 1.30 / 1.06** | 15 / 24 / **63** |
+| quadrupole κ_s=10³, n=64/128/256 | **10.2 / 23.2 / 45.4** | 751 / 1500 / 2703 | 114 / 177 / 87 | 0.09 / 0.13 / 0.52 |
+| dipole κ_s=10³, n=64/128/256 | **22.4 / 47.4 / 94.0** | 1448 / 3412 / 6247 | 146 / 185 / 130 | 0.15 / 0.26 / 0.72 |
+
+Three statements, and the third is the one that matters:
+
+1. **On a plane the scheme becomes EXACT** — at every ratio and every contrast,
+   six to nine orders below the baseline. The `r`-independent floor the README
+   attributed to "the discrete `s_t`'s own residual error" was exactly that,
+   and removing it removes the floor completely. `k_area` was the right
+   multiplier all along; it was waiting on an `s_t` that converged.
+2. **On a curved interface at moderate contrast it is 7-63× better AND
+   BOUNDED**, where the C1 baseline's cut-cell residual grows like `1/h`
+   (7.6 → 13.5 → 31.0). The gain IMPROVES with refinement, which is the
+   signature of removing a term the baseline does not converge on.
+3. **At high contrast on a curved interface it is 1.4-11× WORSE**, and
+   **`s_t` is no longer the cause**: with the SAME one-sided `s_t`, `k_loc`
+   sits at baseline parity (13.7/22.4/48.7 against 10.2/23.2/45.4) while
+   `k_area` is 2× above it. So the residual defect is in the MULTIPLIER on a
+   curved high-contrast interface — a different defect from the one C2
+   identified, and the single remaining blocker.
+
+**What it is not**: the plane assumption inside `face_area_fraction` is real
+(|f_plane − f_exact| rms 2.2e-2, max 0.25 against exact quadrature on the
+n = 256 cylinder) but too small to explain the excess — it predicts ~2.7 of
+the ~38 by which `k_area` exceeds `k_loc` at κ_s = 10³. **Unresolved; start
+here.** The likely candidate is the derivation's own premise: `F_exact =
+k_area s_t + n_d q_n` assumes `∂_dT` is piecewise CONSTANT over the face, and
+its error carries the same `(κ_s − 1)` amplification.
+
+**Two limiters were tried and neither is never-worse.** The free confidence
+indicator does discriminate — spread/|s_t| is 0.11 where the correction wins
+34× and 11.6 where it loses, a 100× separation — but converting that into a
+rule does not close the gap: a hard gate needs a FITTED threshold (c = 0.3
+recovers high contrast but discards good corrections at coarse h, and still
+loses on one row), and parameter-free soft shrinkage
+`s_t → sign(s_t) max(0, |s_t| − spread)` keeps the moderate-contrast win
+(4-19×) but not the high-contrast loss. Both ship in the checker
+(`area1sg`, `area1soft`, `MOBY_SPREAD_GATE`) as measurements, not proposals.
+
+**GATE 2 VERDICT: tier 2 of the plan** — a large, real improvement with a
+documented regime boundary in (contrast × curvature), not the never-worse
+tier 1. A plane interface of any contrast, and a curved one up to
+κ_s ~ 10, are solved. Do NOT implement in Fortran until statement 3 is
+resolved: the Fortran cost is the same either way, and a multiplier that is
+wrong at high contrast on a curved body would have to be gated on exactly the
+quantity that is not yet understood.
+
 ---
 
 ## C3 — the fraction-weighted capacity, the Nusselt diagnostic, and the time step
