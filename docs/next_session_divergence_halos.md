@@ -12,11 +12,28 @@
 > and §5 of that report names why: the reordering costs `phi_exchange` 7–10 %
 > at 4 ranks while paying 2–3 % at 8, which is a NEW open question.
 >
-> **Task 0** (§3) is job **5145798**, queued on `accelerated`: the 23-run matrix
-> twice in one allocation, `ref` = `55bee89` (so its column is the control
-> against `results_horeka_2026-09-14.md`) vs `new` = `3c2903a`. Both sides are
-> pinned worktrees. NOTE it does NOT include task 1 — the matrix will need
-> re-running once more, or its `new` column read as "the 2026-09-14 work only".
+> **Task 0** (§3) is job **5145816**, queued on `accelerated` (estimated start
+> 2026-09-17; the partition has beaten its own estimate before). It runs the
+> 23-run matrix **three times in one allocation**, all three sides pinned
+> worktrees, so each column isolates one increment and the outer pair gives the
+> total:
+>
+> | column | commit | worktree |
+> |---|---|---|
+> | `ref` | `55bee89` | `moby-2to1-mapref` — the `new` column of `results_horeka_2026-09-14.md`, so it is the CONTROL and must reproduce it |
+> | `mid` | `3c2903a` | `moby-2to1-base` — + the register cuts and the step-work increments |
+> | `new` | `95312d7` | `moby-2to1-divhalo` — + the divergence-halo exchange |
+>
+> It writes `scaling_total.md`, `scaling_registers_stepwork.md` and
+> `scaling_divhalo.md` into `horeka/exchange/results_matrix3/`. Collect them into
+> `horeka/results_job5145816/` (run.log + config.ini only, no `.h5` — the
+> convention every `results_job*` follows) and write the matrix report; the
+> block tax, the strong-scaling efficiencies and the 2:1 coarse-cell-equivalent
+> in `results_horeka_2026-09-14.md` are stale until it lands.
+>
+> An earlier submission (5145798) was cancelled: it predated task 1 and would
+> have published a `new` column that was stale on arrival. Resubmitting reset
+> the queue priority — a deliberate trade for one job that covers everything.
 >
 > **Task 2** (§5) and **task 3** (§6) are untouched, and §2's closed list still
 > stands. Housekeeping done: the six worktrees are down to `moby-2to1-base`

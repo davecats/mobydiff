@@ -4,7 +4,7 @@
 #SBATCH --ntasks-per-node=4
 #SBATCH --cpus-per-task=19
 #SBATCH --gres=gpu:4
-#SBATCH --time=03:00:00
+#SBATCH --time=04:00:00
 #SBATCH --partition=accelerated
 #SBATCH --account=hk-project-exasim
 #SBATCH --mail-type=END,FAIL
@@ -22,18 +22,21 @@
 # erosion -- has a moved denominator.
 #
 # The SAME 23-run matrix (run_matrix.sh unchanged, --map-by numa --bind-to core,
-# 200 steps) run twice in ONE allocation:
+# 200 steps) run THREE times in ONE allocation, so each column isolates one
+# increment and the pair (ref, new) gives the total:
 #   ref = 55bee89  -- the `new` column of results_horeka_2026-09-14.md, so its
 #                     column here is the CONTROL: it must reproduce that report.
-#   new = 3c2903a  -- the head of the register + step-work line.
+#   mid = 3c2903a  -- + the register cuts and the step-work increments (09-14).
+#   new = 95312d7  -- + the divergence-halo exchange (09-15).
 #
-# Both sides are PINNED WORKTREES. The live tree is about to grow the task-1
-# divergence-halo exchange and a job that starts hours from now must not build it.
+# All three are PINNED WORKTREES: the live tree keeps moving and a job that
+# starts two days from now must not build whatever it has become.
 #
-# NEW first: if the wall clock bites, the current numbers are the deliverable.
+# NEW then REF then MID: if the wall clock bites, the two columns that give the
+# TOTAL survive, and only the per-increment split is lost.
 set -uo pipefail
 
-CODE_DIR="${CODE_DIR:?}"; RUN_DIR="${RUN_DIR:?}"; REF_DIR="${REF_DIR:?}"
+CODE_DIR="${CODE_DIR:?}"; RUN_DIR="${RUN_DIR:?}"; REF_DIR="${REF_DIR:?}"; MID_DIR="${MID_DIR:?}"
 SRC="$CODE_DIR/tutorials/turbulentBoundaryLayer/overheadTest/horeka"
 
 # Stage the driver AND the configs it resolves relative to itself, then run the
@@ -50,30 +53,39 @@ export HDF5_ROOT="${HDF5_ROOT:-$HOME/hdf5}"
 export LD_LIBRARY_PATH="$HDF5_ROOT/lib:${LD_LIBRARY_PATH:-}"
 export UCX_MEMTYPE_CACHE=n OMP_NUM_THREADS=1
 
-for d in "$REF_DIR" "$CODE_DIR"; do
+for d in "$REF_DIR" "$MID_DIR" "$CODE_DIR"; do
     echo "=== building $d ($(git -C "$d" rev-parse --short HEAD))"
     ( cd "$d" && ./compile.sh gpu ) || exit 1
 done
 NEW="$CODE_DIR/build_gpu/moby_solve"; REF="$REF_DIR/build_gpu/moby_solve"
-[ -x "$NEW" ] && [ -x "$REF" ] || { echo "ERROR: missing binary" >&2; exit 1; }
+MID="$MID_DIR/build_gpu/moby_solve"
+[ -x "$NEW" ] && [ -x "$REF" ] && [ -x "$MID" ] || { echo "ERROR: missing binary" >&2; exit 1; }
 
 RES="${RESDIR:-$RUN_DIR/results_matrix3}"; mkdir -p "$RES"
 {
     echo "job    : ${SLURM_JOB_ID:-none}"
     echo "date   : $(date '+%F %T %Z')"
     echo "nodes  : ${SLURM_JOB_NUM_NODES:-?}  (${SLURM_JOB_NODELIST:-?})"
-    echo "new    : $(git -C "$CODE_DIR" rev-parse HEAD)  (registers + step work)"
+    echo "new    : $(git -C "$CODE_DIR" rev-parse HEAD)  (+ the divergence-halo exchange)"
+    echo "mid    : $(git -C "$MID_DIR" rev-parse HEAD)  (+ the register cuts and step work)"
     echo "ref    : $(git -C "$REF_DIR" rev-parse HEAD)  (map(to: c); = the 2026-09-14 'new' column)"
     echo "gpu    : $(nvidia-smi --query-gpu=name --format=csv,noheader | head -1)"
     echo "nsteps : ${NSTEPS:-200}"
     echo "layout : --map-by numa --bind-to core (as every earlier matrix)"
 } | tee "$RES/provenance.txt"
 
-echo "############ NEW (registers + step work, 3c2903a) ############"
+echo "############ NEW (+ divergence halo, 95312d7) ############"
 NSTEPS="${NSTEPS:-200}" bash "$STG/run_matrix.sh" "$NEW" "$RES/new"
 echo "############ REF (map(to: c), 55bee89) ############"
 NSTEPS="${NSTEPS:-200}" bash "$STG/run_matrix.sh" "$REF" "$RES/ref"
+echo "############ MID (+ registers and step work, 3c2903a) ############"
+NSTEPS="${NSTEPS:-200}" bash "$STG/run_matrix.sh" "$MID" "$RES/mid"
 
-python3 "$STG/collect_scaling.py" "$RES/ref" "$RES/new" > "$RES/scaling.md" 2>&1 \
-    && { echo; cat "$RES/scaling.md"; } || echo "=== collector failed; raw logs intact ==="
+# Three pairings: the total, and each increment on its own.
+for pair in "ref new total" "ref mid registers_stepwork" "mid new divhalo"; do
+    set -- $pair
+    python3 "$STG/collect_scaling.py" "$RES/$1" "$RES/$2" > "$RES/scaling_$3.md" 2>&1 \
+        && { echo; echo "===== $3 ($1 -> $2)"; cat "$RES/scaling_$3.md"; } \
+        || echo "=== collector failed for $3; raw logs intact ==="
+done
 echo "=== matrix3 job finished ==="
