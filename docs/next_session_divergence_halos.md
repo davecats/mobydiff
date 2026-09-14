@@ -1,5 +1,28 @@
 # Handout — the between-iteration velocity exchange, and what is left after it
 
+> **STATUS 2026-09-15 — TASK 1 IS DONE, TASK 0 IS RUNNING.**
+>
+> **Task 1** (§4) landed at `95312d7`: `entry_round` gives the entry
+> enumeration a third round, so a divergence round is a per-peer prefix of the
+> copy prefix and runs with peers; `dsSlot` and its three kernels are gone.
+> Worth **−3.0 to −4.9 % of the step** (`proj vel_exchange` −46 to −54 %),
+> every gate `max_abs 0` at production flags. Full reading in
+> `overheadTest/results_divhalo_2026-09-15.md`; jobs 5145805 / 5145806.
+> The pre-registered step band (−3.5 to −5.5 %) was **missed low at 4 ranks**,
+> and §5 of that report names why: the reordering costs `phi_exchange` 7–10 %
+> at 4 ranks while paying 2–3 % at 8, which is a NEW open question.
+>
+> **Task 0** (§3) is job **5145798**, queued on `accelerated`: the 23-run matrix
+> twice in one allocation, `ref` = `55bee89` (so its column is the control
+> against `results_horeka_2026-09-14.md`) vs `new` = `3c2903a`. Both sides are
+> pinned worktrees. NOTE it does NOT include task 1 — the matrix will need
+> re-running once more, or its `new` column read as "the 2026-09-14 work only".
+>
+> **Task 2** (§5) and **task 3** (§6) are untouched, and §2's closed list still
+> stands. Housekeeping done: the six worktrees are down to `moby-2to1-base`
+> (`3c2903a`), `moby-2to1-mapref` (`55bee89`) and `moby-2to1-divhalo`
+> (`95312d7`).
+
 Written 2026-09-14, at `76f643f`, from the session that took **≈18 % off the
 step** in five increments. **Read section 2 before planning anything: most of the
 obvious targets are now closed by measurement, and one was closed by a

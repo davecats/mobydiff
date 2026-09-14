@@ -1103,6 +1103,50 @@ immersed boundary. Phased, each phase verified before the next:
   saves 2.0 ms of launch but puts the interface gather's ~128 registers on all 39
   rounds. `docs/next_session_profiling.md` and the Phase-4 sketch in
   `docs/nonblocking_overlap_strategy.md` predate all of this.
+- **The between-iteration velocity exchange, reduced to what the divergence
+  reads (DONE 2026-09-15, jobs 5145805/5145806,
+  `results_divhalo_2026-09-15.md`): -3.0 to -4.9% of the step.** 15 of the 18
+  velocity halo rounds per step sit BETWEEN projection iterations, and the only
+  velocity halo anything reads before the next divergence is `q(nb+1)` of the
+  component NORMAL to that face. The solver already exploited that at ONE rank;
+  with peers it fell back to the full 26-direction three-component shell because
+  the entry list was not partitioned for it. `entry_round` now gives the
+  enumeration a THIRD round -- pure `+axis` same-level face COPY entries first,
+  then the remaining same-level copies, then the cross-level ones -- so a
+  divergence round is a per-peer **prefix of the copy prefix** (the `copyOnly`
+  trick one level down), derived identically on both ends with no negotiation,
+  carrying ONE variable per entry (`lDivVar`/`sDivVar`/`rDivVar`, the face
+  normal). `dsSlot` and its three kernels are GONE: the same-rank half is that
+  same prefix, one kernel, peers or not. COMPLETENESS IS FROM THE ENTRY LIST,
+  not from a gate: `entry_boxes` gives `off(d)=+1` the plane `nb(d)+1`,
+  `off(d)=-1` the plane 0, and `off(d)=0` reaches `nb(d)+1` only through the
+  tangential extension -- i.e. only at HALO indices of the other dims -- so
+  inside the range the divergence reads, the pure `+axis` FACE entries are the
+  only writers; and the cross-level ones write nothing there anyway
+  (`interface_normal_dim` marks that face the low-side block's own and unpack
+  skips it). Measured: wire volume **6.46x/6.36x** smaller, device-local
+  **6.20x/6.14x** (the entry arithmetic predicts 6.24x at `nb = 64 44 48`);
+  `proj vel_exchange` **-52.8/-53.5%** (`rect` 4/8 ranks) and **-46.0/-46.7%**
+  (`refined`); STEP -3.21/-4.55% and -2.93/-4.93%. **The launch count does NOT
+  fall** (39 pack + 39 unpack + 39 local copy + 24 cross, both sides) -- the
+  saving is bytes and wait, and the biggest single bucket is `local_copy`
+  (-27%), not the message, which is why it is worth something at one rank too.
+  FOUND WHILE GATING, unexplained: the REORDERING moves `phi_exchange`, whose
+  volume is untouched, by **+7.3/+9.6% at 4 ranks and -1.7/-2.9% at 8** -- the
+  scalar exchange's scatter locality changed (the copies used to run all 26
+  directions of block 1 then all 26 of block 2; they now run three faces of every
+  block then the other 23 of every block). It eats 7-15% of the 4-rank gain and
+  is why those two fell short of the pre-registered band. Gates at PRODUCTION
+  flags (nothing moves, values are copied not recomputed): Pass G on both
+  production cases (138M/60M points) and the 7-case suite, all `max_abs 0` incl.
+  every RANS scalar; `min_channel` 1 == 2 == 3 == 4 ranks EXACTLY (four peer
+  topologies -- the load-bearing gate, since it is what the single-rank reduced
+  path was validated against); `validation/redblack_interface` 1 and 4 ranks
+  `max_abs 0` (red-black does not use this path, but the reordering changes its
+  wire layout). LANDMINE: `tools/h5maxdiff` is a BUILD PRODUCT, not tracked, so a
+  pinned worktree lacks it -- and `run_exchange.sh` deletes Pass G's snapshots
+  whether or not the comparison ran, so a missing comparator LOSES the gate
+  rather than merely failing to report it (`submit_divhalo.sh` now builds it).
 
 ## Verification
 
