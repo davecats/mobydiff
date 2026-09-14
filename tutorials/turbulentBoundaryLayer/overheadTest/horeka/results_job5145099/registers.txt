@@ -1,0 +1,26 @@
+--- ref
+nvkernel_pressure_solver_cheb_combine__F1L310_2_  REG:56 STACK:0 SHARED:0 LOCAL:0
+nvkernel_pressure_solver_compute_rdenom__F1L366_6_  REG:110 STACK:0 SHARED:0 LOCAL:0
+nvkernel_pressure_solver_interface_correct__F1L610_22_  REG:54 STACK:0 SHARED:0 LOCAL:0
+nvkernel_pressure_solver_interface_correct__F1L637_24_  REG:54 STACK:0 SHARED:0 LOCAL:0
+nvkernel_pressure_solver_interface_correct__F1L664_26_  REG:54 STACK:0 SHARED:0 LOCAL:0
+nvkernel_pressure_solver_jacobi_apply__F1L470_14_  REG:59 STACK:0 SHARED:0 LOCAL:0
+nvkernel_pressure_solver_jacobi_apply__F1L502_16_  REG:88 STACK:0 SHARED:0 LOCAL:0
+nvkernel_pressure_solver_jacobi_compute_phi__F1L418_10_  REG:94 STACK:0 SHARED:0 LOCAL:0
+nvkernel_pressure_solver_redblack_sweep__F1L909_38_  REG:96 STACK:0 SHARED:0 LOCAL:0
+nvkernel_pressure_solver_zero_phi__F1L854_34_  REG:44 STACK:0 SHARED:0 LOCAL:0
+nvkernel_step_momentum__F1L153_6_  REG:128 STACK:0 SHARED:0 LOCAL:0
+nvkernel_step_momentum__F1L366_8_  REG:66 STACK:0 SHARED:0 LOCAL:0
+--- new
+nvkernel_pressure_solver_cheb_combine__F1L337_2_  REG:56 STACK:0 SHARED:0 LOCAL:0
+nvkernel_pressure_solver_compute_rdenom__F1L447_6_  REG:110 STACK:0 SHARED:0 LOCAL:0
+nvkernel_pressure_solver_interface_correct__F1L688_22_  REG:54 STACK:0 SHARED:0 LOCAL:0
+nvkernel_pressure_solver_interface_correct__F1L715_24_  REG:54 STACK:0 SHARED:0 LOCAL:0
+nvkernel_pressure_solver_interface_correct__F1L742_26_  REG:54 STACK:0 SHARED:0 LOCAL:0
+nvkernel_pressure_solver_jacobi_apply__F1L550_14_  REG:59 STACK:0 SHARED:0 LOCAL:0
+nvkernel_pressure_solver_jacobi_apply__F1L585_16_  REG:64 STACK:0 SHARED:0 LOCAL:0
+nvkernel_pressure_solver_jacobi_compute_phi__F1L499_10_  REG:94 STACK:0 SHARED:0 LOCAL:0
+nvkernel_pressure_solver_redblack_sweep__F1L987_38_  REG:96 STACK:0 SHARED:0 LOCAL:0
+nvkernel_pressure_solver_zero_phi__F1L932_34_  REG:44 STACK:0 SHARED:0 LOCAL:0
+nvkernel_step_momentum__F1L153_6_  REG:128 STACK:0 SHARED:0 LOCAL:0
+nvkernel_step_momentum__F1L366_8_  REG:66 STACK:0 SHARED:0 LOCAL:0

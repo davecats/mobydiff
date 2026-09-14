@@ -1000,7 +1000,37 @@ immersed boundary. Phased, each phase verified before the next:
   ≤64 (~2.5 ms/step at 16 ranks, 7-8%) and fuse k1 into k2 (~1.0 ms/step, 3%).
   CHECK ANY REGISTER CHANGE against `launch__registers_per_thread` and
   `sm__warps_active`, not a step time — cutting registers by spilling looks like
-  progress and loses on the clock. Probe: `horeka/exchange/run_ncu.sh` (ncu needs
+  progress and loses on the clock.
+  **THE REGISTER LEVER IS TAKEN (2026-09-14, jobs 5145099/5145100/5145114,
+  `results_apply_registers_2026-09-14.md`): k2 is 88 -> 64 registers and the time
+  followed.** `face_grad_corr` depends on the block and the FACE-NORMAL index
+  alone, so evaluating it inside the `collapse(4)` body recomputed it nb^2 times
+  and -- the part that cost something -- kept ten array bases live for every
+  thread. It is now precomputed into the module arrays `cfLow(idx,d,b)` (low
+  faces, carrying the interface zeroing) and `cfHigh(d,b)` (the outlet high
+  face), which are STATIC unlike `rdenom` (face kinds from the leaf table,
+  metrics from the node lines) and so are formed ONCE on the host and mapped
+  once. `STACK`/`LOCAL` stay 0. ncu, both binaries on one node: occupancy
+  **29.6 -> 46.0%**, DRAM **42.5 -> 60.5% of peak**, k2 **7565 -> 5309 us
+  (-29.8%)** with the traffic unchanged to the last digit printed (10.31
+  doubles/cell) -- the same bytes, issued by 1.56x the warps. `proj_timing:
+  apply` **-21.8% / -20.1%** and the STEP **-8.6% / -7.8%** at 4 and 8 ranks on
+  both production cases, with `sweep` an unmoved control (+1.0 to -0.3%) and two
+  separate allocations agreeing to 0.1%. Unlike the `map(to: c)` fix this saving
+  is PER-CELL, not per-launch: it halves from 4 to 8 ranks (17.5 -> 8.8 ms
+  `rect`, 7.7 -> 4.0 `refined`) while staying ~8% of the step. Bit-exact by
+  construction and measured so: Pass G on both production cases (138M / 60M
+  points) and the 7-case suite at max_abs 0 incl. every RANS scalar, CPU and GPU,
+  deliberately WITHOUT nofma. L1 (splitting the high-face planes into their own
+  kernel) was NOT taken and should not be -- it costs a launch and the threshold
+  it was for is already crossed. The 16-rank A/B (job 5145101) was still queued
+  on `accelerated` when this was written, so the 16-rank figures in that report's
+  section 6 are a PREDICTION, not a measurement. NEXT, and cheap:
+  **`compute_rdenom` is at 110 registers**, the highest in the projection, and
+  `proj_timing: setup` is ~2.3 ms/step at 16 ranks -- `face_grad_denom` is static
+  in exactly the same way, so the same hoist applies verbatim and is bit-exact by
+  the same argument.
+  Probe: `horeka/exchange/run_ncu.sh` (ncu needs
   `--bind-to none`; `--page raw` is WIDE; the solver's stdout lands in ncu.csv). `horeka/exchange/analyse_launch_traffic.py`
   reproduces the per-launch traffic table from an nsys sqlite export. Cheap concrete win meanwhile: fold the local copy into the pack
   kernel (independent, both before the `Waitall`, 2.3 ms/step, bit-exact).

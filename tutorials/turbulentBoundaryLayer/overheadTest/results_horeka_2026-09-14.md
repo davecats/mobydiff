@@ -127,3 +127,7 @@ will touch it (2026-09-10 §3, and A0).
   `results_kernel_timeline_2026-09-11.md` estimates `jacobi_apply` at ~34 % of the
   post-fix 16-rank step by subtracting known savings from the pre-fix phase
   table. That is arithmetic, not a measurement, and it is the next thing to run.
+  **Settled 2026-09-14** (`results_apply_registers_2026-09-14.md` §6): this
+  matrix's own `new` run logs carry the breakdown, and they give `apply` =
+  20.77 ms of a 60.31 ms step (**34.4 %**) for `rect` and 11.06 of 33.44
+  (**33.1 %**) at 16 ranks. The inferred figure was right.

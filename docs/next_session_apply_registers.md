@@ -1,5 +1,28 @@
 # Handout — `jacobi_apply` k2: can 88 registers become 64?
 
+> **STATUS: CLOSED, 2026-09-14. Yes — by L2 alone, and the time followed.**
+>
+> Hoisting `face_grad_corr` out of the `collapse(4)` body (module arrays
+> `cfLow`/`cfHigh`, `src/modules/pressure_solver.f90`) takes k2 from **88 to 64
+> registers**, `STACK`/`LOCAL` still 0. ncu on the same node, both binaries:
+> occupancy **29.6 → 46.0 %**, DRAM **42.5 → 60.5 % of peak**, k2 **7 565 →
+> 5 309 us (−29.8 %)** with the traffic unchanged to the last digit printed
+> (10.31 doubles/cell) — the mechanism §6 pre-registered, confirmed. `apply`
+> falls **−21.8 % / −20.1 %** and the step **−8.6 % / −7.8 %** at 4 and 8 ranks,
+> with `sweep` as an unmoved control. Every gate at `max_abs 0`.
+>
+> **L1 was not taken** and should not be: it costs a launch and the threshold it
+> was for is already crossed. **L3/L4 are moot.**
+>
+> Full report, with what the numbers do not support and the next lever
+> (`compute_rdenom`, 110 registers, the same hoist verbatim):
+> `tutorials/turbulentBoundaryLayer/overheadTest/results_apply_registers_2026-09-14.md`.
+> The 16-rank A/B (job 5145101) is still queued; §6 there is a prediction, not a
+> measurement.
+>
+> Everything below is the handout as written, kept for the reasoning it records.
+
+
 Written 2026-09-14 from the session that removed the exchange's per-launch
 marshalling. **Read section 1 before planning anything: the obvious explanation
 for this kernel's cost has already been measured and refuted.**
