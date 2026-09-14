@@ -50,13 +50,28 @@ for cfg in $CONFIGS; do
 
     # --launch-skip past the first substage so the kernels profiled are steady
     # ones, --launch-count small because every launch is replayed.
+    # --bind-to none: with one task and 19 cpus/task SLURM hands out a strided
+    # cpuset ("0,76") that OpenMPI's core binding cannot satisfy, and it kills the
+    # process before the application starts (job 5144930). Nothing here is a
+    # timing, so binding buys nothing anyway.
+    # --launch-skip 108 = two full steps of the 54 matching launches per step, so
+    # the profiled ones are steady.
     echo "=== ncu $cfg ($(date '+%F %T'))"
-    ( cd "$run" && mpirun -n 1 "$NCU" --target-processes all --csv --page raw \
-        --metrics "$METRICS" \
+    ( cd "$run" && mpirun -n 1 --bind-to none "$NCU" --target-processes all \
+        --csv --page raw --metrics "$METRICS" \
         --kernel-name 'regex:jacobi_apply|jacobi_compute_phi' \
-        --launch-skip 20 --launch-count 12 \
+        --launch-skip 108 --launch-count 12 \
         "$EXE" config.ini > ncu.csv 2> ncu.log )
     rc=$?
+    # Singleton MPI fallback if the launcher is the problem rather than ncu.
+    if [ $rc -ne 0 ] && ! grep -q jacobi "$run/ncu.csv" 2>/dev/null; then
+        echo "    mpirun path failed; retrying without a launcher"
+        ( cd "$run" && "$NCU" --csv --page raw --metrics "$METRICS" \
+            --kernel-name 'regex:jacobi_apply|jacobi_compute_phi' \
+            --launch-skip 108 --launch-count 12 \
+            "$EXE" config.ini > ncu.csv 2> ncu.log )
+        rc=$?
+    fi
     if [ $rc -ne 0 ] || ! grep -q "jacobi" "$run/ncu.csv" 2>/dev/null; then
         echo "    FAILED (exit $rc) -- see $run/ncu.log"
         head -20 "$run/ncu.log" | sed 's/^/    /'

@@ -1,9 +1,9 @@
 #!/bin/bash
 #SBATCH --job-name=moby_ncu
 #SBATCH --nodes=1
-#SBATCH --ntasks-per-node=1
+#SBATCH --ntasks-per-node=4
 #SBATCH --cpus-per-task=19
-#SBATCH --gres=gpu:1
+#SBATCH --gres=gpu:4
 #SBATCH --time=00:40:00
 #SBATCH --partition=dev_accelerated
 #SBATCH --account=hk-project-exasim
