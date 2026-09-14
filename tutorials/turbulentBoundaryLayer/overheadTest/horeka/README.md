@@ -233,6 +233,36 @@ least one case.
 6. **Block tax.** `rect_jacobi` vs `base_jacobi` per cell — the cost of blocking
    without refinement, which separates the block tax from the 2:1 tax.
 
+### Reading register counts on a LOGIN node (hit and fixed 2026-09-14)
+
+`cuobjdump -res-usage build_gpu/moby_solve` is the fast register loop — minutes
+per attempt, no queue. But **running `./compile.sh gpu` on a HoreKa login node
+poisons `build_gpu`**: the login nodes have no GPU, so nvfortran falls back to a
+multi-architecture target set that includes `sm_70`, while every object the job
+builds left behind is `cc80`-only. The link then fails on objects the recompile
+did not touch, which reads as a source error and is not:
+
+```
+nvlink warning : SM Arch ('sm_70') not found in '.../turbulence.f90.o'
+nvlink error   : Undefined reference to 'turbulence_velocity_gradient_tensor_'
+```
+
+Build into a **separate** directory pinned to the run architecture instead, and
+leave `build_gpu` to the jobs:
+
+```bash
+module purge && module load toolkit/nvidia-hpc-sdk/25.3
+cmake -S . -B build_gpu_cc80 -DUSE_OPENMP_OFFLOAD=ON \
+      -DOPENMP_OFFLOAD_FLAGS="-mp=gpu -gpu=cc80" \
+      -DHDF5_ROOT="$HOME/hdf5" ...   # the MPI_WRAPPER_* args compile.sh derives
+cmake --build build_gpu_cc80 -j --target moby_solve
+cuobjdump -res-usage build_gpu_cc80/moby_solve | grep -A1 jacobi_apply
+```
+
+The counts match the A100 job build exactly (verified both ways in job 5145099),
+so the whole register search can be done off the queue. If `build_gpu` has
+already been mixed, delete it — a partial rebuild will not repair it.
+
 ## Writing it up
 
 Follow the convention already in `overheadTest/`: a dated results file,
