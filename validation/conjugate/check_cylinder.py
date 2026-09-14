@@ -216,6 +216,21 @@ class Multipole:
         c, s = np.cos(theta), np.sin(theta)
         return dr*c - dt*s, dr*s + dt*c, np.zeros_like(dr)
 
+    def gradient(self, x, y):
+        """grad T at ANY point, both materials -- needed to integrate the true
+        face-average flux <k d_d T> by quadrature (cmd_correction)."""
+        r, t = self._polar(x, y)
+        m, a = self.m, self.a
+        rs = np.maximum(r, 1.0e-300)
+        dr_o = self.g*m*(rs**(m - 1) - self.beta*a**(2*m)*rs**(-m - 1))*np.cos(m*t)
+        dt_o = -self.g*m*(rs**(m - 1) + self.beta*a**(2*m)*rs**(-m - 1))*np.sin(m*t)
+        dr_i = self.g*self.gamma*m*rs**(m - 1)*np.cos(m*t)
+        dt_i = -self.g*self.gamma*m*rs**(m - 1)*np.sin(m*t)
+        inside = r <= a
+        dr, dt = np.where(inside, dr_i, dr_o), np.where(inside, dt_i, dt_o)
+        c, sn = np.cos(t), np.sin(t)
+        return dr*c - dt*sn, dr*sn + dt*c, np.zeros_like(dr)
+
     def s_t_exact(self, theta, d):
         g = self.grad_outer(theta)
         n = (np.cos(theta), np.sin(theta), np.zeros_like(theta))
@@ -312,7 +327,10 @@ def cmd_dipole(a):
                         ("mid1s", "STAGE0 k_loc  + 1-sided"),
                         ("area1s", "STAGE0 k_area + 1-sided"),
                         ("area1sg", "STAGE0 k_area + 1s GATED"),
-                        ("area1soft", "STAGE0 k_area + 1s SOFT ")):
+                        ("area1soft", "STAGE0 k_area + 1s SOFT "),
+                        ("area1sx", "STAGE1 k_area + 1s EXTEND"),
+                        ("area1sm", "STAGE1 k_area + 1s MCUT  "),
+                        ("area1sd", "STAGE1 k_area + 1s SPLIT ")):
         total = np.zeros(shape)
         band = np.zeros(shape, dtype=bool)
         defined = np.ones(shape, dtype=bool)
@@ -390,6 +408,98 @@ def cmd_flux(a):
     return 0 if ok else 1
 
 
+def cmd_correction(a):
+    """WHICH PREMISE BREAKS the multiplier at high contrast on a curved
+    interface (stage 1's open item).
+
+    The scheme adds, at a clipped face, C = s_t (K - k_face). What it SHOULD
+    add is fixed by the exact face-average flux:
+
+        C_exact = <k d_d T>_face - k_face gtd          (quadrature; no model)
+
+    Feeding the SAME formula its exact inputs -- the exact s_t at the face
+    centre and the exact area-weighted <k> from quadrature rather than the
+    plane-in-rectangle form -- separates the two possibilities:
+
+        |C_ideal - C_exact| small  =>  the formula is right, its INPUTS are
+                                       wrong (the s_t estimate, the plane f)
+        |C_ideal - C_exact| large  =>  the FORMULA is wrong, i.e. the
+                                       piecewise-constant-d_dT premise fails
+                                       and the cell balance wants <k s_t>,
+                                       the face average of the PRODUCT,
+                                       whose defect Cov(k, s_t) carries the
+                                       (k_f - k_s) ~ kappa_s amplification
+                                       and vanishes identically on a plane.
+    """
+    dip = (Dipole(a.centre[0], a.centre[1], a.radius, a.kappa, a.grad)
+           if a.mode == 1 else
+           Multipole(a.centre[0], a.centre[1], a.radius, a.kappa, a.mode, a.grad))
+    phi, centres = load_phi(a.case)
+    shape = phi.shape
+    gk, gj, gi = np.meshgrid(*[np.arange(s) for s in shape], indexing="ij")
+    xx, yy = centres[0][gi], centres[1][gj]
+    temp = dip.temperature(xx, yy, centres[2][gk])
+    cd = [float(np.diff(c)[0]) for c in centres]
+    M = a.quad
+    u = (np.arange(M) + 0.5)/M - 0.5
+
+    print(f"   radius = {a.radius:g}  kappa_s = {a.kappa:g}  mode = {a.mode}"
+          f"  h = {cd[0]:.6g}  quadrature {M}")
+    print("     d   faces   |C_exact|      |C_ideal-C_e|  |C_sch-C_e|    verdict")
+    for d in (0, 1):
+        det = face_flux_field(phi, temp, centres, dip, d, "area1s", detail=True)
+        cl = det["clipped"]
+        if not cl.any():
+            continue
+        xf, yf = det["xf"][cl], det["yf"][cl]
+        # quadrature over the face: only the in-plane (x, y) extent matters,
+        # the solution being z-invariant.
+        tdim = 1 if d == 0 else 0
+        dv = u*cd[tdim]
+        X = xf[:, None] + (dv[None, :] if tdim == 0 else 0.0)
+        Y = yf[:, None] + (dv[None, :] if tdim == 1 else 0.0)
+        gx, gy, _ = dip.gradient(X, Y)
+        gd = gx if d == 0 else gy
+        kq = np.where((X - dip.c[0])**2 + (Y - dip.c[1])**2 <= dip.a**2,
+                      dip.kappa, 1.0)
+        F_exact = (kq*gd).mean(axis=1)
+        k_mean = kq.mean(axis=1)                       # the EXACT <k>
+        kface, gtd = det["kface"][cl], det["gtd"][cl]
+        C_exact = F_exact - kface*gtd
+        th = dip.theta(xf, yf)
+        C_ideal = dip.s_t_exact(th, d)*(k_mean - kface)
+        C_sch = det["st"][cl]*(det["karea"][cl] - kface)
+        # the two intermediate blends, to split "which input"
+        st_ex = dip.s_t_exact(th, d)
+        C_fex = st_ex*(det["karea"][cl] - kface)        # exact s_t, PLANE f
+        C_kex = det["st"][cl]*(k_mean - kface)          # estimated s_t, exact f
+        r = lambda v: float(np.sqrt(np.mean(v*v)))
+        ei, es = r(C_ideal - C_exact), r(C_sch - C_exact)
+        verdict = "FORMULA" if ei > 0.5*es else "inputs"
+        print(f"     {d}   {int(cl.sum()):5d}   {r(C_exact):.6e}   {ei:.6e}"
+              f"   {es:.6e}   {verdict}")
+        print(f"          which input:  exact s_t + plane f = {r(C_fex-C_exact):.4e}"
+              f"   est s_t + exact f = {r(C_kex-C_exact):.4e}")
+        # ...and WHERE: a face the interface clips but whose two centres AGREE
+        # has no solid cell along d, so only a FLUID-side estimate exists --
+        # and stage 0 measured the fluid side at ~kappa_s times the solid's
+        # error. Marker-cut faces have both.
+        mk = det["markercut"][cl]
+        st_err = det["st"][cl] - st_ex
+        print(f"          s_t on THIS set: |exact| {r(st_ex):.4e}"
+              f"   |err| {r(st_err):.4e} = {r(st_err)/r(st_ex)*100:.2f} %"
+              f"   (marker-cut {int(mk.sum())} / clipped {int(cl.sum())})")
+        if mk.any() and (~mk).any():
+            print(f"          s_t err:  marker-cut {r(st_err[mk]):.4e}"
+                  f"   clipped-only {r(st_err[~mk]):.4e}")
+        if mk.any() and (~mk).any():
+            print(f"          where:  marker-cut ({int(mk.sum())}) "
+                  f"{r((C_sch-C_exact)[mk]):.4e}"
+                  f"   clipped-only ({int((~mk).sum())}) "
+                  f"{r((C_sch-C_exact)[~mk]):.4e}")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -415,6 +525,16 @@ def main():
     p.add_argument("--centre", type=float, nargs=2, default=(0.5, 0.5))
     p.add_argument("--emit", default=None)
     p.set_defaults(func=cmd_dipole)
+
+    p = sub.add_parser("correction")
+    p.add_argument("case")
+    p.add_argument("--radius", type=float, required=True)
+    p.add_argument("--kappa", type=float, required=True)
+    p.add_argument("--mode", type=int, default=2)
+    p.add_argument("--grad", type=float, default=1.0)
+    p.add_argument("--quad", type=int, default=400)
+    p.add_argument("--centre", type=float, nargs=2, default=(0.5, 0.5))
+    p.set_defaults(func=cmd_correction)
 
     a = ap.parse_args()
     return a.func(a)

@@ -546,7 +546,10 @@ def cmd_residual(a):
                         ("mid1s", "STAGE0 k_loc  + 1-sided"),
                         ("area1s", "STAGE0 k_area + 1-sided"),
                         ("area1sg", "STAGE0 k_area + 1s GATED"),
-                        ("area1soft", "STAGE0 k_area + 1s SOFT ")):
+                        ("area1soft", "STAGE0 k_area + 1s SOFT "),
+                        ("area1sx", "STAGE1 k_area + 1s EXTEND"),
+                        ("area1sm", "STAGE1 k_area + 1s MCUT  "),
+                        ("area1sd", "STAGE1 k_area + 1s SPLIT ")):
         total = np.zeros(shape)
         band = np.zeros(shape, dtype=bool)
         defined = np.ones(shape, dtype=bool)
@@ -600,7 +603,7 @@ def face_area_fraction(phic, n1, n2, h1, h2):
     return np.clip(f, 0.0, 1.0)
 
 
-def face_flux_field(phi, temp, centres, plane, d, mode):
+def face_flux_field(phi, temp, centres, plane, d, mode, detail=False):
     """Every scheme's flux on EVERY low face along direction d.
 
     mode = "base"  C1: F = k_face (T_R - T_L)/h
@@ -699,9 +702,78 @@ def face_flux_field(phi, temp, centres, plane, d, mode):
                 # s_t, whose own error would come back) is what makes the
                 # fallback exactly the C1 baseline.
                 usable = usable & (np.abs(st_lo - st_hi) < SPREAD_GATE * np.abs(st1))
+            if mode.endswith("d"):
+                # THE RIGHT BRANCH FOR EACH FACE, and each is used exactly
+                # where it is well conditioned.
+                #
+                # The closure s_t = A q_n - B exists because at a MARKER-CUT
+                # face the arm difference gtd spans the interface and is not a
+                # derivative of either material. It divides by n_d -- harmless
+                # there, since an interface that separates the two centres
+                # along d has n_d bounded away from zero.
+                #
+                # At a CLIPPED-ONLY face the arm lies wholly inside one
+                # material, so gtd IS that material's d-derivative and the
+                # projection can be taken directly:
+                #     s_t = gtd (1 - n_d^2) - n_d (n_1 t1 + n_2 t2),
+                # with t1, t2 the SAME-MATERIAL layer differences -- no
+                # division by n_d at all. That matters because those faces are
+                # precisely the grazing ones (the interface is nearly
+                # perpendicular to them, n_d ~ 0), which is what made the
+                # closure read 1134 % there.
+                #
+                # Note the shipped de-bias is NOT the fallback: at such a face
+                # k_L = k_R makes its coefficient vanish, so it leaves the
+                # STRADDLING central tangential differences uncorrected --
+                # measured 24x worse than this whole branch.
+                st1 = np.where(cut, st1,
+                               gtd*(1.0 - nd*nd)
+                               - nd*np.where(pick_lo, p_lo, p_hi))
+                usable = usable | (~cut & ok & np.where(pick_lo, ok_lo, ok_hi))
+            if mode.endswith("m"):
+                # THE ONE-SIDED ESTIMATE BELONGS ONLY AT MARKER-CUT FACES.
+                # It exists to remove the straddle of the arm difference --
+                # and a face whose two centres are in the SAME material
+                # straddles nothing, so the raw projection is already right
+                # there (the shipped de-bias reduces to it exactly: its
+                # coefficient carries 1/k_R - 1/k_L = 0).
+                #
+                # Applying it there anyway is actively harmful, and the
+                # geometry says why: a face the interface CLIPS but does not
+                # separate has the interface nearly PERPENDICULAR to it, i.e.
+                # n_d ~ 0, and the closure divides by n_d. Measured at
+                # kappa_s = 1e3, h = 1/256: s_t error 5.8e-6 on the 608
+                # marker-cut faces and 6.2e-3 on the 424 clipped-only ones,
+                # and those 424 carry the ENTIRE high-contrast defect.
+                usable = usable & cut
             st = np.where(usable, st1,
                           0.0 if (mode.endswith("g") or mode.endswith("soft"))
                           else st)
+            if mode.endswith("x"):
+                # EXTEND the good estimate instead of computing a bad one.
+                # A face the interface CLIPS but whose two centres agree has
+                # no solid cell along d, so only a fluid-side estimate exists
+                # there -- and stage 0 measured the fluid side at ~kappa_s
+                # times the solid's error. Measured at kappa_s = 1e3, h =
+                # 1/256: s_t error 5.8e-6 on marker-cut faces against 6.2e-3
+                # on clipped-only ones, and those 424 faces carry the whole
+                # defect. But s_t is CONTINUOUS ALONG the interface, so the
+                # neighbouring marker-cut faces already hold a good value:
+                # average over the tangential neighbours that have one.
+                # Skipping those faces instead is not an option -- k_area at
+                # marker-cut faces only leaves 3.92e+01 where every clipped
+                # face leaves 1.33e-08 (README, "the way out").
+                good = cut & usable
+                num = np.zeros_like(st1)
+                den = np.zeros_like(st1)
+                for direction in tang:
+                    axf = 2 - direction
+                    for sh in (-1, 1):
+                        g = np.roll(good, sh, axis=axf)
+                        num = num + np.where(g, np.roll(st1, sh, axis=axf), 0.0)
+                        den = den + np.where(g, 1.0, 0.0)
+                need = ~cut & (den > 0.0)
+                st = np.where(need, num / np.where(den > 0.0, den, 1.0), st)
         if mode.startswith("mid"):
             kloc = np.where(pl_ + pr_ < 0.0, plane.kappa, 1.0)
             F = F + np.where(cut, st * (kloc - kface), 0.0)
@@ -712,6 +784,22 @@ def face_flux_field(phi, temp, centres, plane, d, mode):
                                        cd[tang[0]], cd[tang[1]])
             karea = karea + (1.0 - karea) * plane.kappa
             F = F + st * (karea - kface)
+    if detail:
+        # the scheme's own pieces, for the premise decomposition
+        # (check_cylinder.py correction). `clipped` is the set k_area acts on:
+        # every face the interface cuts, not only the marker-cut ones.
+        karea_f = face_area_fraction(0.5 * (pl_ + pr_),
+                                     np.where(ok, gp1 / safe, 0.0),
+                                     np.where(ok, gp2 / safe, 0.0),
+                                     cd[tang[0]], cd[tang[1]])
+        xyz = np.meshgrid(*[np.arange(s) for s in shape], indexing="ij")
+        xc = centres[0][xyz[2]]
+        yc = centres[1][xyz[1]]
+        return dict(kface=kface, gtd=gtd, st=st,
+                    karea=karea_f + (1.0 - karea_f) * plane.kappa,
+                    clipped=(karea_f > 1.0e-12) & (karea_f < 1.0 - 1.0e-12),
+                    markercut=cut,
+                    xf=0.5 * (xc[lo] + xc[hi]), yf=0.5 * (yc[lo] + yc[hi]))
     return F, cut
 
 

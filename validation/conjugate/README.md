@@ -938,6 +938,86 @@ resolved: the Fortran cost is the same either way, and a multiplier that is
 wrong at high contrast on a curved body would have to be gated on exactly the
 quantity that is not yet understood.
 
+
+### Stage 1b — which premise breaks, and it is none of the ones we suspected
+
+Stage 1 left the high-contrast curved case unexplained. `check_cylinder.py
+correction` decomposes it: per clipped face it forms what the correction
+SHOULD be, `C_exact = <k d_dT>_quadrature - k_face gtd`, with no model in it,
+and compares the scheme's `C = s_t (K - k_face)` against the same formula fed
+EXACT inputs.
+
+```bash
+./check_cylinder.py correction cyl_256.h5 --radius 0.25 --kappa 1000 --mode 2
+```
+
+**The formula is right.** At κ_s = 10³, h = 1/256: `|C_ideal − C_exact|` =
+4.1e-3 against `|C_exact|` = 0.223 — **1.8 %**. So the
+piecewise-constant-`∂_dT` premise holds, and the `Cov(k, s_t)` hypothesis (the
+cell balance wanting the face average of the PRODUCT) is REFUTED, despite the
+excess scaling linearly in κ_s, which is that hypothesis's signature.
+
+**The area fraction is not it either.** Exact `s_t` + the plane `f` gives
+3.9e-3; estimated `s_t` + the exact `<k>` gives 3.1e-1. The whole error is the
+`s_t` estimate, even though stage 0 measured it at 0.95 %.
+
+**Because stage 0 measured it on the wrong set.** Split the faces `k_area`
+acts on:
+
+| face set (κ_s = 10³, h = 1/256) | count | `s_t` error | correction error |
+|---|---|---|---|
+| marker-cut | 608 | **5.8e-6** (1.1 %) | 5.8e-3 |
+| clipped-only | 424 | 6.2e-3 (1134 %) | **4.7e-1** |
+
+and split the clipped-only faces again, by which material the ARM lies in:
+
+| κ_s | arm in SOLID (296) | arm in FLUID (128) |
+|---|---|---|
+| 10 | **1.0 %** | 18.2 % |
+| 10³ | **1.0 %** | **1905 %** |
+
+**128 faces out of 1032 carry the entire high-contrast defect**, and the
+mechanism is stage 0's rule a third time: `|∇_tT| ∝ 2/(1 + κ_s)` at the
+interface, so `s_t` scales with the SOLID-side amplitude, and extracting it
+from an O(1) fluid field is catastrophic cancellation.
+
+**THE FIX: extend `s_t` from the faces that have a solid-side view.** `s_t` is
+continuous along the interface, so the value exists nearby. Sweeping it in
+over the 6 face neighbours:
+
+| | κ_s = 10 | κ_s = 10³ |
+|---|---|---|
+| clipped-set `s_t` error, n = 64 / 128 / 256 | 13.9 / 14.2 / 6.0 % | 1421 / 1492 / 628 % |
+| **after 2-4 extension sweeps** | **4.78 / 2.65 / 2.73 %** | **4.73 / 2.49 / 3.45 %** |
+
+Contrast-independent, as it must be. **Two caveats, both for the next round:**
+it PLATEAUS near 3 % rather than converging, and it needs 2-4 sweeps — which
+in the solver is a halo-DEPTH question, not a free local gather. And the
+residual table has NOT been re-measured with it; that is the immediate next
+step, not a result.
+
+**Four things that did not work, recorded so they are not retried:**
+
+1. *Extend tangentially.* ZERO clipped-only faces have a marker-cut tangential
+   neighbour — they are a different family. A marker-cut face has the
+   interface roughly PARALLEL to it (|n_d| median 0.87); a clipped-only face
+   has it roughly perpendicular (0.23), i.e. grazing. The good neighbour lies
+   along `d`, not in-plane.
+2. *Apply the one-sided estimate only at marker-cut faces*, on the argument
+   that a same-material arm straddles nothing: **24× worse**. The shipped
+   de-bias is not a fallback there — with `k_L = k_R` its coefficient vanishes
+   identically, so it leaves the STRADDLING central tangential differences
+   completely uncorrected (10760 % error, bit-identical to the raw projection).
+3. *A direct projection at clipped-only faces* (`s_t = gtd(1−n_d²) − n_d P`,
+   no `1/n_d`, which the closure needs and which is ill-conditioned at exactly
+   those grazing faces): right in principle, 10× better than the shipped
+   estimator, but still 1091 % — the cancellation, not the conditioning, is
+   what dominates.
+4. *A limiter.* Covered under Stage 1; with this diagnosis it is clear why
+   neither could work — the defect is confined to an identifiable 12 % of the
+   faces, so it wants a different ESTIMATE there, not a smaller correction
+   everywhere.
+
 ---
 
 ## C3 — the fraction-weighted capacity, the Nusselt diagnostic, and the time step
