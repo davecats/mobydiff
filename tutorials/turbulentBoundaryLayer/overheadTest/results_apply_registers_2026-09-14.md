@@ -178,8 +178,11 @@ and HoreKa has no h5py. Unchanged from previous campaigns.
 ## 8 — What these numbers do NOT support
 
 - **Not that the kernel got cheaper.** It moves the same bytes — 10.31
-  doubles/cell, unchanged — and that is still 1.29x its source-counted minimum of
-  8. Nothing was reclaimed; the same traffic is merely issued by more warps.
+  doubles/cell, unchanged — which is 1.03x its source-counted minimum of 10
+  (1 phi + 3 mu + 6 velocity read-and-written). Nothing was reclaimed; the same
+  traffic is merely issued by more warps. *(That minimum read 8 until
+  2026-09-14, counting `ibm%mu` as one array rather than three staggered
+  components, which made this line say 1.29x.)*
 - **Not a per-kernel 16-rank result.** §6's step and bucket times are measured,
   but the ncu occupancy/DRAM pair behind them comes from a single rank holding a
   whole GPU. Whether k2 still reaches 46 % occupancy on 3.8 Mcell is not

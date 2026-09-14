@@ -41,6 +41,8 @@ the high-face plane into its own kernel) was **not** taken: it costs a launch
 utilisation to k1's 64.8 %, the handout's estimate is 7 654 → ~5 200 us, about
 **2.5 ms/step at 16 ranks = 7–8 % of the step**. Anything much larger than that
 should be distrusted, not celebrated: the kernel's traffic is unchanged (1.35x
+[corrected to 1.08x on 2026-09-14: the minimum counted mu as one array, not three
+components -- see results_ncu_apply_2026-09-14.md]
 its source-counted minimum, measured), so only the rate can move.
 
 ## What these jobs cannot say

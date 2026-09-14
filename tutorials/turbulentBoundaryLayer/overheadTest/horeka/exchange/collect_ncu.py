@@ -30,7 +30,15 @@ from collections import defaultdict
 from pathlib import Path
 
 MIN = {"jacobi_compute_phi": 5, "compute_rdenom": 4,
-       "jacobi_apply__14": 3, "jacobi_apply__16": 8,
+       "jacobi_apply__14": 3,
+       # k2: phi streamed once (1) + mu, THREE staggered components (3) + the
+       # three velocity components read and written (6) = 10. It was 8 here
+       # until 2026-09-14, counting mu as one array rather than three, which
+       # published k2 as 1.33-1.35x its minimum -- the worst ratio in the
+       # solver -- when it is 1.07-1.08x, in line with every other kernel.
+       # Count COMPONENTS, not arrays: every other entry in this table already
+       # does (compute_rdenom's 4 is 3 mu + 1 write).
+       "jacobi_apply__16": 10,
        # step_momentum's two kernels: the predictor reads q (4 variables) and
        # mu (3), reads and writes oldrhs (3+3) and writes qs (3) = 16; the
        # copy-back reads qs (3) and writes q (3) = 6. The Laplacian and metric

@@ -991,7 +991,9 @@ immersed boundary. Phased, each phase verified before the next:
   16-rank step** (34.4% single-level), and ncu says why
   (`results_ncu_apply_2026-09-14.md`, job 5144931): it is **occupancy-limited, not
   wasteful.** Traffic is near-minimal everywhere (compute_phi 1.10x, apply k1
-  1.07x, k2 1.35x of the source-counted minimum) and load/store sectors-per-request
+  1.07x, k2 1.08x of the source-counted minimum -- published as 1.35x until
+  2026-09-14, when the minimum was found to count ibm%mu as one array rather than
+  its three staggered components) and load/store sectors-per-request
   match the control, so there is NO coalescing defect and no wasted bytes. apply
   costs 2.87x compute_phi because it moves 1.98x the bytes it genuinely needs AND
   runs at 0.83x the efficiency, and the efficiency gap is registers: k1 at **59

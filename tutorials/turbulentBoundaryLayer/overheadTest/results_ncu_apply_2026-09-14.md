@@ -12,15 +12,16 @@ post-fix refined 16-rank step against `sweep`'s 10.3 %, both called 18 times.
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | `jacobi_compute_phi` | 3 204 | 5.48 | 5 | 1.10x | 2.49 | 9.00 | 51.5 | 53.3 | 47.0 | 29.1 | 94 |
 | `jacobi_apply` k1 (`p += phi·idt`) | 1 543 | 3.21 | 3 | 1.07x | 1.90 | 9.00 | 49.9 | **64.8** | 66.1 | **45.3** | **59** |
-| `jacobi_apply` k2 (face correction) | 7 654 | 10.82 | 8 | **1.35x** | 2.13 | 8.97 | 51.9 | **44.0** | 32.1 | **29.6** | **88** |
+| `jacobi_apply` k2 (face correction) | 7 654 | 10.82 | 10 | **1.08x** | 2.13 | 8.97 | 51.9 | **44.0** | 32.1 | **29.6** | **88** |
 
 ## What this refutes — mine
 
 From the phase table alone I inferred that k2 "moves ~17.6 doubles/cell where
 ~10 suffice", i.e. wasted roughly half its traffic, and wrote that an
 uncoalesced access pattern was the likely cause and possibly a several-fold
-prize. **That is wrong.** k2 moves **10.82** doubles/cell against a minimum of 8
-— 1.35x, and the two other kernels are at 1.07–1.10x. Load sectors/request is
+prize. **That is wrong.** k2 moves **10.82** doubles/cell against a minimum of 10
+— 1.08x, exactly where the two other kernels sit (1.07–1.10x). Load
+sectors/request is
 1.9–2.5 and store 9.0 across all three, the *same* for the control, so there is
 no coalescing defect to find. **There is no wasted traffic to reclaim.**
 
@@ -70,9 +71,19 @@ must be checked against `launch__registers_per_thread` and
 registers by spilling to local memory will look like progress on paper and lose
 on the clock.
 
+## Correction, 2026-09-14
+
+The `min` column above originally read **8** for k2, giving **1.35x**, and that
+number was quoted as "the worst ratio in the solver". It was a mis-count:
+`ibm%mu` is THREE staggered components, not one array. The minimum is
+1 (phi) + 3 (mu) + 6 (three velocities read and written) = **10**, so k2 is at
+**1.08x** — in line with `compute_phi`'s 1.10x and k1's 1.07x. `collect_ncu.py`
+is fixed. Nothing else in this report changes: its argument was that there is no
+waste to reclaim, and the corrected number makes that *more* true, not less.
+
 ## What this does not say
 
-- **Not that k2 is badly written.** 1.35x minimum traffic with no coalescing
+- **Not that k2 is badly written.** 1.08x minimum traffic with no coalescing
   defect is a competent memory-bound kernel; it is limited by how many warps the
   SM can keep in flight, not by how it accesses memory.
 - **Not that 50 % occupancy is achievable.** 88 → 64 registers is a target, not a
