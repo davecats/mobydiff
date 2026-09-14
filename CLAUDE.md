@@ -986,7 +986,22 @@ immersed boundary. Phased, each phase verified before the next:
   step — the largest single exchange item again, and the one neither partitioning
   nor overlap can touch. Largest launch count left is the
   projection's (`interface_correct` 3 kernels × 18 calls + `jacobi_apply` 36),
-  already at the per-launch floor — a kernel-count question worth ~1 ms/step. `horeka/exchange/analyse_launch_traffic.py`
+  already at the per-launch floor — a kernel-count question worth ~1 ms/step.
+  **`jacobi_apply` is now the biggest single item at 33.1% of the post-fix refined
+  16-rank step** (34.4% single-level), and ncu says why
+  (`results_ncu_apply_2026-09-14.md`, job 5144931): it is **occupancy-limited, not
+  wasteful.** Traffic is near-minimal everywhere (compute_phi 1.10x, apply k1
+  1.07x, k2 1.35x of the source-counted minimum) and load/store sectors-per-request
+  match the control, so there is NO coalescing defect and no wasted bytes. apply
+  costs 2.87x compute_phi because it moves 1.98x the bytes it genuinely needs AND
+  runs at 0.83x the efficiency, and the efficiency gap is registers: k1 at **59
+  regs → 45.3% occupancy → 64.8% of peak DRAM**, k2 at **88 regs → 29.6% → 44.0%**,
+  same grid/block, zero local memory in both. Levers, sized: cut k2's registers to
+  ≤64 (~2.5 ms/step at 16 ranks, 7-8%) and fuse k1 into k2 (~1.0 ms/step, 3%).
+  CHECK ANY REGISTER CHANGE against `launch__registers_per_thread` and
+  `sm__warps_active`, not a step time — cutting registers by spilling looks like
+  progress and loses on the clock. Probe: `horeka/exchange/run_ncu.sh` (ncu needs
+  `--bind-to none`; `--page raw` is WIDE; the solver's stdout lands in ncu.csv). `horeka/exchange/analyse_launch_traffic.py`
   reproduces the per-launch traffic table from an nsys sqlite export. Cheap concrete win meanwhile: fold the local copy into the pack
   kernel (independent, both before the `Waitall`, 2.3 ms/step, bit-exact).
   Recommended AGAINST: fusing the cross-level kernel into the same-level one — it
