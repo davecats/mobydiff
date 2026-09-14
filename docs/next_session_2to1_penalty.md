@@ -85,9 +85,18 @@
 > cases. **AT SCALE (job 5142047): refined −20.14 % at 16 ranks, −13.84 % at 8;
 > single-level −9.21 % and −6.35 %. The absolute saving is rank-independent
 > (8.64/8.34/8.34 ms/step refined at 4/8/16), device-local exchange at 16 ranks
-> 13.15 → 4.82 ms/step, and the 2:1 per-cell tax 1.403 → 1.234.** Every
-> scaling-efficiency and block-tax table in `results_horeka_2026-09-10.md` §9
-> predates this and must be re-run before it is quoted again.
+> 13.15 → 4.82 ms/step, and the 2:1 per-cell tax 1.403 → 1.234.** **MATRIX RE-RUN
+> (job 5142973, `results_horeka_2026-09-14.md`): 16-rank gains base +8.7 %, rect
+> +11.2 %, refined +18.9 %, red-black +23.1 %; strong scaling at 16 ranks
+> 71→78 / 66→74 / 49→60 / 44→56 / 80→86 %; block tax 1.130→1.100. The `ref`
+> column reproduces the 2026-09-10 tables, so the `new` column is the fix alone.
+> TWO CONCLUSIONS REVISED: the 2:1 machinery costs 1.004 coarse-cell-equivalents
+> at 4 ranks (not 0.98 — the added cells cost exactly what the coarse cells beside
+> them cost), and red-black erodes to 0.808 at 16 ranks (not 0.852 — half the
+> published erosion).** `results_horeka_2026-09-10.md` §9 carries a
+> SUPERSEDED-IN-PART header; its mechanism sections stand. NEXT: the per-phase
+> breakdown is NOT re-measured — `jacobi_apply` at ~34 % of the post-fix 16-rank
+> step is arithmetic, not a measurement, and it is the largest remaining item.
 >
 > Superseded estimate: recoverable 7.8–9.4 ms/step = 19–23 % of the refined
 > 16-rank step. Fix direction: stop referencing `c%component` inside the target regions

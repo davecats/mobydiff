@@ -968,9 +968,23 @@ immersed boundary. Phased, each phase verified before the next:
   landing on whatever the step is. Device-local exchange at 16 ranks **13.15 →
   4.82 ms/step (31.8 % → 14.6 % of the step)**, and the 2:1 per-cell tax at 16
   ranks falls **1.403 → 1.234** as a side effect (removing a per-LAUNCH cost helps
-  the case with fewer cells per launch more). **BEWARE: every scaling-efficiency
-  and block-tax table in `results_horeka_2026-09-10.md` §9 predates this and must
-  not be quoted until the matrix is re-run.** Largest launch count left is the
+  the case with fewer cells per launch more). MATRIX RE-RUN (2026-09-14,
+  job 5142973, `results_horeka_2026-09-14.md`; `results_horeka_2026-09-10.md` §9
+  now carries a SUPERSEDED-IN-PART header). Its `ref` column reproduces the
+  2026-09-10 tables on different nodes, so the `new` column is the fix alone.
+  Worth at 16 ranks: base +8.7%, rect +11.2%, refined +18.9%, red-black +23.1%,
+  refined_big +9.2%; absolute saving a constant 6.5-9.9 ms/step from 2 ranks up
+  and 1.6-3.6 ms at ONE rank (no peers ⇒ only the 39+24 copy launches ever paid
+  the blob, not all 141). Strong scaling at 16 ranks base 71→78, rect 66→74,
+  refined 49→60, red-black 44→56, refined_big 80→86%; block tax 1.130→1.100.
+  **TWO PUBLISHED CONCLUSIONS REVISED: the 2:1 machinery costs 1.004
+  coarse-cell-equivalents at 4 ranks, not 0.98** (the added fine cells cost what
+  the coarse cells beside them cost, to 0.4%; the old value was below 1 only
+  because the single-level twin carried more of the per-launch bill), **and
+  red-black erodes to 0.808 at 16 ranks, not 0.852** (0.76→0.81, half the erosion
+  published). `mpi_wait` did not move but its share grew to 10-12% of the smaller
+  step — the largest single exchange item again, and the one neither partitioning
+  nor overlap can touch. Largest launch count left is the
   projection's (`interface_correct` 3 kernels × 18 calls + `jacobi_apply` 36),
   already at the per-launch floor — a kernel-count question worth ~1 ms/step. `horeka/exchange/analyse_launch_traffic.py`
   reproduces the per-launch traffic table from an nsys sqlite export. Cheap concrete win meanwhile: fold the local copy into the pack
