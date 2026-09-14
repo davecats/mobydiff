@@ -1058,6 +1058,41 @@ immersed boundary. Phased, each phase verified before the next:
   production-flag gate ONLY when the arithmetic source is byte-identical between
   the two binaries (a device index, a launch parameter); use the nofma gate for
   anything that moves an expression.
+  **WORK THAT DID NOT NEED DOING (2026-09-14, jobs 5145541/5145549/5145554,
+  `results_stepwork_2026-09-14.md`): a further -8.0 to -8.2% of the step, larger
+  than either register increment, because these mostly make kernels NOT RUN.**
+  (1) `update_ibm_mu` ran an fp64 DIVIDE per ghost-inclusive cell x 3 components
+  x 3 substages to compute `mu = 1/(1+dt*0) = 1` on every body-free case --
+  channels, boundary layers, Beltrami. One device reduction on the first call now
+  decides whether any coef is non-zero ON THIS RANK (local is correct: mu is
+  pointwise, so the fields are bit-identical either way) and the kernel never runs
+  again: **-99.5%** on the bucket. (2) The trip force refreshed the WHOLE domain
+  every substage although its own `ex < -50` cutoff confines the envelope to under
+  1% of it: now the v component only (f_u/f_w are always zero and already zero
+  from allocation), over a block list built once at init (**40 of 256 blocks** on
+  the rank that owns the trip -- the solver prints it, treat it as a gate), and
+  the spanwise Fourier sums g_k(z) -- which depend on z ALONE and change only when
+  the random walk redraws, once per trip_ts -- are tabulated per (k, block)
+  instead of evaluated per cell: **-88.6%** on the bucket. Both bit-exact at
+  PRODUCTION flags (no expression moves), 9 comparisons per job at max_abs 0.
+  (3) **`step_momentum` IS occupancy-limited -- and the register lever does NOT
+  work on it.** First ncu on the solver's largest kernel: 128 registers, 23.96%
+  occupancy, 32.50% of peak DRAM, traffic 1.05x its source-counted minimum,
+  against its own sibling (same grid/block, 66 regs) at 41.09% and 74.22%.
+  Packing its NINE Laplacian coefficient arrays into three (`lapX(LAP_M/LAP_0/
+  LAP_P,i,var,b)`, stencil first) changed the register count **by nothing** --
+  for this kernel the array bases are not the binding constraint, the ~30 live
+  values of three fused component blocks are. And `-gpu=maxregcount:102` reaches
+  102 only with `STACK:16`, while GLOBALLY it acts as a TARGET, not a cap, raising
+  every kernel toward it (`jacobi_apply` k2 64 -> 96, `compute_rdenom` 80 -> 100,
+  `interface_correct` 54 -> 80) and undoing the day's work. The pack was kept only
+  because it was measured separately: momentum **-3.0%** from CONTIGUITY alone
+  (registers and occupancy unchanged, DRAM 32.50 -> 34.52). NEXT for momentum is a
+  different idea -- splitting the fused predictor into three per-component kernels
+  -- not another register trick.
+  **RE-RUN THE CAMPAIGN MATRIX before quoting any ratio: ~15% has come off the
+  step across 2026-09-14 and every published number in
+  `results_horeka_2026-09-14.md` has a moved denominator.**
   Probe: `horeka/exchange/run_ncu.sh` (ncu needs
   `--bind-to none`; `--page raw` is WIDE; the solver's stdout lands in ncu.csv). `horeka/exchange/analyse_launch_traffic.py`
   reproduces the per-launch traffic table from an nsys sqlite export. Cheap concrete win meanwhile: fold the local copy into the pack
