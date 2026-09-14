@@ -87,6 +87,32 @@ module pressure_solver
     ! via 1/0; the failure mode is unchanged in kind.
     real(C_DOUBLE), allocatable :: rdenom(:,:,:,:)
 
+    ! Velocity-face CORRECTION metric, precomputed per (block, face-normal index).
+    !
+    ! The value jacobi_apply's face kernel needs at a face is
+    ! face_grad_corr(face kind, at-boundary, d1f, outlet, refined) -- a function
+    ! of the block and the index along the face NORMAL only, not of the two
+    ! tangential indices the collapse(4) loop also spans. Evaluating it inside
+    ! the kernel therefore recomputed the same branchy expression nb^2 times per
+    ! value and, worse, kept physLow/physHigh/d1x/d1y/d1z/outLow/outHigh/refd
+    ! live across the whole loop body: the kernel was register-limited at 88
+    ! registers/thread, 29.6 % occupancy and 44 % of peak DRAM against its
+    ! sibling pressure kernel's 65 % at 59 registers (see
+    ! overheadTest/results_ncu_apply_2026-09-14.md). Hoisting is bit-exact by
+    ! construction -- identical expression, identical inputs, evaluated once.
+    !
+    ! cfLow(idx,d,b) carries the interface zeroing already (2:1 interface faces
+    ! are corrected by interface_correct instead, not here). cfHigh(d,b) is zero
+    ! unless the block's high face in d is an OUTLET physical face -- the only
+    ! high face this kernel owns.
+    !
+    ! Both are STATIC, unlike rdenom: face kinds come from the leaf table and
+    ! the metrics from the node lines, and neither changes during a run (rdenom
+    ! follows ibm%mu, which update_ibm_mu rewrites every substage). So they are
+    ! formed ONCE on the host and mapped.
+    real(C_DOUBLE), allocatable :: cfLow(:,:,:)   ! (1:maxval(nb), 3, nBlocks)
+    real(C_DOUBLE), allocatable :: cfHigh(:,:)    ! (3, nBlocks)
+
     ! Does this case have any 2:1 interface face? Face kinds come from the leaf
     ! table and never change during a run, so the answer is computed once and
     ! cached. It must be a GLOBAL answer: the red-black path drives a collective
@@ -215,6 +241,7 @@ contains
         ! divergence.
         ! The diagonal is constant across the iterations (see rdenom), so it is
         ! formed once here rather than inside the loop.
+        call allocate_face_corr(blk, outLow, outHigh, refd)
         call compute_rdenom(blk, ibm, outLow, outHigh, refd)
         call prof_toc(proj_prof, PROF_PROJ_SETUP, t0)
 
@@ -242,7 +269,7 @@ contains
             if (anyOutlet) call apply_scalar_bc(blk, bc, phi, phiMode)
             call prof_toc(proj_prof, PROF_PHI_EXCHANGE, t0)
             t0 = prof_tic()
-            call jacobi_apply(ps, blk, dt_gamma, ibm, outLow, outHigh, refd)
+            call jacobi_apply(ps, blk, dt_gamma, ibm)
             if (hasIface) call interface_correct(blk, ibm, outLow, outHigh, refd)
             call prof_toc(proj_prof, PROF_APPLY, t0)
             t0 = prof_tic()
@@ -338,6 +365,60 @@ contains
 #endif
         end if
     end subroutine allocate_rdenom
+
+    ! Fill the static face-correction metrics (see the cfLow declaration) and
+    ! map them. Called from pressure_projection once the outlet/refinement flags
+    ! are known; it returns immediately on every later call because nothing it
+    ! reads can change during a run.
+    subroutine allocate_face_corr(blk, outLow, outHigh, refd)
+        type(block_set_type), intent(in) :: blk
+        logical(C_BOOL), intent(in) :: outLow(3), outHigh(3), refd(3)
+
+        integer(C_INT) :: b, d, idx, n
+
+        if (allocated(cfLow)) return
+        allocate(cfLow(maxval(blk%nb),3,blk%nBlocks), cfHigh(3,blk%nBlocks))
+        cfLow = 0.0d0
+        cfHigh = 0.0d0
+
+        do b = 1_C_INT, blk%nBlocks
+            do d = 1_C_INT, 3_C_INT
+                n = blk%nb(d)
+                do idx = 1_C_INT, n
+                    cfLow(idx,d,b) = face_grad_corr(blk%physLow(d,b), idx == 1_C_INT, &
+                        d1_normal(blk, d, idx, b), outLow(d), refd(d))
+                end do
+                ! Interface faces belong to interface_correct: zero rather than
+                ! a second predicate, exactly as the kernel used to do.
+                if (is_interface(blk%physLow(d,b))) cfLow(1,d,b) = 0.0d0
+                ! The high face is the neighbour's low face (filled by the
+                ! velocity exchange) unless it is an outlet physical face.
+                if (outHigh(d) .and. blk%physHigh(d,b) == FACE_PHYS) &
+                    cfHigh(d,b) = face_grad_corr(blk%physHigh(d,b), .true., &
+                        d1_normal(blk, d, n + 1_C_INT, b), outHigh(d), refd(d))
+            end do
+        end do
+
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target enter data map(to: cfLow, cfHigh)
+#endif
+    end subroutine allocate_face_corr
+
+    ! The face metric d1f of direction d at face index idx of block b, for the
+    ! velocity component normal to that face. Host-side helper for
+    ! allocate_face_corr only.
+    real(C_DOUBLE) function d1_normal(blk, d, idx, b)
+        type(block_set_type), intent(in) :: blk
+        integer(C_INT), intent(in) :: d, idx, b
+
+        if (d == 1_C_INT) then
+            d1_normal = blk%d1x(idx,VAR_U,b)
+        else if (d == 2_C_INT) then
+            d1_normal = blk%d1y(idx,VAR_V,b)
+        else
+            d1_normal = blk%d1z(idx,VAR_W,b)
+        end if
+    end function d1_normal
 
     ! The RECIPROCAL projection diagonal: each face's pressure-gradient metric,
     ! summed, then inverted.
@@ -451,12 +532,11 @@ contains
     ! no in-place race and no colouring. Only the cell's own LOW faces (1..nb)
     ! are written here; each block's high halo face is the neighbour's low face,
     ! filled by the velocity exchange. Pinned faces are left untouched.
-    subroutine jacobi_apply(ps, blk, dt_gamma, ibm, outLow, outHigh, refd)
+    subroutine jacobi_apply(ps, blk, dt_gamma, ibm)
         type(pressure_solver_type), intent(in) :: ps
         type(block_set_type), intent(inout) :: blk
         real(C_DOUBLE), intent(in) :: dt_gamma
         type(ibm_type), intent(in) :: ibm
-        logical(C_BOOL), intent(in) :: outLow(3), outHigh(3), refd(3)
 
         real(C_DOUBLE) :: idt, cf
         integer(C_INT) :: i, ip, j, jp, k, kp, b, nBlocks, nx, ny, nz
@@ -498,50 +578,48 @@ contains
         ! already counts. The predictor never writes the outlet face, so this
         ! correction (+ the initial value) is its entire evolution: the standard
         ! do-nothing Dirichlet-pressure outlet.
+        ! cfLow/cfHigh hold face_grad_corr for every face this kernel owns,
+        ! precomputed per (block, normal index) -- see their declaration for why
+        ! that is both bit-exact and the point of the kernel's shape.
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do collapse(4) &
-        !$omp& map(to: nx, ny, nz, outLow(1:3), outHigh(1:3), refd(1:3), &
-        !$omp& blk%physLow, blk%physHigh, blk%d1x, blk%d1y, blk%d1z, ibm%mu) &
+        !$omp& map(to: nx, ny, nz, cfLow, cfHigh, ibm%mu) &
         !$omp& map(tofrom: blk%q, phi) private(i,ip,j,jp,k,kp,b,cf)
 #endif
         do b = 1_C_INT, nBlocks
         do k = 1_C_INT, nz
             do j = 1_C_INT, ny
                 do i = 1_C_INT, nx
-                    ip = i + 1; jp = j + 1; kp = k + 1
-
-                    ! Interface faces are skipped here and done by
-                    ! interface_correct, which both smoothers share. Zeroing cf
-                    ! rather than adding a second predicate keeps the common
-                    ! (non-interface) path arithmetically untouched.
-                    cf = face_grad_corr(blk%physLow(1,b), i == 1_C_INT, blk%d1x(i,VAR_U,b), outLow(1), refd(1))
-                    if (i == 1_C_INT .and. is_interface(blk%physLow(1,b))) cf = 0.0d0
+                    cf = cfLow(i,1,b)
                     if (cf /= 0.0d0) blk%q(i,j,k,VAR_U,b) = blk%q(i,j,k,VAR_U,b) &
                         + (phi(i-1,j,k,b) - phi(i,j,k,b))*cf*ibm%mu(i,j,k,VAR_U,b)
-                    cf = face_grad_corr(blk%physLow(2,b), j == 1_C_INT, blk%d1y(j,VAR_V,b), outLow(2), refd(2))
-                    if (j == 1_C_INT .and. is_interface(blk%physLow(2,b))) cf = 0.0d0
+                    cf = cfLow(j,2,b)
                     if (cf /= 0.0d0) blk%q(i,j,k,VAR_V,b) = blk%q(i,j,k,VAR_V,b) &
                         + (phi(i,j-1,k,b) - phi(i,j,k,b))*cf*ibm%mu(i,j,k,VAR_V,b)
-                    cf = face_grad_corr(blk%physLow(3,b), k == 1_C_INT, blk%d1z(k,VAR_W,b), outLow(3), refd(3))
-                    if (k == 1_C_INT .and. is_interface(blk%physLow(3,b))) cf = 0.0d0
+                    cf = cfLow(k,3,b)
                     if (cf /= 0.0d0) blk%q(i,j,k,VAR_W,b) = blk%q(i,j,k,VAR_W,b) &
                         + (phi(i,j,k-1,b) - phi(i,j,k,b))*cf*ibm%mu(i,j,k,VAR_W,b)
 
                     ! High faces: only an OUTLET physical face (FACE_PHYS +
-                    ! declared outlet) is owned here; the 2:1 interface ones
-                    ! moved to interface_correct.
-                    if (i == nx .and. outHigh(1) .and. blk%physHigh(1,b) == FACE_PHYS) &
-                        blk%q(ip,j,k,VAR_U,b) = blk%q(ip,j,k,VAR_U,b) &
-                            + (phi(i,j,k,b) - phi(ip,j,k,b)) &
-                              *face_grad_corr(blk%physHigh(1,b), .true., blk%d1x(ip,VAR_U,b), outHigh(1), refd(1))*ibm%mu(ip,j,k,VAR_U,b)
-                    if (j == ny .and. outHigh(2) .and. blk%physHigh(2,b) == FACE_PHYS) &
-                        blk%q(i,jp,k,VAR_V,b) = blk%q(i,jp,k,VAR_V,b) &
-                            + (phi(i,j,k,b) - phi(i,jp,k,b)) &
-                              *face_grad_corr(blk%physHigh(2,b), .true., blk%d1y(jp,VAR_V,b), outHigh(2), refd(2))*ibm%mu(i,jp,k,VAR_V,b)
-                    if (k == nz .and. outHigh(3) .and. blk%physHigh(3,b) == FACE_PHYS) &
-                        blk%q(i,j,kp,VAR_W,b) = blk%q(i,j,kp,VAR_W,b) &
-                            + (phi(i,j,k,b) - phi(i,j,kp,b)) &
-                              *face_grad_corr(blk%physHigh(3,b), .true., blk%d1z(kp,VAR_W,b), outHigh(3), refd(3))*ibm%mu(i,j,kp,VAR_W,b)
+                    ! declared outlet) is owned here, and cfHigh is zero unless
+                    ! it is one; the 2:1 interface ones moved to
+                    ! interface_correct. Reading cfHigh under the plane
+                    ! predicate keeps it off the common path.
+                    if (i == nx) then
+                        cf = cfHigh(1,b); ip = i + 1
+                        if (cf /= 0.0d0) blk%q(ip,j,k,VAR_U,b) = blk%q(ip,j,k,VAR_U,b) &
+                            + (phi(i,j,k,b) - phi(ip,j,k,b))*cf*ibm%mu(ip,j,k,VAR_U,b)
+                    end if
+                    if (j == ny) then
+                        cf = cfHigh(2,b); jp = j + 1
+                        if (cf /= 0.0d0) blk%q(i,jp,k,VAR_V,b) = blk%q(i,jp,k,VAR_V,b) &
+                            + (phi(i,j,k,b) - phi(i,jp,k,b))*cf*ibm%mu(i,jp,k,VAR_V,b)
+                    end if
+                    if (k == nz) then
+                        cf = cfHigh(3,b); kp = k + 1
+                        if (cf /= 0.0d0) blk%q(i,j,kp,VAR_W,b) = blk%q(i,j,kp,VAR_W,b) &
+                            + (phi(i,j,k,b) - phi(i,j,kp,b))*cf*ibm%mu(i,j,kp,VAR_W,b)
+                    end if
                 end do
             end do
         end do
