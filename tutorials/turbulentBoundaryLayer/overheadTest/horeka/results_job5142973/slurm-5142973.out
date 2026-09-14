@@ -1,0 +1,349 @@
+=== building /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-headref (365af76)
+MPI Fortran module dir: /hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+HDF5_ROOT: /home/hk-project-exasim/xt8786/hdf5
+-- HDF5 include dir: /home/hk-project-exasim/xt8786/hdf5/include
+-- HDF5 C library: /home/hk-project-exasim/xt8786/hdf5/lib/libhdf5.so
+-- Pressure solver: red-black SOR
+-- MPI support: required
+-- MPI wrapper compile flags: -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/hwloc/hwloc201/hwloc/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/event/libevent2022/libevent -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/event/libevent2022/libevent/include -pthread -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+-- MPI wrapper link flags: -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -L/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -Wl,-rpath -Wl,/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -Wl,--enable-new-dtags -lmpi_usempif08 -lmpi_usempi_ignore_tkr -lmpi_mpifh -lmpi
+-- MPI Fortran module dir: /hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+-- Configuring done (0.9s)
+-- Generating done (0.6s)
+-- Build files have been written to: /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-headref/build_gpu
+[ 70%] Built target leaftable_test
+[ 89%] Built target transition_test
+[ 98%] Built target moby_prepare
+[100%] Built target walldist_test
+[100%] Built target moby_solve
+
+========================================
+Build summary: gpu
+========================================
+Build directory       : build_gpu
+Executables           : build_gpu/moby_solve (+ main symlink), build_gpu/moby_prepare
+Fortran compiler      : /software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/compilers/bin/nvfortran
+C compiler            : /software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/compilers/bin/nvc
+Pressure solver       : red-black SOR
+MPI                   : ON
+MPI wrapper compile   : -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/hwloc/hwloc201/hwloc/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/event/libevent2022/libevent -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/event/libevent2022/libevent/include -pthread -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+MPI wrapper link      : -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -L/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -Wl,-rpath -Wl,/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -Wl,--enable-new-dtags -lmpi_usempif08 -lmpi_usempi_ignore_tkr -lmpi_mpifh -lmpi
+MPI Fortran mod dir   : /hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+USE_OPENMP_OFFLOAD    : ON
+USE_IBM_SECONDORDER   : ON
+OPENMP_OFFLOAD_FLAGS  : -mp=gpu
+HDF5_ROOT             : /home/hk-project-exasim/xt8786/hdf5
+HDF5 include dir      : /home/hk-project-exasim/xt8786/hdf5/include
+HDF5 C library        : /home/hk-project-exasim/xt8786/hdf5/lib/libhdf5.so
+========================================
+
+=== building /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-code (55bee89)
+MPI Fortran module dir: /hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+HDF5_ROOT: /home/hk-project-exasim/xt8786/hdf5
+-- HDF5 include dir: /home/hk-project-exasim/xt8786/hdf5/include
+-- HDF5 C library: /home/hk-project-exasim/xt8786/hdf5/lib/libhdf5.so
+-- Pressure solver: red-black SOR
+-- MPI support: required
+-- MPI wrapper compile flags: -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/hwloc/hwloc201/hwloc/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/event/libevent2022/libevent -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/event/libevent2022/libevent/include -pthread -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+-- MPI wrapper link flags: -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -L/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -Wl,-rpath -Wl,/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -Wl,--enable-new-dtags -lmpi_usempif08 -lmpi_usempi_ignore_tkr -lmpi_mpifh -lmpi
+-- MPI Fortran module dir: /hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+-- Configuring done (0.6s)
+-- Generating done (0.4s)
+-- Build files have been written to: /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-code/build_gpu
+[ 62%] Built target leaftable_test
+[ 74%] Built target moby_prepare
+[ 97%] Built target walldist_test
+[ 98%] Built target moby_solve
+[100%] Built target transition_test
+
+========================================
+Build summary: gpu
+========================================
+Build directory       : build_gpu
+Executables           : build_gpu/moby_solve (+ main symlink), build_gpu/moby_prepare
+Fortran compiler      : /software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/compilers/bin/nvfortran
+C compiler            : /software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/compilers/bin/nvc
+Pressure solver       : red-black SOR
+MPI                   : ON
+MPI wrapper compile   : -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/hwloc/hwloc201/hwloc/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/event/libevent2022/libevent -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/event/libevent2022/libevent/include -pthread -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+MPI wrapper link      : -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -L/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -Wl,-rpath -Wl,/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -Wl,--enable-new-dtags -lmpi_usempif08 -lmpi_usempi_ignore_tkr -lmpi_mpifh -lmpi
+MPI Fortran mod dir   : /hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+USE_OPENMP_OFFLOAD    : ON
+USE_IBM_SECONDORDER   : ON
+OPENMP_OFFLOAD_FLAGS  : -mp=gpu
+HDF5_ROOT             : /home/hk-project-exasim/xt8786/hdf5
+HDF5 include dir      : /home/hk-project-exasim/xt8786/hdf5/include
+HDF5 C library        : /home/hk-project-exasim/xt8786/hdf5/lib/libhdf5.so
+========================================
+
+job    : 5142973
+date   : 2026-09-14 03:26:27 CEST
+nodes  : 4  (hkn[0620-0621,0627,0632])
+new    : 55bee89aec5d8a29321a11a59b360915b97ed1d7  (map(to: c))
+ref    : 365af767dd290bcdaf951a4409fb9acd9edd2154  (pre-fix)
+gpu    : NVIDIA A100-SXM4-40GB
+nsteps : 200
+layout : --map-by numa --bind-to core (as every earlier matrix)
+############ NEW (map(to: c)) ############
+=== matrix start 2026-09-14 03:26:27  exe=/hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-code/build_gpu/moby_solve
+=== base_jacobi  n=1  (2026-09-14 03:26:27)
+           150   1.50000000E-01   1.09948407E-05   1.94872675E+00   1.00202410E+00   6.73467512E-03   2.09364619E-02   6.81130380E-01
+           200   2.00000000E-01   1.07282926E-05   1.74268453E+00   1.00228451E+00   6.73467512E-03   2.09364619E-02   6.80226841E-01
+=== base_jacobi  n=2  (2026-09-14 03:28:59)
+           150   1.50000000E-01   1.09948407E-05   1.94872675E+00   1.00202410E+00   6.73467512E-03   2.09364619E-02   3.43670026E-01
+           200   2.00000000E-01   1.07282926E-05   1.74268453E+00   1.00228451E+00   6.73467512E-03   2.09364619E-02   3.43185745E-01
+=== base_jacobi  n=4  (2026-09-14 03:30:18)
+           150   1.50000000E-01   1.09948407E-05   1.94872675E+00   1.00202410E+00   6.73467512E-03   2.09364619E-02   1.80335086E-01
+           200   2.00000000E-01   1.07282926E-05   1.74268453E+00   1.00228451E+00   6.73467512E-03   2.09364619E-02   1.80037103E-01
+=== base_jacobi  n=8  (2026-09-14 03:31:02)
+           150   1.50000000E-01   1.09948407E-05   1.94872675E+00   1.00202410E+00   6.73467512E-03   2.09364619E-02   9.75676467E-02
+           200   2.00000000E-01   1.07282926E-05   1.74268453E+00   1.00228451E+00   6.73467512E-03   2.09364619E-02   9.73781655E-02
+=== base_jacobi  n=16  (2026-09-14 03:31:30)
+           150   1.50000000E-01   1.09948407E-05   1.94872675E+00   1.00202410E+00   6.73467512E-03   2.09364619E-02   5.51652127E-02
+           200   2.00000000E-01   1.07282926E-05   1.74268453E+00   1.00228451E+00   6.73467512E-03   2.09364619E-02   5.49375745E-02
+=== rect_jacobi  n=1  (2026-09-14 03:31:48)
+           150   1.50000000E-01   1.09948407E-05   1.94872675E+00   1.00202410E+00   6.73467512E-03   2.09364619E-02   7.17472027E-01
+           200   2.00000000E-01   1.07282926E-05   1.74268453E+00   1.00228451E+00   6.73467512E-03   2.09364619E-02   7.16336505E-01
+=== rect_jacobi  n=2  (2026-09-14 03:34:26)
+           150   1.50000000E-01   1.09948407E-05   1.94872675E+00   1.00202410E+00   6.73467512E-03   2.09364619E-02   3.76311467E-01
+           200   2.00000000E-01   1.07282926E-05   1.74268453E+00   1.00228451E+00   6.73467512E-03   2.09364619E-02   3.75716316E-01
+=== rect_jacobi  n=4  (2026-09-14 03:35:52)
+           150   1.50000000E-01   1.09948407E-05   1.94872675E+00   1.00202410E+00   6.73467512E-03   2.09364619E-02   1.93053520E-01
+           200   2.00000000E-01   1.07282926E-05   1.74268453E+00   1.00228451E+00   6.73467512E-03   2.09364619E-02   1.92715740E-01
+=== rect_jacobi  n=8  (2026-09-14 03:36:39)
+           150   1.50000000E-01   1.09948407E-05   1.94872675E+00   1.00202410E+00   6.73467512E-03   2.09364619E-02   1.01879165E-01
+           200   2.00000000E-01   1.07282926E-05   1.74268453E+00   1.00228451E+00   6.73467512E-03   2.09364619E-02   1.01608095E-01
+=== rect_jacobi  n=16  (2026-09-14 03:37:07)
+           150   1.50000000E-01   1.09948407E-05   1.94872675E+00   1.00202410E+00   6.73467512E-03   2.09364619E-02   6.02571993E-02
+           200   2.00000000E-01   1.07282926E-05   1.74268453E+00   1.00228451E+00   6.73467512E-03   2.09364619E-02   6.03153145E-02
+=== refined_yp82_rect_jacobi  n=1  (2026-09-14 03:37:26)
+           150   1.50000000E-01   2.28296439E-05   1.63167400E+00   1.00254940E+00   6.73338691E-03   2.09364619E-02   3.20751233E-01
+           200   2.00000000E-01   1.92842279E-05   5.25982040E-01   1.00294523E+00   6.73338691E-03   2.09364619E-02   3.20285004E-01
+=== refined_yp82_rect_jacobi  n=2  (2026-09-14 03:38:38)
+           150   1.50000000E-01   2.28296439E-05   1.63167400E+00   1.00254940E+00   6.73338691E-03   2.09364619E-02   1.71048706E-01
+           200   2.00000000E-01   1.92842279E-05   5.25982040E-01   1.00294523E+00   6.73338691E-03   2.09364619E-02   1.70730659E-01
+=== refined_yp82_rect_jacobi  n=4  (2026-09-14 03:39:19)
+           150   1.50000000E-01   2.28296439E-05   1.63167400E+00   1.00254940E+00   6.73338691E-03   2.09364619E-02   9.09674593E-02
+           200   2.00000000E-01   1.92842279E-05   5.25982040E-01   1.00294523E+00   6.73338691E-03   2.09364619E-02   9.07568095E-02
+=== refined_yp82_rect_jacobi  n=8  (2026-09-14 03:39:43)
+           150   1.50000000E-01   2.28296439E-05   1.63167400E+00   1.00254940E+00   6.73338691E-03   2.09364619E-02   5.15539327E-02
+           200   2.00000000E-01   1.92842279E-05   5.25982040E-01   1.00294523E+00   6.73338691E-03   2.09364619E-02   5.13769650E-02
+=== refined_yp82_rect_jacobi  n=16  (2026-09-14 03:39:59)
+           150   1.50000000E-01   2.28296439E-05   1.63167400E+00   1.00254940E+00   6.73338691E-03   2.09364619E-02   3.36268200E-02
+           200   2.00000000E-01   1.92842279E-05   5.25982040E-01   1.00294523E+00   6.73338691E-03   2.09364619E-02   3.35048790E-02
+=== refined_yp82_rect_redblack  n=1  (2026-09-14 03:40:12)
+           150   1.50000000E-01   3.24125216E-05  -3.61876936E-01   1.00282336E+00   6.73338691E-03   2.09364619E-02   2.43358914E-01
+           200   2.00000000E-01   6.04011147E-05  -1.87014768E+00   1.00371009E+00   6.73338691E-03   2.09364619E-02   2.43102140E-01
+=== refined_yp82_rect_redblack  n=2  (2026-09-14 03:41:08)
+           150   1.50000000E-01   3.24125216E-05  -3.61876936E-01   1.00282336E+00   6.73338691E-03   2.09364619E-02   1.28048171E-01
+           200   2.00000000E-01   6.04011147E-05  -1.87014768E+00   1.00371009E+00   6.73338691E-03   2.09364619E-02   1.27869009E-01
+=== refined_yp82_rect_redblack  n=4  (2026-09-14 03:41:41)
+           150   1.50000000E-01   3.24125216E-05  -3.61876936E-01   1.00282336E+00   6.73338691E-03   2.09364619E-02   6.92623007E-02
+           200   2.00000000E-01   6.04011147E-05  -1.87014768E+00   1.00371009E+00   6.73338691E-03   2.09364619E-02   6.91278955E-02
+=== refined_yp82_rect_redblack  n=8  (2026-09-14 03:42:02)
+           150   1.50000000E-01   3.24125216E-05  -3.61876936E-01   1.00282336E+00   6.73338691E-03   2.09364619E-02   4.02884927E-02
+           200   2.00000000E-01   6.04011147E-05  -1.87014768E+00   1.00371009E+00   6.73338691E-03   2.09364619E-02   4.01752745E-02
+=== refined_yp82_rect_redblack  n=16  (2026-09-14 03:42:16)
+           150   1.50000000E-01   3.24125216E-05  -3.61876936E-01   1.00282336E+00   6.73338691E-03   2.09364619E-02   2.72673460E-02
+           200   2.00000000E-01   6.04011147E-05  -1.87014768E+00   1.00371009E+00   6.73338691E-03   2.09364619E-02   2.70889445E-02
+=== refined_big_rect_jacobi  n=4  (2026-09-14 03:42:28)
+           150   1.50000000E-01   9.27358772E-06   1.77076522E+00   1.00187682E+00   1.34667289E-02   2.09364619E-02   3.38357914E-01
+           200   2.00000000E-01   9.22705678E-06   1.84540370E+00   1.00219265E+00   1.34667289E-02   2.09364619E-02   3.37770405E-01
+=== refined_big_rect_jacobi  n=8  (2026-09-14 03:43:46)
+           150   1.50000000E-01   9.27358772E-06   1.77076522E+00   1.00187682E+00   1.34667289E-02   2.09364619E-02   1.77111033E-01
+           200   2.00000000E-01   9.22705678E-06   1.84540370E+00   1.00219265E+00   1.34667289E-02   2.09364619E-02   1.76777855E-01
+=== refined_big_rect_jacobi  n=16  (2026-09-14 03:44:30)
+           150   1.50000000E-01   9.27358772E-06   1.77076522E+00   1.00187682E+00   1.34667289E-02   2.09364619E-02   9.79919920E-02
+           200   2.00000000E-01   9.22705678E-06   1.84540370E+00   1.00219265E+00   1.34667289E-02   2.09364619E-02   9.78712245E-02
+=== matrix done 2026-09-14 03:44:57
+############ REF (pre-fix) ############
+=== matrix start 2026-09-14 03:44:57  exe=/hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-headref/build_gpu/moby_solve
+=== base_jacobi  n=1  (2026-09-14 03:44:57)
+           150   1.50000000E-01   1.09948407E-05   1.94872675E+00   1.00202410E+00   6.73467512E-03   2.09364619E-02   6.84245087E-01
+           200   2.00000000E-01   1.07282926E-05   1.74268453E+00   1.00228451E+00   6.73467512E-03   2.09364619E-02   6.83297555E-01
+=== base_jacobi  n=2  (2026-09-14 03:47:28)
+           150   1.50000000E-01   1.09948407E-05   1.94872675E+00   1.00202410E+00   6.73467512E-03   2.09364619E-02   3.49755913E-01
+           200   2.00000000E-01   1.07282926E-05   1.74268453E+00   1.00228451E+00   6.73467512E-03   2.09364619E-02   3.49274621E-01
+=== base_jacobi  n=4  (2026-09-14 03:48:49)
+           150   1.50000000E-01   1.09948407E-05   1.94872675E+00   1.00202410E+00   6.73467512E-03   2.09364619E-02   1.86668893E-01
+           200   2.00000000E-01   1.07282926E-05   1.74268453E+00   1.00228451E+00   6.73467512E-03   2.09364619E-02   1.86347976E-01
+=== base_jacobi  n=8  (2026-09-14 03:49:35)
+           150   1.50000000E-01   1.09948407E-05   1.94872675E+00   1.00202410E+00   6.73467512E-03   2.09364619E-02   1.03009106E-01
+           200   2.00000000E-01   1.07282926E-05   1.74268453E+00   1.00228451E+00   6.73467512E-03   2.09364619E-02   1.02777855E-01
+=== base_jacobi  n=16  (2026-09-14 03:50:03)
+           150   1.50000000E-01   1.09948407E-05   1.94872675E+00   1.00202410E+00   6.73467512E-03   2.09364619E-02   6.03815327E-02
+           200   2.00000000E-01   1.07282926E-05   1.74268453E+00   1.00228451E+00   6.73467512E-03   2.09364619E-02   6.01484640E-02
+=== rect_jacobi  n=1  (2026-09-14 03:50:22)
+           150   1.50000000E-01   1.09948407E-05   1.94872675E+00   1.00202410E+00   6.73467512E-03   2.09364619E-02   7.19040867E-01
+           200   2.00000000E-01   1.07282926E-05   1.74268453E+00   1.00228451E+00   6.73467512E-03   2.09364619E-02   7.17919631E-01
+=== rect_jacobi  n=2  (2026-09-14 03:53:00)
+           150   1.50000000E-01   1.09948407E-05   1.94872675E+00   1.00202410E+00   6.73467512E-03   2.09364619E-02   3.82829008E-01
+           200   2.00000000E-01   1.07282926E-05   1.74268453E+00   1.00228451E+00   6.73467512E-03   2.09364619E-02   3.82225256E-01
+=== rect_jacobi  n=4  (2026-09-14 03:54:28)
+           150   1.50000000E-01   1.09948407E-05   1.94872675E+00   1.00202410E+00   6.73467512E-03   2.09364619E-02   1.99709813E-01
+           200   2.00000000E-01   1.07282926E-05   1.74268453E+00   1.00228451E+00   6.73467512E-03   2.09364619E-02   1.99364279E-01
+=== rect_jacobi  n=8  (2026-09-14 03:55:16)
+           150   1.50000000E-01   1.09948407E-05   1.94872675E+00   1.00202410E+00   6.73467512E-03   2.09364619E-02   1.08785567E-01
+           200   2.00000000E-01   1.07282926E-05   1.74268453E+00   1.00228451E+00   6.73467512E-03   2.09364619E-02   1.08503324E-01
+=== rect_jacobi  n=16  (2026-09-14 03:55:45)
+           150   1.50000000E-01   1.09948407E-05   1.94872675E+00   1.00202410E+00   6.73467512E-03   2.09364619E-02   6.82488993E-02
+           200   2.00000000E-01   1.07282926E-05   1.74268453E+00   1.00228451E+00   6.73467512E-03   2.09364619E-02   6.80453845E-02
+=== refined_yp82_rect_jacobi  n=1  (2026-09-14 03:56:05)
+           150   1.50000000E-01   2.28296439E-05   1.63167400E+00   1.00254940E+00   6.73338691E-03   2.09364619E-02   3.24374712E-01
+           200   2.00000000E-01   1.92842279E-05   5.25982040E-01   1.00294523E+00   6.73338691E-03   2.09364619E-02   3.23870329E-01
+=== refined_yp82_rect_jacobi  n=2  (2026-09-14 03:57:18)
+           150   1.50000000E-01   2.28296439E-05   1.63167400E+00   1.00254940E+00   6.73338691E-03   2.09364619E-02   1.79027373E-01
+           200   2.00000000E-01   1.92842279E-05   5.25982040E-01   1.00294523E+00   6.73338691E-03   2.09364619E-02   1.78722490E-01
+=== refined_yp82_rect_jacobi  n=4  (2026-09-14 03:58:01)
+           150   1.50000000E-01   2.28296439E-05   1.63167400E+00   1.00254940E+00   6.73338691E-03   2.09364619E-02   9.98610273E-02
+           200   2.00000000E-01   1.92842279E-05   5.25982040E-01   1.00294523E+00   6.73338691E-03   2.09364619E-02   9.96255145E-02
+=== refined_yp82_rect_jacobi  n=8  (2026-09-14 03:58:27)
+           150   1.50000000E-01   2.28296439E-05   1.63167400E+00   1.00254940E+00   6.73338691E-03   2.09364619E-02   5.99768207E-02
+           200   2.00000000E-01   1.92842279E-05   5.25982040E-01   1.00294523E+00   6.73338691E-03   2.09364619E-02   5.98185455E-02
+=== refined_yp82_rect_jacobi  n=16  (2026-09-14 03:58:45)
+           150   1.50000000E-01   2.28296439E-05   1.63167400E+00   1.00254940E+00   6.73338691E-03   2.09364619E-02   4.13955193E-02
+           200   2.00000000E-01   1.92842279E-05   5.25982040E-01   1.00294523E+00   6.73338691E-03   2.09364619E-02   4.13015540E-02
+=== refined_yp82_rect_redblack  n=1  (2026-09-14 03:58:59)
+           150   1.50000000E-01   3.24125216E-05  -3.61876936E-01   1.00282336E+00   6.73338691E-03   2.09364619E-02   2.46867100E-01
+           200   2.00000000E-01   6.04011147E-05  -1.87014768E+00   1.00371009E+00   6.73338691E-03   2.09364619E-02   2.46595059E-01
+=== refined_yp82_rect_redblack  n=2  (2026-09-14 03:59:56)
+           150   1.50000000E-01   3.24125216E-05  -3.61876936E-01   1.00282336E+00   6.73338691E-03   2.09364619E-02   1.36587513E-01
+           200   2.00000000E-01   6.04011147E-05  -1.87014768E+00   1.00371009E+00   6.73338691E-03   2.09364619E-02   1.36401865E-01
+=== refined_yp82_rect_redblack  n=4  (2026-09-14 04:00:31)
+           150   1.50000000E-01   3.24125216E-05  -3.61876936E-01   1.00282336E+00   6.73338691E-03   2.09364619E-02   7.80240867E-02
+           200   2.00000000E-01   6.04011147E-05  -1.87014768E+00   1.00371009E+00   6.73338691E-03   2.09364619E-02   7.79043100E-02
+=== refined_yp82_rect_redblack  n=8  (2026-09-14 04:00:52)
+           150   1.50000000E-01   3.24125216E-05  -3.61876936E-01   1.00282336E+00   6.73338691E-03   2.09364619E-02   4.87743533E-02
+           200   2.00000000E-01   6.04011147E-05  -1.87014768E+00   1.00371009E+00   6.73338691E-03   2.09364619E-02   4.86505005E-02
+=== refined_yp82_rect_redblack  n=16  (2026-09-14 04:01:08)
+           150   1.50000000E-01   3.24125216E-05  -3.61876936E-01   1.00282336E+00   6.73338691E-03   2.09364619E-02   3.52695127E-02
+           200   2.00000000E-01   6.04011147E-05  -1.87014768E+00   1.00371009E+00   6.73338691E-03   2.09364619E-02   3.51854095E-02
+=== refined_big_rect_jacobi  n=4  (2026-09-14 04:01:21)
+           150   1.50000000E-01   9.27358772E-06   1.77076522E+00   1.00187682E+00   1.34667289E-02   2.09364619E-02   3.46729913E-01
+           200   2.00000000E-01   9.22705678E-06   1.84540370E+00   1.00219265E+00   1.34667289E-02   2.09364619E-02   3.46136770E-01
+=== refined_big_rect_jacobi  n=8  (2026-09-14 04:02:41)
+           150   1.50000000E-01   9.27358772E-06   1.77076522E+00   1.00187682E+00   1.34667289E-02   2.09364619E-02   1.85487979E-01
+           200   2.00000000E-01   9.22705678E-06   1.84540370E+00   1.00219265E+00   1.34667289E-02   2.09364619E-02   1.85153245E-01
+=== refined_big_rect_jacobi  n=16  (2026-09-14 04:03:27)
+           150   1.50000000E-01   9.27358772E-06   1.77076522E+00   1.00187682E+00   1.34667289E-02   2.09364619E-02   1.08253679E-01
+           200   2.00000000E-01   9.22705678E-06   1.84540370E+00   1.00219265E+00   1.34667289E-02   2.09364619E-02   1.07893294E-01
+=== matrix done 2026-09-14 04:03:56
+
+# The campaign, re-measured at the corrected rank-to-GPU mapping
+
+Same 23-run matrix as `results_horeka_2026-09-07.md` (`run_matrix.sh`,
+`--map-by numa --bind-to core`, 400 steps), run twice in ONE allocation:
+`ref` is the pre-change binary (`device = local_rank mod ndev`), `new`
+the topology-aware mapping. The two columns differ only in the mapping.
+
+## s/step, and what the mapping is worth
+
+| config | ranks | ref | new | gain |
+|---|---|---|---|---|
+| `base_jacobi` | 1 | 0.68328 | 0.68020 | **+0.4 %** |
+| `base_jacobi` | 2 | 0.34926 | 0.34317 | **+1.7 %** |
+| `base_jacobi` | 4 | 0.18634 | 0.18003 | **+3.4 %** |
+| `base_jacobi` | 8 | 0.10277 | 0.09737 | **+5.2 %** |
+| `base_jacobi` | 16 | 0.06008 | 0.05485 | **+8.7 %** |
+| `rect_jacobi` | 1 | 0.71790 | 0.71631 | **+0.2 %** |
+| `rect_jacobi` | 2 | 0.38221 | 0.37570 | **+1.7 %** |
+| `rect_jacobi` | 4 | 0.19936 | 0.19271 | **+3.3 %** |
+| `rect_jacobi` | 8 | 0.10847 | 0.10152 | **+6.4 %** |
+| `rect_jacobi` | 16 | 0.06790 | 0.06031 | **+11.2 %** |
+| `refined_yp82_rect_jacobi` | 1 | 0.32386 | 0.32027 | **+1.1 %** |
+| `refined_yp82_rect_jacobi` | 2 | 0.17872 | 0.17072 | **+4.5 %** |
+| `refined_yp82_rect_jacobi` | 4 | 0.09962 | 0.09075 | **+8.9 %** |
+| `refined_yp82_rect_jacobi` | 8 | 0.05981 | 0.05137 | **+14.1 %** |
+| `refined_yp82_rect_jacobi` | 16 | 0.04124 | 0.03344 | **+18.9 %** |
+| `refined_yp82_rect_redblack` | 1 | 0.24658 | 0.24309 | **+1.4 %** |
+| `refined_yp82_rect_redblack` | 2 | 0.13640 | 0.12786 | **+6.3 %** |
+| `refined_yp82_rect_redblack` | 4 | 0.07790 | 0.06912 | **+11.3 %** |
+| `refined_yp82_rect_redblack` | 8 | 0.04862 | 0.04013 | **+17.5 %** |
+| `refined_yp82_rect_redblack` | 16 | 0.03514 | 0.02703 | **+23.1 %** |
+| `refined_big_rect_jacobi` | 4 | 0.34612 | 0.33776 | **+2.4 %** |
+| `refined_big_rect_jacobi` | 8 | 0.18515 | 0.17677 | **+4.5 %** |
+| `refined_big_rect_jacobi` | 16 | 0.10760 | 0.09766 | **+9.2 %** |
+
+## Per-round `mpi_wait`
+
+| config | n=1 | n=2 | n=4 | n=8 | n=16 |
+|---|---|---|---|---|---|
+| `base_jacobi` (ref) | - | 42.7 us | 116.5 us | 128.9 us | 147.9 us |
+| `base_jacobi` (new) | - | 32.1 us | 118.7 us | 115.4 us | 144.0 us |
+| `rect_jacobi` (ref) | - | 45.6 us | 64.4 us | 74.5 us | 173.9 us |
+| `rect_jacobi` (new) | - | 35.7 us | 54.8 us | 63.8 us | 157.0 us |
+| `refined_yp82_rect_jacobi` (ref) | - | 38.9 us | 59.3 us | 51.6 us | 82.7 us |
+| `refined_yp82_rect_jacobi` (new) | - | 27.3 us | 43.7 us | 46.1 us | 96.8 us |
+| `refined_yp82_rect_redblack` (ref) | - | 33.4 us | 54.4 us | 53.4 us | 81.1 us |
+| `refined_yp82_rect_redblack` (new) | - | 25.1 us | 36.6 us | 45.2 us | 85.8 us |
+| `refined_big_rect_jacobi` (ref) | - | - | 67.8 us | 85.4 us | 132.8 us |
+| `refined_big_rect_jacobi` (new) | - | - | 58.3 us | 66.5 us | 101.7 us |
+
+## Block tax — inverse per-GPU throughput `t_step * n / cells` (ns)
+
+| ranks | Mcell/GPU | base ref | base new | rect ref | rect new | **tax ref** | **tax new** |
+|---|---|---|---|---|---|---|---|
+| 1 | 138.41 | 4.937 | 4.914 | 5.187 | 5.175 | **1.051** | **1.053** |
+| 2 | 69.21 | 5.047 | 4.959 | 5.523 | 5.429 | **1.094** | **1.095** |
+| 4 | 34.60 | 5.385 | 5.203 | 5.761 | 5.569 | **1.070** | **1.070** |
+| 8 | 17.30 | 5.940 | 5.628 | 6.269 | 5.868 | **1.055** | **1.043** |
+| 16 | 8.65 | 6.946 | 6.341 | 7.849 | 6.972 | **1.130** | **1.100** |
+
+## Strong-scaling efficiency (vs each config's smallest rank count)
+
+| config | n=1 | n=2 | n=4 | n=8 | n=16 |
+|---|---|---|---|---|---|
+| `base_jacobi` (ref) | 100 % | 98 % | 92 % | 83 % | 71 % |
+| `base_jacobi` (new) | 100 % | 99 % | 94 % | 87 % | 78 % |
+| `rect_jacobi` (ref) | 100 % | 94 % | 90 % | 83 % | 66 % |
+| `rect_jacobi` (new) | 100 % | 95 % | 93 % | 88 % | 74 % |
+| `refined_yp82_rect_jacobi` (ref) | 100 % | 91 % | 81 % | 68 % | 49 % |
+| `refined_yp82_rect_jacobi` (new) | 100 % | 94 % | 88 % | 78 % | 60 % |
+| `refined_yp82_rect_redblack` (ref) | 100 % | 90 % | 79 % | 63 % | 44 % |
+| `refined_yp82_rect_redblack` (new) | 100 % | 95 % | 88 % | 76 % | 56 % |
+| `refined_big_rect_jacobi` (ref) | - | - | 100 % | 93 % | 80 % |
+| `refined_big_rect_jacobi` (new) | - | - | 100 % | 96 % | 86 % |
+
+## Headline 1 — the 2:1 machinery, like for like
+
+`refined_big_rect_jacobi` shares grid, block shape and solver with
+`rect_jacobi`; it just refines one y-tile. Cost of the ADDED cells
+against the coarse cells beside them:
+
+| ranks | binary | rect s/step | big s/step | ns per EXTRA cell | vs coarse-cell avg |
+|---|---|---|---|---|---|
+| 4 | ref | 0.19936 | 0.34612 | 1.4138 | **0.982x** |
+| 4 | new | 0.19271 | 0.33776 | 1.3973 | **1.004x** |
+| 8 | ref | 0.10847 | 0.18515 | 0.7387 | **0.943x** |
+| 8 | new | 0.10152 | 0.17677 | 0.7248 | **0.988x** |
+| 16 | ref | 0.06790 | 0.10760 | 0.3824 | **0.779x** |
+| 16 | new | 0.06031 | 0.09766 | 0.3598 | **0.826x** |
+
+## Headline 3 — red-black against Jacobi
+
+| binary | n=1 | n=2 | n=4 | n=8 | n=16 |
+|---|---|---|---|---|---|
+| ref | 0.761 | 0.763 | 0.782 | 0.813 | 0.852 |
+| new | 0.759 | 0.749 | 0.762 | 0.781 | 0.808 |
+=== scaling2 job finished ===
+
+============================= JOB FEEDBACK =============================
+
+Job ID: 5142973
+Cluster: hk
+User/Group: xt8786/hk-project-exasim
+Account: hk-project-exasim
+State: COMPLETED (exit code 0)
+Partition: accelerated
+Nodes: 4
+Cores per node: 80
+Nodelist: hkn[0620-0621,0627,0632]
+CPU Utilized: 02:07:05
+CPU Efficiency: 1.04% of 8-11:28:00 core-walltime
+Job Wall-clock time: 00:38:09
+Starttime: Mon Sep 14 03:25:47 2026
+Endtime: Mon Sep 14 04:03:56 2026
+Memory Utilized: 45.59 GB
+Memory Efficiency: 2.35% of 1.90 TB (485.84 GB/node)
+Energy Consumed: 5984986 Joule / 1662.49611111111 Watthours
+Average node power draw: 2614.67278287462 Watt

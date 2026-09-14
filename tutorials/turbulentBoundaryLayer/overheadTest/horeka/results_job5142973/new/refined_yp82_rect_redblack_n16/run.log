@@ -1,0 +1,64 @@
+      __. - ~ ~ ~ - .
+_   ,//           __  ' ,
+ \  ||       __--  --    ,   ~~~~
+ , \|____---    o       ~~~    ~~~~
+,    _            __/   ~~ ,  ~~~               mobyDiff
+,       ---/ / __--   ~~   ,~~                  commit: 7aa1c7b
+ ,          /       ~~   ~~
+  ,         ~~~ ~~~     ~~,
+    ,    ~~~           , '
+      ' - , _ _ _ ,  '
+
+
+ reading input data...
+MPI Cartesian dimensions: 4 2 2
+ gpu binding (this node): 0->dev0 1->dev2 2->dev3 3->dev1   MOBY_GPU_ORDER unset (devices used in index order)
+ initialising grid...
+ block refinement:          448 leaves,          256 refined
+ exchange sizes: peers/rank(max) 2  send pts/rank min 23000 max 46000  total send pts 690000  local copy pts 5734680
+ exchange MB per round (all ranks): scalar nv=1      5.520   copy-only nv=3     16.344   full nv=4     22.080
+ exchange by op: copy      local pts      4688280 entries       4160  send pts       681000 entries       1620
+ exchange by op: restrict  local pts       208000 entries        768  send pts         3000 entries        240
+ exchange by op: prolong   local pts       838400 entries       1920  send pts         6000 entries        360
+ OpenMP target devices available:            4
+ initialising fields...
+ initialising pressure solver...
+ initialising IBM...
+ initialising body force...
+ trip forcing: amp= 3.000E-02 x0= 1.500E+01 ts= 4.000E+00 nmodes=24
+ warning: boundaryLayer stats assume a single level; refinement ignored
+ main loop starting...
+iteration time L2_div global_div Linf_vel CFL Peclet wall_seconds_per_step
+        50   5.00000000E-02   3.85112708E-05   9.76497362E-01   1.00140665E+00   6.73338691E-03   2.09364619E-02   2.78387820E-02
+       100   1.00000000E-01   3.45645498E-05   9.32365598E-01   1.00219187E+00   6.73338691E-03   2.09364619E-02   2.74087500E-02
+       150   1.50000000E-01   3.24125216E-05  -3.61876936E-01   1.00282336E+00   6.73338691E-03   2.09364619E-02   2.72673460E-02
+       200   2.00000000E-01   6.04011147E-05  -1.87014768E+00   1.00371009E+00   6.73338691E-03   2.09364619E-02   2.70889445E-02
+ main loop ended...
+timing: nsteps 200 loop_seconds   5.40566300E+00 seconds_per_step   2.70283150E-02
+step_timing: momentum calls 600 nsteps 200 seconds   8.92824100E-01 seconds_per_step   4.46412050E-03 seconds_per_call   1.48804017E-03
+step_timing: ibm_mu calls 600 nsteps 200 seconds   1.93679800E-01 seconds_per_step   9.68399000E-04 seconds_per_call   3.22799667E-04
+step_timing: bodyforce calls 600 nsteps 200 seconds   3.35005300E-01 seconds_per_step   1.67502650E-03 seconds_per_call   5.58342167E-04
+step_timing: turbulence calls 0 nsteps 200 seconds   0.00000000E+00 seconds_per_step   0.00000000E+00 seconds_per_call   0.00000000E+00
+step_timing: apply_bc calls 600 nsteps 200 seconds   2.56423000E-02 seconds_per_step   1.28211500E-04 seconds_per_call   4.27371667E-05
+step_timing: vel_exchange calls 600 nsteps 200 seconds   1.18311800E-01 seconds_per_step   5.91559000E-04 seconds_per_call   1.97186333E-04
+step_timing: projection calls 600 nsteps 200 seconds   3.68127840E+00 seconds_per_step   1.84063920E-02 seconds_per_call   6.13546400E-03
+step_timing: io_stats calls 200 nsteps 200 seconds   1.58703400E-01 seconds_per_step   7.93517000E-04 seconds_per_call   7.93517000E-04
+step_timing: total_measured calls 3800 nsteps 200 seconds   5.40544510E+00 seconds_per_step   2.70272255E-02 seconds_per_call   1.42248555E-03
+step_timing: coverage measured   5.40544510E+00 loop_seconds   5.40566300E+00 fraction   1.0000
+proj_timing: sweep calls 3600 nsteps 200 seconds   1.64496530E+00 seconds_per_step   8.22482650E-03 seconds_per_call   4.56934806E-04
+proj_timing: apply calls 3600 nsteps 200 seconds   2.98519500E-01 seconds_per_step   1.49259750E-03 seconds_per_call   8.29220833E-05
+proj_timing: phi_exchange calls 3600 nsteps 200 seconds   8.34241800E-01 seconds_per_step   4.17120900E-03 seconds_per_call   2.31733833E-04
+proj_timing: vel_exchange calls 3600 nsteps 200 seconds   7.37310800E-01 seconds_per_step   3.68655400E-03 seconds_per_call   2.04808556E-04
+proj_timing: apply_bc calls 3600 nsteps 200 seconds   1.52809100E-01 seconds_per_step   7.64045500E-04 seconds_per_call   4.24469722E-05
+proj_timing: setup calls 600 nsteps 200 seconds   1.23229000E-02 seconds_per_step   6.16145000E-05 seconds_per_call   2.05381667E-05
+proj_timing: total_measured calls 18600 nsteps 200 seconds   3.68016940E+00 seconds_per_step   1.84008470E-02 seconds_per_call   1.97858570E-04
+exch_timing: pack calls 7800 nsteps 200 seconds   2.44375000E-01 seconds_per_step   1.22187500E-03 seconds_per_call   3.13301282E-05
+exch_timing: mpi_post calls 7800 nsteps 200 seconds   4.32992000E-02 seconds_per_step   2.16496000E-04 seconds_per_call   5.55117949E-06
+exch_timing: mpi_wait calls 7800 nsteps 200 seconds   6.69384600E-01 seconds_per_step   3.34692300E-03 seconds_per_call   8.58185385E-05
+exch_timing: unpack calls 7800 nsteps 200 seconds   2.10219700E-01 seconds_per_step   1.05109850E-03 seconds_per_call   2.69512436E-05
+exch_timing: local_copy calls 7800 nsteps 200 seconds   3.68630800E-01 seconds_per_step   1.84315400E-03 seconds_per_call   4.72603590E-05
+exch_timing: skew_barrier calls 0 nsteps 200 seconds   0.00000000E+00 seconds_per_step   0.00000000E+00 seconds_per_call   0.00000000E+00
+exch_timing: copy_cross calls 4800 nsteps 200 seconds   1.49833100E-01 seconds_per_step   7.49165500E-04 seconds_per_call   3.12152292E-05
+exch_timing: total_measured calls 43800 nsteps 200 seconds   1.68574240E+00 seconds_per_step   8.42871200E-03 seconds_per_call   3.84872694E-05
+ exchange balance: mpi_wait seconds min   6.69384600E-01 mean   8.68759162E-01 max   9.54228800E-01  max/min     1.43  slowest rank 8
+ current time step:           200    field filename: overhead_200.h5
