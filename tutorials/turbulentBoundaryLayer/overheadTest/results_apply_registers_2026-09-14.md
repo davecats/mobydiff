@@ -116,8 +116,12 @@ about the same rate as the saving.
 
 ## 6 — What is predicted at 16 ranks, and not yet measured
 
-The 4-node job (5145101) is queued behind the `accelerated` partition, three days
-out at submission. From the committed pre-change phase table (job 5142973, `new`
+The 4-node job (**5145120**) is queued behind the `accelerated` partition, three
+days out at submission. It builds from a PINNED worktree at `6708193`
+(`$WS/moby-2to1-applynew`), not from the live tree, so that further work on the
+projection cannot silently contaminate a job that runs days later — the first
+submission (5145101) did read the live tree and was cancelled and replaced for
+exactly that reason. From the committed pre-change phase table (job 5142973, `new`
 column), at 16 ranks `apply` is **20.77 ms of a 60.31 ms step (34.4 %)** for
 `rect` and **11.06 of 33.44 (33.1 %)** for `refined_yp82` — which, incidentally,
 is the measurement that `results_horeka_2026-09-14.md` §6 said was still owed:
@@ -127,7 +131,7 @@ If the fractional reduction holds at 16 ranks, `apply` becomes ~16.2 / ~8.8 ms,
 i.e. **~4.5 / ~2.2 ms/step saved, −7.5 % / −6.6 % of the step**, and `apply`'s
 share falls to about 28 %. **This is a prediction.** It may come out lower: at 16
 ranks each GPU holds 8.6 / 3.8 Mcell, so the kernel has fewer waves to fill and
-occupancy buys less. Job 5145101 settles it; until it reports, no 16-rank number
+occupancy buys less. Job 5145120 settles it; until it reports, no 16-rank number
 from this change should be quoted.
 
 ## 7 — Gates

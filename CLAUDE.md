@@ -1023,8 +1023,9 @@ immersed boundary. Phased, each phase verified before the next:
   points) and the 7-case suite at max_abs 0 incl. every RANS scalar, CPU and GPU,
   deliberately WITHOUT nofma. L1 (splitting the high-face planes into their own
   kernel) was NOT taken and should not be -- it costs a launch and the threshold
-  it was for is already crossed. The 16-rank A/B (job 5145101) was still queued
-  on `accelerated` when this was written, so the 16-rank figures in that report's
+  it was for is already crossed. The 16-rank A/B (job 5145120, built from a
+  PINNED worktree so later work cannot contaminate it) was still queued on
+  `accelerated` when this was written, so the 16-rank figures in that report's
   section 6 are a PREDICTION, not a measurement. NEXT, and cheap:
   **`compute_rdenom` is at 110 registers**, the highest in the projection, and
   `proj_timing: setup` is ~2.3 ms/step at 16 ranks -- `face_grad_denom` is static

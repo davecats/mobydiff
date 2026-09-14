@@ -17,8 +17,9 @@
 > Full report, with what the numbers do not support and the next lever
 > (`compute_rdenom`, 110 registers, the same hoist verbatim):
 > `tutorials/turbulentBoundaryLayer/overheadTest/results_apply_registers_2026-09-14.md`.
-> The 16-rank A/B (job 5145101) is still queued; §6 there is a prediction, not a
-> measurement.
+> The 16-rank A/B (job **5145120**, built from the pinned worktree
+> `$WS/moby-2to1-applynew` at `6708193`) is still queued; §6 there is a
+> prediction, not a measurement.
 >
 > Everything below is the handout as written, kept for the reasoning it records.
 
