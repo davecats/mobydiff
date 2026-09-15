@@ -1,17 +1,23 @@
 # Conjugate pipe flow vs Neuhauser (NekRS, body-fitted) — session handout
 
-STATUS: written 2026-09-15 on branch `scalar` as PLANNED; **every feature gap
-is now closed and the campaign can run.**
-UPDATE 2026-09-15: (a) the §1 **PIN DOWN is resolved** — and the reading this
-handout was written with was WRONG; its consequences for dt and for the
-transient legs are folded into §5. (b) **F1 (`source_dir`) and F5 (the annulus
-STL) are implemented and gated** — §3 and §3a. (c) **F2 is DONE** — §3 and the
-new §3b — but NOT as this handout proposed: the per-leaf mask field turned out
-to be unnecessary, because φ already carries the shell. Read §3's F2 entry
-before writing any case ini. **Nothing on the critical path is left; §4 and §5
-are the next session's work.**
-Everything below marked *measured* was read out of the dataset itself in the
-session that wrote this; everything marked *estimate* is not.
+STATUS (2026-09-15, branch `scalar`, through commit `a9efce9`): **every
+feature gap is closed and gated. The next session BUILDS AND RUNS the case.**
+Start at §0, which is the runbook; §1–§3b are the reference behind it.
+
+History of this file, so its layers read straight: it was written as a PLAN,
+and three things then changed under it. (a) The §1 **PIN DOWN is resolved**,
+and the reading the plan shipped with was WRONG — `solid_k` = λ_sf and
+`solid_rhocp` = 1/(K²λ_sf). (b) **F1** (`source_dir`) and **F5** (the annulus
+STL) landed — §3, §3a. (c) **F2 landed, but NOT as planned**: the per-leaf
+mask field is unnecessary because φ already carries the shell — §3, §3b. Read
+§3's F2 entry before writing any case ini.
+
+Three kinds of claim appear below and they are not equally strong.
+*measured* = read out of Neuhauser's dataset or out of a gate; *gated* = a
+number in `validation/conjugate/README.md` with a script behind it;
+*derived here* = arithmetic done while writing, correct as algebra but never
+run. §0's numbers are mostly the third kind — **re-derive from the solver's
+own reported `dt` and `s/step` before committing a long run.**
 
 Data: `validation/conjugate/neuhauser_data/10.35097-26za20q32xsz43yk/data/dataset`
 (23 GB, BagIt). Jonathan Neuhauser, *Conjugate Heat Transfer in Turbulent Pipe
@@ -25,8 +31,145 @@ eightfold refinement range — where every previous conjugate validation
 (Flageul channel, slab gates) was a flat wall and therefore *exact*. This
 campaign is the first test of the scheme on the geometry where it is weakest.
 That is the point of running it, and it is also why **two grids are
-mandatory** (§5): at first order a single grid cannot separate scheme error
-from physics.
+mandatory** (§0.2, §6.6): at first order a single grid cannot separate scheme
+error from physics.
+
+---
+
+## 0. Runbook — what the next session actually does
+
+The features are done; what is left is a CAMPAIGN. Do it in this order,
+because each step is the thing that makes the next one interpretable.
+
+### 0.1 Build the geometry and the case file
+
+```bash
+cd validation/conjugate
+# domain [0,1.3]^2 x [0,12.5], pipe axis z, wall at r = 0.5, shell to r = 0.6
+~/ibmc/bin/python ./make_geometry_stl.py annulus pipe.stl \
+    --axis z --centre 0.65 0.65 --r-inner 0.5 --box-half 1.25 \
+    --facets 16384 --a0 -1.0 --a1 13.5 --domain-half 0.65
+mpirun -n 4 ../../build_cpu/moby_prepare pipe_prep.ini pipe_coarse.h5
+```
+
+`pipe_prep.ini` has to be written; `pipe_geom.ini` (the F5 gate's
+prepare-only template, same geometry with placeholders) is the right thing to
+start from. `--box-half 1.25` is the F5 gate's padding, measured to leave the
+pipe wall the nearest surface everywhere inside the domain by a margin 0.21.
+Prepare with the **CPU** build (canonical; the GPU build computes `coef` on the
+device and differs by libm ulps), and the prepare ini **must carry a
+`[scalar]` section** or the case file gets no `coef_p_blocks` and the solver
+refuses it. Expect prepare to be minutes, not seconds, at these sizes.
+
+### 0.2 Two grids, both with `nb = 32` (*derived here*)
+
+`nb` must divide the global grid in EVERY direction, which is what picks these
+numbers — not roundness. δ_v = 2.7593e-3.
+
+| | n_x = n_y | n_z | Δ⁺ | Δz⁺ | cells | shell cells | `nb` |
+|---|---|---|---|---|---|---|---|
+| coarse | 160 | 320 | 2.94 | 14.2 | **8.2 M** | 12.3 | 32 |
+| fine | 256 | 448 | 1.84 | 10.1 | **29.4 M** | 19.7 | 32 |
+
+**Run the coarse grid end to end FIRST.** It is 3.6× smaller and ~2.6× looser
+in `dt`, so the whole campaign fits in hours instead of days, it produces every
+figure, and it is one of the two grids §6.6 needs anyway. Only then commit the
+fine one.
+
+Cross-section occupancy is fixed by the geometry: **46.5 % fluid, 20.4 % shell,
+33.1 % jacket.** The jacket is inert, so a third of the cells do no thermal
+work — see §7.6.
+
+### 0.3 The numbers that are not free (*derived here — check them*)
+
+`source` sets the temperature scale and the scalar is passive and linear, so
+**take `source = 1.0`** and normalise everything by each run's own `θ_τ`. Then
+
+* **the sink is fixed by the balance, and it is PER SCALAR.** The fluid
+  generates `source·u_b·πR²` per unit length; the shell must remove it, and the
+  shell's volumetric power density is `C_s · solid_source` (the kernel divides
+  the flux divergence by the capacity, so `solid_source` is a rate of change of
+  θ, not a power). Hence
+
+      C_s · |solid_source| = source · u_b · R²/(R_o² − R²) = 2.272727 · source
+
+  and `solid_source` must be scaled by `1/solid_rhocp` for each scalar. Get
+  this wrong and the five conjugate scalars carry five different wall fluxes,
+  which quietly destroys the whole comparison:
+
+  | isc | K | λ_sf | `solid_k` | `solid_rhocp` | `solid_source` |
+  |---|---|---|---|---|---|
+  | 0 | 1 | 1 | 1 | 1 | −2.272727 |
+  | 1 | 1 | 2 | 2 | 0.5 | −4.545455 |
+  | 2 | 1 | 0.5 | 0.5 | 2 | −1.136364 |
+  | 3 | 4 | 1 | 1 | 0.0625 | −36.363636 |
+  | 4 | 0.25 | 1 | 1 | 16 | −0.142045 |
+
+  The discrete fluid area and the discrete `u_b` are not exactly πR² and 1, so
+  the balance will not close exactly. A residual imbalance is NOT harmless —
+  it settles into a uniform ramp `λt` plus an O(λ) distortion of the profile —
+  so **measure it**: `[scalar] heat_interval` (the C3 Nusselt branch, gated
+  three ways) reports the interface heat directly, and `d⟨θ⟩/dt` reports the
+  ramp. Correct `solid_source` once after the first leg and say by how much.
+
+* **`dt` is set by isc 3's SOLID-SIDE CUT CELLS**, not by convection and not by
+  the fluid. Those cells carry `C = 1/16` and the C3 cut-cell `share = 2`:
+  coarse **2.1e-3**, fine **8.1e-4** (convection allows ~1.2e-2 / ~8.6e-3, the
+  fluid scalar limit ~1e-1 / ~4e-2). The insulated jacket contributes nothing —
+  every one of its face coefficients is zero. Read the solver's own reported
+  `dt` and believe it over this table.
+
+### 0.4 The legs
+
+| leg | what | why |
+|---|---|---|
+| **A — hydrodynamics, NO scalars** | `[scalar] count = 0`, develop the pipe, then a stats window | §6.1: if the velocity does not match Neuhauser, nothing thermal means anything — and this isolates the IBM pipe from the conjugate scheme. It is also much cheaper than a thermal leg and produces the restart the others start from. **Do not skip it.** |
+| **B — thermal transient** | add the 7 scalars, restart A's velocity, isc 4 temporarily at `solid_rhocp = 1` | reaches the thermal fixed point fast |
+| **C — settle** | restore isc 4's `solid_rhocp = 16` | only the FLUCTUATION field has to re-equilibrate, which is fast (see below) |
+| **D — statistics** | accumulate, `stats_layout = plane` | the campaign's product |
+
+**The C_s accelerator removes the 600 D/u_b settle entirely, and that is worth
+seeing clearly.** isc 4's solid diffusion time `d²/α_s ≈ 600 D/u_b` is the time
+for the solid MEAN to diffuse through the shell — and the mean is exactly what
+C1 gated as **capacity-independent**: the steady state solves ∇·(κ∇θ) + S = 0,
+in which C does not appear, and isc 4 has the same κ_s as isc 0. So leg B may
+run isc 4 at `solid_rhocp = 1` (α_s = α_f, ~2 D/u_b) and leg C restores 16 with
+the mean already correct; only θ′ in the solid has to adjust, and its
+penetration depth at turbulent frequencies is a small fraction of the shell.
+**Verify rather than assume**: after restoring, check the solid mean profile
+does not move. (Direction matters — REDUCING C_s speeds the approach.
+Inflating it slows it; an earlier draft of §5 had this backwards.)
+
+### 0.5 Cost (*derived here from one measured point — MEASURE IT AGAIN*)
+
+The one measured point is **0.111 s/step for 13.8 M cells with 6 scalars on
+istmcorax (RTX 5090)**. Scaling by cells and by scalar count:
+
+| | s/step | steps per D/u_b | per D/u_b | 700 D/u_b |
+|---|---|---|---|---|
+| coarse | ~0.077 | 476 | ~37 s | **~7 h** |
+| fine | ~0.28 | 1235 | ~5.8 min | **~67 h** |
+
+Neuhauser's own `cht_short` window is **≈ 4400 D/u_b**, six times 700, so quote
+batch-means error bars from their `time` axis and do not over-claim agreement
+inside them (§7.4). The 67 h is the statistics leg alone — which is the second
+reason to run the coarse grid first.
+
+### 0.6 What has to be written
+
+* a driver script in the repo (home is shared across the remote hosts, `/tmp`
+  is not — see the `remote-hosts` memory);
+* **`pipe_stats.py`** — radial binning of the z-averaged (x,y) plane the
+  scalar statistics produce, plus the VELOCITY statistics, which have to come
+  from snapshots because the stats module is y-profiles (§3, F4);
+* a comparison script against `.interp.zarr` using THEIR definitions (§2).
+
+Two mechanics worth knowing before you hit them: leg A runs `[scalar] count =
+0` against a case file that DOES carry `coef_p_blocks` (§0.1) — harmless, the
+solver only reads it when scalars are configured — and leg B restarts from a
+snapshot with no scalar datasets in it, which the named-scalar io handles by
+reinitialising and warning. Neither is an error; both look like one the first
+time.
 
 ---
 
@@ -149,7 +292,13 @@ the two cases that have none and understated α_s by 16×.**
 *This also CONFIRMS the control mapping below*: MBC carries θ'_rms ≈ 0 at the
 interface (0.4 % of the conjugate case) ⇒ `ibm_wall = dirichlet` — it is the
 Kasagi "mixed" idealisation, constant mean flux with isothermal fluctuations —
-and IF carries the largest θ'_rms with zero fluctuating flux ⇒ `adiabatic`.
+and IF carries the largest θ'_rms with zero fluctuating flux.
+
+**But `adiabatic` is NOT the right solver mode for IF** — that inference was
+made here from the FLUCTUATION behaviour alone and it does not survive the
+mean. Neuhauser's IF wall carries a constant NONZERO flux; `adiabatic` carries
+none, so the fluid never loses its heat. §4 has the argument and a substitute
+that is exactly expressible today at no cost in `dt`.
 
 ---
 
@@ -386,7 +535,7 @@ mask field" list in `validation/conjugate/README.md`.
 | `banddet` | banded conjugate run: 1 == 4 ranks == **GPU**, `max_abs 0`. |
 | inert by default | `run_bitexact{,_s3}.sh` vs `~/f1_ref_binaries`: 7-case and 9-case suites **max_abs 0, CPU AND GPU**; the whole C1 gate suite re-run unchanged; `scalar_test` gained 17 band assertions. |
 
-**One time-step note**, for whoever re-derives §5's `dt`: a material interface
+**One time-step note**, for whoever re-derives §0.3's `dt`: a material interface
 inside the solid excites the same extreme Gershgorin mode a cut cell does, so
 a band cell takes the cut-cell `share = 2` — but ONLY when
 `solid_outer_k > 0`. An insulated jacket can only remove face coefficients,
@@ -396,88 +545,120 @@ costs nothing.
 
 ---
 
-## 4. Setting the case up
+## 4. Setting the case up — the reference ini
+
+§0.1–§0.3 carry the numbers; this is the shape of the input.
 
 ```
 axis            z (periodic), L_z = 12.5
-cross-section   [-0.65, 0.65]^2  (r = 0.6 solid, insulating jacket beyond)
-geometry        make_geometry_stl.py annulus --axis z --r-inner 0.5
-                    --box-half <clears the corner> --facets 16384   [F5, done]
-nu              1.8868e-4                 [flow] re = 5300
-forcing_z       1.8703e-2   = 2 u_tau^2/R   (gives Re_tau = 181, u_b ~ 1)
-scalars         7   (5 conjugate + dirichlet + adiabatic controls)
+cross-section   [0, 1.3]^2, pipe centred at (0.65, 0.65)
+                r < 0.5 fluid; 0.5 < r < 0.6 conjugate SHELL; beyond, the
+                inert jacket, which is where the box corners go
+nu              1.8868e-4                     [flow] re = 5300
+forcing_z       1.8702750564e-2 = 2 u_tau^2/R  (gives Re_tau = 181, u_b ~ 1)
 Pr              0.71
-required        keep_buried = true, remove_solid = false, no wall functions
+periodic        z only; the x and y faces are walls INSIDE the jacket, so
+                whatever they impose on the scalar never reaches the fluid --
+                the F2 `insulate` gate measured exactly that, a Dirichlet
+                face inside an insulated band staying disconnected
+required        remove_solid = false, keep_buried = true if refine_body,
+                no wall functions, no ibm_value on a conjugate scalar
 ```
 
-and each of the five conjugate scalars, with (K, λ_sf) from §1's table:
+The driving force is *derived from the measured u_τ*, so **Re_b is an
+outcome**: check it lands near 1 and say what it is rather than tuning the
+forcing to make it 1.
+
+Each of the five conjugate scalars (values in §0.3):
 
 ```
 [scalar.N]
 pr                = 0.71
 source_type       = velocity        ; Kasagi
-source            = <beta>
+source            = 1.0             ; sets the temperature scale; normalise by theta_tau
 source_dir        = z               ; F1 -- the pipe axis
 ibm_wall          = conjugate
-solid_k           = <lambda_sf>     ; = kappa_s/kappa_f       [see PIN DOWN]
+solid_k           = <lambda_sf>                 [see PIN DOWN in Section 1]
 solid_rhocp       = <1/(K^2 lambda_sf)>
 solid_thickness   = 0.1             ; F2 -- the shell; beyond it, the jacket
 solid_outer_k     = 0.0             ; (the default) an exact insulator
-solid_source      = <-beta u_b/(2 d) ...>   ; the F3 substitute sink; SHELL only
+solid_source      = <-2.272727/solid_rhocp>     ; F3's substitute sink, SHELL only
 ```
 
-`solid_source` must remove exactly the heat the fluid source puts in, or the
-case has no steady state. Size it from the closed balance, then CHECK it
-against the interface-heat diagnostic (`[scalar] heat_interval`, the C3
-Nusselt branch) rather than trusting the arithmetic.
+**The sign convention, since it is easy to get backwards.** The kernel adds
+`source · w`, and the Kasagi reduction `T = βz + θ` gives `∂θ/∂t = … − βw`, so
+`source = −β`. Neuhauser's core is HOTTER than the wall (*measured*, §1): the
+fluid loses heat through the wall, its bulk temperature falls downstream
+(β < 0), and `source = −β > 0` is a volumetric HEATING. The shell sink is
+therefore negative. A sign error here does not blow up — it produces a
+perfectly converged, perfectly wrong case.
 
-The driving force is *derived from the measured u_τ*, so Re_b is an outcome;
-check it lands near 1 and say so rather than tuning. Grid (estimate):
-Δ⁺ ≈ 2 ⟹ Δ = 5.5e-3 ⟹ 224² in cross-section; Δz⁺ ≈ 10 ⟹ 448 in z;
-**≈ 22 M cells**. `refine_body` with a fine wall band could cut that ~3× and is
-a pass-2 optimisation — it needs `keep_buried` and the 2:1 precondition (no cut
-face on a coarse/fine block face), so do not take it on in pass 1.
+### The two controls, and a finding about one of them
+
+isc 5 (`MBC`, K → 0) and isc 6 (`IF`, isoflux) bracket the K sweep.
+
+**MBC → `ibm_wall = dirichlet` is exact and free.** Pinning θ in the solid
+gives zero fluctuation at the wall and leaves the mean flux an outcome, which
+is what "constant mean flux with isothermal fluctuations" means. (Doing it
+instead as a conjugate solid with κ_s → ∞ would be correct too and would cost
+`dt ~ 1/κ_s` — the cut-face coefficient is a harmonic mean, so it grows with
+κ_s. Don't.)
+
+**IF → `ibm_wall = adiabatic` is WRONG, and this handout said it was right
+(§1). *Derived here; check it before relying on either reading.*** Neuhauser's
+IF wall carries a constant NONZERO flux with zero fluctuation, i.e.
+`∂θ/∂r|_R = c ≠ 0`. `adiabatic` sets `c = 0` — so no heat leaves at all, the
+fluid heats without bound, and what it settles into is `θ = λt + φ(x)` with
+`λ = source·u_b` absorbed UNIFORMLY instead of at the wall. φ is not
+Neuhauser's IF mean, and since θ′ is driven by `u′·∇⟨θ⟩`, **θ′_rms is not
+comparable either.** The difference is concentrated exactly at the wall, where
+the real case has a steep mean gradient and the adiabatic one has none.
+
+*The substitute that IS exactly expressible today, at no cost in `dt`.* IF is
+the vanishing-effusivity solid, `K → ∞` with `K² = (κρc)_f/(κρc)_s`. Taking
+`κ_s = ρc_s = ε` gives `K = 1/ε`, `λ_sf = ε`, and **`α_s/α_f = K²λ_sf² = 1`** —
+the shell diffuses at the fluid rate, so it does not touch the time step (it is
+isc 3, at `α_s = 16 α_f`, that binds). The shell still conducts the mean heat
+to the same `solid_source` sink; its large mean temperature drop `q_w d/ε` is a
+constant offset in the SOLID and leaves the fluid-side profile alone. So:
+
+```
+[scalar.6]   ; the IF control
+ibm_wall        = conjugate
+solid_k         = 0.01      ; = eps  -> K = 100
+solid_rhocp     = 0.01      ; = eps  -> alpha_s = alpha_f, dt untouched
+solid_thickness = 0.1
+solid_source    = -227.2727 ; = -2.272727/0.01
+```
+
+Pick ε from precision, not from ambition: the interface jump grows like 1/ε
+against an O(1) θ′, so ε = 1e-2 is a sane first try and ε = 1e-3 the stress
+test. The K sweep (isc 3 is K = 4) already approaches IF from below, so the
+control has an independent trend to be consistent with — **that is the check
+to run before trusting it.**
 
 ---
 
 ## 5. Running it
 
-**istmcorax (RTX 5090, 32 GB) is the target** — measured 0.111 s/step on a
-13.8 M-cell conjugate channel with 6 scalars, ~6× the local 3060 per cell, and
-usually idle. It needs its own `build_gpu_corax/` (`-gpu=cc120`) and has no
-modulefile; `export PATH=/opt/Nvidia/nvhpc/Linux_x86_64/25.9/{compilers/bin,
+**istmcorax (RTX 5090, 32 GB) is the target** — the 0.111 s/step reference
+point of §0.5, ~6× the local 3060 per cell, and usually idle. It needs its own
+`build_gpu_corax/` (`-gpu=cc120`) and has no modulefile; `export
+PATH=/opt/Nvidia/nvhpc/Linux_x86_64/25.9/{compilers/bin,
 comm_libs/12.9/hpcx/latest/ompi/bin}`. istmcetus (2× A6000) is the fallback —
-**check `nvidia-smi` first, it is often someone else's**. Home is shared across
-the hosts; **`/tmp` is not**, so driver scripts and logs live in the repo.
-See the `remote-hosts` memory.
+**check `nvidia-smi` first, it is often someone else's**. Home is shared
+across the hosts; **`/tmp` is not**, so driver scripts and logs live in the
+repo. See the `remote-hosts` memory.
 
-Cost (estimate): convection sets dt ≈ 1.7e-3 (CFL 0.4, u_max ~ 1.3); the
-scalar-diffusion limit at Pr = 0.71 is ~10× looser *in the fluid*. **But the
-pin-down changed this: isc 3 has α_s = 16 α_f** (κ_s = κ_f with C_s = 1/16),
-and our limiter builds the rate from the actual face coefficient over the LOCAL
-capacity — so those solid cells run 16× the fluid scalar-diffusion rate and the
-scalar limit lands at ≈ 1.1e-3, i.e. **BELOW convection**. Expect dt ≈ 1.1e-3,
-a factor ~1.6 under the estimate below, on top of the C3 cut-cell share. At
-~0.2 s/step for 22 M cells × 7 scalars, ≈ 400 k steps ≈ 22 h buys ~700 D/u_b at
-the old dt — so budget **≈ 35 h**, and re-derive rather than trust this.
-Neuhauser's own `cht_short` window is t = 517 → 4942, i.e. **≈ 4400 D/u_b** —
-six times that.
+The legs, the accelerator and the cost are §0.4 and §0.5. Two things about
+them worth repeating where a reader will be standing when it matters:
 
-**And isc 4 sets the SETTLING time, symmetrically**: C_s = 16 gives
-α_s = α_f/16 and a solid diffusion time d²/α_s ≈ **600 D/u_b** — comparable to
-the entire planned statistics window, so its solid will still be equilibrating
-while everything else is converged. So plan the **three-leg structure that
-worked for the channel**: a cheap transient, a settle leg at the correct
-properties, and only then a statistics leg, extended until the batch-means
-error bars from Neuhauser's own `time` axis are matched.
-
-*On accelerating the transient — the direction matters and the earlier draft
-had it backwards.* To reach the solid's equilibrium faster you **REDUCE** C_s
-(raising α_s), never inflate it; inflating the capacity slows the approach.
-This is legitimate and already gated: C1's "capacity-independent steady state"
-gate says the fixed point does not depend on C_s at all, so a transient leg may
-run isc 4 at, say, C_s = 1 and restore C_s = 16 for the settle leg. isc 3 needs
-no such help (its solid equilibrates in ~2 D/u_b) — it is the one paying in dt.
+* **use `nsteps`, never `t_final`**, for every campaign leg. A
+  `t_final`-terminated run used to take one extra step whose `dt` was
+  round-off; that is fixed in the solver, but the fix is a suppression and
+  `nsteps` avoids the question (§7.5).
+* **the 600 D/u_b settle is avoidable** — it is the solid MEAN's diffusion
+  time, and the mean is capacity-independent (C1, gated). §0.4.
 
 ---
 
@@ -495,21 +676,32 @@ each domain's mid-point, so the data are streamwise-averaged.) Their radial
 resolution is far finer than ours will be, so interpolate THEIR profile onto
 OUR bins, never the reverse.
 
+0. **The velocity statistics have to be written** (§0.6): the scalar
+   statistics give the z-averaged (x,y) plane, which is a pipe cross-section
+   and bins straight into r, but the velocity side is the channel module's
+   y-profiles and does not. Take those from snapshots.
 1. **Hydrodynamics first, before any thermal claim** — U⁺(y⁺), u'/v'/w'_rms,
    −⟨u'v'⟩, u_τ, Re_τ, u_b. If the velocity does not match, nothing thermal
    means anything. This also isolates the IBM pipe from the conjugate scheme.
+   It is leg A of §0.4 and it needs no scalars at all.
 2. **Mean temperature** ⟨θ⟩⁺(y⁺) in the fluid; θ_τ; Nusselt from the
    interface-heat diagnostic (conjugate branch, already gated three ways).
 3. **The conjugate signature** — θ'_rms at the interface and through the solid,
    against the profile in §1 (1.00 → 0.382). This is the measurement the whole
-   campaign exists for, and it is where the K and λ_sf variants separate.
+   campaign exists for, and it is where the K and λ_sf variants separate. The
+   controls bracket it (§1's normalised interface values: MBC 0.004, K = 0.25
+   → 0.446, λ sweep 0.95–1.03, K = 4 → 1.511, IF 2.078); **the IF end of that
+   bracket depends on §4's substitute being right, so check it against the K
+   trend before quoting it.**
 4. **Turbulent heat fluxes** ⟨θ'u'⟩, ⟨θ'w'⟩; and ⟨θ'²⟩ budgets if the
    derivative products (`d(t)dx*d(t)dx` etc. are in the dataset) are worth it.
 5. **Azimuthal uniformity** — our own check, not theirs: at `bccode = 0`
    everything must be φ-independent, so the azimuthal spread of ⟨θ⟩ and θ'_rms
    at the interface is a direct measure of the Cartesian-grid/IBM artefact on a
    curved wall. **This is the number that quantifies the first-order interface
-   error**, and no body-fitted code can produce it.
+   error**, and no body-fitted code can produce it. Expect it to carry the
+   band staircase of §7.1 as well — the two artefacts share an azimuth
+   dependence, so separating them is what the two grids are for.
 6. **Two grids.** Repeat 2–5 at Δ⁺ ≈ 2 and ≈ 3 (or 4). At first order the
    interface error halves rather than quarters; showing that it moves *at the
    expected rate* converts a discrepancy from "unexplained" into "resolution",
@@ -538,3 +730,24 @@ OUR bins, never the reverse.
 5. **The `t_final` landmine** — a `t_final`-terminated run takes one extra step
    whose dt is round-off and whose final snapshot is a bad restart. Fixed in
    the solver, but prefer `nsteps` for campaign legs anyway.
+6. **A third of the cells do no thermal work.** The cross-section is 46.5 %
+   fluid, 20.4 % shell, **33.1 % inert jacket** (§0.2) — the box corners. They
+   are not free: the transport kernel, the momentum predictor and the
+   projection all run there. `remove_solid` cannot help (it is a hard error
+   under `conjugate`, and rightly — a buried block carries the solid's
+   temperature), but a block lying entirely in the INSULATED jacket carries
+   nothing at all, which the current code has no way to say. That is a real
+   ~33 % optimisation, it is not on the critical path, and it should not be
+   attempted inside this campaign — record what it would be worth from the
+   measured `s/step` and leave it.
+7. **The sink is per scalar** (§0.3). `C_s · solid_source` is the power
+   density, so a `solid_source` shared across the five conjugate scalars gives
+   them five different wall fluxes. Nothing crashes; the comparison is simply
+   meaningless. Check it with `heat_interval` on leg B before spending a leg D
+   on it.
+8. **`refine_body` in pass 2 now has a second constraint.** The F2 band
+   boundary is a same-level arm like the body surface, so it is subject to the
+   same 2:1 precondition, and `refine_body`'s one-block buffer is built around
+   the SURFACE — nothing yet guarantees the finest level also covers a band
+   boundary 0.1 deeper. The solver hard-errors rather than running, so this
+   costs a config iteration, not a wrong answer.
