@@ -128,7 +128,9 @@ estimation, so quote error bars from it rather than presenting single numbers.
 
 ## 3. Feature gaps
 
-Three real ones. F2 is the blocker; F1 and F5 are small; F3 has a workaround.
+**ONE real feature (F2), plus two small ones.** F3 turned out to fold into F2
+rather than being separate, and its substitute is exact for every fluctuation
+statistic; F4 is not a gap at all.
 
 **F1 — the Kasagi source is hardwired to `u_x`.** `scalar.f90`:
 `srcVal = source*0.5*(uw + ue)`, the x-faces. `stats_layout = plane` averages
@@ -138,7 +140,8 @@ directions, and one must be generalised. **Generalise the source direction**
 (a `source_dir` key; a few lines, and a natural completion of the feature) and
 put the pipe axis along **z**. `forcing_z` already exists.
 
-**F2 — the solid must be an ANNULUS, and `solid_k` is a per-scalar CONSTANT.**
+**F2 — the solid must be an ANNULUS, and `solid_k` is a per-scalar CONSTANT.
+This is the ONE feature the campaign needs; F3 folds into it.**
 A Cartesian box cannot exclude the corner region r > 0.6. Letting the solid run
 to the box faces makes its thickness vary from 0.1 (face mid-points) to 0.35
 (corners), and §1 measured that the fluctuation reaches the outer surface at
@@ -157,17 +160,45 @@ inner surface, so `w` is unaffected — but verify rather than assume, and note
 the outer surface at r = 0.6 becomes a *second* conjugate interface with
 whatever lies beyond it.
 
-**F3 — no nonzero Neumann on an immersed surface.** `ibm_wall = neumann` is
-only an alias for `adiabatic` (zero flux; six-face masking). The faithful outer
-BC is a constant nonzero flux at r = 0.6.
-*Workaround with shipped features*: a uniform `solid_source` sink in the
-annulus plus an adiabatic outer surface. Total heat and the mean interface flux
-are unchanged; only the radial distribution *within the solid* differs (a
-distributed sink instead of a surface one), which is an analytic O(d/R) ≈ 20 %
-difference on the solid ΔT and **is correctable in post**. The fluctuation
-problem — which is what CHT is about — is unaffected, because the outer surface
-is adiabatic to fluctuations either way. Take the workaround for pass 1 and
-*state it in the comparison*.
+**F3 — no nonzero Neumann on an immersed surface. NOT A SEPARATE FEATURE: it
+folds into F2, and the substitute is exact for everything this campaign
+measures.** `ibm_wall = neumann` is only an alias for `adiabatic` (zero flux,
+six-face masking); the faithful outer BC is a constant nonzero flux at r = 0.6.
+Replace it by a `solid_source` sink in the annulus with an adiabatic outer
+surface, sized so the total heat matches.
+
+*Why that is not an approximation where it matters.* The scalar is PASSIVE and
+its equation is LINEAR, so split θ = ⟨θ⟩ + θ'. A steady, azimuthally uniform
+source lives ENTIRELY in the mean: the solid's fluctuation equation is
+`C_s ∂θ'/∂t = κ_s ∇²θ'`, in which `S` does not appear at all, and θ'_s is
+driven only by the interface conditions and the outer boundary — adiabatic to
+fluctuations in Neuhauser's constant-flux case and in ours alike. In the fluid,
+θ' is driven by `u'·∇⟨θ⟩_f`, and ⟨θ⟩_f is fixed by the mean interface flux,
+which is unchanged by construction. **So θ' everywhere — θ'_rms through the
+solid, the turbulent heat fluxes, the whole conjugate signature — is EXACTLY
+unaffected.** The only quantity that differs is ⟨θ⟩ *inside the solid*, and
+since the source distribution is known, its profile is known in closed form:
+compare our solid mean against its own analytic prediction, and compare
+everything else against Neuhauser directly.
+
+*And if the solid mean profile is wanted too*, concentrate the source in the
+outermost solid cells rather than spreading it: with ~18 cells across the
+solid, a one-cell layer approaches a surface flux to O(Δ/d) ≈ 5 %. That needs a
+field-valued `solid_source` — **which is the same mechanism F2 already
+requires**, so it costs nothing extra once F2 lands. It is in fact *mandatory*
+once F2 lands: a per-scalar constant source would also fire inside the
+insulating jacket, which cannot conduct the heat away and would run away.
+
+*Why the "faithful" route is the worse one.* An annulus presents the solver
+with TWO cut surfaces, at r = 0.5 and r = 0.6, and the IBM marker is binary —
+locally they are indistinguishable, so a surface-flux BC would need a
+per-surface tag *on top of* cut-face area machinery that exists only in the
+Python checkers (`face_area_fraction`), not in the solver. That is strictly
+more work than F2, and it needs F2-like fields anyway.
+
+*Implementation note*: give the jacket κ small but NONZERO (e.g. 1e-6, not 0) —
+the face coefficient is a harmonic mean `dm/(w/κ_L + (1−w)/κ_R)` and κ = 0
+divides by zero — and C_jacket = 1 so the time-step limiter stays finite.
 
 **F4 — radial statistics: NOT missing.** `stats_layout = plane` gives the
 z-averaged (x,y) cross-section per scalar; radial binning is post-processing.
@@ -231,6 +262,15 @@ Neuhauser's own `time` axis are matched.
 Their definitions throughout (`datawrapper.py`). Bin our z-averaged (x,y) plane
 into r, and compare against `.interp.zarr` azimuthally averaged.
 
+Their radial grid is clustered **at the interfaces**, not in z: of 226 points,
+48 sit in 0.45 < r < 0.5 and 41 in 0.5 < r < 0.55, with dr down to 1e-4 =
+**0.04 wall units**. (That also settles the technical remarks' phrase "near the
+start of the heated region" — it is the near-wall RADIAL region where the mean
+gradient is steep, not a streamwise entrance; z is a scalar coordinate equal to
+each domain's mid-point, so the data are streamwise-averaged.) Their radial
+resolution is far finer than ours will be, so interpolate THEIR profile onto
+OUR bins, never the reverse.
+
 1. **Hydrodynamics first, before any thermal claim** — U⁺(y⁺), u'/v'/w'_rms,
    −⟨u'v'⟩, u_τ, Re_τ, u_b. If the velocity does not match, nothing thermal
    means anything. This also isolates the IBM pipe from the conjugate scheme.
@@ -255,9 +295,10 @@ into r, and compare against `.interp.zarr` azimuthally averaged.
 
 ## 7. Risks, in the order they are likely to bite
 
-1. **F2 is a genuine feature, not a config change.** If it slips, the fallback
-   is a thick-solid run that is *not* Neuhauser's d⁺ = 36 — report it as a
-   different case, do not present it as a match.
+1. **F2 is a genuine feature, not a config change**, and it is now the only
+   one on the critical path. If it slips, the fallback is a thick-solid run
+   that is *not* Neuhauser's d⁺ = 36 — report it as a different case, do not
+   present it as a match.
 2. **The (K, λ_sf) → (κ_s, ρc_s) mapping** (§1). Wrong here = wrong physics,
    silently.
 3. **First order at a curved interface.** Expect a visible interface error;
