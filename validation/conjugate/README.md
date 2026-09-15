@@ -1138,6 +1138,28 @@ must: 23x at n = 256, **42x at n = 512**. The DIPOLE reproduces all of it
    dropped term vanishes on its own. Stage 1b is second order at every
    contrast, so its gain is largest exactly where the baseline is weakest.
 
+#### ...and on the OBLIQUE PLANE, which is the geometry the as-built note's
+#### "does not converge" row is actually about
+
+The cut-face FLUX there does not converge (order −0.01, gate 1). Solved and
+refined (θ = 30°, κ_s = 10, r = 0.01, n = 64/128/256):
+
+| scheme | n=64 | n=128 | n=256 | band order | all-L2 order |
+|---|---|---|---|---|---|
+| C1 baseline | 2.10e-6 | 7.23e-7 | 2.52e-7 | **1.00** | 1.53 |
+| `k_area` + shipped `s_t` | 5.63e-5 | 2.75e-5 | 1.29e-5 | 0.99 | 1.06 |
+| **STAGE 1b** | **1.0e-13** | **6.8e-13** | **1.5e-13** | round-off | — |
+
+So **the O(r) flux plateau costs exactly one order, not convergence** — the
+same answer the curved interface gives, from an independent geometry. Three
+further readings: the global order is 1.53 rather than 1.00 because the
+interface band is a shrinking fraction of the domain; C2's multiplier with the
+same discrete `s_t` is **25× WORSE than the baseline** here and still first
+order; and stage 1b is EXACT to round-off, confirming at the SOLUTION level
+what the residual table said — on a plane the series resistance is already the
+exact 1D solution, so once the tangential term is right the interface
+contributes nothing at all.
+
 **A degeneracy check that passes**: at κ_s = 1 there is no contrast, the exact
 field is `x^2 - y^2`, the discrete Laplacian reproduces a quadratic exactly,
 and both schemes sit at round-off (2.5e-16) and are BIT-IDENTICAL. An

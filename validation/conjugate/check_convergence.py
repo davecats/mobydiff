@@ -36,6 +36,7 @@ import scipy.sparse.linalg as spla
 
 from check_oblique import load_phi, face_flux_field
 from check_cylinder import Dipole, Multipole
+from check_oblique import Plane
 
 RADIUS = 6                      # colouring half-width; verified a posteriori
 
@@ -142,6 +143,11 @@ def main():
     ap.add_argument("--kappa", type=float, default=10.0)
     ap.add_argument("--radius", type=float, default=0.25)
     ap.add_argument("--mode", type=int, default=2)
+    ap.add_argument("--geometry", choices=["cylinder", "plane"], default="cylinder")
+    ap.add_argument("--theta", type=float, default=30.0)
+    ap.add_argument("--x0", type=float, default=0.5)
+    ap.add_argument("--q-n", type=float, default=1.0, dest="q_n")
+    ap.add_argument("--amp", type=float, default=0.01)
     ap.add_argument("--verify", action="store_true")
     ap.add_argument("--summary", action="store_true",
                     help="one machine-readable line per scheme")
@@ -149,10 +155,19 @@ def main():
                     default=["base", "area", "area1sext"])
     a = ap.parse_args()
 
-    model = (Dipole(0.5, 0.5, a.radius, a.kappa) if a.mode == 1 else
-             Multipole(0.5, 0.5, a.radius, a.kappa, a.mode))
+    if a.geometry == "plane":
+        # The manufactured oblique plane of check_oblique: linear in each
+        # material, so harmonic in both and div(k grad T) = 0 exactly -- the
+        # same BVP statement the cylinder satisfies. This is the geometry the
+        # as-built note's "oblique face, r > 0" row is about.
+        model = Plane(a.theta, a.x0, 0.5117, a.kappa, a.q_n, a.amp)
+    else:
+        model = (Dipole(0.5, 0.5, a.radius, a.kappa) if a.mode == 1 else
+                 Multipole(0.5, 0.5, a.radius, a.kappa, a.mode))
     print(f"== SOLUTION convergence, curved interface: kappa_s = {a.kappa:g},"
-          f" harmonic mode {a.mode}")
+          f" harmonic mode {a.mode}" if a.geometry == "cylinder" else
+          f"== SOLUTION convergence, OBLIQUE PLANE: theta = {a.theta:g} deg,"
+          f" kappa_s = {a.kappa:g}, r = {a.amp/a.q_n if a.q_n else float(chr(105)+chr(110)+chr(102)):g}")
     res = {s: {} for s in a.schemes}
     for n in a.grids:
         for s in a.schemes:

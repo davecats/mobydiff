@@ -291,14 +291,16 @@ $1.56\times$ and that case runs.
 %======================================================================
 
 The scheme is \textbf{second order where the interface is flat or the local
-temperature gradient is interface-normal, and first order at a curved
-interface carrying a genuine tangential gradient.} The condition is geometric,
+temperature gradient is interface-normal, and first order at an obliquely cut or
+curved interface carrying a genuine tangential gradient.} The condition is geometric,
 not a matter of resolution. It is exact --- not merely second order --- when
 the interface normal is a grid direction, which covers every flat-wall case
 including all of the channel validation in \S\ref{sec:validation}. At an
-obliquely cut face carrying a tangential gradient the cut-face flux error does
-not converge at all; the conservative cell balance damps that into a
-first-order \emph{solution} error, measured below. Each statement is measured.
+obliquely cut or curved interface carrying a tangential gradient the cut-face
+\emph{flux} error does not converge at all; the conservative cell balance
+damps that into a \emph{first-order} solution error --- measured below on both
+geometries, so ``does not converge'' is a statement about the flux and never
+about the scheme. Each statement is measured.
 
 \begin{center}
 \begin{tabular}{p{6.1cm}p{4.0cm}l}
@@ -316,8 +318,13 @@ archived pre-C3 binary & 1.71, 1.09 --- \textbf{first order} \\[2mm]
 Oblique face, gradient purely interface-normal ($r=0$) & cut-face normal flux
 against the analytic conjugate field & \textbf{exact},
 $\sim10^{-10}$ (geometry floor) \\[2mm]
-Oblique face, tangential ratio $r>0$ & the same, at $h=1/64,1/128,1/256$ &
-error $\propto r$, \textbf{independent of $h$} \\
+Oblique face, tangential ratio $r>0$ --- the cut-face \emph{flux} & the same,
+at $h=1/64,1/128,1/256$ & error $\propto r$, \textbf{independent of $h$}
+\\[2mm]
+The same, the \emph{solution} & oblique-plane conjugate BVP, solved and
+refined & \textbf{first order} ($1.00$ in the interface band) \\[2mm]
+Curved interface, the \emph{solution} & cylinder in a harmonic far field,
+$n=64\ldots512$ & \textbf{first order} ($0.999$) \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -350,6 +357,19 @@ refinement, i.e.\ flat. It scales exactly linearly with $r$
 So at such a face the error \textbf{plateaus at $O(r)$} rather than reducing.
 This is a consistency error on a codimension-one set, and how much of it
 survives into the solution norm has now been measured.
+
+\paragraph{The solution order at an oblique plane: \textbf{one}.}
+On the manufactured oblique plane of \S\ref{sec:disabled} ($\theta=30^\circ$,
+$\kappa_s=10$, $r=0.01$), solved and refined over $n=64,128,256$, the
+interface-band $L_2$ error falls at order $\mathbf{1.00}$
+($2.10\times10^{-6}$, $7.23\times10^{-7}$, $2.52\times10^{-7}$; globally
+$1.53$, since the band is a shrinking fraction of the domain). So the $O(r)$
+flux plateau costs one order, not convergence. For contrast, the multiplier of
+\S\ref{sec:disabled} applied with the same discrete $s_t$ is $25\times$
+\emph{worse} than the baseline here and still first order, while a converging
+$s_t$ makes the solution exact to round-off ($1.5\times10^{-13}$): on a plane
+the series resistance is already exact, so once the tangential term is right
+the interface contributes nothing at all.
 
 \paragraph{The solution order on a curved interface: \textbf{one}.}
 \emph{Measured 2026-09-15, and it is a correction to what this section

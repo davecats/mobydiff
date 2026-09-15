@@ -330,6 +330,15 @@ if want converge; then
     done
     run $PY ./check_convergence.py --kappa 10 --mode 2 --grids 64 128 256 512 \
         --schemes base area1sext
+    # ...and the OBLIQUE PLANE, which is the geometry the as-built note's
+    # "oblique face, r > 0" row is about. The flux there does not converge
+    # (order -0.01, gate 1); this is what that costs the SOLUTION.
+    for ka in 10.0 1000.0; do
+        for r in 0.01 1.0; do
+            run $PY ./check_convergence.py --geometry plane --tag obl30 \
+                --theta 30 --kappa "$ka" --q-n 1.0 --amp "$r" --grids 64 128 256
+        done
+    done
 fi
 
 # --- (4) the time-step penalty of the correction ---------------------------
