@@ -137,6 +137,13 @@ module scalar
         ! sign of phi below selects the material pointwise.
         real(C_DOUBLE), allocatable :: solidK(:), solidC(:)
         real(C_DOUBLE), allocatable :: solidInit(:), solidSource(:), contactR(:)
+        ! The solid's SECOND material band (the pipe jacket). solidDepth > 0
+        ! splits the solid at the iso-surface phi = -solidDepth: a SHELL of
+        ! that thickness wrapped around the body surface, carrying solidK /
+        ! solidC / solidSource, and everything deeper carrying outerK / outerC
+        ! and NO source. solidDepth = 0 (the default) is one solid material,
+        ! i.e. today's scheme operand for operand. See band_face_diffusivity.
+        real(C_DOUBLE), allocatable :: solidDepth(:), outerK(:), outerC(:)
         ! [scalar.N] tangential_correction (increment C2), 0/1 rather than a
         ! logical so it maps to the device exactly like ibmMode. DEFAULT OFF:
         ! the C1 baseline deliberately drops the tangential term of the exact
@@ -169,6 +176,7 @@ module scalar
         real(C_DOUBLE), allocatable :: vfrac(:,:,:,:)
         integer(C_INT) :: nConjugate = 0_C_INT
         integer(C_INT) :: nTangential = 0_C_INT
+        integer(C_INT) :: nBanded = 0_C_INT
         ! Per-face boundary rows (n, NFACES): BC_DIRICHLET / BC_NEUMANN with
         ! the face value / normal derivative. They live HERE, not in
         ! boundary_type, so bc keeps its fixed VAR_U:VAR_P shape and the
@@ -245,6 +253,10 @@ module scalar
     ! indicator (always available) and the correction itself (config-gated).
     public :: scalar_conjugate_indicator, conjugate_tangential
     public :: conjugate_face_local_k
+    ! The banded solid (F2): the face coefficient scalar_stats.f90 must share
+    ! for the same reason it shares conjugate_face_diffusivity, and the band
+    ! classifier behind it.
+    public :: band_face_diffusivity, band_material
     ! S5a thermal wall function: the face diffusivity scalar_stats.f90 needs
     ! (its wall flux must be the flux the transport kernel applied), and the
     ! two correlations, public for the host-side unit test.
@@ -366,6 +378,125 @@ contains
 
         k = dm*merge(ks, 1.0d0, phiL + phiR < 0.0d0)
     end function conjugate_face_local_k
+
+    !--------------------------------------------------------------------
+    ! The solid's second material band (F2)
+    !--------------------------------------------------------------------
+    !
+    ! A conjugate body of FINITE WALL THICKNESS on a Cartesian grid: the pipe
+    ! of validation/conjugate (docs/next_session_pipe_cht.md). Its body is
+    ! everything outside r = R -- the fluid is the hole -- so the solid runs
+    ! out to the box faces, and a solid whose thickness varies from d at the
+    ! face mid-points to d*sqrt(2)-ish at the corners is not the reference
+    ! case: the temperature fluctuation reaches the outer surface at ~38 % of
+    ! its interface value and REFLECTS off it, so an azimuthally varying
+    ! thickness gives an azimuthally varying reflection.
+    !
+    ! What is needed is therefore a material that varies in SPACE, and the
+    ! cheap way to say it is that phi is ALREADY a signed distance to the
+    ! body surface: a shell of uniform thickness d around that surface is
+    ! exactly the level set -d < phi < 0, and everything deeper is
+    ! phi <= -d. No mask field, no moby_prepare stage, no case-file dataset
+    ! -- the same argument that gave the C1 baseline its geometry for free.
+    !
+    ! The shifted level set psi = phi + d is itself a distance function
+    ! (|grad psi| = 1 wherever |grad phi| = 1), so the shell/outer interface
+    ! is handled by the SAME distance-weighted harmonic mean on the SAME
+    ! obliquity lemma, with psi in place of phi. The grazing guard is
+    ! untouched by the shift, since it tests |phi_L - phi_R| = |psi_L - psi_R|.
+    !
+    ! LIMIT OF VALIDITY: the band is a uniform-thickness OFFSET of the body
+    ! surface. That is exact for a pipe (and for any skin whose offset does
+    ! not self-intersect); it is not a general region mask, and where phi's
+    ! nearest surface point stops being unique -- a medial axis -- the band
+    ! follows phi, not the geometry the user had in mind.
+    !
+    ! outerK = 0 (the default) means an INSULATOR, and it is handled by
+    ! returning an exact zero rather than by a small-kappa surrogate: the
+    ! harmonic mean would divide by it. An insulated outer band is inert --
+    ! no flux, no convection (every staggered face inside the body is solid,
+    ! which the conjugate mode already masks) and no source -- so it simply
+    ! holds its initial value, contributes nothing to the explicit time-step
+    ! limit, and the shell's outer surface is an ADIABATIC one at depth d.
+    ! That is F3's substitute for Neuhauser's constant outer flux, whose
+    ! error in every fluctuation statistic is exactly zero (the fluctuation
+    ! equation in the solid does not contain the source at all).
+    !
+    ! The outer surface is a STAIRCASE: which band a cell belongs to is
+    ! decided at its centre, so the effective thickness carries the usual
+    ! +-h/2. There is no point refining that with a volume fraction while the
+    ! conduction geometry stays staircase -- and a fraction-blended capacity
+    ! would be worse, not better, since it would dilute a straddling cell
+    ! with a FICTITIOUS material. The fluid-side cut cells keep the C3
+    ! fluid-fraction capacity exactly as before: vfrac is 0 throughout the
+    ! band region, so the two never interact.
+
+    ! Which material a cell centre is in: 0 fluid, 1 shell, 2 outer band.
+    ! dsh <= 0 disables the split, so every solid cell reads 1 and the
+    ! arithmetic below collapses onto conjugate_face_diffusivity's.
+    integer function band_material(ph, dsh) result(m)
+        !$omp declare target
+        real(C_DOUBLE), intent(in) :: ph, dsh
+
+        if (ph >= 0.0d0) then
+            m = 0
+        else if (dsh <= 0.0d0 .or. ph > -dsh) then
+            m = 1
+        else
+            m = 2
+        end if
+    end function band_material
+
+    real(C_DOUBLE) function band_kappa(m, ks, ko) result(k)
+        !$omp declare target
+        integer, intent(in) :: m
+        real(C_DOUBLE), intent(in) :: ks, ko
+
+        if (m == 0) then
+            k = 1.0d0
+        else if (m == 1) then
+            k = ks
+        else
+            k = ko
+        end if
+    end function band_kappa
+
+    ! conjugate_face_diffusivity generalized to the three bands. Same face
+    ! coefficient, same level-set weight, evaluated on whichever iso-surface
+    ! the face crosses: phi = 0 between fluid and shell, phi = -dsh between
+    ! shell and outer. The contact resistance belongs to the BODY SURFACE, so
+    ! it enters only at the former.
+    !
+    ! A fluid|outer face means the band is thinner than the arm, which
+    ! init_scalar_conjugate rejects; if one ever reached here it falls into
+    ! the phi = 0 branch and reads the outer kappa, i.e. an insulated wall.
+    real(C_DOUBLE) function band_face_diffusivity(dm, phiL, phiR, ks, ko, dsh, rc, invd) &
+            result(d)
+        !$omp declare target
+        real(C_DOUBLE), intent(in) :: dm, phiL, phiR, ks, ko, dsh, rc, invd
+
+        integer :: ml, mr
+        real(C_DOUBLE) :: w, kl, kr, lev, rcf
+
+        ml = band_material(phiL, dsh)
+        mr = band_material(phiR, dsh)
+        kl = band_kappa(ml, ks, ko)
+        if (ml == mr) then
+            d = dm*kl
+            return
+        end if
+        kr = band_kappa(mr, ks, ko)
+        ! An insulating partner makes the series resistance infinite. Said
+        ! as a branch, because the harmonic mean would divide by zero.
+        if (kl <= 0.0d0 .or. kr <= 0.0d0) then
+            d = 0.0d0
+            return
+        end if
+        lev = merge(0.0d0, -dsh, min(ml, mr) == 0)
+        rcf = merge(rc, 0.0d0, min(ml, mr) == 0)
+        w = conjugate_face_weight(phiL - lev, phiR - lev, invd)
+        d = dm/(w/kl + (1.0d0 - w)/kr + rcf*dm*invd)
+    end function band_face_diffusivity
 
     ! FLUID VOLUME FRACTION of a box cut by a plane -- the 3D sibling of the
     ! face-area fraction (increment C3, strategy doc Section 6).
@@ -932,6 +1063,17 @@ contains
         case ("contact_resistance")
             sc%contactR(is) = read_real_value(value, key, line_no)
             sc%solidKeySet(is) = .true.
+        ! The solid's second material band (F2). Also rejected outright on a
+        ! non-conjugate scalar, by the same solidKeySet guard.
+        case ("solid_thickness")
+            sc%solidDepth(is) = read_real_value(value, key, line_no)
+            sc%solidKeySet(is) = .true.
+        case ("solid_outer_k", "solid_outer_kappa")
+            sc%outerK(is) = read_real_value(value, key, line_no)
+            sc%solidKeySet(is) = .true.
+        case ("solid_outer_rhocp", "solid_outer_capacity")
+            sc%outerC(is) = read_real_value(value, key, line_no)
+            sc%solidKeySet(is) = .true.
         ! The C2 escalation term. It rides solidKeySet, so it is rejected on
         ! a non-conjugate scalar by the same guard as the solid properties.
         case ("tangential_correction")
@@ -1026,6 +1168,8 @@ contains
             old%solidK = sc%solidK; old%solidC = sc%solidC
             old%solidInit = sc%solidInit; old%solidSource = sc%solidSource
             old%contactR = sc%contactR; old%tangCorr = sc%tangCorr
+            old%solidDepth = sc%solidDepth
+            old%outerK = sc%outerK; old%outerC = sc%outerC
             old%solidKeySet = sc%solidKeySet; old%solidInitSet = sc%solidInitSet
             old%ibmValueSet = sc%ibmValueSet
             old%bcType = sc%bcType; old%bcValue = sc%bcValue
@@ -1040,6 +1184,7 @@ contains
         allocate(sc%srcDirSet(n))
         allocate(sc%solidK(n), sc%solidC(n), sc%solidInit(n), sc%solidSource(n))
         allocate(sc%contactR(n), sc%tangCorr(n))
+        allocate(sc%solidDepth(n), sc%outerK(n), sc%outerC(n))
         allocate(sc%solidKeySet(n), sc%solidInitSet(n), sc%ibmValueSet(n))
         allocate(sc%bcType(n,NFACES), sc%bcValue(n,NFACES))
         allocate(sc%bcTypeSet(n,NFACES), sc%bcValueSet(n,NFACES))
@@ -1068,6 +1213,13 @@ contains
         sc%solidSource = 0.0d0
         sc%contactR = 0.0d0
         sc%tangCorr = 0_C_INT
+        ! No band: one solid material, the C1/C3 arithmetic unchanged. When a
+        ! band IS asked for, its default material is an insulator with a
+        ! fluid-like capacity -- the adiabatic outer surface of F3, and a
+        ! capacity that never multiplies a non-zero rhs there.
+        sc%solidDepth = 0.0d0
+        sc%outerK = 0.0d0
+        sc%outerC = 1.0d0
         sc%solidKeySet = .false.
         sc%solidInitSet = .false.
         sc%ibmValueSet = .false.
@@ -1091,6 +1243,8 @@ contains
             sc%solidSource(1:nOld) = old%solidSource
             sc%contactR(1:nOld) = old%contactR
             sc%tangCorr(1:nOld) = old%tangCorr
+            sc%solidDepth(1:nOld) = old%solidDepth
+            sc%outerK(1:nOld) = old%outerK; sc%outerC(1:nOld) = old%outerC
             sc%solidKeySet(1:nOld) = old%solidKeySet
             sc%solidInitSet(1:nOld) = old%solidInitSet
             sc%ibmValueSet(1:nOld) = old%ibmValueSet
@@ -1162,17 +1316,18 @@ contains
         type(dns_type), intent(in) :: dns
         logical, intent(in) :: terminal
 
-        integer :: is, nConj, nTang
+        integer :: is, nConj, nTang, nBand
 
         nConj = 0
         nTang = 0
+        nBand = 0
         do is = 1, int(sc%n)
             if (sc%ibmMode(is) /= SC_IBM_CONJUGATE) then
                 if (sc%solidKeySet(is)) then
                     if (terminal) print '(a,i0,a)', " error: [scalar.", is, &
                         "] solid_k / solid_rhocp / solid_init / solid_source /" // &
-                        " contact_resistance / tangential_correction need" // &
-                        " ibm_wall = conjugate"
+                        " contact_resistance / solid_thickness / solid_outer_* /" // &
+                        " tangential_correction need ibm_wall = conjugate"
                     error stop "[scalar.N] solid property without ibm_wall = conjugate"
                 end if
                 cycle
@@ -1191,12 +1346,35 @@ contains
             if (sc%solidC(is) <= 0.0d0) error stop "[scalar.N] solid_rhocp must be positive"
             if (sc%contactR(is) < 0.0d0) &
                 error stop "[scalar.N] contact_resistance must be non-negative"
+            ! The second material band (F2). solid_thickness = 0 is "no band",
+            ! so a negative one is a typo rather than a disable.
+            if (sc%solidDepth(is) < 0.0d0) &
+                error stop "[scalar.N] solid_thickness must be non-negative"
+            if (sc%outerK(is) < 0.0d0) &
+                error stop "[scalar.N] solid_outer_k must be non-negative"
+            if (sc%outerC(is) <= 0.0d0) &
+                error stop "[scalar.N] solid_outer_rhocp must be positive"
+            if (sc%solidDepth(is) > 0.0d0) then
+                nBand = nBand + 1
+                ! The C2 correction's stencil, its Gershgorin rate and the
+                ! interface indicator are all written against the single
+                ! kappa_s of the C1 baseline. Combining them with a banded
+                ! solid is untested, and C2 ships disabled by measurement, so
+                ! the combination is rejected rather than half-implemented.
+                if (sc%tangCorr(is) /= 0_C_INT) then
+                    if (terminal) print '(a,i0,a)', " error: [scalar.", is, &
+                        "] tangential_correction with solid_thickness is not" // &
+                        " supported (the C2 correction assumes one solid material)"
+                    error stop "[scalar.N] tangential_correction with solid_thickness"
+                end if
+            end if
             ! Default solid initial value = the scalar's own `initial`, so a
             ! conjugate run with no solid_init starts uniform.
             if (.not. sc%solidInitSet(is)) sc%solidInit(is) = sc%initValue(is)
         end do
         sc%nConjugate = int(nConj, C_INT)
         sc%nTangential = int(nTang, C_INT)
+        sc%nBanded = int(nBand, C_INT)
         if (nConj == 0) return
 
         if (.not. dns%ibm_enabled) then
@@ -1603,7 +1781,68 @@ contains
         end if
 
         call check_conjugate_refinement(sc, blk, c)
+        call check_scalar_bands(sc, blk, c)
     end subroutine init_scalar_conjugate
+
+    ! The second material band (F2): report how the solid splits, and check
+    ! the ONE precondition the band arithmetic has.
+    !
+    ! phi is 1-Lipschitz, so an arm of length h changes it by at most h and a
+    ! face can only ever join ADJACENT bands -- unless the band is thinner
+    ! than the arm, in which case a face joins fluid to the outer material
+    ! directly and the shell has holes. The check is stated as the thing
+    ! itself (does any face skip a band?), not as a proxy on the spacing, so
+    ! it holds on stretched and refined grids without a margin argument.
+    subroutine check_scalar_bands(sc, blk, c)
+        type(scalar_type), intent(in) :: sc
+        type(block_set_type), intent(in) :: blk
+        type(comm_type), intent(in) :: c
+
+        integer :: i, j, k, b, is, nx, ny, nz, m0
+        real(C_DOUBLE) :: dsh, counts(3)
+
+        if (sc%nBanded == 0_C_INT) return
+
+        nx = int(blk%nb(1))
+        ny = int(blk%nb(2))
+        nz = int(blk%nb(3))
+
+        do is = 1, int(sc%n)
+            dsh = sc%solidDepth(is)
+            if (sc%ibmMode(is) /= SC_IBM_CONJUGATE .or. dsh <= 0.0d0) cycle
+            counts = 0.0d0
+            do b = 1, int(blk%nBlocks)
+            do k = 1, nz
+                do j = 1, ny
+                    do i = 1, nx
+                        m0 = band_material(sc%phi(i,j,k,b), dsh)
+                        if (m0 == 1) counts(1) = counts(1) + 1.0d0
+                        if (m0 == 2) counts(2) = counts(2) + 1.0d0
+                        if (abs(m0 - band_material(sc%phi(i-1,j,k,b), dsh)) == 2 .or. &
+                            abs(m0 - band_material(sc%phi(i+1,j,k,b), dsh)) == 2 .or. &
+                            abs(m0 - band_material(sc%phi(i,j-1,k,b), dsh)) == 2 .or. &
+                            abs(m0 - band_material(sc%phi(i,j+1,k,b), dsh)) == 2 .or. &
+                            abs(m0 - band_material(sc%phi(i,j,k-1,b), dsh)) == 2 .or. &
+                            abs(m0 - band_material(sc%phi(i,j,k+1,b), dsh)) == 2) &
+                            counts(3) = counts(3) + 1.0d0
+                    end do
+                end do
+            end do
+            end do
+            call comm_allreduce_sum(c, counts)
+            if (c%has_terminal) print '(a,i0,a,f0.4,a,i0,a,i0,a)', &
+                "    scalar ", is, ": solid band at depth ", dsh, " -- ", &
+                nint(counts(1)), " shell cells, ", nint(counts(2)), " outer cells"
+            if (nint(counts(3)) > 0) then
+                if (c%has_terminal) print '(a,i0,a,i0,a)', &
+                    " error: [scalar.", is, &
+                    "] solid_thickness is thinner than the grid there: ", &
+                    nint(counts(3)), " cells have a face joining the fluid" // &
+                    " straight to the outer band"
+                error stop "[scalar.N] solid_thickness below the cell size"
+            end if
+        end do
+    end subroutine check_scalar_bands
 
     ! The fluid volume fraction at every cell (increment C3), from phi and
     ! its central differences. Pure geometry, so it is built ONCE here, right
@@ -1713,22 +1952,22 @@ contains
                     case (1)
                         do k = 1, nz
                             do j = 1, ny
-                                if ((sc%phi(0,j,k,b) < 0.0d0) .neqv. &
-                                    (sc%phi(1,j,k,b) < 0.0d0)) bad(1) = bad(1) + 1.0d0
+                                if (face_crosses_material(sc, sc%phi(0,j,k,b), &
+                                    sc%phi(1,j,k,b))) bad(1) = bad(1) + 1.0d0
                             end do
                         end do
                     case (2)
                         do k = 1, nz
                             do i = 1, nx
-                                if ((sc%phi(i,0,k,b) < 0.0d0) .neqv. &
-                                    (sc%phi(i,1,k,b) < 0.0d0)) bad(1) = bad(1) + 1.0d0
+                                if (face_crosses_material(sc, sc%phi(i,0,k,b), &
+                                    sc%phi(i,1,k,b))) bad(1) = bad(1) + 1.0d0
                             end do
                         end do
                     case default
                         do j = 1, ny
                             do i = 1, nx
-                                if ((sc%phi(i,j,0,b) < 0.0d0) .neqv. &
-                                    (sc%phi(i,j,1,b) < 0.0d0)) bad(1) = bad(1) + 1.0d0
+                                if (face_crosses_material(sc, sc%phi(i,j,0,b), &
+                                    sc%phi(i,j,1,b))) bad(1) = bad(1) + 1.0d0
                             end do
                         end do
                     end select
@@ -1739,22 +1978,22 @@ contains
                     case (1)
                         do k = 1, nz
                             do j = 1, ny
-                                if ((sc%phi(nx,j,k,b) < 0.0d0) .neqv. &
-                                    (sc%phi(nx+1,j,k,b) < 0.0d0)) bad(1) = bad(1) + 1.0d0
+                                if (face_crosses_material(sc, sc%phi(nx,j,k,b), &
+                                    sc%phi(nx+1,j,k,b))) bad(1) = bad(1) + 1.0d0
                             end do
                         end do
                     case (2)
                         do k = 1, nz
                             do i = 1, nx
-                                if ((sc%phi(i,ny,k,b) < 0.0d0) .neqv. &
-                                    (sc%phi(i,ny+1,k,b) < 0.0d0)) bad(1) = bad(1) + 1.0d0
+                                if (face_crosses_material(sc, sc%phi(i,ny,k,b), &
+                                    sc%phi(i,ny+1,k,b))) bad(1) = bad(1) + 1.0d0
                             end do
                         end do
                     case default
                         do j = 1, ny
                             do i = 1, nx
-                                if ((sc%phi(i,j,nz,b) < 0.0d0) .neqv. &
-                                    (sc%phi(i,j,nz+1,b) < 0.0d0)) bad(1) = bad(1) + 1.0d0
+                                if (face_crosses_material(sc, sc%phi(i,j,nz,b), &
+                                    sc%phi(i,j,nz+1,b))) bad(1) = bad(1) + 1.0d0
                             end do
                         end do
                     end select
@@ -1765,13 +2004,41 @@ contains
         call comm_allreduce_sum(c, bad)
         if (bad(1) <= 0.0d0) return
         if (c%has_terminal) print '(a,i0,a)', &
-            " error: ibm_wall = conjugate: ", nint(bad(1)), " interface cut faces sit on a" // &
-            " 2:1 block face. The cut-face coefficient is a same-level arm and cannot" // &
-            " read across a refinement interface. Use [blocks] refine_body = true (its" // &
-            " one-block 26-neighbour buffer keeps the surface strictly inside the finest" // &
-            " level), or refine the surface region explicitly."
+            " error: ibm_wall = conjugate: ", nint(bad(1)), " material faces sit on a" // &
+            " 2:1 block face. The conjugate face coefficient is a same-level arm and" // &
+            " cannot read across a refinement interface -- for the body surface, and" // &
+            " equally for a solid_thickness band boundary. Use [blocks] refine_body =" // &
+            " true (its one-block 26-neighbour buffer keeps the surface strictly inside" // &
+            " the finest level), or refine the region explicitly."
         error stop "conjugate interface crosses a 2:1 block face"
     end subroutine check_conjugate_refinement
+
+    ! Do these two cell centres hold different MATERIALS -- for any conjugate
+    ! scalar? The body surface (phi = 0) is one material boundary and every
+    ! scalar shares it; a solid_thickness band adds a second, at phi = -d, and
+    ! d is per scalar. Both are same-level arms, so both are equally unable to
+    ! sit on a 2:1 block face, and the 2:1 precondition must test both.
+    !
+    ! Without a band this reduces to the sign test it replaces: band_material
+    ! returns 0 in the fluid and 1 everywhere in the solid when dsh = 0.
+    logical function face_crosses_material(sc, phiL, phiR) result(bad)
+        type(scalar_type), intent(in) :: sc
+        real(C_DOUBLE), intent(in) :: phiL, phiR
+
+        integer :: is
+
+        bad = (phiL < 0.0d0) .neqv. (phiR < 0.0d0)
+        if (bad .or. sc%nBanded == 0_C_INT) return
+        do is = 1, int(sc%n)
+            if (sc%ibmMode(is) /= SC_IBM_CONJUGATE) cycle
+            if (sc%solidDepth(is) <= 0.0d0) cycle
+            if (band_material(phiL, sc%solidDepth(is)) &
+                /= band_material(phiR, sc%solidDepth(is))) then
+                bad = .true.
+                return
+            end if
+        end do
+    end function face_crosses_material
 
     ! The solid's own initial temperature ([scalar.N] solid_init, default =
     ! `initial`). COLD START ONLY: on a restart the solid field is part of
@@ -1874,7 +2141,8 @@ contains
 
         integer :: i, j, k, b, is, nx, ny, nz
         real(C_DOUBLE) :: dm, ks, rc, cc, phc, diag, share, r(1)
-        logical :: solc, cut, tangOn
+        real(C_DOUBLE) :: dsh, ko, csb
+        logical :: solc, cut, tangOn, banded
 
         rate = 0.0d0
         if (.not. scalar_conjugate_enabled(sc)) return
@@ -1890,36 +2158,81 @@ contains
             ks = sc%solidK(is)
             rc = sc%contactR(is)
             tangOn = sc%tangCorr(is) /= 0_C_INT
+            ! The banded solid (F2) reaches the limiter through the same two
+            ! numbers the kernel uses: the face coefficients, and the cell's
+            ! own capacity. An INSULATED outer band therefore contributes a
+            ! rate of exactly zero -- which is right, it is inert.
+            dsh = sc%solidDepth(is)
+            ko = sc%outerK(is)
+            banded = dsh > 0.0d0
             do b = 1, int(blk%nBlocks)
             do k = 1, nz
                 do j = 1, ny
                     do i = 1, nx
                         phc = sc%phi(i,j,k,b)
                         solc = phc < 0.0d0
+                        csb = sc%solidC(is)
+                        if (banded) then
+                            if (band_material(phc, dsh) == 2) csb = sc%outerC(is)
+                        end if
                         cc = sc%vfrac(i,j,k,b) &
-                            + (1.0d0 - sc%vfrac(i,j,k,b))*sc%solidC(is)
+                            + (1.0d0 - sc%vfrac(i,j,k,b))*csb
                         cut = ((sc%phi(i-1,j,k,b) < 0.0d0) .neqv. solc) &
                          .or. ((sc%phi(i+1,j,k,b) < 0.0d0) .neqv. solc) &
                          .or. ((sc%phi(i,j-1,k,b) < 0.0d0) .neqv. solc) &
                          .or. ((sc%phi(i,j+1,k,b) < 0.0d0) .neqv. solc) &
                          .or. ((sc%phi(i,j,k-1,b) < 0.0d0) .neqv. solc) &
                          .or. ((sc%phi(i,j,k+1,b) < 0.0d0) .neqv. solc)
+                        ! A material interface INSIDE the solid (F2) excites
+                        ! the same extreme Gershgorin mode a cut cell does --
+                        ! but only if it carries a contrast. An INSULATED outer
+                        ! band can only remove face coefficients, never amplify
+                        ! one, so it does not buy the cell the cut-cell share
+                        ! (and charging it anyway would cost the whole run a
+                        ! factor ~2.5 in dt for nothing).
+                        if (banded .and. ko > 0.0d0) then
+                            cut = cut .or. &
+                                band_material(sc%phi(i-1,j,k,b), dsh) /= band_material(phc, dsh) &
+                           .or. band_material(sc%phi(i+1,j,k,b), dsh) /= band_material(phc, dsh) &
+                           .or. band_material(sc%phi(i,j-1,k,b), dsh) /= band_material(phc, dsh) &
+                           .or. band_material(sc%phi(i,j+1,k,b), dsh) /= band_material(phc, dsh) &
+                           .or. band_material(sc%phi(i,j,k-1,b), dsh) /= band_material(phc, dsh) &
+                           .or. band_material(sc%phi(i,j,k+1,b), dsh) /= band_material(phc, dsh)
+                        end if
                         share = merge(2.0d0, 6.0d0, cut)
-                        diag = (conjugate_face_diffusivity(dm, sc%phi(i-1,j,k,b), phc, &
-                                    ks, rc, sc%invDx(i,b))*sc%invDx(i,b) &
-                              + conjugate_face_diffusivity(dm, phc, sc%phi(i+1,j,k,b), &
-                                    ks, rc, sc%invDx(i+1,b))*sc%invDx(i+1,b)) &
-                                *blk%d1x(i,VAR_P,b) &
-                             + (conjugate_face_diffusivity(dm, sc%phi(i,j-1,k,b), phc, &
-                                    ks, rc, sc%invDy(j,b))*sc%invDy(j,b) &
-                              + conjugate_face_diffusivity(dm, phc, sc%phi(i,j+1,k,b), &
-                                    ks, rc, sc%invDy(j+1,b))*sc%invDy(j+1,b)) &
-                                *blk%d1y(j,VAR_P,b) &
-                             + (conjugate_face_diffusivity(dm, sc%phi(i,j,k-1,b), phc, &
-                                    ks, rc, sc%invDz(k,b))*sc%invDz(k,b) &
-                              + conjugate_face_diffusivity(dm, phc, sc%phi(i,j,k+1,b), &
-                                    ks, rc, sc%invDz(k+1,b))*sc%invDz(k+1,b)) &
-                                *blk%d1z(k,VAR_P,b)
+                        if (banded) then
+                            diag = (band_face_diffusivity(dm, sc%phi(i-1,j,k,b), phc, &
+                                        ks, ko, dsh, rc, sc%invDx(i,b))*sc%invDx(i,b) &
+                                  + band_face_diffusivity(dm, phc, sc%phi(i+1,j,k,b), &
+                                        ks, ko, dsh, rc, sc%invDx(i+1,b))*sc%invDx(i+1,b)) &
+                                    *blk%d1x(i,VAR_P,b) &
+                                 + (band_face_diffusivity(dm, sc%phi(i,j-1,k,b), phc, &
+                                        ks, ko, dsh, rc, sc%invDy(j,b))*sc%invDy(j,b) &
+                                  + band_face_diffusivity(dm, phc, sc%phi(i,j+1,k,b), &
+                                        ks, ko, dsh, rc, sc%invDy(j+1,b))*sc%invDy(j+1,b)) &
+                                    *blk%d1y(j,VAR_P,b) &
+                                 + (band_face_diffusivity(dm, sc%phi(i,j,k-1,b), phc, &
+                                        ks, ko, dsh, rc, sc%invDz(k,b))*sc%invDz(k,b) &
+                                  + band_face_diffusivity(dm, phc, sc%phi(i,j,k+1,b), &
+                                        ks, ko, dsh, rc, sc%invDz(k+1,b))*sc%invDz(k+1,b)) &
+                                    *blk%d1z(k,VAR_P,b)
+                        else
+                            diag = (conjugate_face_diffusivity(dm, sc%phi(i-1,j,k,b), phc, &
+                                        ks, rc, sc%invDx(i,b))*sc%invDx(i,b) &
+                                  + conjugate_face_diffusivity(dm, phc, sc%phi(i+1,j,k,b), &
+                                        ks, rc, sc%invDx(i+1,b))*sc%invDx(i+1,b)) &
+                                    *blk%d1x(i,VAR_P,b) &
+                                 + (conjugate_face_diffusivity(dm, sc%phi(i,j-1,k,b), phc, &
+                                        ks, rc, sc%invDy(j,b))*sc%invDy(j,b) &
+                                  + conjugate_face_diffusivity(dm, phc, sc%phi(i,j+1,k,b), &
+                                        ks, rc, sc%invDy(j+1,b))*sc%invDy(j+1,b)) &
+                                    *blk%d1y(j,VAR_P,b) &
+                                 + (conjugate_face_diffusivity(dm, sc%phi(i,j,k-1,b), phc, &
+                                        ks, rc, sc%invDz(k,b))*sc%invDz(k,b) &
+                                  + conjugate_face_diffusivity(dm, phc, sc%phi(i,j,k+1,b), &
+                                        ks, rc, sc%invDz(k+1,b))*sc%invDz(k+1,b)) &
+                                    *blk%d1z(k,VAR_P,b)
+                        end if
                         ! The C2 tangential correction is an EXPLICIT spatial
                         ! operator at the same cut faces, so it enters the
                         ! same rate. It is not diffusive -- it couples this
@@ -2221,7 +2534,8 @@ contains
         !$omp& sc%bcType, sc%bcValue, sc%invDx, sc%invDy, sc%invDz, sc%nutNone, &
         !$omp& sc%cdx, sc%cdy, sc%cdz, &
         !$omp& sc%wfP, sc%wfYpt, sc%wfYplus, sc%phi, sc%vfrac, sc%solidK, sc%solidC, &
-        !$omp& sc%solidSource, sc%contactR, sc%tangCorr)
+        !$omp& sc%solidSource, sc%contactR, sc%tangCorr, &
+        !$omp& sc%solidDepth, sc%outerK, sc%outerC)
 #endif
     end subroutine enter_scalar_data
 
@@ -2237,7 +2551,8 @@ contains
         !$omp& sc%bcType, sc%bcValue, sc%invDx, sc%invDy, sc%invDz, sc%nutNone, &
         !$omp& sc%cdx, sc%cdy, sc%cdz, &
         !$omp& sc%wfP, sc%wfYpt, sc%wfYplus, sc%phi, sc%vfrac, sc%solidK, sc%solidC, &
-        !$omp& sc%solidSource, sc%contactR, sc%tangCorr)
+        !$omp& sc%solidSource, sc%contactR, sc%tangCorr, &
+        !$omp& sc%solidDepth, sc%outerK, sc%outerC)
         !$omp target exit data map(delete: sc)
 #endif
     end subroutine exit_scalar_data
@@ -2263,6 +2578,9 @@ contains
         if (allocated(sc%solidSource)) deallocate(sc%solidSource)
         if (allocated(sc%contactR)) deallocate(sc%contactR)
         if (allocated(sc%tangCorr)) deallocate(sc%tangCorr)
+        if (allocated(sc%solidDepth)) deallocate(sc%solidDepth)
+        if (allocated(sc%outerK)) deallocate(sc%outerK)
+        if (allocated(sc%outerC)) deallocate(sc%outerC)
         if (allocated(sc%solidKeySet)) deallocate(sc%solidKeySet)
         if (allocated(sc%solidInitSet)) deallocate(sc%solidInitSet)
         if (allocated(sc%ibmValueSet)) deallocate(sc%ibmValueSet)
@@ -2434,6 +2752,11 @@ contains
         ! Conjugate interface (C1): the six neighbour signed distances and
         ! this cell's, plus the per-scalar solid properties.
         real(C_DOUBLE) :: phc, phw, phe, phs, phn, phb, pht, ks, rc
+        ! The solid's second material band (F2): its depth and outer kappa,
+        ! and this cell's band capacity and band source. Without a band the
+        ! last two are the scalar's solid_rhocp / solid_source, so the rhs
+        ! expression below is unchanged operand for operand.
+        real(C_DOUBLE) :: dsh, ko, csb, ssb
         ! Tangential correction (C2): the face-centred gradients of T and phi
         ! in (face-normal, tangential 1, tangential 2) form, and the six face
         ! corrections themselves. Zero unless the face is CUT and the scalar
@@ -2442,6 +2765,7 @@ contains
         real(C_DOUBLE) :: gtd, gt1, gt2, gpd, gp1, gp2
         real(C_DOUBLE) :: crw, cre, crs, crn, crb, crt
         logical :: skew, useIbm, adiab, wallfn, anyConj, conjug, solc, tang
+        logical :: banded
         logical :: cutw, cute, cuts, cutn, cutb, cutt
         logical :: clw, cle, cls, cln, clb, clt
         logical :: solw, sole, sols, soln, solb, solt
@@ -2474,10 +2798,12 @@ contains
         !$omp& sc%pr, sc%prt, sc%prtModel, sc%source, sc%srcType, sc%srcDir, &
         !$omp& sc%invDx, sc%invDy, sc%invDz, &
         !$omp& sc%ibmMode, sc%ibmValue, sc%wfP, sc%wfYpt, sc%wfYplus, wallfn, &
-        !$omp& sc%phi, sc%vfrac, sc%solidK, sc%solidC, sc%solidSource, sc%contactR) &
+        !$omp& sc%phi, sc%vfrac, sc%solidK, sc%solidC, sc%solidSource, sc%contactR, &
+        !$omp& sc%solidDepth, sc%outerK, sc%outerC) &
         !$omp& map(tofrom: blk%qs, blk%oldrhs) &
         !$omp& private(i,j,k,b,is,var,scr,uw,ue,vs,vn,wb,wt,divu,divuse, &
         !$omp& s0,conv,diff,rhs,srcVal,dm,fw,fe,ss,mus,ipr,adiab,conjug,solc,ks,rc,tang, &
+        !$omp& banded,dsh,ko,csb,ssb, &
         !$omp& gtd,gt1,gt2,gpd,gp1,gp2,crw,cre,crs,crn,crb,crt, &
         !$omp& phc,phw,phe,phs,phn,phb,pht, &
         !$omp& cutw,cute,cuts,cutn,cutb,cutt, &
@@ -2582,6 +2908,7 @@ contains
                         adiab = useIbm .and. sc%ibmMode(is) == SC_IBM_ADIABATIC
                         conjug = useIbm .and. sc%ibmMode(is) == SC_IBM_CONJUGATE
                         tang = conjug .and. sc%tangCorr(is) /= 0_C_INT
+                        banded = conjug .and. sc%solidDepth(is) > 0.0d0
                         mw = clw .or. (adiab .and. solw)
                         me = cle .or. (adiab .and. sole)
                         ms = cls .or. (adiab .and. sols)
@@ -2652,12 +2979,44 @@ contains
                             ! level-set fraction of the arm.
                             ks = sc%solidK(is)
                             rc = sc%contactR(is)
-                            dxw = conjugate_face_diffusivity(dm, phw, phc, ks, rc, sc%invDx(i,b))
-                            dxe = conjugate_face_diffusivity(dm, phc, phe, ks, rc, sc%invDx(i+1,b))
-                            dys = conjugate_face_diffusivity(dm, phs, phc, ks, rc, sc%invDy(j,b))
-                            dyn = conjugate_face_diffusivity(dm, phc, phn, ks, rc, sc%invDy(j+1,b))
-                            dzb = conjugate_face_diffusivity(dm, phb, phc, ks, rc, sc%invDz(k,b))
-                            dzt = conjugate_face_diffusivity(dm, phc, pht, ks, rc, sc%invDz(k+1,b))
+                            ! The band branch (F2) is entered only by a scalar
+                            ! that asked for one, so the single-material lines
+                            ! below stay byte for byte what they were.
+                            csb = sc%solidC(is)
+                            ssb = sc%solidSource(is)
+                            if (banded) then
+                                dsh = sc%solidDepth(is)
+                                ko = sc%outerK(is)
+                                dxw = band_face_diffusivity(dm, phw, phc, ks, ko, dsh, &
+                                    rc, sc%invDx(i,b))
+                                dxe = band_face_diffusivity(dm, phc, phe, ks, ko, dsh, &
+                                    rc, sc%invDx(i+1,b))
+                                dys = band_face_diffusivity(dm, phs, phc, ks, ko, dsh, &
+                                    rc, sc%invDy(j,b))
+                                dyn = band_face_diffusivity(dm, phc, phn, ks, ko, dsh, &
+                                    rc, sc%invDy(j+1,b))
+                                dzb = band_face_diffusivity(dm, phb, phc, ks, ko, dsh, &
+                                    rc, sc%invDz(k,b))
+                                dzt = band_face_diffusivity(dm, phc, pht, ks, ko, dsh, &
+                                    rc, sc%invDz(k+1,b))
+                                ! The outer band carries its own capacity and
+                                ! NO source: it stands in for whatever is
+                                ! beyond the wall, and a solid_source that
+                                ! fired there would have nowhere to send its
+                                ! heat (an insulated band would simply run
+                                ! away). The shell keeps the solid's own pair.
+                                if (band_material(phc, dsh) == 2) then
+                                    csb = sc%outerC(is)
+                                    ssb = 0.0d0
+                                end if
+                            else
+                                dxw = conjugate_face_diffusivity(dm, phw, phc, ks, rc, sc%invDx(i,b))
+                                dxe = conjugate_face_diffusivity(dm, phc, phe, ks, rc, sc%invDx(i+1,b))
+                                dys = conjugate_face_diffusivity(dm, phs, phc, ks, rc, sc%invDy(j,b))
+                                dyn = conjugate_face_diffusivity(dm, phc, phn, ks, rc, sc%invDy(j+1,b))
+                                dzb = conjugate_face_diffusivity(dm, phb, phc, ks, rc, sc%invDz(k,b))
+                                dzt = conjugate_face_diffusivity(dm, phc, pht, ks, rc, sc%invDz(k+1,b))
+                            end if
                             ! nu_t enters NEITHER the solid NOR a cut face
                             ! (strategy doc Section 12): at DNS resolution
                             ! nu_t -> 0 at the wall anyway, and ibm_aware
@@ -2935,10 +3294,9 @@ contains
                             ! it reduces to the pointwise C1 statement.
                             rhs = (-conv + diff &
                                    + sc%vfrac(i,j,k,b)*srcVal &
-                                   + (1.0d0 - sc%vfrac(i,j,k,b))*sc%solidC(is) &
-                                        *sc%solidSource(is)) &
+                                   + (1.0d0 - sc%vfrac(i,j,k,b))*csb*ssb) &
                                 /(sc%vfrac(i,j,k,b) &
-                                  + (1.0d0 - sc%vfrac(i,j,k,b))*sc%solidC(is))
+                                  + (1.0d0 - sc%vfrac(i,j,k,b))*csb)
                         else
                             rhs = -conv + diff + srcVal
                         end if

@@ -38,16 +38,41 @@ def wavy_wall_height(x, amp=0.025, nwave=1, phase=0.0, lx=1.0):
     return amp * 0.5 * (1.0 + np.sin(2.0 * np.pi * nwave * x / lx + phase)) + 1.0e-2
 
 
-def slab_exact(y, y_wall, kappa, ly, rc=0.0):
-    """The piecewise-linear two-material steady solution, T(0)=0, T(ly)=1.
+def slab_exact(y, y_wall, kappa, ly, rc=0.0, depth=0.0, kappa_outer=None,
+               outer_init=0.0):
+    """The piecewise-linear multi-material steady solution, T(0)=0, T(ly)=1.
 
     A contact resistance rc simply adds to the series and puts a JUMP q*rc in
     T at the interface; the profile stays piecewise linear, so it stays an
     exact fixed point of the discrete operator.
+
+    With depth > 0 the solid carries the F2 second material band: a SHELL of
+    thickness `depth` against the wall plane with conductivity `kappa`, and
+    everything deeper with `kappa_outer`. Three layers in series, still
+    piecewise linear, so still an exact fixed point -- and now the fixed
+    point depends on where the band boundary is, which is exactly what the
+    level-set weight on the shifted level set psi = phi + depth decides.
+
+    kappa_outer = 0 is the INSULATOR the pipe campaign actually uses. The
+    series resistance is then infinite: no heat crosses the band boundary,
+    the shell and the fluid sit at the y = ly Dirichlet value, and the outer
+    band is inert at whatever it started from (`outer_init`).
     """
-    q = 1.0 / (y_wall / kappa + rc + (ly - y_wall))
-    return np.where(y <= y_wall, q * y / kappa,
-                    q * (y_wall / kappa + rc + (y - y_wall)))
+    if depth <= 0.0:
+        q = 1.0 / (y_wall / kappa + rc + (ly - y_wall))
+        return np.where(y <= y_wall, q * y / kappa,
+                        q * (y_wall / kappa + rc + (y - y_wall)))
+    y_band = y_wall - depth
+    if kappa_outer == 0.0:
+        return np.where(y <= y_band, outer_init, 1.0)
+    r_out = y_band / kappa_outer
+    r_shell = depth / kappa
+    q = 1.0 / (r_out + r_shell + rc + (ly - y_wall))
+    return np.where(
+        y <= y_band, q * y / kappa_outer,
+        np.where(y <= y_wall,
+                 q * (r_out + (y - y_band) / kappa),
+                 q * (r_out + r_shell + rc + (y - y_wall))))
 
 
 def read_scalar(path, name="theta"):
@@ -63,7 +88,8 @@ def cmd_slab(a):
     for bid in range(geo.n_blocks):
         x, y, z, _ = geo.mesh(bid)
         yy = np.broadcast_to(y, th[bid].shape)
-        ref = slab_exact(yy, a.y_wall, a.kappa, ly, a.contact)
+        ref = slab_exact(yy, a.y_wall, a.kappa, ly, a.contact,
+                         a.depth, a.outer_kappa, a.outer_init)
         err = np.abs(th[bid] - ref)
         if err.max() > worst:
             worst = float(err.max())
@@ -77,9 +103,14 @@ def cmd_slab(a):
         drift = float(np.abs(p5[a.name][...] - th).max())
         p5.close()
 
-    q = 1.0 / (a.y_wall / a.kappa + a.contact + (ly - a.y_wall))
-    print(f"   kappa_s = {a.kappa:g}  y_wall = {a.y_wall!r}  R_c = {a.contact:g}"
-          f"  q_exact = {q:.16e}")
+    if a.depth > 0.0:
+        print(f"   kappa_s = {a.kappa:g}  y_wall = {a.y_wall!r}"
+              f"  band depth = {a.depth!r} (boundary at y = {a.y_wall - a.depth!r})"
+              f"  kappa_outer = {a.outer_kappa:g}")
+    else:
+        q = 1.0 / (a.y_wall / a.kappa + a.contact + (ly - a.y_wall))
+        print(f"   kappa_s = {a.kappa:g}  y_wall = {a.y_wall!r}  R_c = {a.contact:g}"
+              f"  q_exact = {q:.16e}")
     print(f"   max|theta - exact| = {worst:.6e}   at y = {worst_at[0]:.6f} "
           f"({worst_at[1]:.16e} vs {worst_at[2]:.16e})")
     if a.prev:
@@ -223,6 +254,11 @@ def main():
     p.add_argument("--kappa", type=float, required=True)
     p.add_argument("--prev", default=None)
     p.add_argument("--contact", type=float, default=0.0)
+    # The F2 second material band: shell depth, the material beyond it, and
+    # the value an INSULATED outer band is frozen at (its solid_init).
+    p.add_argument("--depth", type=float, default=0.0)
+    p.add_argument("--outer-kappa", type=float, default=None)
+    p.add_argument("--outer-init", type=float, default=0.0)
     p.add_argument("--name", default="theta")
     p.add_argument("--tolerance", type=float, default=1e-13)
     p.set_defaults(func=cmd_slab)

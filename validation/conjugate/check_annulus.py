@@ -86,6 +86,10 @@ def main():
     ap.add_argument("--domain-half", type=float, required=True)
     ap.add_argument("--axis", choices=("x", "y", "z"), default="z")
     ap.add_argument("--tol-phi", type=float, default=1e-9)
+    # F2: check that [scalar.N] solid_thickness = D really carves the
+    # ANNULUS r_inner < r < r_inner + D out of the solid, i.e. that the
+    # level-set band and the geometry the campaign means are the same set.
+    ap.add_argument("--band-depth", type=float, default=None)
     a = ap.parse_args()
 
     with h5py.File(a.case, "r") as h5:
@@ -110,6 +114,7 @@ def main():
 
     worst_phi, n_cells, n_flip = 0.0, 0, 0
     worst_near, n_dom = -1e30, 0
+    n_band_flip, n_shell, n_outer = 0, 0, 0
     for bid in range(blocks.shape[0]):
         org = [int(blocks[bid, d]) for d in range(3)]
         # tile axes are (i, j, k) = (x, y, z)
@@ -133,6 +138,20 @@ def main():
         worst_phi = max(worst_phi, float(np.abs(phi - (-phi_ref)).max()))
         n_cells += phi.size
 
+        if a.band_depth is not None:
+            # band_material(phi, d) in scalar.f90: 0 fluid, 1 shell, 2 outer.
+            # The reference is built from the ANALYTIC polygon distance, so
+            # this is a statement about the geometry, not about phi.
+            band = np.where(phi >= 0.0, 0, np.where(phi > -a.band_depth, 1, 2))
+            ref = np.where(phi_ref <= 0.0, 0,
+                           np.where(phi_ref < a.band_depth, 1, 2))
+            # Same ambiguity rule as the class test, now at BOTH level sets.
+            amb_b = (np.abs(phi_ref) < 1e-12) | \
+                    (np.abs(phi_ref - a.band_depth) < 1e-12)
+            n_band_flip += int((band != ref)[~amb_b].sum())
+            n_shell += int((band == 1).sum())
+            n_outer += int((band == 2).sum())
+
         # near: only cells INSIDE the domain, where the check has meaning.
         ind = (np.abs(pu) <= a.domain_half) & (np.abs(pv) <= a.domain_half)
         if ind.any():
@@ -150,6 +169,11 @@ def main():
     print(f"   near:  max(d_wall - d_padding) = {worst_near:.4f}"
           f"   ({'pipe wall nearest everywhere' if worst_near < 0 else 'PADDING WINS'})")
     ok = n_flip == 0 and worst_phi <= a.tol_phi and worst_near < 0.0
+    if a.band_depth is not None:
+        print(f"   band:  solid_thickness = {a.band_depth:g} carves"
+              f" {a.r_inner:g} < r < {a.r_inner + a.band_depth:g}"
+              f"   shell = {n_shell}, outer = {n_outer}, flips = {n_band_flip}")
+        ok = ok and n_band_flip == 0 and n_shell > 0 and n_outer > 0
     print("   PASS" if ok else "   FAIL")
     return 0 if ok else 1
 

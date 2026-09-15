@@ -1,12 +1,15 @@
 # Conjugate pipe flow vs Neuhauser (NekRS, body-fitted) — session handout
 
-STATUS: written 2026-09-15 on branch `scalar` as PLANNED; **the pin-down and
-the two small features are now DONE.**
+STATUS: written 2026-09-15 on branch `scalar` as PLANNED; **every feature gap
+is now closed and the campaign can run.**
 UPDATE 2026-09-15: (a) the §1 **PIN DOWN is resolved** — and the reading this
 handout was written with was WRONG; its consequences for dt and for the
 transient legs are folded into §5. (b) **F1 (`source_dir`) and F5 (the annulus
-STL) are implemented and gated** — §3 and the new §3a. **F2 is the only thing
-left before the campaign can run.** Everything else is untouched.
+STL) are implemented and gated** — §3 and §3a. (c) **F2 is DONE** — §3 and the
+new §3b — but NOT as this handout proposed: the per-leaf mask field turned out
+to be unnecessary, because φ already carries the shell. Read §3's F2 entry
+before writing any case ini. **Nothing on the critical path is left; §4 and §5
+are the next session's work.**
 Everything below marked *measured* was read out of the dataset itself in the
 session that wrote this; everything marked *estimate* is not.
 
@@ -172,10 +175,10 @@ estimation, so quote error bars from it rather than presenting single numbers.
 
 ## 3. Feature gaps
 
-**ONE real feature (F2), plus two small ones.** F3 turned out to fold into F2
-rather than being separate, and its substitute is exact for every fluctuation
-statistic; F4 is not a gap at all. **F1 and F5 are DONE (2026-09-15); F2 is
-the whole remaining critical path.**
+**ALL CLOSED (2026-09-15).** F1 and F5 were the two small ones; F2 was
+expected to be the one real feature and turned out not to be, for the reason
+its entry gives. F3 folded into F2 as predicted, and its substitute is exact
+for every fluctuation statistic; F4 was never a gap.
 
 **F1 — the Kasagi source was hardwired to `u_x`. DONE 2026-09-15.**
 `[scalar.N] source_dir = x | y | z` picks the component the VELOCITY source
@@ -189,28 +192,82 @@ Gates in `validation/conjugate/run_gates_pipe.sh` (`source_dir`, `guard`),
 CPU and GPU, plus the standard bit-exactness suites — see §3a.
 
 **F2 — the solid must be an ANNULUS, and `solid_k` is a per-scalar CONSTANT.
-This is the ONE feature the campaign needs; F3 folds into it.**
-A Cartesian box cannot exclude the corner region r > 0.6. Letting the solid run
-to the box faces makes its thickness vary from 0.1 (face mid-points) to 0.35
-(corners), and §1 measured that the fluctuation reaches the outer surface at
-38 % and reflects off it — so an azimuthally varying thickness gives
-azimuthally varying reflection and destroys the `bccode = 0` premise. The
-region beyond r = 0.6 therefore needs to be *insulating*, and there is
-currently no way to say so: `solid_k` / `solid_rhocp` / `solid_source` are
-scalars, not fields.
-*Minimal fix*: let them be modulated by a per-leaf mask written by
-`moby_prepare` beside `coef_p_blocks` (the `dwall_blocks` precedent), so the
-face coefficient reads κ_s(x) instead of a constant. Contained, and it also
-buys F3.
-*Also check*: φ = ±dwall in an annulus is the distance to the NEAREST of the
-two surfaces. For cut faces at r = 0.5 both adjacent cells are within Δ of the
-inner surface, so `w` is unaffected — but verify rather than assume, and note
-the outer surface at r = 0.6 becomes a *second* conjugate interface with
-whatever lies beyond it.
+DONE 2026-09-15 — but by a DIFFERENT and much smaller mechanism than this
+handout proposed. F3 folds into it as predicted.**
+
+*The problem, unchanged.* A Cartesian box cannot exclude the corner region
+r > 0.6. Letting the solid run to the box faces makes its thickness vary from
+0.1 (face mid-points) to 0.35 (corners), and §1 measured that the fluctuation
+reaches the outer surface at 38 % and reflects off it — so an azimuthally
+varying thickness gives azimuthally varying reflection and destroys the
+`bccode = 0` premise. The region beyond r = 0.6 must be *insulating*.
+
+*The mechanism that shipped: `[scalar.N] solid_thickness`, a LEVEL-SET BAND.*
+The handout's plan was a per-leaf κ_s(x) mask written by `moby_prepare`. That
+is not needed, and the reason is the same one that gave the C1 baseline its
+geometry for free: **φ is already the signed distance to the body surface**,
+so a shell of uniform thickness d wrapped around that surface is *exactly*
+the level set −d < φ < 0, and everything deeper is φ ≤ −d. The shifted level
+set ψ = φ + d is itself a distance function, so the shell/outer interface is
+handled by the SAME distance-weighted harmonic mean on the SAME obliquity
+lemma, with ψ in place of φ — the grazing guard included, since it tests
+|φ_L − φ_R| = |ψ_L − ψ_R|. No mask, no `moby_prepare` stage, no case-file
+dataset, no re-preparing any existing case file.
+
+    [scalar.N] solid_thickness    = 0.1   ! shell depth; 0 (default) = one material
+               solid_outer_k      = 0.0   ! default 0 = an exact insulator
+               solid_outer_rhocp  = 1.0
+
+`solid_source` fires in the SHELL only, by construction — which the handout
+correctly identified as mandatory (a source in the insulating jacket has
+nowhere to send its heat and would run away). `solid_outer_k = 0` is handled
+by returning an exact zero rather than by the small-κ surrogate the handout
+suggested: the harmonic mean would divide by it. An insulated outer band is
+then wholly inert — no flux, no convection, no source, no contribution to the
+explicit time-step limit — so it simply holds `solid_init`, and **the shell's
+outer surface is an exactly adiabatic one at depth d.**
+
+*Where it is weaker than a mask field, stated plainly.*
+1. The band is a uniform-thickness OFFSET of the body surface. Exact for a
+   pipe, and fine for any skin whose offset does not self-intersect; it is
+   NOT a general region mask, and on a medial axis it follows φ rather than
+   the geometry a user had in mind.
+2. The outer surface is a STAIRCASE: band membership is decided at the cell
+   centre, so the effective thickness carries the usual ±h/2 — at Δ⁺ ≈ 2 that
+   is ±1.0 wall unit out of d⁺ = 36, i.e. ±2.8 % of d = 0.1. There is no point
+   refining that with a volume fraction while the conduction geometry stays
+   staircase — and a fraction-blended capacity would be *worse*, since it
+   would dilute a straddling cell with a fictitious material. The fluid-side
+   cut cells keep the C3 fluid-fraction capacity exactly as before: `vfrac`
+   is 0 throughout the band region, so the two never interact.
+3. `tangential_correction` (C2) with a band is a hard config error. C2's
+   stencil, its Gershgorin rate and its indicator are all written against the
+   single κ_s of the C1 baseline, and C2 ships disabled by measurement
+   anyway.
+4. The band boundary is a same-level arm like the body surface, so it is
+   subject to the SAME 2:1 precondition (C1 gate 3c), which now tests both.
+   That matters for the pass-2 `refine_body` optimisation of §4: its
+   one-block 26-neighbour buffer keeps the SURFACE inside the finest level,
+   and nothing yet guarantees the same for a band boundary 0.1 deeper.
+   Expect to have to widen the refinement region, and note that the solver
+   will say so rather than run.
+
+*The one precondition, CHECKED at init rather than assumed.* φ is
+1-Lipschitz, so an arm of length h changes it by at most h and a face can only
+ever join ADJACENT bands — unless the band is thinner than the arm, in which
+case the shell has holes and a face joins the fluid straight to the outer
+material. `check_scalar_bands` counts exactly that, on the real φ field, and
+hard-errors. It is stated as the thing itself, not as a proxy on the spacing,
+so it holds on stretched and refined grids with no margin argument.
+
+*And the premise itself was measured, not asserted*: on the prepared 64²×8
+pipe case, the level set −0.1 < φ < 0 is the annulus 0.5 < r < 0.6 with
+**0 flips** out of 64 000 ghost-inclusive cells, against the ANALYTIC polygon
+distance (§3b).
 
 **F3 — no nonzero Neumann on an immersed surface. NOT A SEPARATE FEATURE: it
-folds into F2, and the substitute is exact for everything this campaign
-measures.** `ibm_wall = neumann` is only an alias for `adiabatic` (zero flux,
+folded into F2 exactly as predicted, and the substitute is exact for
+everything this campaign measures.** `ibm_wall = neumann` is only an alias for `adiabatic` (zero flux,
 six-face masking); the faithful outer BC is a constant nonzero flux at r = 0.6.
 Replace it by a `solid_source` sink in the annulus with an adiabatic outer
 surface, sized so the total heat matches.
@@ -231,11 +288,12 @@ everything else against Neuhauser directly.
 
 *And if the solid mean profile is wanted too*, concentrate the source in the
 outermost solid cells rather than spreading it: with ~18 cells across the
-solid, a one-cell layer approaches a surface flux to O(Δ/d) ≈ 5 %. That needs a
-field-valued `solid_source` — **which is the same mechanism F2 already
-requires**, so it costs nothing extra once F2 lands. It is in fact *mandatory*
-once F2 lands: a per-scalar constant source would also fire inside the
-insulating jacket, which cannot conduct the heat away and would run away.
+solid, a one-cell layer approaches a surface flux to O(Δ/d) ≈ 5 %. **NOT
+IMPLEMENTED** — the band confines `solid_source` to the shell, which is what
+made the runaway impossible, but it does not concentrate it. It would be a
+second band (`−d < φ < −d + t`) on the machinery that now exists, and it buys
+only the solid MEAN profile, which is known in closed form for a uniform
+source anyway. Do it only if that profile turns out to be wanted.
 
 *Why the "faithful" route is the worse one.* An annulus presents the solver
 with TWO cut surfaces, at r = 0.5 and r = 0.6, and the IBM marker is binary —
@@ -244,9 +302,12 @@ per-surface tag *on top of* cut-face area machinery that exists only in the
 Python checkers (`face_area_fraction`), not in the solver. That is strictly
 more work than F2, and it needs F2-like fields anyway.
 
-*Implementation note*: give the jacket κ small but NONZERO (e.g. 1e-6, not 0) —
-the face coefficient is a harmonic mean `dm/(w/κ_L + (1−w)/κ_R)` and κ = 0
-divides by zero — and C_jacket = 1 so the time-step limiter stays finite.
+*Implementation note, SUPERSEDED*: the draft said to give the jacket κ small
+but nonzero (1e-6) because the harmonic mean `dm/(w/κ_L + (1−w)/κ_R)` divides
+by κ = 0. The shipped code branches on it instead and returns an exact zero,
+so `solid_outer_k = 0` is a true insulator rather than a nearly-one, and the
+default `solid_outer_rhocp = 1` keeps the limiter finite as intended (it never
+multiplies a non-zero rhs there anyway).
 
 **F4 — radial statistics: NOT missing.** `stats_layout = plane` gives the
 z-averaged (x,y) cross-section per scalar; radial binning is post-processing.
@@ -308,19 +369,67 @@ error above reads 0.18 instead of 5.6e-13.
 
 ---
 
+## 3b. What F2 was gated on (2026-09-15)
+
+`validation/conjugate/run_gates_pipe.sh [band|insulate|bandguard|bandannulus|banddet]`
+— ALL PASS, on binaries rebuilt from the final source (the README's own
+PROVENANCE lesson). Full write-up and the "where the band is weaker than a
+mask field" list in `validation/conjugate/README.md`.
+
+| gate | measured |
+|---|---|
+| `band` — three-material slab | the C1 slab one layer deeper (jacket κ_o / shell κ_s = 2 / fluid 1, `T(0)=0`, `T(L)=1`). The steady profile is piecewise LINEAR in three layers and is an exact fixed point ONLY if both internal faces carry the true series resistance — the body-surface one on φ and the band one on ψ. Band boundary swept through a full cell × κ_o ∈ {0.01, 1, 100}: `max\|θ − exact\|` **0.0**, residual **0.0**, on all 12. |
+| …and it is LIVE | mutation control: give the SOLVER a band depth wrong by a tenth of a cell and seed the same exact profile — it leaves at once, residual **1.9e-2**. |
+| `insulate` — κ_o = 0 | the campaign's actual configuration. Shell + fluid reach the `y = L` Dirichlet 1; the jacket holds `solid_init = 0.5`, a value NEITHER domain face carries, so a leak either way shows. **4.4e-14**, residual 0.0. |
+| `bandannulus` — the premise | on the prepared 64²×8 pipe, `−0.1 < φ < 0` vs the ANALYTIC polygon distance: 13520 shell / 20960 jacket cells, **0 flips** of 64000. The level set IS the annulus. |
+| `bandguard` | 5/5 rejected: band thinner than the grid (caught at INIT on the real φ, not by a config rule); negative thickness; a `solid_*` key on a non-conjugate scalar; `tangential_correction` with a band; **a band boundary on a 2:1 block face** — C1 gate 3c's precondition, which tested the sign of φ only and so could not see the band. Paired with a CONTROL (same geometry, same refine box, band off) that must run, so the probe cannot pass by catching the body surface instead. |
+| `banddet` | banded conjugate run: 1 == 4 ranks == **GPU**, `max_abs 0`. |
+| inert by default | `run_bitexact{,_s3}.sh` vs `~/f1_ref_binaries`: 7-case and 9-case suites **max_abs 0, CPU AND GPU**; the whole C1 gate suite re-run unchanged; `scalar_test` gained 17 band assertions. |
+
+**One time-step note**, for whoever re-derives §5's `dt`: a material interface
+inside the solid excites the same extreme Gershgorin mode a cut cell does, so
+a band cell takes the cut-cell `share = 2` — but ONLY when
+`solid_outer_k > 0`. An insulated jacket can only remove face coefficients,
+never amplify one, so charging it the cut-cell share would cost the whole run
+a factor ~2.5 in `dt` for nothing. The campaign's jacket is insulated, so it
+costs nothing.
+
+---
+
 ## 4. Setting the case up
 
 ```
 axis            z (periodic), L_z = 12.5
-cross-section   [-0.65, 0.65]^2  (r = 0.6 solid, thin insulating jacket beyond)
+cross-section   [-0.65, 0.65]^2  (r = 0.6 solid, insulating jacket beyond)
+geometry        make_geometry_stl.py annulus --axis z --r-inner 0.5
+                    --box-half <clears the corner> --facets 16384   [F5, done]
 nu              1.8868e-4                 [flow] re = 5300
 forcing_z       1.8703e-2   = 2 u_tau^2/R   (gives Re_tau = 181, u_b ~ 1)
 scalars         7   (5 conjugate + dirichlet + adiabatic controls)
 Pr              0.71
-source_type     velocity (Kasagi), source = beta, source_dir = z  [F1, done]
-ibm_wall        conjugate;  solid_k / solid_rhocp per scalar    [see PIN DOWN]
 required        keep_buried = true, remove_solid = false, no wall functions
 ```
+
+and each of the five conjugate scalars, with (K, λ_sf) from §1's table:
+
+```
+[scalar.N]
+pr                = 0.71
+source_type       = velocity        ; Kasagi
+source            = <beta>
+source_dir        = z               ; F1 -- the pipe axis
+ibm_wall          = conjugate
+solid_k           = <lambda_sf>     ; = kappa_s/kappa_f       [see PIN DOWN]
+solid_rhocp       = <1/(K^2 lambda_sf)>
+solid_thickness   = 0.1             ; F2 -- the shell; beyond it, the jacket
+solid_outer_k     = 0.0             ; (the default) an exact insulator
+solid_source      = <-beta u_b/(2 d) ...>   ; the F3 substitute sink; SHELL only
+```
+
+`solid_source` must remove exactly the heat the fluid source puts in, or the
+case has no steady state. Size it from the closed balance, then CHECK it
+against the interface-heat diagnostic (`[scalar] heat_interval`, the C3
+Nusselt branch) rather than trusting the arithmetic.
 
 The driving force is *derived from the measured u_τ*, so Re_b is an outcome;
 check it lands near 1 and say so rather than tuning. Grid (estimate):
@@ -410,10 +519,14 @@ OUR bins, never the reverse.
 
 ## 7. Risks, in the order they are likely to bite
 
-1. **F2 is a genuine feature, not a config change**, and with F1 and F5 done
-   (§3a) it is the ONLY thing left on the critical path. If it slips, the fallback is a thick-solid run
-   that is *not* Neuhauser's d⁺ = 36 — report it as a different case, do not
-   present it as a match.
+1. ~~**F2 is a genuine feature, not a config change**~~ — **DONE 2026-09-15**
+   (§3, §3b), and much smaller than this handout expected, because φ already
+   carries the shell. Nothing is left on the critical path. What survives of
+   this risk is its second half: the shell's outer surface is a STAIRCASE at
+   ±h/2, i.e. d = 0.1 ± 0.0028 azimuthally at Δ⁺ ≈ 2 (±1.0 wall unit out of
+   d⁺ = 36, i.e. ±2.8 %). That is a real, if small, departure from Neuhauser's exact
+   d⁺ = 36 — quote it, and note that the two-grid study of §6.6 moves it by
+   the same factor as everything else.
 2. ~~**The (K, λ_sf) → (κ_s, ρc_s) mapping**~~ — **RESOLVED 2026-09-15**, four
    ways, §1. `solid_k` = λ_sf, `solid_rhocp` = 1/(K² λ_sf). The reading this
    handout shipped with was wrong; if anything downstream still assumes

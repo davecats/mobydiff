@@ -2,17 +2,24 @@
 # Pipe-campaign prerequisites F1 and F5 (docs/next_session_pipe_cht.md).
 #
 #   F1  [scalar.N] source_dir -- the Kasagi source on a chosen direction.
+#   F2  [scalar.N] solid_thickness -- the solid's second material band, i.e.
+#       the insulating jacket that makes the pipe wall a uniform-thickness
+#       shell on a Cartesian grid.
 #   F5  make_geometry_stl.py annulus -- the pipe's immersed body.
 #
-#   ./run_gates_pipe.sh [source_dir|guard|annulus|ranks|all]
+#   ./run_gates_pipe.sh [source_dir|guard|annulus|ranks|
+#                        band|insulate|bandguard|bandannulus|banddet|all]
 #
 # Environment: BIN   (default ../../build_cpu/moby_solve)
 #              PREP  (default the moby_prepare next to BIN)
+#              NBIN/NPREP (nofma CPU pair, banddet group)
+#              GBIN/GPREP (nofma GPU pair, banddet group)
 #              RANKS (default 4, prepare only)
 #              PY    (default python3; needs h5py, and ~/ibmc/bin/python here)
 #
 # The source_dir group runs in seconds; the annulus group prepares two 64^2x8
-# cases and takes a couple of minutes (the 16384-facet BVH is the cost).
+# cases and takes a couple of minutes (the 16384-facet BVH is the cost). The
+# F2 groups run on a 4x16x4 slab and take seconds each.
 #
 # NOT covered here, deliberately: that source_dir OFF is bit-exact. That is
 # the standard suite's job -- validation/scalar/run_bitexact{,_s3}.sh against
@@ -24,6 +31,10 @@ ROOT=$(cd ../.. && pwd)
 
 BIN=${BIN:-$ROOT/build_cpu/moby_solve}
 PREP=${PREP:-$(dirname "$BIN")/moby_prepare}
+NBIN=${NBIN:-$ROOT/build_cpu_nofma/moby_solve}
+NPREP=${NPREP:-$ROOT/build_cpu_nofma/moby_prepare}
+GBIN=${GBIN:-$ROOT/build_gpu_nofma/moby_solve}
+GPREP=${GPREP:-$ROOT/build_gpu_nofma/moby_prepare}
 RANKS=${RANKS:-4}
 PY=${PY:-python3}
 sel=${1:-all}
@@ -135,7 +146,174 @@ if want ranks; then
     report $?
 fi
 
+# ==========================================================================
+# F2: the solid's second material band
+# ==========================================================================
+
+# One banded-slab case, mirroring run_gates_c1.sh's slab_case.
+#   band_case <y_wall> <kappa_s> <cap> <depth> <kappa_o> <cap_o> <init>
+#             <prefix> <nsteps> <write> [bin] [prep] [ranks]
+# BAND_EXTRA_SED, if set, is one more sed expression applied to the template
+# (the refinement probe uses it to add a [blocks] refine box to BOTH the
+# prepare and the solve input, which must describe the same leaf table).
+band_case() {
+    local yw=$1 ka=$2 cap=$3 dep=$4 ko=$5 co=$6 ini=$7 pre=$8 ns=$9 wr=${10}
+    local bin=${11:-$BIN} prep=${12:-$PREP} nr=${13:-1}
+    $PY ./make_slab_stl.py "$pre.stl" --y-top "$yw" > /dev/null || return 1
+    sed -e "s|@STL@|$pre.stl|" -e "s|@CASE@|$pre.h5|" \
+        -e "s|@KAPPA@|$ka|" -e "s|@CAP@|$cap|" -e "s|@DEPTH@|$dep|" \
+        -e "s|@OUTERK@|$ko|" -e "s|@OUTERC@|$co|" -e "s|@INIT@|$ini|" \
+        -e "s|@PREFIX@|$pre|" -e "s|@NSTEPS@|$ns|" -e "s|@WRITE@|$wr|" \
+        -e "${BAND_EXTRA_SED:-s|^\\[case\\]|[case]|}" \
+        band_slab.ini > ".$pre.full.ini"
+    # moby_prepare COMPUTES the coefficients, so its input must not name a
+    # coefficient file; the solve input takes the file and drops the STL.
+    sed '/^coeff_file/d' ".$pre.full.ini" > ".$pre.prep.ini"
+    sed '/^stl_file/d'   ".$pre.full.ini" > ".$pre.ini"
+    mpirun -n "$nr" "$prep" ".$pre.prep.ini" "$pre.h5" > "$pre.prep.log" 2>&1 || {
+        tail -5 "$pre.prep.log"; return 1; }
+    mpirun -n "$nr" "$bin" ".$pre.ini" > "$pre.log" 2>&1 || { tail -20 "$pre.log"; return 1; }
+    return 0
+}
+
+# --- F2 (1): the three-material slab, band boundary swept through a cell ---
+# The C1 slab gate one layer deeper. The piecewise-linear three-layer profile
+# is an exact fixed point ONLY if the band face carries the true series
+# resistance, i.e. only if the level-set weight on psi = phi + d is the true
+# cut fraction of THAT iso-surface. The gate starts at the fixed point and
+# checks it does not move; y_wall is held at a half-cell cut (C1 already
+# swept it) and the BAND boundary is what moves here.
+if want band; then
+    echo "== F2 (1) three-material slab: the exact profile is a fixed point"
+    yw=0.25
+    for f in 0.05 0.35 0.65 0.95; do
+        dep=$($PY -c "print(repr(0.25 - (0.09375 + $f/16.0)))")
+        for ko in 0.01 1.0 100.0; do
+            tag="bnd_f$(echo $f | tr . p)_k$(echo $ko | tr . p)"
+            band_case "$yw" 2.0 2.0 "$dep" "$ko" 1.0 0.0 "$tag" 1 1 \
+                || { report 1; continue; }
+            $PY ./seed_slab_ic.py "${tag}_1.h5" "${tag}_ic.h5" \
+                --y-wall "$yw" --kappa 2.0 --depth "$dep" --outer-kappa "$ko" \
+                > /dev/null || { report 1; continue; }
+            sed -e "s|^nsteps.*|nsteps = 500|" -e "s|^field_interval.*|field_interval = 500|" \
+                -e "s|^field_prefix = $tag|field_prefix = ${tag}_fp|" \
+                -e "s|^\\[output\\]|[restart]\\nfile = ${tag}_ic.h5\\n\\n[output]|" \
+                ".$tag.ini" > ".${tag}_fp.ini"
+            mpirun -n 1 "$BIN" ".${tag}_fp.ini" > "${tag}_fp.log" 2>&1 \
+                || { tail -20 "${tag}_fp.log"; report 1; continue; }
+            run $PY ./check_conjugate.py slab "${tag}_fp_501.h5" \
+                --y-wall "$yw" --kappa 2.0 --depth "$dep" --outer-kappa "$ko" \
+                --prev "${tag}_ic.h5"
+            [ $? -eq 0 ] || status=1
+        done
+    done
+fi
+
+# --- F2 (2): the INSULATED band, cold start ------------------------------
+# kappa_outer = 0 is what the campaign uses, and it is a different statement:
+# the band face coefficient must be EXACTLY zero, not small. Then no heat
+# crosses the band boundary, the shell and the fluid come to the y = L
+# Dirichlet value 1, and the outer band is inert at solid_init = 0.5 -- a
+# value NEITHER domain face carries, so a leak in either direction shows.
+# The y = 0 Dirichlet face is disconnected and must stay disconnected.
+if want insulate; then
+    echo "== F2 (2) insulated outer band: inert at solid_init, no leak"
+    yw=0.25
+    dep=$($PY -c "print(repr(0.25 - 0.125))")
+    band_case "$yw" 1.0 1.0 "$dep" 0.0 1.0 0.5 ins 40000 39000 || report 1
+    run $PY ./check_conjugate.py slab ins_40000.h5 \
+        --y-wall "$yw" --kappa 1.0 --depth "$dep" --outer-kappa 0.0 \
+        --outer-init 0.5 --prev ins_39000.h5 --tolerance 1e-12
+    report $?
+fi
+
+# --- F2 (3): the config guards --------------------------------------------
+if want bandguard; then
+    echo "== F2 (3) config guards"
+    # One prepared case file to run the probes against; the geometry is
+    # irrelevant, only the config parsing and the init-time band check are.
+    [ -f bg.h5 ] || band_case 0.25 1.0 1.0 0.125 0.0 1.0 0.0 bg 1 0 || report 1
+    band_probe() {  # <name> <sed-expr>
+        sed "$2" .bg.ini > ".bg_$1.ini"
+    }
+    # thinner than the grid (h = 1/16): the shell then has holes, so a face
+    # joins the fluid straight to the outer band. This one is caught at INIT,
+    # from the real phi field, not by a config rule.
+    band_probe thin 's|^solid_thickness = .*|solid_thickness = 0.02|'
+    band_probe negative 's|^solid_thickness = .*|solid_thickness = -0.1|'
+    band_probe non-conjugate 's|^ibm_wall = conjugate|ibm_wall = dirichlet|'
+    band_probe with-tangential \
+        's|^solid_thickness = .*|solid_thickness = 0.125\ntangential_correction = true|'
+    for name in thin negative non-conjugate with-tangential; do
+        if mpirun -n 1 "$BIN" ".bg_$name.ini" > ".bg_$name.log" 2>&1; then
+            echo "   $name: ACCEPTED -- it must be a hard config error"; report 1
+        else
+            echo "   $name: rejected -- $(grep -m1 'ERROR STOP' ".bg_$name.log")"; report 0
+        fi
+    done
+
+    # --- the 2:1 precondition applies to the BAND boundary too -------------
+    # The conjugate face coefficient is a same-level arm, so it cannot read
+    # across a refinement interface -- at the body surface (C1 gate 3c) and
+    # equally at a solid_thickness band boundary, which C1's check could not
+    # see. Built as a PAIR so it cannot pass for the wrong reason: the body
+    # surface sits at y = 0.40625, strictly inside a block row, and only the
+    # BAND boundary (0.40625 - 0.15625 = 0.25) lands on the 2:1 face the
+    # refine box creates. Same geometry, same box, band off -> must RUN.
+    echo "   -- the 2:1 precondition at a band boundary"
+    export BAND_EXTRA_SED='s|^nb = 4|nb = 4\nrefine = 0.0 0.25 0.0 0.25 0.0 0.25\nrefine_levels = 1|'
+    if band_case 0.40625 1.0 1.0 0.15625 0.0 1.0 0.0 bgr 1 0 > /dev/null 2>&1; then
+        echo "   band on a 2:1 face: ACCEPTED -- it must be a hard error"; report 1
+    else
+        echo "   band on a 2:1 face: rejected -- $(grep -m1 'ERROR STOP' bgr.log)"; report 0
+    fi
+    if band_case 0.40625 1.0 1.0 0.0 0.0 1.0 0.0 bgrc 1 0 > /dev/null 2>&1; then
+        echo "   control, same box with the band off: runs"; report 0
+    else
+        echo "   control, same box with the band off: REJECTED -- the probe above"
+        echo "   would then be testing the body surface, not the band"
+        tail -5 bgrc.log; report 1
+    fi
+    unset BAND_EXTRA_SED
+fi
+
+# --- F2 (4): the band on the REAL annulus ---------------------------------
+# The premise the whole feature rests on: inside the domain the level set
+# -d < phi < 0 IS the annulus r_inner < r < r_inner + d. Checked against the
+# ANALYTIC polygon distance, so it is a statement about the geometry rather
+# than a restatement of what the solver stored.
+if want bandannulus; then
+    echo "== F2 (4) the level-set band IS the annulus"
+    [ -f pipe64.h5 ] || pipe_case pipe64 z --box-half 1.25 || report 1
+    run $PY ./check_annulus.py pipe64.h5 --centre 0.65 0.65 --r-inner 0.5 \
+        --facets 16384 --box-half 1.25 --domain-half 0.65 --band-depth 0.1
+    report $?
+fi
+
+# --- F2 (5): determinism ---------------------------------------------------
+# A banded run must not depend on the decomposition or the device. Both
+# statements are max_abs 0, on nofma binaries.
+if want banddet; then
+    echo "== F2 (5) banded run: 1 == 4 ranks == GPU, exactly"
+    yw=0.25
+    dep=$($PY -c "print(repr(0.25 - 0.125))")
+    band_case "$yw" 2.0 0.5 "$dep" 0.01 1.0 0.5 bdet_r1 200 200 "$NBIN" "$NPREP" 1 \
+        || report 1
+    band_case "$yw" 2.0 0.5 "$dep" 0.01 1.0 0.5 bdet_r4 200 200 "$NBIN" "$NPREP" 4 \
+        || report 1
+    run $PY $ROOT/tools/compare_fields.py bdet_r1_200.h5 bdet_r4_200.h5 --tolerance 0
+    report $?
+    if [ -x "$GBIN" ]; then
+        band_case "$yw" 2.0 0.5 "$dep" 0.01 1.0 0.5 bdet_gpu 200 200 "$GBIN" "$NPREP" 1 \
+            || report 1
+        run $PY $ROOT/tools/compare_fields.py bdet_r1_200.h5 bdet_gpu_200.h5 --tolerance 0
+        report $?
+    else
+        echo "   GPU binary $GBIN not found -- SKIPPED"; status=1
+    fi
+fi
+
 echo
-if [ $status -eq 0 ]; then echo "pipe prerequisite gates (F1, F5): ALL PASS"
-else echo "pipe prerequisite gates (F1, F5): FAILURES"; fi
+if [ $status -eq 0 ]; then echo "pipe prerequisite gates (F1, F2, F5): ALL PASS"
+else echo "pipe prerequisite gates (F1, F2, F5): FAILURES"; fi
 exit $status

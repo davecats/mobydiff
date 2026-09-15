@@ -51,6 +51,7 @@ module scalar_stats
     use :: ibmm, only: ibm_type
     use :: scalar, only: scalar_type, scalars_enabled, eddy_diffusivity, &
         wall_face_diffusivity, scalar_conjugate_enabled, conjugate_face_diffusivity, &
+        band_face_diffusivity, &
         SC_IBM_ADIABATIC, SC_IBM_CONJUGATE, SC_LAYOUT_PROFILE, SC_LAYOUT_PLANE
     implicit none
 
@@ -362,7 +363,8 @@ contains
         !$omp& blk%q, blk%x, blk%z, blk%origin, blk%level, blk%physLow, blk%physHigh, nut, coef, &
         !$omp& sc%pr, sc%prt, sc%prtModel, sc%invDy, sc%ibmMode, &
         !$omp& sc%wfP, sc%wfYpt, sc%wfYplus, wallfn, anyConj, &
-        !$omp& sc%phi, sc%solidK, sc%contactR) &
+        !$omp& sc%phi, sc%solidK, sc%contactR, &
+        !$omp& sc%solidDepth, sc%outerK) &
         !$omp& map(tofrom: sample_sum, sample_count) &
         !$omp& private(i,j,k,b,is,s,var,row,base,gx,gy,weight,dm,uc,s0,sS,sN,vs,vn, &
         !$omp& dys,dyn,nts,ntn,clo,jlo,chi,jhi,adiab,cls,cln,sols,soln,ms,mn, &
@@ -437,10 +439,23 @@ contains
                         dys = dm
                         dyn = dm
                         if (conjug) then
-                            dys = conjugate_face_diffusivity(dm, phs, phc, sc%solidK(is), &
-                                sc%contactR(is), sc%invDy(j,b))
-                            dyn = conjugate_face_diffusivity(dm, phc, phn, sc%solidK(is), &
-                                sc%contactR(is), sc%invDy(j+1,b))
+                            ! F2: a banded solid must be reported with the
+                            ! coefficient the transport kernel APPLIED, which
+                            ! is the whole invariant these accumulators exist
+                            ! for -- so the same branch, on the same numbers.
+                            if (sc%solidDepth(is) > 0.0d0) then
+                                dys = band_face_diffusivity(dm, phs, phc, sc%solidK(is), &
+                                    sc%outerK(is), sc%solidDepth(is), &
+                                    sc%contactR(is), sc%invDy(j,b))
+                                dyn = band_face_diffusivity(dm, phc, phn, sc%solidK(is), &
+                                    sc%outerK(is), sc%solidDepth(is), &
+                                    sc%contactR(is), sc%invDy(j+1,b))
+                            else
+                                dys = conjugate_face_diffusivity(dm, phs, phc, &
+                                    sc%solidK(is), sc%contactR(is), sc%invDy(j,b))
+                                dyn = conjugate_face_diffusivity(dm, phc, phn, &
+                                    sc%solidK(is), sc%contactR(is), sc%invDy(j+1,b))
+                            end if
                             if (useNut .and. .not. solc) then
                                 if (.not. cuts) dys = dys + eddy_diffusivity(nts, sc%pr(is), &
                                     sc%prt(is), sc%prtModel(is), re)
@@ -770,7 +785,8 @@ contains
         !$omp& blk%q, blk%x, blk%y, blk%z, blk%physLow, nut, coef, &
         !$omp& sc%pr, sc%prt, sc%prtModel, sc%invDx, sc%invDy, sc%invDz, &
         !$omp& sc%ibmValue, sc%ibmMode, sc%wfP, sc%wfYpt, sc%wfYplus, wallfn, &
-        !$omp& sc%phi, sc%solidK, sc%contactR) &
+        !$omp& sc%phi, sc%solidK, sc%contactR, &
+        !$omp& sc%solidDepth, sc%outerK) &
         !$omp& map(tofrom: heat) &
         !$omp& private(i,j,k,b,is,var,dm,dx,dy,dz,s0,sW,sS,sB,flux,sgn,cp, &
         !$omp& ntw,nts,ntb,dxw,dys,dzb,solc,solw,sols,solb,clw,cls,clb, &
@@ -829,12 +845,25 @@ contains
                             ! The scheme's own cut-face coefficient. nu_t does
                             ! not enter a cut face (nor the solid), so the
                             ! molecular branch is the whole story here.
-                            dxw = conjugate_face_diffusivity(dm, phw, phc, &
-                                sc%solidK(is), sc%contactR(is), sc%invDx(i,b))
-                            dys = conjugate_face_diffusivity(dm, phs, phc, &
-                                sc%solidK(is), sc%contactR(is), sc%invDy(j,b))
-                            dzb = conjugate_face_diffusivity(dm, phb, phc, &
-                                sc%solidK(is), sc%contactR(is), sc%invDz(k,b))
+                            if (sc%solidDepth(is) > 0.0d0) then
+                                ! F2, as above: the applied coefficient.
+                                dxw = band_face_diffusivity(dm, phw, phc, sc%solidK(is), &
+                                    sc%outerK(is), sc%solidDepth(is), &
+                                    sc%contactR(is), sc%invDx(i,b))
+                                dys = band_face_diffusivity(dm, phs, phc, sc%solidK(is), &
+                                    sc%outerK(is), sc%solidDepth(is), &
+                                    sc%contactR(is), sc%invDy(j,b))
+                                dzb = band_face_diffusivity(dm, phb, phc, sc%solidK(is), &
+                                    sc%outerK(is), sc%solidDepth(is), &
+                                    sc%contactR(is), sc%invDz(k,b))
+                            else
+                                dxw = conjugate_face_diffusivity(dm, phw, phc, &
+                                    sc%solidK(is), sc%contactR(is), sc%invDx(i,b))
+                                dys = conjugate_face_diffusivity(dm, phs, phc, &
+                                    sc%solidK(is), sc%contactR(is), sc%invDy(j,b))
+                                dzb = conjugate_face_diffusivity(dm, phb, phc, &
+                                    sc%solidK(is), sc%contactR(is), sc%invDz(k,b))
+                            end if
                         else if (useNut .and. wallfn) then
                             dxw = dm + wall_face_diffusivity(nut(i-1,j,k,b), nut(i,j,k,b), &
                                 sc%wfYplus(i-1,j,k,b), sc%wfYplus(i,j,k,b), &

@@ -33,7 +33,7 @@ group), `RANKS`. Helpers:
 | file | role |
 |---|---|
 | `make_slab_stl.py` | the flat solid slab as an **ASCII** STL — `moby_prepare` parses ASCII vertices to float64, so the interface plane is exact and the analytic reference needs no quantisation dance. |
-| `seed_slab_ic.py` | writes the exact two-material steady profile into a snapshot, for the fixed-point form of gate 1. |
+| `seed_slab_ic.py` | writes the exact steady profile into a snapshot, for the fixed-point form of gate 1 — two materials, or three with `--depth`/`--outer-kappa` (the F2 band gate). It imports `slab_exact` from `check_conjugate.py`, so the seed and the reference cannot drift apart. |
 | `check_conjugate.py` | `slab` / `weight` / `conserve` / `limit`. |
 | `flux_limit.py` | the `κ_s → ∞` / `κ_s → 0` limits as a **rate**, which is the sharp half of gate 2. |
 
@@ -1707,12 +1707,12 @@ conductivity-contrast case"; it has none.
 
 ---
 
-## Pipe-campaign prerequisites F1 and F5 (2026-09-15)
+## Pipe-campaign prerequisites F1, F2 and F5 (2026-09-15)
 
-`./run_gates_pipe.sh [source_dir|guard|annulus|ranks|all]` — **ALL PASS**
-(`PY=~/ibmc/bin/python`; the `source_dir` group reproduces its numbers exactly
-with the GPU binary). The two small features of
-`docs/next_session_pipe_cht.md` §3; F2 remains the critical path.
+`./run_gates_pipe.sh [source_dir|guard|annulus|ranks|band|insulate|bandguard|bandannulus|banddet|all]`
+— **ALL PASS** (`PY=~/ibmc/bin/python`; the `source_dir` group reproduces its
+numbers exactly with the GPU binary). Every feature gap of
+`docs/next_session_pipe_cht.md` §3 is now closed.
 
 **F1 — `[scalar.N] source_dir = x | y | z`** picks the velocity component the
 Kasagi (`source_type = velocity`) source rides. Default x, and the x branch is
@@ -1769,3 +1769,87 @@ ones. `check_oblique.py` had already found this and says so, but the stale
 comment was the one a reader meets first. A pipe can tell them apart (it is
 invariant in z but not in x or y): with the axes swapped, the φ error above
 reads 0.18 instead of 5.6e-13.
+
+### F2 — the solid's second material band (`[scalar.N] solid_thickness`)
+
+The pipe's wall must be a shell of UNIFORM thickness `d = 0.1`: §1 of the
+handout measured that the temperature fluctuation still carries 38 % of its
+interface value at the outer surface and REFLECTS off it, so a solid that runs
+out to the box faces (thickness 0.1 at the face mid-points, 0.35 at the
+corners) reflects differently at every azimuth and destroys the `bccode = 0`
+premise the campaign rests on.
+
+**What shipped is NOT the handout's plan**, and the difference is the whole
+point of the increment. The handout called for a per-leaf `κ_s(x)` mask
+written by `moby_prepare` — a new case-file dataset, a new prepare stage, new
+read plumbing, and every existing conjugate case file re-prepared. None of it
+is needed, for the same reason the C1 baseline got its geometry for free:
+**φ is already the signed distance to the body surface**, so a shell of
+uniform thickness `d` IS the level set `−d < φ < 0`, and the jacket is
+`φ ≤ −d`. The shifted level set `ψ = φ + d` is itself a distance function, so
+the shell/jacket interface goes through the SAME distance-weighted harmonic
+mean on the SAME obliquity lemma — grazing guard included, since it tests
+`|φ_L − φ_R| = |ψ_L − ψ_R|`. Three config keys, one new face-coefficient
+function, no file-format change.
+
+```
+[scalar.N] solid_thickness   = 0.1   ; 0 (default) = one solid material
+           solid_outer_k     = 0.0   ; default 0 = an EXACT insulator
+           solid_outer_rhocp = 1.0
+```
+
+`solid_outer_k = 0` is a branch returning an exact zero, not the small-κ
+surrogate the handout suggested (the harmonic mean would divide by it), so the
+jacket is wholly inert: no flux, no convection, no source, no contribution to
+the explicit time-step limit. It holds `solid_init` and the shell's outer
+surface is exactly adiabatic at depth `d` — which is F3's substitute for
+Neuhauser's constant outer flux, and one whose error in every FLUCTUATION
+statistic is exactly zero (the solid's fluctuation equation does not contain
+the source at all). `solid_source` fires in the SHELL only, by construction,
+which is what makes the runaway the handout warned about impossible.
+
+| gate | measured |
+|---|---|
+| `band` — three-material slab | the C1 slab one layer deeper: outer κ_o / shell κ_s = 2 / fluid 1, `T(0) = 0`, `T(L) = 1`. The steady profile is piecewise LINEAR in three layers and is an exact fixed point **only if both internal faces carry the true series resistance** — the body-surface one on φ and the band one on ψ. Band boundary swept through a full cell (sub-cell fraction 0.05/0.35/0.65/0.95) × κ_o ∈ {0.01, 1, 100}: `max|θ − exact|` = **0.0** and transient residual **0.0** on all 12. |
+| …and it is a LIVE gate | mutation control: give the SOLVER a band depth wrong by a tenth of a cell (0.1094 vs 0.115625) and seed the same exact profile — it leaves at once, residual **1.9e-2**. The checker fed a wrong depth against a correct run likewise reads **2.7e-2**. So the 0.0 above is an exact fixed point, not a dead test. |
+| `insulate` — κ_o = 0, cold start | the campaign's actual configuration, and a different statement: the band coefficient must be EXACTLY zero, not small. Shell + fluid come to the `y = L` Dirichlet value 1; the jacket stays at `solid_init = 0.5`, a value NEITHER domain face carries, so a leak in either direction shows. `max|θ − exact|` **4.4e-14**, residual **0.0** (converged). The `y = 0` Dirichlet face is disconnected and stays disconnected. |
+| `bandannulus` — the premise itself | on the prepared 64²×8 pipe case, `−0.1 < φ < 0` vs the ANALYTIC polygon distance: 13520 shell / 20960 jacket cells, **0 flips** out of 64000 ghost-inclusive cells. The level-set band IS the annulus `0.5 < r < 0.6`. |
+| `bandguard` — 5/5 rejected, 1/1 control | a band thinner than the grid (caught at INIT from the real φ field, not by a config rule); a negative thickness; a `solid_*` key on a non-conjugate scalar; `tangential_correction` with a band; **a band boundary sitting on a 2:1 block face**. |
+| …and that last one is a PAIR | C1 gate 3c rejects a cut face on a 2:1 block face because the conjugate coefficient is a same-level arm — and the band boundary is one too, which C1's check could not see (it tested the sign of φ only). The probe puts the body surface strictly inside a block row and only the BAND boundary on the refined face; the **control**, the identical case and refine box with the band off, must RUN, so the probe cannot pass by catching the surface instead. Both hold. |
+| `banddet` | banded conjugate run, 200 steps, nofma: 1 rank == 4 ranks == **GPU**, `max_abs 0` on every dataset (`un vn wn pn theta vfrac`). |
+| inert by default | `run_bitexact.sh` + `run_bitexact_s3.sh` vs `~/f1_ref_binaries`: 7-case and 9-case suites **max_abs 0, CPU AND GPU**; the whole C1 gate suite re-run unchanged; `scalar_test` gained 17 band assertions (classification, the three single-material cases, fluid|shell == C1 exactly, the series resistance at two weights, R_c present at the body surface and absent at the band, and κ_o = 0 as an exact zero on three face kinds). |
+
+**Where the band is weaker than a mask field would have been — stated so the
+next reader does not have to rediscover it.**
+
+1. It is a uniform-thickness OFFSET of the body surface. Exact for a pipe, and
+   fine for any skin whose offset does not self-intersect; it is not a general
+   region mask, and on a MEDIAL AXIS it follows φ rather than the geometry the
+   user meant.
+2. The outer surface is a STAIRCASE: band membership is decided at the cell
+   centre, so the effective thickness carries ±h/2 — at the campaign's
+   Δ⁺ ≈ 2 that is ±1.0 wall unit out of `d⁺ = 36`, i.e. ±2.8 % of `d = 0.1`.
+   Refining that
+   with a volume fraction while the conduction geometry stays staircase would
+   not be a refinement, and a fraction-blended capacity would be actively
+   WORSE, since it would dilute a straddling cell with a fictitious material.
+   The fluid-side cut cells are untouched: `vfrac` is 0 throughout the band
+   region, so the C3 capacity and the band never interact.
+3. `tangential_correction` (C2) with a band is a hard config error rather than
+   a half-implementation: C2's stencil, its Gershgorin rate and its indicator
+   are all written against the single `κ_s` of the C1 baseline, and C2 ships
+   disabled by measurement anyway.
+
+**The one precondition is CHECKED, not assumed.** φ is 1-Lipschitz, so an arm
+of length `h` moves it by at most `h` and a face can only join ADJACENT bands
+— unless the band is thinner than the arm, in which case the shell has holes
+and a face joins the fluid straight to the jacket. `check_scalar_bands` counts
+exactly that, on the real φ field, and hard-errors naming the count. It is the
+thing itself rather than a proxy on the spacing, so it holds on stretched and
+refined grids with no margin argument.
+
+**One time-step note.** A material interface inside the solid excites the same
+extreme Gershgorin mode a cut cell does, so a band cell takes the cut-cell
+`share = 2` — but ONLY when `solid_outer_k > 0`. An insulated jacket can only
+remove face coefficients, never amplify one, so charging it the cut-cell share
+would cost the whole run a factor ~2.5 in `dt` for nothing.

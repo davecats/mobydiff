@@ -30,7 +30,8 @@
 program test_scalar
     use, intrinsic :: iso_c_binding
     use :: scalar, only: prt_kays, jayatilleke_p, thermal_yplus, wall_diffusivity, &
-        plane_box_fraction, scalar_volume_fraction
+        plane_box_fraction, scalar_volume_fraction, &
+        band_face_diffusivity, band_material, conjugate_face_diffusivity
     implicit none
 
     integer :: nfail
@@ -141,6 +142,9 @@ program test_scalar
     call check_fraction_symmetry()
     call check_fraction_brute()
 
+    ! === F2: the solid's second material band ============================
+    call check_band()
+
     if (nfail > 0) then
         print '(A,I0,A)', "scalar_test: ", nfail, " FAILURES"
         error stop
@@ -161,6 +165,87 @@ contains
         a = wall_diffusivity(yplus, 0.71d0, 0.85d0, 180.0d0, p, &
             thermal_yplus(0.71d0, 0.85d0, p))
     end function alpha_air
+
+    ! F2: band_face_diffusivity against the series resistance it must be.
+    ! phi is a distance, so a cell centre at phi carries an ARM of |phi_L -
+    ! phi_R| and the level-set weight is the fraction of that arm on the left
+    ! side of whichever iso-surface the face crosses.
+    subroutine check_band()
+        real(C_DOUBLE), parameter :: DM = 0.25d0, KS = 3.0d0, KO = 7.0d0, D = 1.0d0
+        real(C_DOUBLE) :: invd, w
+
+        ! Unit arm, so invd = 1 and phi differences ARE the arm fractions.
+        invd = 1.0d0
+
+        ! (a) classification. The shell is -d < phi < 0; a cell centre
+        ! exactly ON the surface is FLUID (the solver gives solid cells a
+        ! strictly negative phi for precisely this reason), and dsh = 0
+        ! disables the split.
+        call check_int("band(+0.5, d=1)", band_material( 0.5d0, D), 0)
+        call check_int("band( 0.0, d=1)", band_material( 0.0d0, D), 0)
+        call check_int("band(-0.5, d=1)", band_material(-0.5d0, D), 1)
+        call check_int("band(-1.0, d=1)", band_material(-1.0d0, D), 2)
+        call check_int("band(-1.5, d=1)", band_material(-1.5d0, D), 2)
+        call check_int("band(-1.5, d=0)", band_material(-1.5d0, 0.0d0), 1)
+
+        ! (b) within one material it is kappa*dm, in all three.
+        call check("band fluid-fluid", &
+            band_face_diffusivity(DM, 0.7d0, 0.3d0, KS, KO, D, 0.0d0, invd), DM)
+        call check("band shell-shell", &
+            band_face_diffusivity(DM, -0.3d0, -0.7d0, KS, KO, D, 0.0d0, invd), DM*KS)
+        call check("band outer-outer", &
+            band_face_diffusivity(DM, -1.3d0, -1.7d0, KS, KO, D, 0.0d0, invd), DM*KO)
+
+        ! (c) the fluid|shell face reproduces C1 EXACTLY -- the band must not
+        ! move the body-surface coefficient by a single ulp.
+        call check("band fluid-shell == C1", &
+            band_face_diffusivity(DM, 0.3d0, -0.7d0, KS, KO, D, 0.0d0, invd), &
+            conjugate_face_diffusivity(DM, 0.3d0, -0.7d0, KS, 0.0d0, invd))
+
+        ! (d) the shell|outer face is the series resistance on psi = phi + d.
+        ! phi_L = -0.7 -> psi_L = 0.3, phi_R = -1.3 -> psi_R = -0.3, so the
+        ! left (shell) side holds w = 0.3/0.6 = 1/2 of the arm.
+        w = 0.5d0
+        call check("band shell-outer", &
+            band_face_diffusivity(DM, -0.7d0, -1.3d0, KS, KO, D, 0.0d0, invd), &
+            DM/(w/KS + (1.0d0 - w)/KO))
+        ! ...and asymmetrically, w = 0.1/0.6.
+        w = 0.1d0/0.6d0
+        call check("band shell-outer, w = 1/6", &
+            band_face_diffusivity(DM, -0.9d0, -1.5d0, KS, KO, D, 0.0d0, invd), &
+            DM/(w/KS + (1.0d0 - w)/KO))
+
+        ! (e) the contact resistance belongs to the BODY SURFACE and must not
+        ! appear at the band face.
+        call check("band shell-outer ignores R_c", &
+            band_face_diffusivity(DM, -0.7d0, -1.3d0, KS, KO, D, 4.0d0, invd), &
+            band_face_diffusivity(DM, -0.7d0, -1.3d0, KS, KO, D, 0.0d0, invd))
+        call check("band fluid-shell keeps R_c", &
+            band_face_diffusivity(DM, 0.3d0, -0.7d0, KS, KO, D, 4.0d0, invd), &
+            conjugate_face_diffusivity(DM, 0.3d0, -0.7d0, KS, 4.0d0, invd))
+
+        ! (f) kappa_outer = 0 is an EXACT insulator, not a small number, on
+        ! both the band face and inside the outer material. This is the one
+        ! the pipe campaign runs on, and the harmonic mean would divide by it.
+        call check("insulator, band face", &
+            band_face_diffusivity(DM, -0.7d0, -1.3d0, KS, 0.0d0, D, 0.0d0, invd), 0.0d0)
+        call check("insulator, outer-outer", &
+            band_face_diffusivity(DM, -1.3d0, -1.7d0, KS, 0.0d0, D, 0.0d0, invd), 0.0d0)
+        ! ...and a fluid|outer face (the band thinner than the arm, which the
+        ! solver rejects at init) must still be finite rather than NaN.
+        call check("insulator, fluid-outer fallback", &
+            band_face_diffusivity(DM, 0.3d0, -1.3d0, KS, 0.0d0, 1.0d0, 0.0d0, invd), 0.0d0)
+    end subroutine check_band
+
+    subroutine check_int(name, got, want)
+        character(len=*), intent(in) :: name
+        integer, intent(in) :: got, want
+
+        if (got /= want) then
+            print '(A,A,I0,A,I0)', name, ": got ", got, " want ", want
+            nfail = nfail + 1
+        end if
+    end subroutine check_int
 
     ! Relative comparison; the reference values come from mpmath (its own
     ! exp/sqrt), so allow a few-ulp cross-runtime spread.
