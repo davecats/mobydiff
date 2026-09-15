@@ -3,7 +3,7 @@
 # e_face, and the correction behind [scalar.N] tangential_correction
 # (docs/next_session_conjugate.md Section 10, increment C2).
 #
-#   ./run_gates_c2.sh [flux|indicator|bvp|cylinder|stzero|residual|converge|dt|c1|all]
+#   ./run_gates_c2.sh [flux|indicator|bvp|cylinder|stzero|residual|converge|coco|dt|c1|all]
 #
 # Environment: BIN   (default ../../build_cpu/moby_solve)
 #              PREP  (the moby_prepare next to BIN)
@@ -337,6 +337,20 @@ if want converge; then
         for r in 0.01 1.0; do
             run $PY ./check_convergence.py --geometry plane --tag obl30 \
                 --theta 30 --kappa "$ka" --q-n 1.0 --amp "$r" --grids 64 128 256
+        done
+    done
+fi
+
+# --- (3e) the COCO ceiling -------------------------------------------------
+# Could a locally CURVED analytic model, used as a deferred correction, beat
+# what we have? It is a ceiling measurement (exact mode amplitudes), so a real
+# scheme can only do worse -- and the answer is that stage 1b already attains
+# it. Runs no solver.
+if want coco; then
+    echo "== (3e) the COCO ceiling: flat vs locally curved local models"
+    for sch in base area1sext; do
+        for ka in 10.0 1000.0; do
+            run $PY ./check_coco.py --kappa "$ka" --grids 64 128 256 --scheme "$sch"
         done
     done
 fi

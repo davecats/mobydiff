@@ -1166,6 +1166,74 @@ and both schemes sit at round-off (2.5e-16) and are BIT-IDENTICAL. An
 "observed order" fitted to round-off is noise, and the sweep reports one
 (-1.30) -- which is why the row is a control and not a data point.
 
+
+### The COCO ceiling — the principle works, and stage 1b already attains it
+
+`./check_coco.py --kappa 10 --grids 64 128 256 --scheme base`. Asked whether
+the corner-correction (COCO) principle could treat regular but locally CURVED
+walls as a deferred correction. It can; it has nothing left to give.
+
+**What was measured.** A COCO correction subtracts `-L_h(T_e)` with `T_e` a
+local analytic solution; since `L(T_e) = 0` exactly, `L_h(T_e)` IS a truncation
+error, and the correction removes as much of the scheme's own truncation error
+as `T_e` resembles the true local behaviour. Two local models, both verified
+exact two-material conjugate solutions (jump conditions to 8e-6, harmonic in
+each material):
+
+- **flat** -- the 180/180-degree wedge pair, which design note §5 proves IS the
+  shipped series resistance;
+- **curved** -- the same two modes on an arc of the local curvature:
+  `(q_n a/κ) ln(r/a)` plus a dipole `A sin(θ-θ_0)` with
+  `A = a_t (1 + κ_s)/2`. `flat` is its `a → ∞` limit (verified: the difference
+  falls exactly as `1/a` over four decades).
+
+Both amplitudes are taken from the EXACT solution, so these are CEILINGS. A
+real scheme must estimate them and can only do worse. `L_h` is the scheme's own
+operator, available exactly as the matrix `check_convergence.py` assembles.
+
+**Captured fraction of the baseline's cut-cell truncation error:**
+
+| | n=64 | n=128 | n=256 | residual order |
+|---|---|---|---|---|
+| uncorrected | — | — | — | **−1.01** (grows like 1/h) |
+| flat-COCO | 88.3 % | 89.5 % | 96.7 % | −0.11 (bounded) |
+| curved-COCO | **92.9 %** | **95.3 %** | **97.8 %** | −0.17 (bounded) |
+
+So the principle WORKS: either local model, used as a deferred correction,
+converts the baseline's `1/h`-growing cut-cell residual into a bounded one, and
+curvature is worth a further factor ~1.5-2.2 on what remains.
+
+**But the absolute numbers close it** (n = 256):
+
+| | κ_s = 10 | κ_s = 10³ |
+|---|---|---|
+| C1 baseline, uncorrected | 30.97 | 45.38 |
+| + flat-COCO | 1.04 | 1.54 |
+| + curved-COCO | **0.68** | **1.06** |
+| **STAGE 1b** (a different route) | **0.71** | **1.08** |
+
+**Stage 1b already sits AT the curved-COCO ceiling.** And the reciprocal test
+confirms it from the other side: COCO applied ON TOP of stage 1b has a NEGATIVE
+captured fraction (−44 % to −166 %) -- subtracting `L_h(T_e)` from a residual
+that is already smaller than the local model's own truncation injects error
+rather than removing it.
+
+**The reading.** Both routes plateau at the same ~0.7 / ~1.06, so that plateau
+is a property of this discretisation FAMILY, not of either correction -- it is
+the "bounded, not converging" caveat, now known to be a floor COCO cannot beat
+either. It is also harmless: the convergence test measures L2 order 1.92 with
+that residual in place.
+
+**VERDICT: curved COCO is closed for SMOOTH walls** -- not because the
+principle fails, but because it is already attained. Note what this does NOT
+close: sharp CORNERS (C4 proper), where the local solution is a wedge
+eigenfunction `r^{π/2φ_w}` and no member of the smooth family applies. And it
+retires a standing warning: C4 was flagged as resting on "the same
+pointwise-flux premise C2 falsified", which stage 1b un-falsified (the flux
+formula reproduces the true correction to 1.8 % with exact inputs) and which
+trap (b)'s face anchoring makes conservative by construction. That warning was
+wrong; this measurement is the reason to stop anyway.
+
 ---
 
 ## C3 — the fraction-weighted capacity, the Nusselt diagnostic, and the time step
