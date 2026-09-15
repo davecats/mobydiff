@@ -66,9 +66,16 @@ module scalar
     ! separating our bulk-heated channel from the reference DNS
     ! (validation/conjugate/cht), whose flux profile it reproduces exactly
     ! instead of approximating it by a uniform source.
-    ! x is the streamwise direction by assumption, as everywhere else here.
+    ! The homogeneous direction is [scalar.N] source_dir, DEFAULT x -- the
+    ! channels' streamwise direction, so an ini that does not name one keeps
+    ! the original arithmetic operand for operand. A pipe along z needs
+    ! source_dir = z (the pipe campaign, docs/next_session_pipe_cht.md F1):
+    ! stats_layout = plane averages over z and returns the (x,y) plane, i.e.
+    ! the cross-section, which pins the axis to z from the other side.
     integer(C_INT), parameter, public :: SC_SRC_UNIFORM  = 0_C_INT
     integer(C_INT), parameter, public :: SC_SRC_VELOCITY = 1_C_INT
+    ! Direction names, for the config echo. Index = the stored srcDir.
+    character(len=1), parameter :: SRC_DIR_NAME(3) = ["x", "y", "z"]
     ! Immersed-body wall modes ([scalar.N] ibm_wall); used from S3.
     integer(C_INT), parameter, public :: SC_IBM_DIRICHLET = 0_C_INT
     integer(C_INT), parameter, public :: SC_IBM_ADIABATIC = 1_C_INT
@@ -120,6 +127,10 @@ module scalar
         integer(C_INT), allocatable :: prtModel(:)
         real(C_DOUBLE), allocatable :: source(:), initValue(:), ibmValue(:), inlet(:)
         integer(C_INT), allocatable :: ibmMode(:), initProfile(:), srcType(:)
+        ! Which velocity component the VELOCITY source rides (1 = x, 2 = y,
+        ! 3 = z); ignored by the UNIFORM source, and a source_dir on one is a
+        ! config error rather than a silent no-op.
+        integer(C_INT), allocatable :: srcDir(:)
         ! Conjugate body mode (increment C1): the solid's material ratios and
         ! its own initial value / volumetric source, per scalar. kappa and C
         ! are 1 in the FLUID by definition, so neither needs a field -- the
@@ -136,6 +147,7 @@ module scalar
         ! key on a non-conjugate scalar (or an ibm_value on a conjugate one)
         ! is a hard config error rather than a silent no-op.
         logical, allocatable :: solidKeySet(:), solidInitSet(:), ibmValueSet(:)
+        logical, allocatable :: srcDirSet(:)
         ! Signed distance to the immersed surface at the cell centres,
         ! GHOST-INCLUSIVE: phi = +dwall in the fluid, -dwall in the solid,
         ! the sign taken from the cell-centred IBM marker. This ONE field is
@@ -872,6 +884,20 @@ contains
                     " uniform or velocity (= kasagi), input line", line_no
                 error stop "unknown [scalar] source_type"
             end select
+        case ("source_dir", "source_direction")
+            select case (trim(value))
+            case ("x")
+                sc%srcDir(is) = 1_C_INT
+            case ("y")
+                sc%srcDir(is) = 2_C_INT
+            case ("z")
+                sc%srcDir(is) = 3_C_INT
+            case default
+                if (terminal) print *, "error: [scalar.N] source_dir must be", &
+                    " x, y or z, input line", line_no
+                error stop "unknown [scalar] source_dir"
+            end select
+            sc%srcDirSet(is) = .true.
         case ("ibm_wall")
             select case (trim(value))
             case ("dirichlet")
@@ -993,7 +1019,8 @@ contains
         if (nOld > 0) then
             old%pr = sc%pr; old%prt = sc%prt; old%prtModel = sc%prtModel
             old%source = sc%source; old%initValue = sc%initValue
-            old%srcType = sc%srcType
+            old%srcType = sc%srcType; old%srcDir = sc%srcDir
+            old%srcDirSet = sc%srcDirSet
             old%ibmValue = sc%ibmValue; old%inlet = sc%inlet
             old%ibmMode = sc%ibmMode; old%initProfile = sc%initProfile
             old%solidK = sc%solidK; old%solidC = sc%solidC
@@ -1009,7 +1036,8 @@ contains
 
         allocate(sc%pr(n), sc%prt(n), sc%prtModel(n))
         allocate(sc%source(n), sc%initValue(n), sc%ibmValue(n), sc%inlet(n))
-        allocate(sc%ibmMode(n), sc%initProfile(n), sc%srcType(n))
+        allocate(sc%ibmMode(n), sc%initProfile(n), sc%srcType(n), sc%srcDir(n))
+        allocate(sc%srcDirSet(n))
         allocate(sc%solidK(n), sc%solidC(n), sc%solidInit(n), sc%solidSource(n))
         allocate(sc%contactR(n), sc%tangCorr(n))
         allocate(sc%solidKeySet(n), sc%solidInitSet(n), sc%ibmValueSet(n))
@@ -1024,6 +1052,8 @@ contains
         sc%prtModel = SC_PRT_CONSTANT
         sc%source = 0.0d0
         sc%srcType = SC_SRC_UNIFORM
+        sc%srcDir = 1_C_INT
+        sc%srcDirSet = .false.
         sc%initValue = 0.0d0
         sc%ibmValue = 0.0d0
         sc%inlet = 0.0d0
@@ -1054,7 +1084,8 @@ contains
             sc%source(1:nOld) = old%source; sc%initValue(1:nOld) = old%initValue
             sc%ibmValue(1:nOld) = old%ibmValue; sc%inlet(1:nOld) = old%inlet
             sc%ibmMode(1:nOld) = old%ibmMode; sc%initProfile(1:nOld) = old%initProfile
-            sc%srcType(1:nOld) = old%srcType
+            sc%srcType(1:nOld) = old%srcType; sc%srcDir(1:nOld) = old%srcDir
+            sc%srcDirSet(1:nOld) = old%srcDirSet
             sc%solidK(1:nOld) = old%solidK; sc%solidC(1:nOld) = old%solidC
             sc%solidInit(1:nOld) = old%solidInit
             sc%solidSource(1:nOld) = old%solidSource
@@ -1095,6 +1126,15 @@ contains
             end if
             if (sc%pr(is) <= 0.0d0) error stop "[scalar.N] pr must be positive"
             if (sc%prt(is) <= 0.0d0) error stop "[scalar.N] prt must be positive"
+            ! source_dir only means anything to the VELOCITY source. Rejected
+            ! rather than ignored: naming a direction and getting the default
+            ! one is exactly the silent wrong answer this campaign cannot
+            ! afford (a pipe along z driven by u_x heats nothing).
+            if (sc%srcDirSet(is) .and. sc%srcType(is) /= SC_SRC_VELOCITY) then
+                if (terminal) print '(a,i0,a)', " error: [scalar.", is, &
+                    "] source_dir needs source_type = velocity (= kasagi)"
+                error stop "[scalar.N] source_dir without source_type = velocity"
+            end if
             if (len_trim(sc%name(is)) == 0) write(sc%name(is), '(a,i0)') "s", is
             if (name_is_reserved(sc%name(is))) then
                 if (terminal) print *, "error: [scalar.", is, "] name '", &
@@ -1390,8 +1430,8 @@ contains
             do is = 1, int(sc%n)
                 print '(a,i0,a,a,a,f8.4,a,es10.3,a)', "   s", is, " '", trim(sc%name(is)), &
                     "'  pr =", sc%pr(is), "  source =", sc%source(is), &
-                    merge(" * u_x (Kasagi)", "               ", &
-                          sc%srcType(is) == SC_SRC_VELOCITY)
+                    merge(" * u_" // SRC_DIR_NAME(sc%srcDir(is)) // " (Kasagi)", &
+                          "               ", sc%srcType(is) == SC_SRC_VELOCITY)
                 if (wall_function) print '(a,f8.4,a,f8.3)', &
                     "      thermal wall function: P =", sc%wfP(is), "  y+_T =", sc%wfYpt(is)
             end do
@@ -2176,7 +2216,7 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target enter data map(to: sc)
         !$omp target enter data map(to: sc%pr, sc%prt, sc%prtModel, sc%source, &
-        !$omp& sc%srcType, &
+        !$omp& sc%srcType, sc%srcDir, &
         !$omp& sc%initValue, sc%ibmValue, sc%inlet, sc%ibmMode, sc%initProfile, &
         !$omp& sc%bcType, sc%bcValue, sc%invDx, sc%invDy, sc%invDz, sc%nutNone, &
         !$omp& sc%cdx, sc%cdy, sc%cdz, &
@@ -2192,7 +2232,7 @@ contains
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target exit data map(delete: sc%pr, sc%prt, sc%prtModel, sc%source, &
-        !$omp& sc%srcType, &
+        !$omp& sc%srcType, sc%srcDir, &
         !$omp& sc%initValue, sc%ibmValue, sc%inlet, sc%ibmMode, sc%initProfile, &
         !$omp& sc%bcType, sc%bcValue, sc%invDx, sc%invDy, sc%invDz, sc%nutNone, &
         !$omp& sc%cdx, sc%cdy, sc%cdz, &
@@ -2210,6 +2250,8 @@ contains
         if (allocated(sc%prtModel)) deallocate(sc%prtModel)
         if (allocated(sc%source)) deallocate(sc%source)
         if (allocated(sc%srcType)) deallocate(sc%srcType)
+        if (allocated(sc%srcDir)) deallocate(sc%srcDir)
+        if (allocated(sc%srcDirSet)) deallocate(sc%srcDirSet)
         if (allocated(sc%initValue)) deallocate(sc%initValue)
         if (allocated(sc%ibmValue)) deallocate(sc%ibmValue)
         if (allocated(sc%inlet)) deallocate(sc%inlet)
@@ -2429,7 +2471,7 @@ contains
         !$omp& nScal, nx, ny, nz, anyConj, &
         !$omp& sc%cdx, sc%cdy, sc%cdz, sc%tangCorr, &
         !$omp& blk%q, blk%d1x, blk%d1y, blk%d1z, blk%physLow, blk%physHigh, nut, coef, &
-        !$omp& sc%pr, sc%prt, sc%prtModel, sc%source, sc%srcType, &
+        !$omp& sc%pr, sc%prt, sc%prtModel, sc%source, sc%srcType, sc%srcDir, &
         !$omp& sc%invDx, sc%invDy, sc%invDz, &
         !$omp& sc%ibmMode, sc%ibmValue, sc%wfP, sc%wfYpt, sc%wfYplus, wallfn, &
         !$omp& sc%phi, sc%vfrac, sc%solidK, sc%solidC, sc%solidSource, sc%contactR) &
@@ -2859,9 +2901,19 @@ contains
                         ! it costs one add and one multiply. u is the
                         ! INSTANTANEOUS velocity, which is the whole point:
                         ! the term comes from u.grad(beta x), not from a mean.
+                        ! source_dir picks the pair; the x branch is the
+                        ! default and is the original expression operand for
+                        ! operand, so an ini without the key is bit-exact.
                         srcVal = sc%source(is)
-                        if (sc%srcType(is) == SC_SRC_VELOCITY) &
-                            srcVal = sc%source(is)*0.5d0*(uw + ue)
+                        if (sc%srcType(is) == SC_SRC_VELOCITY) then
+                            if (sc%srcDir(is) == 2_C_INT) then
+                                srcVal = sc%source(is)*0.5d0*(vs + vn)
+                            else if (sc%srcDir(is) == 3_C_INT) then
+                                srcVal = sc%source(is)*0.5d0*(wb + wt)
+                            else
+                                srcVal = sc%source(is)*0.5d0*(uw + ue)
+                            end if
+                        end if
 
                         if (conjug) then
                             ! Divide the flux divergence by the cell's own

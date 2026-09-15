@@ -1,6 +1,12 @@
 # Conjugate pipe flow vs Neuhauser (NekRS, body-fitted) — session handout
 
-STATUS: PLANNED. Written 2026-09-15 on branch `scalar`. Nothing implemented.
+STATUS: written 2026-09-15 on branch `scalar` as PLANNED; **the pin-down and
+the two small features are now DONE.**
+UPDATE 2026-09-15: (a) the §1 **PIN DOWN is resolved** — and the reading this
+handout was written with was WRONG; its consequences for dt and for the
+transient legs are folded into §5. (b) **F1 (`source_dir`) and F5 (the annulus
+STL) are implemented and gated** — §3 and the new §3a. **F2 is the only thing
+left before the campaign can run.** Everything else is untouched.
 Everything below marked *measured* was read out of the dataset itself in the
 session that wrote this; everything marked *estimate* is not.
 
@@ -77,13 +83,13 @@ sets dt.
 `bccode = 0` shares one velocity field — exactly the structure the Flageul
 channel campaign used with six scalars. The five are `isc` 0–4:
 
-| isc | K | λ_sf | α_s/α_f (measured) | note |
-|---|---|---|---|---|
-| **0** | 1 | 1 | 1 | **no contrast at all** — start here |
-| 1 | 1 | 2 | 2 | |
-| 2 | 1 | 0.5 | 0.5 | |
-| 3 | 4 | 1 | 1 | the conductivity-contrast case |
-| 4 | 0.25 | 1 | 1 | |
+| isc | K | λ_sf | `solid_k` = κ_s/κ_f | `solid_rhocp` = ρc_s/ρc_f | α_s/α_f | note |
+|---|---|---|---|---|---|---|
+| **0** | 1 | 1 | 1 | 1 | 1 | **no contrast at all** — start here |
+| 1 | 1 | 2 | **2** | 0.5 | 4 | conductivity contrast |
+| 2 | 1 | 0.5 | **0.5** | 2 | 0.25 | conductivity contrast |
+| 3 | 4 | 1 | 1 | **1/16** | **16** | pure CAPACITY contrast; **sets dt** |
+| 4 | 0.25 | 1 | 1 | **16** | 1/16 | pure CAPACITY contrast; **sets settling time** |
 
 plus `isc` 5 (`MBC`, K→0) and 6 (`IF`, isoflux) as non-conjugate controls,
 which map to `ibm_wall = dirichlet` and `adiabatic`.
@@ -93,16 +99,54 @@ the materials are identical and the conjugate interface has *no contrast*. It
 is the cheapest and the right first target — it validates geometry, forcing,
 statistics and the whole pipeline — but it is the *weakest* test of the
 conjugate scheme (our own gates show κ_s = 1 is a degeneracy where every
-scheme is exact). **isc = 3 (K = 4) is the real conjugate test.**
+scheme is exact). **isc = 1 and 2 (λ_sf = 2 and 0.5) are the real test of the
+conjugate face coefficient**, because they are the only two with κ_s ≠ κ_f and
+the coefficient is a conductivity harmonic mean — it is IDENTITY at κ_s = κ_f
+whatever the capacity does. isc 3 and 4 (the K sweep) carry no conductivity
+contrast at all and instead test the C3 capacity `C_cell = f + (1−f)C_s`.
 
-**PIN DOWN FIRST (unresolved here):** the mapping from (K, λ_sf) to
-(κ_s/κ_f, ρc_s/ρc_f). `diffusionCoeffSolid/diffusionCoeff` is unambiguous and
-gives α_s/α_f = λ_sf (measured, table above). With K the effusivity ratio
-`K² = (κ_s/κ_f)(ρc_s/ρc_f)` this forces **κ_s/κ_f = K √λ_sf** and
-**ρc_s/ρc_f = K/√λ_sf**, which is consistent with every row — but
-`transportCoeffSolid` in the file equals `1/λ_sf`, not that, so the convention
-is not self-evident. **Check it against the thesis before setting `solid_k`.**
-Getting it wrong silently changes the physics, not the numerics.
+**PIN DOWN — RESOLVED 2026-09-15, and the earlier reading in this handout was
+WRONG.** The mapping is
+
+> **κ_s/κ_f = λ_sf** and **ρc_s/ρc_f = 1/(K² λ_sf)**, hence α_s/α_f = K² λ_sf².
+
+so, directly, **`solid_k` = λ_sf** and **`solid_rhocp` = 1/(K² λ_sf)** (the
+solver's κ and C are both ≡ 1 in the fluid, `scalar.f90` "kappa = 1 in the
+fluid"). λ_sf is simply the CONDUCTIVITY ratio — λ as in the German λ for
+thermal conductivity, "sf" = solid/fluid — and **K is the FLUID-to-SOLID
+effusivity ratio**, K² = (κρc)_f/(κρc)_s, i.e. the INVERSE of the usual Tiselj
+activity ratio. That inversion is why the dataset's own labels (§technical
+remarks) read backwards at first sight and are in fact right: K → ∞ is the
+inert solid = isoflux, K → 0 the infinitely effusive solid = isothermal
+fluctuations.
+
+The superseded reading (λ_sf = α_s/α_f, κ_s/κ_f = K√λ_sf) predicts κ_s/κ_f = 4
+for isc 3; the true value is 1. **It would have put a conductivity contrast on
+the two cases that have none and understated α_s by 16×.**
+
+*Four independent confirmations, all on `cht_short`:*
+1. **The file's own coefficients.** `diffusionCoeff`/`transportCoeff` are Nek's
+   `vdiff`/`vtrans`, i.e. CONDUCTIVITY and ρc_p — not diffusivity. The fluid
+   pair is exactly (ν/Pr, 1) for both Pr, which fixes the identification;
+   `diffusionCoeffSolid/diffusionCoeff` is then κ_s/κ_f, and it equals λ_sf on
+   all five rows, while `transportCoeffSolid` = 1/(K² λ_sf) on all five.
+2. **Flux continuity in the data.** The φ- and time-averaged ∂T/∂r just inside
+   and just outside r = 0.5 jumps by exactly λ_sf (measured 1.0002, 2.0005,
+   0.5001, 1.0002, 1.0003 for isc 0-4 — the residual is the polar
+   interpolation), never by K√λ_sf. isc 3 and 4 show NO jump.
+3. **The authors' own script.** `mean_dtdr_comparison.py:39` builds the flux as
+   `where(r < 0.5, 1, lambda_sf) * (−∂T/∂r)/(Pr/ν)`, i.e. it multiplies the
+   solid gradient by λ_sf to make the flux continuous. Only consistent with
+   λ_sf = κ_s/κ_f.
+4. **The controls bracket the K sweep.** θ'_rms at r = 0.5⁻ (Pr = 0.71),
+   normalised by isc 0: MBC 0.004, K = 0.25 → 0.446, λ sweep 0.95-1.03,
+   K = 4 → 1.511, IF 2.078. Monotone in K between the two limits, exactly as
+   K = e_f/e_s requires.
+
+*This also CONFIRMS the control mapping below*: MBC carries θ'_rms ≈ 0 at the
+interface (0.4 % of the conjugate case) ⇒ `ibm_wall = dirichlet` — it is the
+Kasagi "mixed" idealisation, constant mean flux with isothermal fluctuations —
+and IF carries the largest θ'_rms with zero fluctuating flux ⇒ `adiabatic`.
 
 ---
 
@@ -130,15 +174,19 @@ estimation, so quote error bars from it rather than presenting single numbers.
 
 **ONE real feature (F2), plus two small ones.** F3 turned out to fold into F2
 rather than being separate, and its substitute is exact for every fluctuation
-statistic; F4 is not a gap at all.
+statistic; F4 is not a gap at all. **F1 and F5 are DONE (2026-09-15); F2 is
+the whole remaining critical path.**
 
-**F1 — the Kasagi source is hardwired to `u_x`.** `scalar.f90`:
-`srcVal = source*0.5*(uw + ue)`, the x-faces. `stats_layout = plane` averages
-over **z** and returns the (x,y) plane — which is exactly a pipe cross-section
-*if the axis is z*. So the two constrain the orientation in opposite
-directions, and one must be generalised. **Generalise the source direction**
-(a `source_dir` key; a few lines, and a natural completion of the feature) and
-put the pipe axis along **z**. `forcing_z` already exists.
+**F1 — the Kasagi source was hardwired to `u_x`. DONE 2026-09-15.**
+`[scalar.N] source_dir = x | y | z` picks the component the VELOCITY source
+rides; default x, so the arithmetic of an ini that does not name one is the
+original expression operand for operand. `stats_layout = plane` averages over
+**z** and returns the (x,y) plane — exactly a pipe cross-section *if the axis
+is z* — which is why the source had to move rather than the statistics: the
+pipe axis is **z**, and `forcing_z` already existed. A `source_dir` on a
+`source_type = uniform` scalar is a hard config error, not a silent no-op.
+Gates in `validation/conjugate/run_gates_pipe.sh` (`source_dir`, `guard`),
+CPU and GPU, plus the standard bit-exactness suites — see §3a.
 
 **F2 — the solid must be an ANNULUS, and `solid_k` is a per-scalar CONSTANT.
 This is the ONE feature the campaign needs; F3 folds into it.**
@@ -205,9 +253,58 @@ z-averaged (x,y) cross-section per scalar; radial binning is post-processing.
 Velocity statistics are the gap — the channel stats module is y-profiles — so
 take those from snapshots.
 
-**F5 — no annulus STL generator.** Extend `validation/conjugate/
-make_geometry_stl.py` (it already writes a faceted cylinder). Use enough facets
-that the chord error is well below h: at 16384 facets on R = 0.6 it is ~1e-8.
+**F5 — no annulus STL generator. DONE 2026-09-15.**
+`make_geometry_stl.py annulus --axis {x,y,z} --r-inner R --box-half H |
+--r-outer R2 --facets M --a0/--a1` writes the closed shell. The pipe's body is
+everything OUTSIDE r_inner — the fluid is the hole — so the outer surface is
+pure padding; a SQUARE one (`--box-half`) clears the domain corner at a smaller
+vertex magnitude than a cylindrical one, which the module's own precision
+argument (padding costs precision quadratically) makes the right default for a
+square cross-section. `--domain-half` asserts the property F2 needs and this
+handout said to verify rather than assume: that inside the domain the pipe
+wall, not the padding, is the nearest surface. 16384 facets on R = 0.5 gives a
+chord error 9.19e-09, as predicted. Gates in §3a.
+
+---
+
+## 3a. What F1 and F5 were gated on (2026-09-15)
+
+`validation/conjugate/run_gates_pipe.sh [source_dir|guard|annulus|ranks|all]`
+— ALL PASS, and the `source_dir` group reproduces its numbers exactly on GPU.
+
+| gate | measured |
+|---|---|
+| F1 closed form, all three branches | uniform (u,v,w) = (1,2,3) in a periodic box is an exact steady solution and a uniform scalar has no gradient, so θ = source·u_dir·t exactly: 0.04 / 0.08 / 0.12, max err **5.6e-17**. Three DIFFERENT answers, so a branch reading the wrong component lands on another one's number. |
+| F1 same arithmetic in x and z | channel driven along the x–z diagonal, u(y) = w(y) (checked: max\|u−w\| **0.0**) ⇒ `source_dir` x and z **BIT-IDENTICAL**, every dataset 0.0 |
+| F1 config guards | `source_dir` on a uniform source, and a bad direction name, both hard-error |
+| F1 inert by default | `validation/scalar/run_bitexact{,_s3}.sh` vs `~/f1_ref_binaries` (cut from commit `0e0e225` with the edit stashed): 7-case and 9-case suites **max_abs 0, CPU AND GPU** |
+| F5 classification | 64000 ghost-inclusive cells, solid ⇔ outside the 16384-gon, **0 flips** |
+| F5 φ | max\|φ − φ_exact\| **5.6e-13** (z axis) / **5.9e-13** (x axis) against the analytic distance to the FACETED polygon |
+| F5 nearest surface | pipe wall nearest everywhere inside the domain, margin **0.21** (box outer) / **0.29** (cylindrical outer) |
+| F5 rank independence | prepared case file 1 == 4 ranks, dataset-identical |
+
+TWO THINGS FOUND while building those gates, both recorded in the gate inis
+because both cost real time:
+
+1. **`dns%ibm_enabled` defaults to `.true.`** (`init.f90`), so an ini with NO
+   `[ibm]` section silently runs the default analytic WAVY WALL. A triply
+   periodic box that should preserve uniform flow exactly instead showed an
+   8 % spread with a y-edge deficit modulated sinusoidally in x — which is
+   precisely a wavy wall, and for an hour looked like a solver defect. With
+   `[ibm] enabled = false` the spread is **0.0**. Any gate ini that does not
+   want a body must say so.
+2. **`tgv3d` is a pure GRADIENT**, u = ∇[−cos(kx)cos(ky)cos(kz)/k], so the
+   projection annihilates it (measured: velocity 4e-8 instead of O(1)). It is
+   the one x↔z-symmetric initial condition on offer and is therefore useless
+   for a rotation test — hence the diagonal-channel bit-identity above
+   instead. The module comment already says it is "NOT an NS solution"; this
+   is what that means in practice.
+
+Also corrected: `check_conjugate.py`'s docstring claimed case-file tiles are
+`(k, j, i)`. They are `(i, j, k)` — `check_oblique.py` had already found this
+and says so; the field datasets are the ones that are `(k, j, i)`. A pipe can
+tell them apart (invariant in z, not in x or y): with the axes swapped the φ
+error above reads 0.18 instead of 5.6e-13.
 
 ---
 
@@ -220,7 +317,7 @@ nu              1.8868e-4                 [flow] re = 5300
 forcing_z       1.8703e-2   = 2 u_tau^2/R   (gives Re_tau = 181, u_b ~ 1)
 scalars         7   (5 conjugate + dirichlet + adiabatic controls)
 Pr              0.71
-source_type     velocity (Kasagi), source = beta, direction z   [F1]
+source_type     velocity (Kasagi), source = beta, source_dir = z  [F1, done]
 ibm_wall        conjugate;  solid_k / solid_rhocp per scalar    [see PIN DOWN]
 required        keep_buried = true, remove_solid = false, no wall functions
 ```
@@ -246,14 +343,32 @@ the hosts; **`/tmp` is not**, so driver scripts and logs live in the repo.
 See the `remote-hosts` memory.
 
 Cost (estimate): convection sets dt ≈ 1.7e-3 (CFL 0.4, u_max ~ 1.3); the
-scalar-diffusion limit at Pr = 0.71 is ~10× looser. At ~0.2 s/step for 22 M
-cells × 7 scalars, **≈ 400 k steps ≈ 22 h** buys ~700 D/u_b. Neuhauser's own
-`cht_short` window is t = 517 → 4942, i.e. **≈ 4400 D/u_b** — six times that.
-So plan the **three-leg structure that worked for the channel**: a cheap
-transient (optionally with an inflated solid heat capacity to accelerate the
-solid's approach to equilibrium), a settle leg at the correct properties, and
-only then a statistics leg, extended until the batch-means error bars from
-Neuhauser's own `time` axis are matched.
+scalar-diffusion limit at Pr = 0.71 is ~10× looser *in the fluid*. **But the
+pin-down changed this: isc 3 has α_s = 16 α_f** (κ_s = κ_f with C_s = 1/16),
+and our limiter builds the rate from the actual face coefficient over the LOCAL
+capacity — so those solid cells run 16× the fluid scalar-diffusion rate and the
+scalar limit lands at ≈ 1.1e-3, i.e. **BELOW convection**. Expect dt ≈ 1.1e-3,
+a factor ~1.6 under the estimate below, on top of the C3 cut-cell share. At
+~0.2 s/step for 22 M cells × 7 scalars, ≈ 400 k steps ≈ 22 h buys ~700 D/u_b at
+the old dt — so budget **≈ 35 h**, and re-derive rather than trust this.
+Neuhauser's own `cht_short` window is t = 517 → 4942, i.e. **≈ 4400 D/u_b** —
+six times that.
+
+**And isc 4 sets the SETTLING time, symmetrically**: C_s = 16 gives
+α_s = α_f/16 and a solid diffusion time d²/α_s ≈ **600 D/u_b** — comparable to
+the entire planned statistics window, so its solid will still be equilibrating
+while everything else is converged. So plan the **three-leg structure that
+worked for the channel**: a cheap transient, a settle leg at the correct
+properties, and only then a statistics leg, extended until the batch-means
+error bars from Neuhauser's own `time` axis are matched.
+
+*On accelerating the transient — the direction matters and the earlier draft
+had it backwards.* To reach the solid's equilibrium faster you **REDUCE** C_s
+(raising α_s), never inflate it; inflating the capacity slows the approach.
+This is legitimate and already gated: C1's "capacity-independent steady state"
+gate says the fixed point does not depend on C_s at all, so a transient leg may
+run isc 4 at, say, C_s = 1 and restore C_s = 16 for the settle leg. isc 3 needs
+no such help (its solid equilibrates in ~2 D/u_b) — it is the one paying in dt.
 
 ---
 
@@ -295,12 +410,14 @@ OUR bins, never the reverse.
 
 ## 7. Risks, in the order they are likely to bite
 
-1. **F2 is a genuine feature, not a config change**, and it is now the only
-   one on the critical path. If it slips, the fallback is a thick-solid run
+1. **F2 is a genuine feature, not a config change**, and with F1 and F5 done
+   (§3a) it is the ONLY thing left on the critical path. If it slips, the fallback is a thick-solid run
    that is *not* Neuhauser's d⁺ = 36 — report it as a different case, do not
    present it as a match.
-2. **The (K, λ_sf) → (κ_s, ρc_s) mapping** (§1). Wrong here = wrong physics,
-   silently.
+2. ~~**The (K, λ_sf) → (κ_s, ρc_s) mapping**~~ — **RESOLVED 2026-09-15**, four
+   ways, §1. `solid_k` = λ_sf, `solid_rhocp` = 1/(K² λ_sf). The reading this
+   handout shipped with was wrong; if anything downstream still assumes
+   κ_s/κ_f = K√λ_sf, fix it there too.
 3. **First order at a curved interface.** Expect a visible interface error;
    the two-grid study is what makes it interpretable rather than embarrassing.
 4. **Averaging window.** 700 D/u_b against their 4400. Quote batch-means error

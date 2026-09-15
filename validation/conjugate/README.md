@@ -1638,3 +1638,134 @@ different code, and the `det` groups compare three binaries against each other
 and pass happily when all three are equally stale. The C2 control binaries
 live in `~/c2_ref_binaries` (commit `c243e56`, cut from a COMMIT and recorded
 in its `PROVENANCE.txt`, the `~/s5b_ref_binaries` lesson).
+
+---
+
+## The Neuhauser pipe dataset: the (K, λ_sf) pin-down (2026-09-15)
+
+`neuhauser_pin_down.py` (needs `~/ibmc/bin/python`, zarr ≥ 3) settles the one
+unresolved item of `docs/next_session_pipe_cht.md` §1 — how the dataset's
+`(K, λ_sf)` labels map onto our `solid_k` / `solid_rhocp`. It reads straight
+out of the distributed tars, extracting only the arrays it needs (~1 s, ~1 GB
+of scratch, not the full 7.2 GB):
+
+```
+~/ibmc/bin/python neuhauser_pin_down.py          # 3 checks, PASS
+```
+
+**The answer**, which is NOT what the handout was written with:
+
+| | |
+|---|---|
+| `solid_k` = κ_s/κ_f | **λ_sf** |
+| `solid_rhocp` = ρc_s/ρc_f | **1/(K² λ_sf)** |
+| α_s/α_f | K² λ_sf² |
+
+λ_sf is the CONDUCTIVITY ratio (λ as in the German symbol for conductivity,
+"sf" = solid/fluid). **K is the FLUID-to-SOLID effusivity ratio**,
+K² = (κρc)_f/(κρc)_s — the inverse of the usual Tiselj activity ratio, which
+is why the dataset's "IF corresponds to K → ∞" reads backwards at first sight
+and is in fact right.
+
+Three independent confirmations, all in the script:
+
+1. **The file's own coefficients.** `diffusionCoeff`/`transportCoeff` are Nek's
+   `vdiff`/`vtrans` = CONDUCTIVITY and ρc_p, *not* diffusivity — the fluid pair
+   is exactly (ν/Pr, 1) for both Pr, which is what fixes the identification and
+   is the step the handout got wrong. The solid ratios then satisfy the table
+   above on all five CHT rows at both Pr.
+2. **Flux continuity in the data.** The φ- and time-averaged ∂T/∂r jumps across
+   r = 0.5 by exactly λ_sf (1.0002, 2.0005, 0.5001, 1.0002, 1.0003 for isc 0–4;
+   the residual is the polar interpolation), never by the rival K√λ_sf. A
+   fourth, not in the script: the authors' own `mean_dtdr_comparison.py:39`
+   multiplies the solid gradient by λ_sf to build a continuous flux.
+3. **The controls bracket the K sweep.** θ'_rms at r = 0.5⁻, over isc 0: MBC
+   0.004, K = 0.25 → 0.446, λ sweep 0.95–1.03, K = 4 → 1.511, IF 2.078 —
+   monotone in K between the two limits, as K = e_f/e_s requires. It also
+   confirms the control mapping: MBC is isothermal to fluctuations
+   (`ibm_wall = dirichlet`, the Kasagi "mixed" idealisation = constant mean
+   flux + isothermal fluctuations), IF is zero fluctuating flux (`adiabatic`).
+
+**Two consequences for the campaign**, both folded into the handout §5:
+
+- **isc 3 (K = 4) sets dt.** It has κ_s = κ_f with C_s = 1/16, so α_s = 16 α_f
+  and — since our limiter divides the actual face coefficient by the LOCAL
+  capacity — those solid cells run 16× the fluid scalar-diffusion rate. The
+  scalar limit drops below the convective one.
+- **isc 4 (K = 0.25) sets the settling time.** C_s = 16 gives d²/α_s ≈ 600
+  D/u_b, comparable to the whole statistics window. Accelerate it by
+  **REDUCING** C_s on a transient leg (inflating it slows the approach — the
+  handout had the direction backwards) and restoring it for the settle leg;
+  C1's capacity-independent-steady-state gate is what licenses this.
+
+And the case designations move with the mapping: **isc 1 and 2 (λ_sf = 2, 0.5)
+are the real test of the conjugate face coefficient**, being the only rows with
+κ_s ≠ κ_f — the coefficient is a conductivity harmonic mean and is IDENTITY at
+κ_s = κ_f whatever the capacity does. isc 3 and 4 instead exercise the C3
+capacity `C_cell = f + (1−f)C_s`. The handout originally called isc 3 "the
+conductivity-contrast case"; it has none.
+
+---
+
+## Pipe-campaign prerequisites F1 and F5 (2026-09-15)
+
+`./run_gates_pipe.sh [source_dir|guard|annulus|ranks|all]` — **ALL PASS**
+(`PY=~/ibmc/bin/python`; the `source_dir` group reproduces its numbers exactly
+with the GPU binary). The two small features of
+`docs/next_session_pipe_cht.md` §3; F2 remains the critical path.
+
+**F1 — `[scalar.N] source_dir = x | y | z`** picks the velocity component the
+Kasagi (`source_type = velocity`) source rides. Default x, and the x branch is
+the original expression operand for operand, so an ini that does not name a
+direction is bit-exact by construction. `source_dir` on a `source_type =
+uniform` scalar is a hard config error.
+
+| | measured |
+|---|---|
+| closed form, all three branches | uniform (u,v,w) = (1,2,3) in a periodic box is an exact steady solution and a uniform scalar has no gradient ⇒ θ = source·u_dir·t exactly: 0.04 / 0.08 / 0.12, max err **5.6e-17**. The three answers DIFFER, so a branch reading the wrong component lands on another one's number rather than merely a wrong magnitude. |
+| x and z are the same arithmetic | channel driven along the x–z diagonal has u(y) = w(y) (premise checked: max\|u−w\| **0.0**), so `source_dir` x and z must be **BIT-IDENTICAL** — every dataset **0.0** |
+| guards | uniform-source and bad-direction both hard-error |
+| inert by default | `run_bitexact.sh` + `run_bitexact_s3.sh` vs `~/f1_ref_binaries` (cut from commit `0e0e225` with the edit stashed — the s5b lesson): 7-case and 9-case suites **max_abs 0, CPU AND GPU** |
+
+**F5 — `make_geometry_stl.py annulus`** writes the pipe's immersed body: the
+closed shell between `--r-inner` and an outer surface, axis along `--axis`.
+The body is everything OUTSIDE r_inner — the fluid is the hole — so the outer
+surface is pure padding. `--box-half` (square) clears the domain corner at a
+smaller vertex magnitude than `--r-outer` (cylindrical), which the module's own
+precision argument makes the right choice for a square cross-section, and
+`--domain-half` asserts that the pipe wall, not the padding, is the nearest
+surface everywhere inside the domain — the property F2 needs and the handout
+said to verify rather than assume.
+
+| | measured |
+|---|---|
+| classification | 64000 ghost-inclusive cells, solid ⇔ outside the 16384-gon, **0 flips** |
+| φ | max\|φ − φ_exact\| **5.6e-13** (z axis, box outer) / **5.9e-13** (x axis, cylindrical outer) vs the analytic distance to the FACETED polygon |
+| nearest surface | margin **0.21** / **0.29** in favour of the pipe wall |
+| ranks | prepared case file 1 == 4 ranks, dataset-identical |
+| chord error | 9.19e-09 at 16384 facets on R = 0.5, as the handout predicted |
+
+**TWO TRAPS, both now in the gate inis' comments because both cost real time.**
+
+1. **`dns%ibm_enabled` defaults to `.true.`** (`init.f90`), so an ini with NO
+   `[ibm]` section silently runs the default analytic WAVY WALL. A triply
+   periodic box that must preserve uniform flow exactly instead showed an 8 %
+   spread, with a y-edge deficit modulated sinusoidally in x — which is
+   precisely a wavy wall, and which for an hour looked like a solver defect
+   (it survived every control: nb, dt, niter, the projection switched off
+   entirely, and it vanished at ν → 0 because it is the VISCOUS term reading
+   the penalized wall). With `[ibm] enabled = false` the spread is **0.0**.
+   Every gate ini that does not want a body must say so.
+2. **`tgv3d` is a pure GRADIENT**, u = ∇[−cos(kx)cos(ky)cos(kz)/k], so the
+   projection annihilates it: measured velocity 4e-8 instead of O(1). It is
+   the one x↔z-symmetric initial condition available and is therefore useless
+   as a rotation test — the diagonal-channel bit-identity above replaces it.
+   The module comment already calls it "NOT an NS solution"; this is what that
+   means in practice.
+
+Also corrected here: `check_conjugate.py`'s docstring claimed case-file tiles
+are `(k, j, i)`. They are `(i, j, k)`; the FIELD datasets are the `(k, j, i)`
+ones. `check_oblique.py` had already found this and says so, but the stale
+comment was the one a reader meets first. A pipe can tell them apart (it is
+invariant in z but not in x or y): with the axes swapped, the φ error above
+reads 0.18 instead of 5.6e-13.

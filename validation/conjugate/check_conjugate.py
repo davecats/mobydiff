@@ -97,7 +97,11 @@ def cmd_weight(a):
     scheme reads -- dwall_blocks for the magnitude and coef_p_blocks for the
     sign -- and compares the level-set weight of every cut y-arm with the
     analytic cut fraction of the STL plane. Case-file tiles are
-    ghost-inclusive, shape (nBlocks, nb+2, nb+2, nb+2) in (k, j, i) order.
+    ghost-inclusive, shape (nBlocks, nb+2, nb+2, nb+2) in (i, j, k) order --
+    CASE-FILE tiles, unlike the FIELD datasets, which are (k, j, i); see
+    check_oblique.py load_phi. This checker cannot tell the two apart (its
+    slab is x/z symmetric) and only ever indexes axis 1, which is j either
+    way, so the distinction does not reach the number below.
     """
     with h5py.File(a.case, "r") as h5:
         blocks = h5["blocks"][...]

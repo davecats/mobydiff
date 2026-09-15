@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""ASCII STLs for the C2 gates: a TILTED half-space and a CIRCULAR cylinder.
+"""ASCII STLs for the conjugate gates: a TILTED half-space, a CIRCULAR
+cylinder, and an ANNULAR shell (the pipe).
 
     ./make_geometry_stl.py plane    out.stl --theta 30 --x0 0.5 --y0 0.5 ...
     ./make_geometry_stl.py cylinder out.stl --centre 0.5 0.5 --radius 0.2 ...
+    ./make_geometry_stl.py annulus  out.stl --axis z --r-inner 0.5 --box-half 1.1 ...
 
 ASCII for the same reason as `make_slab_stl.py`: moby_prepare parses ASCII
 vertices straight to float64, so the surface is exactly the analytic one and
@@ -97,8 +99,12 @@ def cmd_cylinder(a):
     tris = []
     for i in range(m):
         j = (i + 1) % m
-        nx = math.cos(0.5 * (ang[i] + ang[j]))
-        ny = math.sin(0.5 * (ang[i] + ang[j]))
+        # ang[i] + pi/m, NOT the mean of ang[i] and ang[j]: the latter is 180
+        # degrees out at the wrap-around facet, where ang[j] has come back to
+        # 0. Cosmetic for the solver -- geometry_stl.f90 ignores the stored
+        # normal, parity being orientation-independent -- but wrong is wrong.
+        nx = math.cos(ang[i] + math.pi / m)
+        ny = math.sin(ang[i] + math.pi / m)
         tris.append(((nx, ny, 0.0), (ring0[i], ring0[j], ring1[j])))
         tris.append(((nx, ny, 0.0), (ring0[i], ring1[j], ring1[i])))
     for i in range(1, m - 1):            # the two caps, fanned
@@ -107,6 +113,119 @@ def cmd_cylinder(a):
     n = write_stl(a.out, tris, "cylinder")
     print(f"{a.out}: cylinder r = {a.radius!r} at ({cx!r}, {cy!r}), "
           f"{m} facets, {n} triangles")
+
+
+# Cyclic frames: (u, v, w) with w along the axis, all right-handed, so the
+# winding built below survives the mapping and the normals come out outward.
+# `centre` is taken in ASCENDING coordinate order, which for the y axis is the
+# other way round from the cyclic pair -- swapped here, once.
+AXIS_FRAME = {"x": (1, 2, 0), "y": (2, 0, 1), "z": (0, 1, 2)}
+
+
+def cmd_annulus(a):
+    """A closed ANNULAR shell: the solid between `--r-inner` and an outer
+    surface, with its axis along `--axis` and its ends beyond the domain.
+
+    This is the pipe's immersed body. The FLUID is the hole -- the body is
+    everything outside r_inner -- so the outer surface is padding whose only
+    job is to close the solid, and it must stay far enough out that no cell
+    centre INSIDE the domain is nearer to it than to the pipe wall. Otherwise
+    phi = +-dwall, which in a shell is the distance to the NEAREST of the two
+    surfaces, would report a fictitious wall (the conjugate scheme reads phi's
+    sign to pick the material and its magnitude only at CUT faces, so the
+    damage is confined -- but --domain-half checks it rather than assuming).
+
+    A BOX outer surface (--box-half) is tighter than a cylindrical one
+    (--r-outer) for a square cross-section: the binding case is the domain
+    corner, and the box clears it at a smaller vertex magnitude. Keep it tight
+    -- the module docstring's precision argument applies here too.
+
+    The facets ARE the geometry: an inscribed m-gon, chord error
+    r (1 - cos(pi/m)), printed below. Any reference must use the same polygon.
+    """
+    if (a.r_outer is None) == (a.box_half is None):
+        raise SystemExit("annulus: give exactly one of --r-outer / --box-half")
+    iu, iv, iw = AXIS_FRAME[a.axis]
+    cu, cv = (a.centre[1], a.centre[0]) if a.axis == "y" else a.centre
+
+    def P(u, v, w):
+        """Place a canonical-frame point into world coordinates."""
+        p = [0.0, 0.0, 0.0]
+        p[iu], p[iv], p[iw] = u, v, w
+        return tuple(p)
+
+    def N(nu, nv, nw):
+        return P(nu, nv, nw)
+
+    m = a.facets
+    ang = [2.0 * math.pi * i / m for i in range(m)]
+    ri = a.r_inner
+    inner = [[P(cu + ri * math.cos(t), cv + ri * math.sin(t), w) for t in ang]
+             for w in (a.a0, a.a1)]
+    if a.r_outer is not None:
+        ro = a.r_outer
+        outer = [[P(cu + ro * math.cos(t), cv + ro * math.sin(t), w) for t in ang]
+                 for w in (a.a0, a.a1)]
+    else:
+        # The outer surface is a square; the end caps below still connect
+        # ring to ring, so the square is sampled at the SAME m angles by
+        # projecting each ray onto the box. Corners land exactly on a facet
+        # boundary only if m % 4 == 0, which is required.
+        if m % 4:
+            raise SystemExit("annulus: --box-half needs --facets divisible by 4")
+        h = a.box_half
+
+        def on_box(t):
+            c, s_ = math.cos(t), math.sin(t)
+            return h / max(abs(c), abs(s_)) * c, h / max(abs(c), abs(s_)) * s_
+
+        outer = [[P(cu + q[0], cv + q[1], w) for q in map(on_box, ang)]
+                 for w in (a.a0, a.a1)]
+
+    i0, i1 = inner
+    o0, o1 = outer
+    tris = []
+    for i in range(m):
+        j = (i + 1) % m
+        # Inner skin: normals point INTO the hole, -r. (Mid-angle as
+        # ang[i] + pi/m -- see cmd_cylinder on the wrap-around facet.)
+        nu = -math.cos(ang[i] + math.pi / m)
+        nv = -math.sin(ang[i] + math.pi / m)
+        tris.append((N(nu, nv, 0.0), (i0[i], i1[j], i0[j])))
+        tris.append((N(nu, nv, 0.0), (i0[i], i1[i], i1[j])))
+        # Outer skin: normals point out. Computed from the vertices, because
+        # for the box form the facet normal is not the mid-angle direction.
+        p, q, r = o0[i], o0[j], o1[j]
+        du, dv = q[iu] - p[iu], q[iv] - p[iv]
+        sn = math.hypot(du, dv) or 1.0
+        tris.append((N(dv / sn, -du / sn, 0.0), (o0[i], o0[j], o1[j])))
+        tris.append((N(dv / sn, -du / sn, 0.0), (o0[i], o1[j], o1[i])))
+        # The two annular end caps.
+        tris.append((N(0.0, 0.0, -1.0), (o0[i], i0[i], i0[j])))
+        tris.append((N(0.0, 0.0, -1.0), (o0[i], i0[j], o0[j])))
+        tris.append((N(0.0, 0.0, 1.0), (o1[i], i1[j], i1[i])))
+        tris.append((N(0.0, 0.0, 1.0), (o1[i], o1[j], i1[j])))
+    n = write_stl(a.out, tris, "annulus")
+
+    chord = ri * (1.0 - math.cos(math.pi / m))
+    outer_desc = (f"r_outer = {a.r_outer!r}" if a.r_outer is not None
+                  else f"box half-width {a.box_half!r}")
+    print(f"{a.out}: annulus about {a.axis}, r_inner = {ri!r}, {outer_desc}, "
+          f"{a.axis} in [{a.a0!r}, {a.a1!r}], {m} facets, {n} triangles")
+    print(f"  inner chord error {chord:.3g}")
+    if a.domain_half is not None:
+        # The binding point is the cross-section corner: furthest from the
+        # pipe wall, nearest to the outer surface.
+        d = a.domain_half
+        corner_r = math.hypot(d, d)
+        to_inner = corner_r - ri
+        to_outer = (a.r_outer - corner_r) if a.r_outer is not None else (a.box_half - d)
+        ok = to_outer > to_inner
+        print(f"  nearest-surface check at the domain corner (|x| = |y| = {d!r}): "
+              f"to the pipe wall {to_inner:.4f}, to the outer surface {to_outer:.4f}"
+              f"  -> {'OK' if ok else 'THE OUTER SURFACE WINS -- pad it further out'}")
+        if not ok:
+            raise SystemExit(1)
 
 
 def main():
@@ -133,6 +252,25 @@ def main():
     p.add_argument("--z0", type=float, default=-0.5)
     p.add_argument("--z1", type=float, default=0.5)
     p.set_defaults(func=cmd_cylinder)
+
+    p = sub.add_parser("annulus")
+    p.add_argument("out")
+    p.add_argument("--axis", choices=("x", "y", "z"), default="z")
+    p.add_argument("--centre", type=float, nargs=2, default=(0.0, 0.0),
+                   help="cross-plane centre, in ascending coordinate order")
+    p.add_argument("--r-inner", type=float, required=True)
+    p.add_argument("--r-outer", type=float, default=None,
+                   help="cylindrical outer surface (exclusive with --box-half)")
+    p.add_argument("--box-half", type=float, default=None,
+                   help="square outer surface of this half-width; tighter than "
+                        "--r-outer for a square cross-section")
+    p.add_argument("--facets", type=int, default=16384)
+    p.add_argument("--a0", type=float, default=-0.5, help="axial start (pad past the domain)")
+    p.add_argument("--a1", type=float, default=0.5, help="axial end (pad past the domain)")
+    p.add_argument("--domain-half", type=float, default=None,
+                   help="cross-section half-width; checks that the pipe wall is "
+                        "the nearest surface everywhere inside it")
+    p.set_defaults(func=cmd_annulus)
 
     a = ap.parse_args()
     return a.func(a)
