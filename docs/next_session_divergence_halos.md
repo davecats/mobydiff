@@ -12,8 +12,7 @@
 > and §5 of that report names why: the reordering costs `phi_exchange` 7–10 %
 > at 4 ranks while paying 2–3 % at 8, which is a NEW open question.
 >
-> **Task 0** (§3) is job **5145816**, queued on `accelerated` (estimated start
-> 2026-09-17; the partition has beaten its own estimate before). It runs the
+> **Task 0** (§3) is job **5147466**, queued on `accelerated`. It runs the
 > 23-run matrix **three times in one allocation**, all three sides pinned
 > worktrees, so each column isolates one increment and the outer pair gives the
 > total:
@@ -31,9 +30,14 @@
 > block tax, the strong-scaling efficiencies and the 2:1 coarse-cell-equivalent
 > in `results_horeka_2026-09-14.md` are stale until it lands.
 >
-> An earlier submission (5145798) was cancelled: it predated task 1 and would
-> have published a `new` column that was stale on arrival. Resubmitting reset
-> the queue priority — a deliberate trade for one job that covers everything.
+> Two earlier submissions died. 5145798 was cancelled deliberately: it predated
+> task 1 and would have published a `new` column that was stale on arrival.
+> 5145816 then **failed after a day in the queue** because `moby-2to1-mapref`
+> had been renamed with `git worktree move` and its `build_gpu/CMakeCache.txt`
+> still named `moby-2to1-headref` — a CMake cache records the ABSOLUTE source
+> path, and cmake refuses to configure against a different one. The submit
+> script now checks `CMAKE_HOME_DIRECTORY` against the worktree and wipes the
+> build dir rather than trusting it. **Rename a worktree, wipe its build dirs.**
 >
 > **Task 2** (§5) and **task 3** (§6) are untouched, and §2's closed list still
 > stands. Housekeeping done: the six worktrees are down to `moby-2to1-base`

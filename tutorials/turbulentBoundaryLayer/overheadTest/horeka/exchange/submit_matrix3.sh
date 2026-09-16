@@ -53,7 +53,17 @@ export HDF5_ROOT="${HDF5_ROOT:-$HOME/hdf5}"
 export LD_LIBRARY_PATH="$HDF5_ROOT/lib:${LD_LIBRARY_PATH:-}"
 export UCX_MEMTYPE_CACHE=n OMP_NUM_THREADS=1
 
+# A CMake cache records the ABSOLUTE source path, so a worktree that was
+# renamed (git worktree move) carries a cache pointing at its old name and
+# cmake refuses to configure -- which killed job 5145816 after it had waited a
+# day in the queue. Check and wipe rather than trust.
 for d in "$REF_DIR" "$MID_DIR" "$CODE_DIR"; do
+    cache="$d/build_gpu/CMakeCache.txt"
+    if [ -f "$cache" ] && ! grep -qx "CMAKE_HOME_DIRECTORY:INTERNAL=$d" "$cache"; then
+        echo "=== $d: build_gpu cache was configured for a different source dir -- discarding"
+        grep -m1 "^CMAKE_HOME_DIRECTORY:" "$cache" | sed 's/^/    /'
+        rm -rf "$d/build_gpu"
+    fi
     echo "=== building $d ($(git -C "$d" rev-parse --short HEAD))"
     ( cd "$d" && ./compile.sh gpu ) || exit 1
 done
