@@ -51,15 +51,14 @@ module comm
         ! dimension, the source rows for destination index i are
         ! base..base+cnt-1 with base = ishft(ga*i + gb, -gs), a form that
         ! covers same-level copies, restrictions and prolongations alike
-        ! (entry_gather_map). Entries are ordered in three rounds (per
-        ! peer), with prefix counts, so each reduced exchange is a prefix
-        ! of the fuller one: pure +axis same-level face copies (the
-        ! DIVERGENCE round), then the remaining same-level copies (the
-        ! COPY-ONLY round), then the cross-level entries. Same-rank
-        ! entries run as one flat device kernel; off-rank entries form one
-        ! message per peer rank, in a canonical order (receiver's blocks
-        ! in slot order, fixed direction order, rounds in order) both ends
-        ! derive independently, so the wire format needs no negotiation.
+        ! (entry_gather_map). Entries are ordered same-level COPY first
+        ! (per peer), with prefix counts, so a copy-only exchange is a
+        ! prefix of the full one. Same-rank entries run as one flat device
+        ! kernel; off-rank entries form one message per peer rank, in a
+        ! canonical order (receiver's blocks in slot order, fixed
+        ! direction order, copies first) both ends derive independently,
+        ! so the wire format needs no negotiation. The divergence subset
+        ! is a compacted index list over this SAME order -- see lDivEnt.
         integer :: nLocal = 0
         integer :: nLocalPts = 0
         integer :: nLocalCopyPts = 0
@@ -70,16 +69,25 @@ module comm
         ! alone cannot.
         integer :: localPtsOp(0:2) = 0, localEntOp(0:2) = 0
         integer :: sendPtsOp(0:2) = 0, sendEntOp(0:2) = 0
-        ! Divergence-refresh prefix. Between projection iterations the only
+        ! Divergence-refresh subset. Between projection iterations the only
         ! velocity halo anything reads is q(nb+1) of the component NORMAL to
         ! each face (see sync_divergence_halos), and the entries that write it
-        ! are exactly the pure +axis same-level face COPY entries. Those are
-        ! enumerated FIRST inside the copy prefix, so a divergence round is a
-        ! prefix of a prefix on both ends of every message, and each entry
-        ! carries ONE variable -- lDivVar/sDivVar/rDivVar, the face normal
-        ! (VAR_U/V/W = the dimension), 0 for every other entry.
-        integer :: nLocalDivPts = 0
-        integer, allocatable :: lDivVar(:)                 ! (nLocal)
+        ! are exactly the pure +axis same-level face COPY entries.
+        !
+        ! It is an explicit INDEX LIST, not a prefix, and that is a measured
+        ! choice: reordering the enumeration to make it a prefix worked, but
+        ! cost every OTHER exchange 12-24 % and turned red-black net negative at
+        ! every rank count (results_horeka_2026-09-17.md section 4). The
+        ! enumeration is therefore left exactly as it was, and the subset is
+        ! compacted out of the finished lists -- ?DivEnt the entry index in
+        ! enumeration order, ?DivVar its face normal (VAR_U/V/W = the
+        ! dimension), ?DivOff its point prefix, ?DivPt the point -> list-index
+        ! map. The lists inherit the entry lists' peer-major order, so a peer's
+        ! points are still contiguous and no binary search is needed.
+        integer :: nLocalDiv = 0, nLocalDivPts = 0
+        integer, allocatable :: lDivEnt(:), lDivVar(:)     ! (nLocalDiv)
+        integer, allocatable :: lDivOff(:)                 ! (0:nLocalDiv)
+        integer, allocatable :: lDivPt(:)                  ! (0:nLocalDivPts-1)
         integer, allocatable :: lSrcSlot(:), lDstSlot(:)   ! (nLocal)
         integer, allocatable :: lDstLo(:,:), lExt(:,:)     ! (3,nLocal)
         integer, allocatable :: lGA(:,:), lGB(:,:), lGS(:,:), lGC(:,:) ! gather map (3,nLocal)
@@ -119,8 +127,15 @@ module comm
         integer, allocatable :: peerRecvOff(:)
         integer, allocatable :: peerSendCopyOff(:)         ! (0:nPeers) same-level copy prefix
         integer, allocatable :: peerRecvCopyOff(:)
-        integer, allocatable :: peerSendDivOff(:)          ! (0:nPeers) divergence prefix
+        integer, allocatable :: peerSendDivOff(:)          ! (0:nPeers) divergence point prefix
         integer, allocatable :: peerRecvDivOff(:)
+        integer :: nSendDiv = 0, nRecvDiv = 0
+        integer, allocatable :: sDivEnt(:), sDivVar(:)     ! (nSendDiv) see lDivEnt
+        integer, allocatable :: sDivOff(:)                 ! (0:nSendDiv)
+        integer, allocatable :: sDivPt(:)
+        integer, allocatable :: rDivEnt(:), rDivVar(:)     ! (nRecvDiv)
+        integer, allocatable :: rDivOff(:)                 ! (0:nRecvDiv)
+        integer, allocatable :: rDivPt(:)
         integer :: nSend = 0, nRecv = 0
         integer, allocatable :: sSlot(:), sPeer(:)         ! (nSend)
         integer, allocatable :: sExt(:,:)                  ! (3,nSend)
@@ -128,14 +143,12 @@ module comm
         integer, allocatable :: sDstLo(:,:)                ! dst box lo (gather indexing)
         integer, allocatable :: sOff(:)                    ! (0:nSend) point prefix, peer-major
         integer, allocatable :: sPhiN(:)                   ! (nSend) see lPhiN
-        integer, allocatable :: sDivVar(:)                 ! (nSend) see lDivVar
         integer, allocatable :: rSlot(:), rPeer(:)
         integer, allocatable :: rLo(:,:), rExt(:,:)
         integer, allocatable :: rDir(:,:)
         real(C_DOUBLE), allocatable :: rWp(:), rWpDst(:)
         integer, allocatable :: rOff(:)
         integer, allocatable :: rNrm(:)                    ! (nRecv) see lNrm
-        integer, allocatable :: rDivVar(:)                 ! (nRecv) see lDivVar
 
         integer :: maxBufferCount = 0
         real(C_DOUBLE), allocatable :: sendbuf(:,:)        ! (maxBufferCount, nPeers)
@@ -495,6 +508,9 @@ contains
         integer :: peerCoords(3), peerFirst(3), peerLast(3)
         integer :: peerBlocks, peerStart, pb, dorigin(3), dlevel
         integer :: nLocal, nSend, nRecv, pts, maxCount, ierr, e, round
+        ! Per-entry face normal of the divergence subset (0 = not in it), held
+        ! only long enough to compact the index lists out of it -- see lDivEnt.
+        integer, allocatable :: divVarL(:), divVarS(:), divVarR(:)
 
         call build_direction_table(off)
         nb = int(blk%nb)
@@ -513,18 +529,17 @@ contains
             c%sendEntOp = 0
 
             ! Local entries: my blocks' halos served by my own blocks
-            ! (including the periodic wrap inside a single rank). The three
-            ! rounds of entry_round: +axis same-level faces, the rest of the
-            ! same-level copies, the cross-level entries -- so both the
-            ! divergence view and the copy-only view are prefixes.
-            do round = 1, 3
+            ! (including the periodic wrap inside a single rank). Round 1
+            ! emits the same-level copies, round 2 the cross-level
+            ! entries, so the copy-only view is a prefix.
+            do round = 1, 2
                 do b = 1, int(blk%nBlocks)
                     do d = 1, 26
                         call resolve_neighbors(c, blk, dns, int(blk%level(b)), int(blk%origin(:,b)), &
                             off(:,d), ncand, owner, slot, opc, tqc)
                         do cand = 1, ncand
                             if (owner(cand) /= c%cart_rank) cycle
-                            if (entry_round(opc(cand), off(:,d)) /= round) cycle
+                            if ((opc(cand) == OP_COPY) .neqv. (round == 1)) cycle
                             call candidate_boxes(c, blk, dns, int(blk%level(b)), int(blk%origin(:,b)), &
                                 off(:,d), nb, opc(cand), tqc(:,cand), srcLo, dstLo, ext)
                             nLocal = nLocal + 1
@@ -544,7 +559,7 @@ contains
                                 c%lNrm(nLocal) = interface_normal_dim(opc(cand), off(:,d))
                                 c%lPhiN(nLocal) = iface_restrict_normal(opc(cand), off(:,d), &
                                     int(blk%refMask))
-                                c%lDivVar(nLocal) = merge(div_face_var(off(:,d)), 0, round == 1)
+                                divVarL(nLocal) = div_entry_var(opc(cand), off(:,d))
                                 c%lOff(nLocal) = c%lOff(nLocal-1) + pts
                             end if
                             c%nLocalPts = c%nLocalPts + pts
@@ -553,8 +568,7 @@ contains
                         end do
                     end do
                 end do
-                if (round == 1) c%nLocalDivPts = c%nLocalPts
-                if (round == 2) c%nLocalCopyPts = c%nLocalPts
+                if (round == 1) c%nLocalCopyPts = c%nLocalPts
             end do
             c%nLocal = nLocal
 
@@ -572,14 +586,14 @@ contains
             c%peerRecvDivOff(0) = 0
             do p = 1, c%nPeers
                 c%peerRecvOff(p) = c%peerRecvOff(p-1)
-                do round = 1, 3
+                do round = 1, 2
                     do b = 1, int(blk%nBlocks)
                         do d = 1, 26
                             call resolve_neighbors(c, blk, dns, int(blk%level(b)), int(blk%origin(:,b)), &
                                 off(:,d), ncand, owner, slot, opc, tqc)
                             do cand = 1, ncand
                                 if (owner(cand) /= c%peerRank(p)) cycle
-                                if (entry_round(opc(cand), off(:,d)) /= round) cycle
+                                if ((opc(cand) == OP_COPY) .neqv. (round == 1)) cycle
                                 call candidate_boxes(c, blk, dns, int(blk%level(b)), int(blk%origin(:,b)), &
                                     off(:,d), nb, opc(cand), tqc(:,cand), srcLo, dstLo, ext)
                                 nRecv = nRecv + 1
@@ -594,16 +608,14 @@ contains
                                         int(blk%origin(:,b)), off(:,d), opc(cand))
                                     c%rWpDst(nRecv) = 1.0d0 - c%rWp(nRecv)
                                     c%rNrm(nRecv) = interface_normal_dim(opc(cand), off(:,d))
-                                    c%rDivVar(nRecv) = merge(div_face_var(off(:,d)), 0, round == 1)
+                                    divVarR(nRecv) = div_entry_var(opc(cand), off(:,d))
                                     c%rOff(nRecv) = c%rOff(nRecv-1) + pts
                                 end if
                                 c%peerRecvOff(p) = c%peerRecvOff(p) + pts
                             end do
                         end do
                     end do
-                    if (round == 1) c%peerRecvDivOff(p) = c%peerRecvDivOff(p-1) &
-                        + (c%peerRecvOff(p) - c%peerRecvOff(p-1))
-                    if (round == 2) c%peerRecvCopyOff(p) = c%peerRecvCopyOff(p-1) &
+                    if (round == 1) c%peerRecvCopyOff(p) = c%peerRecvCopyOff(p-1) &
                         + (c%peerRecvOff(p) - c%peerRecvOff(p-1))
                 end do
 
@@ -621,7 +633,7 @@ contains
                     peerBlocks = 1
                 end if
                 c%peerSendOff(p) = c%peerSendOff(p-1)
-                do round = 1, 3
+                do round = 1, 2
                     do pb = 1, peerBlocks
                         if (blk%distMode == DIST_ZORDER) then
                             dorigin = int(blk%leafCoord(:,peerStart + pb))*nb
@@ -635,7 +647,7 @@ contains
                                 off(:,d), ncand, owner, slot, opc, tqc)
                             do cand = 1, ncand
                                 if (owner(cand) /= c%cart_rank) cycle
-                                if (entry_round(opc(cand), off(:,d)) /= round) cycle
+                                if ((opc(cand) == OP_COPY) .neqv. (round == 1)) cycle
                                 call candidate_boxes(c, blk, dns, dlevel, dorigin, &
                                     off(:,d), nb, opc(cand), tqc(:,cand), srcLo, dstLo, ext)
                                 nSend = nSend + 1
@@ -650,7 +662,7 @@ contains
                                         c%sGS(:,nSend), c%sGC(:,nSend))
                                     c%sPhiN(nSend) = iface_restrict_normal(opc(cand), off(:,d), &
                                         int(blk%refMask))
-                                    c%sDivVar(nSend) = merge(div_face_var(off(:,d)), 0, round == 1)
+                                    divVarS(nSend) = div_entry_var(opc(cand), off(:,d))
                                     c%sOff(nSend) = c%sOff(nSend-1) + pts
                                 end if
                                 c%peerSendOff(p) = c%peerSendOff(p) + pts
@@ -659,9 +671,7 @@ contains
                             end do
                         end do
                     end do
-                    if (round == 1) c%peerSendDivOff(p) = c%peerSendDivOff(p-1) &
-                        + (c%peerSendOff(p) - c%peerSendOff(p-1))
-                    if (round == 2) c%peerSendCopyOff(p) = c%peerSendCopyOff(p-1) &
+                    if (round == 1) c%peerSendCopyOff(p) = c%peerSendCopyOff(p-1) &
                         + (c%peerSendOff(p) - c%peerSendOff(p-1))
                 end do
             end do
@@ -677,7 +687,6 @@ contains
                 allocate(c%lWp(max(1,nLocal)), c%lWpDst(max(1,nLocal)))
                 allocate(c%lNrm(max(1,nLocal)))
                 allocate(c%lPhiN(max(1,nLocal)))
-                allocate(c%lDivVar(max(1,nLocal)))
                 allocate(c%lOff(0:max(1,nLocal)))
                 allocate(c%sSlot(max(1,nSend)), c%sPeer(max(1,nSend)))
                 allocate(c%sExt(3,max(1,nSend)))
@@ -685,14 +694,12 @@ contains
                 allocate(c%sGS(3,max(1,nSend)), c%sGC(3,max(1,nSend)))
                 allocate(c%sDstLo(3,max(1,nSend)))
                 allocate(c%sPhiN(max(1,nSend)))
-                allocate(c%sDivVar(max(1,nSend)))
                 allocate(c%sOff(0:max(1,nSend)))
                 allocate(c%rSlot(max(1,nRecv)), c%rPeer(max(1,nRecv)))
                 allocate(c%rLo(3,max(1,nRecv)), c%rExt(3,max(1,nRecv)))
                 allocate(c%rDir(3,max(1,nRecv)))
                 allocate(c%rWp(max(1,nRecv)), c%rWpDst(max(1,nRecv)))
                 allocate(c%rNrm(max(1,nRecv)))
-                allocate(c%rDivVar(max(1,nRecv)))
                 allocate(c%rOff(0:max(1,nRecv)))
                 c%lWp = 1.0d0
                 c%lWpDst = 0.0d0
@@ -702,9 +709,11 @@ contains
                 c%rNrm = 0
                 c%lPhiN = 0
                 c%sPhiN = 0
-                c%lDivVar = 0
-                c%sDivVar = 0
-                c%rDivVar = 0
+                if (allocated(divVarL)) deallocate(divVarL, divVarS, divVarR)
+                allocate(divVarL(max(1,nLocal)), divVarS(max(1,nSend)), divVarR(max(1,nRecv)))
+                divVarL = 0
+                divVarS = 0
+                divVarR = 0
                 c%lOff = 0
                 c%sOff = 0
                 c%rOff = 0
@@ -737,6 +746,27 @@ contains
                 c%rPointEntry(p) = e
             end do
         end do
+
+        ! Compact the divergence subset out of the finished entry lists. It is a
+        ! SUBSEQUENCE of the enumeration, not a prefix: leaving the order alone
+        ! is the whole point (see lDivEnt). Because the lists are peer-major and
+        ! the subsequence preserves their order, each peer's divergence points
+        ! stay contiguous, so the kernels index them directly -- no find_entry.
+        !
+        ! Both ends of a message select the SAME entries: the predicate is a
+        ! pure function of the op and the direction, which the send and recv
+        ! enumerations of one entry both evaluate identically. That is the same
+        ! argument the canonical wire order already rests on.
+        call compact_div_list(divVarL, c%nLocal, c%lOff, c%nLocalDiv, &
+            c%lDivEnt, c%lDivVar, c%lDivOff, c%lDivPt)
+        c%nLocalDivPts = c%lDivOff(c%nLocalDiv)
+        call compact_div_list(divVarS, c%nSend, c%sOff, c%nSendDiv, &
+            c%sDivEnt, c%sDivVar, c%sDivOff, c%sDivPt)
+        call compact_div_list(divVarR, c%nRecv, c%rOff, c%nRecvDiv, &
+            c%rDivEnt, c%rDivVar, c%rDivOff, c%rDivPt)
+        call peer_div_prefix(c%nSendDiv, c%sDivEnt, c%sDivOff, c%sPeer, c%nPeers, c%peerSendDivOff)
+        call peer_div_prefix(c%nRecvDiv, c%rDivEnt, c%rDivOff, c%rPeer, c%nPeers, c%peerRecvDivOff)
+        deallocate(divVarL, divVarS, divVarR)
 
         maxCount = 1
         do p = 1, c%nPeers
@@ -771,12 +801,15 @@ contains
         !$omp target enter data map(to: &
         !$omp& c%lPointEntry, c%sPointEntry, c%rPointEntry, &
         !$omp& c%lSrcSlot, c%lDstSlot, c%lDstLo, c%lExt, c%lOff, &
-        !$omp& c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lWp, c%lWpDst, c%lNrm, c%lPhiN, c%lDivVar, &
+        !$omp& c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lWp, c%lWpDst, c%lNrm, c%lPhiN, &
         !$omp& c%sSlot, c%sPeer, c%sExt, c%sOff, &
-        !$omp& c%sGA, c%sGB, c%sGS, c%sGC, c%sDstLo, c%sPhiN, c%sDivVar, &
+        !$omp& c%sGA, c%sGB, c%sGS, c%sGC, c%sDstLo, c%sPhiN, &
         !$omp& c%peerSendOff, c%peerRecvOff, c%peerSendCopyOff, c%peerRecvCopyOff, &
         !$omp& c%peerSendDivOff, c%peerRecvDivOff, &
-        !$omp& c%rSlot, c%rPeer, c%rLo, c%rExt, c%rDir, c%rWp, c%rWpDst, c%rOff, c%rNrm, c%rDivVar)
+        !$omp& c%lDivEnt, c%lDivVar, c%lDivOff, c%lDivPt, &
+        !$omp& c%sDivEnt, c%sDivVar, c%sDivOff, c%sDivPt, &
+        !$omp& c%rDivEnt, c%rDivVar, c%rDivOff, c%rDivPt, &
+        !$omp& c%rSlot, c%rPeer, c%rLo, c%rExt, c%rDir, c%rWp, c%rWpDst, c%rOff, c%rNrm)
         !$omp target enter data map(alloc: c%sendbuf, c%recvbuf)
 #endif
     end subroutine init_block_exchange
@@ -790,21 +823,27 @@ contains
             !$omp target exit data map(delete: &
             !$omp& c%lPointEntry, c%sPointEntry, c%rPointEntry, &
             !$omp& c%lSrcSlot, c%lDstSlot, c%lDstLo, c%lExt, c%lOff, &
-            !$omp& c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lWp, c%lWpDst, c%lNrm, c%lPhiN, c%lDivVar, &
+            !$omp& c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lWp, c%lWpDst, c%lNrm, c%lPhiN, &
             !$omp& c%sSlot, c%sPeer, c%sExt, c%sOff, &
-            !$omp& c%sGA, c%sGB, c%sGS, c%sGC, c%sDstLo, c%sPhiN, c%sDivVar, &
+            !$omp& c%sGA, c%sGB, c%sGS, c%sGC, c%sDstLo, c%sPhiN, &
             !$omp& c%peerSendOff, c%peerRecvOff, c%peerSendCopyOff, c%peerRecvCopyOff, &
             !$omp& c%peerSendDivOff, c%peerRecvDivOff, &
-            !$omp& c%rSlot, c%rPeer, c%rLo, c%rExt, c%rDir, c%rWp, c%rWpDst, c%rOff, c%rNrm, c%rDivVar)
+            !$omp& c%lDivEnt, c%lDivVar, c%lDivOff, c%lDivPt, &
+            !$omp& c%sDivEnt, c%sDivVar, c%sDivOff, c%sDivPt, &
+            !$omp& c%rDivEnt, c%rDivVar, c%rDivOff, c%rDivPt, &
+            !$omp& c%rSlot, c%rPeer, c%rLo, c%rExt, c%rDir, c%rWp, c%rWpDst, c%rOff, c%rNrm)
             !$omp target exit data map(delete: c)
 #endif
             deallocate(c%sendbuf, c%recvbuf)
             deallocate(c%lPointEntry, c%sPointEntry, c%rPointEntry)
             deallocate(c%lSrcSlot, c%lDstSlot, c%lDstLo, c%lExt, c%lOff)
-            deallocate(c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lWp, c%lWpDst, c%lNrm, c%lPhiN, c%lDivVar)
+            deallocate(c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lWp, c%lWpDst, c%lNrm, c%lPhiN)
             deallocate(c%sSlot, c%sPeer, c%sExt, c%sOff)
-            deallocate(c%sGA, c%sGB, c%sGS, c%sGC, c%sDstLo, c%sPhiN, c%sDivVar)
-            deallocate(c%rSlot, c%rPeer, c%rLo, c%rExt, c%rDir, c%rWp, c%rWpDst, c%rOff, c%rNrm, c%rDivVar)
+            deallocate(c%sGA, c%sGB, c%sGS, c%sGC, c%sDstLo, c%sPhiN)
+            deallocate(c%rSlot, c%rPeer, c%rLo, c%rExt, c%rDir, c%rWp, c%rWpDst, c%rOff, c%rNrm)
+            deallocate(c%lDivEnt, c%lDivVar, c%lDivOff, c%lDivPt)
+            deallocate(c%sDivEnt, c%sDivVar, c%sDivOff, c%sDivPt)
+            deallocate(c%rDivEnt, c%rDivVar, c%rDivOff, c%rDivPt)
             deallocate(c%request)
         end if
         if (allocated(c%peerRank)) deallocate(c%peerRank)
@@ -1069,35 +1108,76 @@ contains
         end do
     end function interface_normal_dim
 
-    ! Enumeration round of an entry: 1 = pure +axis same-level FACE copy (the
-    ! divergence prefix, see sync_divergence_halos), 2 = every other same-level
-    ! copy (completing the copy-only prefix), 3 = the cross-level entries.
-    ! Emitting in this order is what makes each reduced exchange a prefix of the
-    ! fuller one on BOTH ends of a message without either end negotiating: the
-    ! round depends only on the op and the direction, which the send and recv
-    ! enumerations of the same entry both hold.
-    pure integer function entry_round(op, off) result(r)
+    ! Face normal (VAR_U/V/W = the dimension) of an entry that belongs to the
+    ! DIVERGENCE subset -- a pure +axis same-level FACE copy -- else 0. It is a
+    ! function of the op and the direction ALONE, which is what lets the send
+    ! and recv ends of one entry select it identically without negotiating.
+    pure integer function div_entry_var(op, off) result(v)
         integer, intent(in) :: op, off(3)
-        if (op /= OP_COPY) then
-            r = 3
-        else if (div_face_var(off) /= 0) then
-            r = 1
-        else
-            r = 2
-        end if
-    end function entry_round
-
-    ! VAR_U/V/W (= the dimension) if off is a pure +axis face direction, else 0:
-    ! the one velocity component whose q(nb+1) plane such an entry feeds.
-    pure integer function div_face_var(off) result(v)
-        integer, intent(in) :: off(3)
         integer :: d
         v = 0
+        if (op /= OP_COPY) return
         if (sum(abs(off)) /= 1) return
         do d = 1, 3
             if (off(d) == 1) v = d
         end do
-    end function div_face_var
+    end function div_entry_var
+
+    ! Compact the entries with divVar /= 0 into (ent, var, off, pt) lists:
+    ! ent(n) is the entry index in enumeration order, var(n) its face normal,
+    ! off(0:n) the point prefix over the subset, and pt the inverse map from a
+    ! subset point index to n. entOff is the FULL list's point prefix.
+    subroutine compact_div_list(divVar, nEnt, entOff, nDiv, ent, var, off, pt)
+        integer, intent(in) :: divVar(:), nEnt, entOff(0:)
+        integer, intent(out) :: nDiv
+        integer, allocatable, intent(out) :: ent(:), var(:), off(:), pt(:)
+
+        integer :: e, n, p
+
+        nDiv = 0
+        do e = 1, nEnt
+            if (divVar(e) /= 0) nDiv = nDiv + 1
+        end do
+        allocate(ent(max(1,nDiv)), var(max(1,nDiv)), off(0:max(1,nDiv)))
+        off = 0
+        n = 0
+        do e = 1, nEnt
+            if (divVar(e) == 0) cycle
+            n = n + 1
+            ent(n) = e
+            var(n) = divVar(e)
+            off(n) = off(n-1) + (entOff(e) - entOff(e-1))
+        end do
+        allocate(pt(0:max(0, off(nDiv) - 1)))
+        do n = 1, nDiv
+            do p = off(n-1), off(n) - 1
+                pt(p) = n
+            end do
+        end do
+    end subroutine compact_div_list
+
+    ! Per-peer point prefix over a divergence list. The entry list is peer-major
+    ! and the subset preserves its order, so each peer's points are one
+    ! contiguous range and a prefix sum describes them completely.
+    subroutine peer_div_prefix(nDiv, ent, off, entPeer, nPeers, peerOff)
+        integer, intent(in) :: nDiv, ent(:), off(0:), entPeer(:), nPeers
+        integer, intent(out) :: peerOff(0:)
+
+        integer :: n, p
+        integer, allocatable :: cnt(:)
+
+        allocate(cnt(0:max(1,nPeers)))
+        cnt = 0
+        do n = 1, nDiv
+            p = entPeer(ent(n))
+            cnt(p) = cnt(p) + (off(n) - off(n-1))
+        end do
+        peerOff(0) = 0
+        do p = 1, nPeers
+            peerOff(p) = peerOff(p-1) + cnt(p)
+        end do
+        deallocate(cnt)
+    end subroutine peer_div_prefix
 
     ! Signed normal dim (off(d)*d) of an interface RESTRICT pure-face entry,
     ! else 0. The sign tells the phi exchange which of the two cell-centred
@@ -1613,11 +1693,11 @@ contains
     ! reconstructs it). Bit-exact by construction: the values delivered are the
     ! same copies, only the unread ones are skipped.
     !
-    ! The entry list is ordered with these entries first (entry_round), so the
-    ! same-rank kernel takes the local prefix and each message the per-peer
-    ! prefix -- one variable per point instead of nActiveVars, hence the
-    ! separate pack/unpack. The launch count is the copy-only round's: pack,
-    ! local copy, unpack.
+    ! The subset is a compacted index list over the unchanged enumeration (see
+    ! lDivEnt), so the same-rank kernel walks the local list and each message
+    ! the peer's contiguous range of it -- one variable per point instead of
+    ! nActiveVars, hence the separate pack/unpack. The launch count is the
+    ! copy-only round's: pack, local copy, unpack.
     subroutine sync_divergence_halos(c, blk)
         type(comm_type), intent(inout) :: c
         type(block_set_type), intent(inout) :: blk
@@ -1679,22 +1759,24 @@ contains
         type(comm_type), intent(inout) :: c
         type(block_set_type), intent(inout) :: blk
 
-        integer :: gp, e, pt, ni, nj, nPts, qj, qk
-        integer :: di, dj, dk
+        integer :: gp, n, e, pt, ni, nj, nPts, qj, qk
+        integer :: di, dj, dk, var
 
         nPts = c%nLocalDivPts
         if (nPts <= 0) return
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
-        !$omp& map(to: nPts, c%lOff, c%lPointEntry, c%lSrcSlot, c%lDstSlot, &
-        !$omp& c%lDstLo, c%lExt, c%lGB, c%lDivVar) &
+        !$omp& map(to: nPts, c%lDivPt, c%lDivEnt, c%lDivVar, c%lDivOff, &
+        !$omp& c%lSrcSlot, c%lDstSlot, c%lDstLo, c%lExt, c%lGB) &
         !$omp& map(tofrom: blk%q) &
-        !$omp& private(e,pt,ni,nj,di,dj,dk,qj,qk)
+        !$omp& private(n,e,pt,ni,nj,di,dj,dk,qj,qk,var)
 #endif
         do gp = 0, nPts - 1
-            e = c%lPointEntry(gp)
-            pt = gp - c%lOff(e-1)
+            n = c%lDivPt(gp)
+            e = c%lDivEnt(n)
+            var = c%lDivVar(n)
+            pt = gp - c%lDivOff(n-1)
             ni = c%lExt(1,e)
             nj = c%lExt(2,e)
             qj = pt/ni
@@ -1702,42 +1784,42 @@ contains
             di = c%lDstLo(1,e) + (pt - qj*ni)
             dj = c%lDstLo(2,e) + (qj - qk*nj)
             dk = c%lDstLo(3,e) + qk
-            blk%q(di, dj, dk, c%lDivVar(e), c%lDstSlot(e)) = &
+            blk%q(di, dj, dk, var, c%lDstSlot(e)) = &
                 blk%q(di + c%lGB(1,e), dj + c%lGB(2,e), dk + c%lGB(3,e), &
-                      c%lDivVar(e), c%lSrcSlot(e))
+                      var, c%lSrcSlot(e))
         end do
 #ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
 #endif
     end subroutine copy_local_div_entries
 
-    ! Pack the divergence prefix: one double per point (the entry's normal
+    ! Pack the divergence list: one double per point (the entry's normal
     ! component), so the message is the copy-only one shrunk by both the entry
-    ! filter and the variable count. A divergence point index maps into the
-    ! full enumeration through the per-peer divergence prefixes, exactly as a
-    ! copy-only index maps through the copy prefixes.
+    ! filter and the variable count. The list is peer-major, so a peer's points
+    ! are the contiguous range [peerSendDivOff(p-1), peerSendDivOff(p)) and the
+    ! buffer position is a subtraction -- no search.
     subroutine pack_div_entries(c, blk)
         type(comm_type), intent(inout) :: c
         type(block_set_type), intent(in) :: blk
 
-        integer :: gp, e, pt, ni, nj, totalItems, peer, base, qj, qk
-        integer :: di, dj, dk
+        integer :: gp, n, e, pt, ni, nj, totalItems, peer, qj, qk
+        integer :: di, dj, dk, var
 
         totalItems = c%peerSendDivOff(c%nPeers)
         if (totalItems == 0) return
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
-        !$omp& map(to: totalItems, c%nPeers, c%sOff, c%sPointEntry, c%sSlot, c%sPeer, &
-        !$omp& c%sDstLo, c%sExt, c%sGB, c%sDivVar, c%peerSendOff, c%peerSendDivOff, blk%q) &
+        !$omp& map(to: totalItems, c%sDivPt, c%sDivEnt, c%sDivVar, c%sDivOff, &
+        !$omp& c%sSlot, c%sPeer, c%sDstLo, c%sExt, c%sGB, c%peerSendDivOff, blk%q) &
         !$omp& map(tofrom: c%sendbuf) &
-        !$omp& private(e,pt,ni,nj,di,dj,dk,peer,base,qj,qk)
+        !$omp& private(n,e,pt,ni,nj,di,dj,dk,peer,qj,qk,var)
 #endif
         do gp = 0, totalItems - 1
-            peer = find_entry(c%peerSendDivOff, c%nPeers, gp)
-            base = gp - c%peerSendDivOff(peer-1)
-            e = c%sPointEntry(c%peerSendOff(peer-1) + base)
-            pt = c%peerSendOff(peer-1) + base - c%sOff(e-1)
+            n = c%sDivPt(gp)
+            e = c%sDivEnt(n)
+            var = c%sDivVar(n)
+            pt = gp - c%sDivOff(n-1)
             ni = c%sExt(1,e)
             nj = c%sExt(2,e)
             qj = pt/ni
@@ -1745,39 +1827,40 @@ contains
             di = c%sDstLo(1,e) + (pt - qj*ni)
             dj = c%sDstLo(2,e) + (qj - qk*nj)
             dk = c%sDstLo(3,e) + qk
-            c%sendbuf(base+1,peer) = blk%q(di + c%sGB(1,e), dj + c%sGB(2,e), &
-                dk + c%sGB(3,e), c%sDivVar(e), c%sSlot(e))
+            peer = c%sPeer(e)
+            c%sendbuf(gp - c%peerSendDivOff(peer-1) + 1, peer) = &
+                blk%q(di + c%sGB(1,e), dj + c%sGB(2,e), dk + c%sGB(3,e), var, c%sSlot(e))
         end do
 #ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
 #endif
     end subroutine pack_div_entries
 
-    ! Unpack the divergence prefix. No ghost blend and no owned-face skip: both
+    ! Unpack the divergence list. No ghost blend and no owned-face skip: both
     ! are identically off for OP_COPY entries (entry_blend returns 1.0,
     ! interface_normal_dim returns 0), which is why this is a plain store.
     subroutine unpack_div_entries(c, blk)
         type(comm_type), intent(in) :: c
         type(block_set_type), intent(inout) :: blk
 
-        integer :: gp, e, pt, ni, nj, totalItems, peer, base, qj, qk
-        integer :: i, j, k
+        integer :: gp, n, e, pt, ni, nj, totalItems, peer, qj, qk
+        integer :: i, j, k, var
 
         totalItems = c%peerRecvDivOff(c%nPeers)
         if (totalItems == 0) return
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
-        !$omp& map(to: totalItems, c%nPeers, c%rOff, c%rPointEntry, c%rSlot, c%rPeer, &
-        !$omp& c%rLo, c%rExt, c%rDivVar, c%peerRecvOff, c%peerRecvDivOff, c%recvbuf) &
+        !$omp& map(to: totalItems, c%rDivPt, c%rDivEnt, c%rDivVar, c%rDivOff, &
+        !$omp& c%rSlot, c%rPeer, c%rLo, c%rExt, c%peerRecvDivOff, c%recvbuf) &
         !$omp& map(tofrom: blk%q) &
-        !$omp& private(e,pt,ni,nj,i,j,k,peer,base,qj,qk)
+        !$omp& private(n,e,pt,ni,nj,i,j,k,peer,qj,qk,var)
 #endif
         do gp = 0, totalItems - 1
-            peer = find_entry(c%peerRecvDivOff, c%nPeers, gp)
-            base = gp - c%peerRecvDivOff(peer-1)
-            e = c%rPointEntry(c%peerRecvOff(peer-1) + base)
-            pt = c%peerRecvOff(peer-1) + base - c%rOff(e-1)
+            n = c%rDivPt(gp)
+            e = c%rDivEnt(n)
+            var = c%rDivVar(n)
+            pt = gp - c%rDivOff(n-1)
             ni = c%rExt(1,e)
             nj = c%rExt(2,e)
             qj = pt/ni
@@ -1785,7 +1868,8 @@ contains
             i = c%rLo(1,e) + (pt - qj*ni)
             j = c%rLo(2,e) + (qj - qk*nj)
             k = c%rLo(3,e) + qk
-            blk%q(i, j, k, c%rDivVar(e), c%rSlot(e)) = c%recvbuf(base+1,peer)
+            peer = c%rPeer(e)
+            blk%q(i, j, k, var, c%rSlot(e)) = c%recvbuf(gp - c%peerRecvDivOff(peer-1) + 1, peer)
         end do
 #ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
