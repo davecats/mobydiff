@@ -1,48 +1,44 @@
 # Handout — the between-iteration velocity exchange, and what is left after it
 
-> **STATUS 2026-09-15 — TASK 1 IS DONE, TASK 0 IS RUNNING.**
+> **STATUS 2026-09-17 — TASKS 0 AND 1 ARE BOTH DONE.**
 >
-> **Task 1** (§4) landed at `95312d7`: `entry_round` gives the entry
-> enumeration a third round, so a divergence round is a per-peer prefix of the
-> copy prefix and runs with peers; `dsSlot` and its three kernels are gone.
-> Worth **−3.0 to −4.9 % of the step** (`proj vel_exchange` −46 to −54 %),
-> every gate `max_abs 0` at production flags. Full reading in
-> `overheadTest/results_divhalo_2026-09-15.md`; jobs 5145805 / 5145806.
-> The pre-registered step band (−3.5 to −5.5 %) was **missed low at 4 ranks**,
-> and §5 of that report names why: the reordering costs `phi_exchange` 7–10 %
-> at 4 ranks while paying 2–3 % at 8, which is a NEW open question.
+> **Task 1** (§4) landed at `95312d7`: `entry_round` makes the pure `+axis`
+> same-level face copies a third enumeration round, so a divergence round is a
+> per-peer prefix of the copy prefix and runs with peers; `dsSlot` and its three
+> kernels are gone. Every gate `max_abs 0` at production flags
+> (`overheadTest/results_divhalo_2026-09-15.md`, jobs 5145805 / 5145806).
 >
-> **Task 0** (§3) is job **5147466**, queued on `accelerated`. It runs the
-> 23-run matrix **three times in one allocation**, all three sides pinned
-> worktrees, so each column isolates one increment and the outer pair gives the
-> total:
+> **Task 0** (§3) is job **5147466**: the 23-run matrix at `55bee89` /
+> `3c2903a` / `95312d7` in one allocation
+> (`overheadTest/results_horeka_2026-09-17.md`). It supersedes
+> `results_horeka_2026-09-14.md` §2–§4.
 >
-> | column | commit | worktree |
-> |---|---|---|
-> | `ref` | `55bee89` | `moby-2to1-mapref` — the `new` column of `results_horeka_2026-09-14.md`, so it is the CONTROL and must reproduce it |
-> | `mid` | `3c2903a` | `moby-2to1-base` — + the register cuts and the step-work increments |
-> | `new` | `95312d7` | `moby-2to1-divhalo` — + the divergence-halo exchange |
+> **AND IT CHANGED THE VERDICT ON TASK 1.** Two rank counts were not enough.
+> Across 1/2/4/8/16 the divergence halo's gain **grows with rank count** —
+> −1.0 % at 1 rank, +3.3 % at 4, +4.5 % at 8, **+11.8 % at 16** — and it is a
+> **net loss at one rank and for red-black at every rank count** (−3.8 to
+> −0.8 %). The cause is the half of the change that is not the saving: making
+> the divergence set a PREFIX reorders the entry list, and that costs every
+> other exchange 12–24 %. See `results_horeka_2026-09-17.md` §4 for the
+> controlled 1-rank pair that isolates it.
 >
-> It writes `scaling_total.md`, `scaling_registers_stepwork.md` and
-> `scaling_divhalo.md` into `horeka/exchange/results_matrix3/`. Collect them into
-> `horeka/results_job5145816/` (run.log + config.ini only, no `.h5` — the
-> convention every `results_job*` follows) and write the matrix report; the
-> block tax, the strong-scaling efficiencies and the 2:1 coarse-cell-equivalent
-> in `results_horeka_2026-09-14.md` are stale until it lands.
+> **THE ONE THING WORTH DOING NEXT, and it is new:** keep the two-round
+> enumeration and drive the divergence round from explicit index lists
+> (`lDivEnt`/`sDivEnt`/`rDivEnt` + point prefixes) instead of a prefix. ~6 extra
+> integer arrays, kernels unchanged. It should recover the red-black regression
+> entirely, turn the 1-rank result positive, and add a little at 4–16 ranks.
+> That design was considered first and rejected on "more state" grounds — the
+> measurement overturns them. §6 of the 09-17 report has the reasoning.
 >
-> Two earlier submissions died. 5145798 was cancelled deliberately: it predated
-> task 1 and would have published a `new` column that was stale on arrival.
-> 5145816 then **failed after a day in the queue** because `moby-2to1-mapref`
-> had been renamed with `git worktree move` and its `build_gpu/CMakeCache.txt`
-> still named `moby-2to1-headref` — a CMake cache records the ABSOLUTE source
-> path, and cmake refuses to configure against a different one. The submit
-> script now checks `CMAKE_HOME_DIRECTORY` against the worktree and wipes the
-> build dir rather than trusting it. **Rename a worktree, wipe its build dirs.**
+> **Task 2** (§5, `compute_rdenom`'s divide) and **task 3** (§6, splitting
+> `step_momentum`) are untouched, and §2's closed list still stands. Note their
+> bucket shares in §1 below are now stale — re-read them off
+> `results_job5147466/`.
 >
-> **Task 2** (§5) and **task 3** (§6) are untouched, and §2's closed list still
-> stands. Housekeeping done: the six worktrees are down to `moby-2to1-base`
-> (`3c2903a`), `moby-2to1-mapref` (`55bee89`) and `moby-2to1-divhalo`
-> (`95312d7`).
+> Worktrees: `moby-2to1-base` (`3c2903a`), `moby-2to1-mapref` (`55bee89`),
+> `moby-2to1-divhalo` (`95312d7`). **Rename a worktree, wipe its build dirs** —
+> a CMake cache records the absolute source path, and a stale one killed job
+> 5145816 after a day in the queue.
 
 Written 2026-09-14, at `76f643f`, from the session that took **≈18 % off the
 step** in five increments. **Read section 2 before planning anything: most of the
