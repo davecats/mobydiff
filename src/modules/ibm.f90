@@ -1255,4 +1255,21 @@ contains
         ibm_coef_all_zero = peak == 0.0d0
     end function ibm_coef_all_zero
 
+    ! Is mu identically 1 for the whole run on this rank? True exactly when the
+    ! rank holds no body: update_ibm_mu then returns without writing, so mu keeps
+    ! the 1.0 init_ibm gave it and NOTHING downstream of it changes between
+    ! substages either -- which is what lets the projection form rdenom once
+    ! instead of three times a step. Answers from the cache, computing it on the
+    ! first call so the answer does not depend on being asked after
+    ! update_ibm_mu.
+    logical function ibm_mu_is_unit(ibm) result(isUnit)
+        type(ibm_type), intent(in) :: ibm
+
+        if (.not. muKnown) then
+            muIsUnit = ibm_coef_all_zero(ibm)
+            muKnown = .true.
+        end if
+        isUnit = muIsUnit
+    end function ibm_mu_is_unit
+
 end module ibmm

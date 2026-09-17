@@ -2,7 +2,7 @@ module pressure_solver
     use, intrinsic :: iso_c_binding
     use :: init, only: dns_type, VAR_U, VAR_V, VAR_W, VAR_P
     use :: blocks, only: block_set_type, FACE_PHYS, FACE_CLOSED, FACE_COARSE, FACE_FINE
-    use :: ibmm, only: ibm_type
+    use :: ibmm, only: ibm_type, ibm_mu_is_unit
     use :: boundary, only: boundary_type, apply_bc, apply_scalar_bc, &
         boundary_face_id, NFACES, PATCH_OUTLET, SCALAR_BC_NONE, SCALAR_BC_MIRROR
     use :: comm, only: comm_type, exchange_halos, exchange_scalar_halos, sync_divergence_halos, &
@@ -86,6 +86,8 @@ module pressure_solver
     ! Inf/NaN before (division by an exactly zero diagonal) and still does, now
     ! via 1/0; the failure mode is unchanged in kind.
     real(C_DOUBLE), allocatable :: rdenom(:,:,:,:)
+    ! Set once rdenom is known not to change again -- see the metric tables.
+    logical, save :: rdenomStatic = .false.
 
     ! STATIC face metric tables, precomputed per (face-normal index, direction,
     ! block) and shared by the two volume kernels of the projection.
@@ -123,10 +125,16 @@ module pressure_solver
     !                  into dnLow/dnHigh would distribute the multiply and move
     !                  the last bits.
     !
-    ! All of them are STATIC, unlike rdenom: face kinds come from the leaf table
-    ! and the metrics from the node lines, and neither changes during a run
-    ! (rdenom follows ibm%mu, which update_ibm_mu rewrites every substage). So
-    ! they are formed ONCE on the host and mapped once.
+    ! All of them are STATIC: face kinds come from the leaf table and the metrics
+    ! from the node lines, and neither changes during a run. So they are formed
+    ! ONCE on the host and mapped once.
+    !
+    ! rdenom follows ibm%mu, which update_ibm_mu rewrites every substage -- but
+    ! ONLY on a rank that holds a body. Where it holds none, update_ibm_mu
+    ! returns without writing and mu keeps its 1.0, so rdenom is as static as
+    ! the tables above and is formed once too (rdenomStatic, set from
+    ! ibm_mu_is_unit after the first call). Skipping the recomputation is
+    ! bit-exact by construction: same inputs, same expression, same result.
     real(C_DOUBLE), allocatable :: cfLow(:,:,:)   ! (1:maxval(nb), 3, nBlocks)
     real(C_DOUBLE), allocatable :: cfHigh(:,:)    ! (3, nBlocks)
     real(C_DOUBLE), allocatable :: dnLow(:,:,:)   ! (1:maxval(nb), 3, nBlocks)
@@ -260,9 +268,13 @@ contains
         ! velocity (+ pressure on the last iteration) halos for the next
         ! divergence.
         ! The diagonal is constant across the iterations (see rdenom), so it is
-        ! formed once here rather than inside the loop.
+        ! formed once here rather than inside the loop -- and on a body-free rank
+        ! it is constant across SUBSTAGES too, so it is formed once per run.
         call init_face_metrics(blk, outLow, outHigh, refd)
-        call compute_rdenom(blk, ibm)
+        if (.not. rdenomStatic) then
+            call compute_rdenom(blk, ibm)
+            rdenomStatic = ibm_mu_is_unit(ibm)
+        end if
         call prof_toc(proj_prof, PROF_PROJ_SETUP, t0)
 
         do iIter = 1_C_INT, ps%nIter
