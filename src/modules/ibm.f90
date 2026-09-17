@@ -1255,21 +1255,65 @@ contains
         ibm_coef_all_zero = peak == 0.0d0
     end function ibm_coef_all_zero
 
-    ! Is mu identically 1 for the whole run on this rank? True exactly when the
-    ! rank holds no body: update_ibm_mu then returns without writing, so mu keeps
-    ! the 1.0 init_ibm gave it and NOTHING downstream of it changes between
-    ! substages either -- which is what lets the projection form rdenom once
-    ! instead of three times a step. Answers from the cache, computing it on the
-    ! first call so the answer does not depend on being asked after
-    ! update_ibm_mu.
-    logical function ibm_mu_is_unit(ibm) result(isUnit)
+    ! The block slots holding any non-zero IBM coefficient, and how many.
+    !
+    ! mu = 1/(1 + dt*coef) is EXACTLY 1.0 wherever coef is zero, whatever dt
+    ! does, so a block with no coefficient anywhere in its ghost-inclusive range
+    ! has a dt-independent mu and everything derived from it is fixed for the
+    ! run. That is what lets the projection recompute rdenom for the body blocks
+    ! alone (see rdenomBlocks) -- the per-rank "no body at all" answer
+    ! update_ibm_mu caches, one level finer.
+    !
+    ! One device reduction per block, once per run. It must read the DEVICE copy:
+    ! the analytic path fills coef there and leaves the host copy stale, which is
+    ! also why this is not a host loop over a big array.
+    subroutine ibm_body_blocks(ibm, blocks, nBody)
         type(ibm_type), intent(in) :: ibm
+        integer, allocatable, intent(out) :: blocks(:)
+        integer, intent(out) :: nBody
 
-        if (.not. muKnown) then
-            muIsUnit = ibm_coef_all_zero(ibm)
-            muKnown = .true.
-        end if
-        isUnit = muIsUnit
-    end function ibm_mu_is_unit
+        integer :: ix, iy, iz, var, b, nBlocks
+        integer :: ilo, ihi, jlo, jhi, klo, khi
+        real(C_DOUBLE) :: peak
+        integer, allocatable :: found(:)
+
+        nBlocks = size(ibm%coef,5)
+        ilo = lbound(ibm%coef,1); ihi = ubound(ibm%coef,1)
+        jlo = lbound(ibm%coef,2); jhi = ubound(ibm%coef,2)
+        klo = lbound(ibm%coef,3); khi = ubound(ibm%coef,3)
+        allocate(found(nBlocks))
+        nBody = 0
+
+        do b = 1, nBlocks
+            peak = 0.0d0
+#ifdef USE_OPENMP_OFFLOAD
+            !$omp target teams distribute parallel do collapse(4) &
+            !$omp& map(to: ilo, ihi, jlo, jhi, klo, khi, b, ibm%coef) &
+            !$omp& map(tofrom: peak) reduction(max: peak) &
+            !$omp& private(ix,iy,iz,var)
+#endif
+            do var = VAR_U, VAR_W
+                do iz = klo, khi
+                    do iy = jlo, jhi
+                        do ix = ilo, ihi
+                            peak = max(peak, abs(ibm%coef(ix,iy,iz,var,b)))
+                        end do
+                    end do
+                end do
+            end do
+#ifdef USE_OPENMP_OFFLOAD
+            !$omp end target teams distribute parallel do
+#endif
+            if (peak /= 0.0d0) then
+                nBody = nBody + 1
+                found(nBody) = b
+            end if
+        end do
+
+        allocate(blocks(max(1, nBody)))
+        blocks = 0
+        if (nBody > 0) blocks(1:nBody) = found(1:nBody)
+        deallocate(found)
+    end subroutine ibm_body_blocks
 
 end module ibmm
