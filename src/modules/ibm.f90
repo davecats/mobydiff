@@ -1264,9 +1264,14 @@ contains
     ! alone (see rdenomBlocks) -- the per-rank "no body at all" answer
     ! update_ibm_mu caches, one level finer.
     !
-    ! One device reduction per block, once per run. It must read the DEVICE copy:
-    ! the analytic path fills coef there and leaves the host copy stale, which is
-    ! also why this is not a host loop over a big array.
+    ! ONE kernel, not one per block. The obvious shape -- a device reduction per
+    ! block -- costs a LAUNCH per block (measured: 36.5 us x 640 blocks on
+    ! les_ibm, which on a 50-step run was larger than everything the narrowing
+    ! saves) and is invisible on CPU, where there are no launches. So the test
+    ! is a plain store into a per-block flag: every thread that writes writes
+    ! the same 1, which makes the race benign and needs no atomic or array
+    ! reduction. It must read the DEVICE copy of coef: the analytic path fills
+    ! it there and leaves the host copy stale.
     subroutine ibm_body_blocks(ibm, blocks, nBody)
         type(ibm_type), intent(in) :: ibm
         integer, allocatable, intent(out) :: blocks(:)
@@ -1274,46 +1279,47 @@ contains
 
         integer :: ix, iy, iz, var, b, nBlocks
         integer :: ilo, ihi, jlo, jhi, klo, khi
-        real(C_DOUBLE) :: peak
-        integer, allocatable :: found(:)
+        integer(C_INT), allocatable :: isBody(:)
 
         nBlocks = size(ibm%coef,5)
         ilo = lbound(ibm%coef,1); ihi = ubound(ibm%coef,1)
         jlo = lbound(ibm%coef,2); jhi = ubound(ibm%coef,2)
         klo = lbound(ibm%coef,3); khi = ubound(ibm%coef,3)
-        allocate(found(nBlocks))
-        nBody = 0
+        allocate(isBody(nBlocks))
+        isBody = 0_C_INT
 
-        do b = 1, nBlocks
-            peak = 0.0d0
 #ifdef USE_OPENMP_OFFLOAD
-            !$omp target teams distribute parallel do collapse(4) &
-            !$omp& map(to: ilo, ihi, jlo, jhi, klo, khi, b, ibm%coef) &
-            !$omp& map(tofrom: peak) reduction(max: peak) &
-            !$omp& private(ix,iy,iz,var)
+        !$omp target teams distribute parallel do collapse(5) &
+        !$omp& map(to: ilo, ihi, jlo, jhi, klo, khi, nBlocks, ibm%coef) &
+        !$omp& map(tofrom: isBody) &
+        !$omp& private(ix,iy,iz,var,b)
 #endif
-            do var = VAR_U, VAR_W
-                do iz = klo, khi
-                    do iy = jlo, jhi
-                        do ix = ilo, ihi
-                            peak = max(peak, abs(ibm%coef(ix,iy,iz,var,b)))
-                        end do
+        do b = 1, nBlocks
+        do var = VAR_U, VAR_W
+            do iz = klo, khi
+                do iy = jlo, jhi
+                    do ix = ilo, ihi
+                        if (ibm%coef(ix,iy,iz,var,b) /= 0.0d0) isBody(b) = 1_C_INT
                     end do
                 end do
             end do
-#ifdef USE_OPENMP_OFFLOAD
-            !$omp end target teams distribute parallel do
-#endif
-            if (peak /= 0.0d0) then
-                nBody = nBody + 1
-                found(nBody) = b
-            end if
         end do
+        end do
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp end target teams distribute parallel do
+#endif
 
+        nBody = int(count(isBody == 1_C_INT))
         allocate(blocks(max(1, nBody)))
         blocks = 0
-        if (nBody > 0) blocks(1:nBody) = found(1:nBody)
-        deallocate(found)
+        nBody = 0
+        do b = 1, nBlocks
+            if (isBody(b) == 1_C_INT) then
+                nBody = nBody + 1
+                blocks(nBody) = b
+            end if
+        end do
+        deallocate(isBody)
     end subroutine ibm_body_blocks
 
 end module ibmm

@@ -1,0 +1,5 @@
+# large regeneratable prerequisites (./setup.sh rebuilds; or rsync with the dir)
+ibm_coeff_blocks.h5
+IC_refine.h5
+__pycache__/
+*.pyc
