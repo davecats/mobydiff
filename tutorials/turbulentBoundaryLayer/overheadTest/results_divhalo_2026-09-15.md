@@ -8,6 +8,15 @@ suite — one allocation) and 5145806 (Pass G re-run). A100-SXM4-40GB, HoreKa,
 
 Task 1 of `docs/next_session_divergence_halos.md`.
 
+> **CORRECTED 2026-09-17 by `results_horeka_2026-09-17.md` §4.** Two ranks
+> counts were not enough to see the shape of this change. The campaign matrix
+> at 1/2/4/8/16 ranks shows the gain **grows with rank count** (−1.0 % at 1 rank
+> → **+11.8 % at 16**, better than anything here), and that the entry
+> REORDERING — called "observed, not explained" in §5 below — costs every OTHER
+> exchange 12–24 %, which makes this change a **net loss at one rank and for
+> red-black at every rank count**. Two specific statements below are wrong and
+> are marked inline. Read §4 and §6 of the 09-17 report before quoting this one.
+
 ## 1 — The change
 
 15 of the 18 velocity halo rounds per step sit between projection iterations,
@@ -94,6 +103,12 @@ Those four sum to −3.86 ms on `rect` 8×2 against a `proj vel_exchange` fall o
 closes. **The largest single contributor is the device-local copy, not the
 message**, which is why the change is worth something at one rank too.
 
+> **WRONG, corrected 2026-09-17.** The last clause does not hold: at ONE rank
+> the same bucket goes **+46 % / +64 %** and the step is a net **loss** of
+> 1.0–1.4 %. The −27 % here is real at 4 ranks; it does not extrapolate down to
+> 1 rank, where the old `dsSlot` kernels were also not counted in this bucket
+> and where the reordering has no message saving to hide behind.
+
 Per between-iteration round (15 of the 18): **267 µs saved** on `rect` 8×2,
 **135 µs** on `refined` 8×2, **433 / 190 µs** at 4 ranks. The handout forecast
 412 → ~120 µs on `rect` 8×2, i.e. ~292 µs; measured 267.
@@ -124,6 +139,15 @@ different scatter locality. Why that costs ~8 % at 4 ranks and *pays* ~2 % at 8
 is not established here; the per-rank point count is 2x larger at 4 ranks, so a
 cache-residency explanation is available but untested. **It is recorded as an
 observed redistribution, not explained.**
+
+> **EXPLAINED, and the "pays at 8 ranks" reading is wrong (2026-09-17).** The
+> reordering is always a cost; at 8 ranks the whole step got faster and ranks
+> arrived more in sync, so `phi_exchange`'s share of `mpi_wait` fell and hid it.
+> The clean measurement is at ONE rank, where there is no MPI: `phi_exchange`
+> **+11.9 % (`rect`) and +24.2 % (`refined`)**, against **−1.7 % on
+> `base_jacobi`, which has ONE block and therefore nothing to reorder** — same
+> rank count, same binaries, the entry count is the only variable. See
+> `results_horeka_2026-09-17.md` §4.
 
 ## 6 — What these numbers do not support
 

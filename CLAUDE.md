@@ -1147,6 +1147,42 @@ immersed boundary. Phased, each phase verified before the next:
   pinned worktree lacks it -- and `run_exchange.sh` deletes Pass G's snapshots
   whether or not the comparison ran, so a missing comparator LOSES the gate
   rather than merely failing to report it (`submit_divhalo.sh` now builds it).
+  **ITS REAL SHAPE, from the 3-column matrix (2026-09-17, job 5147466,
+  `results_horeka_2026-09-17.md` §4): the gain GROWS with rank count --
+  -1.0% at 1 rank, +2.7/+3.3% at 4, +4.5/+5.1% at 8, +8.6 to +12.0% at 16 --
+  and the change is a NET LOSS at one rank and for RED-BLACK at every rank
+  count (-3.8 to -0.8%).** Two ranks counts were not enough to see that. The
+  cause is the half of the change that is not the saving: making the divergence
+  set a PREFIX reorders the entry list, and that costs every OTHER exchange.
+  Measured cleanly at 1 rank, where no MPI confounds it: `phi_exchange`
+  **+11.9% (`rect`) / +24.2% (`refined`)** against **-1.7% on `base_jacobi`,
+  which has ONE block and so nothing to reorder** -- same rank count, same
+  binaries, entry count the only variable. Red-black never runs the reduced
+  round (its `mpi_wait` is unmoved, 96.2 -> 97.4 us at 16 ranks), so it pays the
+  reordering and collects nothing: `proj vel_exchange` +23.1% and `local_copy`
+  +30.7% at 4 ranks. THE FIX, measurement-justified and not yet taken: keep the
+  two-round enumeration and drive the divergence round from explicit index lists
+  (`lDivEnt`/`sDivEnt`/`rDivEnt` + point prefixes) instead of a prefix -- ~6
+  extra integer arrays, the kernels otherwise unchanged. That design was
+  considered first and rejected on "more state" grounds; the measurement
+  overturns them.
+- **The campaign matrix, three columns (DONE 2026-09-17, job 5147466,
+  `results_horeka_2026-09-17.md`). SUPERSEDES `results_horeka_2026-09-14.md`
+  sections 2-4 and every ratio quoted from it here.** 23 runs at each of
+  `55bee89` (control, reproduces the 09-14 table), `3c2903a` (+ registers and
+  step work) and `95312d7` (+ divergence halo), one allocation. Total off the
+  step since `map(to: c)`: base +18.0 to +21.3%, rect +19.0 to +25.2%, refined
+  +18.3 to +23.4%, refined_big +21.2 to +24.0%, **red-black only +5.4 to +7.8%**.
+  The two increments run in OPPOSITE directions with rank count: per-cell work
+  removed shrinks as the per-GPU problem shrinks (rect +19.8% at 1 rank ->
+  +15.3% at 16), message volume removed grows (-1.0% -> +11.8%). REVISED:
+  **block tax 1.036/1.053/1.038/1.010/1.033** at 1/2/4/8/16 (was
+  1.053/1.095/1.070/1.043/1.100); strong scaling at 16 ranks base 82%, rect 82,
+  refined 65, redblack 57, big 89; the 2:1 machinery **1.002x** coarse-cell-
+  equivalents at 4 ranks, 0.986x at 8, **0.900x** at 16 (was 0.826).
+  **THE LARGEST REVISION: red-black against Jacobi went 0.804 -> 0.993 at 16
+  ranks -- red-black was ~20% faster and is now at PARITY.** Nothing was done to
+  red-black; Jacobi got faster and it did not.
 
 ## Verification
 
