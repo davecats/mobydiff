@@ -43,10 +43,18 @@
 > Jacobi's 3 — ~1.4x, not 6.2x — and needs edge cases proved. §6 of the
 > `results_divlist` report has the read-set argument.
 >
-> **Task 2** (§5, `compute_rdenom`'s divide) and **task 3** (§6, splitting
-> `step_momentum`) are untouched, and §2's closed list still stands. Note their
-> bucket shares in §1 below are now stale — re-read them off
-> `results_job5147466/`.
+> **Task 2** (§5) is DONE, but not as written — see
+> `overheadTest/results_rdenom_static_2026-09-17.md`. Its premise had expired:
+> `rdenom` is STATIC on a body-free rank, because `update_ibm_mu` stopped
+> rewriting `mu` every substage on 2026-09-14. It is now formed once
+> (`rdenomStatic`), worth +2.8 to +3.4 % measured at 100 steps and 4.1–4.9 %
+> asymptotically. **The divide the handout points at is untouched** and still
+> stands for cases WITH a body.
+>
+> **Task 3** (§6, splitting `step_momentum`) is untouched and is now the largest
+> remaining item; it still needs its own session and pre-registration. §2's
+> closed list still stands. Bucket shares in §1 below are stale — re-read them
+> off `results_job5150041/`.
 >
 > Worktrees: `moby-2to1-base` (`3c2903a`), `moby-2to1-mapref` (`55bee89`),
 > `moby-2to1-divhalo` (`95312d7`). **Rename a worktree, wipe its build dirs** —

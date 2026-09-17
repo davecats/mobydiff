@@ -1195,6 +1195,31 @@ immersed boundary. Phased, each phase verified before the next:
   reduced set is ~12 of 18 face-component units against Jacobi's 3, a ~1.4x cut
   needing its own read-set proof (a cell at `(0,hi2,k)` reads an EDGE,
   `q(0,hi2+1,k,V)`).
+- **`rdenom` is STATIC on a body-free rank (DONE 2026-09-17, job 5150041,
+  `results_rdenom_static_2026-09-17.md`): +2.8 to +3.4% of the step measured at
+  100 steps, 4.1-4.9% asymptotically.** The `rdenom` comment said the metric
+  tables are static "unlike rdenom: rdenom follows `ibm%mu`, which
+  `update_ibm_mu` rewrites every substage". **That expired on 2026-09-14**, in a
+  DIFFERENT increment of the same day: `update_ibm_mu` returns immediately on a
+  rank with no body, so `mu = 1.0` for the whole run and `rdenom` is as static as
+  the tables it is contrasted with -- it was being recomputed 3x a step to get
+  the same answer. New `ibm_mu_is_unit(ibm)` exposes the cached flag and the
+  projection forms `rdenom` once (`rdenomStatic`); a rank WITH a body keeps
+  recomputing, because there `mu` really does follow `dt_gamma`. Bit-exact by
+  construction (same inputs, same expression); gates `max_abs 0` at production
+  flags incl. Pass G and `les_ibm`, which is the case WITH a body and so the
+  correctness half. **This is task 2 of the handout but NOT the change it
+  proposes** -- that one attacks the per-cell fp64 divide, on the expired
+  premise. The divide is untouched and still stands for body cases.
+  MEASUREMENT LANDMINE, and it bit: at 100 steps the bucket falls only 67%, NOT
+  because the skip half-works (a CPU 10-vs-40-step run drops `setup`/step 3.90x
+  with the TOTAL constant -- it runs ONCE PER RUN) but because what is left is
+  **one-time allocation, zeroing and device mapping of `phi`/`delta`/`rdenom`**
+  (~3.7 GB, 867 ms, on `rect` at 1 rank) that a 100-step benchmark charges to
+  every step. Netted out, the kernel is 6.52 ms/call on 138.4 M cells = ~0.68
+  TB/s = 44% of peak, matching the independently measured 39.8%. **A short
+  benchmark UNDERSTATES any change that removes per-step work from a bracket
+  that also holds first-call setup.**
 - **The campaign matrix, three columns (DONE 2026-09-17, job 5147466,
   `results_horeka_2026-09-17.md`). SUPERSEDES `results_horeka_2026-09-14.md`
   sections 2-4 and every ratio quoted from it here.** 23 runs at each of
