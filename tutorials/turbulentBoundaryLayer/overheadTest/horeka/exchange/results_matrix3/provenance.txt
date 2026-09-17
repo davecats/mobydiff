@@ -1,9 +1,0 @@
-job    : 5147466
-date   : 2026-09-17 11:08:38 CEST
-nodes  : 4  (hkn[0532,0627,0720,0733])
-new    : 95312d75f867312298955840e446d54546936312  (+ the divergence-halo exchange)
-mid    : 3c2903a62c7e027fb7eb250925f33077ca73d88a  (+ the register cuts and step work)
-ref    : 55bee89aec5d8a29321a11a59b360915b97ed1d7  (map(to: c); = the 2026-09-14 'new' column)
-gpu    : NVIDIA A100-SXM4-40GB
-nsteps : 200
-layout : --map-by numa --bind-to core (as every earlier matrix)

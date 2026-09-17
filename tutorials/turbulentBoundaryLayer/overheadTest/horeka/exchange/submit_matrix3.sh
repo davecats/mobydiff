@@ -37,6 +37,9 @@
 set -uo pipefail
 
 CODE_DIR="${CODE_DIR:?}"; RUN_DIR="${RUN_DIR:?}"; REF_DIR="${REF_DIR:?}"; MID_DIR="${MID_DIR:?}"
+# What each column IS varies by run; the collector writes scaling_<pair>.md
+# named from these, so a table can never be quoted against the wrong question.
+LBL_REF="${LBL_REF:-ref}"; LBL_MID="${LBL_MID:-mid}"; LBL_NEW="${LBL_NEW:-new}"
 SRC="$CODE_DIR/tutorials/turbulentBoundaryLayer/overheadTest/horeka"
 
 # Stage the driver AND the configs it resolves relative to itself, then run the
@@ -76,23 +79,23 @@ RES="${RESDIR:-$RUN_DIR/results_matrix3}"; mkdir -p "$RES"
     echo "job    : ${SLURM_JOB_ID:-none}"
     echo "date   : $(date '+%F %T %Z')"
     echo "nodes  : ${SLURM_JOB_NUM_NODES:-?}  (${SLURM_JOB_NODELIST:-?})"
-    echo "new    : $(git -C "$CODE_DIR" rev-parse HEAD)  (+ the divergence-halo exchange)"
-    echo "mid    : $(git -C "$MID_DIR" rev-parse HEAD)  (+ the register cuts and step work)"
-    echo "ref    : $(git -C "$REF_DIR" rev-parse HEAD)  (map(to: c); = the 2026-09-14 'new' column)"
+    echo "new    : $(git -C "$CODE_DIR" rev-parse HEAD)  ($LBL_NEW)"
+    echo "mid    : $(git -C "$MID_DIR" rev-parse HEAD)  ($LBL_MID)"
+    echo "ref    : $(git -C "$REF_DIR" rev-parse HEAD)  ($LBL_REF)"
     echo "gpu    : $(nvidia-smi --query-gpu=name --format=csv,noheader | head -1)"
     echo "nsteps : ${NSTEPS:-200}"
     echo "layout : --map-by numa --bind-to core (as every earlier matrix)"
 } | tee "$RES/provenance.txt"
 
-echo "############ NEW (+ divergence halo, 95312d7) ############"
+echo "############ NEW ($LBL_NEW) ############"
 NSTEPS="${NSTEPS:-200}" bash "$STG/run_matrix.sh" "$NEW" "$RES/new"
-echo "############ REF (map(to: c), 55bee89) ############"
+echo "############ REF ($LBL_REF) ############"
 NSTEPS="${NSTEPS:-200}" bash "$STG/run_matrix.sh" "$REF" "$RES/ref"
-echo "############ MID (+ registers and step work, 3c2903a) ############"
+echo "############ MID ($LBL_MID) ############"
 NSTEPS="${NSTEPS:-200}" bash "$STG/run_matrix.sh" "$MID" "$RES/mid"
 
-# Three pairings: the total, and each increment on its own.
-for pair in "ref new total" "ref mid registers_stepwork" "mid new divhalo"; do
+# Three pairings: the total, and each step of the way on its own.
+for pair in "ref new total" "ref mid ${LBL_MID}" "mid new ${LBL_NEW}"; do
     set -- $pair
     python3 "$STG/collect_scaling.py" "$RES/$1" "$RES/$2" > "$RES/scaling_$3.md" 2>&1 \
         && { echo; echo "===== $3 ($1 -> $2)"; cat "$RES/scaling_$3.md"; } \
