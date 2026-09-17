@@ -53,8 +53,10 @@ BASE="$BASE_DIR/build_gpu/moby_solve"
 for x in "$LIST" "$PREFIX" "$BASE"; do [ -x "$x" ] || { echo "ERROR: missing $x" >&2; exit 1; }; done
 # h5maxdiff is a build product; a fresh worktree lacks it and Pass G deletes its
 # snapshots regardless, so a missing comparator LOSES the gate (job 5145805).
+# mpicc, NOT gcc: this HDF5 is the PARALLEL build, so H5public.h includes
+# mpi.h and `module purge` has removed it from the default include path.
 H5MAXDIFF="$CODE_DIR/tools/h5maxdiff"
-[ -x "$H5MAXDIFF" ] || gcc -O2 -o "$H5MAXDIFF" "$CODE_DIR/tools/h5maxdiff.c" \
+[ -x "$H5MAXDIFF" ] || mpicc -O2 -o "$H5MAXDIFF" "$CODE_DIR/tools/h5maxdiff.c" \
     -I"$HDF5_ROOT/include" -L"$HDF5_ROOT/lib" -lhdf5 -Wl,-rpath,"$HDF5_ROOT/lib" || exit 1
 
 RES="${RESDIR:-$RUN_DIR/results_divlist}"; mkdir -p "$RES"
