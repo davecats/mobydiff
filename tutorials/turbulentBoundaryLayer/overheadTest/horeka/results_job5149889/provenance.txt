@@ -1,0 +1,7 @@
+job    : 5149889
+date   : 2026-09-17 16:21:18 CEST
+nodes  : 2  (hkn[0402-0403])
+list   : b9414bd6a1d2b9e29178e5605a9ddd80a7db17b6  (index list)
+prefix : 95312d75f867312298955840e446d54546936312  (prefix form, 95312d7)
+base   : 3c2903a62c7e027fb7eb250925f33077ca73d88a  (before any divergence work)
+gpu    : NVIDIA A100-SXM4-40GB

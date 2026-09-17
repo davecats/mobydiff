@@ -11,7 +11,10 @@
 > **Task 0** (§3) is job **5147466**: the 23-run matrix at `55bee89` /
 > `3c2903a` / `95312d7` in one allocation
 > (`overheadTest/results_horeka_2026-09-17.md`). It supersedes
-> `results_horeka_2026-09-14.md` §2–§4.
+> `results_horeka_2026-09-14.md` §2–§4. **Its `new` column used the PREFIX
+> form**, so its Jacobi numbers are now slightly pessimistic and its red-black
+> numbers 1–4 % pessimistic; a re-run at `b9414bd` is owed before the ratios are
+> quoted again.
 >
 > **AND IT CHANGED THE VERDICT ON TASK 1.** Two rank counts were not enough.
 > Across 1/2/4/8/16 the divergence halo's gain **grows with rank count** —
@@ -22,13 +25,23 @@
 > other exchange 12–24 %. See `results_horeka_2026-09-17.md` §4 for the
 > controlled 1-rank pair that isolates it.
 >
-> **THE ONE THING WORTH DOING NEXT, and it is new:** keep the two-round
-> enumeration and drive the divergence round from explicit index lists
-> (`lDivEnt`/`sDivEnt`/`rDivEnt` + point prefixes) instead of a prefix. ~6 extra
-> integer arrays, kernels unchanged. It should recover the red-black regression
-> entirely, turn the 1-rank result positive, and add a little at 4–16 ranks.
-> That design was considered first and rejected on "more state" grounds — the
-> measurement overturns them. §6 of the 09-17 report has the reasoning.
+> **DONE (2026-09-17, `b9414bd`, job 5149889,
+> `overheadTest/results_divlist_2026-09-17.md`).** The subset is now an index
+> list compacted out of the UNCHANGED enumeration. Red-black is back to
+> `3c2903a` within ±0.1 % at every rank count; Jacobi is +4.2/+5.1 % (`rect`)
+> and +3.8/+5.2 % (`refined`) at 4/8 ranks over `3c2903a`, i.e. +0.6–0.9 % over
+> the prefix. Bit-exact vs the prefix (9 gates) AND vs `3c2903a` on a red-black
+> case. One prediction missed: the 1-rank step came out at PARITY, not a gain —
+> the old `dsSlot` path was already good there.
+>
+> **Both solvers are now optimal in the sense that neither pays for the other.**
+> Nothing regresses anywhere, at any rank count, on any case.
+>
+> **The only divergence-side idea left, and it is small:** a reduced round for
+> RED-BLACK itself. Its sweep runs `0..hi` and reads the low halo plane of all
+> three components, so its reduced set is ~12 of 18 face-component units against
+> Jacobi's 3 — ~1.4x, not 6.2x — and needs edge cases proved. §6 of the
+> `results_divlist` report has the read-set argument.
 >
 > **Task 2** (§5, `compute_rdenom`'s divide) and **task 3** (§6, splitting
 > `step_momentum`) are untouched, and §2's closed list still stands. Note their

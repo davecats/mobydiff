@@ -1165,7 +1165,36 @@ immersed boundary. Phased, each phase verified before the next:
   (`lDivEnt`/`sDivEnt`/`rDivEnt` + point prefixes) instead of a prefix -- ~6
   extra integer arrays, the kernels otherwise unchanged. That design was
   considered first and rejected on "more state" grounds; the measurement
-  overturns them.
+  overturns them. **TAKEN (2026-09-17, job 5149889,
+  `results_divlist_2026-09-17.md`), and it works.** The enumeration is restored
+  EXACTLY as it was and the subset is compacted out of the finished lists
+  (`?DivEnt`/`?DivVar`/`?DivOff`/`?DivPt`, `peerSend/RecvDivOff` now compaction
+  outputs); both ends still select the same entries because the predicate is a
+  pure function of the op and the direction. It is also SIMPLER than the prefix
+  where it counts: the lists inherit peer-major order, so a peer's points are
+  one contiguous range and `find_entry` is gone from all three divergence
+  kernels. Measured, three columns in one allocation at 1/4/8 ranks: **red-black
+  back to `3c2903a` within -0.07/+0.04/-0.10%** (its `proj vel_exchange` 15.982
+  -> 15.984 ms at 1 rank against the prefix's 21.636), **Jacobi +4.2/+5.1%
+  (`rect`) and +3.8/+5.2% (`refined`) at 4/8 ranks vs `3c2903a`**, i.e.
+  +0.6 to +0.9% over the prefix; `phi_exchange` at 1 rank back to +0.1/+0.2% of
+  base against the prefix's +12.6/+24.4%. Bit-exact both ways: 9 comparisons at
+  `max_abs 0` vs the prefix (Pass G + the 7-case suite incl. every RANS scalar)
+  and `max_abs 0` vs `3c2903a` on a RED-BLACK case, which is what proves the
+  enumeration is restored rather than merely similar. ONE PRE-REGISTERED
+  PREDICTION MISSED: the 1-rank step was predicted to become a gain and came out
+  at PARITY (-0.02%/+0.21%) -- at one rank the old `dsSlot` path was already
+  good, and three specialised plane-copy kernels against one generic index-list
+  kernel is a wash. **The campaign ratios in `results_horeka_2026-09-17.md` were
+  measured with the PREFIX and are now slightly pessimistic** (Jacobi) to 1-4%
+  pessimistic (red-black); 16 ranks was not re-measured.
+  NOT ATTEMPTED, and the only idea left here: a reduced round for RED-BLACK
+  itself. `redblack_sweep` iterates `0..hi`, sweeping the lower halo layer
+  redundantly, so a cell at `i=0` reads the low halo plane of ALL THREE
+  components where Jacobi's divergence reads the high plane of one -- its
+  reduced set is ~12 of 18 face-component units against Jacobi's 3, a ~1.4x cut
+  needing its own read-set proof (a cell at `(0,hi2,k)` reads an EDGE,
+  `q(0,hi2+1,k,V)`).
 - **The campaign matrix, three columns (DONE 2026-09-17, job 5147466,
   `results_horeka_2026-09-17.md`). SUPERSEDES `results_horeka_2026-09-14.md`
   sections 2-4 and every ratio quoted from it here.** 23 runs at each of
