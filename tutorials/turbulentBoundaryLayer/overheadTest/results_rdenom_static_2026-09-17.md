@@ -141,4 +141,52 @@ case — keeps nearly all of it. Walls spanning the domain keep about half.
 blocks**, which is a much smaller target than it was this morning, and smaller
 the more finely the case is blocked.
 
-GPU A/B on both body geometries: job 5150243.
+### 6a — The GPU A/B, and what it does and does not show (jobs 5150243, 5150257)
+
+**Job 5150243 found a regression, and it was mine.** `ibm_body_blocks` did one
+device reduction PER BLOCK — 640 launches at init on `les_ibm`, **36.5 µs each**,
+which over a 50-step run cost more than the narrowing saves: `setup` **+165 %**,
+step **+7.2 %**. It is now a single kernel storing into a per-block flag (every
+thread that writes writes the same 1, so the race is benign and needs no atomic
+or array reduction).
+
+It was invisible on CPU, where there are no launches, and CPU is where I
+measured it. **A launch-cost question cannot be validated on the platform that
+has no launches** — the same shape of error as extrapolating from two rank
+counts.
+
+**Job 5150243's sailplane row was not a regression either.** `h5maxdiff`
+printed `max_abs=0 ** DIFFERS **`, which is contradictory on its face and is the
+NaN signature: `d != 0.0` is true for NaN while `d > m` is false. The tutorial
+ships `nsteps = 1` as a smoke test and diverges when driven 50 steps, in BOTH
+binaries. Dropped from the A/B; its 48/4500 block fraction is an init-time
+classification and stands.
+
+**Job 5150257, corrected, 200 steps, `les_ibm`, `max_abs 0`:**
+
+| | ref | new | |
+|---|---|---|---|
+| `setup` | 0.1539 | 0.1375 ms/step | **−10.6 %** |
+| step | 6.209 | 6.198 ms/step | −0.18 % |
+
+**That is a small win, and the honest reading is that `les_ibm` is close to the
+worst case for this change.** Its walls span the domain (256/640 blocks, so the
+ceiling is a 60 % cut), and `setup` is only **2.5 %** of its step against 4.6 %
+on `rect_jacobi`, because WALE LES adds per-step work that `rdenom` does not
+scale with. Ceiling here: 0.6 × 2.5 % ≈ **1.5 % of step**, and the rest of the
+bucket is the one-time allocation. −0.18 % on the step is within noise of the
+−10.6 % the bucket actually moved.
+
+### 6b — What is still NOT measured
+
+**The magnitude on a production-sized case with a COMPACT body.** That is the
+airfoil shape — `sailplane` at `nb = 10` classifies 48/4500 blocks, so ~99 % of
+a 4–5 % bucket should survive — but the mechanism is all that is demonstrated
+for it. `les_ibm` shows the mechanism works and is positive; it is too small and
+too wall-dominated to show the size.
+
+Measuring it needs a stable, production-sized body case: `validation/naca0012`
+or `sd7003`, which need `setup.sh` (STL generation + `moby_prepare`, minutes).
+**Not attempted here.** Until it is, the body-case claim is: *correct, positive,
+and bounded by `1 − (body blocks / all blocks)` times the `rdenom` share of the
+step* — with only the small end of that range measured.

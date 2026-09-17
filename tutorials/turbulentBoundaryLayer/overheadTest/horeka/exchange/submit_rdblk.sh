@@ -15,7 +15,7 @@
 # The overheadTest configs are all BODY-FREE, so they cannot measure this: the
 # cases here are the two body geometries that bracket production --
 #   les_ibm    plane walls spanning the domain  (256/640 blocks on CPU)
-#   sailplane  a compact body in a large domain (48/4500 at nb=10)
+# (the sailplane was dropped -- it diverges past its smoke-test nsteps=1)
 # ref = b9414bd (before any rdenom work), new = HEAD.
 set -uo pipefail
 CODE_DIR="${CODE_DIR:?}"; RUN_DIR="${RUN_DIR:?}"; REF_DIR="${REF_DIR:?}"
@@ -54,11 +54,14 @@ PROF='\n[output]\nprofile = true\n'
 for side in ref new; do
     exe="$REF"; [ "$side" = new ] && exe="$NEW"
     run_case les_ibm  validation/channel_interface/les_ibm/channel_ibm.ini 1 "$PROF" "$side" "$exe"
-    run_case sailplane tutorials/sailplane/input.ini 4 "\n[blocks]\nnb = 10\n$PROF" "$side" "$exe"
+    # The sailplane is NOT usable here: it ships nsteps = 1 as a smoke test and
+    # diverges when driven further, in BOTH binaries (job 5150243). Its
+    # 48/4500 body-block fraction is still a valid init-time reading and is
+    # taken from a short CPU run instead.
 done
 
 echo "=== body-block fractions, buckets and bit-exactness ==="
-for name in les_ibm sailplane; do
+for name in les_ibm; do
     echo "--- $name"
     grep -h "rdenom recomputed" "$RES/${name}_new/run.log" | sed 's/^/    /'
     for side in ref new; do

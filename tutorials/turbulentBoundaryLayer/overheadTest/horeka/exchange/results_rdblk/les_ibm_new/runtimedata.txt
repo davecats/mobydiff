@@ -1,2 +1,0 @@
-iteration time meanpx meanpz flowratex flowratez volume_k volume_epsilon wall_seconds_per_step
-        50   2.50000000E-02   1.00000000E+00   0.00000000E+00   1.24392647E+01  -1.12322465E-02   1.17024035E+00   2.20819708E+00   6.94859800E-03
