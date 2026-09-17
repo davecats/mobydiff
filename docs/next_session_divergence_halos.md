@@ -47,9 +47,13 @@
 > `overheadTest/results_rdenom_static_2026-09-17.md`. Its premise had expired:
 > `rdenom` is STATIC on a body-free rank, because `update_ibm_mu` stopped
 > rewriting `mu` every substage on 2026-09-14. It is now formed once
-> (`rdenomStatic`), worth +2.8 to +3.4 % measured at 100 steps and 4.1–4.9 %
-> asymptotically. **The divide the handout points at is untouched** and still
-> stands for cases WITH a body.
+> (`rdenomBlocks`), worth +2.8 to +3.4 % measured at 100 steps and 4.1–4.9 %
+> asymptotically on body-free cases. **Extended the same day to cases WITH a
+> body**, which are common in production: the recompute is narrowed to the
+> blocks actually holding coefficients — `les_ibm` 256/640 (`setup` −54 %),
+> `sailplane` at `nb=10` 48/4500. It needs `nb` set; with one block per rank
+> there is nothing to narrow. **The divide the handout points at is untouched**
+> and now survives only for cells inside body blocks.
 >
 > **Task 3** (§6, splitting `step_momentum`) is untouched and is now the largest
 > remaining item; it still needs its own session and pre-registration. §2's

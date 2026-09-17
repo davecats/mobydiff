@@ -1210,7 +1210,23 @@ immersed boundary. Phased, each phase verified before the next:
   flags incl. Pass G and `les_ibm`, which is the case WITH a body and so the
   correctness half. **This is task 2 of the handout but NOT the change it
   proposes** -- that one attacks the per-cell fp64 divide, on the expired
-  premise. The divide is untouched and still stands for body cases.
+  premise. The divide is untouched.
+  **EXTENDED THE SAME DAY TO CASES WITH A BODY, which are COMMON in production
+  (user, 2026-09-17 -- the first version helped only body-free cases and was
+  aimed at the wrong half).** `mu = 1/(1+dt*coef)` is EXACTLY 1.0 wherever coef
+  is zero whatever dt does, so the dt-dependence is confined to blocks that
+  actually hold coefficients: `ibm_body_blocks` (one device reduction per block,
+  once per run) replaces `ibm_mu_is_unit`, the first projection fills every block
+  and then narrows `rdenomBlocks` to the body ones. The win is geometric, not
+  binary -- `1 - (body blocks / all blocks)` of a 4-5% bucket: body-free 0/N
+  (never runs again); `les_ibm`, plane walls spanning the domain, **256/640**
+  (setup 8.756 -> 4.003 ms/step, **-54%**); `sailplane` at nb=10, a compact body
+  in a large domain (the airfoil shape), **48/4500**. CAVEAT, not a defect: with
+  `nb` UNSET there is one block per rank, the body touches it, and there is
+  nothing to narrow (sailplane reads 1/1) -- the gain needs block granularity,
+  which production cases set anyway. The fraction is PRINTED at init like the
+  trip force's block list, because a silent 100% looks identical to a silent 0%.
+  The handout's divide question now survives only for cells inside body blocks.
   MEASUREMENT LANDMINE, and it bit: at 100 steps the bucket falls only 67%, NOT
   because the skip half-works (a CPU 10-vs-40-step run drops `setup`/step 3.90x
   with the TOTAL constant -- it runs ONCE PER RUN) but because what is left is

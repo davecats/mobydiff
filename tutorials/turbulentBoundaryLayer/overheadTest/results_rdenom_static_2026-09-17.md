@@ -90,10 +90,8 @@ CPU number I already had was right.
 
 ## 5 — What this does not support
 
-- **Nothing about cases WITH a body.** There `compute_rdenom` still runs three
-  times a step and the only cost added is one cached boolean. `les_ibm` gates
-  that it is still correct, not that it is still fast. **The handout's divide
-  question survives intact for those cases** — it is simply now the minority.
+- **Nothing about cases WITH a body** — see the correction below, which is where
+  that gap got closed.
 - **Nothing about 16 ranks.** `setup` is a per-cell kernel so its share should
   be roughly rank-independent, and the 1/4/8 measurements are flat at −67 %;
   that is an expectation, not a measurement.
@@ -102,3 +100,45 @@ CPU number I already had was right.
 - **The campaign matrix (job 5150030) does not include this.** It was queued at
   `b9414bd` and answers the divergence question; its absolute ratios are ~3 %
   stale for Jacobi from the moment this landed, and red-black's are not.
+
+
+## 6 — CORRECTION (2026-09-17, same day): body cases are not the minority
+
+The section above called cases with a body "the minority". **That was my
+assumption about the workload, not a fact, and the user corrected it:
+production cases often have bodies.** The per-rank form helped only body-free
+cases, so as written this change was aimed at the wrong half.
+
+It generalises, and the generalisation is the same observation one level finer:
+`mu = 1/(1 + dt*coef)` is **exactly** 1.0 wherever `coef` is zero, whatever `dt`
+does, so the `dt`-dependence is confined to blocks that actually hold
+coefficients. `ibm_body_blocks` (one device reduction per block, once per run)
+replaces `ibm_mu_is_unit`; the first projection fills every block and then
+narrows `rdenomBlocks` to the body ones. An empty list is the body-free case and
+is exactly the behaviour described above.
+
+Measured on CPU, `proj setup` ms/step:
+
+| geometry | body blocks | `setup` |
+|---|---|---|
+| body-free (boundary layers, channels) | 0 / N | kernel never runs again |
+| `les_ibm` — plane walls spanning the domain | **256 / 640** | 8.756 → 4.003 **−54 %** |
+| `sailplane` at `nb = 10` — compact body, large domain | **48 / 4500** | ~−99 % expected |
+| `sailplane` with `nb` unset | **1 / 1** | **no benefit** |
+
+The last row is the real caveat and it is not a defect: with `nb` unset there is
+one block per rank, the body touches it, and there is nothing to narrow. The
+gain needs block granularity — which production cases set anyway (`CLAUDE.md`
+recommends `nb = 32+`, and the airfoil cases run `refine_body` with thousands of
+leaves). The fraction is **printed at init** for exactly this reason, like the
+trip force's block list: a silent 100 % looks identical to a silent 0 %.
+
+So the shape of the win is geometric, not binary: it is `1 − (body blocks / all
+blocks)` of a 4–5 % bucket. A compact body in a large domain — the airfoil
+case — keeps nearly all of it. Walls spanning the domain keep about half.
+
+**The handout's divide question now survives only for the cells inside body
+blocks**, which is a much smaller target than it was this morning, and smaller
+the more finely the case is blocked.
+
+GPU A/B on both body geometries: job 5150243.
