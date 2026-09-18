@@ -21,7 +21,7 @@ program moby_prepare
     use :: config, only: config_seen_type, read_runtime_config, validate_dns_values
     use :: boundary, only: boundary_type
     use :: io, only: write_case_file
-    use :: ibmm, only: ibm_type, init_ibm, enter_ibm_data, exit_ibm_data, &
+    use :: ibmm, only: ibm_type, init_ibm, set_ibm_geometry, enter_ibm_data, exit_ibm_data, &
         set_ibm_coeff, set_ibm_coeff_host, classify_refinement_masks, &
         classify_active_mask, isInBody, body_indicator_i
     use :: geometry_stl, only: stl_geometry_load, stl_geometry_destroy, &
@@ -126,6 +126,9 @@ program moby_prepare
     ! the host twin over the indicator.
     if (c%has_terminal) print *, "computing IBM coefficients..."
     call init_ibm(ibm, blk)
+    ! Analytic wall geometry from the config. Both binaries apply it -- see
+    ! set_ibm_geometry for why that is not optional.
+    call set_ibm_geometry(ibm, dns)
     if (use_stl) then
         call set_ibm_coeff_host(dns, blk, ibm, VAR_U, inside)
         call set_ibm_coeff_host(dns, blk, ibm, VAR_V, inside)

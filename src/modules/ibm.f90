@@ -26,10 +26,21 @@ module ibmm
     real(C_DOUBLE), parameter :: DEFAULT_TOL = 1.0d-10
     integer(C_INT), parameter :: MAX_ITER = 200
 
+    ! Analytic wall shapes. WAVY is the original streamwise-only wall; its
+    ! branch below is textually unchanged, which is what makes every existing
+    ! analytic case bit-exact. EGGCARTON is the 3D sinusoid
+    ! h*sin(kx x + px)*sin(kz z + pz) used for rough-wall boundary layers
+    ! (MacDonald, Chung, Hutchins, Ooi & Sandberg, JFM 2017).
+    integer, parameter, public :: WALL_WAVY = 0
+    integer, parameter, public :: WALL_EGGCARTON = 1
+
     !========================
     ! IBM TYPE
     !========================
     type :: ibm_type
+        ! Analytic wall shape, WALL_WAVY (2D, streamwise only) or
+        ! WALL_EGGCARTON (3D sinusoidal, the MacDonald & Hutchins roughness).
+        integer :: wallShape = WALL_WAVY
         integer :: n_wave_x, n_wave_z
         real(C_DOUBLE) :: amp_x, phase_x
         real(C_DOUBLE) :: amp_z, phase_z
@@ -133,6 +144,33 @@ contains
         ibm%phase_x = 0.0d0
         ibm%phase_z = 0.0d0
     end subroutine set_ibm_geometry_defaults
+
+    ! Override the analytic wall geometry from the config. MUST be called by
+    ! moby_solve AND moby_prepare right after init_ibm: the indicator drives
+    ! the coefficients, the block classification and the wall distance, so if
+    ! only one of them applied the config a prepared case file would describe a
+    ! different wall from an inline analytic run of the same ini.
+    subroutine set_ibm_geometry(ibm, dns)
+        type(ibm_type), intent(inout) :: ibm
+        type(dns_type), intent(in) :: dns
+
+        select case (trim(adjustl(dns%ibm_wall_shape)))
+        case ("wavy", "")
+            ibm%wallShape = WALL_WAVY
+        case ("eggcarton", "rough")
+            ibm%wallShape = WALL_EGGCARTON
+        case default
+            print *, "[ibm] wall_shape must be wavy or eggcarton, got: ", &
+                trim(dns%ibm_wall_shape)
+            error stop
+        end select
+        ibm%n_wave_x = int(dns%ibm_n_wave_x)
+        ibm%n_wave_z = int(dns%ibm_n_wave_z)
+        ibm%amp_x = dns%ibm_amp_x
+        ibm%amp_z = dns%ibm_amp_z
+        ibm%phase_x = dns%ibm_phase_x
+        ibm%phase_z = dns%ibm_phase_z
+    end subroutine set_ibm_geometry
 
     subroutine init_ibm(ibm, blk)
         type(ibm_type), intent(inout) :: ibm
@@ -393,18 +431,31 @@ contains
 
 
     ! Height of the analytic wavy bottom wall at streamwise position x.
-    real(C_DOUBLE) function wavy_wall_height(x, ibm, dns) result(y_body)
+    ! Wall height at (x, z). The WALL_WAVY branch is the original expression,
+    ! untouched, so every case that does not ask for a different shape is
+    ! bit-exact; WALL_EGGCARTON is a separate branch rather than a
+    ! generalisation for exactly that reason.
+    real(C_DOUBLE) function wavy_wall_height(x, z, ibm, dns) result(y_body)
 !$omp declare target
-        real(C_DOUBLE), intent(in) :: x
+        real(C_DOUBLE), intent(in) :: x, z
         type(ibm_type), intent(in) :: ibm
         type(dns_type), intent(in) :: dns
 
         real(C_DOUBLE), parameter :: pi = 3.141592653589793d0
         real(C_DOUBLE), parameter :: y_offset = 1.0d-2
 
-        y_body = ibm%amp_x * 0.5d0 * &
-                 (1.0d0 + sin(2.0d0*pi*real(ibm%n_wave_x,C_DOUBLE)*x/dns%leng(1) + ibm%phase_x)) + &
-                 y_offset
+        if (ibm%wallShape == WALL_EGGCARTON) then
+            ! h*sin(kx x + px)*sin(kz z + pz), mean height y_offset. The mean
+            ! is what the flow sees as the wall plane; the amplitude is the
+            ! semi-height, so the crest-to-trough height is 2*amp_x.
+            y_body = y_offset + ibm%amp_x &
+                * sin(2.0d0*pi*real(ibm%n_wave_x,C_DOUBLE)*x/dns%leng(1) + ibm%phase_x) &
+                * sin(2.0d0*pi*real(ibm%n_wave_z,C_DOUBLE)*z/dns%leng(3) + ibm%phase_z)
+        else
+            y_body = ibm%amp_x * 0.5d0 * &
+                     (1.0d0 + sin(2.0d0*pi*real(ibm%n_wave_x,C_DOUBLE)*x/dns%leng(1) + ibm%phase_x)) + &
+                     y_offset
+        end if
     end function wavy_wall_height
 
     logical function isInBody(xIN, ibm, dns)
@@ -414,7 +465,7 @@ contains
         type(ibm_type), intent(in) :: ibm
         type(dns_type), intent(in) :: dns
 
-        isInBody = (xIN(2) < wavy_wall_height(xIN(1), ibm, dns))
+        isInBody = (xIN(2) < wavy_wall_height(xIN(1), xIN(3), ibm, dns))
     end function isInBody
 
     real(C_DOUBLE) function distance3(xA, xB) result(d)

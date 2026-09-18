@@ -136,6 +136,9 @@ program moby_solve
 
     if (c%has_terminal) print *, "initialising IBM..."
     call init_ibm(ibm, blk)
+    ! Analytic wall geometry from the config. Both binaries apply it -- see
+    ! set_ibm_geometry for why that is not optional.
+    call set_ibm_geometry(ibm, dns)
     if (dns%ibm_enabled .and. len_trim(dns%ibm_coeff_file) > 0) then
         call read_ibm_coeff_file(ibm, dns, blk, c%has_terminal)
         call enter_ibm_data(ibm, dns)

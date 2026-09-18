@@ -111,6 +111,15 @@ module init
         logical(C_BOOL) :: block_keep_buried = .false.
         logical(C_BOOL) :: ibm_enabled = .true.
         character(len=256) :: ibm_coeff_file = ""
+        ! Analytic wall geometry ([ibm] wall_shape and its parameters). The
+        ! defaults reproduce the hardcoded wavy wall exactly, so a case that
+        ! names none of them is unchanged. BOTH moby_solve and moby_prepare
+        ! must apply these (set_ibm_geometry) or a prepared case file and an
+        ! inline analytic run would describe different geometry.
+        character(len=32) :: ibm_wall_shape = "wavy"
+        integer(C_INT) :: ibm_n_wave_x = 1_C_INT, ibm_n_wave_z = 1_C_INT
+        real(C_DOUBLE) :: ibm_amp_x = 2.5d-2, ibm_amp_z = 2.5d-2
+        real(C_DOUBLE) :: ibm_phase_x = 0.0d0, ibm_phase_z = 0.0d0
         ! STL geometry (moby_prepare input only; the solver rejects it
         ! without a coeff_file). stl_file is repeatable -- one binary STL
         ! path per occurrence, so paths may contain spaces. The optional
