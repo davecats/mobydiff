@@ -1227,6 +1227,30 @@ immersed boundary. Phased, each phase verified before the next:
   which production cases set anyway. The fraction is PRINTED at init like the
   trip force's block list, because a silent 100% looks identical to a silent 0%.
   The handout's divide question now survives only for cells inside body blocks.
+  **MEASURED ON A PRODUCTION-SHAPED BODY CASE (2026-09-19, job 5151978,
+  `results_rough_2026-09-19.md`)**, which needed a new benchmark because every
+  overheadTest config is body-free: `[ibm] wall_shape = eggcarton` adds the 3D
+  sinusoidal roughness `h*sin(kx x)*sin(kz z)` (MacDonald, Chung, Hutchins, Ooi
+  & Sandberg JFM 2017) and `configs/rough_jacobi.ini` is `rect_jacobi`'s grid,
+  blocks and flow plus that wall. The `wavy` branch is textually unchanged so
+  every analytic case stays bit-exact; `set_ibm_geometry` is applied by
+  moby_solve AND moby_prepare (LOAD-BEARING -- the indicator drives coefficients,
+  classification and wall distance, so one-sided application would make a
+  prepared case file describe a different wall). Results at 200 steps: body-free
+  `rect` step **-3.5%** (setup -82%), rough `rough_jacobi` step **-2.4%** (setup
+  -60%) on **64/256 = 25% body blocks**. The pre-registered model -- saving
+  proportional to `1 - (body blocks / all blocks)` -- predicted a 61.5% setup
+  drop and 0.75x the absolute saving; measured 60.5% and 0.736. **The one-time
+  residual is now MEASURED, not inferred**: `setup` after the change reads
+  1.218 ms/step at 100 steps and 0.615 at 200, i.e. a constant 122 ms of
+  first-call allocation, so the bucket fraction keeps improving with run length
+  (-67% at 100 steps, -82% at 200) and production runs are thousands of steps.
+  The case is a BENCHMARK, not validated physics -- height and wavelengths are
+  chosen to be resolved and to sit in the first y-block, nothing physical should
+  be quoted from it. NOT IN THE SOLVER: passive scalars (no generic transport
+  equation exists; the only transported scalars are RANS's k/omega/gamma/Re_thetat,
+  welded into the SST kernel), so the MacDonald forced-convection configuration
+  needs a scalar-transport track first.
   MEASUREMENT LANDMINE, and it bit: at 100 steps the bucket falls only 67%, NOT
   because the skip half-works (a CPU 10-vs-40-step run drops `setup`/step 3.90x
   with the TOTAL constant -- it runs ONCE PER RUN) but because what is left is

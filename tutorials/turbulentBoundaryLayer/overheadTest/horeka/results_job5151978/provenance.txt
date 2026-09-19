@@ -1,0 +1,4 @@
+job    : 5151978
+date   : 2026-09-19 01:58:47 CEST
+new    : 7b2bc2acc808dec4866e1bcd080eb7948ec6e527  (rdenom narrowed)
+ref    : 03305e4bf9d5cac7077be11c7d0705da6933656f  (bench/rdenom-always)
