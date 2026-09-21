@@ -287,7 +287,7 @@ Same environment as the C1 driver. New helpers:
 
 | file | role |
 |---|---|
-| `make_geometry_stl.py` | ASCII STLs for the two C2 geometries: a **tilted half-space** (a rotated box whose top face is the interface plane) and a **faceted cylinder**. Both are padded out of range, and both stay TIGHT for the same reason `make_slab_stl.py` does — the BVH distance loses precision quadratically in the vertex magnitude. |
+| `tools/make_geometry_stl.py` | ASCII STLs for the two C2 geometries: a **tilted half-space** (a rotated box whose top face is the interface plane) and a **faceted cylinder**. Both are padded out of range, and both stay TIGHT for the same reason `make_slab_stl.py` does — the BVH distance loses precision quadratically in the vertex magnitude. |
 | `check_oblique.py` | `flux` (the measurement) and `field` (the BVP). Rebuilds `φ` from the case file's own `dwall_blocks`/`coef_p_blocks` and evaluates the scheme's face quantities on the ANALYTIC field, so it measures the scheme rather than a transient — and needs no solver at all. |
 | `check_cylinder.py` | gate 2, on the same face machinery. |
 | `seed_manufactured.py` | writes either manufactured solution into a snapshot (the `seed_slab_ic.py` idiom). |
@@ -1727,7 +1727,7 @@ uniform` scalar is a hard config error.
 | guards | uniform-source and bad-direction both hard-error |
 | inert by default | `run_bitexact.sh` + `run_bitexact_s3.sh` vs `~/f1_ref_binaries` (cut from commit `0e0e225` with the edit stashed — the s5b lesson): 7-case and 9-case suites **max_abs 0, CPU AND GPU** |
 
-**F5 — `make_geometry_stl.py annulus`** writes the pipe's immersed body: the
+**F5 — `tools/make_geometry_stl.py annulus`** writes the pipe's immersed body: the
 closed shell between `--r-inner` and an outer surface, axis along `--axis`.
 The body is everything OUTSIDE r_inner — the fluid is the hole — so the outer
 surface is pure padding. `--box-half` (square) clears the domain corner at a

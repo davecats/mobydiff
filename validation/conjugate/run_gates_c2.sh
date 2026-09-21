@@ -48,7 +48,7 @@ oblique_case() {
     # w collapses to 0 or 1 and the measured flux is off by the full
     # conductivity contrast. That is a degenerate geometry, not a scheme
     # error, and 0.5117 keeps every centre off the surface at every h here.
-    $PY ./make_geometry_stl.py plane "$tag.stl" --theta "$th" --x0 "$x0" --y0 0.5117 \
+    $PY "$ROOT/tools/make_geometry_stl.py" plane "$tag.stl" --theta "$th" --x0 "$x0" --y0 0.5117 \
         --span 1.0 --depth 1.0 --z0 -0.25 --z1 "$($PY -c "print(repr(4.0/$n + 0.25))")" \
         > /dev/null || return 1
     # The case-specific substitutions run FIRST, so they claim the
@@ -202,7 +202,7 @@ if want cylinder; then
     for n in 64 128 256; do
         tag="cyl_$n"
         lz=$($PY -c "print(repr(4.0/$n))")
-        $PY ./make_geometry_stl.py cylinder "$tag.stl" --centre 0.5 0.5 --radius 0.25 \
+        $PY "$ROOT/tools/make_geometry_stl.py" cylinder "$tag.stl" --centre 0.5 0.5 --radius 0.25 \
             --facets 4096 --z0 -0.25 --z1 "$($PY -c "print(repr(4.0/$n + 0.25))")" > /dev/null
         sed -e "s|@STL@|$tag.stl|" -e "s|@CASE@|$tag.h5|" -e "s|@PREFIX@|$tag|" \
             -e "s|@NX@|$n|" -e "s|@NY@|$n|" -e "s|@NZ@|4|" \
@@ -306,7 +306,7 @@ if want converge; then
     for n in 32 512; do
         [ -f "cyl_$n.h5" ] && continue
         lz=$($PY -c "print(repr(4.0/$n))")
-        $PY ./make_geometry_stl.py cylinder "cyl_$n.stl" --centre 0.5 0.5 \
+        $PY "$ROOT/tools/make_geometry_stl.py" cylinder "cyl_$n.stl" --centre 0.5 0.5 \
             --radius 0.25 --facets 16384 --z0 -0.25 \
             --z1 "$($PY -c "print(repr(4.0/$n + 0.25))")" > /dev/null
         sed -e "s|@STL@|cyl_$n.stl|" -e "s|@CASE@|cyl_$n.h5|" -e "s|@PREFIX@|cyl_$n|" \

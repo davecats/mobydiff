@@ -107,7 +107,7 @@ pipe_case() {
     local n=(64 64 64) l=(1.3 1.3 1.3) per=(false false false)
     local d; d=$(case $axis in x) echo 0;; y) echo 1;; z) echo 2;; esac)
     n[$d]=8; l[$d]=0.2; per[$d]=true
-    $PY ./make_geometry_stl.py annulus ".$tag.stl" --axis "$axis" --centre 0.65 0.65 \
+    $PY "$ROOT/tools/make_geometry_stl.py" annulus ".$tag.stl" --axis "$axis" --centre 0.65 0.65 \
         --r-inner 0.5 "$oflag" "$oval" --facets 16384 --a0 -0.8 --a1 1.0 \
         --domain-half 0.65 || return 1
     sed -e "s|@STL@|.$tag.stl|" -e "s|@CASE@|$tag.h5|" -e "s|@NB@|8|" \
@@ -127,13 +127,13 @@ pipe_case() {
 if want annulus; then
     echo "== F5 (1) annulus about z, square outer surface"
     pipe_case pipe64 z --box-half 1.25 || report 1
-    run $PY ./check_annulus.py pipe64.h5 --centre 0.65 0.65 --r-inner 0.5 \
+    run $PY "$ROOT/tools/check_annulus.py" pipe64.h5 --centre 0.65 0.65 --r-inner 0.5 \
         --facets 16384 --box-half 1.25 --domain-half 0.65
     report $?
 
     echo "== F5 (2) annulus about x, cylindrical outer surface"
     pipe_case pipex x --r-outer 1.6 || report 1
-    run $PY ./check_annulus.py pipex.h5 --axis x --centre 0.65 0.65 --r-inner 0.5 \
+    run $PY "$ROOT/tools/check_annulus.py" pipex.h5 --axis x --centre 0.65 0.65 --r-inner 0.5 \
         --facets 16384 --r-outer 1.6 --domain-half 0.65
     report $?
 fi
@@ -285,7 +285,7 @@ fi
 if want bandannulus; then
     echo "== F2 (4) the level-set band IS the annulus"
     [ -f pipe64.h5 ] || pipe_case pipe64 z --box-half 1.25 || report 1
-    run $PY ./check_annulus.py pipe64.h5 --centre 0.65 0.65 --r-inner 0.5 \
+    run $PY "$ROOT/tools/check_annulus.py" pipe64.h5 --centre 0.65 0.65 --r-inner 0.5 \
         --facets 16384 --box-half 1.25 --domain-half 0.65 --band-depth 0.1
     report $?
 fi

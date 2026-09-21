@@ -1065,6 +1065,20 @@ immersed boundary. Phased, each phase verified before the next:
   - LANDMINE (cost an hour): a local `nVar` in blocks.f90 SHADOWED the
     use-associated `NVAR` parameter (Fortran is case-insensitive) and silently
     allocated a zero-size dimension. The local is now `nQ`.
+- CHT validation campaigns — CONSOLIDATED into `tutorials/cht/` (2026-09-21).
+  `tutorials/cht/channel/` = the Flageul-matched turbulent channel (flat,
+  grid-aligned interface, so the cut-face coefficient is EXACT and what is
+  measured is the conjugate physics); `tutorials/cht/pipe/` = the Neuhauser
+  NekRS pipe (the first CURVED conjugate interface). Each directory holds what
+  is needed to RUN the case; its `asset/` holds the reference data, the
+  comparison scripts, the figures and the report, and runs without any large
+  file. `tutorials/cht/pipe/asset/neuhauser_profiles.npz` is a 250 kB
+  reduction of the 11.8 GB published archive — `extract_neuhauser.py` rebuilds
+  it and figures 1-5 come out BYTE-IDENTICAL either way. The superseded
+  channel campaigns (1-4) are gone from the tree and live in git history +
+  `tutorials/cht/channel/asset/CAMPAIGN_NOTES.md`. `make_geometry_stl.py` and
+  `check_annulus.py` moved to `tools/` (shared by the C2/F5 gates and the pipe
+  tutorial). The FEATURE gates stay in `validation/conjugate/`.
 - Conjugate heat transfer at the immersed interface — increments **C1, C2 and
   C3 DONE** (C1 2026-08-27/28, C2 and C3 2026-08-28, branch `scalar`; plan +
   every deviation and gate number in the STATUS header of
