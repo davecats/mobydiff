@@ -302,3 +302,30 @@ Any change to the solver must still pass the bit-exactness gate before its
 timing means anything — see `Verification` in `CLAUDE.md`. The gate harness lives
 on the workstation (`~/.moby_prof/gate_bitexact.sh`), not here; a cluster-side
 change should be gated back on the workstation before it is believed.
+
+## A held job looks exactly like a queued one
+
+`squeue` prints `PD` for both, so a job Slurm has **held** is invisible in the
+usual check. It happened on 2026-09-19: job 5150030 was allocated nodes, Slurm
+failed to retrieve the user environment on one of them, and requeued the job
+*and held it* --
+
+```
+5150030 accelerat moby_mat  PD  0:00  4 (user env retrieval failed requeued held)
+```
+
+-- where it sat at `Priority=0` for two days. `scontrol show job <id>` is what
+tells you: `Priority=0` IS the hold, and `Restarts=1` says it had already tried
+to start. `scontrol release <id>` clears it (the job keeps its id but loses its
+accrued queue age).
+
+Two consequences, both applied here:
+
+- **Poll the STATE, not the presence.** A waiter of the form
+  `until [ -z "$(squeue -h -j $ID)" ]; do ...` never fires for a held job.
+  Use `squeue -h -j $ID -o "%T %Q %R"` and treat priority 0 as a stop condition.
+- **The 4-node matrix drivers (`submit.sh`, `exchange/submit_matrix3.sh`) set
+  `--no-requeue`.** `run_matrix.sh` is resumable -- it skips any run whose
+  `run.log` exists -- so a visible failure plus a manual resubmit beats a silent
+  hold. The short `dev_accelerated` jobs keep the default: they finish in
+  minutes, so a hold there is noticed immediately.

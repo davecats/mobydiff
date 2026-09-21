@@ -7,8 +7,16 @@
 #SBATCH --time=06:00:00
 #SBATCH --partition=accelerated
 #SBATCH --account=hk-project-exasim
+#SBATCH --no-requeue
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=davide.gatti@kit.edu
+#
+# --no-requeue is deliberate. On 2026-09-19 job 5150030 hit
+# "user env retrieval failed" on the node it was allocated, and Slurm requeued
+# it AND HELD it at priority 0 -- where it sat, invisibly, for two days, because
+# a held job looks exactly like a queued one in squeue. run_matrix.sh is
+# resumable (it skips any run whose run.log exists), so a visible failure and a
+# manual resubmit is strictly better than a silent hold.
 #
 # Timing + profiling matrix for the 2:1 block-refinement machinery.
 #
