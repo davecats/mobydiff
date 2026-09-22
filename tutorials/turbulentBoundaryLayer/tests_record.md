@@ -117,11 +117,66 @@ requires (redundant halo-layer sweeps) exceeds the saving here. The block
 decomposition is exactly result-invariant (`nb` unset vs `nb = 16` give identical
 runtime lines), as designed. So the shipped case runs **single-level** (`nb` unset).
 
+## 9. Finer wall-normal grid — the shipped "finey" case
+
+Once Δx⁺ was adequate (§5), the wall-normal outer resolution turned out to be a
+**bigger** lever than §4's coarse-Δx estimate suggested: refining the resolved band
+from Δy⁺_max ≈ 6 to ≈ 4.3 (**ny 176 → 224**, wall spacing held fixed via
+`dyw_plus` 0.15 → 0.221, so dt stays 0.02) moved c_f from **−1.6 % to −0.4 %** at
+the full ~4000 t.u. window (H −0.6 %). The errors are **non-additive**: at Δx⁺≈8
+the streamwise error dominated and masked the y effect (§4 measured it as ~0.3 pt);
+at Δx⁺≈4 the y-refinement becomes the dominant remaining lever (~1.2 pt). This
+`ny=224` grid is the **shipped case** (`make_finey_grid.py` ports the solver's
+blayer line exactly; the IC is a developed field interpolated in y via
+`make_finewall_restart.py`).
+
+## 10. Trip-amplitude sweep — the u′_rms peak is not the trip
+
+The one residual after §9 was the near-wall **u′_rms peak sitting ~3 % above
+SIMSON** (finey 2.73 vs 2.63). Two runs on the ny=224 grid tested whether the trip
+sets it (HoreKa, 4× A100, 6000 t.u. windows):
+
+| trip_amp | 0.024 (−20 %) | 0.03 (finey) | 0.18854 (SIMSON params) |
+|---|---|---|---|
+| u′_rms peak | 2.709 | 2.727 | 2.724 |
+| c_f @ 677 | −1.2 % | −0.4 % | −3.1 % |
+
+An **8× span in trip amplitude leaves the peak flat at ~2.71–2.73.** The strong
+SIMSON-parameter trip (applied verbatim; our `g(z)` is unit-rms so it is ~6× too
+hot) also over-trips — a violent transition overshoot (c_f 17e-3 at Re_θ 304) and a
+~3 % c_f deficit — without helping the peak. **Trip amplitude sets the transition
+location/overshoot, not the developed near-wall peak.** finey (gentle trip) stays
+the best match.
+
+## 11. Code comparison — the u′_rms peak is an FV/FD signature
+
+Reduced through one common post-processor (`compare_codes.py`) against **SIMSON
+(spectral), CaNS and AMPHIBIOUS** at Re_θ ≈ 677:
+
+| code | c_f | H | u′_rms peak |
+|---|---|---|---|
+| SIMSON (spectral) | 0.00471 | 1.507 | 2.631 |
+| CaNS | 0.00463 | 1.503 | 2.706 |
+| AMPHIBIOUS | 0.00460 | 1.508 | 2.723 |
+| mobydiff (finey) | 0.00469 | 1.498 | **2.727** |
+
+- **mobydiff's c_f is the closest of the non-spectral codes to SIMSON** (−0.4 %).
+- **All three finite-volume/difference codes overshoot the spectral u′_rms peak by
+  ~3 %** (2.71–2.73), collapsing onto each other. The peak excess is therefore an
+  **intrinsic 2nd-order-FV/FD-vs-spectral signature**, reproduced by two independent
+  established DNS codes — not a mobydiff defect. Combined with §10 (trip-independent)
+  this fully closes the question.
+
+The mobydiff data are exported to the reference NetCDF format at
+`assets/mobydiff/xyz_4096_224_192/data.nc` (`make_mobydiff_nc.py`).
+
 ## Bottom line
 
-The 5 % c_f gap to the spectral reference was **not** a fundamental limitation of the
+The original 5 % c_f gap to the spectral reference was **not** a limitation of the
 2nd-order FD solver. It decomposed into an over-aggressive trip (which also caused
-the entire H discrepancy) and streamwise under-resolution — both fixable — leaving a
-small (~1.6 %) FD-vs-spectral floor. The shipped configuration (gentle trip, Δx⁺≈Δz⁺,
-red-black niter=6) reproduces the spectral reference in c_f, H, mean profile and
-Reynolds stresses to ~1–2 %.
+the entire H discrepancy), streamwise under-resolution, and wall-normal outer
+resolution — all fixable — leaving only the intrinsic FV/FD-vs-spectral floor. The
+shipped **finey** configuration (gentle trip, Δx⁺≈Δz⁺≈4, Δy⁺_max≈4.3, red-black
+niter=6) reproduces the SIMSON spectral reference in c_f (−0.4 %), H, mean profile
+and Reynolds stresses to ~1–2 %, and sits squarely with CaNS and AMPHIBIOUS — the
+residual ~3 % near-wall u′_rms peak is a signature shared by all non-spectral codes.

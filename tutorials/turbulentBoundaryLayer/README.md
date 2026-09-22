@@ -1,116 +1,121 @@
 # Turbulent zero-pressure-gradient boundary layer (ZPG TBL)
 
 A spatially-developing incompressible **ZPG turbulent boundary layer** DNS,
-non-dimensionalised by the inlet displacement thickness (Re_δ*,0 = 450, U∞ = 1),
-validated against the **SIMSON pseudo-spectral reference** (`passivewall.hdf5`,
-Schmitt/KIT). This is the final, best-resolved configuration that emerged from an
-extended trip/resolution/solver study — the full history is in
-**[`tests_record.md`](tests_record.md)**.
+non-dimensionalised by the inlet displacement thickness (Re_δ*,0 = 450, U∞ = 1).
+This is the shipped **"finey"** configuration — the best-resolved case from an
+extended trip / resolution / solver study (full history in
+**[`tests_record.md`](tests_record.md)**) — validated against three independent
+reference DNS: the **SIMSON** pseudo-spectral code, **CaNS**, and **AMPHIBIOUS**.
 
-## The case shipped here
+## The case
 
 | ingredient | value | why |
 |---|---|---|
-| grid | 4096 × 176 × 192 (138 M) | Δx⁺≈4 ≈ Δz⁺≈3.7, Δy⁺_wall≈0.2, Δy⁺_max≈4 (in δ₉₉) |
+| grid | 4096 × 224 × 192 (176 M) | Δx⁺≈4 ≈ Δz⁺≈3.7, Δy⁺_wall≈0.23, Δy⁺_max≈4.3 (in δ₉₉) |
 | x-grid | geometric, stretch 1.5 | Δx⁺ ~ uniform as u_τ falls downstream |
 | y-grid | blayer (wall-clustered + freestream coarsening) | resolve the BL, keep the tall domain affordable |
 | domain | 750 × 100 × 32 δ*₀ | ly = 100 δ*₀ (very tall) so the top pins a true ZPG |
-| trip | Schlatter–Örlü, `trip_amp = 0.03` | gentle trip (matches the reference's development) |
+| trip | Schlatter–Örlü, `trip_amp = 0.03` | gentle trip (matches the reference development) |
 | convection | skew-symmetric | energy-neutral under the incremental projection |
-| **pressure solver** | **red-black SOR, niter = 6, sor = 1.5** | stable at low niter on this outlet case + ~1.8× faster than Chebyshev-Jacobi niter=12 |
+| **pressure solver** | **red-black SOR, niter = 6, sor = 1.5** | stable at low niter on this outlet case, ~1.8× faster than Chebyshev-Jacobi niter=12 |
 
-## Result (converged, ~4000 t.u. of averaging)
+## Code comparison — SIMSON / CaNS / AMPHIBIOUS
 
-At Re_θ = 677, vs the SIMSON spectral reference:
+All four codes share the nondimensionalization (Re_δ*,in = 450), so the developed
+flow is compared directly at a matched **Re_θ ≈ 677**. The reference codes use the
+strong Schlatter–Örlü trip; mobydiff uses the gentle trip, so transition sits at a
+different Re_θ — the comparison is in the developed region where the trip is
+forgotten.
 
-| quantity | this DNS | SIMSON | Δ |
-|---|---|---|---|
-| c_f | 0.00464 | 0.00471 | **−1.6 %** |
-| H | 1.501 | 1.507 | **−0.4 %** |
-| u′/v′/w′_rms peak | 2.69 / 1.02 / 1.31 | 2.63 / 1.02 / 1.30 | ~1–2 % |
-| −u′v′ peak | 0.874 | 0.882 | −0.9 % |
+![Code comparison vs SIMSON, CaNS, AMPHIBIOUS](assets/figures/code_comparison.png)
 
-Mean U⁺(y⁺) collapses onto the reference through the sublayer and log region; the
-Reynolds stresses overlay the spectral profiles; the shape factor sits on the
-reference. The residual ~1.6 % in c_f is the intrinsic 2nd-order-FD-vs-spectral
-floor (see `tests_record.md` for the full decomposition of the original ~5 % gap
-into tripping + streamwise resolution + this floor).
+| code | grid (nx·ny·nz) | c_f | H | u′_rms peak | −u′v′ peak |
+|---|---|---|---|---|---|
+| SIMSON (spectral) | 3072·301·— | 0.00471 | 1.507 | 2.631 | 0.882 |
+| CaNS | 3200·384·135 | 0.00463 | 1.503 | 2.706 | 0.874 |
+| AMPHIBIOUS | 3200·384·135 | 0.00460 | 1.508 | 2.723 | 0.899 |
+| **mobydiff (finey)** | **4096·224·192** | **0.00469** | **1.498** | **2.727** | **0.871** |
 
-![c_f, H, U+ and Reynolds stresses vs SIMSON](assets/figures/passivewall_compare.png)
+Mean U⁺(y⁺) and the Reynolds stresses of all four codes overlay through the
+sublayer, log region and wake. **Two takeaways:**
+
+- **mobydiff's c_f is the closest of the finite-volume/difference codes to the
+  spectral SIMSON** (−0.4 %, vs CaNS −1.7 %, AMPHIBIOUS −2.4 %).
+- **The near-wall u′_rms peak sits ~3 % above SIMSON for _all three_ non-spectral
+  codes** (mobydiff 2.73, CaNS 2.71, AMPHIBIOUS 2.72). This overshoot is therefore
+  a generic second-order finite-volume/difference signature relative to a spectral
+  method, **not** a mobydiff artifact — a trip-amplitude sweep (0.024 → 0.19)
+  confirmed it is independent of the trip (`tests_record.md`).
+
+The mobydiff comparison data, in the same NetCDF format as the reference files, is
+committed at **`assets/mobydiff/xyz_4096_224_192/data.nc`**.
 
 ## Layout
 
 ```
-README.md                 this file
-tests_record.md           the full study: every case and what it showed
-cold_start.ini            stage 0: cold start from the Blasius field (from scratch)
-production.ini            stage 1 (re-equilibration at the production trip)
-production_stats.ini      stage 2 (statistics accumulation)
-production_stats.h5       the converged span+time statistics  [local, ~115 MB]
-restart_field.h5          a developed field (IC + grid + snapshot)  [local, 4.4 GB]
-reproduce.py              regenerate every figure from the above
-assets/figures/           the PNGs (committed)
-assets/postpro/           the post-processing scripts + reference data
-    passivewall.hdf5      SIMSON spectral reference  [local, ~103 MB]
-    tbl_uncontrolled.mat  earlier spectral reference (mean only)
-    ref_schlatter_orlu_Re670.prof   KTH Re_θ=677 profile
+production.ini            phase 1: re-equilibration (stats off)
+production_stats.ini      phase 2: statistics accumulation -> production_stats.h5
+cold_start.ini           stage 0: from-scratch laminar->turbulent (regenerates restart_field.h5)
+reproduce.py             regenerate assets/mobydiff/*.nc + all figures from the statistics
+tests_record.md          the full trip/resolution/solver study behind the shipped case
+assets/
+  mobydiff/xyz_4096_224_192/data.nc   our reduced statistics (committed, res-study format)
+  figures/                            the committed comparison figures
+  postpro/                            post-processing + grid/IC tooling (below)
 ```
 
-Files marked *[local]* are too large for git (`restart_field.h5`,
-`passivewall.hdf5` and `production_stats.h5` all exceed GitHub's 100 MB limit);
-keep them in place to reproduce the figures.
+Large data are **kept locally** (all exceed GitHub's 100 MB limit), listed in
+`.gitignore` and regenerable — see below:
 
-## Reproduce
+- `restart_field.h5` — a developed instantaneous field (the phase-1 IC),
+- `production_stats.h5` — the raw span+time statistics,
+- `assets/postpro/passivewall.hdf5` — the SIMSON spectral reference.
 
-**Figures** (fast, from the shipped statistics):
-```bash
-python3 reproduce.py            # -> assets/figures/*.png
-```
+The **CaNS / AMPHIBIOUS** reference data live on the group LSDF share
+(`.../tbl-dns/res_study/data_processed/{cans,amphibious}/*/data.nc`); the committed
+mobydiff `data.nc` is in the identical format so the comparison is symmetric.
 
-**The DNS from scratch** (multi-day GPU run — no data file needed). The developed
-field that the un-committed `restart_field.h5` provided is regenerated by a cold
-start, so the whole case reproduces from the three `.ini` files alone. Run from the
-repository root with the paths adjusted, or copy the binary next to the case.
+## Reproduce from scratch
+
+No large input file is needed — the grid, the Blasius inflow and the trip forcing
+are all generated by the solver from the `.ini`.
 
 ```bash
-module load toolkits/nvhpc/25.9
-BIN=./build_gpu/moby_solve      # 1 GPU; the run is ~138 M cells
+# build (see the repo README): ./compile.sh gpu   (or cpu)
+MPI="mpirun -n 4 ./build_gpu/moby_solve"      # one rank per GPU
 
-# Stage 0 -- cold start: laminar Blasius field + trip 0.15 trips it into
-# turbulence; run until the whole plate is turbulent and the transient has
-# washed out (~2000 t.u. ~ 100k steps). Writes coldstart_<step>.h5.
-mpirun -n 1 $BIN cold_start.ini
+# stage 0 — cold start: laminar Blasius -> turbulent, ~2000 t.u. (~100k steps)
+$MPI cold_start.ini
+mv coldstart_100000.h5 restart_field.h5        # the developed field
 
-# Stage 1 -- re-equilibration at the production trip (0.03). Point [restart] at
-# the last coldstart field, then run. Writes production_<step>.h5.
-sed -i 's/^file = .*/file = coldstart_100000.h5/' production.ini   # [restart] section
-mpirun -n 1 $BIN production.ini
+# phase 1 — re-equilibrate on the shipped (grid, trip, solver), ~1000 t.u.
+$MPI production.ini                            # -> production_100000.h5
 
-# Stage 2 -- statistics. Point [restart] at the last stage-1 field, then run;
-# accumulates ~4000 t.u. of span+time statistics into production_stats.h5.
-sed -i 's/^file = .*/file = production_200000.h5/' production_stats.ini
-mpirun -n 1 $BIN production_stats.ini
-
-# Figures from the fresh statistics:
-python3 reproduce.py             # needs assets/postpro/passivewall.hdf5 locally
+# phase 2 — accumulate statistics, ~4000 t.u. -> production_stats.h5
+$MPI production_stats.ini
 ```
 
-Notes:
-- The exact restart filenames (`coldstart_100000.h5`, `production_200000.h5`)
-  depend on `nsteps` / `field_interval`; use whatever the final
-  `coldstart_*` / `production_*` snapshot is actually called. The shipped inis
-  ship pointing at the original run's names (`restart_field.h5`,
-  `production_850000.h5`) — the `sed` lines above just repoint them.
-- Why the cold start uses a *stronger* trip: `trip_amp = 0.15` is needed to trip
-  the laminar inflow; the production `trip_amp = 0.03` (gentler, matching the
-  reference's development) cannot, so it only runs on an already-turbulent field.
-  This trip choice is the whole story of the shape-factor match — see
-  `tests_record.md`.
-- **Shortcut**: if you already have a developed field on this exact grid, skip
-  Stage 0 and point `production.ini` `[restart]` straight at it.
+Then regenerate the comparison data and figures:
 
-Alternatively, the shipped inis run **as-is** from a saved `restart_field.h5`:
 ```bash
-mpirun -n 1 ./build_gpu/moby_solve production.ini        # stage 1 from restart_field.h5
-mpirun -n 1 ./build_gpu/moby_solve production_stats.ini  # stage 2 from the stage-1 end field
+python3 reproduce.py        # -> assets/mobydiff/.../data.nc + assets/figures/*.png
 ```
+
+`reproduce.py` exports the statistics to the res-study NetCDF format
+(`assets/postpro/make_mobydiff_nc.py`), draws the code comparison
+(`compare_codes.py`, falling back to SIMSON-only if the LSDF reference data are not
+mounted) and the SIMSON single-code figures. To continue the run instead, restart
+`production_stats.ini` from a later `production_p2_*.h5` — the statistics
+accumulators continue seamlessly.
+
+### Post-processing tooling (`assets/postpro/`)
+
+| script | purpose |
+|---|---|
+| `make_mobydiff_nc.py` | export `bl_stats.h5` → res-study NetCDF (`data.nc`) |
+| `compare_codes.py` | mobydiff vs SIMSON / CaNS / AMPHIBIOUS (the figure above) |
+| `compare_passivewall.py` | mobydiff vs SIMSON (single-code, 4-panel) |
+| `bl_stats.py` | boundary-layer profile plots from the statistics |
+| `make_finey_grid.py` | build the blayer wall-normal node line (ny=224) |
+| `make_finewall_restart.py` | interpolate a field onto a finer y-grid |
+| `dpdx.py`, `vonkarman.py`, `resolution.py`, `dyplus_profiles.py`, `viz_flowfield.py` | diagnostics |
