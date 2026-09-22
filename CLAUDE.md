@@ -1188,6 +1188,23 @@ immersed boundary. Phased, each phase verified before the next:
   kernel is a wash. **The campaign ratios in `results_horeka_2026-09-17.md` were
   measured with the PREFIX and are now slightly pessimistic** (Jacobi) to 1-4%
   pessimistic (red-black); 16 ranks was not re-measured.
+  **FULL SWEEP MEASURED (2026-09-23, job 5150030, `results_horeka_2026-09-23.md`),
+  and it CORRECTS one claim.** Whole divergence work `3c2903a -> b9414bd`:
+  `rect` +0.0/+3.9/+4.2/+5.2/**+13.5%** at 1/2/4/8/16, `refined` +8.2% at 16,
+  `refined_big` +9.3%, and **red-black -0.0/-0.1/-0.0/-0.4/+0.5% -- neutral at
+  EVERY rank count, measured rather than chained**, which is the whole point of
+  the index list. CORRECTION: the index list's OWN contribution at 16 ranks is
+  NOT measurable (-1.9 to +0.6% across five configs) -- the claim that it "adds
+  a little at 4-16 ranks" holds for 1-8 (+0.8 to +1.3%) and not for 16. The
+  control that says so: the `ref -> mid` column repeats job 5147466's comparison
+  in a different allocation and lands within **3 percentage points** at 16 ranks,
+  so **16-rank differences below ~3% are not resolvable in one allocation of
+  this matrix**. REVISED: block tax **1.015/1.034/1.024/1.000/1.007** (was
+  1.036/1.053/1.038/1.010/1.033) -- the blocked single-level case now costs
+  essentially nothing at every rank count; strong scaling at 16 ranks base 80%,
+  rect 80, refined 59, redblack 52, big 88; the 2:1 machinery 1.001x
+  coarse-cell-equivalents at 4 ranks and 0.879x at 16. STILL OWED: this matrix
+  predates the `rdenom` work and the rough-wall benchmark, so one more pass.
   NOT ATTEMPTED, and the only idea left here: a reduced round for RED-BLACK
   itself. `redblack_sweep` iterates `0..hi`, sweeping the lower halo layer
   redundantly, so a cell at `i=0` reads the low halo plane of ALL THREE

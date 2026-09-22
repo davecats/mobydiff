@@ -102,7 +102,14 @@ work neither helps nor hurts it.
 - **Nothing measured at 16 ranks.** `dev_accelerated` is 2 nodes. The prefix was
   worth +11.8 % there and the list beats the prefix by 0.6–0.9 % at 8 ranks with
   the margin shrinking as ranks rise (0.93 → 0.68 on `rect`), so ~+12 % is the
-  expectation — **an extrapolation, and labelled one.** The campaign matrix
+  expectation — **an extrapolation, and labelled one.**
+
+  > **MEASURED 2026-09-23 (job 5150030), and the extrapolation was wrong.** The
+  > total is confirmed (`rect` +13.5 % at 16 ranks), but the index list's own
+  > contribution there is **not measurable**: −1.9 to +0.6 % across the five
+  > configs, inside a ±2–3 point noise band. "Adds a little at 4–16 ranks" holds
+  > for 1–8 ranks (+0.8 to +1.3 %) and not for 16. See
+  > `results_horeka_2026-09-23.md` §2. The campaign matrix
   ratios in `results_horeka_2026-09-17.md` were measured with the PREFIX and are
   now slightly pessimistic for Jacobi and ~1–4 % pessimistic for red-black.
 - **Nothing about red-black's own reduced round.** Not attempted. `redblack_sweep`

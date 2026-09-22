@@ -1,0 +1,9 @@
+job    : 5150030
+date   : 2026-09-23 01:02:33 CEST
+nodes  : 4  (hkn[0701,0709,0711,0733])
+new    : b9414bd6a1d2b9e29178e5605a9ddd80a7db17b6  (index_list_b9414bd)
+mid    : 95312d75f867312298955840e446d54546936312  (prefix_form_95312d7)
+ref    : 3c2903a62c7e027fb7eb250925f33077ca73d88a  (before_divergence_work_3c2903a)
+gpu    : NVIDIA A100-SXM4-40GB
+nsteps : 200
+layout : --map-by numa --bind-to core (as every earlier matrix)
