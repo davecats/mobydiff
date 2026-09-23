@@ -49,10 +49,14 @@ module boundarylayer_flow
         real(C_DOUBLE) :: resolved_height = 30.0d0
         ! Trip forcing defaults (mirror the [force] trip_* keys; written into
         ! dns in apply_defaults, still overridable by an explicit [force]).
+        ! Defaults = the CaNS/AMPHIBIOUS reference production trip (the trip is an
+        ! exact port of cans_js/src/trip.f90; see bodyforce.f90). trip_amp is the
+        ! CaNS tripAmp -- scaled by 1/nmodes onto a signal of spanwise rms
+        ! sqrt(nmodes), so the effective forcing amplitude is trip_amp/sqrt(nmodes).
         logical :: trip_enabled = .true.
-        real(C_DOUBLE) :: trip_x0 = 15.0d0, trip_lx = 4.0d0, trip_ly = 1.0d0
-        real(C_DOUBLE) :: trip_amp = 0.15d0, trip_ts = 4.0d0
-        integer(C_INT) :: trip_nmodes = 24_C_INT, trip_seed = 1_C_INT
+        real(C_DOUBLE) :: trip_x0 = 10.0d0, trip_lx = 4.0d0, trip_ly = 1.0d0
+        real(C_DOUBLE) :: trip_amp = 0.18854d0, trip_amp_s = 0.0d0, trip_ts = 4.0d0
+        integer(C_INT) :: trip_nmodes = 16_C_INT, trip_seed = 1_C_INT
         type(bl_stats_type) :: stats
     contains
         procedure :: read_config => bl_read_config
@@ -130,6 +134,7 @@ contains
             dns%trip_lx = this%trip_lx
             dns%trip_ly = this%trip_ly
             dns%trip_amp = this%trip_amp
+            dns%trip_amp_s = this%trip_amp_s
             dns%trip_ts = this%trip_ts
             dns%trip_nmodes = this%trip_nmodes
             dns%trip_seed = this%trip_seed
@@ -247,6 +252,9 @@ contains
         case ("trip_amp")
             read(value, *, iostat=stat) real_value
             if (stat == 0) this%trip_amp = real_value
+        case ("trip_amp_s")
+            read(value, *, iostat=stat) real_value
+            if (stat == 0) this%trip_amp_s = real_value
         case ("trip_ts")
             read(value, *, iostat=stat) real_value
             if (stat == 0) this%trip_ts = real_value

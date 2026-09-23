@@ -359,6 +359,8 @@ subroutine apply_config_value(section, key, value, dns, g, turb, les, ps, bc, c,
             call read_real(value, dns%trip_ly, line_no)
         case ("trip_amp")
             call read_real(value, dns%trip_amp, line_no)
+        case ("trip_amp_s")
+            call read_real(value, dns%trip_amp_s, line_no)
         case ("trip_ts")
             call read_real(value, dns%trip_ts, line_no)
         case ("trip_nmodes")
