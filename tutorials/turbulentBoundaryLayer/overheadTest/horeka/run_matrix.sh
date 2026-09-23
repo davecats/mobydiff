@@ -42,9 +42,16 @@ CONFIGS="${CONFIGS:-}"
 # one GPU per node reads as catastrophic scaling rather than as an error.
 MPIRUN_EXTRA="${MPIRUN_EXTRA:-}"
 
+# rough_jacobi is rect_jacobi plus a 3D egg-carton wall -- the only config here
+# with a BODY, and so the only one that can measure anything the immersed
+# boundary drives. It needs a binary that knows [ibm] wall_shape: config.f90
+# ignores unknown keys SILENTLY, so an older binary runs it as the default 2D
+# wavy wall instead of failing. Gate it with CONFIGS when a column's binary
+# predates 7b2bc2a.
 MATRIX="
 base_jacobi:$RANKS_SMALL
 rect_jacobi:$RANKS_SMALL
+rough_jacobi:$RANKS_SMALL
 refined_yp82_rect_jacobi:$RANKS_SMALL
 refined_yp82_rect_redblack:$RANKS_SMALL
 refined_big_rect_jacobi:$RANKS_BIG
