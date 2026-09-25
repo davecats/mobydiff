@@ -34,15 +34,10 @@ touched at all** — that is task 1.
 
 ## 1 — What is OWED, in order
 
-1. **The GPU gate. Nothing here has run on a GPU.** The cc80 build compiles
-   (that is all it proves). Run the equivalent of the four CPU gates plus the
-   standard suite under `gpu_nofma`, against a binary built from `68e8f16`
-   (`main` before this branch). Reuse `submit_merge_gate.sh` as the shape — it
-   already knows how to build two references and run `run_mapgate.sh` — but its
-   reference logic is merge-specific, so write a sibling rather than editing it.
-2. **`les_ibm` dormancy**, the one case never attempted on CPU (too slow
-   there). Against `68e8f16`, it must be `max_abs 0`. The other legs are DONE
-   (see §0).
+1. ~~The GPU gate~~ **DONE** (job 5163859) — `submit_port_gate.sh` /
+   `run_portgate.sh`, 12/12 `max_abs 0`. Re-run it after any further change to
+   this branch; it is resumable.
+2. ~~`les_ibm` dormancy~~ **DONE** in the same job, `max_abs 0`.
 3. **`cv_box` for what remains of validation/naca0012 and validation/sd7003.**
    See §3. After the 2026-09-25 removals this is much smaller than it was:
    everything still present has a live non-force gate, so the question is only

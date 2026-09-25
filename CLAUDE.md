@@ -1815,6 +1815,18 @@ immersed boundary. Phased, each phase verified before the next:
     `validation/prepare/run_gates_big.sh` builds its P1b cases from. The table
     is in `docs/next_session_port_finish.md` section 3. **Deciding the rest is
     the top follow-up.**
+  **GPU GATE (2026-09-26, job 5163859, `submit_port_gate.sh`, nofma both sides,
+  ref = `68e8f16`): 12 equivalence legs all `max_abs 0`** -- min_channel 1+4
+  ranks, beltrami_slaby, **les_ibm** (never gated anywhere before), turb180,
+  wf180_y30, lam30t, conduction, prsweep, wave, ibmwavy, ibmwavyr. The gate
+  needed its OWN driver (`run_portgate.sh`): because the lockdown is a physics
+  change, a bare A/B only confirms the two binaries disagree, so the ref side is
+  run WITH `[flow] convection = skew` -- the configuration the lockdown makes
+  unconditional -- and scalar cases pair that against the new `[scalar]
+  convection = advective`. Its pass 2 checks each knob DOES something on the
+  GPU, since a gate that only reports "no difference" cannot tell a working
+  feature from a dead one; the kpin control there moves k by
+  2.7220954063067557, the same 17 digits as on the CPU.
   CPU dormancy vs the pre-port binary: min_channel (4 ranks), beltrami_slaby,
   turb180, lam30t and conduction all `max_abs 0`, plus conduction's `s1` named
   explicitly -- **`tools/h5maxdiff` with no dataset arguments compares
