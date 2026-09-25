@@ -1,5 +1,15 @@
 # The rdenom work and the rough wall across the full rank sweep
 
+> **The `mid` control column's branch is deleted (2026-09-25).**
+> `bench/rdenom-always` was `8aedbb5`, one commented-out line on top of
+> `e5b5f8d`: `call narrow_rdenom_blocks(ibm)` in `pressure_solver.f90` disabled,
+> so `rdenom` is recomputed for every block every substage as before `84e8265`,
+> while the binary is HEAD in every other respect -- in particular it knows
+> `[ibm] wall_shape`, which the pre-`rdenom` commits do not, which is why the
+> control had to be a branch rather than an older tag. Recreate it by commenting
+> out that one call; the results below are the durable record.
+
+
 Job 5159149, 4 nodes (hkn[0521,0530-0531,0623]), 57 min, **three columns, six
 configs, 79 runs, no failures**, 200 steps, `--map-by numa --bind-to core`. Raw
 runs in `horeka/results_job5159149/`. Readings pre-registered in

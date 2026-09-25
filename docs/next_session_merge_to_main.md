@@ -66,11 +66,17 @@
 > is a strict ancestor as stated. The stray local `origin` branch of §7 no
 > longer exists.
 >
-> **STILL OPEN:** the `main` fast-forward; deleting `multiGPU`, `claude/blocks`
-> and `bench/rdenom-always`; removing the `moby-2to1-{always,divlist,head4,
-> premerge,scalarref}` worktrees; and the campaign-matrix re-run
-> (`submit_matrix4.sh`, 4 nodes) that §5 asks for before any ratio in
-> `results_horeka_2026-09-25.md` is quoted again.
+> **DONE at the user's instruction (2026-09-25):** the `main` fast-forward and
+> the branch push; `origin/multiGPU` and `origin/claude/blocks` deleted;
+> `bench/rdenom-always` deleted (its one-line content is recorded in
+> `results_horeka_2026-09-25.md`, which is the campaign it was the control for);
+> the `moby-2to1-{always,divlist,head4,premerge,scalarref}` worktrees removed.
+>
+> **STILL OPEN:** the campaign-matrix re-run (`submit_matrix4.sh`, 4 nodes) that
+> §5 asks for before any ratio in `results_horeka_2026-09-25.md` is quoted
+> again. Note that re-running the merge gate now needs its two reference
+> worktrees recreated: `git worktree add --detach <dir> f0a8fe0` and
+> `... origin/scalar`.
 
 Written 2026-09-25 at `c876c75`, from the session that finished the divergence
 and `rdenom` optimisation campaign. **Everything below is measured, not
