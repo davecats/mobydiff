@@ -1203,8 +1203,32 @@ immersed boundary. Phased, each phase verified before the next:
   1.036/1.053/1.038/1.010/1.033) -- the blocked single-level case now costs
   essentially nothing at every rank count; strong scaling at 16 ranks base 80%,
   rect 80, refined 59, redblack 52, big 88; the 2:1 machinery 1.001x
-  coarse-cell-equivalents at 4 ranks and 0.879x at 16. STILL OWED: this matrix
-  predates the `rdenom` work and the rough-wall benchmark, so one more pass.
+  coarse-cell-equivalents at 4 ranks and 0.879x at 16.
+  **THAT PASS IS DONE (2026-09-25, job 5159149, `results_horeka_2026-09-25.md`):
+  three columns, six configs (rough_jacobi joins run_matrix.sh), 79 runs.**
+  The rdenom work is worth **+3.0 to +3.5%** on body-free cases and **+1.9 to
+  +2.8%** on the rough-wall body case, **essentially FLAT in rank count**. Its
+  CONTROL column (`ref -> mid` = HEAD with the narrowing disabled) earned its
+  place: it is **not zero but a systematic -0.4 to -0.6%** on every config that
+  calls `compute_rdenom`, and **exactly 0.0 on red-black, which does not call
+  it** -- so the roughness feature is dormant as claimed AND the `rdenomBlocks`
+  indirection costs ~0.5% while the kernel runs. Quote `ref -> new`, not
+  `mid -> new`, which that 0.5% flatters. The indirection is not a residual to
+  fix: on a body-free rank in HEAD the list is empty and the kernel never runs.
+  `rough_jacobi` classifies **exactly 25% body blocks at every rank count** and
+  its gain tracks the pre-registered `1 - (body/all)` model to three decimals at
+  2 and 4 ranks (ratio 0.739/0.750), drifting to 0.51 at 16 -- **do not
+  extrapolate the model to 16 ranks**. The roughness itself costs **+6.2 to
+  +6.9%** of the step against its body-free twin (more in HEAD than in `mid`
+  because the narrowing speeds the twin up more -- same overhead, smaller
+  denominator). **METHOD CORRECTION to the 09-23 claim that "16-rank differences
+  below ~3 points are not resolvable": that is true of ONE pair across TWO
+  allocations. A pattern consistent across configs and rank counts INSIDE one
+  allocation resolves well under 1% -- the control above pins 0.5%.** LANDMINE
+  designed around: `config.f90` has NO `case default`, so an unknown key in a
+  known section is SILENTLY IGNORED -- a pre-`7b2bc2a` binary runs
+  `rough_jacobi` with `wall_shape` discarded, falls back to the 2D wavy wall and
+  reports success, so the old column must be gated with `CONFIGS`.
   NOT ATTEMPTED, and the only idea left here: a reduced round for RED-BLACK
   itself. `redblack_sweep` iterates `0..hi`, sweeping the lower halo layer
   redundantly, so a cell at `i=0` reads the low halo plane of ALL THREE
