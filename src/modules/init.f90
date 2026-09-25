@@ -161,7 +161,7 @@ module init
         ! smooth-step random walk; nmodes the spanwise Fourier modes; seed the
         ! deterministic RNG seed.
         real(C_DOUBLE) :: trip_x0 = 0.0d0, trip_lx = 4.0d0, trip_ly = 1.0d0
-        real(C_DOUBLE) :: trip_amp = 0.0d0, trip_ts = 4.0d0
+        real(C_DOUBLE) :: trip_amp = 0.0d0, trip_amp_s = 0.0d0, trip_ts = 4.0d0
         integer(C_INT) :: trip_nmodes = 16_C_INT, trip_seed = 1_C_INT
         ! [rans] section (rans.f90). In the T1 increment the section's mere
         ! presence builds the SST geometry state (wall distance + IBM wall

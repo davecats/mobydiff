@@ -2,3 +2,10 @@
 restart_field.h5
 production_stats.h5
 assets/postpro/passivewall.hdf5
+
+# Run outputs regenerated from the .ini files (field snapshots, logs, grids).
+coldstart_*.h5
+production_*.h5
+production_p2_*.h5
+*_runtime.txt
+new_y*.npy

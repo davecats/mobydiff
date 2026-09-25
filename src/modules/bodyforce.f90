@@ -68,21 +68,28 @@ module bodyforce
         ! The force at each component's staggered face, interior cells only.
         real(C_DOUBLE), allocatable :: f(:,:,:,:,:)  ! (1:nb,1:nb,1:nb,NVEL,nBlocks)
 
-        ! Trip forcing (SRC_TRIP) state. The force acts on the wall-normal
-        ! (v) momentum:
-        !   f_v(x,y,z,t) = amp * exp(-((x-x0)/lx)^2 - (y/ly)^2) * g(z,t),
-        !   g(z,t) = (1-b(t)) g_k(z) + b(t) g_{k+1}(z),  b = 3p^2 - 2p^3,
-        !   p = t/ts - k,  k = floor(t/ts),
-        ! g_k(z) a unit-rms random spanwise function (nmodes Fourier modes,
-        ! period Lz), regenerated each ts; b(t) is the C^1 smooth step that
-        ! makes the forcing continuous in time (Schlatter & Orlu 2012).
+        ! Trip forcing (SRC_TRIP) state -- an EXACT port of the CaNS/SIMSON trip
+        ! (cans_js/src/trip.f90; the AMPHIBIOUS "CaNS-exact trip" port). The force
+        ! acts on the wall-normal (v) momentum:
+        !   f_v(x,y,z,t) = exp(-((x-x0)/lx)^2 - (y/ly)^2) * g(z,t),
+        !   g(z,t) = (amp_s/nmodes) g_s(z)
+        !          + (amp_t/nmodes) [ (1-b(t)) g_k(z) + b(t) g_{k+1}(z) ],
+        !   g(z) = sqrt(2) cos(phi_0) + sum_{m=1}^{nmodes/2} 2 cos(2 pi m z/Lz + phi_m),
+        !   b = p^2 (3-2p),  p = t/ts - k,  k = floor(t/ts).
+        ! The spanwise signal is a CaNS-flat Fourier series (mode 0 + nmodes/2
+        ! non-zero harmonics, each with fixed amplitude and a random phase), scaled
+        ! by amp/nmodes and NOT unit-rms normalized -- so its spanwise rms is
+        ! sqrt(nmodes) and the effective forcing amplitude is amp/sqrt(nmodes).
+        ! (This is why CaNS amp=0.18854 with nmodes=16 gives an effective 0.047.)
+        ! g_k is redrawn every ts; b(t) is the C^1 smooth step (Schlatter & Orlu 2012).
         real(C_DOUBLE) :: trip_x0 = 0.0d0, trip_lx = 4.0d0, trip_ly = 1.0d0
-        real(C_DOUBLE) :: trip_amp = 0.0d0, trip_ts = 4.0d0, trip_lz = 0.0d0
+        real(C_DOUBLE) :: trip_amp = 0.0d0, trip_amp_s = 0.0d0, trip_ts = 4.0d0, trip_lz = 0.0d0
         integer(C_INT) :: trip_nmodes = 16_C_INT, trip_seed = 1_C_INT
+        integer(C_INT) :: trip_nharm = 0_C_INT        ! nmodes/2 non-zero harmonics
         integer(C_INT) :: trip_kindex = -1_C_INT
-        ! Spanwise Fourier coefficients of g_k (…ak/…bk) and g_{k+1} (…akp1/…bkp1).
-        real(C_DOUBLE), allocatable :: trip_ak(:), trip_bk(:)
-        real(C_DOUBLE), allocatable :: trip_akp1(:), trip_bkp1(:)
+        ! Random spanwise PHASES: index 1 = CaNS mode 0, 2..nharm+1 = harmonics.
+        ! _s = steady realisation, _old/_new = the two temporal realisations.
+        real(C_DOUBLE), allocatable :: trip_phase_s(:), trip_phase_old(:), trip_phase_new(:)
         ! The blocks whose cells can carry a non-zero trip force, listed once
         ! at init. The envelope is a small ellipse -- the kernel's own
         ! ex < -50 test cuts it at |x-x0| < lx*sqrt(50), |y| < ly*sqrt(50),
@@ -94,15 +101,15 @@ module bodyforce
         ! (4.4-5.5 % of the step at 16 ranks, measured).
         integer(C_INT), allocatable :: trip_blocks(:)
         integer(C_INT) :: n_trip_blocks = 0_C_INT
-        ! The spanwise functions g_k(z) and g_{k+1}(z), tabulated per
-        ! (k, listed block). They are the nmodes-term Fourier sums the field
-        ! kernel used to evaluate PER CELL -- 2*nmodes transcendentals each --
-        ! although they depend on z alone. Worse, they only change when the
+        ! The spanwise signals g_s(z), g_k(z) and g_{k+1}(z), tabulated per
+        ! (k, listed block). They are the nharm-term Fourier sums the field
+        ! kernel used to evaluate PER CELL -- 3*(nharm+1) transcendentals each
+        ! -- although they depend on z alone. Worse, they only change when the
         ! random walk advances, once per trip_ts (hundreds of steps), so they
         ! are refreshed then and not per substage. The per-cell blend
         ! (1-b)g_k + b g_{k+1} still happens in the field kernel, because b(t)
         ! does change every substage.
-        real(C_DOUBLE), allocatable :: trip_g(:,:), trip_gp1(:,:)  ! (nz, n_trip_blocks)
+        real(C_DOUBLE), allocatable :: trip_gs(:,:), trip_g(:,:), trip_gp1(:,:)  ! (nz, n_trip_blocks)
         logical(C_BOOL) :: trip_span_valid = .false.
     end type bodyforce_type
 
@@ -175,6 +182,7 @@ contains
         bf%trip_lx     = dns%trip_lx
         bf%trip_ly     = dns%trip_ly
         bf%trip_amp    = dns%trip_amp
+        bf%trip_amp_s  = dns%trip_amp_s
         bf%trip_ts     = dns%trip_ts
         bf%trip_nmodes = dns%trip_nmodes
         bf%trip_seed   = dns%trip_seed
@@ -183,10 +191,13 @@ contains
         if (bf%trip_ts <= 0.0d0) error stop "[force] trip_ts must be > 0"
         if (bf%trip_lx <= 0.0d0 .or. bf%trip_ly <= 0.0d0) &
             error stop "[force] trip_lx and trip_ly must be > 0"
-        if (bf%trip_nmodes < 1_C_INT) error stop "[force] trip_nmodes must be >= 1"
+        ! CaNS uses nmodes/2 non-zero harmonics, so nmodes must be even and >= 2.
+        if (bf%trip_nmodes < 2_C_INT .or. modulo(bf%trip_nmodes, 2_C_INT) /= 0_C_INT) &
+            error stop "[force] trip_nmodes must be even and >= 2 (CaNS uses nmodes/2 harmonics)"
+        bf%trip_nharm = bf%trip_nmodes/2_C_INT
 
-        n = int(bf%trip_nmodes)
-        allocate(bf%trip_ak(n), bf%trip_bk(n), bf%trip_akp1(n), bf%trip_bkp1(n))
+        n = int(bf%trip_nharm) + 1        ! phase index 1 = mode 0, 2..nharm+1 = harmonics
+        allocate(bf%trip_phase_s(n), bf%trip_phase_old(n), bf%trip_phase_new(n))
 
         ! Deterministic seed so a run is reproducible and rank-independent
         ! (the trip is a global spanwise function evaluated identically on
@@ -197,16 +208,18 @@ contains
         call random_seed(put=seed)
         deallocate(seed)
 
-        ! Prime the walk: g_k for k = 0 and g_{k+1} for k = 1.
-        call trip_gen_coeffs(bf%trip_ak,   bf%trip_bk)
-        call trip_gen_coeffs(bf%trip_akp1, bf%trip_bkp1)
+        ! Reproduce the CaNS init RNG consumption order: steady realisation first
+        ! (drawn even when amp_s = 0), then the temporal states at k = 0 and k = 1.
+        call trip_gen_phases(bf%trip_phase_s)
+        call trip_gen_phases(bf%trip_phase_old)
+        call trip_gen_phases(bf%trip_phase_new)
         bf%trip_kindex = 0_C_INT
 
         call select_trip_blocks(bf, blk)
 
-        if (c_has_terminal) print '(a,es10.3,a,es10.3,a,es10.3,a,i0,a,i0,a,i0)', &
-            " trip forcing: amp=", bf%trip_amp, " x0=", bf%trip_x0, &
-            " ts=", bf%trip_ts, " nmodes=", bf%trip_nmodes, &
+        if (c_has_terminal) print '(a,es10.3,a,es10.3,a,es10.3,a,i0,a,i0,a,i0,a,i0)', &
+            " trip forcing (CaNS-exact): amp=", bf%trip_amp, " x0=", bf%trip_x0, &
+            " ts=", bf%trip_ts, " nmodes=", bf%trip_nmodes, " harmonics=", bf%trip_nharm, &
             " active blocks=", bf%n_trip_blocks, "/", blk%nBlocks
     end subroutine init_trip
 
@@ -239,39 +252,29 @@ contains
             end if
         end do
         bf%n_trip_blocks = n
-        if (n > 0_C_INT) allocate(bf%trip_g(blk%nb(3), n), bf%trip_gp1(blk%nb(3), n))
+        if (n > 0_C_INT) allocate(bf%trip_gs(blk%nb(3), n), &
+            bf%trip_g(blk%nb(3), n), bf%trip_gp1(blk%nb(3), n))
         bf%trip_span_valid = .false.
     end subroutine select_trip_blocks
 
-    ! Draw a unit-rms random spanwise function: nmodes Fourier coefficients
-    ! uniform in [-1,1], then normalized so var(g) = sum(a^2+b^2)/2 = 1.
-    subroutine trip_gen_coeffs(a, b)
-        real(C_DOUBLE), intent(out) :: a(:), b(:)
-        real(C_DOUBLE) :: r, s
-        integer :: n
-
-        call random_number(a); a = 2.0d0*a - 1.0d0
-        call random_number(b); b = 2.0d0*b - 1.0d0
-        s = 0.0d0
-        do n = 1, size(a)
-            s = s + a(n)*a(n) + b(n)*b(n)
-        end do
-        s = sqrt(0.5d0*s)
-        if (s > 0.0d0) then
-            r = 1.0d0/s
-            a = a*r
-            b = b*r
-        end if
-    end subroutine trip_gen_coeffs
+    ! Draw the CaNS random spanwise phases: nharm+1 values (mode 0 + harmonics)
+    ! uniform in [0, 2*pi]. The CaNS signal amplitudes are fixed (sqrt(2) for mode
+    ! zero, 2 per harmonic); only the phase is random, so there is no unit-rms
+    ! normalization (unlike the pre-port implementation).
+    subroutine trip_gen_phases(phase)
+        real(C_DOUBLE), intent(out) :: phase(:)
+        call random_number(phase)
+        phase = 8.0d0*atan(1.0d0)*phase        ! [0, 2*pi]
+    end subroutine trip_gen_phases
 
     subroutine destroy_bodyforce(bf)
         type(bodyforce_type), intent(inout) :: bf
 
         if (allocated(bf%f)) deallocate(bf%f)
-        if (allocated(bf%trip_ak)) deallocate(bf%trip_ak, bf%trip_bk, &
-            bf%trip_akp1, bf%trip_bkp1)
+        if (allocated(bf%trip_phase_s)) deallocate(bf%trip_phase_s, &
+            bf%trip_phase_old, bf%trip_phase_new)
         if (allocated(bf%trip_blocks)) deallocate(bf%trip_blocks)
-        if (allocated(bf%trip_g)) deallocate(bf%trip_g, bf%trip_gp1)
+        if (allocated(bf%trip_gs)) deallocate(bf%trip_gs, bf%trip_g, bf%trip_gp1)
         bf%n_trip_blocks = 0_C_INT
         bf%trip_span_valid = .false.
         bf%trip_kindex = -1_C_INT
@@ -287,8 +290,8 @@ contains
         if (allocated(bf%trip_blocks)) then
             !$omp target enter data map(to: bf%trip_blocks)
         end if
-        if (allocated(bf%trip_g)) then
-            !$omp target enter data map(to: bf%trip_g, bf%trip_gp1)
+        if (allocated(bf%trip_gs)) then
+            !$omp target enter data map(to: bf%trip_gs, bf%trip_g, bf%trip_gp1)
         end if
     end subroutine enter_bodyforce_data
 
@@ -297,8 +300,8 @@ contains
 
         if (.not. allocated(bf%f)) return
 
-        if (allocated(bf%trip_g)) then
-            !$omp target exit data map(delete: bf%trip_g, bf%trip_gp1)
+        if (allocated(bf%trip_gs)) then
+            !$omp target exit data map(delete: bf%trip_gs, bf%trip_g, bf%trip_gp1)
         end if
         if (allocated(bf%trip_blocks)) then
             !$omp target exit data map(delete: bf%trip_blocks)
@@ -406,14 +409,14 @@ contains
         call bodyforce_update_to_device(bf)
     end subroutine update_bodyforce
 
-    ! Schlatter & Orlu trip force on the wall-normal (v) component at time t:
-    !   f_v = amp * exp(-((x-x0)/lx)^2 - (y/ly)^2) * g(z,t).
-    ! The random walk (regenerating the nmodes spanwise coefficients each ts)
-    ! is advanced on the HOST -- cheap and rare (once per ts ~ hundreds of
-    ! steps) -- and the FIELD is filled by a device kernel (fill_trip_kernel):
-    ! only the small coefficient arrays cross to the device, not the whole
-    ! force field every substage. No host-side full-field loop, no H2D copy of
-    ! f. The arithmetic matches the old host fill exactly (CPU bit-exact).
+    ! CaNS/SIMSON trip force on the wall-normal (v) component at time t:
+    !   f_v = exp(-((x-x0)/lx)^2 - (y/ly)^2) * g(z,t)  (see the type comment).
+    ! The random walk (redrawing the spanwise phases each ts) is advanced on
+    ! the HOST -- cheap and rare (once per ts ~ hundreds of steps) -- and the
+    ! FIELD is filled by a device kernel (fill_trip_kernel): nothing but a few
+    ! scalars crosses to the device, not the whole force field every substage.
+    ! No host-side full-field loop, no H2D copy of f. The spanwise signals are
+    ! tabulated once per redraw (fill_trip_span), since they depend on z alone.
     subroutine fill_trip(bf, blk, t)
         type(bodyforce_type), intent(inout) :: bf
         type(block_set_type), intent(in) :: blk
@@ -426,13 +429,12 @@ contains
         kidx = int(floor(t/bf%trip_ts), C_INT)
         kbefore = bf%trip_kindex
         do while (bf%trip_kindex < kidx)
-            bf%trip_ak = bf%trip_akp1
-            bf%trip_bk = bf%trip_bkp1
-            call trip_gen_coeffs(bf%trip_akp1, bf%trip_bkp1)
+            bf%trip_phase_old = bf%trip_phase_new
+            call trip_gen_phases(bf%trip_phase_new)
             bf%trip_kindex = bf%trip_kindex + 1_C_INT
         end do
 
-        ! The spanwise sums depend only on the coefficients just (re)drawn, so
+        ! The spanwise signals depend only on the phases just (re)drawn, so
         ! they are retabulated here and not once per substage.
         if (bf%trip_kindex /= kbefore .or. .not. bf%trip_span_valid) then
             call fill_trip_span(bf, blk)
@@ -445,42 +447,49 @@ contains
         call fill_trip_kernel(bf, blk, bstep)
     end subroutine fill_trip
 
-    ! Tabulate g_k(z) and g_{k+1}(z) over the listed blocks' z lines. The sums
-    ! are formed in the same order, from the same coefficients, as the per-cell
-    ! version they replace, so the field they produce is bit-identical.
+    ! Tabulate the CaNS spanwise signals g_s(z), g_k(z) and g_{k+1}(z) over the
+    ! listed blocks' z lines. The sums are formed in the same order, from the
+    ! same phases, as the per-cell version they replace, so the field they
+    ! produce is bit-identical.
     subroutine fill_trip_span(bf, blk)
         type(bodyforce_type), intent(inout) :: bf
         type(block_set_type), intent(in) :: blk
 
-        integer :: k, b, bb, m, nz, nTrip, nm
-        real(C_DOUBLE) :: z, arg, w, gk, gkp1
+        integer :: k, b, bb, m, nz, nTrip, nharm
+        real(C_DOUBLE) :: z, arg, w, gs, gold, gnew, root2
 
         nTrip = int(bf%n_trip_blocks)
         if (nTrip == 0) return
         nz = int(blk%nb(3))
-        nm = int(bf%trip_nmodes)
+        nharm = int(bf%trip_nharm)
         w = 8.0d0*atan(1.0d0)/bf%trip_lz         ! 2*pi/Lz
+        root2 = sqrt(2.0d0)
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do collapse(2) &
-        !$omp& map(to: w, nm, nz, nTrip, blk%z, bf%trip_blocks, &
-        !$omp& bf%trip_ak(1:nm), bf%trip_bk(1:nm), &
-        !$omp& bf%trip_akp1(1:nm), bf%trip_bkp1(1:nm)) &
-        !$omp& map(to: bf%trip_g, bf%trip_gp1) &
-        !$omp& private(k,b,bb,m,z,arg,gk,gkp1)
+        !$omp& map(to: w, root2, nharm, nz, nTrip, blk%z, bf%trip_blocks, &
+        !$omp& bf%trip_phase_s(1:nharm+1), bf%trip_phase_old(1:nharm+1), &
+        !$omp& bf%trip_phase_new(1:nharm+1)) &
+        !$omp& map(to: bf%trip_gs, bf%trip_g, bf%trip_gp1) &
+        !$omp& private(k,b,bb,m,z,arg,gs,gold,gnew)
 #endif
         do bb = 1, nTrip
             do k = 1, nz
                 b = int(bf%trip_blocks(bb))
                 z = blk%z(k, VAR_V, b)
-                gk = 0.0d0; gkp1 = 0.0d0
-                do m = 1, nm
+                ! CaNS mode 0 (spanwise-uniform) + nharm harmonics.
+                gs   = root2*cos(bf%trip_phase_s(1))
+                gold = root2*cos(bf%trip_phase_old(1))
+                gnew = root2*cos(bf%trip_phase_new(1))
+                do m = 1, nharm
                     arg = w*real(m, C_DOUBLE)*z
-                    gk   = gk   + bf%trip_ak(m)  *cos(arg) + bf%trip_bk(m)  *sin(arg)
-                    gkp1 = gkp1 + bf%trip_akp1(m)*cos(arg) + bf%trip_bkp1(m)*sin(arg)
+                    gs   = gs   + 2.0d0*cos(arg + bf%trip_phase_s(m+1))
+                    gold = gold + 2.0d0*cos(arg + bf%trip_phase_old(m+1))
+                    gnew = gnew + 2.0d0*cos(arg + bf%trip_phase_new(m+1))
                 end do
-                bf%trip_g(k,bb)   = gk
-                bf%trip_gp1(k,bb) = gkp1
+                bf%trip_gs(k,bb)  = gs
+                bf%trip_g(k,bb)   = gold
+                bf%trip_gp1(k,bb) = gnew
             end do
         end do
 #ifdef USE_OPENMP_OFFLOAD
@@ -488,10 +497,11 @@ contains
 #endif
     end subroutine fill_trip_span
 
-    ! Device kernel: fill bf%f's v-component from the (small) coefficient
-    ! arrays, evaluating the Gaussian envelope and the spanwise Fourier sum
-    ! per cell. bf%f and blk%{x,y,z} are already device-resident; only the
-    ! coefficients + scalars cross. On the CPU build this is a plain loop.
+    ! Device kernel: fill bf%f's v-component from the tabulated spanwise
+    ! signals, evaluating the Gaussian envelope per cell. bf%f and blk%{x,y} are
+    ! already device-resident; only the scalars cross. On the CPU build this is
+    ! a plain loop.
+    !   f_v = env * [ (amp_s/nmodes) g_s + (amp_t/nmodes)((1-b) g_old + b g_new) ]
     !
     ! It runs over the LISTED blocks only (see trip_blocks), and writes the v
     ! component only: f_u and f_w are zero for a trip and were already zero from
@@ -505,18 +515,21 @@ contains
 
         integer :: i, j, k, b, bb, nx, ny, nz, nTrip
         real(C_DOUBLE) :: x, y, ex, env
-        real(C_DOUBLE) :: amp, x0, lx, ly
+        real(C_DOUBLE) :: amps, ampt, x0, lx, ly
 
         nTrip = int(bf%n_trip_blocks)
         if (nTrip == 0) return
 
         nx = int(blk%nb(1)); ny = int(blk%nb(2)); nz = int(blk%nb(3))
-        amp = bf%trip_amp; x0 = bf%trip_x0; lx = bf%trip_lx; ly = bf%trip_ly
+        ! CaNS scaling: divide the (non-normalized) signal by nmodes = 2*nharm.
+        ampt = bf%trip_amp  /real(bf%trip_nmodes, C_DOUBLE)
+        amps = bf%trip_amp_s/real(bf%trip_nmodes, C_DOUBLE)
+        x0 = bf%trip_x0; lx = bf%trip_lx; ly = bf%trip_ly
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do collapse(4) &
-        !$omp& map(to: bstep, amp, x0, lx, ly, nx, ny, nz, nTrip, &
-        !$omp& blk%x, blk%y, bf%trip_blocks, bf%trip_g, bf%trip_gp1) &
+        !$omp& map(to: bstep, ampt, amps, x0, lx, ly, nx, ny, nz, nTrip, &
+        !$omp& blk%x, blk%y, bf%trip_blocks, bf%trip_gs, bf%trip_g, bf%trip_gp1) &
         !$omp& map(to: bf%f) &
         !$omp& private(i,j,k,b,bb,x,y,ex,env)
 #endif
@@ -526,7 +539,7 @@ contains
                 do i = 1, nx
                     b = int(bf%trip_blocks(bb))
                     ! v (VAR_V) lives at blk%{x,y}(:,VAR_V,b); the z dependence
-                    ! is entirely in the tabulated spanwise functions.
+                    ! is entirely in the tabulated spanwise signals.
                     x = blk%x(i, VAR_V, b)
                     y = blk%y(j, VAR_V, b)
                     ex = -((x - x0)/lx)**2 - (y/ly)**2
@@ -534,8 +547,9 @@ contains
                         bf%f(i,j,k,VAR_V,b) = 0.0d0
                     else
                         env = exp(ex)
-                        bf%f(i,j,k,VAR_V,b) = amp*env* &
-                            ((1.0d0 - bstep)*bf%trip_g(k,bb) + bstep*bf%trip_gp1(k,bb))
+                        bf%f(i,j,k,VAR_V,b) = env* &
+                            (amps*bf%trip_gs(k,bb) + ampt*((1.0d0 - bstep)*bf%trip_g(k,bb) &
+                            + bstep*bf%trip_gp1(k,bb)))
                     end if
                 end do
             end do
