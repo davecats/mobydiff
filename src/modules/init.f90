@@ -205,6 +205,17 @@ module init
         ! fine cells -- the C10 blow-up). k_inf/omega_inf from [rans] tu /
         ! nut_ratio and |initial_velocity| (must be nonzero when enabled).
         logical(C_BOOL) :: rans_ambient_sustain = .false.
+        ! [rans] kpin_box / ktrip_box: OpenFOAM-matching forced-transition
+        ! devices (their fvOptions scalarFixedValueConstraint +
+        ! scalarSemiImplicitSource). Each kpin_box (x0 x1 y0 y1 z0 z1)
+        ! pins k = 0 in its cells every substage (forced-laminar zone);
+        ! each ktrip_box (x0 x1 y0 y1 z0 z1 rate) adds the constant
+        ! volumetric source rate [k/time] to FLUID cells (trip strip).
+        ! No boxes configured => the transport arithmetic is untouched.
+        integer(C_INT) :: rans_n_kpin = 0_C_INT
+        integer(C_INT) :: rans_n_ktrip = 0_C_INT
+        real(C_DOUBLE) :: rans_kpin_box(6, 8) = 0.0d0
+        real(C_DOUBLE) :: rans_ktrip_box(7, 8) = 0.0d0
         ! Passive scalars ([scalar] / [scalar.N], scalar.f90). Only the two
         ! counts live here -- everything per-scalar lives in scalar_type, so
         ! dns_type stays a fixed-size value type with no scalar-count bound.

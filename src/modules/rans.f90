@@ -220,6 +220,14 @@ module rans
         ! state is a fixed point for any F1). Rumsey AIAA-2007-nnnn idiom.
         real(C_DOUBLE) :: ambKW = 0.0d0
         real(C_DOUBLE) :: ambW2 = 0.0d0
+        ! [rans] kpin_box / ktrip_box cell markers, built once at transport
+        ! init from cell centres (full interior arrays only when boxes are
+        ! configured, 1-cell dummies otherwise -- the gam/ret idiom; every
+        ! access is flag-guarded so no boxes => untouched arithmetic).
+        logical :: has_kpin = .false.
+        logical :: has_ktrip = .false.
+        integer(C_SIGNED_CHAR), allocatable :: kfix(:,:,:,:)     ! (1:nb,...,nBlocks)
+        real(C_DOUBLE), allocatable :: ktriprate(:,:,:,:)        ! (1:nb,...,nBlocks)
         real(C_DOUBLE), allocatable :: k(:,:,:,:), omg(:,:,:,:)      ! (0:nb+1,...)
         real(C_DOUBLE), allocatable :: ks(:,:,:,:), omgs(:,:,:,:)    ! substage scratch
         real(C_DOUBLE), allocatable :: koldrhs(:,:,:,:), omgoldrhs(:,:,:,:)
@@ -346,6 +354,7 @@ contains
         if (allocated(sst%k)) deallocate(sst%k, sst%omg, sst%ks, sst%omgs, &
             sst%koldrhs, sst%omgoldrhs, sst%domwall, sst%wnorm, &
             sst%gam, sst%ret, sst%gams, sst%rets, sst%gamoldrhs, sst%retoldrhs)
+        if (allocated(sst%kfix)) deallocate(sst%kfix, sst%ktriprate)
         sst%geometry_built = .false.
         sst%transport_built = .false.
     end subroutine destroy_rans_geometry
@@ -363,6 +372,9 @@ contains
             !$omp target enter data map(to: sst%gam, sst%ret, sst%gams, sst%rets)
             !$omp target enter data map(to: sst%gamoldrhs, sst%retoldrhs)
         end if
+        if (allocated(sst%kfix)) then
+            !$omp target enter data map(to: sst%kfix, sst%ktriprate)
+        end if
     end subroutine enter_rans_data
 
     subroutine exit_rans_data(sst)
@@ -370,6 +382,9 @@ contains
 
         if (.not. allocated(sst%dwall)) return
 
+        if (allocated(sst%kfix)) then
+            !$omp target exit data map(delete: sst%kfix, sst%ktriprate)
+        end if
         if (allocated(sst%k)) then
             !$omp target exit data map(delete: sst%gamoldrhs, sst%retoldrhs)
             !$omp target exit data map(delete: sst%gam, sst%ret, sst%gams, sst%rets)
@@ -864,6 +879,62 @@ contains
             end if
         end if
 
+        ! [rans] kpin_box / ktrip_box rasterization at cell centres. The
+        ! trip rate lands in FLUID cells only (the OF trip seeds the
+        ! near-wall BL; sourcing k in solid/wall-marker cells would fight
+        ! their constraints). Pinned cells zero k here too, so the IC /
+        ! restart state enters the first substage already constrained.
+        if (dns%rans_n_kpin > 0 .or. dns%rans_n_ktrip > 0) then
+            allocate(sst%kfix(nx,ny,nz,blk%nBlocks))
+            allocate(sst%ktriprate(nx,ny,nz,blk%nBlocks))
+            sst%kfix = 0_C_SIGNED_CHAR
+            sst%ktriprate = 0.0d0
+            block
+                integer :: nb_
+                real(C_DOUBLE) :: xc, yc, zc, npin, ntrip
+                npin = 0.0d0; ntrip = 0.0d0
+                do b = 1, int(blk%nBlocks)
+                do k = 1, nz
+                    do j = 1, ny
+                        do i = 1, nx
+                            xc = blk%x(i, VAR_P, b)
+                            yc = blk%y(j, VAR_P, b)
+                            zc = blk%z(k, VAR_P, b)
+                            do nb_ = 1, int(dns%rans_n_kpin)
+                                if (xc >= dns%rans_kpin_box(1,nb_) .and. xc <= dns%rans_kpin_box(2,nb_) .and. &
+                                    yc >= dns%rans_kpin_box(3,nb_) .and. yc <= dns%rans_kpin_box(4,nb_) .and. &
+                                    zc >= dns%rans_kpin_box(5,nb_) .and. zc <= dns%rans_kpin_box(6,nb_)) then
+                                    sst%kfix(i,j,k,b) = 1_C_SIGNED_CHAR
+                                    sst%k(i,j,k,b) = 0.0d0
+                                    npin = npin + 1.0d0
+                                end if
+                            end do
+                            if (sst%wallcell(i,j,k,b) /= WALL_CELL_FLUID) cycle
+                            do nb_ = 1, int(dns%rans_n_ktrip)
+                                if (xc >= dns%rans_ktrip_box(1,nb_) .and. xc <= dns%rans_ktrip_box(2,nb_) .and. &
+                                    yc >= dns%rans_ktrip_box(3,nb_) .and. yc <= dns%rans_ktrip_box(4,nb_) .and. &
+                                    zc >= dns%rans_ktrip_box(5,nb_) .and. zc <= dns%rans_ktrip_box(6,nb_)) then
+                                    sst%ktriprate(i,j,k,b) = sst%ktriprate(i,j,k,b) &
+                                        + dns%rans_ktrip_box(7,nb_)
+                                    ntrip = ntrip + 1.0d0
+                                end if
+                            end do
+                        end do
+                    end do
+                end do
+                end do
+                sst%has_kpin = dns%rans_n_kpin > 0
+                sst%has_ktrip = dns%rans_n_ktrip > 0
+                if (has_terminal) print '(a,i0,a,i0,a)', &
+                    " [rans] k constraint boxes: ", int(npin), " pinned cells, ", &
+                    int(ntrip), " trip cells (this rank)"
+            end block
+        else
+            allocate(sst%kfix(1,1,1,1), sst%ktriprate(1,1,1,1))
+            sst%kfix = 0_C_SIGNED_CHAR
+            sst%ktriprate = 0.0d0
+        end if
+
         call set_constrained_cells_host(sst, dns, blk)
         sst%ks = sst%k
         sst%omgs = sst%omg
@@ -1200,7 +1271,7 @@ contains
 
         integer :: i, j, k, b, nx, ny, nz, nBlocks
         real(C_DOUBLE) :: nu
-        logical :: wallfn
+        logical :: wallfn, haskpin
 
         nx = int(blk%nb(1))
         ny = int(blk%nb(2))
@@ -1208,15 +1279,19 @@ contains
         nBlocks = int(blk%nBlocks)
         nu = 1.0d0/dns%re
         wallfn = dns%rans_wall_treatment == 1_C_INT
+        haskpin = sst%has_kpin
 
         !$omp target teams distribute parallel do collapse(4) &
-        !$omp& map(to: nu, wallfn, sst%wallcell, sst%domwall, sst%yeff) &
+        !$omp& map(to: nu, wallfn, haskpin, sst%wallcell, sst%domwall, sst%yeff, sst%kfix) &
         !$omp& map(tofrom: sst%k, sst%omg) &
         !$omp& private(i,j,k,b)
         do b = 1, nBlocks
         do k = 1, nz
             do j = 1, ny
                 do i = 1, nx
+                    if (haskpin) then
+                        if (sst%kfix(i,j,k,b) /= 0_C_SIGNED_CHAR) sst%k(i,j,k,b) = 0.0d0
+                    end if
                     if (sst%wallcell(i,j,k,b) == WALL_CELL_SOLID) sst%k(i,j,k,b) = 0.0d0
                     if (sst%wallcell(i,j,k,b) /= WALL_CELL_FLUID .or. &
                         sst%domwall(i,j,k,b) /= 0_C_SIGNED_CHAR) then
@@ -1563,7 +1638,7 @@ contains
         real(C_DOUBLE) :: diag_r, rhsg, rhsr, gnew, rnew, gameff, dkfac
         real(C_DOUBLE) :: cdes_delta
         logical :: solw, sole, sols, soln, solb, solt
-        logical :: iddes, iddesclip
+        logical :: iddes, iddesclip, haskpin, hasktrip
 
         nx = int(blk%nb(1))
         ny = int(blk%nb(2))
@@ -1579,10 +1654,12 @@ contains
         iddes = turb%model == TURB_IDDES
         iddesclip = .false.
         if (iddes) iddesclip = logical(turb%iddes_clip)
+        haskpin = sst%has_kpin
+        hasktrip = sst%has_ktrip
 
         !$omp target teams distribute parallel do collapse(4) &
         !$omp& map(to: nu, dtsub, dt_alpha, dt_beta, solid_threshold, wallfn, transition, iddes, &
-        !$omp& iddesclip, ambKW, ambW2, &
+        !$omp& iddesclip, ambKW, ambW2, haskpin, hasktrip, sst%kfix, sst%ktriprate, &
         !$omp& sst%k, sst%omg, sst%gam, sst%ret, sst%yeff, sst%wallcell, sst%domwall, sst%wnorm, &
         !$omp& blk%q, blk%d1x, blk%d1y, blk%d1z, ibm%coef, &
         !$omp& turb%nut, turb%fd, turb%fe, turb%delta, &
@@ -2003,6 +2080,12 @@ contains
                         rhsk = rhsk + ambKW
                         rhsw = rhsw + beta_b*ambW2
                     end if
+                    if (hasktrip) then
+                        ! [rans] ktrip_box: constant volumetric k source
+                        ! (the OF scalarSemiImplicitSource trip strip);
+                        ! rate is 0 outside the boxes and in non-fluid cells.
+                        rhsk = rhsk + sst%ktriprate(i,j,k,b)
+                    end if
 
                     if (iddes) then
                         ! T5: the k-destruction length l_hyb = fd (1 + fe)
@@ -2026,6 +2109,14 @@ contains
                              /(1.0d0 + dtsub*SST_BETA_STAR*wv*dkfac)
                     end if
                     knew = max(knew, 0.0d0)
+                    if (haskpin) then
+                        ! [rans] kpin_box (the OF scalarFixedValueConstraint
+                        ! forced-laminar zone): the substage result is pinned
+                        ! HERE so neighbours, nut assembly and snapshots all
+                        ! see exactly 0 -- the pre-kernel pin alone would
+                        ! leave one substage of updated k visible.
+                        if (sst%kfix(i,j,k,b) /= 0_C_SIGNED_CHAR) knew = 0.0d0
+                    end if
                     sst%ks(i,j,k,b) = knew
                     sst%koldrhs(i,j,k,b) = rhsk
 
