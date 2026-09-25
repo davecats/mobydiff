@@ -66,11 +66,21 @@
 > is a strict ancestor as stated. The stray local `origin` branch of §7 no
 > longer exists.
 >
-> **DONE at the user's instruction (2026-09-25):** the `main` fast-forward and
-> the branch push; `origin/multiGPU` and `origin/claude/blocks` deleted;
-> `bench/rdenom-always` deleted (its one-line content is recorded in
-> `results_horeka_2026-09-25.md`, which is the campaign it was the control for);
-> the `moby-2to1-{always,divlist,head4,premerge,scalarref}` worktrees removed.
+> **DONE at the user's instruction (2026-09-25).** `main` fast-forwarded
+> `7aa1c7b -> 42ce737` and this branch pushed. `origin/multiGPU` deleted (a
+> strict ancestor, so nothing was lost) and `origin/claude/blocks` deleted --
+> but TAGGED FIRST as `archive/claude-blocks`, because unlike multiGPU it was
+> NOT contained (51 unique commits) and both this handout and the salvage commit
+> say "recover it from `claude/blocks` (4962b10)" about `validation/poiseuille`;
+> the tag keeps that a real instruction. `bench/rdenom-always` deleted, its
+> one-line content recorded first in `results_horeka_2026-09-25.md`, the
+> campaign it was the control for. The `moby-2to1-{always,divlist,head4,
+> premerge,scalarref}` worktrees removed.
+>
+> Branch map after: `main` == this branch; `boundaryLayer` and `scalar` still
+> exist and are now fully merged into `main` (deleting them was not asked for
+> and is now free); `claude/jacobi-interface` (43 commits, the six features) and
+> `assignment` (7 commits) remain unmerged.
 >
 > **STILL OPEN:** the campaign-matrix re-run (`submit_matrix4.sh`, 4 nodes) that
 > §5 asks for before any ratio in `results_horeka_2026-09-25.md` is quoted
