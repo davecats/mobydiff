@@ -136,9 +136,10 @@ with skew as the only path; update CLAUDE.md + this doc STATUS.
   (dip shallower, 0.005 vs 0.002: the staircase adds friction in the
   laminar zone; pressure-side staircase Cf spike ~0.016 at x/c 0.03);
   Cp peak -1.62 vs -1.78 and C_L -13 % PERSIST with transition matched
-  and wall resolution matched -> the LE staircase suction-peak
-  smearing is now ISOLATED as the dominant remaining lift-deficit
-  driver (the post-A3 smoothed-mask/Brinkman escalation is the lever).
+  and wall resolution matched -> the residual peak gap was later
+  shown to be 55 % EXTRACTION artifact (depth-converged Cp_min -1.763
+  vs OF -1.780, 1.0 % physical; see next_session_naca_re4e5.md
+  CORRECTED findings 2026-07-27).
 - WHEN GATE 6 LANDS (user note 2026-07-23): produce the standard
   visualisation of the developed interface-channel results (mean U /
   RMS profiles + interface-band cross-sections, plot_channel_stats.py
@@ -150,8 +151,19 @@ with skew as the only path; update CLAUDE.md + this doc STATUS.
   -<u'v'> peak +1.5 % vs uniform ref (div: +1.2 %), U+ core 18.38, and
   the const-1/2 core rms deficits are EQUAL OR SMALLER under skew
   (v' -9.5 % vs -10.9 %) — skew is marginally less dissipative.
-- PENDING: S2 gate 7 (LES/LES-IBM), gate 9 (polar spot-check);
-  S3 lockdown (flip default, remove toggle, update CLAUDE.md).
+- S2 gates 7 + 9 (2026-07-23): PASS. Gate 7 LES with skew: band
+  ratios u/v/w/nut 0.99-1.03 at face/edge/corner (the standing
+  0.98-1.03 class, no band); core LES/reference ratios reproduce the
+  documented WALE signature (U +0.7/+3.2 %, -<u'v'> within 1 %, the
+  u' +5 % / v' w' -10 % coarse-LES bias). Gate 9 production C11 aoa5:
+  skew 0.4439 +- 0.028 / 0.0127 vs div 0.4452 +- 0.026 / 0.0126
+  (flux-exact cv_forces) — inside the CV scatter.
+- S3 LOCKDOWN (2026-07-23): skew HARDWIRED (the kernel corrections are
+  unconditional; dns%conv_skew and the [flow] convection key removed —
+  a stale key now error-stops pointing here; divergence recoverable
+  from 57bd1e3^..lockdown). run_developed.py --skew retired. S3 suite:
+  toggle-binary-with-convection=skew refs vs lockdown binaries,
+  tolerance 0.
 - OPEN QUESTION (user, 2026-07-23): the remaining -13 % lift deficit vs
   OpenFOAM — geometry RULED OUT (both codes use the identical -0.1036
   closed-TE NACA0012; OF's NACA0012.obj matches to 6.6e-8); staircase
@@ -160,3 +172,26 @@ with skew as the only path; update CLAUDE.md + this doc STATUS.
   (OF's ambient is decayed/pinned). Discriminator ready to run: v1-skew
   restart with ambient sustain off / nut_ratio 1 for 1-2 chord times,
   watch Cp_min.
+
+## Ambient discriminator (2026-07-24, VERDICT: ambient nut is a REAL driver)
+
+v1-skew continued t = 20..23 with ambient_sustain OFF and the restart's
+freestream k rescaled so nut_amb = 1.09 nu (the OpenFOAM inlet level;
+6.1M cells), decaying further: C_L 0.449 -> 0.477 +- 0.013 (the -13 %
+deficit vs OF 0.5142 shrinks to -7 %), Cp_min -1.619 -> -1.695 (half
+the peak gap to OF -1.780 recovered) — the sustained nut = 10 nu on
+the OUTER/mid-chord loading region (NOT the peak: the v1 pin box had
+nut = 0 there already, the user's observation) suppresses ~half the
+lift discrepancy. EXTENSION to t = 26 (2026-07-25): the gap CLOSES. C_L
+0.493 (t 24.5) -> 0.502 (t 25.5) -> 0.506 +- 0.005 (t 26, increments
+halving -> asymptote ~0.51); Cp_min -1.744. vs OpenFOAM 0.5142 /
+-1.780: the lift agrees within ~1.6 % and the peak within 2 %. FINAL
+DEFICIT DECOMPOSITION for the aoa-5 benchmark: wall resolution (y+ 3-4
+-> 1.5-2) fixed the DRAG; the sustained ambient nut = 10 nu was
+essentially the ENTIRE lift gap (outer/mid-chord loading suppression);
+geometry, transition treatment, staircase, pressure iterations:
+measured out (the SST coefficients are IDENTICAL to OF's printed dict,
+c1 limiter and nut clip included; their run also has decayControl
+false). CAMPAIGN FIX: sustain at nut_ratio ~ 1 (tu 5 % kept for
+transition control; the dt bound relaxes) — rerun the polar with that
+before any wall-representation work.

@@ -264,8 +264,8 @@ program moby_solve
     ! Passive-scalar statistics ([scalar] stats_*/heat_*, scalar_stats.f90).
     ! A solver-level facility rather than a case component: the same
     ! statistics serve the channel, the boundary layer and body cases, and
-    ! the case after_step interface carries neither sc nor turb. Off by
-    ! default -- no accumulator is allocated and no kernel is called.
+    ! the case after_step interface does not carry sc. Off by default -- no
+    ! accumulator is allocated and no kernel is called.
     call scalar_stats_setup(sstats, sc, blk, dns, g, c)
     ! Every producer fills the same turb%nut; the consumer chain (exchange,
     ! dt limits) is model-agnostic.
@@ -421,7 +421,7 @@ program moby_solve
             call maybe_write_field(blk, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%omega, &
                 turb%nut, sst%k, sst%omg, sst%gam, sst%ret, turb%fd, scalar_names(sc), sc%vfrac)
         end if
-        call flow%after_step(blk, dns, g, c, ibm)
+        call flow%after_step(blk, dns, g, c, ibm, turb)
         ! Scalar profiles/rms/fluxes and the body heat release (no-op off).
         call scalar_stats_after_step(sstats, sc, blk, dns, turb, ibm, c)
         ! The conjugate cut-face error indicator (increment C2): what the
@@ -432,6 +432,9 @@ program moby_solve
                 call scalar_conjugate_indicator(sc, blk, c, dns%step_current)
         end if
         call prof_toc(step_prof, PROF_IO_STATS, prof_start)
+        ! A case may end the run early (airfoil: steady state reached). Leave
+        ! through the normal exit so the post-loop write_field saves the state.
+        if (flow%stop_requested) exit
 
     end do
     call stop_chron(loop_timer, loop_steps)

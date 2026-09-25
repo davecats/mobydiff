@@ -1,8 +1,71 @@
-# NACA 0012 Re 4e5 campaign — PAUSED 2026-07-16 (fan/interface observations + state)
+# NACA 0012 Re 4e5 campaign — COMPLETE 2026-07-21 (C10 sweep done; results below)
 
-Paused by user decision pending a simplification/improvement of the
-geometric preparation. Everything below is committed; no simulations or
-generations are running on any host.
+STATUS (2026-07-21): the campaign RESUMED on the prepare/solve-split code
+(moby_prepare built ibm_coeff_c10.h5 in 4m26s, 10615 leaves / 5.4M cells)
+and the FULL C10 sweep (alpha = -2..5, Re 4e5, SST + `[rans]
+ambient_sustain`, tu = 5 % / nut_ratio = 10, dt = 1e-4, 150k steps to
+t = 15 per angle) COMPLETED across istmcorax (5/4/3/2), istmcetus GPU1
+(1/-1) and the local 3060 (-2); aoa0 ran first as the verification.
+KEY FIX on resume: the original nut_ratio = 1000 ambient DESTROYED the
+first aoa0 (explicit eddy-diffusion dt bound ~1e-5 vs dt 5e-5; zombied at
+dt 1e-8) — the Rumsey ambient-sustain sources (commit 94a9249) make
+(k_inf, omega_inf) an exact fixed point so tu = 5 % arrives at the body
+(measured EXACTLY 5.00 % at 2c upstream) with nut_inf = 10 nu only.
+aoa0 gates ALL PASS: CV forces box-independent (C_D 0.01185/0.01187/
+0.01240 at 1.5/2.5/4c), C_L(0) = -0.0003, NO interface artifacts (the R1
+fan is GONE at the C10 interface distances; striping probe at distant
+interfaces at/below the quiet-band floor; band_filter stays OFF), only
+the surface-attached LE staircase jaggedness in Cf at x/c < 0.05 remains.
+RESULTS (tutorials/naca: polars_c10.png, polar_mobydiff.dat,
+cv_polar_raw.txt, cpcf_c10_aoa*_{cp,cf}.dat; XFOIL refs
+xfoil_re4e5_n{1,9}.dat — the Debian xfoil FPE-crashes on any second
+viscous point and on PACC: run ONE ALFA PER PROCESS and parse stdout):
+C_L antisymmetric to 0.3 % (+-2: 0.1804/-0.1810); slope 0.0884/deg = 81 %
+of 2pi (XFOIL n1: 0.108/deg); C_L(5) = 0.432+-0.022 vs XFOIL-n1 0.533
+(-19 %, deficit grows with alpha); C_D(0) = 0.0128+-0.0018 vs n1 0.0104.
+Suspected deficit drivers (unproven, next investigation): y+ 2.7-4.1
+resolved-wall under-resolution (T3: first cells below y+ 30 carry the
+10-19 % log-line error class), LE staircase suction-peak smearing
+(measured peak -1.58 at alpha 5 vs XFOIL ~ -1.75), first-order scalar
+upwind transition front.
+OPENFOAM REFERENCE (compared 2026-07-21, tutorials/naca/
+compare_openfoam.py + cpcf_vs_openfoam_aoa5.png; case
+~/auswertung/20251027_MA_JannikWeber/run: simpleFoam kOmegaSST OF7,
+alpha 5, Re 4e5, 48400-cell body-fixed 2D mesh, wall y+ avg 1.31,
+decaying inlet turbulence tuned to Tu ~ 7 % at the LE): Cl = 0.5142,
+Cd = 0.01339 — close to XFOIL n1 (0.533/0.0124). vs mobydiff C10
+(0.432 +- 0.022 / 0.0157 +- 0.003): C_L -16 %, C_D +17 %. Surface
+comparison: Cp SHAPES agree, deficit is the suction-side loading in
+x/c < 0.4 (peak -1.59 vs -1.78, -11 %); pressure side matches; Cf
+midchord levels agree (~0.0075) BUT OF shows a pseudo-laminar nose dip
+(Cf ~ 0.002 at x/c 0.05-0.1, transition at ~0.12) while C10 is
+turbulent from the staircase LE, and aft of x/c 0.4 the C10 suction Cf
+sags below OF (thicker decelerated BL); TE separation onset 0.96 (C10)
+vs 0.996 (OF). All consistent with the y+ 3-4 wall under-resolution +
+LE staircase smearing hypothesis — the OF case resolves y+ 1.3.
+L11 RESOLUTION STUDY (2026-07-22, aoa 5 only): .prep_c11.ini ->
+ibm_coeff_c11.h5 (refine_levels = 11, 16042 leaves / 8.2M cells,
+Delta11 = c/6144, y+ ~ 1.4-2.1); IC INTERPOLATED from the converged L10
+field (interp_restart.py, t = 15 carried, zero uncovered cells), run
+t = 15..20 at dt = 5e-5 on cetus GPU1 (0.45 s/step). VERDICT: the wall
+resolution was the DRAG driver, not the lift driver — C_D 0.0157 ->
+0.0126 +- 0.002 (now matches OF 0.0134 / XFOIL-n1 0.0124 within CV
+scatter); C_L 0.432 -> 0.445 +- 0.024 (deficit vs OF -16 % -> -13 %);
+Cp_min -1.59 -> -1.61 vs OF -1.78 (the suction peak BARELY moved ->
+the remaining lift gap is NOT wall resolution; LE staircase smearing is
+the prime suspect); TE separation onset 0.959 -> 0.983 (OF 0.996).
+NOTE OF's transition is FORCED (fvOptions: k = 0 for x < 0.09c both
+sides + k-source 2e-5 trip strips at x = 0.10-0.12c hugging the
+surface) — a matching [rans] k-pin/trip increment is the agreed next
+step (dormant-off bit-exact gate) before attacking the staircase.
+OOM LANDMINE FIXED (cv_forces.py): cv_force painted the WHOLE control
+box on the finest lattice (~200 GB at L11 margin 4c; the machine has
+62 GB) — repeatedly OOM-killed the post-processing. Now paints four
+thin border strips (161 MB peak, C10 values reproduced EXACTLY).
+plot_c10_turb_fields.py windows carry the same risk at L11+ depths:
+estimate cells x 6 x 8 B before choosing a window.
+
+The pre-resume pause notes (fan analysis, R1 history) follow unchanged.
 
 ## The fan question: is it a 2:1-interface problem?
 
@@ -130,3 +193,50 @@ exactly the "interface-artifact test bed" geometry.
    seed-fan needs damping — R1: 3-5x at ~2 % cost).
 3. Then the sweep (one host per angle) + polars + Cp/Cf vs XFOIL and
    OpenFOAM.
+
+## CORRECTED aoa-5 findings (2026-07-27, user-driven checks; commit 2ec6e46)
+
+Supersedes the earlier "LE staircase suction-peak smearing dominates"
+attribution:
+- Cp SUCTION PEAK: the apparent gap to OpenFOAM was 55 % EXTRACTION
+  ARTIFACT — the shallow default extrapolation depth read staircase
+  step-wake pressure pockets on the suction side (absent on the
+  pressure side: low u, weak pockets — the user's tell). Depth sweep
+  2/4/8/12/16 h: -1.737/-1.744/-1.759/-1.763/-1.7634, CONVERGED at
+  -1.763 vs OF -1.780 -> residual physical gap 0.017 (1.0 %).
+  surface_cp_cf.py dmax_cp default is now 12 h.
+- Cf LAMINAR ZONE: k-gated hybrid estimator (laminar stations use a
+  robust free-intercept fit — the effective wall sits at d0 ~ -1.2 h
+  at the nose; turbulent stations keep the anchored fit verbatim).
+  The remaining excess is the FIELD's: measured Cf = 1.5-1.7x Thwaites
+  driven by our own U_e (7.4 vs 6.1 e-3 at x/c 0.05) — staircase
+  ROUGHNESS (step height ~15 % of the laminar delta) genuinely
+  elevates laminar wall shear. Lever: smoothed-mask/2nd-order IBM.
+  **SUPERSEDED 2026-07-29 — the free-intercept branch was WRONG and is
+  deleted.** Its fit window (0.75-4 h) lies outside the 1-3 cell nose
+  BL, so it fitted the saturated outer profile: the "measured" d0 ran
+  to -10 h..-60 h and Cf came out up to 20x LOW on the pressure side
+  (0.04-0.3x OF for x/c < 0.1) and ~2-3x low at the nose. There is no
+  effective-wall offset to correct: a cubic free fit through cells
+  OUTSIDE the penalization band crosses zero at -0.6h..+0.3h at every
+  station, i.e. the graded penalization holds no-slip on the analytic
+  surface to sub-cell accuracy. The estimator is now anchored
+  u_t = g d + c d^2 over band-excluded cells (`--coef`), with the
+  velocities de-staggered and equal-arc stations; the laminar excess
+  is then 2-3.2x OF on the SUCTION side only (pressure side within
+  25 % throughout), concentrated under the adverse gradient aft of the
+  peak. Lever unchanged: smoothed-mask/2nd-order IBM. Full account in
+  tutorials/naca/rans/README.md.
+- OMEGA/U STRIPES (pressure side): NOT a distributed staircase fan and
+  NOT dynamically relevant — per-level PLATEAU STEPS of the decayed
+  ambient omega across the horizontal 2:1 lines (excess ON the lines
+  <= 0.08 dex; per-level truncation of the decaying transport, seeded
+  by the jagged wall-cell omega BC) plus u-streak content confined
+  NEAR interfaces (strictly mid-level rms 2.9e-4). k ~ 0 there ->
+  nut ~ 0 either way. band_filter was tried and REVERTED (user:
+  unquantified near-wall cost; ask before requeuing).
+State of the aoa-5 benchmark vs OpenFOAM after all corrections:
+C_L 0.506+ (asymptoting ~0.51) vs 0.5142; converged Cp_min -1.763 vs
+-1.780; Cf laminar 1.5-1.7x (staircase roughness), turbulent matched;
+transition structure matched. The UNSUSTAINED OF-ambient polar
+(8 angles, unfiltered, k-gated extraction) is running on cetus.

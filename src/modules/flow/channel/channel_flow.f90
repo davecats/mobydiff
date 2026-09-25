@@ -7,6 +7,7 @@ module channel_flow
     use :: boundary, only: boundary_type, boundary_face_id
     use :: pressure_solver, only: pressure_solver_type
     use :: ibmm, only: ibm_type
+    use :: turbulence, only: turb_type
     use :: comm, only: comm_type
     use :: case_config_helpers, only: next_config_entry, to_lower, clean_config_string
     use :: channel_profile, only: initialise_channel_fields
@@ -95,13 +96,16 @@ contains
             this%large_disturbance_amplitude, this%small_noise_amplitude)
     end subroutine channel_initialise_fields
 
-    subroutine channel_after_step(this, blk, dns, g, c, ibm)
+    subroutine channel_after_step(this, blk, dns, g, c, ibm, turb)
         class(channel_case_type), intent(inout) :: this
         type(block_set_type), intent(inout) :: blk
         type(dns_type), intent(in) :: dns
         type(grid_type), intent(in) :: g
         type(comm_type), intent(in) :: c
         type(ibm_type), intent(in) :: ibm
+        ! Unused here; the interface carries it for the airfoil case's
+        ! control-volume budget, which needs the effective viscosity.
+        type(turb_type), intent(in) :: turb
 
         call this%stats%after_step(blk, dns, g, c)
     end subroutine channel_after_step

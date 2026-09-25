@@ -19,6 +19,7 @@ module boundarylayer_flow
         PATCH_INLET, PATCH_OUTLET, PATCH_WALL, PROFILE_BLASIUS
     use :: pressure_solver, only: pressure_solver_type
     use :: ibmm, only: ibm_type
+    use :: turbulence, only: turb_type
     use :: comm, only: comm_type
     use :: case_config_helpers, only: next_config_entry, to_lower, clean_config_string
     use :: boundarylayer_profile, only: initialise_boundarylayer_field
@@ -163,13 +164,16 @@ contains
         call initialise_boundarylayer_field(blk, dns, this%u_inf, this%theta_in)
     end subroutine bl_initialise_fields
 
-    subroutine bl_after_step(this, blk, dns, g, c, ibm)
+    subroutine bl_after_step(this, blk, dns, g, c, ibm, turb)
         class(boundarylayer_case_type), intent(inout) :: this
         type(block_set_type), intent(inout) :: blk
         type(dns_type), intent(in) :: dns
         type(grid_type), intent(in) :: g
         type(comm_type), intent(in) :: c
         type(ibm_type), intent(in) :: ibm
+        ! Unused here; the interface carries it for the airfoil case's
+        ! control-volume budget, which needs the effective viscosity.
+        type(turb_type), intent(in) :: turb
 
         call this%stats%after_step(blk, dns, g, c)
     end subroutine bl_after_step
