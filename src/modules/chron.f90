@@ -18,7 +18,8 @@ module chron
     ! Generic multi-bucket phase profiler: accumulate wall time and call counts
     ! into named categories and print one line each plus a total. The category
     ! labels and the output-line tag are supplied by the caller, so any
-    ! subsystem (LES today, the projection profiling to come) can reuse it.
+    ! subsystem can reuse it: turbulence.f90's turb_timing and all three of
+    ! profiling.f90's nested profilers (step/proj/exch) are this type.
     ! 9 = profiling.f90's step_timing, the widest profiler in the solver.
     integer, parameter, public :: PROFILER_MAX_CATS = 9
 

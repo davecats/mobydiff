@@ -1,5 +1,77 @@
 # Handout — consolidate the branches and merge to main
 
+> **STATUS 2026-09-25: BOTH MERGES DONE AND GATED. The `main` fast-forward and
+> the branch deletions are NOT done — they are the user's call and are the only
+> things left.**
+>
+> * `origin/boundaryLayer` merged at `965a92e`. §3 resolved as the handout
+>   recommended: their CaNS/SIMSON trip maths kept whole, our block-list +
+>   spanwise-table optimisation re-applied on top. The envelope re-check it
+>   asked for came back usable — the CaNS port keeps the same separable
+>   Gaussian and the same `ex < -50` cutoff, so `select_trip_blocks` is
+>   unchanged and the printed fraction is 4/16 on the gate case (it differs
+>   from the old 40/256 only because the default `trip_x0` moved 15 -> 10).
+>   Gate: CPU nofma, trip case with `trip_ts` small enough to redraw ten times
+>   inside the run, `max_abs 0` against a binary carrying their bodyforce.f90
+>   verbatim, at 1 and 4 ranks; 1 rank == 4 ranks.
+> * `origin/scalar` merged at `e3abcb1`. 11 conflicting files as measured. The
+>   one non-mechanical resolution was NOT in §3's list and the handout did not
+>   see it: **both branches had independently built a per-phase step timer on
+>   the same `[output] profile` key.** Kept this branch's `profiling.f90`
+>   (three nested profilers; the whole campaign is written in its buckets),
+>   deleted the `scalar` branch's six `STEP_PROF_*` chron buckets and the
+>   optional `prof` argument to `pressure_projection`, and preserved the one
+>   thing theirs had that ours lacked as a new `PROF_SCALAR` bucket.
+>
+> **§5's premise was wrong in one place, and it matters.** The handout says the
+> merge "changes no arithmetic on either side, so it should be bit-exact
+> against BOTH parents". It is not, and must not be: `scalar` carries the
+> 2026-08-05 fix for the cold-started RANS initial condition (`k` a factor 4
+> low on the last plane of every block). So `turb180` / `wf180_y30` / `lam30t`
+> are bit-exact against `origin/scalar` and differ from the pre-merge head by
+> O(1e-2) — and a `max_abs 0` there would mean the fix had been LOST. The gate
+> asserts the difference rather than tolerating it.
+>
+> **Gates run (GPU, job 5163314, `submit_merge_gate.sh`; nofma every side):**
+>
+> | leg | reference | result |
+> |---|---|---|
+> | min_channel 1 + 4 ranks, beltrami_slaby, les_ibm | pre-merge `f0a8fe0` | `max_abs 0` |
+> | Pass G, `rect_jacobi` + `refined_yp82` (138 M / 60 M cells, 4 ranks, trip off) | pre-merge `f0a8fe0` | `max_abs 0` |
+> | turb180, wf180_y30 | `origin/scalar` | `max_abs 0` |
+> | lam30t | `origin/scalar` | `pn` 1.7e-28, `v`/`w` 1e-30, everything else 0 |
+> | the same three | pre-merge `f0a8fe0` | DIFFER 0.18 / 0.88 / 2.09 — the RANS IC fix, as required |
+>
+> Plus, on the CPU: the scalar branch's own cases against `origin/scalar` (the
+> scalar fields `max_abs 0` on conduction / prsweep / wave, 1.7e-18 on
+> ibmwavy / ibmwavyr); `scalar_test` and `transition_test` ALL PASS; the
+> prepare/solve P0 cases (wavy, wavy_refine, wavysolid) solve-from-case-file
+> `max_abs 0` vs inline, which is what gates io.f90's 152 merged lines.
+>
+> The 1e-14 velocity / 1e-13 pressure differences against `origin/scalar` on
+> Beltrami-flow cases are NOT the merge: they are this branch's 2026-09-02
+> reciprocal-`rdenom` change, which deliberately gave up projection
+> bit-exactness at exactly that magnitude. Controlled by comparing the two
+> PARENTS directly, which reproduces them to the last digit.
+>
+> **§4 verdicts, checked rather than assumed.** `claude/jacobi-interface`'s six
+> features are confirmed absent here (all seven keys: `kpin_box`, `ktrip_box`,
+> `kpin_dwall`, `boostconv`, `steady_tol`, `refine_body_box`,
+> `refine_body_levels`) — DO NOT DELETE IT. `claude/blocks` is now safe to
+> delete: `validation/channel_interface_mfu` is salvaged into the tree (its
+> whole tool chain survives here; carried over with a header saying it has not
+> been re-run), and `validation/poiseuille` cannot be salvaged — it drives the
+> case through `MOBY_POISEUILLE=1`, one of the 19 hooks deleted in the
+> 2026-06-30 cleanup, and `tools/check_poiseuille.py` is gone too. `multiGPU`
+> is a strict ancestor as stated. The stray local `origin` branch of §7 no
+> longer exists.
+>
+> **STILL OPEN:** the `main` fast-forward; deleting `multiGPU`, `claude/blocks`
+> and `bench/rdenom-always`; removing the `moby-2to1-{always,divlist,head4,
+> premerge,scalarref}` worktrees; and the campaign-matrix re-run
+> (`submit_matrix4.sh`, 4 nodes) that §5 asks for before any ratio in
+> `results_horeka_2026-09-25.md` is quoted again.
+
 Written 2026-09-25 at `c876c75`, from the session that finished the divergence
 and `rdenom` optimisation campaign. **Everything below is measured, not
 estimated: the conflict counts come from trial merges that were run and then

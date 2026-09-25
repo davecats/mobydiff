@@ -1723,6 +1723,45 @@ immersed boundary. Phased, each phase verified before the next:
   ranks -- red-black was ~20% faster and is now at PARITY.** Nothing was done to
   red-black; Jacobi got faster and it did not.
 
+- **Branch consolidation (DONE 2026-09-25, job 5163314,
+  `docs/next_session_merge_to_main.md` STATUS header).** `boundaryLayer` and
+  `scalar` are merged into this branch; `multiGPU` and `claude/blocks` hold
+  nothing it needs; `claude/jacobi-interface` still does (six RANS/airfoil
+  features, verified absent here key by key) and must NOT be deleted.
+  TWO THINGS WORTH CARRYING FORWARD.
+  (1) **The trip maths changed and the optimisation survived it.** The
+  `boundaryLayer` port replaces the Schlatter & Orlu unit-rms Fourier
+  coefficients with the exact CaNS/SIMSON form (random PHASES on a flat
+  spectrum, mode 0 + nmodes/2 harmonics, amp/nmodes scaling, plus a steady
+  realisation `trip_amp_s`) — and it keeps the same separable Gaussian envelope
+  and the same `ex < -50` cutoff, which is the ONLY reason the 2026-09-14
+  block-list optimisation still applies. `fill_trip_span` now tabulates three
+  spanwise signals instead of two. The printed active-block fraction moved
+  (4/16 on the gate case vs the old 40/256) because the default `trip_x0` moved
+  15 -> 10, NOT because the envelope changed — check that print, do not assume
+  it. Gate: `max_abs 0` vs their bodyforce.f90 verbatim, 1 and 4 ranks, with
+  `trip_ts` small enough to redraw the walk ten times inside the run.
+  (2) **A MERGE HAS TWO PARENTS AND THEY CAN DISAGREE ON PURPOSE.** `scalar`
+  carries the 2026-08-05 fix for the cold-started RANS initial condition (`k` a
+  factor 4 low on the last plane of every block, because `init_rans_transport`
+  read a halo nothing had filled yet). So the merged head is `max_abs 0`
+  against `origin/scalar` on turb180 / wf180_y30 and DIFFERS from the pre-merge
+  head by 0.18 / 0.88 / 2.09 on the three RANS cases — a `max_abs 0` there
+  would mean the fix was LOST, and `submit_merge_gate.sh` asserts the
+  difference rather than tolerating it. Everything neither branch's physics
+  touches is `max_abs 0` against the pre-merge head: min_channel 1 and 4 ranks,
+  beltrami_slaby, les_ibm, and Pass G's two production cases at 138 M / 60 M
+  cells (run with `trip_amp = 0`, since the trip maths changed).
+  ALSO: the two branches had each built a per-phase step timer on the SAME
+  `[output] profile` key; `profiling.f90`'s three nested profilers won and
+  chron.f90's six `STEP_PROF_*` buckets are gone, with a new `PROF_SCALAR`
+  bucket carrying over the one thing they had that it lacked.
+  The 1e-14 velocity / 1e-13 pressure gap between this branch and `origin/scalar`
+  on Beltrami-flow cases is NOT the merge — it is the 2026-09-02
+  reciprocal-`rdenom` change, which gave up projection bit-exactness at exactly
+  that magnitude; the two PARENTS compared directly reproduce it to the last
+  digit.
+
 ## Verification
 
 - Pure refactors must be bit-exact vs. the pre-refactor code: compare

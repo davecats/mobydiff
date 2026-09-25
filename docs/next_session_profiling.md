@@ -128,21 +128,30 @@ syncface). THAT decides the target.
 
 ## Step 1 — MEASURED (2026-08-07)
 
-**The timer.** `[output] profile = true` (`dns%profile_phases`) builds the
-`step_timing` profiler and prints one line per bucket at loop end, next to
-`turb_timing`. Six buckets, indices in chron.f90 (`STEP_PROF_*`): `momentum`
-(predictor + its `apply_bc`), `syncface_exchange` (the post-predictor
-`exchange_halos(..., syncface=.true.)`), and inside the projection
-`projection_jacobi` (`jacobi_compute_phi` + `cheb_combine` + `jacobi_apply`),
-`projection_exchange` (the per-iteration phi-scalar exchange + the velocity
-exchange) and `projection_bc` (`apply_scalar_bc` + `apply_bc`), plus
-`scalar_transport`. `pressure_projection` takes the profiler as an OPTIONAL
-argument, so with the key off nothing on the step path reads the clock. The
-whole facility is those six parameters + `init_step_profiler` + the
-`if (present(prof))` brackets — removable in one pass. Host wall time around
-target regions is honest here because the kernels are launched without
-`nowait` (the host blocks), and `total_measured` accounts for 94–98 % of the
-loop; the remainder is the dt limits, the io check and `after_step`.
+**The timer, AS IT WAS.** `[output] profile = true` (`dns%profile_phases`)
+built a `step_timing` profiler with six buckets whose indices lived in
+chron.f90 (`STEP_PROF_*`): `momentum` (predictor + its `apply_bc`),
+`syncface_exchange` (the post-predictor `exchange_halos(..., syncface=.true.)`),
+and inside the projection `projection_jacobi` (`jacobi_compute_phi` +
+`cheb_combine` + `jacobi_apply`), `projection_exchange` (the per-iteration
+phi-scalar exchange + the velocity exchange) and `projection_bc`
+(`apply_scalar_bc` + `apply_bc`), plus `scalar_transport`.
+`pressure_projection` took the profiler as an OPTIONAL argument, so with the
+key off nothing on the step path read the clock.
+
+**GONE at the 2026-09-25 merge.** The performance branch had independently
+built its own timer on the same `[output] profile` key, and the merge kept
+that one: `profiling.f90`'s THREE nested profilers (`step_timing` with nine
+buckets, `proj_timing` inside its projection bucket, `exch_timing` inside every
+halo exchange), module state instead of a threaded argument, and `prof_tic` /
+`prof_toc` that read no clock when disabled. The buckets below therefore no
+longer exist by those names; the measurement they produced stands, and every
+`overheadTest/results_*.md` after 2026-08 is expressed in the new ones.
+
+Host wall time around target regions is honest here because the kernels are
+launched without `nowait` (the host blocks), and `total_measured` accounted for
+94–98 % of the loop — the new profiler reports that coverage itself and reads
+0.9997 on a recent case.
 
 **Where it was measured.** istmcetus device 1 (RTX A6000, idle) — NOT the
 local RTX 3060, which was saturated by an unrelated production job for the
