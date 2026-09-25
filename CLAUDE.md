@@ -1809,6 +1809,11 @@ immersed boundary. Phased, each phase verified before the next:
     invented for them: the budget is sensitive to the per-face `p_inf`
     subtraction and to borders crossing a 2:1 interface, so an unvalidated box
     yields numbers nobody has checked. **That is the top follow-up.**
+  CPU dormancy vs the pre-port binary: min_channel (4 ranks), beltrami_slaby,
+  turb180, lam30t and conduction all `max_abs 0`, plus conduction's `s1` named
+  explicitly -- **`tools/h5maxdiff` with no dataset arguments compares
+  un/vn/wn/pn and the RANS scalars ONLY, so a passive-scalar case gated that way
+  never looks at the scalar.** `les_ibm` is the one case not yet run.
   Also brought over: `tutorials/naca/rans` (the converged OpenFOAM comparison,
   C_L 0.5199 vs 0.5142, Cp_min matching to four digits) and the cv_forces /
   skew / naca docs. `claude/jacobi-interface` is now down to the naca LES

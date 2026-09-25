@@ -14,6 +14,15 @@ Written 2026-09-25 on branch `port/jacobi-interface-features` (off `main` at
 | `877e3ab` | `[rans] kpin_box` / `ktrip_box` |
 | `e95ea37` | runtime CV forces + `[case.airfoil] steady_tol`, `tutorials/naca/rans`, docs |
 
+CPU dormancy against the pre-port binary, completed after `e95ea37` was written
+(that commit says these were still running): `min_channel` 4 ranks,
+`beltrami_slaby`, `turb180`, `lam30t`, `conduction` -- all `max_abs 0`, and
+`conduction`'s scalar field `s1` separately `max_abs 0`. That last check was
+needed because `tools/h5maxdiff`'s default dataset list is velocity/pressure
+plus the RANS scalars only: **a scalar case gated with no dataset arguments
+silently compares four datasets and never looks at the scalar.** Name the
+scalars explicitly. `les_ibm` remains unrun on CPU.
+
 DROPPED on the user's instruction and the branch's own evidence: `boostconv`
 (V1 negative on turb180 — best configuration 2.7x SLOWER than plain marching;
 V2's win invalidated, the recombination suppressed the ktrip strip) and
@@ -31,10 +40,9 @@ touched at all** — that is task 1.
    (`main` before this branch). Reuse `submit_merge_gate.sh` as the shape — it
    already knows how to build two references and run `run_mapgate.sh` — but its
    reference logic is merge-specific, so write a sibling rather than editing it.
-2. **The three dormancy legs that did not finish on the login node**:
-   `beltrami_slaby` and a scalar case (`conduction`) were still running when
-   this was written; `les_ibm` was never attempted (too slow on CPU). Those
-   three, against `68e8f16`, must be `max_abs 0`.
+2. **`les_ibm` dormancy**, the one case never attempted on CPU (too slow
+   there). Against `68e8f16`, it must be `max_abs 0`. The other legs are DONE
+   (see §0).
 3. **`cv_box` for validation/naca0012, validation/sd7003, tutorials/naca.**
    See §3 — the largest piece of judgement left.
 4. Then merge to `main` (fast-forward if nothing else has landed).
