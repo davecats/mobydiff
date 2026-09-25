@@ -122,6 +122,18 @@ module scalar
 
     type, public :: scalar_type
         integer(C_INT) :: n = 0_C_INT
+        ! [scalar] convection = divergence (default) | advective.
+        ! THIS IS NOT THE MOMENTUM KERNEL'S SKEW FORM, and it used to share
+        ! the `[flow] convection` key with it, which was misleading: that key
+        ! is gone (momentum is hardwired skew-symmetric, the S3 lockdown) and
+        ! the scalar's own choice lives here. Subtracting the FULL s*(div u)
+        ! gives the ADVECTIVE form u.grad s -- a uniform scalar is preserved
+        ! exactly for ANY advecting field -- at the cost of the exact global
+        ! conservation the divergence form has, which validation/scalar's
+        ! conserve.ini gates to round-off. The momentum kernel subtracts a
+        ! HALF instead (energy neutrality). Default divergence: the trade is
+        ! a real choice, so it stays one.
+        logical(C_BOOL) :: advective = .false.
         ! Per-scalar configuration (all sized n; host + device).
         real(C_DOUBLE), allocatable :: pr(:), prt(:)
         integer(C_INT), allocatable :: prtModel(:)
@@ -928,6 +940,17 @@ contains
 
         if (index == 0) then
             select case (trim(key))
+            case ("convection")
+                select case (trim(value))
+                case ("divergence", "div", "")
+                    sc%advective = .false.
+                case ("advective", "advection", "nonconservative")
+                    sc%advective = .true.
+                case default
+                    if (terminal) print *, "error: [scalar] convection must be", &
+                        " divergence or advective, on line", line_no
+                    error stop "[scalar] convection"
+                end select
             case ("count")
                 is = int(read_int_value(value, key, line_no))
                 if (is < 0) error stop "[scalar] count must be non-negative"
@@ -2627,9 +2650,10 @@ contains
     ! mesh, and the flux form telescopes, so sum(s dV) changes only by the
     ! boundary flux.
     !
-    ! [flow] convection = skew subtracts s*(div u)|stencil built from the SAME
-    ! face velocities (docs/next_session_scalar.md Section 2). NOTE what that
-    ! buys, since it differs from the momentum kernel's skew term: the FULL
+    ! [scalar] convection = advective subtracts s*(div u)|stencil built from
+    ! the SAME face velocities (docs/next_session_scalar.md Section 2). NOTE
+    ! what that buys, since it differs from the momentum kernel's skew term
+    ! -- the two used to share one key, which was misleading: the FULL
     ! subtraction is the ADVECTIVE form u.grad s, which preserves a UNIFORM
     ! scalar exactly for ANY advecting field (div u never enters), at the cost
     ! of the exact global conservation the divergence form has. Subtracting
@@ -2779,7 +2803,7 @@ contains
         nScal = int(sc%n)
         re = dns%re
         ire = 1.0d0/re
-        skew = logical(dns%conv_skew)
+        skew = logical(sc%advective)
         useIbm = logical(dns%ibm_enabled)
         ! S5a: the thermal wall function replaces the face eddy diffusivity
         ! AT WALL CELLS. Off (every resolved-wall and every non-RANS run) the
