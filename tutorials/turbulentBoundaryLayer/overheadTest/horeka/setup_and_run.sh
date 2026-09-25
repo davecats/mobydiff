@@ -18,7 +18,7 @@ set -euo pipefail
 # Configuration -- edit for your project space.
 # ---------------------------------------------------------------------------
 REPO_URL="${REPO_URL:-git@github.com:davecats/mobydiff.git}"
-BRANCH="${BRANCH:-optimiseBlockRefinement_parentBoundaryLayer}"
+BRANCH="${BRANCH:-main}"
 # The commit under test. PIN IT: the cluster must run exactly the validated
 # code, independent of any branch movement afterwards.
 COMMIT="${COMMIT:-a11e355a47e1535db4f3e9bae0dcc489eaec3567}"

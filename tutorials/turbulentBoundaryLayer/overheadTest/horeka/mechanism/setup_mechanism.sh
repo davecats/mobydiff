@@ -9,7 +9,7 @@
 set -euo pipefail
 
 REPO_URL="${REPO_URL:-git@github.com:davecats/mobydiff.git}"
-BRANCH="${BRANCH:-optimiseBlockRefinement_parentBoundaryLayer}"
+BRANCH="${BRANCH:-main}"
 # The SAME commit the 2026-09-07 matrix measured -- this probe explains that
 # data, so it must not run different code.
 COMMIT="${COMMIT:-a11e355a47e1535db4f3e9bae0dcc489eaec3567}"

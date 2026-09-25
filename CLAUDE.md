@@ -69,11 +69,15 @@ mpirun -n 1 ./build_gpu/moby_solve path/to/input.ini    # main is a symlink
 
 ## Active work
 
-**THE BRANCHES ARE CONSOLIDATED (2026-09-25).** `boundaryLayer` (the CaNS/SIMSON
-trip) and `scalar` (passive scalars + conjugate heat transfer) are merged into
-this branch, which is itself a descendant of `claude/jacobi-interface`; `main`
-fast-forwards to it. `multiGPU` and `claude/blocks` are fully contained or
-superseded. The one branch still holding unmerged work is
+**THE BRANCHES ARE CONSOLIDATED AND THE WORK IS ON `main` (2026-09-25).**
+`boundaryLayer` (the CaNS/SIMSON trip) and `scalar` (passive scalars +
+conjugate heat transfer) were merged into
+`optimiseBlockRefinement_parentBoundaryLayer`, itself a descendant of
+`claude/jacobi-interface`; `main` was then fast-forwarded to it and that branch
+retired, so **`main` is the working branch** -- the long feature-branch phase is
+over. `multiGPU` and `claude/blocks` are deleted (the latter archived as the
+tag `archive/claude-blocks`, since it was not contained). The one branch still
+holding unmerged work is
 `claude/jacobi-interface` — six RANS/airfoil features (`[rans]`
 kpin_box/ktrip_box/kpin_dwall/boostconv, `[case.airfoil] steady_tol`,
 refine_body_box/levels) plus the 2026-08 `naca/rans` tutorial state; keep it

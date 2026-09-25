@@ -77,10 +77,15 @@
 > campaign it was the control for. The `moby-2to1-{always,divlist,head4,
 > premerge,scalarref}` worktrees removed.
 >
-> Branch map after: `main` == this branch; `boundaryLayer` and `scalar` still
-> exist and are now fully merged into `main` (deleting them was not asked for
-> and is now free); `claude/jacobi-interface` (43 commits, the six features) and
-> `assignment` (7 commits) remain unmerged.
+> Branch map after: **`main` IS the working branch** --
+> `optimiseBlockRefinement_parentBoundaryLayer` was retired once `main` carried
+> its tip, so the feature-branch phase this handout was written in is over, and
+> the two cluster scripts that defaulted `BRANCH` to it now default to `main`
+> (`setup_and_run.sh`, `mechanism/setup_mechanism.sh`; their pinned `COMMIT`s
+> are still reachable). `boundaryLayer` and `scalar` still exist and are fully
+> merged into `main`, so they are free to delete whenever wanted;
+> `claude/jacobi-interface` (43 commits, the six features) and `assignment`
+> (7 commits) remain unmerged.
 >
 > **STILL OPEN:** the campaign-matrix re-run (`submit_matrix4.sh`, 4 nodes) that
 > §5 asks for before any ratio in `results_horeka_2026-09-25.md` is quoted
