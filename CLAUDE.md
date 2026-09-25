@@ -1766,6 +1766,53 @@ immersed boundary. Phased, each phase verified before the next:
   reciprocal-`rdenom` change, which gave up projection bit-exactness at exactly
   that magnitude; the two PARENTS compared directly reproduce it to the last
   digit.
+- **Features ported from `claude/jacobi-interface` (2026-09-25, branch
+  `port/jacobi-interface-features`).** Four of the six that branch held alone,
+  plus the one the feature list missed. **`boostconv` and `kpin_dwall` were
+  deliberately DROPPED** -- boostconv on its own dossier (V1 negative on
+  turb180, best config 2.7x SLOWER than plain marching; V2's win INVALIDATED
+  because the recombination suppressed the ktrip strip, k 7.6e-3 -> 7.9e-6),
+  kpin_dwall because the instability it patched was addressed at its root by
+  skew convection and no validated ini uses it.
+  - **The skew lockdown was the one that mattered, and it was not on the list.**
+    main carried a PRE-lockdown snapshot: the `[flow] convection` key still
+    existed and still DEFAULTED TO DIVERGENCE, so any ini omitting it ran the
+    form that branch found unstable at 2:1 interfaces. Skew is now hardwired and
+    the key error-stops. **The snag: scalar.f90 read the SAME key for a
+    DIFFERENT operator** -- its "skew" is the FULL subtraction, i.e. the
+    ADVECTIVE form u.grad s, which preserves a uniform scalar for any advecting
+    field but gives up the exact conservation `validation/scalar/conserve.ini`
+    gates; the momentum kernel subtracts a HALF (energy neutrality). The
+    scalar's choice therefore moved to its own `[scalar] convection =
+    divergence (default) | advective`. Gate: 9/9 max_abs 0 against the toggle
+    binary running `convection = skew`, with ibmwavy as the non-vacuous leg (the
+    new key moves theta by 4.1e-10 between its settings, so max_abs 0 there is a
+    real equivalence; conduction/prsweep/wave have no advection and gate the
+    momentum half only).
+  - `[rans] kpin_box` / `ktrip_box` (the OpenFOAM fvOptions forced-transition
+    pair). Dormant bit-exact; the pin proven EXACT by pinning the whole domain
+    and changing `tu` 1 -> 10 (un/vn/wn/pn/nut/k all max_abs 0; omega does
+    differ, correctly, since kpin pins k alone and nut = 0 makes omega inert),
+    against a control where the same tu change without the pin moves k by 2.72.
+  - `[blocks] refine_body_levels` + `refine_body_box`: a CAP on body-driven
+    refinement, raised locally by boxes that lift the cap rather than filling
+    their volume, so the refinement follows the surface BAND (~1000 leaves on
+    the NACA nose against ~12700 volumetric). Dormant identical (case-file
+    datasets and the inline solve path both max_abs 0); cap 0 gives 0 refined,
+    a half-domain box gives exactly half.
+  - Runtime CONTROL-VOLUME forces replacing the penalization integral, plus
+    `[case.airfoil] steady_tol`. **DELIBERATE DEVIATION:** the branch makes a
+    missing `cv_box` an `error stop`, which leaves EIGHTEEN inis
+    (validation/naca0012, validation/sd7003, tutorials/naca) unable to start --
+    they are broken on that branch today for this reason. Here it is a loud
+    per-run WARNING that disables force sampling instead. Boxes were NOT
+    invented for them: the budget is sensitive to the per-face `p_inf`
+    subtraction and to borders crossing a 2:1 interface, so an unvalidated box
+    yields numbers nobody has checked. **That is the top follow-up.**
+  Also brought over: `tutorials/naca/rans` (the converged OpenFOAM comparison,
+  C_L 0.5199 vs 0.5142, Cp_min matching to four digits) and the cv_forces /
+  skew / naca docs. `claude/jacobi-interface` is now down to the naca LES
+  kickoff, the boostconv module and the C10/C11 analysis history.
 
 ## Verification
 
