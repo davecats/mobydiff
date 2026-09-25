@@ -43,9 +43,10 @@ touched at all** — that is task 1.
 2. **`les_ibm` dormancy**, the one case never attempted on CPU (too slow
    there). Against `68e8f16`, it must be `max_abs 0`. The other legs are DONE
    (see §0).
-3. **`cv_box` for validation/naca0012 and validation/sd7003.** See §3 — the
-   largest piece of judgement left. `tutorials/naca`'s superseded generation is
-   gone (2026-09-25); the other eleven inis stay.
+3. **`cv_box` for what remains of validation/naca0012 and validation/sd7003.**
+   See §3. After the 2026-09-25 removals this is much smaller than it was:
+   everything still present has a live non-force gate, so the question is only
+   whether anyone wants forces back from those cases.
 4. Then merge to `main` (fast-forward if nothing else has landed).
 
 ## 2 — The traps this port walked into, so the next one does not
@@ -91,7 +92,7 @@ touched:
 | `tutorials/naca/rans/.prep_c11{,_nose}.ini` | **KEEP.** Part of the live tutorial (`run_case.sh` calls them), and prepare-only — `moby_prepare` never calls `setup_after_grid`, so the cv_box path is never reached. |
 | `validation/scalar/cylheat.ini` | **KEEP.** An S3 SCALAR gate (heated cylinder, Re 40, Pr 0.71) driven by `run_gates_s3.sh`. It uses the airfoil case for the cylinder geometry; its gate is heat transfer, not forces. |
 | `validation/naca0012/aoa4.ini`, `validation/sd7003/aoa4.ini` | **KEEP.** Load-bearing beyond their own directory: `validation/prepare/run_gates_big.sh` (the P1b prepare-vs-mobygeom gate on the big geometries) builds its cases from them. |
-| `validation/naca0012/xz_{aoa0,aoa4,aoa8}.ini` | force-based AoA-sweep points — their gate (C_L slope) IS dead without a box. The clearest candidates for removal or for a box. |
+| `validation/naca0012/xz_{aoa0,aoa4,aoa8}.ini` | **REMOVED 2026-09-25.** Purely force-based AoA-sweep points; their only product was a C_L/C_D table, and that statistic no longer exists. README section kept as a record with the recovery recipe. |
 | `validation/naca0012/xz_l5.ini`, `validation/sd7003/xz_l4.ini` | fan/resolution BENCHMARKS (leaves, s/step) — not force-based, still meaningful. |
 | `validation/sd7003/xz_aoa4.ini` | the transition benchmark (x_t, k onset) — **not** force-based, alive. |
 

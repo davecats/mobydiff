@@ -237,6 +237,21 @@ step cost (12% of L5-3D), near-linear in the leaf count.
 
 ### R2D-3 follow-up: the AoA sweep at L5-xz (2026-07-15)
 
+> **The three inis were REMOVED on 2026-09-25 and this section is a record, not
+> a recipe.** `xz_aoa{0,4,8}.ini` existed only to produce the C_L/C_D table
+> below, and that statistic no longer exists: the penalization integral was
+> replaced by the control-volume momentum budget, which needs a
+> `[case.airfoil] cv_box` these inis never had
+> (`docs/next_session_cv_forces.md`). Re-running them would therefore not
+> reproduce the numbers here even before considering the grid. The rest of this
+> directory is untouched and still runs -- `aoa4.ini` (which `run_sweep.sh`
+> generates its 3D sweep from, and which `validation/prepare/run_gates_big.sh`
+> builds a P1b case from) and `xz_l5.ini` (the fan benchmark, which measures
+> leaves and s/step, not forces). To redo this sweep: recover the three files
+> from git history, give each a `cv_box`, and re-measure the reference — the
+> budget is a different statistic, not a different way of computing the same
+> one.
+
 xz_aoa{0,4,8}.ini (span y, refine_dims xz, refine_levels 5, KEEP-BURIED
 7975 leaves, dt 2e-4, t_final 10, one host per angle: RTX 5090 / A6000 /
 RTX 3060; tail-0.2 means):
