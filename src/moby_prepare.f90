@@ -15,10 +15,12 @@
 program moby_prepare
     use, intrinsic :: iso_c_binding
     use :: init, only: dns_type, grid_type, init_grid, destroy_grid, &
-        set_serial_local_size, VAR_U, VAR_V, VAR_W
+        set_serial_local_size, VAR_U, VAR_V, VAR_W, VAR_P
     use :: blocks, only: block_set_type, init_block_set, destroy_block_set
     use :: flow_case, only: case_type, create_flow_case
     use :: config, only: config_seen_type, read_runtime_config, validate_dns_values
+    use :: scalar, only: scalar_type, destroy_scalar, scalars_enabled, &
+        scalar_conjugate_enabled
     use :: boundary, only: boundary_type
     use :: io, only: write_case_file
     use :: ibmm, only: ibm_type, init_ibm, set_ibm_geometry, enter_ibm_data, exit_ibm_data, &
@@ -58,6 +60,11 @@ program moby_prepare
     ! Solid-possible box for classification culling (allocated for STL
     ! only; unallocated stays absent in the classify calls).
     real(C_DOUBLE), allocatable :: cullLo(:), cullHi(:)
+    type(scalar_type) :: sc
+    ! [scalar] declared => the coefficient array gains its VAR_P column and
+    ! the case file gains coef_p_blocks.
+    logical :: cell_centred
+    integer(C_INT) :: nCoefComp
 
     call comm_init_world(c)
     call parse_prepare_args(input_file, output_file, show_help)
@@ -71,8 +78,14 @@ program moby_prepare
     if (c%has_terminal) print *, "reading input data: ", trim(input_file)
     call create_flow_case(flow, input_file, c%has_terminal)
     call flow%apply_defaults(dns, g, bc, c, ps)
-    call read_runtime_config(dns, g, turb, les, ps, bc, c, input_file, &
+    ! A [scalar] section here means one thing: the case file must also carry
+    ! the CELL-CENTRED coefficient tiles the scalars penalise with
+    ! (coef_p_blocks, increment S3). Nothing else about the scalars matters
+    ! to prepare -- Pr, the wall mode and the boundary rows are solve-time
+    ! configuration, and one coefficient array serves every scalar.
+    call read_runtime_config(dns, g, turb, les, ps, bc, sc, c, input_file, &
         c%has_terminal, config_seen)
+    cell_centred = scalars_enabled(sc)
 
     if (any(dns%block_nb <= 0_C_INT)) &
         error stop "moby_prepare needs [blocks] nb: the case file is a block-table file"
@@ -125,19 +138,22 @@ program moby_prepare
     ! offload builds -- prepare with the CPU build for the gates); STL runs
     ! the host twin over the indicator.
     if (c%has_terminal) print *, "computing IBM coefficients..."
-    call init_ibm(ibm, blk)
+    call init_ibm(ibm, blk, cell_centred)
     ! Analytic wall geometry from the config. Both binaries apply it -- see
     ! set_ibm_geometry for why that is not optional.
     call set_ibm_geometry(ibm, dns)
+    nCoefComp = int(ubound(ibm%coef,4) - lbound(ibm%coef,4) + 1, C_INT)
     if (use_stl) then
         call set_ibm_coeff_host(dns, blk, ibm, VAR_U, inside)
         call set_ibm_coeff_host(dns, blk, ibm, VAR_V, inside)
         call set_ibm_coeff_host(dns, blk, ibm, VAR_W, inside)
+        if (cell_centred) call set_ibm_coeff_host(dns, blk, ibm, VAR_P, inside)
     else
         call enter_ibm_data(ibm, dns)
         call set_ibm_coeff(dns, blk, ibm, VAR_U)
         call set_ibm_coeff(dns, blk, ibm, VAR_V)
         call set_ibm_coeff(dns, blk, ibm, VAR_W)
+        if (cell_centred) call set_ibm_coeff(dns, blk, ibm, VAR_P)
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target update from(ibm%coef)
 #endif
@@ -149,7 +165,12 @@ program moby_prepare
     ! init_rans_geometry computes inline; STL = the exact BVH
     ! point-triangle distance (the same query mobygeom's dwall_blocks
     ! uses -- indicator bisections would cost millions of parity casts).
-    if (dns%rans_configured) then
+    ! Conjugate heat transfer (increment C1) reads the very same tiles: the
+    ! signed distance whose sign the IBM marker supplies IS this field, so
+    ! `ibm_wall = conjugate` triggers the build exactly as a [rans] section
+    ! does. A TRIGGER only -- no new dataset, and a file prepared either way
+    ! is identical (docs/next_session_conjugate.md Section 8, arrangement 1).
+    if (dns%rans_configured .or. scalar_conjugate_enabled(sc)) then
         if (c%has_terminal) print *, "computing wall distance..."
         allocate(dwall(0:int(blk%nb(1))+1, 0:int(blk%nb(2))+1, &
             0:int(blk%nb(3))+1, blk%nBlocks))
@@ -162,7 +183,7 @@ program moby_prepare
     end if
 
     if (c%has_terminal) print *, "writing case file: ", trim(output_file)
-    call write_case_file(output_file, blk, dns, g, bc, c, ibm%coef, c%has_terminal, &
+    call write_case_file(output_file, blk, dns, g, bc, c, ibm%coef, nCoefComp, c%has_terminal, &
         touch=blockTouch, buried=blockBuried, maskDims=blockMaskDims, &
         active=blockActive, dwall=dwall, maskLo=blockMaskLo)
     if (c%has_terminal) then
@@ -178,6 +199,7 @@ program moby_prepare
     end if
     call destroy_block_set(blk)
     call destroy_grid(g)
+    call destroy_scalar(sc)
     call comm_finalize(c)
 
 contains

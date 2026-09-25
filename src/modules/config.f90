@@ -10,19 +10,22 @@ module config
         PATCH_GENERIC, PATCH_WALL, PATCH_INLET, PATCH_OUTLET, &
         PROFILE_CONSTANT, PROFILE_PARABOLA, PROFILE_BLASIUS
     use :: comm, only: comm_type
+    use :: scalar, only: scalar_type, apply_scalar_config, validate_scalar_config, &
+        scalar_section_index
     implicit none
 
     logical, save :: terminal_output = .true.
 
 contains
 
-subroutine read_runtime_config(dns, g, turb, les, ps, bc, c, input_file, has_terminal, seen_config)
+subroutine read_runtime_config(dns, g, turb, les, ps, bc, sc, c, input_file, has_terminal, seen_config)
     type(dns_type), intent(inout) :: dns
     type(grid_type), intent(inout) :: g
     type(turb_type), intent(inout) :: turb
     type(les_type), intent(inout) :: les
     type(pressure_solver_type), intent(inout) :: ps
     type(boundary_type), intent(inout) :: bc
+    type(scalar_type), intent(inout) :: sc
     type(comm_type), intent(inout) :: c
     character(len=*), intent(in) :: input_file
     logical, intent(in), optional :: has_terminal
@@ -72,11 +75,15 @@ subroutine read_runtime_config(dns, g, turb, les, ps, bc, c, input_file, has_ter
 
         call split_key_value(line, key, value)
         if (len_trim(key) == 0) cycle
-        call apply_config_value(section, key, value, dns, g, turb, les, ps, bc, c, seen, line_no)
+        call apply_config_value(section, key, value, dns, g, turb, les, ps, bc, sc, c, seen, line_no)
     end do
 
     close(unit)
     if (present(seen_config)) seen_config = seen
+
+    ! Passive scalars: validate the [scalar.N] sections and derive
+    ! dns%nScalar / dns%nVar, which size q/qs/oldrhs and the halo buffers.
+    call validate_scalar_config(sc, dns, terminal_output)
 
     ! [turbulence] model selects the FAMILY (none|les|rans|iddes); when the
     ! key is absent, a configured [les] model implies the LES family, so inis
@@ -94,7 +101,7 @@ subroutine read_runtime_config(dns, g, turb, les, ps, bc, c, input_file, has_ter
     call validate_turbulence_values(turb, les, dns)
 end subroutine read_runtime_config
 
-subroutine apply_config_value(section, key, value, dns, g, turb, les, ps, bc, c, seen, line_no)
+subroutine apply_config_value(section, key, value, dns, g, turb, les, ps, bc, sc, c, seen, line_no)
     character(len=*), intent(in) :: section, key, value
     type(dns_type), intent(inout) :: dns
     type(grid_type), intent(inout) :: g
@@ -102,12 +109,14 @@ subroutine apply_config_value(section, key, value, dns, g, turb, les, ps, bc, c,
     type(les_type), intent(inout) :: les
     type(pressure_solver_type), intent(inout) :: ps
     type(boundary_type), intent(inout) :: bc
+    type(scalar_type), intent(inout) :: sc
     type(comm_type), intent(inout) :: c
     type(config_seen_type), intent(inout) :: seen
     integer, intent(in) :: line_no
 
     character(len=:), allocatable :: section_l, key_l
     integer(C_INT) :: niter_value
+    integer :: scalar_index
 
     section_l = lower(trim(section))
     key_l = lower(trim(key))
@@ -404,6 +413,28 @@ subroutine apply_config_value(section, key, value, dns, g, turb, les, ps, bc, c,
         call apply_mpi_value(key_l, value, c, line_no)
     case ("boundary")
         call apply_boundary_value(key_l, value, bc, line_no)
+    case ("scalar")
+        ! Passive scalars: [scalar] holds `count` and the statistics keys, the
+        ! per-scalar keys live in the numbered [scalar.N] sections (the
+        ! [grid.x] pattern). File names keep their case, like [scalar.N] name.
+        if (key_l == "stats_file" .or. key_l == "heat_file") then
+            call apply_scalar_config(0, key_l, clean_string(value), sc, line_no, terminal_output)
+        else
+            call apply_scalar_config(0, key_l, lower(clean_string(value)), sc, line_no, terminal_output)
+        end if
+    case default
+        scalar_index = scalar_section_index(section_l)
+        if (scalar_index > 0) then
+            ! The name key keeps its case; every other value is a lowercase
+            ! token or a number.
+            if (key_l == "name") then
+                call apply_scalar_config(scalar_index, key_l, clean_string(value), sc, &
+                    line_no, terminal_output)
+            else
+                call apply_scalar_config(scalar_index, key_l, lower(clean_string(value)), sc, &
+                    line_no, terminal_output)
+            end if
+        end if
     end select
 end subroutine apply_config_value
 
@@ -460,6 +491,12 @@ subroutine validate_turbulence_values(turb, les, dns)
         if (dns%rans_transition .and. dns%rans_wall_treatment /= 0_C_INT) then
             error stop "[rans] transition requires wall_treatment = resolved"
         end if
+        ! Passive scalars under wall functions run the THERMAL wall function
+        ! (Kader/Jayatilleke P-function, increment S5a: scalar.f90's
+        ! wall_diffusivity on rans_wall_yplus's wall-cell y+). The momentum
+        ! wall function's wall-cell nu_t is deliberately NOT reused for the
+        ! scalar -- it carries the momentum sublayer's resistance, not the
+        ! thermal one.
         if (dns%rans_tu <= 0.0d0) error stop "[rans] tu must be positive (percent)"
         if (dns%rans_nut_ratio <= 0.0d0) error stop "[rans] nut_ratio must be positive"
     end if
@@ -696,6 +733,12 @@ subroutine apply_grid_axis_value(section, key, value, dns, g, seen, line_no)
         call read_real(value, g%natural_outer_height(dir), line_no)
     case ("subdivided")
         call read_bool(value, g%subdivided(dir), line_no)
+    case ("nodes_file", "node_file", "nodes")
+        ! Read this direction's node line from a file instead of generating
+        ! it. The built-in distributions cluster at the DOMAIN ENDS; a
+        ! conjugate case needs clustering at the two INTERIOR fluid/solid
+        ! interfaces, landing exactly on cell faces.
+        g%nodesFile(dir) = trim(clean_string(value))
     case ("n")
         call read_int(value, dns%globalSize(dir), line_no)
         seen%size(dir) = .true.

@@ -71,6 +71,13 @@ def main() -> int:
         dst.create_dataset("blocks", data=blocks)
         dst.create_dataset("coef_blocks", shape=(n, nb + 2, nb + 2, nb + 2, 3),
                            dtype=np.float64, chunks=(1, nb + 2, nb + 2, nb + 2, 3))
+        # The CELL-CENTRED companion (increment S3): a case with [scalar]
+        # requires coef_p_blocks, and the scalar analogue of "the body
+        # exerts no force" is "the body penalises no scalar" -- zero here
+        # too, so a uniform scalar survives the twin exactly as a uniform
+        # velocity does.
+        dst.create_dataset("coef_p_blocks", shape=(n, nb + 2, nb + 2, nb + 2),
+                           dtype=np.float64, chunks=(1, nb + 2, nb + 2, nb + 2))
         # created zero-filled; nothing to write
         n_real = src["blocks"].shape[0]
         print(f"twin: {n} leaves (real file: {n_real}; "

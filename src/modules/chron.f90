@@ -19,7 +19,8 @@ module chron
     ! into named categories and print one line each plus a total. The category
     ! labels and the output-line tag are supplied by the caller, so any
     ! subsystem (LES today, the projection profiling to come) can reuse it.
-    integer, parameter, public :: PROFILER_MAX_CATS = 8
+    ! 9 = profiling.f90's step_timing, the widest profiler in the solver.
+    integer, parameter, public :: PROFILER_MAX_CATS = 9
 
     type, public :: profiler_type
         character(len=24) :: tag = "timing"                 ! output line prefix

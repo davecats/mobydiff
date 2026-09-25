@@ -515,6 +515,15 @@ dwall source → error; etc.).
   still is): the `log()` intrinsic in the wall-function branch differs
   by an ulp between host and device libm (same class as the accepted
   les_ibm masking-branch 4.6e-14 precedent).
+  CAVEAT on (e), found 2026-08-04 and FIXED 2026-08-05: the rank gate here
+  held only for decompositions that did NOT split x. A cold-started RANS
+  run was not rank/nb-independent at all — `init_rans_transport`'s k IC
+  read the still-unfilled velocity halo `q(nb+1)`, making `k` a factor 4
+  low on the last plane of every block. `apply_bc` + `exchange_halos` now
+  run before the `[rans]` init; every decomposition is max_abs 0. Only the
+  cold-start IC changed, not the converged answer (the T3 wall-function
+  gates reproduce to every printed digit). See
+  `validation/rans_sst/README.md`.
 - **T4 — γ–Re_θt transition (resolved only). DONE (validated 2026-07-09).**
   `[rans] transition = true` (transition ∧ wall_function stays a hard
   error). Two extra transported scalars γ and R̃e_θt in the fused substage

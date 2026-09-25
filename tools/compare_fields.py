@@ -19,6 +19,25 @@ import numpy as np
 FIELDS = ["un", "vn", "wn", "pn"]
 
 
+def field_datasets(h5: h5py.File) -> list[str]:
+    """Every FIELD dataset of a file: same rank as `un` (4 in the block-table
+    layout, 3 in the legacy global one), which excludes the `blocks` table and
+    the x/y/z node lines without naming them."""
+    ndim = h5["un"].ndim
+    return [k for k, v in h5.items()
+            if isinstance(v, h5py.Dataset) and v.ndim == ndim]
+
+
+def common_datasets(ref: h5py.File, cand: h5py.File) -> list[str]:
+    """The datasets present in BOTH files, canonical variables first and the
+    rest (scalars, nut, k, omega, gamma, rethetat, fd) alphabetically -- so a
+    run with passive scalars is compared on every dataset it wrote without
+    having to list them."""
+    both = set(field_datasets(ref)) & set(field_datasets(cand))
+    head = [f for f in FIELDS if f in both]
+    return head + sorted(both - set(head))
+
+
 def is_block_format(h5: h5py.File) -> bool:
     return h5["un"].ndim == 4
 
@@ -70,7 +89,8 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("reference")
     parser.add_argument("candidate")
-    parser.add_argument("datasets", nargs="*", default=FIELDS)
+    parser.add_argument("datasets", nargs="*",
+                        help="datasets to compare (default: those present in both files)")
     parser.add_argument("--tolerance", type=float, default=None)
     parser.add_argument("--mask-surviving", action="store_true",
                         help="compare only cells covered by the candidate's block table")
@@ -80,13 +100,16 @@ def main() -> int:
 
     failed = False
     with h5py.File(args.reference, "r") as ref, h5py.File(args.candidate, "r") as cand:
+        datasets = args.datasets or common_datasets(ref, cand)
+        if not args.datasets:
+            print("datasets: " + " ".join(datasets))
         mask = surviving_block_mask(cand) if args.mask_surviving else None
         if mask is not None:
             covered = int(mask.sum())
             print(f"masked to {covered} of {mask.size} cells "
                   f"({mask.size - covered} in removed blocks)")
         out = h5py.File(args.export_global, "w") if args.export_global else None
-        for name in args.datasets:
+        for name in datasets:
             a = load_field(ref, name)
             b = load_field(cand, name)
             if out is not None:

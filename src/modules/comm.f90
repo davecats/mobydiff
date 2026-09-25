@@ -1,7 +1,7 @@
 module comm
     use, intrinsic :: iso_c_binding
     use :: mpi_f08
-    use :: init, only: dns_type, NVAR
+    use :: init, only: dns_type
     use :: blocks, only: block_set_type, DIST_ZORDER, zorder_owner, zorder_start, zorder_count, &
         leaf_at, level_cells, level_cell_width, occupied_any_level, parent_coord, child_origin
     use :: boundary, only: boundary_type
@@ -155,7 +155,10 @@ module comm
         real(C_DOUBLE), allocatable :: recvbuf(:,:)
 
         type(MPI_Request), allocatable :: request(:)       ! (2*nPeers)
-        integer(C_INT) :: activeVars(NVAR) = 0_C_INT
+        ! Variables carried by the current exchange. Sized dns%nVar =
+        ! NVAR + nScalar (init_block_exchange): passive scalars are extra
+        ! q variables and ride the SAME entries and messages as u,v,w,p.
+        integer(C_INT), allocatable :: activeVars(:)
         integer :: nActiveVars = 0
         ! When true, the exchange touches only the same-level COPY prefix
         ! of the entry lists, leaving interface ghosts and face copies
@@ -768,10 +771,16 @@ contains
         call peer_div_prefix(c%nRecvDiv, c%rDivEnt, c%rDivOff, c%rPeer, c%nPeers, c%peerRecvDivOff)
         deallocate(divVarL, divVarS, divVarR)
 
+        ! Buffers must hold every variable an exchange can carry, scalars
+        ! included -- sizing them with NVAR would silently truncate scalar
+        ! halos.
+        if (allocated(c%activeVars)) deallocate(c%activeVars)
+        allocate(c%activeVars(int(dns%nVar)))
+        c%activeVars = 0_C_INT
         maxCount = 1
         do p = 1, c%nPeers
-            maxCount = max(maxCount, (c%peerSendOff(p) - c%peerSendOff(p-1))*int(NVAR))
-            maxCount = max(maxCount, (c%peerRecvOff(p) - c%peerRecvOff(p-1))*int(NVAR))
+            maxCount = max(maxCount, (c%peerSendOff(p) - c%peerSendOff(p-1))*int(dns%nVar))
+            maxCount = max(maxCount, (c%peerRecvOff(p) - c%peerRecvOff(p-1))*int(dns%nVar))
         end do
         c%maxBufferCount = maxCount
         allocate(c%sendbuf(c%maxBufferCount, max(1, c%nPeers)))
@@ -1932,7 +1941,7 @@ contains
 
         integer :: gp, v, e, pt, ni, nj, nPts, nv, qj, qk
         integer :: di, dj, dk, var, si, sj, sk, ds, ss
-        integer(C_INT) :: av(NVAR)
+        integer(C_INT) :: av(size(c%activeVars))
 
         nPts = c%nLocalCopyPts
         nv = c%nActiveVars
@@ -1940,7 +1949,8 @@ contains
         ! activeVars changes on every call, and c is now resident: a plain
         ! map(to: c%activeVars) would find it inside the device copy of c and
         ! leave the STALE value there. Take a local copy so the kernel maps a
-        ! fresh 16-byte array instead -- exactly the transfer this used to do.
+        ! fresh, small array instead -- exactly the transfer this used to do.
+        ! It is an automatic array because activeVars is sized NVAR + nScalar.
         av = c%activeVars
 
         ! ONE thread per halo POINT, with the variables looped INSIDE the thread.
@@ -1999,7 +2009,7 @@ contains
         integer :: b1, b2, b3, s1, s2, s3, og1, og2, og3, np1, np2, np3
         real(C_DOUBLE) :: val, wa1, wb1, wa2, wb2, wa3, wb3
         logical :: doBlend
-        integer(C_INT) :: av(NVAR)
+        integer(C_INT) :: av(size(c%activeVars))
 
         nv = c%nActiveVars
         pLo = c%nLocalCopyPts*nv
@@ -2009,7 +2019,8 @@ contains
         ! activeVars changes on every call, and c is now resident: a plain
         ! map(to: c%activeVars) would find it inside the device copy of c and
         ! leave the STALE value there. Take a local copy so the kernel maps a
-        ! fresh 16-byte array instead -- exactly the transfer this used to do.
+        ! fresh, small array instead -- exactly the transfer this used to do.
+        ! It is an automatic array because activeVars is sized NVAR + nScalar.
         av = c%activeVars
 
 #ifdef USE_OPENMP_OFFLOAD
@@ -2232,7 +2243,7 @@ contains
         integer :: di, dj, dk, var, peer, pos, nv, totalItems, copyOnly
         integer :: b1, b2, b3, c1, c2, c3, s1, s2, s3
         real(C_DOUBLE) :: val
-        integer(C_INT) :: av(NVAR)
+        integer(C_INT) :: av(size(c%activeVars))
 
         nv = c%nActiveVars
         totalItems = merge(c%peerSendCopyOff(c%nPeers), c%peerSendOff(c%nPeers), c%copyOnly)*nv
@@ -2241,7 +2252,8 @@ contains
         ! activeVars changes on every call, and c is now resident: a plain
         ! map(to: c%activeVars) would find it inside the device copy of c and
         ! leave the STALE value there. Take a local copy so the kernel maps a
-        ! fresh 16-byte array instead -- exactly the transfer this used to do.
+        ! fresh, small array instead -- exactly the transfer this used to do.
+        ! It is an automatic array because activeVars is sized NVAR + nScalar.
         av = c%activeVars
 
 #ifdef USE_OPENMP_OFFLOAD
@@ -2300,7 +2312,7 @@ contains
         integer :: i, j, k, var, peer, pos, nv, totalItems, copyOnly, sf
         real(C_DOUBLE) :: val
         logical :: doBlend
-        integer(C_INT) :: av(NVAR)
+        integer(C_INT) :: av(size(c%activeVars))
 
         nv = c%nActiveVars
         totalItems = merge(c%peerRecvCopyOff(c%nPeers), c%peerRecvOff(c%nPeers), c%copyOnly)*nv
@@ -2310,7 +2322,8 @@ contains
         ! activeVars changes on every call, and c is now resident: a plain
         ! map(to: c%activeVars) would find it inside the device copy of c and
         ! leave the STALE value there. Take a local copy so the kernel maps a
-        ! fresh 16-byte array instead -- exactly the transfer this used to do.
+        ! fresh, small array instead -- exactly the transfer this used to do.
+        ! It is an automatic array because activeVars is sized NVAR + nScalar.
         av = c%activeVars
 
 #ifdef USE_OPENMP_OFFLOAD
@@ -2477,12 +2490,14 @@ contains
 
         integer :: n
 
-        if (size(vars) > NVAR) error stop "too many halo variables requested"
+        if (.not. allocated(c%activeVars)) error stop "halo exchange entries have not been built"
+        if (size(vars) > size(c%activeVars)) error stop "too many halo variables requested"
 
         c%activeVars = 0_C_INT
         c%nActiveVars = size(vars)
         do n = 1, c%nActiveVars
-            if (vars(n) < 1_C_INT .or. vars(n) > NVAR) error stop "invalid halo variable requested"
+            if (vars(n) < 1_C_INT .or. int(vars(n)) > size(c%activeVars)) &
+                error stop "invalid halo variable requested"
             c%activeVars(n) = vars(n)
         end do
     end subroutine set_active_vars

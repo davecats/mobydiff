@@ -8,6 +8,12 @@ module init
     integer(C_INT), parameter :: VAR_P = 4_C_INT
     integer(C_INT), parameter :: NVEL = 3_C_INT
     integer(C_INT), parameter :: NVAR = 4_C_INT
+    ! Passive scalars are extra variables of blk%q (docs/next_session_scalar.md):
+    ! scalar `is` lives at VAR_S0 + is in q and at SCR_S0 + is in the substage
+    ! scratch qs / oldrhs. LANDMINE: the two offsets DIFFER (pressure has no
+    ! scratch plane), so a scalar's q index is never its qs index.
+    integer(C_INT), parameter :: VAR_S0 = NVAR
+    integer(C_INT), parameter :: SCR_S0 = NVEL
     integer(C_INT), parameter :: GRID_UNIFORM = 1_C_INT
     integer(C_INT), parameter :: GRID_COSINE  = 2_C_INT
     integer(C_INT), parameter :: GRID_TANH    = 3_C_INT
@@ -190,6 +196,12 @@ module init
         ! fine cells -- the C10 blow-up). k_inf/omega_inf from [rans] tu /
         ! nut_ratio and |initial_velocity| (must be nonzero when enabled).
         logical(C_BOOL) :: rans_ambient_sustain = .false.
+        ! Passive scalars ([scalar] / [scalar.N], scalar.f90). Only the two
+        ! counts live here -- everything per-scalar lives in scalar_type, so
+        ! dns_type stays a fixed-size value type with no scalar-count bound.
+        ! nScalar = 0 reproduces every allocation shape exactly.
+        integer(C_INT) :: nScalar = 0_C_INT
+        integer(C_INT) :: nVar = NVAR
         character(len=256) :: field_prefix = ""
         integer :: field_interval = 0
         character(len=256) :: restart_file = ""
@@ -213,6 +225,15 @@ module init
         ! same subdivision), so a uniformly fine reference run can share
         ! its grid exactly with a refined run's fine level.
         logical(C_BOOL) :: subdivided(1:3) = .false.
+        ! [grid.<d>] nodes_file: read the node line for this direction from a
+        ! text file (nGlobal+1 ascending positions, first 0, last = length)
+        ! instead of generating it from a distribution. The built-in
+        ! distributions all cluster at the DOMAIN ENDS; a conjugate case needs
+        ! clustering at INTERIOR points -- the two fluid/solid interfaces --
+        ! and needs them to land exactly on cell faces, which no analytic
+        ! family gives. Empty = generate as before, so this is inert unless
+        ! asked for.
+        character(len=512) :: nodesFile(1:3) = ""
         real(C_DOUBLE) :: stretch(1:3) = 0.0d0
         real(C_DOUBLE) :: natural_dyw_plus(1:3) = 0.05d0
         logical(C_BOOL) :: natural_one_sided(1:3) = .false.
@@ -262,13 +283,13 @@ subroutine init_grid(g, dns, periodic)
 
     call build_node_line(g%xNode, dns%globalSize(1), dns%leng(1), &
         g%distribution(1), g%stretch(1), g%natural_one_sided(1), g%natural_dyw_plus(1), &
-        g%natural_outer_height(1), g%subdivided(1))
+        g%natural_outer_height(1), g%subdivided(1), g%nodesFile(1))
     call build_node_line(g%yNode, dns%globalSize(2), dns%leng(2), &
         g%distribution(2), g%stretch(2), g%natural_one_sided(2), g%natural_dyw_plus(2), &
-        g%natural_outer_height(2), g%subdivided(2))
+        g%natural_outer_height(2), g%subdivided(2), g%nodesFile(2))
     call build_node_line(g%zNode, dns%globalSize(3), dns%leng(3), &
         g%distribution(3), g%stretch(3), g%natural_one_sided(3), g%natural_dyw_plus(3), &
-        g%natural_outer_height(3), g%subdivided(3))
+        g%natural_outer_height(3), g%subdivided(3), g%nodesFile(3))
 end subroutine init_grid
 
 ! moby_prepare runs without the MPI Cartesian decomposition; give dns the
@@ -293,22 +314,28 @@ subroutine destroy_grid(g)
 end subroutine destroy_grid
 
 recursive subroutine build_node_line(node, nGlobal, length, distribution, stretch, &
-        natural_one_sided, natural_dyw_plus, natural_outer_height, subdivided)
+        natural_one_sided, natural_dyw_plus, natural_outer_height, subdivided, nodes_file)
     real(C_DOUBLE), intent(inout) :: node(0:)
     integer(C_INT), intent(in) :: nGlobal, distribution
     real(C_DOUBLE), intent(in) :: length, stretch, natural_dyw_plus, natural_outer_height
     logical(C_BOOL), intent(in) :: natural_one_sided
     logical(C_BOOL), intent(in), optional :: subdivided
+    character(len=*), intent(in), optional :: nodes_file
 
     integer :: i, n
     real(C_DOUBLE) :: s
     real(C_DOUBLE), allocatable :: coarse(:)
+    character(len=512) :: nodes_file_l
 
+    nodes_file_l = ""
+    if (present(nodes_file)) nodes_file_l = nodes_file
     n = int(nGlobal)
     if (present(subdivided)) then
         if (subdivided) then
             ! Midpoint subdivision of the half-resolution line, exactly as
             ! blocks.f90 builds refinement-level lines.
+            if (len_trim(nodes_file_l) > 0) &
+                error stop "[grid] nodes_file cannot be combined with subdivided"
             if (mod(n, 2) /= 0) error stop "subdivided grid needs an even point count"
             allocate(coarse(0:n/2))
             call build_node_line(coarse, int(n/2, C_INT), length, distribution, stretch, &
@@ -320,6 +347,12 @@ recursive subroutine build_node_line(node, nGlobal, length, distribution, stretc
             node(n) = coarse(n/2)
             return
         end if
+    end if
+
+    ! A file line overrides every distribution parameter for this direction.
+    if (len_trim(nodes_file_l) > 0) then
+        call read_node_line(node, n, length, nodes_file_l)
+        return
     end if
 
     ! Boundary-layer grid: wall-clustered in [0, outer_height], coarsening
@@ -337,6 +370,71 @@ recursive subroutine build_node_line(node, nGlobal, length, distribution, stretc
     node(0) = 0.0d0
     node(n) = length
 end subroutine build_node_line
+
+! Read a node line from a text file: nGlobal+1 ascending positions, one per
+! line (blank lines and `#` comments skipped). Everything is CHECKED, because
+! a silently wrong grid is the most expensive kind of error here: the count,
+! strict monotonicity, and both endpoints against the domain length.
+subroutine read_node_line(node, n, length, path)
+    real(C_DOUBLE), intent(inout) :: node(0:)
+    integer, intent(in) :: n
+    real(C_DOUBLE), intent(in) :: length
+    character(len=*), intent(in) :: path
+
+    integer :: unit, ios, count
+    real(C_DOUBLE) :: v
+    character(len=512) :: line
+
+    open(newunit=unit, file=trim(path), status="old", action="read", iostat=ios)
+    if (ios /= 0) then
+        print *, "error: [grid] nodes_file not readable: ", trim(path)
+        error stop
+    end if
+    count = 0
+    do
+        read(unit, '(a)', iostat=ios) line
+        if (ios /= 0) exit
+        line = adjustl(line)
+        if (len_trim(line) == 0) cycle
+        if (line(1:1) == "#" .or. line(1:1) == ";") cycle
+        read(line, *, iostat=ios) v
+        if (ios /= 0) then
+            print *, "error: [grid] nodes_file has a non-numeric line: ", trim(line)
+            error stop
+        end if
+        if (count > n) then
+            print *, "error: [grid] nodes_file has more than", n + 1, "values: ", trim(path)
+            error stop
+        end if
+        node(count) = v
+        count = count + 1
+    end do
+    close(unit)
+
+    if (count /= n + 1) then
+        print *, "error: [grid] nodes_file needs", n + 1, "values, found", count, ": ", trim(path)
+        error stop
+    end if
+    do count = 1, n
+        if (.not. (node(count) > node(count-1))) then
+            print *, "error: [grid] nodes_file is not strictly increasing at index", count
+            error stop
+        end if
+    end do
+    if (abs(node(0)) > 1.0d-12*max(length, 1.0d0)) then
+        print *, "error: [grid] nodes_file must start at 0, found", node(0)
+        error stop
+    end if
+    if (abs(node(n) - length) > 1.0d-10*max(length, 1.0d0)) then
+        print *, "error: [grid] nodes_file must end at the domain length", length, &
+            ", found", node(n)
+        error stop
+    end if
+    ! Pin the ends exactly: the file carries printed decimals, and every
+    ! downstream length check compares against `length` bit for bit.
+    node(0) = 0.0d0
+    node(n) = length
+end subroutine read_node_line
 
 ! Two-region boundary-layer node line: one-sided natural wall clustering over
 ! [0, h] (h = outer_height) using n_in points, then a geometric stretch over

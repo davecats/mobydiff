@@ -1,0 +1,2 @@
+# step time theta_staircase theta_graded theta_total
+        20   1.0000000000000005E-02  -7.9265794879194876E-05   0.0000000000000000E+00  -7.9265794879194876E-05

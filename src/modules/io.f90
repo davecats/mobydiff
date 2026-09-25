@@ -7,6 +7,10 @@ module io
     use :: comm, only: comm_type
     implicit none
 
+    ! Stride of one slot in the packed field-variable name table handed to
+    ! field_hdf5.c (FDM_VAR_NAME_LEN there -- keep the two in lockstep).
+    integer, parameter :: VAR_NAME_LEN = 32
+
     interface
         function fdm_h5_write_field(file_name, nbx, nby, nbz, n_blocks, &
                 n_blocks_global, id_start, block_origin, block_level, &
@@ -15,7 +19,7 @@ module io
                 re, dt, t_final, t_current, cfl, cflmax, pecletmax, dtmax, &
                 forcing, pressure_niter, pressure_sor, &
                 ibm_enabled, bc_count, periodic, bc_type, bc_value, grid_distribution, grid_stretch, &
-                grid_natural_dyw_plus, x_node, y_node, z_node, q) &
+                grid_natural_dyw_plus, x_node, y_node, z_node, n_var, var_names, q) &
                 bind(C, name="fdm_h5_write_field") result(ierr)
             import :: C_CHAR, C_INT, C_DOUBLE
             character(kind=C_CHAR), intent(in) :: file_name(*)
@@ -35,6 +39,10 @@ module io
             integer(C_INT), intent(in) :: periodic(*), bc_type(*), grid_distribution(*)
             real(C_DOUBLE), intent(in) :: bc_value(*), grid_stretch(*), grid_natural_dyw_plus(*)
             real(C_DOUBLE), intent(in) :: x_node(*), y_node(*), z_node(*)
+            ! n_var = NVAR + nScalar variables of q, named by a packed table
+            ! of n_var NUL-terminated slots of VAR_NAME_LEN characters.
+            integer(C_INT), value :: n_var
+            character(kind=C_CHAR), intent(in) :: var_names(*)
             real(C_DOUBLE), intent(in) :: q(*)
             integer(C_INT) :: ierr
         end function fdm_h5_write_field
@@ -240,15 +248,30 @@ module io
             integer(C_INT) :: ierr
         end function fdm_h5_case_append_active
 
+        ! n_comp = the coefficient array's component extent (3, or 4 when
+        ! the case declares passive scalars): coef_blocks always holds the
+        ! three staggered components, coef_p_blocks the cell-centred one.
         function fdm_h5_case_append_coef(file_name, nbx, nby, nbz, n_blocks, &
-                n_blocks_global, id_start, coef) &
+                n_blocks_global, id_start, n_comp, coef) &
                 bind(C, name="fdm_h5_case_append_coef") result(ierr)
             import :: C_CHAR, C_INT, C_DOUBLE
             character(kind=C_CHAR), intent(in) :: file_name(*)
             integer(C_INT), value :: nbx, nby, nbz, n_blocks, n_blocks_global, id_start
+            integer(C_INT), value :: n_comp
             real(C_DOUBLE), intent(in) :: coef(*)
             integer(C_INT) :: ierr
         end function fdm_h5_case_append_coef
+
+        function fdm_h5_case_append_coef_p(file_name, nbx, nby, nbz, n_blocks, &
+                n_blocks_global, id_start, n_comp, coef) &
+                bind(C, name="fdm_h5_case_append_coef_p") result(ierr)
+            import :: C_CHAR, C_INT, C_DOUBLE
+            character(kind=C_CHAR), intent(in) :: file_name(*)
+            integer(C_INT), value :: nbx, nby, nbz, n_blocks, n_blocks_global, id_start
+            integer(C_INT), value :: n_comp
+            real(C_DOUBLE), intent(in) :: coef(*)
+            integer(C_INT) :: ierr
+        end function fdm_h5_case_append_coef_p
 
         function fdm_h5_case_append_dwall(file_name, nbx, nby, nbz, n_blocks, &
                 n_blocks_global, id_start, dwall) &
@@ -262,14 +285,18 @@ module io
 
         function fdm_h5_read_field(file_name, nbx, nby, nbz, n_blocks, &
                 n_blocks_global, id_start, block_origin, &
-                global_nx, global_ny, global_nz, q) &
+                global_nx, global_ny, global_nz, n_var, var_names, found, q) &
                 bind(C, name="fdm_h5_read_field") result(ierr)
             import :: C_CHAR, C_INT, C_DOUBLE
             character(kind=C_CHAR), intent(in) :: file_name(*)
             integer(C_INT), value :: nbx, nby, nbz, n_blocks, n_blocks_global, id_start
             integer(C_INT), intent(in) :: block_origin(*)
             integer(C_INT), value :: global_nx, global_ny, global_nz
-            real(C_DOUBLE), intent(out) :: q(*)
+            integer(C_INT), value :: n_var
+            character(kind=C_CHAR), intent(in) :: var_names(*)
+            ! Per-variable presence flag; q is left untouched where 0.
+            integer(C_INT), intent(out) :: found(*)
+            real(C_DOUBLE), intent(inout) :: q(*)
             integer(C_INT) :: ierr
         end function fdm_h5_read_field
     end interface
@@ -287,7 +314,7 @@ logical function output_is_due(step, output_interval)
 end function output_is_due
 
 subroutine maybe_write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor, nut, &
-        rans_k, rans_omg, rans_gam, rans_ret, iddes_fd)
+        rans_k, rans_omg, rans_gam, rans_ret, iddes_fd, scalar_names, conj_vfrac)
     type(block_set_type), intent(inout) :: blk
     type(dns_type), intent(in) :: dns
     type(grid_type), intent(in) :: g
@@ -300,14 +327,47 @@ subroutine maybe_write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_
     real(C_DOUBLE), allocatable, intent(in), optional :: rans_k(:,:,:,:), rans_omg(:,:,:,:)
     real(C_DOUBLE), allocatable, intent(in), optional :: rans_gam(:,:,:,:), rans_ret(:,:,:,:)
     real(C_DOUBLE), allocatable, intent(in), optional :: iddes_fd(:,:,:,:)
+    character(len=*), intent(in), optional :: scalar_names(:)
+    real(C_DOUBLE), allocatable, intent(in), optional :: conj_vfrac(:,:,:,:)
 
     if (.not. output_is_due(step, dns%field_interval)) return
     call write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor, nut, &
-        rans_k, rans_omg, rans_gam, rans_ret, iddes_fd)
+        rans_k, rans_omg, rans_gam, rans_ret, iddes_fd, scalar_names, conj_vfrac)
 end subroutine maybe_write_field
 
+! Packed variable-name table for the C field writer/reader: n_var slots of
+! VAR_NAME_LEN characters, each NUL-terminated. Slots 1-4 are always
+! un/vn/wn/pn, so a scalar-free file is byte-identical to the historical one.
+function field_var_names(dns, scalar_names) result(table)
+    type(dns_type), intent(in) :: dns
+    character(len=*), intent(in), optional :: scalar_names(:)
+    character(kind=C_CHAR,len=:), allocatable :: table
+
+    character(len=*), parameter :: base(4) = [character(len=4) :: "un", "vn", "wn", "pn"]
+    integer :: v, nv, pos, ln
+    character(len=VAR_NAME_LEN) :: name
+
+    nv = int(dns%nVar)
+    allocate(character(kind=C_CHAR,len=VAR_NAME_LEN*nv) :: table)
+    do v = 1, VAR_NAME_LEN*nv
+        table(v:v) = C_NULL_CHAR
+    end do
+    do v = 1, nv
+        if (v <= 4) then
+            name = base(v)
+        else if (present(scalar_names)) then
+            name = scalar_names(v - 4)
+        else
+            write(name, '(a,i0)') "s", v - 4
+        end if
+        ln = len_trim(name)
+        pos = (v - 1)*VAR_NAME_LEN
+        table(pos+1:pos+ln) = name(1:ln)
+    end do
+end function field_var_names
+
 subroutine write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor, nut, &
-        rans_k, rans_omg, rans_gam, rans_ret, iddes_fd)
+        rans_k, rans_omg, rans_gam, rans_ret, iddes_fd, scalar_names, conj_vfrac)
     ! Parallel HDF5 call: all MPI ranks must enter this routine together.
     ! Global datasets, one hyperslab per block.
     type(block_set_type), intent(inout) :: blk
@@ -328,9 +388,20 @@ subroutine write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor, n
     ! IDDES DDES-shielding function: a 1-cell dummy unless model = iddes
     ! (size gate below), so non-iddes output is unchanged.
     real(C_DOUBLE), allocatable, intent(in), optional :: iddes_fd(:,:,:,:)
+    ! Passive-scalar dataset names (scalar.f90); absent = the s1..sN default.
+    character(len=*), intent(in), optional :: scalar_names(:)
+    ! Conjugate fluid VOLUME FRACTION (C3): a 1-cell dummy unless a conjugate
+    ! scalar is configured (size gate below), so every other file is
+    ! unchanged. It is pure geometry, so it is written for the reader's
+    ! benefit and never read back -- a restart rebuilds it from the case file
+    ! exactly as a cold start does. What it buys: the cell capacity
+    ! C = f + (1-f)C_s the scheme conserves is a solver-side quantity that no
+    ! checker can reconstruct to the last bit from the geometry alone, so the
+    ! conservation and interface-heat gates read the solver's own f.
+    real(C_DOUBLE), allocatable, intent(in), optional :: conj_vfrac(:,:,:,:)
 
     character(len=256) :: h5_file_name
-    character(kind=C_CHAR,len=:), allocatable :: c_file_name
+    character(kind=C_CHAR,len=:), allocatable :: c_file_name, var_names
     integer(C_INT) :: ierr
     integer(C_INT) :: periodic(1:3)
     integer(C_INT) :: ibm_enabled
@@ -348,6 +419,7 @@ subroutine write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor, n
 #endif
 
     c_file_name = to_c_string(h5_file_name)
+    var_names = field_var_names(dns, scalar_names)
     ierr = fdm_h5_write_field(c_file_name, blk%nb(1), blk%nb(2), blk%nb(3), &
         blk%nBlocks, blk%nBlocksGlobal, blk%idStart, blk%origin, blk%level, &
         int(c%world_rank, C_INT), int(c%world_size, C_INT), &
@@ -361,7 +433,7 @@ subroutine write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor, n
         bc%faceBcType(VAR_U:VAR_P,1:NFACES), bc%faceBcDefaultValue(VAR_U:VAR_P,1:NFACES), &
         g%distribution(1:3), g%stretch(1:3), g%natural_dyw_plus(1:3), &
         g%xNode(0:dns%globalSize(1)), g%yNode(0:dns%globalSize(2)), g%zNode(0:dns%globalSize(3)), &
-        blk%q)
+        dns%nVar, var_names, blk%q)
     if (ierr /= 0_C_INT) then
         if (c%has_terminal) print *, "error: could not write HDF5 field file: ", trim(h5_file_name)
         error stop
@@ -414,6 +486,12 @@ subroutine write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor, n
         if (allocated(iddes_fd)) then
             if (size(iddes_fd) > 1) call append_scalar_field(c_file_name, "fd", iddes_fd, blk, &
                 h5_file_name, c%has_terminal)
+        end if
+    end if
+    if (present(conj_vfrac)) then
+        if (allocated(conj_vfrac)) then
+            if (size(conj_vfrac) > 1) call append_scalar_field(c_file_name, "vfrac", &
+                conj_vfrac, blk, h5_file_name, c%has_terminal)
         end if
     end if
 
@@ -666,7 +744,7 @@ end subroutine write_rans_geometry_file
 ! and dwall_blocks ([rans]). Parallel HDF5: all ranks enter together; each
 ! rank writes its own contiguous leaf-row range, rank 0 the lattice-global
 ! rasters (full rasters, no window attrs -- the analytic convention).
-subroutine write_case_file(file_name, blk, dns, g, bc, c, coef, has_terminal, &
+subroutine write_case_file(file_name, blk, dns, g, bc, c, coef, nCoefComp, has_terminal, &
         touch, buried, maskDims, active, dwall, maskLo)
     character(len=*), intent(in) :: file_name
     type(block_set_type), intent(in) :: blk
@@ -675,6 +753,11 @@ subroutine write_case_file(file_name, blk, dns, g, bc, c, coef, has_terminal, &
     type(boundary_type), intent(in) :: bc
     type(comm_type), intent(in) :: c
     real(C_DOUBLE), intent(in) :: coef(*)
+    ! Component extent of coef: 3, or 4 when the case declares passive
+    ! scalars, in which case the cell-centred column is written as the
+    ! separate OPTIONAL coef_p_blocks dataset (increment S3) and every
+    ! other dataset in the file is untouched.
+    integer(C_INT), intent(in) :: nCoefComp
     logical, intent(in) :: has_terminal
     integer(C_INT), intent(in), optional :: touch(:,:), buried(:,:), maskDims(:,:)
     integer(C_INT), intent(in), optional :: active(:)
@@ -738,8 +821,14 @@ subroutine write_case_file(file_name, blk, dns, g, bc, c, coef, has_terminal, &
     end if
 
     ierr = fdm_h5_case_append_coef(c_file_name, blk%nb(1), blk%nb(2), blk%nb(3), &
-        blk%nBlocks, blk%nBlocksGlobal, blk%idStart, coef)
+        blk%nBlocks, blk%nBlocksGlobal, blk%idStart, nCoefComp, coef)
     call check_case_write(ierr, "coef_blocks", file_name, has_terminal)
+
+    if (nCoefComp > 3_C_INT) then
+        ierr = fdm_h5_case_append_coef_p(c_file_name, blk%nb(1), blk%nb(2), blk%nb(3), &
+            blk%nBlocks, blk%nBlocksGlobal, blk%idStart, nCoefComp, coef)
+        call check_case_write(ierr, "coef_p_blocks", file_name, has_terminal)
+    end if
 
     if (present(dwall)) then
         ierr = fdm_h5_case_append_dwall(c_file_name, blk%nb(1), blk%nb(2), blk%nb(3), &
@@ -759,15 +848,18 @@ subroutine check_case_write(ierr, what, file_name, has_terminal)
     error stop
 end subroutine check_case_write
 
-subroutine read_field(blk, dns, file_name, c)
+subroutine read_field(blk, dns, file_name, c, scalar_names)
     ! Parallel HDF5 call: all MPI ranks must enter this routine together.
     type(block_set_type), intent(inout) :: blk
     type(dns_type), intent(in) :: dns
     character(len=*), intent(in) :: file_name
     type(comm_type), intent(in) :: c
+    character(len=*), intent(in), optional :: scalar_names(:)
 
-    character(kind=C_CHAR,len=:), allocatable :: c_file_name
+    character(kind=C_CHAR,len=:), allocatable :: c_file_name, var_names
     integer(C_INT) :: ierr, file_mask(1:3), has_blocks
+    integer(C_INT), allocatable :: found(:)
+    integer :: v
 
     c_file_name = to_c_string(file_name)
     ! The refine_dims variants store block origins in different index
@@ -786,14 +878,31 @@ subroutine read_field(blk, dns, file_name, c)
             "does not match the configured [blocks] refine_dims", dns%block_refine_mask
         error stop "restart/config [blocks] refine_dims mismatch"
     end if
+    var_names = field_var_names(dns, scalar_names)
+    allocate(found(int(dns%nVar)))
     ierr = fdm_h5_read_field(c_file_name, blk%nb(1), blk%nb(2), blk%nb(3), &
         blk%nBlocks, blk%nBlocksGlobal, blk%idStart, blk%origin, &
         dns%globalSize(1), dns%globalSize(2), dns%globalSize(3), &
-        blk%q)
+        dns%nVar, var_names, found, blk%q)
     if (ierr /= 0_C_INT) then
         if (c%has_terminal) print *, "error: could not read HDF5 field file: ", trim(file_name)
         error stop
     end if
+    if (any(found(1:4) == 0_C_INT)) then
+        if (c%has_terminal) print *, "error: restart file has no un/vn/wn/pn datasets: ", &
+            trim(file_name)
+        error stop
+    end if
+    ! A missing scalar dataset (a scalar added after the file was written, or
+    ! an older restart) leaves the slot at its [scalar.N] initial condition --
+    ! the RANS named-scalar precedent.
+    do v = 5, int(dns%nVar)
+        if (found(v) == 0_C_INT .and. c%has_terminal) then
+            print *, "warning: restart file has no dataset for scalar", v - 4, &
+                "; initialising it from [scalar.N] initial"
+        end if
+    end do
+    deallocate(found)
 
 #ifdef USE_OPENMP_OFFLOAD
     !$omp target update to(blk%q)
@@ -815,8 +924,11 @@ subroutine read_force_file(f, blk, dns, file_name, has_terminal)
 
     character(kind=C_CHAR,len=:), allocatable :: c_file_name
     real(C_DOUBLE), allocatable :: qtmp(:,:,:,:,:)
-    integer(C_INT) :: ierr
+    integer(C_INT) :: ierr, found(NVAR)
     integer :: nx, ny, nz
+    ! A velocity-layout file, NOT the scalar-extended one: this read stays at
+    ! NVAR variables whatever dns%nVar is.
+    character(kind=C_CHAR,len=VAR_NAME_LEN*NVAR) :: var_names
 
     if (len_trim(file_name) == 0) error stop "[force] type = file needs [force] file = path"
 
@@ -824,12 +936,18 @@ subroutine read_force_file(f, blk, dns, file_name, has_terminal)
     allocate(qtmp(0:nx+1, 0:ny+1, 0:nz+1, NVAR, blk%nBlocks))
     qtmp = 0.0d0
 
+    var_names = repeat(C_NULL_CHAR, VAR_NAME_LEN*NVAR)
+    var_names(1:2) = "un"
+    var_names(VAR_NAME_LEN+1:VAR_NAME_LEN+2) = "vn"
+    var_names(2*VAR_NAME_LEN+1:2*VAR_NAME_LEN+2) = "wn"
+    var_names(3*VAR_NAME_LEN+1:3*VAR_NAME_LEN+2) = "pn"
+
     c_file_name = to_c_string(file_name)
     ierr = fdm_h5_read_field(c_file_name, blk%nb(1), blk%nb(2), blk%nb(3), &
         blk%nBlocks, blk%nBlocksGlobal, blk%idStart, blk%origin, &
         dns%globalSize(1), dns%globalSize(2), dns%globalSize(3), &
-        qtmp)
-    if (ierr /= 0_C_INT) then
+        NVAR, var_names, found, qtmp)
+    if (ierr /= 0_C_INT .or. any(found(VAR_U:VAR_W) == 0_C_INT)) then
         if (has_terminal) print *, "error: could not read force field file: ", trim(file_name)
         error stop
     end if

@@ -219,6 +219,7 @@ contains
         type(boundary_type), intent(in) :: bc
         type(comm_type), intent(inout) :: c
 
+        real(C_DOUBLE) :: t0
         integer(C_INT) :: iIter, dir
         real(C_DOUBLE) :: omega
         real(C_DOUBLE) :: dd, cc, alpha, alphaPrev, beta, gamma
@@ -311,6 +312,7 @@ contains
             call prof_toc(proj_prof, PROF_SWEEP, t0)
             t0 = prof_tic()
             call exchange_scalar_halos(c, phi, blk, ifaceRow=.true.)
+
             ! Re-mirror the outlet phi ghosts EVERY iteration: the exchange's
             ! tangential extension can write physical halos, so do not rely on
             ! them staying zero.

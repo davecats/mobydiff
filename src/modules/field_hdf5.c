@@ -7,6 +7,12 @@
 #error "field_hdf5.c requires HDF5 built with parallel MPI-IO support"
 #endif
 
+/* Field-variable name table (fdm_h5_write_field / fdm_h5_read_field): the
+ * Fortran side packs n_var NUL-terminated names of this fixed stride, so the
+ * variable count is a runtime value (u,v,w,p plus the passive scalars,
+ * docs/next_session_scalar.md) instead of the hardcoded 4. */
+#define FDM_VAR_NAME_LEN 32
+
 static size_t linear_fortran(size_t i, size_t j, size_t k, size_t ni, size_t nj)
 {
     return i + ni*(j + nj*k);
@@ -659,16 +665,18 @@ int fdm_h5_write_field(const char *filename, int nbx, int nby, int nbz,
                        const int *grid_distribution, const double *grid_stretch,
                        const double *grid_natural_dyw_plus,
                        const double *x_node, const double *y_node, const double *z_node,
+                       int n_var, const char *var_names,
                        const double *q)
 {
-    /* q is the solver's (0:nb+1,0:nb+1,0:nb+1, 4 vars, n_blocks) array. */
+    /* q is the solver's (0:nb+1,0:nb+1,0:nb+1, n_var, n_blocks) array;
+     * var_names holds n_var NUL-terminated names of stride FDM_VAR_NAME_LEN
+     * ("un","vn","wn","pn" plus one per passive scalar). */
     const size_t var_stride = (size_t)(nbx + 2)*(size_t)(nby + 2)*(size_t)(nbz + 2);
-    const size_t block_stride = var_stride*4;
-    static const char *var_name[4] = {"un", "vn", "wn", "pn"};
+    const size_t block_stride = var_stride*(size_t)n_var;
     hid_t file;
     int ierr = 0;
 
-    if (nbx < 1 || nby < 1 || nbz < 1 || n_blocks < 1) return 1;
+    if (nbx < 1 || nby < 1 || nbz < 1 || n_blocks < 1 || n_var < 1) return 1;
 
     file = create_parallel_file(filename);
     if (file < 0) return 1;
@@ -711,8 +719,9 @@ int fdm_h5_write_field(const char *filename, int nbx, int nby, int nbz,
     ierr |= write_block_table(file, n_blocks_global, id_start, n_blocks,
                               block_origin, block_level);
 
-    for (int v = 0; v < 4; ++v) {
-        ierr |= write_block_dataset(file, var_name[v], nbx, nby, nbz,
+    for (int v = 0; v < n_var; ++v) {
+        ierr |= write_block_dataset(file, var_names + (size_t)v*FDM_VAR_NAME_LEN,
+                                    nbx, nby, nbz,
                                     n_blocks, n_blocks_global, id_start,
                                     q + (size_t)v*var_stride, block_stride);
     }
@@ -992,32 +1001,40 @@ int fdm_h5_read_metadata(const char *filename,
     return ierr != 0;
 }
 
+/* found[v] = 0 marks a dataset the file does not carry; the caller decides
+ * whether that is fatal (u,v,w,p) or a reinitialise-and-warn (a scalar added
+ * after the restart file was written -- the RANS named-scalar precedent). */
 int fdm_h5_read_field(const char *filename, int nbx, int nby, int nbz,
                       int n_blocks, int n_blocks_global, int id_start,
                       const int *block_origin,
                       int global_nx, int global_ny, int global_nz,
+                      int n_var, const char *var_names, int *found,
                       double *q)
 {
     const size_t var_stride = (size_t)(nbx + 2)*(size_t)(nby + 2)*(size_t)(nbz + 2);
-    const size_t block_stride = var_stride*4;
-    static const char *var_name[4] = {"un", "vn", "wn", "pn"};
+    const size_t block_stride = var_stride*(size_t)n_var;
     hid_t file;
     int ierr = 0;
 
-    if (nbx < 1 || nby < 1 || nbz < 1 || n_blocks < 1) return 1;
+    if (nbx < 1 || nby < 1 || nbz < 1 || n_blocks < 1 || n_var < 1) return 1;
 
     file = open_parallel_file(filename);
     if (file < 0) return 1;
 
-    for (int v = 0; v < 4; ++v) {
-        hid_t dset = H5Dopen2(file, var_name[v], H5P_DEFAULT);
+    for (int v = 0; v < n_var; ++v) {
+        const char *name = var_names + (size_t)v*FDM_VAR_NAME_LEN;
+        hid_t dset;
         hid_t file_space = -1;
         int ndims = 0;
 
+        found[v] = 0;
+        if (H5Lexists(file, name, H5P_DEFAULT) <= 0) continue;
+        dset = H5Dopen2(file, name, H5P_DEFAULT);
         if (dset < 0) {
             ierr = 1;
             break;
         }
+        found[v] = 1;
         file_space = H5Dget_space(dset);
         if (file_space < 0) {
             H5Dclose(dset);
@@ -1227,12 +1244,16 @@ int fdm_h5_read_ibm_coeff_blocks(const char *filename, int nbx, int nby, int nbz
                                  int n_blocks, int id_start,
                                  const int *block_origin, const int *block_level,
                                  double lx, double ly, double lz, double re,
-                                 int *found, double *coef)
+                                 int n_comp, int *found, double *coef)
 {
     const size_t ni = (size_t)nbx + 2;
     const size_t nj = (size_t)nby + 2;
     const size_t nk = (size_t)nbz + 2;
     const size_t n = ni*nj*nk*3;
+    /* The DESTINATION array carries n_comp components (4 with the
+     * cell-centred scalar column, increment S3); the dataset always
+     * carries the three staggered ones. */
+    const size_t dst_stride = ni*nj*nk*(size_t)n_comp;
     hsize_t local_dims[5] = {(hsize_t)n_blocks, ni, nj, nk, 3};
     hsize_t start[5] = {(hsize_t)id_start, 0, 0, 0, 0};
     hsize_t file_dims[5] = {0, 0, 0, 0, 0};
@@ -1299,7 +1320,7 @@ int fdm_h5_read_ibm_coeff_blocks(const char *filename, int nbx, int nby, int nbz
     status = H5Dread(dset, H5T_NATIVE_DOUBLE, mem_space, file_space, H5P_DEFAULT, buffer);
     if (status >= 0) {
         for (int b = 0; b < n_blocks; ++b) {
-            double *block_coef = coef + (size_t)b*n;
+            double *block_coef = coef + (size_t)b*dst_stride;
             const double *row = buffer + (size_t)b*n;
             for (size_t v = 0; v < 3; ++v) {
                 for (size_t k = 0; k < nk; ++k) {
@@ -1326,16 +1347,19 @@ int fdm_h5_read_ibm_coeff_blocks(const char *filename, int nbx, int nby, int nbz
 }
 
 /*
- * Per-leaf wall-distance tiles (mobygeom block-table): dwall_blocks rows
- * are (nb+2)^3 ghost windows of the cell-centred distance to the immersed
- * surface, evaluated at each leaf's level. Cross-checked against the
- * file's blocks table exactly like coef_blocks (returns 2 on a stale
- * table). *found = 0 when the file carries no dwall_blocks.
+ * ONE ghost-inclusive per-leaf tile dataset (n_blocks_global, nb+2, nb+2,
+ * nb+2), transposed into a Fortran-ordered destination whose per-block
+ * stride and component-plane offset the caller supplies -- shared by
+ * dwall_blocks and coef_p_blocks (which lands in the VAR_P plane of the
+ * 4-component coefficient array). Cross-checked against the file's blocks
+ * table exactly like coef_blocks (returns 2 on a stale table).
+ * *found = 0 when the file carries no such dataset.
  */
-int fdm_h5_read_dwall_blocks(const char *filename, int nbx, int nby, int nbz,
-                             int n_blocks, int id_start,
-                             const int *block_origin, const int *block_level,
-                             int *found, double *dwall)
+static int read_leaf_tiles(const char *filename, const char *name,
+                           int nbx, int nby, int nbz, int n_blocks, int id_start,
+                           const int *block_origin, const int *block_level,
+                           size_t dst_stride, size_t dst_offset,
+                           int *found, double *dst)
 {
     const size_t ni = (size_t)nbx + 2;
     const size_t nj = (size_t)nby + 2;
@@ -1353,7 +1377,7 @@ int fdm_h5_read_dwall_blocks(const char *filename, int nbx, int nby, int nbz,
     file = H5Fopen(filename, H5F_ACC_RDONLY, H5P_DEFAULT);
     if (file < 0) return 1;
 
-    if (H5Lexists(file, "dwall_blocks", H5P_DEFAULT) <= 0) {
+    if (H5Lexists(file, name, H5P_DEFAULT) <= 0) {
         H5Fclose(file);
         return 0;
     }
@@ -1364,7 +1388,7 @@ int fdm_h5_read_dwall_blocks(const char *filename, int nbx, int nby, int nbz,
         return ierr;
     }
 
-    dset = H5Dopen2(file, "dwall_blocks", H5P_DEFAULT);
+    dset = H5Dopen2(file, name, H5P_DEFAULT);
     file_space = dset >= 0 ? H5Dget_space(dset) : -1;
     if (dset < 0 || file_space < 0 || H5Sget_simple_extent_ndims(file_space) != 4) {
         if (file_space >= 0) H5Sclose(file_space);
@@ -1395,12 +1419,12 @@ int fdm_h5_read_dwall_blocks(const char *filename, int nbx, int nby, int nbz,
     status = H5Dread(dset, H5T_NATIVE_DOUBLE, mem_space, file_space, H5P_DEFAULT, buffer);
     if (status >= 0) {
         for (int b = 0; b < n_blocks; ++b) {
-            double *block_dwall = dwall + (size_t)b*n;
+            double *block_dst = dst + (size_t)b*dst_stride + dst_offset;
             const double *row = buffer + (size_t)b*n;
             for (size_t k = 0; k < nk; ++k) {
                 for (size_t j = 0; j < nj; ++j) {
                     for (size_t i = 0; i < ni; ++i) {
-                        block_dwall[linear_fortran(i, j, k, ni, nj)] =
+                        block_dst[linear_fortran(i, j, k, ni, nj)] =
                             row[(i*nj + j)*nk + k];
                     }
                 }
@@ -1419,11 +1443,42 @@ int fdm_h5_read_dwall_blocks(const char *filename, int nbx, int nby, int nbz,
     return ierr;
 }
 
+/* Per-leaf wall-distance tiles (mobygeom block-table): dwall_blocks rows
+ * are (nb+2)^3 ghost windows of the cell-centred distance to the immersed
+ * surface, evaluated at each leaf's level. */
+int fdm_h5_read_dwall_blocks(const char *filename, int nbx, int nby, int nbz,
+                             int n_blocks, int id_start,
+                             const int *block_origin, const int *block_level,
+                             int *found, double *dwall)
+{
+    const size_t n = ((size_t)nbx + 2)*((size_t)nby + 2)*((size_t)nbz + 2);
+
+    return read_leaf_tiles(filename, "dwall_blocks", nbx, nby, nbz, n_blocks,
+                           id_start, block_origin, block_level, n, 0, found, dwall);
+}
+
+/* Per-leaf CELL-CENTRED (pressure-position) IBM coefficient tiles, the
+ * passive scalars' penalization coefficient (increment S3). Optional: only
+ * a case file prepared with [scalar] carries coef_p_blocks, and it lands in
+ * component 3 (0-based) of the solver's 4-component coefficient array. */
+int fdm_h5_read_ibm_coeff_p_blocks(const char *filename, int nbx, int nby, int nbz,
+                                   int n_blocks, int id_start,
+                                   const int *block_origin, const int *block_level,
+                                   int n_comp, int *found, double *coef)
+{
+    const size_t n = ((size_t)nbx + 2)*((size_t)nby + 2)*((size_t)nbz + 2);
+
+    if (n_comp < 4) return 1;
+    return read_leaf_tiles(filename, "coef_p_blocks", nbx, nby, nbz, n_blocks,
+                           id_start, block_origin, block_level,
+                           n*(size_t)n_comp, n*3, found, coef);
+}
+
 int fdm_h5_read_ibm_coeff(const char *filename, int nbx, int nby, int nbz,
                           int n_blocks, const int *block_origin,
                           int global_nx, int global_ny, int global_nz,
                           double lx, double ly, double lz, double re,
-                          double *coef)
+                          int n_comp, double *coef)
 {
     /* The coefficient file carries the global ghost layer, so a block's
      * window (halos included) starts at its zero-based cell origin. */
@@ -1431,7 +1486,7 @@ int fdm_h5_read_ibm_coeff(const char *filename, int nbx, int nby, int nbz,
     const size_t nj = (size_t)nby + 2;
     const size_t nk = (size_t)nbz + 2;
     const size_t n = ni*nj*nk*3;
-    const size_t block_stride = n;
+    const size_t block_stride = ni*nj*nk*(size_t)n_comp;
     hsize_t expected_dims[4] = {
         (hsize_t)global_nx + 2,
         (hsize_t)global_ny + 2,
@@ -1696,12 +1751,15 @@ int fdm_h5_case_append_active(const char *filename, int n_lattice,
  * of fdm_h5_read_ibm_coeff_blocks. */
 int fdm_h5_case_append_coef(const char *filename, int nbx, int nby, int nbz,
                             int n_blocks, int n_blocks_global, int id_start,
-                            const double *coef)
+                            int n_comp, const double *coef)
 {
     const size_t ni = (size_t)nbx + 2;
     const size_t nj = (size_t)nby + 2;
     const size_t nk = (size_t)nbz + 2;
     const size_t n = ni*nj*nk*3;
+    /* Source stride: the coefficient array may carry a fourth,
+     * cell-centred component (coef_p_blocks writes it separately). */
+    const size_t src_stride = ni*nj*nk*(size_t)n_comp;
     hsize_t global_dims[5] = {(hsize_t)n_blocks_global, ni, nj, nk, 3};
     hsize_t local_dims[5] = {(hsize_t)n_blocks, ni, nj, nk, 3};
     hsize_t start[5] = {(hsize_t)id_start, 0, 0, 0, 0};
@@ -1720,7 +1778,7 @@ int fdm_h5_case_append_coef(const char *filename, int nbx, int nby, int nbz,
         return 1;
     }
     for (int b = 0; b < n_blocks; ++b) {
-        const double *block_coef = coef + (size_t)b*n;
+        const double *block_coef = coef + (size_t)b*src_stride;
         double *row = buffer + (size_t)b*n;
         for (size_t v = 0; v < 3; ++v) {
             for (size_t k = 0; k < nk; ++k) {
@@ -1815,12 +1873,15 @@ int fdm_h5_case_append_grid(const char *filename, int nx, int ny, int nz,
     return ierr != 0;
 }
 
-/* dwall_blocks: (n_blocks_global, nb+2, nb+2, nb+2) ghost-inclusive
- * cell-centred raw body-distance tiles; inverse of
- * fdm_h5_read_dwall_blocks. */
-int fdm_h5_case_append_dwall(const char *filename, int nbx, int nby, int nbz,
-                             int n_blocks, int n_blocks_global, int id_start,
-                             const double *dwall)
+/* One ghost-inclusive per-leaf tile dataset (n_blocks_global, nb+2, nb+2,
+ * nb+2) from a Fortran-ordered source with the caller's per-block stride
+ * and component-plane offset -- the exact inverse of read_leaf_tiles, and
+ * shared by dwall_blocks and coef_p_blocks. */
+static int case_append_leaf_tiles(const char *filename, const char *name,
+                                  int nbx, int nby, int nbz, int n_blocks,
+                                  int n_blocks_global, int id_start,
+                                  size_t src_stride, size_t src_offset,
+                                  const double *src)
 {
     const size_t ni = (size_t)nbx + 2;
     const size_t nj = (size_t)nby + 2;
@@ -1844,19 +1905,19 @@ int fdm_h5_case_append_dwall(const char *filename, int nbx, int nby, int nbz,
         return 1;
     }
     for (int b = 0; b < n_blocks; ++b) {
-        const double *block_dwall = dwall + (size_t)b*n;
+        const double *block_src = src + (size_t)b*src_stride + src_offset;
         double *row = buffer + (size_t)b*n;
         for (size_t k = 0; k < nk; ++k) {
             for (size_t j = 0; j < nj; ++j) {
                 for (size_t i = 0; i < ni; ++i) {
-                    row[(i*nj + j)*nk + k] = block_dwall[linear_fortran(i, j, k, ni, nj)];
+                    row[(i*nj + j)*nk + k] = block_src[linear_fortran(i, j, k, ni, nj)];
                 }
             }
         }
     }
 
     file_space = H5Screate_simple(4, global_dims, NULL);
-    dset = file_space >= 0 ? H5Dcreate2(file, "dwall_blocks", H5T_NATIVE_DOUBLE,
+    dset = file_space >= 0 ? H5Dcreate2(file, name, H5T_NATIVE_DOUBLE,
                                         file_space, H5P_DEFAULT, H5P_DEFAULT,
                                         H5P_DEFAULT) : -1;
     mem_space = H5Screate_simple(4, local_dims, NULL);
@@ -1876,6 +1937,36 @@ int fdm_h5_case_append_dwall(const char *filename, int nbx, int nby, int nbz,
     free(buffer);
     ierr |= H5Fclose(file) < 0;
     return ierr != 0;
+}
+
+/* dwall_blocks: ghost-inclusive cell-centred raw body-distance tiles;
+ * inverse of fdm_h5_read_dwall_blocks. */
+int fdm_h5_case_append_dwall(const char *filename, int nbx, int nby, int nbz,
+                             int n_blocks, int n_blocks_global, int id_start,
+                             const double *dwall)
+{
+    const size_t n = ((size_t)nbx + 2)*((size_t)nby + 2)*((size_t)nbz + 2);
+
+    return case_append_leaf_tiles(filename, "dwall_blocks", nbx, nby, nbz, n_blocks,
+                                  n_blocks_global, id_start, n, 0, dwall);
+}
+
+/* coef_p_blocks: the OPTIONAL cell-centred (pressure-position) coefficient
+ * tiles the passive scalars penalise with, written only when the prepare
+ * ini declares [scalar] -- so a case file for a scalar-free run is
+ * byte-identical to what P0-P3 produced. Source component 3 (0-based) of
+ * the 4-component coefficient array; inverse of
+ * fdm_h5_read_ibm_coeff_p_blocks. */
+int fdm_h5_case_append_coef_p(const char *filename, int nbx, int nby, int nbz,
+                              int n_blocks, int n_blocks_global, int id_start,
+                              int n_comp, const double *coef)
+{
+    const size_t n = ((size_t)nbx + 2)*((size_t)nby + 2)*((size_t)nbz + 2);
+
+    if (n_comp < 4) return 1;
+    return case_append_leaf_tiles(filename, "coef_p_blocks", nbx, nby, nbz, n_blocks,
+                                  n_blocks_global, id_start,
+                                  n*(size_t)n_comp, n*3, coef);
 }
 
 static int write_dataset1(hid_t file, const char *name, hsize_t n, const double *values)

@@ -22,11 +22,17 @@ module step
     use :: turbulence, only: turb_type, turbulence_is_enabled, TURB_PROF_SGS
     use :: chron, only: profiler_type, wall_seconds, profiler_add
     use :: bodyforce, only: bodyforce_type, bodyforce_is_enabled
+    use :: scalar, only: scalar_type, scalars_enabled, scalar_min_pr, scalar_min_prt
     implicit none
 
     real(C_DOUBLE), parameter :: rk_alpha(3) = [64.0d0/120.0d0,  50.0d0/120.0d0,  90.0d0/120.0d0]
     real(C_DOUBLE), parameter :: rk_beta(3)  = [ 0.0d0,         -34.0d0/120.0d0, -50.0d0/120.0d0]
     real(C_DOUBLE), parameter :: rk_gamma(3) = [64.0d0/120.0d0,  16.0d0/120.0d0,  40.0d0/120.0d0]
+
+    ! Fraction of the nominal step below which a "remaining" time is taken to
+    ! be accumulated round-off in t_current rather than a real final partial
+    ! step. See the comment in trim_dt_for_final_time.
+    real(C_DOUBLE), parameter :: FINAL_STEP_FRACTION = 1.0d-6
 
 contains
 
@@ -79,10 +85,19 @@ contains
         !$omp end target teams distribute parallel do
     end subroutine apply_ibm_band_filter
 
-    subroutine precompute_peclet_rate(dns, blk, c)
+    subroutine precompute_peclet_rate(dns, blk, c, sc)
         type(dns_type), intent(inout) :: dns
         type(block_set_type), intent(in) :: blk
         type(comm_type), intent(in) :: c
+        ! Passive scalars: the binding molecular diffusivity is
+        ! 1/(Re Pr_min), so a Pr < 1 scalar tightens the explicit limit.
+        ! Absent / no scalars leaves the rate exactly as before.
+        !
+        ! A CONJUGATE body's contribution cannot be formed here -- it needs
+        ! the signed distance, which needs the IBM coefficients, which do not
+        ! exist yet. scalar_conjugate_peclet_rate is max'ed into
+        ! dns%peclet_rate from moby_solve once the interface is built.
+        type(scalar_type), intent(in), optional :: sc
 
         integer :: i, b, nx, ny, nz
         real(C_DOUBLE) :: ire, local_rate(1)
@@ -91,6 +106,9 @@ contains
         ny = int(blk%nb(2))
         nz = int(blk%nb(3))
         ire = 1.0d0/dns%re
+        if (present(sc)) then
+            if (scalars_enabled(sc)) ire = ire*max(1.0d0, 1.0d0/scalar_min_pr(sc))
+        end if
 
         local_rate = 0.0d0
         do b = 1, int(blk%nBlocks)
@@ -650,15 +668,22 @@ contains
             wall_seconds() - profile_start)
     end subroutine add_eddy_viscosity_correction
 
-    subroutine get_timestep_rates(blk, dns, rates, turb)
+    subroutine get_timestep_rates(blk, dns, rates, turb, sc)
         type(block_set_type), intent(inout) :: blk
         type(dns_type),   intent(in)    :: dns
         real(C_DOUBLE), intent(out) :: rates(1:NCFL)
         type(turb_type), intent(in), optional :: turb
+        ! Passive scalars: their effective diffusivity, not the momentum
+        ! viscosity, sets the explicit limit -- nu_eff = ire/Pr_min +
+        ! nu_t/Pr_t,min (docs/next_session_scalar.md Section 8; the molecular
+        ! half is already folded into dns%peclet_rate by
+        ! precompute_peclet_rate). Absent / no scalars leaves both scale
+        ! factors at exactly 1.
+        type(scalar_type), intent(in), optional :: sc
 
         integer :: i,j,k,b
         integer :: nx, ny, nz, nBlocks
-        real(C_DOUBLE) :: cfl_rate, peclet_rate, ire, nu_eff
+        real(C_DOUBLE) :: cfl_rate, peclet_rate, ire, nu_eff, pr_scale, prt_scale
         logical :: use_eddy_viscosity
 
         nx = int(blk%nb(1))
@@ -690,7 +715,15 @@ contains
         if (.not. use_eddy_viscosity) return
 
         peclet_rate = dns%peclet_rate
-        ire = 1.0d0/dns%re
+        pr_scale = 1.0d0
+        prt_scale = 1.0d0
+        if (present(sc)) then
+            if (scalars_enabled(sc)) then
+                pr_scale = max(1.0d0, 1.0d0/scalar_min_pr(sc))
+                prt_scale = max(1.0d0, 1.0d0/scalar_min_prt(sc))
+            end if
+        end if
+        ire = pr_scale/dns%re
 
         !$omp target teams distribute parallel do collapse(4) reduction(max:peclet_rate) &
         !$omp& map(to: blk%d1x, blk%d1y, blk%d1z, turb%nut) &
@@ -699,7 +732,7 @@ contains
         do k = 1, nz
             do j = 1, ny
                 do i = 1, nx
-                    nu_eff = ire + max(0.0d0, turb%nut(i,j,k,b))
+                    nu_eff = ire + prt_scale*max(0.0d0, turb%nut(i,j,k,b))
                     peclet_rate = max(peclet_rate, nu_eff*blk%d1x(i,VAR_P,b)**2)
                     peclet_rate = max(peclet_rate, nu_eff*blk%d1y(j,VAR_P,b)**2)
                     peclet_rate = max(peclet_rate, nu_eff*blk%d1z(k,VAR_P,b)**2)
@@ -726,22 +759,63 @@ contains
         end if
     end function run_should_continue
 
-    subroutine trim_dt_for_final_time(dns)
+    ! Trim dt so the run lands exactly on t_final, and report whether a step
+    ! is left to take at all.
+    !
+    ! IT REPORTS RATHER THAN ZEROING dt, and that is load-bearing: dns%dt is
+    ! written into every snapshot's metadata and read back by the restart, so
+    ! a zero there makes the FINAL snapshot of a t_final run unusable --
+    ! `config.f90: time step must be positive`. Signalling the end by setting
+    ! dns%dt = 0 traded the amplified-pn trap this routine exists to fix for
+    ! that one. FOUND 2026-08-28 by run_gates_s2.sh's `les` leg: les_legs()
+    ! REWRITES t_final in a generated variant, so those legs are t_final-
+    ! terminated even though every committed suite ini is nsteps-terminated
+    ! (the claim in the original write-up), and the relax leg's RT_turbles.h5
+    ! came out with dt = 0.0 at t = 29.999999999975433 -- exactly the step
+    ! this routine suppresses.
+    ! The trajectory is unchanged: the loop still exits at the same step, and
+    ! a genuine final partial step still gets dt = remaining.
+    logical function trim_dt_for_final_time(dns) result(step_remains)
         type(dns_type), intent(inout) :: dns
 
         real(C_DOUBLE) :: remaining
 
+        step_remains = .true.
         if (dns%t_final <= 0.0d0) return
 
         remaining = dns%t_final - dns%t_current
-        dns%dt = min(dns%dt, max(0.0d0, remaining))
-    end subroutine trim_dt_for_final_time
 
-    subroutine update_timestep_limits(blk, dns, c, turb)
+        ! t_current is accumulated by repeated `t_current = t_current + dt`, so
+        ! it carries round-off that grows with the STEP COUNT (~N eps t_final).
+        ! On a long run that outruns run_should_continue's absolute stopping
+        ! tolerance and the loop takes one extra step of essentially zero
+        ! length -- measured 2026-08-07 on the turbles relax leg: 10401 steps
+        ! instead of 10400, t_current = 29.999999999975433 against t_final =
+        ! 30.0 and a 1e-12 tolerance, i.e. dt = 2.46e-11. The velocity barely
+        ! moves, but the projection solves against dt_gamma ~ 1e-11 and the
+        ! stored pn comes out amplified by 1/dt (|pn| 1.5e6 against 9.1 one
+        ! step earlier), which makes the FINAL snapshot of any t_final run a
+        ! restart that blows up. So: a remaining that is a negligible FRACTION
+        ! of the step about to be taken is round-off, not a step. The test has
+        ! to be RELATIVE -- an absolute one at the stopping tolerance would not
+        ! have caught this (the gap was 25x it) -- while a genuine final
+        ! partial step is a meaningful fraction of dt and passes through.
+        ! Nothing left to take -- including the `already past t_final` case,
+        ! where remaining <= 0 is trivially below the threshold.
+        if (remaining < FINAL_STEP_FRACTION*dns%dt) then
+            step_remains = .false.
+            return
+        end if
+
+        dns%dt = min(dns%dt, remaining)
+    end function trim_dt_for_final_time
+
+    subroutine update_timestep_limits(blk, dns, c, turb, sc)
         type(block_set_type), intent(inout) :: blk
         type(dns_type), intent(inout) :: dns
         type(comm_type), intent(in) :: c
         type(turb_type), intent(in), optional :: turb
+        type(scalar_type), intent(in), optional :: sc
 
         real(C_DOUBLE) :: rates(1:NCFL), next_dt
         logical :: have_limit
@@ -749,7 +823,7 @@ contains
         if (dns%cflmax <= 0.0d0 .and. dns%pecletmax <= 0.0d0) return
 
         if (present(turb)) then
-            call get_timestep_rates(blk, dns, rates, turb)
+            call get_timestep_rates(blk, dns, rates, turb, sc)
         else
             call get_timestep_rates(blk, dns, rates)
         end if

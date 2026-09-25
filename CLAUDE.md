@@ -8,15 +8,18 @@ mobydiff: an incompressible Navier-Stokes solver. Second-order finite
 differences on a staggered Cartesian grid (uniform or stretched per
 direction), RK3 time stepping, a segregated **damped-Jacobi pressure
 projection** with optional **Chebyshev-Jacobi** acceleration (`[pressure]
-accel = chebyshev`; on the `claude/jacobi-interface` branch — it replaced the
-old coupled red-black SOR projection, which could not make the 2:1 interface
-operators consistent on the OPERATOR of the day; red-black is selectable again
+accel = chebyshev`; it replaced the old coupled red-black SOR projection, which
+could not make the 2:1 interface operators consistent on the OPERATOR of the
+day; red-black is selectable again
 via `[pressure] solver = redblack` and, since R1, runs across a 2:1 interface
 too — see `validation/redblack_interface/`), volume-penalization immersed
 boundary method (IBM),
-optional LES. Fortran + MPI (3D Cartesian decomposition, 26-neighbour halos) with
-OpenMP target offload for GPU. Entry points: `src/moby_solve.f90` (the
-solver; the build keeps a `main` symlink for the older scripts) and
+optional LES, RANS (k-omega SST, transition, wall functions) and IDDES, and
+**passive scalars** with conjugate heat transfer at the immersed interface
+(`src/modules/scalar.f90`, `[scalar]`/`[scalar.N]`). Fortran + MPI (3D
+Cartesian decomposition, 26-neighbour halos) with OpenMP target offload for
+GPU. Entry points: `src/moby_solve.f90` (the solver; the build keeps a `main`
+symlink for the older scripts) and
 `src/moby_prepare.f90` (the MPI-parallel preprocessor writing the case
 file, `docs/prepare_solve_strategy.md`). `tools/mobygeom*` is the RETIRED
 Python preprocessor, kept as the cross-implementation validation
@@ -52,12 +55,35 @@ mpirun -n 1 ./build_gpu/moby_solve path/to/input.ini    # main is a symlink
 - Derived types own flat contiguous allocatable arrays; map them to the
   device once in `enter_*_data`/`exit_*_data` routines (see `gpu_runtime.f90`,
   `blocks.f90`). No allocatable components inside arrays of derived types.
+- **After `enter_*_data`, the host and device copies are independent.** Host
+  code that READS a mapped array sees whatever the HOST last wrote (device
+  kernels do not update it), and a host WRITE is invisible to the device
+  until an explicit update. The two escapes are `!$omp target update
+  from(x)` (device → host, before a host read) and `... to(x)` (host →
+  device, after a host write) — both `#ifdef USE_OPENMP_OFFLOAD`-guarded.
+  This is a real defect class: the 2026-08-05 RANS cold-start IC fix was
+  correct on CPU and a pure no-op on GPU for exactly this reason. Never
+  argue a site is safe — TEST it: make the host-side change and check the
+  GPU output MOVES. Full audit (every call site, verdict + probe) in
+  `docs/next_session_verification.md` §2.
 
-## Active work: block refinement + 2:1 interface (branch `claude/jacobi-interface`)
+## Active work
 
-The block refactor (Phases 0–3) is complete and lives on `claude/jacobi-interface`
-(forked from `claude/blocks` to rebuild the projection on a damped-Jacobi /
-Chebyshev smoother). The CURRENT state and next steps are in
+**THE BRANCHES ARE CONSOLIDATED (2026-09-25).** `boundaryLayer` (the CaNS/SIMSON
+trip) and `scalar` (passive scalars + conjugate heat transfer) are merged into
+this branch, which is itself a descendant of `claude/jacobi-interface`; `main`
+fast-forwards to it. `multiGPU` and `claude/blocks` are fully contained or
+superseded. The one branch still holding unmerged work is
+`claude/jacobi-interface` — six RANS/airfoil features (`[rans]`
+kpin_box/ktrip_box/kpin_dwall/boostconv, `[case.airfoil] steady_tol`,
+refine_body_box/levels) plus the 2026-08 `naca/rans` tutorial state; keep it
+until those are wanted or explicitly dropped. The log below is one list, in
+rough chronological order: block refinement, then RANS/IDDES, then the
+airfoil, then passive scalars, then the performance campaign.
+
+The block refactor (Phases 0–3) is complete (the projection was rebuilt on a
+damped-Jacobi / Chebyshev smoother, which is why `claude/jacobi-interface` was
+forked from `claude/blocks`). The CURRENT state and next steps are in
 `docs/next_session_edges_les.md` (read it first); the master design is
 `docs/block_refinement_strategy.md`. Goal:
 BCM-style equal-size blocks (Nakahashi & Kim 2004; Jansson et al. 2019) to
@@ -876,6 +902,379 @@ immersed boundary. Phased, each phase verified before the next:
   gone velocity-active through outlet faces); dt detunes it. The case ships
   accel-off. Latent risk for long chebyshev+outlet runs (cylinder/naca
   horizons were too short to show it).
+- Passive scalars S0-S5a (DONE 2026-08-03/04, branch `scalar` off
+  `boundaryLayer`; plan + every deviation, finding and gate number in
+  `docs/next_session_scalar.md` STATUS header, gate machinery in
+  `validation/scalar/README.md`). N user-selectable transported scalars, each
+  with its own Pr/Sc. THE ONE DESIGN DECISION: **scalars are extra variables of
+  `blk%q`** (`dns%nVar = NVAR + dns%nScalar`, scalar `is` at `VAR_S0+is`;
+  `SCR_S0+is` in `qs`/`oldrhs` — p has no scratch, so THE TWO INDICES DIFFER),
+  which makes the metric arrays (a scalar sits exactly at the `VAR_P` position),
+  the 2:1 halo exchange (cell-centred ⇒ the PRESSURE transfer: 8-cell restrict +
+  blended `(2 p_C + p_f)/3` prolong ghost — deliberately unlike the RANS
+  scalars' plain injection) and the io (one file, one collective write) come for
+  free. `count = 0` is bit-exact BY CONSTRUCTION and gated at max_abs 0 (nofma,
+  CPU AND GPU) on the standard 7-case suite at every increment.
+  `src/modules/scalar.f90` owns `scalar_type` (allocatable per-scalar arrays —
+  there is NO `MAX_SCALARS`), the fused `scalar_transport` (one GPU launch for
+  any N: collapse(4) + inner scalar loop) and `scalar_finish` (qs→q, ghosts, ONE
+  batched exchange), both OUTSIDE the projection.
+  - S0/S1: config `[scalar]`/`[scalar.N]`, `apply_scalar_bc_q` (a var-indexed
+    twin of apply_bc's cell-centred branch — do NOT extend apply_bc, it runs
+    `nIter`x inside the projection), patch-derived BC defaults; 2nd-order
+    central divergence-form convection on the p-cell's own face velocities,
+    `convection = skew` honoured, face-flux diffusion, momentum RK3 verbatim.
+    **NO upwind option** (project stance; the sharp-front over/undershoot is a
+    known limitation until the shared TVD increment lands). Called BEFORE
+    `momentum` — after it the velocity is the non-solenoidal predictor with
+    stale halos.
+  - S2: `D_face = 1/(Re Pr) + ½(nut_L+nut_R)/Pr_t(face)` reading `turb%nut`, so
+    ONE path covers LES/RANS/IDDES; `prt_model = kays` (Kays-Crawford, pure
+    declare-target, small-x series branch or it loses all precision at large
+    Pe_t) unit-tested in `src/test_scalar.f90`. Peclet limiter scaled by
+    `nu_eff = ire/Pr_min + nut/Pr_t,min`.
+  - S3: `ibm%coef` gains its `VAR_P` column ONLY when `[scalar]` is configured
+    (**`ibm%mu` does NOT** — `mu_s = 1/(1+dt_gamma coef_p/Pr)` is Pr-dependent
+    and formed inline); `ibm_wall = dirichlet` (penalization, solid cell == the
+    body value to the last bit) | `adiabatic` (six-face convective AND diffusive
+    masking, symmetric ⇒ `∫s dV` conserved exactly). File path reads the NEW
+    OPTIONAL `coef_p_blocks` case-file dataset — scalar-free case files stay
+    byte-identical, and scalars + a file without it is a hard error naming the
+    fix (**any pre-S3 coefficient file must be re-prepared**; the generated
+    zero-force twins are fixed by re-running their generator, not moby_prepare).
+    **FINDING: the A2 penalization integral does NOT transpose to a Dirichlet
+    scalar** — `coef_p (s_body − s)` is `1e28 x 0 = 0` in every solid cell and
+    the integral sees only 63 % of the heat; the body heat release is measured
+    as staircase-interface flux + graded-cell penalization (validated by a
+    discrete energy budget to 3.9e-4).
+  - S4: `src/modules/scalar_stats.f90` — seven columns per scalar per row
+    (`<s>`, `<s²>`, `<u_c s>`, and on the LOW and HIGH y face the convective and
+    the TOTAL flux) built with the TRANSPORT KERNEL's own face diffusivity, so a
+    wall row's `J` IS the exact discrete wall flux and `theta_tau`/Nusselt are
+    exact rather than reconstructed; `stats_layout = profile|plane`, per-level
+    files, restart-continued. DEVIATION: a solver-level facility called from
+    `moby_solve.f90`, NOT a case component — the case `after_step` interface
+    carries neither `sc` nor `turb%nut`. `tools/scalar_stats.py` reads it;
+    `compare_fields.py` with no dataset arguments now discovers datasets.
+  - S5a: the Kader/Jayatilleke THERMAL WALL FUNCTION for `[rans]
+    wall_treatment = wall_function` (was S2's hard config error), delivered
+    exactly as T3 delivers the wall shear — **as a wall-cell eddy
+    DIFFUSIVITY**, so the ordinary face-flux discretisation reproduces the
+    wall-function flux with no special-cased flux anywhere (measured identity
+    1e-15). THE T3 LESSON TRANSPOSED: the wall-cell value must also be copied
+    into the no-slip ghosts or the face-interpolated diffusivity, and the
+    delivered flux, are halved. `kappa`/`E` are USE-ASSOCIATED from rans.f90 —
+    one definition of the log law. The wall cell uses the CONSTANT `prt` even
+    under `prt_model = kays` (deliberate: P and the log branch are defined with
+    a constant Pr_t); gate (x2) measures what that costs.
+  - **THE PASSIVE-SCALAR PLAN IS CONCLUDED (decided 2026-08-07).** S0–S5a are
+    the shipped feature set, and the verification debt behind them is closed
+    (`docs/next_session_verification.md`: every gate group re-measured, plus
+    a host/device staleness audit that came back clean). The two remaining
+    plan items are reclassified and are BOTH LOW PRIORITY:
+    **S5b** (TVD/van-Leer convection) moves to the comm/halo track — it is a
+    halo-DEPTH change in comm.f90 (second upwind cell, the per-dim affine
+    gather maps, every 2:1 transfer), shared with the RANS transition
+    scalars, and its measured motivation is the SD7003 gamma front, not
+    anything a passive scalar failed; its gates are `validation/
+    interface_suite/` + `validation/refine2d/`. **S5c** (Boussinesq) is
+    parked: the `[force] type = custom` hook is in and gated, so it is user
+    code away. WHAT CONCLUDING RATIFIES: scalar convection stays 2nd-order
+    CENTRAL with no upwind option, so sharp fronts over/undershoot — the
+    documented stance, now the shipped behaviour. The live scalar work is
+    conjugate heat transfer, `docs/next_session_conjugate.md` C1, which gets
+    its own session (it is a third `ibm_wall` mode on the same cut cells the
+    penalization pins).
+  - IBM THERMAL WALL FUNCTION — case built + PARTIALLY gated 2026-08-05
+    (S5a's open item; every S5a gate was a domain wall).
+    `validation/scalar/ibmwf180.ini`: the les_ibm wall slabs on a COARSE grid
+    (ly 2.5 / ny 8), where the classified wall cells are CUT cells (centre
+    inside the solid, one fluid staggered face) that the Dirichlet
+    penalization pins (u 2e-27, theta 1.6e-29) while the wall function reads
+    them. ONE body value serves both walls, so the case drives the scalar
+    with isothermal walls + a constant volumetric `source`: the steady budget
+    is then CLOSED-FORM (fluxes telescope; heat into the body =
+    `source*V_fluid`) and NO reference run is needed -- gated to 1.4e-15.
+    LOG BRANCH -- CLOSED at Re_tau 1000 (`ibmwf1000.ini`, GPU on istmcetus).
+    KEY INSIGHT: **coarsening the grid is not the y+ lever at an immersed
+    wall.** The cut cell's velocity is penalized, so its k stays small
+    however coarse the grid; y+ only picks up the bounded growth of
+    y_eff ~ dwall <= dy/2 (ibmwf180 already has 6x ibm180wf's y_eff and still
+    converges to y+ 5.8, the conduction branch). The lever is `nu`: at fixed
+    u_tau = 1, y+ ∝ Re. `ibmwf1000.ini` is the same ini with re = 1000 and
+    nothing else (the case file is re-prepared because the coefficients carry
+    the 1/Re scaling; dwall/yeff/wallcell come out BIT-IDENTICAL, so y+ moves
+    only through nu and k). Converged: y+_k **38.3-41.0** (mean 39.7), the
+    log branch fires on **128/128** wall cells for BOTH wall functions, the
+    wall-cell nut matches the independent transcription **exactly (0.0, on
+    GPU)**, and the closed-form budget holds to **2.3e-15**. So the
+    penalization and the thermal wall function coexist correctly on the same
+    cut cell in the log branch. BONUS control: the same case run with the
+    PRE-FIX GPU binary read 132 % high, reproducing the double count at a
+    second Re and on a second device.
+  - FOUND BY THAT GATE, FIXED 2026-08-05: **the S4 body-heat diagnostic
+    double counted whenever `ibm_value = 0`.** The staircase/penalization
+    split assumes a solid cell contributes exactly 0 to the penalization sum
+    (it holds the body value to the last bit -- the S3 FINDING), so its heat
+    is carried by the staircase term. That cancellation is an ARTEFACT OF THE
+    VALUE: it is bitwise only when `ibm_value` is large enough to swallow the
+    O(1e-29) penalization residual under its own ulp. With `ibm_value = 0` the
+    residual survives, `coef_p*(0 - 1.6e-29)` is O(0.1) per cell, and the heat
+    was counted twice. MEASURED on the same physics with the two conventions
+    (theta differs by a constant; the staircase column is bit-identical to 13
+    digits): `ibm_value = 1` gave the exact closed-form answer 0.46263770630106
+    (rel dev 1.7e-14), `ibm_value = 0` gave 1.0556 -- 128 % high. FIX: exclude
+    solid cells from the penalization accumulator explicitly
+    (`scalar_stats.f90`), which is a NO-OP at `ibm_value = 1` -- re-gated, the
+    S4 heat gates read their recorded numbers (solver-vs-Python 1.3e-15,
+    energy budget 4.49e-04, adiabatic exactly 0) and the fixed binary at
+    `ibm_value = 0` now reproduces the `ibm_value = 1` numbers to 1e-15. The
+    diagnostic is now value-independent, which is the invariance it must have.
+    LESSON: never rely on a floating-point cancellation as a classification.
+  - FIXED 2026-08-05 (pre-existing, found while gating S5a): a cold-started
+    RANS run was **not rank/nb-independent**. `init_rans_transport`'s
+    `k = 1.5 (tu/100 |u|)^2` IC interpolates the cell velocity from the two
+    staggered faces, so at a block's LAST interior cell it read the halo
+    `q(nb+1)` — which `moby_solve.f90` did not fill until after the whole
+    init block: `k` came out a factor **4** low on the last plane of EVERY
+    block (`omega` following it down to the viscous limb), one bad plane per
+    block, so the answer depended on the decomposition. Visible in x only on
+    the channels because their `v`/`w` vanish in the IC; a nonzero-`v`/`w`
+    cold start was wrong on the high face of every block in all three
+    directions. FIX: `apply_bc` + `exchange_halos` now run BEFORE the
+    `[rans]` init block (the later calls are idempotent — ghosts and halos
+    only, from interior data nothing modifies in between), so non-RANS cases
+    stay bit-exact. **PLUS `!$omp target update from(blk%q)` after it**: those
+    calls write the DEVICE copy while `init_rans_transport` is HOST code, so
+    without the update the fix was a pure NO-OP on GPU (measured: the fixed
+    GPU binary reproduced the pre-fix result bit-for-bit and kept the
+    x-dependent k, x-spread 1.49e-02 vs 0.0 on CPU). This is the general
+    trap: **any host-side code reading a device-mapped array after its
+    `enter_*_data` sees a stale host copy** (and any host-side WRITE is
+    invisible to the device until a `target update to`) — the
+    `target update from(ibm%coef)` a few lines below is the same pattern.
+    Only the GPU bit-exactness suite could catch it; the CPU one looked
+    complete. **Exactly one instance of this class has been found; the audit
+    for the others is `docs/next_session_verification.md`**, which also
+    carries the gate groups not re-run after these two fixes. Only the k/omega INITIAL CONDITION of a cold start
+    changes; the converged answer does not (`wf180_y30`/`wf180_y45`
+    reproduce the T3 gate to every printed digit), but cold-started RANS
+    snapshots written before this date no longer reproduce bit-for-bit.
+    `run_bitexact.sh` vs the S5a binaries now reads the INTENDED signature on
+    CPU **and GPU**: min_channel / les_ibm / les_ibm_refine / beltrami_yslab
+    max_abs 0, and turb180 / wf180_y30 / lam30t moved (20-step transients
+    from the corrected IC: un ~2e-2, k ~3e-1; turb180's GPU deviation is
+    IDENTICAL to its CPU one to every digit). Same for `run_bitexact_s3.sh`:
+    8 of 9 scalar cases max_abs 0, `turbsst` moved (it is cold-started RANS).
+    The S2/S5a PHYSICS is unmoved — re-measured, not assumed: the S5a
+    `theta_tau` sweep still reads +1.39/+2.28/+5.64/+7.22 %, the resolved
+    reference still 0.053413, Kader still 17.1/0.1/0.7 %, and the S5a
+    determinism gate is now max_abs 0 for the X SPLIT too (CPU vs GPU 5.6e-17).
+    **THE REFERENCE SET TO USE IS `~/s5c_ref_binaries/`** (CPU+GPU nofma
+    solve/prepare, commit-pinned to `8f60944`, PROVENANCE inside).
+    `~/s5a_ref_binaries/` is stale for cold-started RANS cases, and so is the
+    **GPU** binary of `~/s5b_ref_binaries/` — found 2026-08-07: it was
+    archived in the four minutes BEFORE the `target update from(blk%q)` was
+    added, so it is the "correct on CPU, no-op on GPU" intermediate state and
+    gives output IDENTICAL to s5a's GPU binary on turb180 (its own
+    PROVENANCE claimed both fixes; that holds for the CPU binary only). It
+    silently failed a GPU gate before it was caught. LESSON, now in the s5c
+    provenance: **cut a reference set from a COMMIT, never from a working
+    tree mid-edit, and record the hash.** LESSON: `q`'s halos are invalid
+    throughout init — any init-time consumer reading a neighbour must
+    exchange first. Write-up in `validation/rans_sst/README.md`.
+  - LANDMINE (cost an hour): a local `nVar` in blocks.f90 SHADOWED the
+    use-associated `NVAR` parameter (Fortran is case-insensitive) and silently
+    allocated a zero-size dimension. The local is now `nQ`.
+- CHT validation campaigns — CONSOLIDATED into `tutorials/cht/` (2026-09-21).
+  `tutorials/cht/channel/` = the Flageul-matched turbulent channel (flat,
+  grid-aligned interface, so the cut-face coefficient is EXACT and what is
+  measured is the conjugate physics); `tutorials/cht/pipe/` = the Neuhauser
+  NekRS pipe (the first CURVED conjugate interface). Each directory holds what
+  is needed to RUN the case; its `asset/` holds the reference data, the
+  comparison scripts, the figures and the report, and runs without any large
+  file. `tutorials/cht/pipe/asset/neuhauser_profiles.npz` is a 250 kB
+  reduction of the 11.8 GB published archive — `extract_neuhauser.py` rebuilds
+  it and figures 1-5 come out BYTE-IDENTICAL either way. The superseded
+  channel campaigns (1-4) are gone from the tree and live in git history +
+  `tutorials/cht/channel/asset/CAMPAIGN_NOTES.md`. `make_geometry_stl.py` and
+  `check_annulus.py` moved to `tools/` (shared by the C2/F5 gates and the pipe
+  tutorial). The FEATURE gates stay in `validation/conjugate/`.
+- Conjugate heat transfer at the immersed interface — increments **C1, C2 and
+  C3 DONE** (C1 2026-08-27/28, C2 and C3 2026-08-28, branch `scalar`; plan +
+  every deviation and gate number in the STATUS header of
+  `docs/next_session_conjugate.md`, commands and measurements in
+  `validation/conjugate/README.md`).
+  **C2 — the tangential term the C1 baseline drops: measured, and SHIPPED
+  DISABLED.** `[scalar] indicator_interval` reduces `e_face = h_d s_t/(T_R −
+  T_L)` over the cut faces (max, rms, count) — §3's own closed form, so it IS
+  the relative error the baseline makes, and it ships ENABLED as a free
+  diagnostic; `[scalar.N] tangential_correction` adds `s_t (k_loc − k_face)`
+  as its OWN flux divergence after the C1 term (inert by construction when
+  off, not by a `+0.0` argument) and is DEFAULT OFF because three independent
+  measurements say so: a crossover ratio `r* ≈ 0.027` that the DNS-like
+  `|∇_tT|/|∂_nT| ~ 10⁻²` sits below; the `r = ∞` BVP where the corrected FACE
+  flux is exact to 1e-11 and the corrected FIELD is 2.6× WORSE (a
+  finite-difference divergence wants the face AVERAGE, not the midpoint
+  value); and — decisive — a cylinder at κ_s = 10³ where the correction is
+  40–65× worse than dropping the term, because `|∇_tT| ∝ 2/(1+κ_s) → 0` in the
+  isothermal limit while the discrete estimate of it does not. The measured
+  fix (`k_area`, the face AREA-weighted mean, which removes the paradox
+  exactly on a plane) is recorded in the README and NOT implemented: it cannot
+  rescue the feature, because the binding constraint is the `s_t` estimate on
+  curved interfaces. **Anyone reopening this starts from `s_t`, not from the
+  multiplier.**
+  **C3 — the fluid-fraction-weighted capacity, the Nusselt diagnostic, and the
+  TIME STEP.** (1) `C_cell = f + (1−f)C_s` with `f` from the closed
+  plane-in-box form (`plane_box_fraction`; `clip(½ + φ_c/h)` is not an
+  approximation of it but its degenerate limit, the one a GRID-ALIGNED wall
+  lands in). `f` is pure geometry, built once at init beside `φ` (`sc%vfrac`)
+  and read by the transport kernel, the time-step limiter AND the checkers —
+  it rides the snapshot as `vfrac` (write only), which is what lets a gate
+  state the invariant the SOLVER conserves. Gated: field error order **1.99,
+  2.00** and decay rate order **1.99, 2.00** on a two-material eigenmode,
+  against **1.71, 1.09** and **1.28, 0.54** from the archived C2 binary on the
+  same inis — the pointwise capacity costs a full order, measured with a
+  control, not argued. (2) The conjugate branch of the interface-heat
+  diagnostic (`scalar_stats.f90`) = the Nusselt number: the sum over cut faces
+  of the scheme's own flux, penalization column EXPLICITLY zero (there is none
+  in this mode, and `coef_p` is finite in a graded fluid cell — the 2026-08-05
+  lesson applied before it could bite). Gated three ways: a closed form
+  (**4.572e-13**), an independent Python transcription (**3.553e-16** / 
+  **2.709e-16**), and a control-volume budget with the flow on that falls like
+  `dt²` and does not move with `niter`. FOUND: the PRE-C3 diagnostic on a
+  conjugate case reported a MEANINGLESS number, so C1's "smoke-gated" columns
+  were also wrong. (3) **The cut-cell share in `scalar_conjugate_peclet_rate`
+  is now 2, not 3** — C2 measured the old convention at 96 % of the Gershgorin
+  bound and found the case that attains it; `share = 2` gives a 1.56× margin
+  and that case runs. Cost: `dt × 2/3` AT CUT CELLS ONLY. Every C1/C2 number
+  was therefore re-measured, not assumed.
+  **C1 — the baseline** (derivation in `docs/conjugate/conjugate_ibm.tex`).
+  `[scalar.N] ibm_wall = conjugate` is a
+  THIRD mode beside `dirichlet`/`adiabatic` (re-expressing those two through
+  the new arithmetic could not be bit-exact, so they are untouched): the solid
+  stops being a boundary condition and becomes a REAL unknown carrying
+  `solid_k` = κ_s and `solid_rhocp` = C_s (both ≡ 1 in the fluid), plus
+  `solid_init` / `solid_source` / `contact_resistance`. **THE WHOLE SCHEME IS
+  ONE FACE COEFFICIENT**: at a face whose two cell centres straddle the
+  interface, the face diffusivity becomes the distance-weighted harmonic mean
+  `dm/(w/κ_L + (1−w)/κ_R + R_c dm/h)` on the level-set fraction
+  `w = φ_L/(φ_L − φ_R)`; every other face keeps today's kernel line verbatim.
+  The OBLIQUITY LEMMA is why this needs no new data: φ stores the
+  PERPENDICULAR distance, so the direction cosine cancels in the ratio and `w`
+  is the true arm fraction at any orientation, with no normal ever computed —
+  **no new dataset, no case-file format change**. `sc%phi = ±dwall` is
+  ghost-inclusive, signed by the cell-centred IBM marker
+  (`|coef(VAR_P)| > 1e20` is exactly "this centre is in the solid", because
+  `set_ibm_coeff` writes SOLID/Re there and grades only fluid-centred cells),
+  and comes from the two EXISTING dwall producers. Around the coefficient:
+  convection HARD-masked on solid and cut faces with the skew term's
+  divergence built from the SAME masked velocities (so a uniform scalar is
+  still preserved exactly, in the solid too); the flux divergence divided by
+  the local capacity; ν_t in neither the solid nor a cut face; no
+  penalization. HARD CONFIG ERRORS (each silently produces a wrong answer):
+  `remove_solid = true`, `refine_body` without `keep_buried`, `ibm_value`,
+  a `solid_*` key on a non-conjugate scalar, no immersed body, wall functions.
+  The 2:1 precondition is CHECKED at init, not assumed (a cut face may not sit
+  on a coarse/fine block face — the coefficient is a same-level arm).
+  Gates (all PASS, `validation/conjugate/run_gates_c1.sh`): 1D two-material
+  slab with the cut swept through a full cell × κ_s over five decades —
+  max|θ − exact| **≤ 9.7e-15** over 28 pairs, and `w` itself **2.2e-14** vs
+  the analytic cut, rebuilt from the case file without the solver;
+  capacity-independent steady state; contact resistance exact (R_c = 0.25
+  gives **0.0**); `Σ C θ dV` drift **1.2e-16 relative** with the flow on;
+  1 == 4 ranks and CPU == GPU **max_abs 0** on both geometry paths; 5/5 config
+  guards rejected; `[scalar] count = 0` and every `ibm_wall /= conjugate` run
+  **max_abs 0** vs `~/s5c_ref_binaries` on the 7-case and 9-case suites, CPU
+  AND GPU. TWO TIME-STEP FINDINGS, both from gate 1 and both recorded in
+  `scalar_conjugate_peclet_rate`: (1) the explicit limit is NOT the max over
+  materials of `α = κ/C` — a cut face's `k_face` reaches `max(κ_L,κ_R)` but
+  feeds the cell on the OTHER side, whose capacity is the other material's, so
+  a fluid cell against a κ_s = 1000 solid sees 1000× the fluid rate even at
+  α_s = α_f; the rate is built from the ACTUAL face coefficients instead
+  (also 500× less conservative at w = ½); (2) a cut cell attains the
+  Gershgorin factor `ρ ≤ 2A_ii/C_i` that the uniform interior never excites,
+  so its rate is raised — measured, `pecletmax` 0.3 blows up / 0.2 is stable.
+  C1 doubled it (share 6 → 3); C2 measured that even so the default sat at
+  96 % of the bound and found an oblique high-contrast case that went to NaN
+  there, and **C3 went to share 2** (a 3× rate at cut cells, a 1.56× margin).
+  NEXT (optional, its own session): **C4, conducting sharp corners** — the
+  COCO wedge model. It rests on the same pointwise-flux premise C2 falsified,
+  so read C2's verdict and the README's "the way out" BEFORE starting it; the
+  first thing to settle is the `s_t` estimate on a curved interface, not the
+  corner eigensolution. Everything else in the conjugate plan is done.
+- Profile + optimise the GPU step for the 2:1-refined channel — **STEP 1
+  (re-profile) DONE 2026-08-07, and step 2 has since been done many times
+  over: see the performance-campaign bullets below**, which supersede every
+  number in this one. Kept for the two things it established. (1) The fresh
+  split that set the target (A6000, 100 steps, min_channel refined
+  128x64x8, niter=6 cheb): loop 31.3 ms/step = projection_exchange 44.5% +
+  projection_jacobi 33.9% + syncface 7.9% + momentum 6.1% + projection_bc
+  4.2%; **all halo exchange 52.4%**, and on the heavier 128x64x128 refined
+  case 42.4% with the projection's exchange (79.1 ms) costing as much as its
+  Jacobi kernels (82.1 ms). That reading was right about WHERE and wrong
+  about WHY — the 2026-09-11 kernel-timeline work showed the exchange's cost
+  was per-LAUNCH overhead, not transport. (2) The nb lever: unrefined
+  128x64x128, nb 8/16/32 = 48.6/39.3/36.4 ms/step (**-25%**) with the
+  exchange share 44.6%/35.2%/35.1% — but the refined channel is PINNED to
+  nb=8 (its 24-cell wall band is 3 block rows; nb=16 does not divide it), so
+  bigger blocks are not the fix there. LANDMINE, still live: `nb` must divide
+  the global grid in every direction, so an nb sweep is impossible on the
+  nz=8 case. **The profiler it describes is GONE**: the `scalar` branch's six
+  `STEP_PROF_*` buckets in chron.f90 and the optional `prof` argument to
+  `pressure_projection` were superseded at the merge by `profiling.f90`'s
+  three nested profilers (step/proj/exch), which the same `[output] profile
+  = true` key drives; chron.f90 keeps only the generic `profiler_type` both
+  used. `docs/next_session_profiling.md` carries a SUPERSEDED header.
+- Verification debt + host/device staleness audit (DONE 2026-08-07, branch
+  `scalar`, `docs/next_session_verification.md`). Every gate group left
+  un-measured by the 2026-08-05 fixes was re-run and reproduces; the audit of
+  host-side consumers of device-mapped arrays came back CLEAN (verdict table
+  + the GPU probe behind each row in §A; the class is now a coding convention
+  above). TWO OPEN ITEMS it produced, neither a scalar feature:
+  - **A `t_final`-terminated run takes one extra step whose `dt` is the
+    accumulated round-off in `t_current`, and that step's `pn` is amplified
+    by `1/dt`** — measured |pn| 1.5e6 at step 60001 vs 9.1 at 60000 with the
+    velocity identical to 8.5e-6 (10401 steps instead of 10400;
+    `t_current = 29.999999999975433` against a 1e-12 stopping tolerance).
+    **The FINAL snapshot of any `t_final` run is therefore a bad restart** —
+    this is the real mechanism behind the "never restart from the campaign's
+    final `*_50001.h5`" landmine, which had been blamed on the niter = 6
+    pn-drift mode. Fixed at the gate level (`run_gates_s2.sh last_periodic`);
+    and FIXED in the solver (`trim_dt_for_final_time` suppresses a
+    `remaining` below `FINAL_STEP_FRACTION*dns%dt`, 1e-6). The test must be
+    RELATIVE: an absolute snap at `run_should_continue`'s tolerance would NOT
+    catch this, since the round-off in `t_current` grows like `N eps t_final`
+    (6.9e-11 here) and outruns the fixed 1e-12 floor, while
+    `remaining/dt = 4.9e-08` identifies it scale-free. Gated three ways:
+    inert on all 32 bit-exactness case-runs, effective on the leg that
+    produced it (10400 steps not 10401, `max|pn|` 9.09 not 1.5e6, last real
+    step bit-identical), and a GENUINE final partial step still taken.
+    Details in §B1.
+    **CORRECTED 2026-08-28.** The first form of that fix signalled the end by
+    SETTING `dns%dt = 0` and letting the loop's `dt <= 0` exit fire — but
+    `dns%dt` is written into every snapshot's metadata and read back by the
+    restart, so the final snapshot of a `t_final` run became unusable in a
+    NEW way (`config.f90: time step must be positive`). It traded one bad
+    final restart for another. `trim_dt_for_final_time` is now a LOGICAL
+    FUNCTION that reports "no step left" and never leaves `dt` non-positive;
+    the trajectory is unchanged (same exit step, a genuine partial step still
+    gets `dt = remaining`), only the recorded metadata differs.
+    **And the claim "every suite case is nsteps-terminated" was FALSE**:
+    `run_gates_s2.sh`'s `les_legs()` REWRITES `t_final` in a generated
+    variant, so its `les` and `band` legs are `t_final`-terminated. That is
+    what caught this — `RT_turbles.h5` came out with `dt = 0.0` at
+    `t = 29.999999999975433`, the S2 `les` leg died on the restart, and
+    because that leg deletes `turbles_*.h5` before it fails it took S4 down
+    with it. LESSON: a claim of the form "no case exercises this path" must
+    be checked against the GENERATED inis, not only the committed ones.
+  - **`check_scalar_turb.py cmd_band` compares RAW `theta'_rms`**, so the two
+    campaigns' wall-flux difference enters the ratio as a global factor:
+    measured core ratio 1.0365 == the flux ratio 1.0360, and normalising by
+    each run's own `theta_tau` leaves a localized −2.6 % DEFICIT at the
+    interface (the const-1/2 restriction's known dissipation — the opposite
+    sign from a spurious band). Normalising inside the checker is suggested,
+    not applied. Write-up in `validation/scalar/README.md`.
 - Rank-to-GPU mapping + campaign re-measurement (DONE 2026-09-10, branch
   `optimiseBlockRefinement_parentBoundaryLayer`). The 708-753 us `mpi_wait` that
   three reports called "the blocked exchange's stall" was GPU AFFINITY: **the two
@@ -1288,10 +1687,15 @@ immersed boundary. Phased, each phase verified before the next:
   (-67% at 100 steps, -82% at 200) and production runs are thousands of steps.
   The case is a BENCHMARK, not validated physics -- height and wavelengths are
   chosen to be resolved and to sit in the first y-block, nothing physical should
-  be quoted from it. NOT IN THE SOLVER: passive scalars (no generic transport
-  equation exists; the only transported scalars are RANS's k/omega/gamma/Re_thetat,
-  welded into the SST kernel), so the MacDonald forced-convection configuration
-  needs a scalar-transport track first.
+  be quoted from it. **CORRECTED AT THE 2026-09-25 MERGE:** when this case was
+  designed I wrote that the solver had no generic scalar transport and that the
+  MacDonald forced-convection configuration would need its own track. That was
+  true of THIS branch and false of the project — the `scalar` branch, now merged,
+  carries `src/modules/scalar.f90` (passive scalars, `[scalar]`/`[scalar.N]`,
+  conjugate heat transfer at the immersed interface). **The MacDonald &
+  Hutchins rough-wall forced-convection benchmark therefore needs NO new
+  physics**, only a case file combining `[ibm] wall_shape = eggcarton` with a
+  `[scalar.N]` section: the natural follow-up to `configs/rough_jacobi.ini`.
   MEASUREMENT LANDMINE, and it bit: at 100 steps the bucket falls only 67%, NOT
   because the skip half-works (a CPU 10-vs-40-step run drops `setup`/step 3.90x
   with the TOTAL constant -- it runs ONCE PER RUN) but because what is left is
