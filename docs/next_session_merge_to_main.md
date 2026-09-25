@@ -83,9 +83,11 @@
 > the two cluster scripts that defaulted `BRANCH` to it now default to `main`
 > (`setup_and_run.sh`, `mechanism/setup_mechanism.sh`; their pinned `COMMIT`s
 > are still reachable). `boundaryLayer` and `scalar` still exist and are fully
-> merged into `main`, so they are free to delete whenever wanted;
-> `claude/jacobi-interface` (43 commits, the six features) and `assignment`
-> (7 commits) remain unmerged.
+> merged into `main`, and were deleted too (no archive tag: unlike
+> `claude/blocks` they are contained, so every commit stays reachable from
+> `main` -- `c7b4ef0` and `be1451e` verified so after the deletion). What is
+> left on the remote is `main`, `claude/jacobi-interface` (43 commits, the six
+> features) and `assignment` (7 commits).
 >
 > **STILL OPEN:** the campaign-matrix re-run (`submit_matrix4.sh`, 4 nodes) that
 > §5 asks for before any ratio in `results_horeka_2026-09-25.md` is quoted

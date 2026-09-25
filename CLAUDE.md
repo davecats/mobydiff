@@ -76,8 +76,9 @@ conjugate heat transfer) were merged into
 `claude/jacobi-interface`; `main` was then fast-forwarded to it and that branch
 retired, so **`main` is the working branch** -- the long feature-branch phase is
 over. `multiGPU` and `claude/blocks` are deleted (the latter archived as the
-tag `archive/claude-blocks`, since it was not contained). The one branch still
-holding unmerged work is
+tag `archive/claude-blocks`, since it was not contained), and `boundaryLayer`
+and `scalar` are deleted too once `main` carried them (no tag needed -- they
+are contained). The one branch still holding unmerged work is
 `claude/jacobi-interface` — six RANS/airfoil features (`[rans]`
 kpin_box/ktrip_box/kpin_dwall/boostconv, `[case.airfoil] steady_tol`,
 refine_body_box/levels) plus the 2026-08 `naca/rans` tutorial state; keep it
