@@ -340,6 +340,19 @@ subroutine apply_config_value(section, key, value, dns, g, turb, les, ps, bc, sc
                 dns%block_refine_box_level(dns%block_refine_nboxes), line_no)
         case ("refine_levels")
             call read_int(value, dns%block_refine_levels, line_no)
+        case ("refine_body_levels")
+            call read_int(value, dns%block_refine_body_levels, line_no)
+        case ("refine_body_box")
+            ! Repeatable: raises the refine_body cap to the box's TARGET
+            ! LEVEL (7th value) inside this box; the surface touch test
+            ! still selects the blocks, so only the band refines.
+            if (dns%block_refine_body_nboxes >= int(size(dns%block_refine_body_box, 2), C_INT)) then
+                print *, "too many [blocks] refine_body boxes at line", line_no
+                error stop "too many body refinement boxes"
+            end if
+            dns%block_refine_body_nboxes = dns%block_refine_body_nboxes + 1_C_INT
+            call read_refine_box(value, dns%block_refine_body_box(:, dns%block_refine_body_nboxes), &
+                dns%block_refine_body_box_level(dns%block_refine_body_nboxes), line_no)
         case ("refine_dims")
             select case (lower(clean_string(value)))
             case ("xyz")

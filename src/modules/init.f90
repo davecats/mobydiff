@@ -91,6 +91,22 @@ module init
         real(C_DOUBLE) :: block_refine_box(6,16) = 0.0d0
         integer(C_INT) :: block_refine_box_level(16) = -1_C_INT
         integer(C_INT) :: block_refine_nboxes = 0_C_INT
+        ! [blocks] refine_body_levels: CAP on the body-driven refinement
+        ! (< 0 = refine_levels, i.e. the whole surface band goes to the
+        ! finest level -- the original behaviour). Cap it below
+        ! refine_levels and the extra levels reach the wall only inside a
+        ! refine_body_box, so a thin band can be refined where the
+        ! boundary layer needs it without paying for the whole surface.
+        integer(C_INT) :: block_refine_body_levels = -1_C_INT
+        ! [blocks] refine_body_box = x0 x1 y0 y1 z0 z1 level: inside this
+        ! physical box the body cap is RAISED to `level`. Unlike `refine`,
+        ! which fills its whole volume, this only lifts the cap -- the
+        ! touch+buffer test still decides, so the refinement follows the
+        ! surface. (Filling the NACA nose box volumetrically at one extra
+        ! level costs ~12700 leaves; the band costs ~1000.) Repeatable.
+        real(C_DOUBLE) :: block_refine_body_box(6,16) = 0.0d0
+        integer(C_INT) :: block_refine_body_box_level(16) = -1_C_INT
+        integer(C_INT) :: block_refine_body_nboxes = 0_C_INT
         ! [blocks] refine_levels: rounds of box refinement (max level).
         integer(C_INT) :: block_refine_levels = 1_C_INT
         ! [blocks] refine_dims = xyz (default octree) | xz (quadtree: blocks
