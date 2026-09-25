@@ -43,8 +43,9 @@ touched at all** — that is task 1.
 2. **`les_ibm` dormancy**, the one case never attempted on CPU (too slow
    there). Against `68e8f16`, it must be `max_abs 0`. The other legs are DONE
    (see §0).
-3. **`cv_box` for validation/naca0012, validation/sd7003, tutorials/naca.**
-   See §3 — the largest piece of judgement left.
+3. **`cv_box` for validation/naca0012 and validation/sd7003.** See §3 — the
+   largest piece of judgement left. `tutorials/naca`'s superseded generation is
+   gone (2026-09-25); the other eleven inis stay.
 4. Then merge to `main` (fast-forward if nothing else has landed).
 
 ## 2 — The traps this port walked into, so the next one does not
@@ -78,12 +79,24 @@ believing a feature is complete.**
 
 ## 3 — The one real decision left: cv_box for the legacy airfoil cases
 
-The CV budget replaced the penalization integral, and a box has no sane
-default — the case does not know where the body is. Eighteen inis
-(`validation/naca0012/*`, `validation/sd7003/*`, `tutorials/naca/{naca,c10,
-b11}_base.ini`, `validation/scalar/cylheat.ini`) were written for the old
-statistic. Right now they start, print a loud warning and run with force
-sampling off, which keeps their flow-field / Cp / transition gates working.
+**CORRECTION to the first draft of this handout, and to the commit messages
+that quote it: the count is FOURTEEN on this tree, not eighteen** — eighteen was
+carried over from `claude/jacobi-interface` without being re-counted here. More
+importantly the set is not homogeneous, and three of its members must NOT be
+touched:
+
+| ini(s) | status |
+|---|---|
+| `tutorials/naca/{naca,c10,b11}_base.ini` + `setup.sh`, `setup_b11.sh`, `run_sweep.sh` | **REMOVED 2026-09-25.** Superseded by `tutorials/naca/rans`; `claude/jacobi-interface` deleted them too. Their C_L/C_D were the penalization integral, so re-running would not reproduce their own README anyway. README re-headed, files recoverable from history. |
+| `tutorials/naca/rans/.prep_c11{,_nose}.ini` | **KEEP.** Part of the live tutorial (`run_case.sh` calls them), and prepare-only — `moby_prepare` never calls `setup_after_grid`, so the cv_box path is never reached. |
+| `validation/scalar/cylheat.ini` | **KEEP.** An S3 SCALAR gate (heated cylinder, Re 40, Pr 0.71) driven by `run_gates_s3.sh`. It uses the airfoil case for the cylinder geometry; its gate is heat transfer, not forces. |
+| `validation/naca0012/aoa4.ini`, `validation/sd7003/aoa4.ini` | **KEEP.** Load-bearing beyond their own directory: `validation/prepare/run_gates_big.sh` (the P1b prepare-vs-mobygeom gate on the big geometries) builds its cases from them. |
+| `validation/naca0012/xz_{aoa0,aoa4,aoa8}.ini` | force-based AoA-sweep points — their gate (C_L slope) IS dead without a box. The clearest candidates for removal or for a box. |
+| `validation/naca0012/xz_l5.ini`, `validation/sd7003/xz_l4.ini` | fan/resolution BENCHMARKS (leaves, s/step) — not force-based, still meaningful. |
+| `validation/sd7003/xz_aoa4.ini` | the transition benchmark (x_t, k onset) — **not** force-based, alive. |
+
+Right now all of them start, print a loud warning and run with force sampling
+off, which keeps every non-force gate working.
 
 **Do not simply add boxes.** The budget is sensitive to two things the branch
 records the hard way: `p_inf` must be subtracted PER FACE (a first attempt at a

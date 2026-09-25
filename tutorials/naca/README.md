@@ -1,4 +1,19 @@
-# NACA 0012 polar sweep at Re_c = 4e5 (fully-turbulent SST, L6-xz IBM)
+# NACA 0012 tutorials
+
+> **SUPERSEDED (2026-09-25). The live case is [`rans/`](rans/README.md)** — the
+> converged alpha = 5, Re_c = 4e5 validation against OpenFOAM (C_L 0.5199 vs
+> 0.5142, Cp_min matching to four digits). This README describes the earlier
+> polar-sweep generation, whose inis (`naca_base.ini`, `c10_base.ini`,
+> `b11_base.ini`) and drivers (`setup.sh`, `setup_b11.sh`, `run_sweep.sh`) were
+> REMOVED on that date, for two reasons: `rans/` replaces them, and their C_L/C_D
+> came from the penalization integral, which the control-volume budget replaced
+> (`docs/next_session_cv_forces.md`) — so re-running them would not reproduce
+> the numbers below even if the files were still here.
+>
+> The text is kept because the modelling discussion (fully-turbulent vs
+> transitional, the XFOIL comparison, the blockage accounting) still applies.
+> Recover the files from git history if a polar sweep is wanted again; they will
+> need a `[case.airfoil] cv_box` and a re-measured reference.
 
 Production polar for comparison against XFOIL and OpenFOAM RANS: aoa =
 -2, -1, 0, 1, 2, 3, 4, 5 at Re = 4e5, on the R2D 2D-refinement stack

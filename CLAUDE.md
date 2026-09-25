@@ -1802,13 +1802,19 @@ immersed boundary. Phased, each phase verified before the next:
     a half-domain box gives exactly half.
   - Runtime CONTROL-VOLUME forces replacing the penalization integral, plus
     `[case.airfoil] steady_tol`. **DELIBERATE DEVIATION:** the branch makes a
-    missing `cv_box` an `error stop`, which leaves EIGHTEEN inis
-    (validation/naca0012, validation/sd7003, tutorials/naca) unable to start --
-    they are broken on that branch today for this reason. Here it is a loud
-    per-run WARNING that disables force sampling instead. Boxes were NOT
-    invented for them: the budget is sensitive to the per-face `p_inf`
-    subtraction and to borders crossing a 2:1 interface, so an unvalidated box
-    yields numbers nobody has checked. **That is the top follow-up.**
+    missing `cv_box` an `error stop`, which leaves fourteen inis on this tree
+    (eighteen on the branch -- the count was carried over without re-checking)
+    unable to start. Here it is a loud per-run WARNING that disables force
+    sampling instead. Boxes were NOT invented for them: the budget is sensitive
+    to the per-face `p_inf` subtraction and to borders crossing a 2:1
+    interface, so an unvalidated box yields numbers nobody has checked.
+    `tutorials/naca`'s superseded polar generation was REMOVED (2026-09-25,
+    as `claude/jacobi-interface` had done); the rest stay, and three of them
+    must -- the naca/rans prepare inis, `validation/scalar/cylheat.ini` (an S3
+    SCALAR gate) and the two `aoa4.ini` templates that
+    `validation/prepare/run_gates_big.sh` builds its P1b cases from. The table
+    is in `docs/next_session_port_finish.md` section 3. **Deciding the rest is
+    the top follow-up.**
   CPU dormancy vs the pre-port binary: min_channel (4 ranks), beltrami_slaby,
   turb180, lam30t and conduction all `max_abs 0`, plus conduction's `s1` named
   explicitly -- **`tools/h5maxdiff` with no dataset arguments compares
