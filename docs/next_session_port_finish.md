@@ -153,7 +153,32 @@ plan's item 8 RECOMMENDS a non-divergence form for production (`niter = 6`
 leaves `div u` only projection-small) but by analogy with the momentum finding,
 not from any scalar measurement.
 
-The comparison to run, with the instrumentation that already exists:
+**RUN 2026-09-26 — see `validation/scalar/README.md` for the table. Outcome:
+the choice barely matters on anything this project currently gates.**
+Conservation drift stays at round-off (1e-18 / 1e-19) for all three forms even
+with the projection starved to `niter = 2`, on the very case built to measure
+conservation; the `ibmwavy` solid-cell Dirichlet equality is exactly 0.0 for all
+three, because the penalization enforces it whatever the convection form. The
+forms separate only near the immersed body (~1e-10 in `theta`, with f = ½ exactly
+midway between f = 0 and f = 1), and that separation does NOT shrink when the
+projection tightens (niter 40 → 200 moves it under 1 %), which localises it to
+the IBM's residual divergence rather than the projection's.
+
+**That does not say which is BEST**, and no measurement here can: showing three
+forms are nearly indistinguishable on the existing gates is not the same as
+showing one is more accurate. Settling it needs a known answer — a grid-
+convergence study or a manufactured solution. NOT started: it is a study, not a
+gate, and it was outside the overnight remit.
+
+**BLOCKER found while trying**: the `uniform3` gate, the one that would test
+uniform-scalar preservation directly, **cannot be regenerated on a fresh
+checkout.** `validation/multilevel_body/setup.sh` builds its coefficient file
+with `mobygrid` and `tools/mobygeom.py` — both RETIRED in the prepare/solve
+split P3 — so the committed `ibm_coeff_ml3_zero.h5` is the only copy in
+existence and that setup script is dead. Porting it to `moby_prepare` is a
+small, separate job and is worth doing before the file is ever lost.
+
+The comparison originally planned, for reference:
 
 1. `run_gates.sh conserve` under each form — it reports `∫s dV` drift directly
    (divergence gives −6.838e-19; the other two must degrade it, and BY HOW MUCH

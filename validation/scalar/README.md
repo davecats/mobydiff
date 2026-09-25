@@ -1191,13 +1191,46 @@ diffusivity, and the resulting wall heat flux is the exact closed-form one.
   `validation/channel_interface`).
 - **Central convection is unbounded**: sharp fronts over/undershoot until the
   shared TVD/van-Leer increment lands (deliberately no upwind fallback).
-- **What `[flow] convection = skew` means for a scalar.** The plan's formula
-  (`conv_div − s·(div u)`) is the ADVECTIVE form: it preserves a uniform
-  scalar exactly for any advecting field, but gives up the divergence form's
-  exact global conservation. Subtracting HALF would be the skew-symmetric
-  form the momentum kernel uses (neutral in `∑s²`, but leaving `½ s div u` on
-  a uniform field). The implemented behaviour is the plan's; the gates above
-  all run the DEFAULT divergence form, so neither is exercised by them.
+- **The scalar convection form: `[scalar] convection = divergence | skew |
+  advective`** (`conv_div − f·s·(div u)`, f = 0, ½, 1). The plan specified f = 1
+  and CALLED it "skew", which it is not — f = ½ is the momentum kernel's form,
+  and it was added on 2026-09-26. The key used to be shared with momentum's
+  `[flow] convection`; it is separate now, because the two are different
+  operators.
+
+  **MEASURED 2026-09-26, and the result is that the choice barely matters
+  here.** Every property this suite gates is insensitive to it:
+
+  | probe | divergence | skew | advective |
+  |---|---|---|---|
+  | `conserve` relative drift, niter 40 | −1.482e-18 | −7.977e-19 | −5.698e-19 |
+  | … niter 6 | 3.077e-18 | −6.838e-19 | 3.077e-18 |
+  | … niter 2 | 2.051e-18 | 2.279e-19 | 5.698e-18 |
+  | `ibmwavy` solid-cell `max\|theta − 1\|` | 0.0 | 0.0 | 0.0 |
+
+  So **conservation is not the deciding axis** — the drift stays at round-off
+  for all three even with the projection deliberately starved to niter 2, on the
+  very case built to measure conservation. And the solid-cell Dirichlet equality
+  is exact for all three, because the penalization (`mu_s → 0`) enforces it
+  regardless of the convection form.
+
+  Where they DO differ is near the immersed body: on `ibmwavy` the three `theta`
+  fields separate by ~1e-10 (divergence→advective 2.267e-10,
+  divergence→skew 1.134e-10 — exactly half, as f = 0, ½, 1 requires), and
+  **that difference does not shrink as the projection tightens** (niter 40 → 200
+  moves it by <1 %). It is therefore the IBM's residual divergence, not the
+  projection's, that the forms respond to — consistent with the kernel comment
+  about the masked `divuse`.
+
+  **WHICH IS BEST IS STILL NOT ESTABLISHED**, and these measurements cannot
+  establish it: they show the forms are nearly indistinguishable on every
+  existing gate, not that one is more accurate. That needs a grid-convergence
+  or manufactured-solution study against a known answer. The `uniform3` gate,
+  which would test uniform-scalar preservation directly, **cannot currently be
+  regenerated at all**: `validation/multilevel_body/setup.sh` builds its
+  coefficient file with `mobygrid` and `tools/mobygeom.py`, both retired in the
+  prepare/solve split P3, so the committed `ibm_coeff_ml3_zero.h5` is the only
+  copy and a fresh checkout cannot rebuild it.
 - The diffusive flux is masked at `FACE_CLOSED` faces (blocks removed inside
   an immersed body hold a zeroed halo). Immersed-body scalar coefficients
   themselves are increment S3.
