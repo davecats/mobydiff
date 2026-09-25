@@ -90,8 +90,10 @@
 > **STILL OPEN:** the campaign-matrix re-run (`submit_matrix4.sh`, 4 nodes) that
 > §5 asks for before any ratio in `results_horeka_2026-09-25.md` is quoted
 > again. Note that re-running the merge gate now needs its two reference
-> worktrees recreated: `git worktree add --detach <dir> f0a8fe0` and
-> `... origin/scalar`.
+> worktrees recreated, and BY SHA rather than by branch name, because both
+> branches are gone -- the commits stay reachable from `main`:
+> `git worktree add --detach <dir> f0a8fe0` (the pre-merge head) and
+> `git worktree add --detach <dir> be1451e` (the old `scalar` tip).
 
 Written 2026-09-25 at `c876c75`, from the session that finished the divergence
 and `rdenom` optimisation campaign. **Everything below is measured, not

@@ -25,7 +25,9 @@
 #     against it: min_channel (1 and 4 ranks), beltrami_slaby, les_ibm, and
 #     Pass G's two production cases.
 #
-#   REF_B = origin/scalar.
+#   REF_B = be1451e, the old `scalar` branch tip. The branch itself was deleted
+#     on 2026-09-25 once it was fully merged; the commit stays reachable from
+#     main, so `git worktree add --detach <dir> be1451e` still builds it.
 #     turb180 / wf180_y30 / lam30t must be max_abs 0 against THIS one and
 #     WILL DIFFER from REF_A by O(1e-2). That is correct: `scalar` carries the
 #     2026-08-05 fix for the cold-started RANS initial condition (k a factor 4
@@ -57,7 +59,7 @@ set -uo pipefail
 
 CODE_DIR="${CODE_DIR:?}"; RUN_DIR="${RUN_DIR:?}"
 REF_A="${REF_A:?pre-merge worktree at f0a8fe0}"
-REF_B="${REF_B:?origin/scalar worktree}"
+REF_B="${REF_B:?worktree at be1451e, the old scalar branch tip}"
 SRC="$CODE_DIR/tutorials/turbulentBoundaryLayer/overheadTest/horeka/exchange"
 STG="$RUN_DIR/merge_staged"; rm -rf "$STG"; mkdir -p "$STG"
 cp "$SRC"/run_exchange.sh "$SRC"/run_mapgate.sh "$SRC"/collect_exchange.py "$STG/"
@@ -72,7 +74,7 @@ export HDF5_ROOT="${HDF5_ROOT:-$HOME/hdf5}"
 export LD_LIBRARY_PATH="$HDF5_ROOT/lib:${LD_LIBRARY_PATH:-}"
 export UCX_MEMTYPE_CACHE=n OMP_NUM_THREADS=1
 
-# origin/scalar predates compile.sh's nofma modes and carries its own script.
+# be1451e predates compile.sh's nofma modes and carries its own script.
 build_nofma() {   # build_nofma <dir>
     local d="$1"
     echo "=== building $d ($(git -C "$d" rev-parse --short HEAD)) -- gpu nofma"
@@ -96,7 +98,7 @@ RES="${RESDIR:-$RUN_DIR/results_merge}"; mkdir -p "$RES"
     echo "nodes  : ${SLURM_JOB_NUM_NODES:-?}  (${SLURM_JOB_NODELIST:-?})"
     echo "new    : $(git -C "$CODE_DIR" rev-parse HEAD)  dirty $(git -C "$CODE_DIR" status --porcelain -uno | wc -l)"
     echo "ref A  : $(git -C "$REF_A" rev-parse HEAD)   (pre-merge head)"
-    echo "ref B  : $(git -C "$REF_B" rev-parse HEAD)   (origin/scalar)"
+    echo "ref B  : $(git -C "$REF_B" rev-parse HEAD)   (the old scalar branch tip)"
     echo "flags  : -Mnofma -gpu=nofma, every side"
     echo "gpu    : $(nvidia-smi --query-gpu=name --format=csv,noheader | head -1)"
 } | tee "$RES/provenance.txt"
