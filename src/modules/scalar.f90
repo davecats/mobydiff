@@ -120,20 +120,32 @@ module scalar
 
     integer, parameter :: SC_NAME_LEN = 32
 
+    ! [scalar] convection: the factor f in conv = conv_div - f*s*(div u).
+    integer(C_INT), parameter, public :: SC_CONV_DIV  = 0_C_INT   ! f = 0
+    integer(C_INT), parameter, public :: SC_CONV_SKEW = 1_C_INT   ! f = 1/2
+    integer(C_INT), parameter, public :: SC_CONV_ADV  = 2_C_INT   ! f = 1
+
     type, public :: scalar_type
         integer(C_INT) :: n = 0_C_INT
-        ! [scalar] convection = divergence (default) | advective.
-        ! THIS IS NOT THE MOMENTUM KERNEL'S SKEW FORM, and it used to share
-        ! the `[flow] convection` key with it, which was misleading: that key
-        ! is gone (momentum is hardwired skew-symmetric, the S3 lockdown) and
-        ! the scalar's own choice lives here. Subtracting the FULL s*(div u)
-        ! gives the ADVECTIVE form u.grad s -- a uniform scalar is preserved
-        ! exactly for ANY advecting field -- at the cost of the exact global
-        ! conservation the divergence form has, which validation/scalar's
-        ! conserve.ini gates to round-off. The momentum kernel subtracts a
-        ! HALF instead (energy neutrality). Default divergence: the trade is
-        ! a real choice, so it stays one.
-        logical(C_BOOL) :: advective = .false.
+        ! [scalar] convection = divergence (default) | skew | advective.
+        ! All three are `conv_div - f*s*(div u)|stencil` with f = 0, 1/2, 1,
+        ! and the choice is a real trade, which is why it is a key:
+        !   divergence (f=0)  exact global conservation (conserve.ini gates
+        !                     it to round-off); a uniform scalar is NOT
+        !                     preserved when div u is only projection-small.
+        !   skew       (f=1/2) the MOMENTUM kernel's form: neutral in sum s^2
+        !                     for any advecting field, but leaves 1/2 s div u
+        !                     on a uniform field.
+        !   advective  (f=1)  u.grad s: a uniform scalar is preserved exactly
+        !                     for any advecting field; conservation given up.
+        ! The scalar plan specified f=1 and CALLED it "skew", and the two
+        ! operators shared `[flow] convection` with momentum until the 2026-09-25
+        ! S3 lockdown. They are different operators, so the scalar's choice
+        ! lives here under its own name.
+        ! NOT MEASURED: every gate in validation/scalar runs the DEFAULT
+        ! divergence form, so which form is best for a scalar is open -- see
+        ! docs/next_session_port_finish.md.
+        integer(C_INT) :: convMode = SC_CONV_DIV
         ! Per-scalar configuration (all sized n; host + device).
         real(C_DOUBLE), allocatable :: pr(:), prt(:)
         integer(C_INT), allocatable :: prtModel(:)
@@ -943,12 +955,14 @@ contains
             case ("convection")
                 select case (trim(value))
                 case ("divergence", "div", "")
-                    sc%advective = .false.
+                    sc%convMode = SC_CONV_DIV
+                case ("skew", "skew-symmetric", "skewsymmetric")
+                    sc%convMode = SC_CONV_SKEW
                 case ("advective", "advection", "nonconservative")
-                    sc%advective = .true.
+                    sc%convMode = SC_CONV_ADV
                 case default
                     if (terminal) print *, "error: [scalar] convection must be", &
-                        " divergence or advective, on line", line_no
+                        " divergence, skew or advective, on line", line_no
                     error stop "[scalar] convection"
                 end select
             case ("count")
@@ -2650,10 +2664,11 @@ contains
     ! mesh, and the flux form telescopes, so sum(s dV) changes only by the
     ! boundary flux.
     !
-    ! [scalar] convection = advective subtracts s*(div u)|stencil built from
-    ! the SAME face velocities (docs/next_session_scalar.md Section 2). NOTE
-    ! what that buys, since it differs from the momentum kernel's skew term
-    ! -- the two used to share one key, which was misleading: the FULL
+    ! [scalar] convection subtracts f*s*(div u)|stencil built from the SAME
+    ! face velocities, f = 0 / 1/2 / 1 for divergence / skew / advective
+    ! (docs/next_session_scalar.md Section 2). NOTE what each buys; the
+    ! scalar and the momentum kernel used to share one key, which was
+    ! misleading, because f differs between them: the FULL
     ! subtraction is the ADVECTIVE form u.grad s, which preserves a UNIFORM
     ! scalar exactly for ANY advecting field (div u never enters), at the cost
     ! of the exact global conservation the divergence form has. Subtracting
@@ -2787,8 +2802,9 @@ contains
         ! asked for the correction, so the C1 flux line is untouched
         ! elsewhere.
         real(C_DOUBLE) :: gtd, gt1, gt2, gpd, gp1, gp2
+        real(C_DOUBLE) :: convFac
         real(C_DOUBLE) :: crw, cre, crs, crn, crb, crt
-        logical :: skew, useIbm, adiab, wallfn, anyConj, conjug, solc, tang
+        logical :: nondiv, useIbm, adiab, wallfn, anyConj, conjug, solc, tang
         logical :: banded
         logical :: cutw, cute, cuts, cutn, cutb, cutt
         logical :: clw, cle, cls, cln, clb, clt
@@ -2803,7 +2819,13 @@ contains
         nScal = int(sc%n)
         re = dns%re
         ire = 1.0d0/re
-        skew = logical(sc%advective)
+        ! f = 0 (divergence) skips the subtraction entirely, so the default
+        ! path keeps its arithmetic byte for byte -- the branch is not entered
+        ! rather than multiplying by a zero factor.
+        nondiv = sc%convMode /= SC_CONV_DIV
+        convFac = 0.0d0
+        if (sc%convMode == SC_CONV_SKEW) convFac = 0.5d0
+        if (sc%convMode == SC_CONV_ADV)  convFac = 1.0d0
         useIbm = logical(dns%ibm_enabled)
         ! S5a: the thermal wall function replaces the face eddy diffusivity
         ! AT WALL CELLS. Off (every resolved-wall and every non-RANS run) the
@@ -2815,7 +2837,7 @@ contains
         anyConj = sc%nConjugate > 0_C_INT
 
         !$omp target teams distribute parallel do collapse(4) &
-        !$omp& map(to: ire, re, dt_alpha, dt_beta, dt_gamma, skew, useNut, useIbm, &
+        !$omp& map(to: ire, re, dt_alpha, dt_beta, dt_gamma, nondiv, convFac, useNut, useIbm, &
         !$omp& nScal, nx, ny, nz, anyConj, &
         !$omp& sc%cdx, sc%cdy, sc%cdz, sc%tangCorr, &
         !$omp& blk%q, blk%d1x, blk%d1y, blk%d1z, blk%physLow, blk%physHigh, nut, coef, &
@@ -2977,14 +2999,14 @@ contains
                         ! in the solid as in the fluid. (The adiabatic mode
                         ! keeps its shipped, gated arithmetic: divuse = divu.)
                         divuse = divu
-                        if (skew .and. conjug) &
+                        if (nondiv .and. conjug) &
                             divuse = (merge(0.0d0, ue, cme) - merge(0.0d0, uw, cmw)) &
                                         *blk%d1x(i,VAR_P,b) &
                                    + (merge(0.0d0, vn, cmn) - merge(0.0d0, vs, cms)) &
                                         *blk%d1y(j,VAR_P,b) &
                                    + (merge(0.0d0, wt, cmt) - merge(0.0d0, wb, cmb)) &
                                         *blk%d1z(k,VAR_P,b)
-                        if (skew) conv = conv - s0*divuse
+                        if (nondiv) conv = conv - convFac*s0*divuse
 
                         ! Molecular diffusivity + the eddy part on each face.
                         ! With useNut off every face keeps dm exactly, so the

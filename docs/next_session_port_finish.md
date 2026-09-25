@@ -120,6 +120,44 @@ After this port: the `boostconv` module and its `[rans] boostconv*` keys, the
 (`docs/next_session_naca_re4e5.md` came over; the per-commit dossiers did not).
 **Do not delete that branch yet** — nothing here supersedes the LES kickoff.
 
+## 5b — The scalar convection form is now selectable, and UNMEASURED
+
+`[scalar] convection = divergence (default) | skew | advective` — all three are
+`conv_div − f·s·(div u)|stencil` with f = 0, 1/2, 1:
+
+| f | name | what it buys | what it gives up |
+|---|---|---|---|
+| 0 | divergence | exact global conservation (`conserve.ini` gates it to round-off) | a uniform scalar is not preserved when `div u` is only projection-small |
+| 1/2 | skew | the momentum kernel's form: neutral in `∑s²` for any advecting field | leaves `½ s div u` on a uniform field |
+| 1 | advective | `u·∇s`: a uniform scalar preserved exactly for any advecting field | conservation |
+
+**WHICH IS BEST FOR A SCALAR IS OPEN.** Every gate in `validation/scalar` runs
+the default divergence form — `validation/scalar/README.md` says so in as many
+words ("the gates above all run the DEFAULT divergence form, so neither is
+exercised by them"), and that was still true when f = 1/2 was added. The scalar
+plan's item 8 RECOMMENDS a non-divergence form for production (`niter = 6`
+leaves `div u` only projection-small) but by analogy with the momentum finding,
+not from any scalar measurement.
+
+The comparison to run, with the instrumentation that already exists:
+
+1. `run_gates.sh conserve` under each form — it reports `∫s dV` drift directly
+   (divergence gives −6.838e-19; the other two must degrade it, and BY HOW MUCH
+   is the number that decides this).
+2. `run_gates.sh det` under each form — it reports the 2:1-interface
+   conservation residual (1.047e-05 under divergence) AND the rank/GPU identity.
+3. A uniform-scalar case under each form: f = 1 must hold it EXACTLY, f = 1/2
+   must leave `½ s div u`, f = 0 more. `run_gates.sh uniform` is that case.
+4. Something advecting and non-trivial for accuracy — `ibmwavy`, or the
+   turbulent channel scalar campaign.
+
+Sanity check already done: on `ibmwavy` the three forms are distinct and the
+f = 1/2 result sits at the MIDPOINT of the other two (divergence→advective
+4.134e-10, divergence→skew 2.067e-10), which is what f = 0, 1/2, 1 predicts and
+confirms the factor is wired correctly. Default is bit-exact vs the pre-change
+binary on conduction / prsweep / ibmwavy (`max_abs 0` including the scalar
+fields), so nothing published moves until someone sets the key.
+
 ## 6 — Unrelated but still owed from the previous session
 
 The campaign matrix re-run (`submit_matrix4.sh`, 4 nodes). Nothing in
