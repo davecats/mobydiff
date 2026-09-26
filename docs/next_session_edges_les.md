@@ -1,5 +1,7 @@
 # Next session — edge/corner + LES validation, and a less-dissipative 2:1 interface
 
+> STATUS (2026-09-26): items 1 (edges/corners) and 2 (LES) DONE 2026-06-29/30; item 3 (less-dissipative interface transfer) OPEN, never started. Since then the interface toggles `interface_constant_half` / `momentum_reflux` were REMOVED (const-1/2 hardwired, reflux deleted, 2026-07-01), all `MOBY_*` hooks are gone, and `validation/channel_interface/interface_benchmark/`, `VALIDATION_CASES.md`, `developed/run_reflux_study.sh` and `validation/beltrami/{refined_fast,slab_y_diag}.ini` were removed 2026-09-26 (git history; surviving cases indexed in `validation/README.md`). Current state: CLAUDE.md "Active work".
+
 Branch `claude/jacobi-interface`. This is the CURRENT authoritative handoff for the
 2:1 refinement work; it supersedes the deleted `next_session_*` / `interface_band`
 handouts. Lineage (still valid background): `docs/jacobi_interface_handout.md`

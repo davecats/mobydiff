@@ -175,8 +175,8 @@ contains
         ! DELIBERATE DEVIATION from claude/jacobi-interface, which made this
         ! an `error stop`. Its intent was right -- a force statistic must
         ! never be silently absent or silently wrong -- but the hard error
-        ! left 18 inis in validation/naca0012, validation/sd7003 and
-        ! tutorials/naca unable to START, because they were written for the
+        ! left 18 inis (then in validation/naca0012, validation/sd7003 -- both
+        ! since removed -- and tutorials/naca) unable to START, because they were written for the
         ! penalization integral this budget replaced and never revisited. A
         ! warning keeps the intent (nothing silent) without bricking cases
         ! whose flow-field, Cp and transition gates are unrelated to forces.
@@ -331,7 +331,7 @@ contains
     ! missed, and a uniform field integrates to exactly zero. Halos supply
     ! the i-1/i+1 neighbours, so the velocity interpolations and gradients
     ! are central everywhere -- the block-edge one-sided fallbacks of the
-    ! offline tools/cv_forces.py are not needed. Only the PRESSURE is
+    ! offline tutorials/naca/rans/postProcess/cv_forces.py are not needed. Only the PRESSURE is
     ! one-sided on a face that is a block's low edge, because that halo
     ! carries the blended 2:1 ghost rather than the neighbour cell value
     ! (see the branch below; it costs ~5e-5 in C_D on the Re 40 cylinder).

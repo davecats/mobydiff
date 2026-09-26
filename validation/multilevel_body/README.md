@@ -22,7 +22,8 @@
 > two agreeing to 1.3e-10 on far bigger geometries.
 
 Levels > 1 were lightly exercised before the airfoil physics (les_ibm used
-levels 2 = l1 only): these gates run `mobygeom.py block-table --levels 3` +
+levels 2 = l1 only): these gates run a 3-level block-table file (originally
+`mobygeom.py block-table --levels 3`, now `moby_prepare` via `setup.sh`) +
 `refine_body` with `refine_levels = 2` on the committed cylinder geometry
 (`validation/cylinder/cylinder.stl`, D = 1 at (6.0, 8.02)) on a small
 128x128x8 / lx = ly = 16 / lz = 0.25 grid, nb = 8 (D/h = 32 at level 2 —
@@ -35,7 +36,8 @@ levels.
 - `uniform.ini`   gate (a): uniform oblique flow (u, v, w all nonzero)
                   across every l0-l1 and l1-l2 interface/edge/corner,
                   preserved EXACTLY. Runs on the ZERO-FORCE TWIN
-                  (`make_uniform_twin.py`): same touch-driven refinement,
+                  (`setup.sh` step 2: prepare + `zero_coef.py`; originally
+                  `make_uniform_twin.py`): same touch-driven refinement,
                   buried masks zeroed + blocks table rebuilt without
                   burial removal (no closed faces in the flow), coef = 0
                   (no IBM force) — the body shapes the block layout but
@@ -65,6 +67,12 @@ levels.
   `validation/rans_geometry` flat gates re-run with the new generator:
   still exactly 0.0, and the regenerated les_ibm file still differs from
   the committed one only by the added dwall_blocks.
+
+Re-run 2026-09-26 at `niter = 12` (was 6), CPU, files from the repaired
+`setup.sh`: uniform EXACT (0.0 on un/vn/wn and pn spread) on 1 and 4 ranks,
+1 == 4 ranks max_abs 0; dwall 1.776e-15 / 4.441e-16 / 8.620e-14 (init-only,
+niter-independent — identical to the post-repair numbers above), ransgeom
+1 == 4 ranks identical. PASS.
 
 ## Workflow
 

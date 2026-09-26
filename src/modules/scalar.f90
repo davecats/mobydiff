@@ -64,7 +64,7 @@ module scalar
     ! beta u + u.grad theta: the extra term is a source proportional to the
     ! INSTANTANEOUS streamwise velocity, not the mean. That is the only thing
     ! separating our bulk-heated channel from the reference DNS
-    ! (validation/conjugate/cht), whose flux profile it reproduces exactly
+    ! (tutorials/cht/channel), whose flux profile it reproduces exactly
     ! instead of approximating it by a uniform source.
     ! The homogeneous direction is [scalar.N] source_dir, DEFAULT x -- the
     ! channels' streamwise direction, so an ini that does not name one keeps
@@ -1422,7 +1422,7 @@ contains
         ! The solid now carries a real temperature field, so a block buried
         ! inside the body is part of the SOLUTION domain. Removing it deletes
         ! the solid -- the same class of trap as the A3 penalization-force
-        ! finding (validation/naca0012/README.md).
+        ! finding (validation/naca0012/README.md, in git history).
         if (all(dns%block_nb > 0_C_INT) .and. dns%block_remove_solid &
                 .and. .not. dns%block_refine_body) then
             if (terminal) print *, "error: ibm_wall = conjugate needs [blocks]", &

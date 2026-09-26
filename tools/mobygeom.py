@@ -9,7 +9,9 @@ cross-implementation reference for the validation/prepare/ gates; the STL
 generators and checkers remain in normal use.
 
 The Python front-end owns STL mesh classification, HDF5 output, and analytic tests.
-Grid coordinates are imported from a mobygrid HDF5 file written by the Fortran solver setup.
+Grid coordinates are imported from a mobygrid-format HDF5 grid file: any case file
+written by moby_prepare (the mobygrid executable itself was deleted in the
+prepare/solve split P3), or a legacy mobygrid-written file.
 """
 from __future__ import annotations
 
@@ -431,7 +433,7 @@ def load_grid_file(args: argparse.Namespace) -> None:
     """Load solver-exported grid nodes and metadata into the argparse namespace."""
     grid_file = getattr(args, "grid_file", None)
     if not grid_file:
-        raise ValueError("provide --grid-file from the mobygrid executable")
+        raise ValueError("provide --grid-file (a moby_prepare case file or a legacy mobygrid file)")
     path = Path(grid_file).resolve()
     if getattr(args, "_grid_file_loaded", None) == str(path):
         return
@@ -3074,7 +3076,7 @@ def add_bent_pipe_args(parser: argparse.ArgumentParser) -> None:
 
 def add_common_grid_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--grid-file", required=True,
-                        help="HDF5 grid exported by the mobygrid executable")
+                        help="mobygrid-format HDF5 grid: a moby_prepare case file (or a legacy mobygrid file)")
     parser.add_argument("--re", type=float, default=100.0)
 
 

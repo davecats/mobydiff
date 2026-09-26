@@ -23,12 +23,19 @@ staggered (MAC) grid**: pressure lives at cell centres and each velocity compone
 the corresponding cell face. Staggering couples pressure and velocity on the tightest
 stencil and avoids odd–even (checkerboard) pressure decoupling.
 
+The momentum convection term is discretized in **skew-symmetric** form (the average of the
+divergence and advective forms), which conserves kinetic energy discretely and is what
+keeps the 2:1 interfaces stable; it is hardwired.
+
 Each direction can be stretched independently (`[grid.x/y/z] distribution`):
 
 - `uniform` — constant spacing.
 - `cosine` / `tanh` — symmetric clustering toward the boundaries.
 - `natural` — the Pirozzoli–Orlandi near-wall stretching used for wall-bounded turbulence,
-  with the first off-wall spacing set in wall units (`natural_dyw_plus`).
+  with the first off-wall spacing set in wall units (`natural_dyw_plus`); `one_sided`
+  clusters at the low wall only.
+- `blayer` — natural clustering up to `outer_height`, geometric coarsening above (boundary
+  layers); `geometric`; or an explicit node line from `nodes_file`.
 
 Metric terms from the stretching are carried per cell so the difference operators stay
 second order on the non-uniform mesh.
@@ -68,9 +75,9 @@ across the interface.
 - `cheb_lmin` / `cheb_lmax` bound the operator spectrum for the Chebyshev polynomial and are
   auto-derived when left at their `-1` defaults.
 
-> The projection replaced an earlier coupled red–black SOR scheme, which could not be made
-> consistent with the 2:1-interface operators. This is the `claude/jacobi-interface` line of
-> development.
+> The projection replaced an earlier coupled red–black SOR scheme as the default. Red–black
+> SOR remains selectable (`[pressure] solver = redblack`, with over-relaxation `sor ≈ 1.5`)
+> and also runs across 2:1 interfaces; it cannot be combined with Chebyshev acceleration.
 
 ## Block-structured grid and 2:1 refinement
 
@@ -86,11 +93,14 @@ Two capabilities build on the block layout:
 - **Solid-block removal** (`remove_solid`, default on) — a block fully buried inside an
   immersed body (solid at cell centres and all staggered locations, dilated by one halo
   cell) is dropped from the computation. Its faces become exact zero-flux walls.
-- **2:1 local refinement** — refinement is requested by box (`refine`, up to four boxes, with
+- **2:1 local refinement** — refinement is requested by box (`refine`, up to 16 boxes, with
   `refine_levels` levels) or by geometry (`refine_body`, refining blocks that touch the
-  immersed surface plus a one-block buffer). Neighbouring blocks differ by at most one level
+  immersed surface plus a one-block buffer, optionally capped by `refine_body_levels` and
+  raised locally by `refine_body_box`). Neighbouring blocks differ by at most one level
   (2:1 balancing). Refined node lines come from midpoint subdivision, so a fully refined
-  dyadic region is bitwise identical to running at the doubled resolution.
+  dyadic region is bitwise identical to running at the doubled resolution. With
+  `refine_dims = xz` the blocks refine in x and z only (quadtree) and y keeps one global
+  node line — the natural choice for quasi-2D wall-bounded and airfoil cases.
 
 ### The 2:1 interface
 
@@ -116,12 +126,12 @@ velocity toward zero inside the body through a source term that is treated **imp
 the momentum update (roughly $\mu = 1/(1 + \Delta t\,\text{coef})$), so an arbitrarily strong
 penalization introduces **no time-step restriction**.
 
-The coefficient field is produced by the `mobygeom` Python preprocessor from one or more
-watertight STL meshes, classified against the solver's **exact** node lines (exported by
-`mobygrid`). For refined runs, `mobygeom` writes per-level coefficient tiles and the
-block-active / block-table masks the solver reads. See the
-[tools reference](tools.md#geometry--preprocessing) and the
-[`sailplane` tutorial](tutorials.md#sailplane-external-aerodynamics-with-ibm).
+Analytic walls (`[ibm] wall_shape`) are classified inline. STL geometry is classified by the
+MPI-parallel `moby_prepare`, which runs the solver's own grid, block and coefficient code
+and writes the case file the solver reads: per-leaf coefficient tiles (graded
+sharp-interface coefficients in cut cells), the per-level touch/buried block masks, and the
+wall distance used by the RANS models. See [Running](running.md#preprocessing-immersed-bodies-moby_prepare)
+and the [`sailplane` tutorial](tutorials.md).
 
 ## Large-eddy simulation
 
@@ -132,3 +142,22 @@ model is **IBM-aware** by default (`ibm_aware`): the subgrid viscosity is zeroed
 cells so the model does not read the penalized velocity drop as resolved strain. The eddy
 viscosity steps by the physical filter-width ratio across 2:1 interfaces with no spurious
 band, and this has been validated across refinement interfaces and IBM walls.
+
+## RANS and IDDES
+
+`[turbulence] model = rans` advances the **k-ω SST** model (`[rans]`): resolved walls or
+wall functions, optional **γ–Re_θt transition** (Langtry–Menter, with separation-induced
+transition), wall distance from the case file or computed from the analytic indicator.
+The turbulence scalars use first-order upwind convection. `model = iddes` blends SST near
+walls with the `[les]` SGS model away from them (Gritskevich SST-IDDES shielding and
+elevating functions).
+
+## Passive scalars and conjugate heat transfer
+
+Any number of passive scalars (`[scalar]`, `[scalar.N]`) are transported with the same
+staggered second-order scheme (central convection, no upwind option; eddy diffusivity
+ν_t/Pr_t from whichever turbulence model is active). At an immersed body a scalar is held
+at a value (`dirichlet`), insulated (`adiabatic`), or — with `ibm_wall = conjugate` —
+solved inside the solid as well, with its own conductivity and capacity, coupled through a
+harmonic-mean face coefficient at the cut faces. The derivation is in
+`docs/conjugate/conjugate_ibm.tex`.

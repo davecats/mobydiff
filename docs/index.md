@@ -3,22 +3,25 @@
 `mobydiff` is an incompressible Navier–Stokes solver: second-order finite differences on a
 staggered Cartesian grid, RK3 time stepping, a damped-Jacobi / Chebyshev–Jacobi pressure
 projection, block-structured 2:1 local refinement, a volume-penalization immersed boundary
-method, and optional LES. It runs on CPUs (MPI) and NVIDIA GPUs (OpenMP target offload).
+method, optional LES / RANS / IDDES, and passive scalars with conjugate heat transfer. It
+runs on CPUs (MPI) and NVIDIA GPUs (OpenMP target offload). The executables are
+`moby_prepare` (preprocessor) and `moby_solve` (solver).
 
 ## User documentation
 
 - **[Installation](installation.md)** — dependencies, CPU vs GPU toolchains, building.
-- **[Running the solver](running.md)** — the run workflow, MPI decomposition, output and
-  restart.
+- **[Running the solver](running.md)** — the run workflow, `moby_prepare`, MPI
+  decomposition, output and restart.
 - **[Configuration reference](configuration.md)** — every `.ini` section and key.
 - **[Numerical methods](numerical-methods.md)** — discretization, time stepping, the
-  pressure projection, block refinement and the 2:1 interface, the IBM, and LES.
-- **[Tutorials](tutorials.md)** — a walk-through of the `channel_kmm180` turbulent-channel
-  case and the `sailplane` immersed-boundary case.
-- **[Tools reference](tools.md)** — geometry preprocessing (`mobygeom`), verification
-  checks, and post-processing/plotting scripts.
-- **[Validation & verification](validation.md)** — the reference flows and how correctness
-  is established.
+  pressure projection, block refinement and the 2:1 interface, the IBM, turbulence models
+  and scalars.
+- **[Tutorials](tutorials.md)** — the shipped cases, with walk-throughs of the
+  `channel_kmm180` turbulent channel and the `sailplane` immersed-boundary case.
+- **[Tools reference](tools.md)** — geometry helpers, verification checks, and
+  post-processing/plotting scripts.
+- **[Validation & verification](validation.md)** — how correctness is established; the case
+  index is [`validation/README.md`](../validation/README.md).
 - **[Developer guide](developer-guide.md)** — source layout, the block data model, the GPU
   programming model, and coding conventions.
 
@@ -36,7 +39,8 @@ historical than the user documentation above, but they are the authoritative rec
 - [`interface_review.md`](interface_review.md) — review of the interface treatment.
 - [`corner_reconstruction_strategy.md`](corner_reconstruction_strategy.md) — edge/corner
   halo reconstruction across refinement interfaces.
-- [`nonblocking_overlap_strategy.md`](nonblocking_overlap_strategy.md) — the planned
-  communication/computation overlap for the projection exchanges.
+- [`prepare_solve_strategy.md`](prepare_solve_strategy.md) — the `moby_prepare` /
+  `moby_solve` split and the case-file contract.
+- [`conjugate/`](conjugate/) — derivation of the conjugate heat-transfer scheme.
 - The `momentum_interface_handout.md`, `jacobi_interface_handout.md` and the
   `next_session_*.md` files are working handouts for individual development sessions.

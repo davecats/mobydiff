@@ -1,5 +1,7 @@
 # Next session — reducing the 2:1 penalty
 
+> STATUS (2026-09-26): CLOSED -- superseded by the launch-cost work (the `map(to: c)` fix, 2026-09-11) and later campaign; current numbers in CLAUDE.md "Active work" and `overheadTest/results_horeka_2026-09-26.md`. `overheadTest/` below means `tutorials/turbulentBoundaryLayer/overheadTest/`.
+
 > **STATUS 2026-09-10 (later) — P2 (OVERLAP) IS CLOSED. THE EXCHANGE COST AT
 > SCALE IS KERNEL LAUNCHES.** `overheadTest/results_horeka_exchange_2026-09-10.md`,
 > jobs 5139461 / 5139581.
@@ -364,7 +366,7 @@ rank-count-independent.
 
 Not 2:1-specific, but the exchange it hides is precisely what the interface
 inflates, so it pays most on refined multi-rank. Gated on the **A0 progress
-probe** (`docs/next_session_multirank_exchange.md`): the entire plan rests on
+probe** (`docs/next_session_multirank_exchange.md` (removed 2026-09-26; git history)): the entire plan rests on
 an in-flight `Isend` progressing while a target kernel runs, which is
 unverified on GPU and demonstrably false on CPU (0.46 GB/s). Ten throwaway
 lines decide it. If it holds, `jacobi_apply` kernel 1 reads no phi halo at all
@@ -414,6 +416,6 @@ becomes multiplicative, at one extra phi exchange per colour.
 ## Measurement discipline for any of this
 
 Same-host same-session baselines only (memory `timing-runs-need-drift-check`);
-multi-GPU needs `overheadTest/gpu_rank.sh`; and **re-baseline at `niter = 12`**
+multi-GPU needs `overheadTest/gpu_rank.sh` (no longer: `select_target_device` maps ranks to GPUs since 2026-09-10); and **re-baseline at `niter = 12`**
 — every recorded number in `overheadTest` is `niter = 6` Jacobi, which does not
 keep the pressure zero-mode away.

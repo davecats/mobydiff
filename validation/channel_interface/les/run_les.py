@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """LES validation -- developed-turbulence statistics campaign.
 
-Four cases on Re_tau 180, same code/scheme, WALE + momentum_reflux=false +
-interface_constant_half=true (LES cases):
+Four cases on Re_tau 180, same code/scheme, WALE + the const-1/2, reflux-off
+2:1 interface (hardwired; the former momentum_reflux / interface_constant_half
+keys are gone) (LES cases):
   reference : uniform 128x64x128, NO LES (DNS-adequate) -- the filtered-DNS target
   uniform   : uniform 64x48x64, LES-active (the LES baseline)
   slab      : 64^3 + symmetric wall bands (flat y-interfaces, no edges)

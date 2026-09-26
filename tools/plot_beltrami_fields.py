@@ -116,7 +116,9 @@ def main():
             rng[v]["f"] = max(rng[v]["f"], np.abs(sol).max(), np.abs(exa).max())
             rng[v]["e"] = max(rng[v]["e"], np.abs(err).max())
 
-    # Companion divergence dumps (MOBY_DIVDUMP): <prefix>_divpre_<step>.h5 etc.
+    # Companion divergence dumps <prefix>_divpre_<step>.h5 etc., written by the
+    # MOBY_DIVDUMP hook -- REMOVED in the 2026-06-30 cleanup, so current runs
+    # produce none and the divergence row is simply skipped.
     base = a.field
     dirn, fn = os.path.split(base)
     stem, _, rest = fn.rpartition("_")          # "tst", "_", "1.h5"

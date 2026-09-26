@@ -270,7 +270,7 @@ Follow the convention already in `overheadTest/`: a dated results file,
 mechanism for each number, and — explicitly — what the numbers do **not**
 support. Then update the STATUS header of
 `docs/next_session_2to1_penalty.md` and, if the ranking of targets changed,
-`docs/next_session_jacobi_apply.md`.
+`docs/next_session_jacobi_apply.md` (removed 2026-09-26; git history).
 
 ## Rules that still apply on the cluster
 

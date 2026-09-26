@@ -1,5 +1,7 @@
 # Next session — making the block/2:1-interface machinery cheaper
 
+> STATUS (2026-09-26): SUPERSEDED IN PART -- Phases 0, 1, 3 done (sections below); Phases 4-6 (unread halos, block fusion, mixed precision) never started. Later performance work (launch cost, registers, divergence halo) is in CLAUDE.md "Active work". `overheadTest/` below means `tutorials/turbulentBoundaryLayer/overheadTest/`; `chron.f90`'s step profiler was replaced by `src/modules/profiling.f90` (`[output] profile = true`).
+
 Handout. **Measure first, then optimise.** Every phase below is bit-exact-gatable
 except the last, which is deliberately last.
 
@@ -517,7 +519,7 @@ Decision rule, written down in advance:
 |---|---|---|
 | exchange `pack`/`unpack`/`local_copy` | traffic-bound | Phases 3, 5 |
 | spread proportionally over volume kernels | footprint/bandwidth-bound | Phases 1, 4 (exchange tuning is futile) |
-| `mpi_wait` | irrelevant at 1 rank — re-run at 4 ranks | overlap (see `docs/nonblocking_overlap_strategy.md`, needs rewriting) |
+| `mpi_wait` | irrelevant at 1 rank — re-run at 4 ranks | overlap (see `docs/nonblocking_overlap_strategy.md` (removed 2026-09-26; git history), needs rewriting) |
 
 Secondary check: repeat at `nb = 32` on a grid that allows it (e.g. min_channel)
 and confirm the per-phase overhead follows `(nb+2)^3/nb^3` phase by phase.
@@ -685,8 +687,8 @@ discipline every part of this project has relied on.
 - memory `block-overhead-measured` — the `(nb+2)^3` law and its consequences.
 - `docs/next_session_redblack_interface.md` — Phase 3a is its Increment R0;
   also the reason the refined timing runs had to use `solver = jacobi`.
-- `docs/next_session_profiling.md` — the older profiling plan (stale numbers,
+- `docs/next_session_profiling.md` (removed 2026-09-26; git history) — the older profiling plan (stale numbers,
   but the same phase-timer need; supersede or merge it in Phase 0).
-- `docs/nonblocking_overlap_strategy.md` — predates the Chebyshev solver;
+- `docs/nonblocking_overlap_strategy.md` (removed 2026-09-26; git history) — predates the Chebyshev solver;
   rewrite before using.
 - `docs/block_refinement_strategy.md` §5 (exchange entries), §10 (choosing nb).

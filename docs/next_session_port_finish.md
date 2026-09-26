@@ -1,5 +1,11 @@
 # Handout — finish the jacobi-interface port, then merge it to main
 
+> **STATUS 2026-09-26: DONE.** The port is on `main` (commits below), the GPU
+> gate passed, and §6's campaign re-run was done (job 5163909,
+> `results_horeka_2026-09-26.md`). `validation/naca0012` and `validation/sd7003`
+> were REMOVED 2026-09-26, so §3's cv_box question is reduced to the table
+> below. Current state: CLAUDE.md "Active work".
+
 Written 2026-09-25 on branch `port/jacobi-interface-features` (off `main` at
 `68e8f16`). The previous session consolidated every branch into `main`
 (`docs/next_session_merge_to_main.md`); this one ported four features out of
@@ -41,8 +47,10 @@ touched at all** — that is task 1.
 3. **`cv_box` for what remains of validation/naca0012 and validation/sd7003.**
    See §3. After the 2026-09-25 removals this is much smaller than it was:
    everything still present has a live non-force gate, so the question is only
-   whether anyone wants forces back from those cases.
-4. Then merge to `main` (fast-forward if nothing else has landed).
+   whether anyone wants forces back from those cases. *(Moot since 2026-09-26:
+   both directories were removed; the live airfoil case is `tutorials/naca/rans`,
+   which has a `cv_box`.)*
+4. ~~Then merge to `main`~~ **DONE** (the port commits are on `main`).
 
 ## 2 — The traps this port walked into, so the next one does not
 
@@ -86,12 +94,16 @@ touched:
 | `tutorials/naca/{naca,c10,b11}_base.ini` + `setup.sh`, `setup_b11.sh`, `run_sweep.sh` | **REMOVED 2026-09-25.** Superseded by `tutorials/naca/rans`; `claude/jacobi-interface` deleted them too. Their C_L/C_D were the penalization integral, so re-running would not reproduce their own README anyway. README re-headed, files recoverable from history. |
 | `tutorials/naca/rans/.prep_c11{,_nose}.ini` | **KEEP.** Part of the live tutorial (`run_case.sh` calls them), and prepare-only — `moby_prepare` never calls `setup_after_grid`, so the cv_box path is never reached. |
 | `validation/scalar/cylheat.ini` | **KEEP.** An S3 SCALAR gate (heated cylinder, Re 40, Pr 0.71) driven by `run_gates_s3.sh`. It uses the airfoil case for the cylinder geometry; its gate is heat transfer, not forces. |
-| `validation/naca0012/aoa4.ini`, `validation/sd7003/aoa4.ini` | **KEEP.** Load-bearing beyond their own directory: `validation/prepare/run_gates_big.sh` (the P1b prepare-vs-mobygeom gate on the big geometries) builds its cases from them. |
-| `validation/naca0012/xz_{aoa0,aoa4,aoa8}.ini` | **REMOVED 2026-09-25.** Purely force-based AoA-sweep points; their only product was a C_L/C_D table, and that statistic no longer exists. README section kept as a record with the recovery recipe. |
-| `validation/naca0012/xz_l5.ini`, `validation/sd7003/xz_l4.ini` | fan/resolution BENCHMARKS (leaves, s/step) — not force-based, still meaningful. |
-| `validation/sd7003/xz_aoa4.ini` | the transition benchmark (x_t, k onset) — **not** force-based, alive. |
+| `validation/naca0012/aoa4.ini`, `validation/sd7003/aoa4.ini` | *Were* KEEP (inputs to `validation/prepare/run_gates_big.sh`'s P1b airfoil legs). **REMOVED 2026-09-26** with their directories; `run_gates_big.sh` now runs the sailplane leg only. Git history. |
+| `validation/naca0012/xz_{aoa0,aoa4,aoa8}.ini` | **REMOVED 2026-09-25.** Purely force-based AoA-sweep points; their only product was a C_L/C_D table, and that statistic no longer exists. |
+| `validation/naca0012/xz_l5.ini`, `validation/sd7003/xz_l4.ini`, `validation/sd7003/xz_aoa4.ini` | fan/resolution benchmarks and the transition benchmark. **REMOVED 2026-09-26** with their directories; git history. |
 
-Right now all of them start, print a loud warning and run with force sampling
+**As of 2026-09-26 the tracked inis with `name = airfoil` and no `cv_box` are
+exactly the three KEEP rows above**: `tutorials/naca/rans/.prep_c11{,_nose}.ini`
+(prepare-only) and `validation/scalar/cylheat.ini` (scalar gate). None needs a
+box; the cv_box question is closed unless someone wants forces from cylheat.
+
+A solve-side ini without a box starts, prints a loud warning and runs with force sampling
 off, which keeps every non-force gate working.
 
 **Do not simply add boxes.** The budget is sensitive to two things the branch
@@ -178,7 +190,8 @@ showing one is more accurate. Settling it needs a known answer — a grid-
 convergence study or a manufactured solution. NOT started: it is a study, not a
 gate, and it was outside the overnight remit.
 
-**BLOCKER found while trying**: the `uniform3` gate, the one that would test
+**BLOCKER found while trying** *(RESOLVED 2026-09-26, commit `3e48579`: the
+setup script now uses `moby_prepare`)*: the `uniform3` gate, the one that would test
 uniform-scalar preservation directly, **cannot be regenerated on a fresh
 checkout.** `validation/multilevel_body/setup.sh` builds its coefficient file
 with `mobygrid` and `tools/mobygeom.py` — both RETIRED in the prepare/solve
@@ -206,6 +219,10 @@ binary on conduction / prsweep / ibmwavy (`max_abs 0` including the scalar
 fields), so nothing published moves until someone sets the key.
 
 ## 6 — Unrelated but still owed from the previous session
+
+*(DONE 2026-09-26, job 5163909, `results_horeka_2026-09-26.md`: ratios held, a
+1.3-2.0 % momentum-predictor regression found. The `convection = skew` key was
+stripped from the campaign configs — it is now an error stop.)*
 
 The campaign matrix re-run (`submit_matrix4.sh`, 4 nodes). Nothing in
 `results_horeka_2026-09-25.md` has been re-measured since the merges, and the

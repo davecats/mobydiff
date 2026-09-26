@@ -1,5 +1,7 @@
 # Next session(s) — airfoil flow case: freestream in/outflow, lift/drag, quasi-2D RANS+transition
 
+> STATUS (2026-09-26): DONE -- A0-A3 complete (CLAUDE.md "Active work"). Historical record. Since then: `validation/naca0012/` and `validation/sd7003/` were removed (2026-09-26; git history) -- the live airfoil case is `tutorials/naca/rans/`; the penalization-integral C_L/C_D was REPLACED by the control-volume budget (`[case.airfoil] cv_box`, `docs/next_session_cv_forces.md`), so the "penalization integral stays the runtime statistic" decision below no longer holds; `tools/mobygeom.py` geometry subcommands are retired (use `moby_prepare`).
+
 ## STATUS 2026-07-14 — A3 increments 0-2 DONE (all gates PASS), increment 3 finishing
 
 - **INCREMENT 0 (081f387): 3-level refine_body prerequisite gates PASS**
@@ -23,7 +25,7 @@
   k_inf/omega_inf at the inlet column (0.21 %/2.3 %), 1==4 ranks EXACT
   (`validation/rans_inlet/`).
 - **INCREMENT 2 (9e91943..afdcda0): NACA 0012 SST sanity PASS.**
-  `validation/naca0012/`: 12c x 12c x 0.1875c, base 512x512x8,
+  `validation/naca0012/` (removed 2026-09-26; git history): 12c x 12c x 0.1875c, base 512x512x8,
   refine_body 5 levels (Delta = 1.465e-3 c, 19562->25418 leaves), SST
   tu 5 / nut_ratio 10, dtmax 4e-4 (explicit eddy diffusion vs the
   molecular-only Peclet limiter). C_L(0/4/8) = -0.0013/+0.384/+0.745 ->
@@ -82,7 +84,7 @@ theta <= 0.6 hard bound — 1-3theta amplification, theta=1 measured
 unstable; OFF = never called, bit-exact + zero cost, suite green).
 theta=0.5 reaches the refinement ground truth from 0.012c outward;
 COST: +3.9 % C_D on the coarse (D/h=32) cylinder — document per case.
-Full data: validation/naca0012 README (R1 + band-filter sections).
+Full data: validation/naca0012 README (removed 2026-09-26; git history) (R1 + band-filter sections).
 Follow-ups if ever needed: filtered-NACA force check, width/theta
 tuning, per-DOF theta by direction count, ghost convection increment.
 
@@ -113,7 +115,7 @@ tuning, per-DOF theta by direction count, ghost convection increment.
 3. Deferred unchanged: calibrated smoothed-mask/Brinkman (D+h bias),
    convective outlet, mean-force border decomposition, moment
    coefficient, wall functions/IDDES under transition, GPU profiling
-   (docs/next_session_profiling.md).
+   (docs/next_session_profiling.md (removed 2026-09-26; git history)).
 
 ## STATUS 2026-07-12 — A0 DONE (all gates), A1/A2 implemented, cylinder gates running
 
@@ -483,7 +485,7 @@ quadrature on the body.
   round-off, projection divergence round-off;
   (c) inflow/outflow plane Poiseuille (Dirichlet parabola in, outflow
   out) matches the periodic-forcing reference profile
-  (validation/poiseuille machinery) to discretization error, pressure
+  (validation/poiseuille machinery -- no longer in the tree; the gate as built is in validation/freestream/) to discretization error, pressure
   gradient linear, level pinned at the outlet (no drift over 10k steps);
   (d) a Lamb–Oseen vortex advected through the outlet: no blow-up,
   bounded reflection (report the reflected fraction; a convective outlet
@@ -597,4 +599,4 @@ quadrature on the body.
 > the TVD upwind increment (measurement-triggered), convective outlet,
 > the mean-force border-decomposition diagnostic, moment coefficient,
 > wall functions/IDDES under transition, the GPU profiling task
-> (docs/next_session_profiling.md). git: stage explicit paths only.
+> (docs/next_session_profiling.md (removed 2026-09-26; git history)). git: stage explicit paths only.

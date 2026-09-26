@@ -24,6 +24,8 @@ run **is** the reference. Gated at `--tolerance 0`:
 | `nb = 8` == `nb` unset (one block per rank box) | PASS (max_abs 0) |
 | `nb = 32 16 8` on 1 rank == 4 ranks | PASS (max_abs 0) |
 
+*Re-run 2026-09-26 at `niter = 12` (was 6), CPU: all four PASS (max_abs 0).*
+
 **2:1 interfaces: uniform-flow preservation**, not a cross-layout comparison —
 see the finding below. A constant field is preserved exactly by any
 *consistent* set of transfer operators, so a per-direction indexing mistake
@@ -36,6 +38,9 @@ through a 3-level patch at `nb = 8 4 8`, 50 steps:
 |---|---|---|---|
 | `uniform_rect` (xz) | 448 / 248 / 32 | **0.0** | **0.0** |
 | `uniform_rect_xyz` (xyz) | 448 / 504 / 64 | **0.0** | **0.0** |
+
+*Re-run 2026-09-26 at `niter = 12` (was 6), CPU 1 rank: both PASS, 0.0 / 0.0,
+same level histograms.* (The FINDING table below was not re-measured.)
 
 The tiling is deliberately fine enough that levels 0, 1 **and** 2 all survive,
 so both l0–l1 and l1–l2 interfaces are exercised. A coarser `nb` lets the 2:1

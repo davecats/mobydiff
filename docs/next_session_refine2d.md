@@ -3,7 +3,10 @@
 > **STATUS 2026-07-15: R2D-0..3 ALL DONE** (commits becbda3 / 6384aac /
 > f0ce7a7 / 9dd33c2 + the sweep/SD7003 follow-up; gates in
 > `validation/refine2d/README.md`, `validation/naca0012/README.md`
-> "R2D-3", `validation/sd7003/README.md` "R2D-3 follow-up"). Headlines:
+> "R2D-3", `validation/sd7003/README.md` "R2D-3 follow-up" — both airfoil
+> directories REMOVED 2026-09-26, git history; `validation/refine2d/README.md`
+> is the surviving record, and mobygeom block-table is retired in favour of
+> `moby_prepare`). Headlines:
 > the xz interface error is ~30% BELOW the octree's at equal base
 > resolution (Beltrami order 2.83); the Re_tau 180 xz wall-band channel
 > matches the validated reflux-off signature with NO interface band;

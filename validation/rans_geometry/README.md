@@ -54,6 +54,15 @@ python3 check_rans_geometry.py --mode wavy  wavy_ransgeom.h5
 python3 check_rans_geometry.py --mode wavy  wavy_refine_ransgeom.h5
 ```
 
+Re-run 2026-09-26 (`niter = 12`, was 6 — irrelevant here, the dump is
+init-only): `flat_l1` / `flat_refine` PASS against the exact slab-box
+reference with the coefficient files built by `moby_prepare` from
+`../prepare/flat.ini` / `flat_refine.ini` (the mobygeom `setup.sh` needs the
+retired geometry venv and was not used): max|dwall-ref| 7.461e-12 (l1);
+9.215e-14 / 2.728e-11 (refine, l0/l1); wallcell mismatches 0. The 0.0 of
+the mobygeom-built files is not expected from the prepared ones — P1
+measured the same 7.5e-12 / 2.7e-11 interior dwall gap between the two.
+
 The mobygeom `block-table` files are generated from the les_ibm STLs/grid
 (`../channel_interface/les_ibm/`); `setup.sh` also verifies that the
 regenerated levels-2 file carries byte-identical `coef_blocks`/masks/blocks

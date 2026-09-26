@@ -1,5 +1,14 @@
 # NACA 0012 Re 4e5 campaign — COMPLETE 2026-07-21 (C10 sweep done; results below)
 
+> **STATUS 2026-09-26: DONE (historical record).** The live airfoil case is
+> `tutorials/naca/rans` (C11 aoa 5 vs OpenFOAM; its README is the current
+> state). REMOVED since this was written (git history only): the top-level
+> `tutorials/naca/` C10/B11 inis, setup scripts, figures, polars and `*.py`
+> tools (live `cv_forces.py`, `surface_cp_cf.py`, `compare_openfoam.py` are in
+> `tutorials/naca/rans/postProcess/`), and `validation/naca0012` (the R1 fan
+> tables). Penalization C_L/C_D is gone — forces come from the runtime CV budget
+> (`[case.airfoil] cv_box`); mobygeom block-table is retired (use `moby_prepare`).
+
 STATUS (2026-07-21): the campaign RESUMED on the prepare/solve-split code
 (moby_prepare built ibm_coeff_c10.h5 in 4m26s, 10615 leaves / 5.4M cells)
 and the FULL C10 sweep (alpha = -2..5, Re 4e5, SST + `[rans]

@@ -1,5 +1,12 @@
 # Skew-symmetric convection — global migration plan (approved 2026-07-22)
 
+> **STATUS 2026-09-26: DONE.** Locked down 2026-07-23 on `claude/jacobi-interface`
+> and ported to `main` 2026-09-25 (`b1798f2`): skew is hardwired and the
+> `[flow] convection` key is an error stop, so the "Implementation" toggle below
+> no longer exists. The scalar has its own `[scalar] convection`. The
+> `tutorials/naca` figures cited below were removed; the live airfoil case is
+> `tutorials/naca/rans`. Current state: CLAUDE.md "Active work".
+
 User decision (2026-07-22, after the C11 v1 term attribution): migrate the
 momentum convection to the skew-symmetric form GLOBALLY, config-toggled
 during validation, then locked down (toggle removed, divergence form
@@ -143,7 +150,7 @@ with skew as the only path; update CLAUDE.md + this doc STATUS.
 - WHEN GATE 6 LANDS (user note 2026-07-23): produce the standard
   visualisation of the developed interface-channel results (mean U /
   RMS profiles + interface-band cross-sections, plot_channel_stats.py
-  + plot_interface_validation.py) alongside the pass/fail numbers.
+  + plot_interface_validation.py, removed 2026-09-26) alongside the pass/fail numbers.
 - S2 gate 6 (2026-07-23): PASS. Developed interface channel t = 5..25
   with skew (developed/runs/skew_conv, gate6_skew_stats.png): interface
   jump ratios within 0.007 of the validated div-refluxoff signature on

@@ -1,6 +1,6 @@
 # Next session: re-run tutorials/naca/rans from scratch, stopping on `steady_tol`
 
-## STATUS: DONE (2026-08-08)
+## STATUS: DONE (2026-08-08). Current state: `tutorials/naca/rans/README.md`.
 
 The converged state is regenerated (`tutorials/naca/rans/c11_nose_660000.h5`,
 t = 34.0, plus the level-11 baseline `c11_aoa5_460000.h5` at t = 29) and the

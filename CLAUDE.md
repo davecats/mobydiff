@@ -338,7 +338,7 @@ immersed boundary. Phased, each phase verified before the next:
   2.03x up into the coarse core across the 2:1 interface, a smooth step with NO
   band (fine wall bands carry lower nut, the physical filter-width step). Case +
   driver + analysis + committed prereqs + figure (`ibm_les_profiles.png`) in
-  `validation/channel_interface/les_ibm/` (README + RESUME_STATUS). DONE.
+  `validation/channel_interface/les_ibm/` (README). DONE.
 - Code cleanup (DONE 2026-06-30, branch `claude/jacobi-interface`). Removed the
   19 `MOBY_*` testing/diagnostic hooks (63 refs). Category A (pure diagnostics:
   PROJONLY/PREDONLY/DIVDUMP/RHSDUMP/TERMDUMP/MANUF/KEBAL/KESKEW-env/PHASETIME/
@@ -1230,7 +1230,7 @@ immersed boundary. Phased, each phase verified before the next:
   `pressure_projection` were superseded at the merge by `profiling.f90`'s
   three nested profilers (step/proj/exch), which the same `[output] profile
   = true` key drives; chron.f90 keeps only the generic `profiler_type` both
-  used. `docs/next_session_profiling.md` carries a SUPERSEDED header.
+  used. `docs/next_session_profiling.md` was marked SUPERSEDED (removed 2026-09-26; git history).
 - Verification debt + host/device staleness audit (DONE 2026-08-07, branch
   `scalar`, `docs/next_session_verification.md`). Every gate group left
   un-measured by the 2026-08-05 fixes was re-run and reproduces; the audit of
@@ -1505,8 +1505,8 @@ immersed boundary. Phased, each phase verified before the next:
   kernel (independent, both before the `Waitall`, 2.3 ms/step, bit-exact).
   Recommended AGAINST: fusing the cross-level kernel into the same-level one — it
   saves 2.0 ms of launch but puts the interface gather's ~128 registers on all 39
-  rounds. `docs/next_session_profiling.md` and the Phase-4 sketch in
-  `docs/nonblocking_overlap_strategy.md` predate all of this.
+  rounds. `docs/next_session_profiling.md` (removed 2026-09-26; git history) and the Phase-4 sketch in
+  `docs/nonblocking_overlap_strategy.md` (removed 2026-09-26; git history) predate all of this.
 - **The between-iteration velocity exchange, reduced to what the divergence
   reads (DONE 2026-09-15, jobs 5145805/5145806,
   `results_divhalo_2026-09-15.md`): -3.0 to -4.9% of the step.** 15 of the 18
@@ -1886,6 +1886,41 @@ immersed boundary. Phased, each phase verified before the next:
   schedule at the cost of a never-taken branch. It needs its own before/after
   ncu + the nofma suite. NOT `-gpu=maxregcount`, which is a target, not a cap.
 
+- **Test-case cleanup (2026-09-26).** One home per kind: `tutorials/` (channel_kmm180,
+  cht, min_channel, naca/rans, sailplane, turbulentBoundaryLayer) and
+  `validation/` (every gate; its `README.md` is THE index of surviving cases and
+  what each exercises, plus the list of what was removed). Deleted: `smoke/`,
+  `profile_200_20_gpu_*`, `tutorials/wavychannel` (a plain channel despite the
+  name), the superseded `tutorials/naca/*.py`, `validation/{naca0012, sd7003,
+  taylor_green, momentum_interface, channel_interface_mfu}`, and the cases that
+  needed removed hooks/keys/mobygrid. `tutorials/interface_decay` moved to
+  `validation/interface_decay`. So the log above cites some paths that now live
+  only in git history (naca0012/sd7003 findings: keep-buried, LE fan, gamma_sep,
+  the L5-xz no-transition result); `validation/prepare/run_gates_big.sh` keeps
+  only its sailplane leg. The turbulentBoundaryLayer production inis still set
+  `[flow] convection = skew` -- an error stop since the lockdown -- and were fixed.
+  PRESSURE SETTINGS NORMALISED the same day: Chebyshev-Jacobi runs `niter = 12`
+  (all 51 live inis moved from 6; every number recorded at 6 is being
+  re-measured) and IGNORES `sor` -- its damping is the grid-derived spectral
+  bounds lmax = 2, lmin = (2/3) sin^2(pi/N_max) (pressure_solver.f90); red-black
+  SOR takes `sor = 1.5`. channel_kmm180 and sailplane carried `sor = 1.5` under
+  the default Jacobi and blew up (NaN / 1e15 in one step): they now declare
+  `solver = redblack`.
+  RE-MEASUREMENT STATUS: only the cheap gates were re-run at niter 12 (CPU, all
+  PASS; results dated in their READMEs; the Lamb-Oseen reflected fraction went
+  5.2e-3 -> 2.2e-2, the old value an under-converged-projection artefact). The
+  long tier (~200 GPU-h, 85% the CHT tutorials; LES/developed/les_ibm/iddes/
+  scalar-turbulence/cylinder/rans_sst/chan_conj) was PLANNED, NOT LAUNCHED:
+  every number recorded from those cases is still a niter-6 (and, for the
+  older campaigns, pre-skew) value.
+  **THE PLAN (decided 2026-09-26): first tackle code simplifications and a
+  thorough analysis of the code; THEN re-go through every gate, validation
+  case and tutorial ONE BY ONE** (validation/README.md is the checklist) --
+  re-run, re-measure, and update or retire each, rather than a bulk
+  re-measurement campaign now. Inputs the long cases need (KMM180 restart,
+  campaign snapshots) live in the sibling checkouts mobydiff.scalar /
+  mobydiff.bl; zero `pn` when restarting a niter-6 snapshot.
+
 ## Verification
 
 - Pure refactors must be bit-exact vs. the pre-refactor code: compare
@@ -1895,7 +1930,8 @@ immersed boundary. Phased, each phase verified before the next:
   differences for arithmetically identical source.
 - Channel sanity: `tools/check_parabolic_channel.py`. IBM cases:
   `tutorials/sailplane/` (coefficient file path),
-  `tutorials/wavychannel/` (analytic `set_ibm_coeff`).
+  `validation/prepare/wavy*.ini` (analytic `set_ibm_coeff`). The index of
+  every surviving test case is `validation/README.md`.
 - Refinement phases: uniform-flow preservation across interfaces and global
   mass conservation to round-off (see strategy doc §11 for the full list).
 - Never declare a phase done with failing builds or unverified results.

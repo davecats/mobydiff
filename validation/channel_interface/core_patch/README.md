@@ -3,8 +3,9 @@
 Validates the 2:1 refinement at **edges** (two interface faces meeting) and
 **corners** (three) in turbulence — the flat-face (y-band) case validated on
 2026-06-29 has only y-face interfaces. See `docs/next_session_edges_les.md`
-open item 1. Production interface settings: `interface_constant_half = true`
-(default), `momentum_reflux = false`.
+open item 1. Production interface settings: const-1/2 transfer, no momentum
+reflux (run 2026-06-29 with `interface_constant_half = true`, `momentum_reflux =
+false`; both keys were removed 2026-07-01 and that configuration is now hardwired).
 
 ## The case
 
@@ -46,7 +47,8 @@ Why the core, not a wall patch (the decision):
    steps `max|u−1|=max|v−0.5|=max|w−0.25|=0.0`, p constant. The transfer
    (RESTRICT/PROLONG/copy) is exact for constants at every face/edge/corner under
    const-½ + reflux-off.
-3. **250-step turbulent stability** (`MOBY_STEPDIV=1`) — PASS. Step 1
+3. **250-step turbulent stability** (`MOBY_STEPDIV=1`, a per-step divergence
+   print removed in the 2026-06-30 hook cleanup; not reproducible as-is) — PASS. Step 1
    `div_max=9.24` (interpolated-IC transient, absorbed by the first projection),
    then post-transient `div_max` peaks 0.078 and **decays to ~0.012**; `div_l2`
    monotonically decreasing; `max|mass|=1e-15`; no NaN. Well under the benchmark

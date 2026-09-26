@@ -103,7 +103,7 @@ essentially the single-level one:
 itself costs ~3 % per cell (9.114 vs 8.809 ns/cell against single-level
 `rect_jacobi`), consistent with the 3–8 % the README has always quoted for the
 interface. Work on the refined case is now the same work as on the single-level
-case — `jacobi_compute_phi` first (see `docs/next_session_jacobi_apply.md`).
+case — `jacobi_compute_phi` first (see `docs/next_session_jacobi_apply.md` (removed 2026-09-26; git history)).
 
 The one place the exchange story could still be alive is **multi-rank**, which
 none of this measures: `sync_divergence_halos` is single-rank only and with MPI

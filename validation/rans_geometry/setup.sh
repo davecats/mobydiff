@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 # Generate the block-table coefficient files (with dwall_blocks) for the
 # RANS T1 geometry gates, from the les_ibm wall STLs and grid.
+#
+# NOTE (2026-09-26): this deliberately uses the RETIRED tools/mobygeom.py (kept
+# as the cross-implementation reference; validation/prepare's flat/flat_refine
+# gates compare moby_prepare against these files). It needs the committed
+# les_ibm grid.h5 and the geometry venv. Step 3 holds only for an les_ibm
+# ibm_coeff_blocks.h5 that was itself built by mobygeom: les_ibm/setup.sh now
+# builds that file with moby_prepare, whose coefficients differ at round-off.
 set -euo pipefail
 cd "$(dirname "$0")"
 

@@ -1,5 +1,5 @@
 #!/bin/bash
-# The three passes of docs/next_session_2to1_performance.md, run inside one
+# The three passes of docs/next_session_2to1_performance.md (removed 2026-09-26; git history), run inside one
 # SLURM allocation.
 #
 #   run_exchange.sh <exe> <results_dir>

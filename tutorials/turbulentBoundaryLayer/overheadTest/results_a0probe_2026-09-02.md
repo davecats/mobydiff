@@ -1,6 +1,6 @@
 # A0: does MPI progress while a target kernel runs? No.
 
-The feasibility probe Plan A (`docs/next_session_multirank_exchange.md`) put
+The feasibility probe Plan A (`docs/next_session_multirank_exchange.md` (removed 2026-09-26; git history)) put
 ahead of any overlap work, because the whole plan rests on that one assumption.
 istmcetus, 2 GPU ranks, refined production case, clean machine.
 

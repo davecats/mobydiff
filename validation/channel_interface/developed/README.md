@@ -4,8 +4,18 @@ Run a developed turbulent channel (Re_tau = 180) with 2:1-refined wall bands and
 collect **time-averaged** statistics, to quantify the interface signatures cleanly
 (the single-snapshot probe at t≈0.08 is not converged — see
 `docs/next_session_edges_les.md`). The energy-conserving
-**constant-1/2 interface is the default** (`[blocks] interface_constant_half`),
-which keeps the refined channel stable.
+**constant-1/2 interface** keeps the refined channel stable; it is hardwired
+(the `[blocks] interface_constant_half` toggle was removed 2026-07-01).
+
+> **Note (2026-09-26).** This directory records the reflux ON-vs-OFF study and
+> an `interface_skew` variant. Both toggles (`[blocks] momentum_reflux`,
+> `interface_skew`) and the `MOBY_KESKEW` hook were REMOVED once the study
+> settled it: the solver now always runs the reflux-OFF, const-1/2 interface,
+> i.e. what the runs below call `reflux_off`. The driver options that set those
+> keys (`run_developed.py --skew/--no-reflux`, `run_reflux_study.sh`) are gone;
+> the recorded conclusions below are unchanged. (`plot_interface_validation.py`,
+> which plotted `runs/reflux_off` against `runs/reflux_on`, was removed on
+> 2026-09-26; git history.)
 
 Two phases (the stats accumulator starts fresh in phase 2, so the discarded
 transient does not pollute it):
@@ -27,12 +37,11 @@ prints the plot command):
 module load /opt/nvidia/hpc_sdk/modulefiles/nvhpc-hpcx-cuda13/26.3
 ./compile.sh gpu
 cd validation/channel_interface/developed
-python3 run_developed.py --arch gpu --ranks 2              # constant-1/2 default
-python3 run_developed.py --arch gpu --ranks 2 --skew       # + interface_skew
+python3 run_developed.py --arch gpu --ranks 2              # -> runs/default
+python3 run_developed.py --arch gpu --ranks 2 --refine-dims xz   # -> runs/xz (quadtree bands)
 # -> runs/<name>/stats/channel_stats.h5 (+ _l1)
 python3 ../../../tools/plot_channel_stats.py stats.png \
-    runs/default/stats/channel_stats.h5:constant-1/2 \
-    runs/skew/stats/channel_stats.h5:+KESKEW
+    runs/default/stats/channel_stats.h5:constant-1/2
 ```
 
 `--ranks N` sets the x-decomposition (`dims = N 1 1`) and `mpirun -n N`. The manual
@@ -42,7 +51,7 @@ steps below are equivalent.
 
 ```bash
 module load /opt/nvidia/hpc_sdk/modulefiles/nvhpc-hpcx-cuda13/26.3
-./compile.sh gpu        # build_gpu/main
+./compile.sh gpu        # build_gpu/moby_solve
 ```
 
 ## 1. Initial condition
@@ -60,7 +69,7 @@ python3 tools/make_channel_restart.py --mode refined --band-cells 24 \
 ```bash
 cd validation/channel_interface/developed
 mkdir -p run_transient && cd run_transient
-mpirun -n 2 ../../../../build_gpu/main ../transient.ini
+mpirun -n 2 ../../../../build_gpu/moby_solve ../transient.ini
 # final field is channel_field_<laststep>.h5 -- copy it up as the developed restart:
 cp channel_field_*.h5 ../transient_t5.h5
 cd ..
@@ -73,44 +82,34 @@ cd ..
 
 ```bash
 mkdir -p run_developed && cd run_developed
-mpirun -n 2 ../../../../build_gpu/main ../developed.ini
+mpirun -n 2 ../../../../build_gpu/moby_solve ../developed.ini
 # -> channel_stats.h5 and channel_stats_l1.h5 (flushed every stats_write_interval
 #    and at the end). runtimedata.txt has the running bulk quantities.
 cd ..
 ```
-
-To also test the optional skew band correction, set `interface_skew = true` in
-`developed.ini` (or `MOBY_KESKEW=1`), run in a separate directory, and overlay.
 
 ## 4. Post-process
 
 ```bash
 python3 tools/plot_channel_stats.py channel_stats.png \
     run_developed/channel_stats.h5:constant-1/2
-# overlay two runs:
-python3 tools/plot_channel_stats.py channel_stats.png \
-    run_dev_default/channel_stats.h5:constant-1/2 \
-    run_dev_skew/channel_stats.h5:+KESKEW
+# overlay several runs: append more <stats.h5>:<label> arguments
 ```
 
 Produces mean U+ vs y+ (law of the wall), u'/v'/w' rms, and −⟨u'v'⟩, fine near the
 walls + coarse in the core, with the 2:1 interface marked.
 
-## Reflux ON-vs-OFF study (the current open question)
+## Reflux ON-vs-OFF study (SETTLED: reflux removed; historical record)
 
 The u'/v' interface BANDS are a momentum-reflux artifact (the reflux injects the
 fine-side resolved Reynolds-stress flux into the under-resolved coarse interface
-cell; see `docs/next_session_edges_les.md`). `run_reflux_study.sh`
-runs the developed two-leg stats for reflux ON (default) and reflux OFF and prints
-the overlay command, to test the trade: reflux OFF removes the band but the reflux
-exists to conserve the MEAN interface flux (-<u'v'>), so check whether reflux OFF
-degrades the mean profile / Reynolds shear vs the uniform-fine reference.
-
-```bash
-cd validation/channel_interface/developed
-./run_reflux_study.sh gpu 2          # arch nranks; runs reflux_on + reflux_off
-# (single case: run_developed.py --no-reflux)
-```
+cell; see `docs/next_session_edges_les.md`). The study (driver
+`run_reflux_study.sh`, removed 2026-09-26 with the key; in git history) ran the
+developed two-leg stats for reflux ON and OFF to test the trade: reflux OFF
+removes the band but the reflux existed to conserve the MEAN interface flux
+(-<u'v'>). Outcome (CLAUDE.md): reflux OFF removes the band at no cost to the
+mean profile / Reynolds shear vs the uniform-fine reference, so OFF is now the
+only behaviour.
 
 `run_reference.sh gpu N` runs the **uniform-fine reference** (256x128x256, single
 level, two-leg, same t-window/params) — the ground truth the refined reflux_on /
@@ -128,6 +127,6 @@ bitwise). It generates `runs/reference/REF_IC.h5` on first use and prints the
   cross-level exchange across a rank boundary). y-splits are untested for the
   refined path.
 - Verified: 1-rank vs 2-rank (dims 2 1 1) is **bit-identical** (u,v,w,p), both for
-  the default constant-1/2 and with `interface_skew`/`MOBY_KESKEW`.
+  the constant-1/2 interface and (historically) with the removed `interface_skew`.
 - `dims` must divide the block lattice: nb=8 → 16 blocks in x, so 2/4/8/16 ranks
   in x are all valid.

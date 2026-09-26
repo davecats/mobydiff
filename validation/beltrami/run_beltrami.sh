@@ -11,13 +11,13 @@ set -uo pipefail
 cd "$(dirname "$0")"
 ARCH="${1:-cpu}"
 NITER="${2:-}"
-BIN="../../build_${ARCH}/main"
-[ -x "$BIN" ] && BIN="$(cd "$(dirname "$BIN")" && pwd)/main" || {
+BIN="../../build_${ARCH}/moby_solve"
+[ -x "$BIN" ] && BIN="$(cd "$(dirname "$BIN")" && pwd)/moby_solve" || {
     echo "binary $BIN not found (build with ./compile.sh $ARCH)"; exit 1; }
 source /etc/profile.d/modules.sh 2>/dev/null
 module load /opt/nvidia/hpc_sdk/modulefiles/nvhpc-hpcx-cuda13/26.3 2>/dev/null || true
 export OMP_TARGET_OFFLOAD=MANDATORY
-export MOBY_BELTRAMI=1
+# The analytic IC is selected by [flow] initial = beltrami in the inis.
 CHK=../../tools/check_beltrami.py
 mkdir -p runs
 
@@ -25,7 +25,7 @@ run() {  # run() <dir> <ini>
     local d="runs/$1"; mkdir -p "$d"; rm -f "$d"/beltrami_*.h5
     cp "$2" "$d/input.ini"
     [ -n "$NITER" ] && sed -i "s/^niter = .*/niter = $NITER/" "$d/input.ini"
-    ( cd "$d" && mpirun -x MOBY_BELTRAMI -x OMP_TARGET_OFFLOAD -n 1 "$BIN" input.ini > run.log 2>&1 )
+    ( cd "$d" && mpirun -x OMP_TARGET_OFFLOAD -n 1 "$BIN" input.ini > run.log 2>&1 )
     python3 "$CHK" "$(ls -1 "$d"/beltrami_*.h5 | sort -t_ -k2 -n | tail -1)"
 }
 

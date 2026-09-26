@@ -1,5 +1,7 @@
 # Conjugate heat transfer at an immersed interface
 
+> STATUS (2026-09-26): C1-C3 DONE and shipped (`[scalar.N] ibm_wall = conjugate`); C4 (conducting corners) not started. Current state: `docs/next_session_conjugate.md` STATUS header and `validation/conjugate/README.md`.
+
 **Two documents, and they answer different questions.**
 
 | file | question it answers |
@@ -49,7 +51,7 @@ implement), then §7. The rest is why those two terms are the right ones.
 | 11 | Alternatives considered and rejected |
 | 12 | Validation ladder (the gates are stated in full in the session document) |
 
-Source papers, in `literature/`: `luchini-ibm-2025.pdf` (JCP 539:114245),
+Source papers (a local `literature/` folder, not tracked in the repository): `luchini-ibm-2025.pdf` (JCP 539:114245),
 `interface-method.pdf` (Wiegmann & Bube, SIAM J. Numer. Anal. 37(3):827–862)
 and `cipelli-2025.pdf` (Cipelli, Chiarini, Quadrio, Gatti & Luchini, riblet
 corner correction).

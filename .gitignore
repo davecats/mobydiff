@@ -78,8 +78,8 @@ build_*/
 validation/**/runs/
 validation/**/ic/
 validation/**/smoke/
-tutorials/interface_decay/decay_*.h5
-tutorials/interface_decay/run.log
+validation/interface_decay/decay_*.h5
+validation/interface_decay/run.log
 
 # run outputs / scratch
 validation/beltrami/suite/
@@ -97,7 +97,6 @@ validation/channel_interface/les/runs/
 
 # Exceptions: reference data / figures that ARE committed on purpose.
 !.mobydiff.png
-!smoke/**/*.h5
 !tools/mobygeom_tests/**/*.h5
 !tutorials/sailplane/*.h5
 !validation/channel_interface/divergence_comparison.png
@@ -130,6 +129,10 @@ validation/scalar/*.dat
 # docs/conjugate: the derivation note is BUILT from the .tex (`make` in that
 # directory), so the PDF is a build product, not a source.
 docs/conjugate/*.pdf
+docs/conjugate/*.aux
+docs/conjugate/*.fls
+docs/conjugate/*.fdb_latexmk
+docs/conjugate/*.log
 
 # conjugate-interface C1 gate scratch (validation/conjugate/run_gates_c1.sh):
 # the generated case inis, the slab STLs the gate writes per cut position, and

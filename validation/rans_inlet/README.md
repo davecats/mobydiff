@@ -34,9 +34,11 @@ are inlet-face-gated and dormant in every channel.
 - gate (a): all 7 cases BIT-EXACT (max_abs 0) vs the dd37937 binaries,
   CPU AND GPU, incl. k/omega/nut (+gamma/rethetat on lam30t).
 - gate (b): report_patch_types prints inlet/outlet/wall "(declared)";
-  first-column mid-channel k = k_inf to 0.21 %, omega = omega_inf to
-  2.3 % after 500 steps; 1 == 4 ranks EXACT (max_abs 0 on un vn wn pn
-  k omega nut). CPU vs GPU on the ACTIVE inlet path <= 1.8e-10 over 500
+  first-column mid-channel k = k_inf to 0.14 %, omega = omega_inf to
+  2.15 % after 500 steps (niter 12, 2026-09-26; was 0.21 % / 2.3 % at
+  niter 6 — the current binary at niter 6 reproduces 0.22 % / 2.30 %, so the
+  shift is the niter change alone); 1 == 4 ranks EXACT (max_abs 0 on un vn wn pn
+  k omega nut; re-run 2026-09-26 at niter 12: still EXACT). CPU vs GPU on the ACTIVE inlet path <= 1.8e-10 over 500
   steps (omega; velocities 1.7e-12) — the established A0 in/outflow
   CPU/GPU ulp class (the freestream gates gate GPU at 1e-12/200 steps),
   not a scalar-inlet artifact: the dormant-path suite is exactly 0.

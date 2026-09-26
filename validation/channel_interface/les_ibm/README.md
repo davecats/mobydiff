@@ -16,7 +16,8 @@ band, on a single grid **and** across the 2:1 interface.
 ## The test case
 
 A plane-wall channel whose two flat walls are the **file-based IBM** (built from
-two wall-slab STLs via `tools/mobygeom.py`), deliberately placed **off grid node**:
+two wall-slab STLs; built with `tools/mobygeom.py` at the time, now with
+`moby_prepare`), deliberately placed **off grid node**:
 
 | | |
 |---|---|
@@ -25,7 +26,7 @@ two wall-slab STLs via `tools/mobygeom.py`), deliberately placed **off grid node
 | walls | `y=0.259375` and `y=2.259375` &mdash; mid-cell (8.3&middot;dy, 72.3&middot;dy), off node AND off cell-centre |
 | fluid gap | exactly **2.0** (half-height 1) &rarr; Re&tau;&asymp;180 with `re=180`, `forcing_x=1` |
 | solid | ~8 cells thick each side &rarr; fully-solid cells (`coef=1e30/Re`) + one band cell per wall |
-| LES | WALE, `momentum_reflux=false`, `interface_constant_half=true` |
+| LES | WALE; const-1/2, reflux-off 2:1 interface (run with the since-removed keys `momentum_reflux=false`, `interface_constant_half=true`; now hardwired) |
 | IC | KMM180 developed field y-shifted into the gap, solid zeroed |
 
 Cases (`run_ibm_les.py`):
@@ -39,7 +40,7 @@ Cases (`run_ibm_les.py`):
 
 ```bash
 module load /opt/nvidia/hpc_sdk/modulefiles/nvhpc-hpcx-cuda13/26.3
-./compile.sh gpu                       # build_gpu/main must carry the nut output (this branch)
+./compile.sh cpu && ./compile.sh gpu  # setup.sh needs build_cpu/moby_prepare
 cd validation/channel_interface/les_ibm
 # all prerequisite .h5 files are committed (or rsync this dir); to rebuild them: ./setup.sh
 MP=/opt/.../hpcx-2.25.1/ompi/bin/mpirun   # or just "mpirun" on another host
@@ -76,15 +77,18 @@ band-aware `nut` damping is needed; **no solver code change**. See `ibm_les_prof
 - `channel_ibm.ini` (a/b), `channel_ibm_refine.ini` (c).
 - `grid.h5`, `wall_{lo,hi}.stl`, `ibm_coeff.h5` (single level), `IC.h5` &mdash; committed.
 - `ibm_coeff_blocks.h5`, `IC_refine.h5` (case c, larger) &mdash; gitignored; `./setup.sh`
-  regenerates them (needs the geometry venv) or rsync them with the directory.
+  regenerates them (`moby_prepare` + the geometry venv; since 2026-09-26 — it used
+  mobygrid + mobygeom before) or rsync them with the directory. `grid.h5` and
+  `ibm_coeff.h5` came from the retired mobygrid/mobygeom and are not rebuilt.
 - `make_walls_stl.py`, `make_ibm_ic.py`, `setup.sh` &mdash; data generators.
 - `run_ibm_les.py` &mdash; campaign driver. `measure_nut.py` &mdash; gates 1-2.
-  `ibm_les_stats.py` &mdash; gates 3-4. `RESUME_STATUS.md` &mdash; session handoff notes.
+  `ibm_les_stats.py` &mdash; gates 3-4.
 
 ## Notes / gotchas
 - The IBM is **implicit** (`mu = 1/(1+dt&gamma;&middot;coef)`, `ibm.f90:506`; `qs *= mu`)
   &mdash; no dt restriction; standard CFL governs.
-- `mobygeom` needs `--grid-file` (from `mobygrid`); `read_restart_metadata`
-  overwrites grid/BC/re/forcing/`ibm_enabled` from the IC attrs (minted via cold-start).
+- `read_restart_metadata` overwrites grid/BC/re/forcing/`ibm_enabled` from the IC
+  attrs (minted via cold-start); setup.sh strips `[restart]` from the ini it
+  hands `moby_prepare`, since the IC does not exist yet at that point.
 - les.f90 solid rule: cell solid iff **any** of its 6 staggered faces has `|coef|>1e20`
   (so the cell straddling the wall is masked; the first full-`nut` cell is ~1.5 cells in).

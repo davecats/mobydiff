@@ -24,7 +24,7 @@ print_build_summary() {
     echo "Executables           : ${build_dir}/moby_solve (+ main symlink), ${build_dir}/moby_prepare"
     echo "Fortran compiler      : $(cache_value "$build_dir" CMAKE_Fortran_COMPILER)"
     echo "C compiler            : $(cache_value "$build_dir" CMAKE_C_COMPILER)"
-    echo "Pressure solver       : red-black SOR"
+    echo "Pressure solver       : damped Jacobi (+Chebyshev); red-black via [pressure] solver"
     echo "MPI                   : ON"
     echo "MPI wrapper compile   : $(cache_value "$build_dir" MPI_WRAPPER_COMPILE_FLAGS)"
     echo "MPI wrapper link      : $(cache_value "$build_dir" MPI_WRAPPER_LINK_FLAGS)"

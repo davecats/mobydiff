@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # P1b gates (docs/prepare_solve_strategy.md): moby_prepare vs mobygeom on
-# the BIG committed geometries -- the NACA 0012 / SD7003 5-level airfoil
-# cases (keep_buried, dwall, deep lattices) and the ASCII+transform
-# sailplane. Each case: prepare the case file, generate a mobygeom
+# the BIG committed geometries. Only the ASCII+transform sailplane remains:
+# the NACA 0012 / SD7003 5-level airfoil legs were removed with
+# validation/naca0012 and validation/sd7003 (2026-09-26; their P1b results
+# stay recorded in README.md, the drivers are in git history). Each case: prepare the case file, generate a mobygeom
 # block-table reference FROM THE CASE FILE's grid datasets (P3: the case
 # file replaced the mobygrid handshake), compare (blocks + masks
 # identical, zero solid-classification flips, graded coef to a per-case
@@ -31,30 +32,6 @@ check() {
         echo "FAIL  $name"; fail=$((fail+1))
     fi
 }
-
-airfoil_case() { # <dir> <label> <stl> <re>
-    local dir="$1" label="$2" stl="$3" re="$4"
-    (
-        cd "$dir"
-        [ -f "$stl" ] || PY="$PYG" ./setup.sh
-        sed -e "s|^coeff_file = .*|stl_file = $stl|" \
-            -e 's|^refine_levels = 4|refine_levels = 4\nkeep_buried = true|' \
-            -e "s|^runtime_file = .*|runtime_file = forces_prep_unused.txt|" \
-            aoa4.ini > "prep_${label}.ini"
-    )
-    check "$label: prepare (L5, keep_buried)" bash -c \
-        "cd $dir && $RUN $BUILD/moby_prepare prep_${label}.ini prep_${label}_case.h5"
-    check "$label: mobygeom reference (grid from the case file)" bash -c \
-        "cd $dir && $PYG $HERE/../../tools/mobygeom.py block-table \
-            --geometry $stl --grid-file prep_${label}_case.h5 --re $re \
-            --block-nb 8 --levels 5 --keep-buried \
-            --output ${label}_mobygeom_ref.h5 --jobs 16"
-    check "$label: vs mobygeom" bash -c \
-        "cd $dir && $PY $HERE/compare_case.py prep_${label}_case.h5 ${label}_mobygeom_ref.h5 --coef-tol 2e-3"
-}
-
-airfoil_case ../naca0012 n0012 n0012.stl 1.0e5
-airfoil_case ../sd7003 sd7003 sd7003.stl 6.0e4
 
 # ---- sailplane: ASCII STL + scale/translate, spaces in the path ----------
 (
@@ -85,6 +62,4 @@ check "sailplane: solve prep == committed legacy (1 step)" bash -c '
 
 echo
 echo "passed: $pass  failed: $fail"
-echo "(short solve-equivalence gates for naca/sd7003 run separately on the"
-echo " GPU -- see validation/prepare/README.md P1b status)"
 [ "$fail" -eq 0 ]

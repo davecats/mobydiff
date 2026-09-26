@@ -156,6 +156,12 @@ Every l0–l1 and l1–l2 interface, edge and corner is crossed, the physical
 faces are a Dirichlet inlet and a zero-gradient outlet, and the transport
 kernel runs every substage — the constants survive bit-for-bit.
 
+*Re-run 2026-09-26 at `niter = 12` (was 6), CPU 1 and 4 ranks: all 0.000e+00,
+1 == 4 ranks max_abs 0 (theta/phi included). PASS, from the twin that
+`../multilevel_body/setup.sh` writes -- which gained a `[scalar]` section that
+day so the file carries the `coef_p_blocks` this gate needs (before, the twin
+was prepared from `dwall.ini` alone and `run_gates.sh uniform` error-stopped).*
+
 **(b) global conservation** (`conserve.ini`, 32³ periodic Beltrami box,
 manufactured `sin(k·x)`, 200 steps, t 0.002 → 0.402):
 
@@ -538,7 +544,8 @@ ERROR STOP
 ```
 
 This is not hypothetical: it caught the inherited S1 `uniform3` gate, whose
-zero-force twin predates S3. `../multilevel_body/make_uniform_twin.py` now
+zero-force twin predates S3. `../multilevel_body/make_uniform_twin.py` (since
+2026-09-26 replaced by `zero_coef.py`, which does the same) now
 writes a zeroed `coef_p_blocks` beside the zeroed `coef_blocks` (the scalar
 analogue of "the body exerts no force" is "the body penalises no scalar").
 The twin is a GENERATED artifact, not a tracked file — a stale local copy is
@@ -1226,11 +1233,12 @@ diffusivity, and the resulting wall heat flux is the exact closed-form one.
   establish it: they show the forms are nearly indistinguishable on every
   existing gate, not that one is more accurate. That needs a grid-convergence
   or manufactured-solution study against a known answer. The `uniform3` gate,
-  which would test uniform-scalar preservation directly, **cannot currently be
-  regenerated at all**: `validation/multilevel_body/setup.sh` builds its
-  coefficient file with `mobygrid` and `tools/mobygeom.py`, both retired in the
-  prepare/solve split P3, so the committed `ibm_coeff_ml3_zero.h5` is the only
-  copy and a fresh checkout cannot rebuild it.
+  which would test uniform-scalar preservation directly, could not be
+  regenerated when this was written: `validation/multilevel_body/setup.sh`
+  built its coefficient file with `mobygrid` and `tools/mobygeom.py`, both
+  retired in the prepare/solve split P3. *(Fixed later on 2026-09-26: setup.sh
+  now uses `moby_prepare` + `zero_coef.py`, so `ibm_coeff_ml3_zero.h5` — never
+  in git, `*.h5` is ignored — can be rebuilt on any checkout.)*
 - The diffusive flux is masked at `FACE_CLOSED` faces (blocks removed inside
   an immersed body hold a zeroed halo). Immersed-body scalar coefficients
   themselves are increment S3.

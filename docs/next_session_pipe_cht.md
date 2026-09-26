@@ -1,5 +1,13 @@
 # Conjugate pipe flow vs Neuhauser (NekRS, body-fitted) — session handout
 
+> **STATUS 2026-09-26: DONE — the case was built and run.** It now lives in
+> `tutorials/cht/pipe/` (runbook `README.md`, `pipe_prep.ini`, `run_pipe.sh`;
+> reference data, comparison and report in `asset/`). Paths below are as
+> written: `make_geometry_stl.py` / `check_annulus.py` moved to `tools/`; the
+> 23 GB Neuhauser archive is NOT in the tree — `asset/neuhauser_profiles.npz` is
+> its reduction (`asset/extract_neuhauser.py` rebuilds it). Feature gates stay in
+> `validation/conjugate/`.
+
 STATUS (2026-09-15, branch `scalar`, through commit `a9efce9`): **every
 feature gap is closed and gated. The next session BUILDS AND RUNS the case.**
 Start at §0, which is the runbook; §1–§3b are the reference behind it.
@@ -20,7 +28,7 @@ run. §0's numbers are mostly the third kind — **re-derive from the solver's
 own reported `dt` and `s/step` before committing a long run.**
 
 Data: `validation/conjugate/neuhauser_data/10.35097-26za20q32xsz43yk/data/dataset`
-(23 GB, BagIt). Jonathan Neuhauser, *Conjugate Heat Transfer in Turbulent Pipe
+(23 GB, BagIt; external download, not tracked — see the header). Jonathan Neuhauser, *Conjugate Heat Transfer in Turbulent Pipe
 Flows with Non-Uniform Heating Effects at Two Prandtl Numbers*, thermal DNS in
 NekRS v26.0, DOI 10.35097/26za20q32xsz43yk.
 
@@ -46,7 +54,7 @@ because each step is the thing that makes the next one interpretable.
 ```bash
 cd validation/conjugate
 # domain [0,1.3]^2 x [0,12.5], pipe axis z, wall at r = 0.5, shell to r = 0.6
-~/ibmc/bin/python ./make_geometry_stl.py annulus pipe.stl \
+~/ibmc/bin/python ../../tools/make_geometry_stl.py annulus pipe.stl   # moved to tools/ \
     --axis z --centre 0.65 0.65 --r-inner 0.5 --box-half 1.25 \
     --facets 16384 --a0 -1.0 --a1 13.5 --domain-half 0.65
 mpirun -n 4 ../../build_cpu/moby_prepare pipe_prep.ini pipe_coarse.h5

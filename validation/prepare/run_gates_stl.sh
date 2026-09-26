@@ -4,8 +4,10 @@
 # analytic path, so the gates compare against mobygeom's committed/generated
 # block-table references and an exact shift-invariance twin.
 #
-#   flat / flat_refine : les_ibm wall slabs vs the COMMITTED mobygeom files
-#                        (validation/rans_geometry/ibm_coeff_blocks_l{1,2}.h5)
+#   flat / flat_refine : les_ibm wall slabs vs the mobygeom files
+#                        validation/rans_geometry/ibm_coeff_blocks_l{1,2}.h5
+#                        (NOT in git -- *.h5 is ignored; build them first with
+#                        ../rans_geometry/setup.sh, which needs the ibmc venv)
 #                        -- blocks + masks identical, coef <= 1e-6 rel,
 #                        interior dwall <= 2e-9 -- plus a 1-step solve from
 #                        the prepared file vs the committed file.

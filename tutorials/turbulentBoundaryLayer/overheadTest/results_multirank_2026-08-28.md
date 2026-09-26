@@ -114,7 +114,7 @@ Two secondary items this exposed:
 - **`proj/phi_exchange` is no better (0.32/0.33)**. It is 18 small scalar
   exchanges per step, so it is latency-bound rather than bandwidth-bound; the
   divergence-sync fix does not touch it, and overlap
-  (`docs/nonblocking_overlap_strategy.md`, which needs rewriting for the
+  (`docs/nonblocking_overlap_strategy.md` (removed 2026-09-26; git history), which needs rewriting for the
   Chebyshev-Jacobi solver) is the lever that would.
 
 ## Reproducing

@@ -1037,7 +1037,7 @@ gates unchanged; a conducting riblet/fin as the production demonstration.
 
 **Reference implementation (during C2, it is cheap):** a standalone 2D EJIIM
 solve (augmented system + GMRES) for the manufactured cases, in
-`validation/conjugate/reference/`. It separates "the scheme is wrong" from "the
+`validation/conjugate/reference/` (never created). It separates "the scheme is wrong" from "the
 implementation is wrong" — the role `mobygeom` plays as a cross-implementation
 reference.
 
@@ -1064,7 +1064,7 @@ error path. That is the whole benefit of the baseline.
 - **`remove_solid` must be OFF and `keep_buried = true` for conjugate runs.**
   Buried blocks now carry the solid temperature field; removing them deletes the
   solid domain. Same class of trap as the A3 penalization-force finding
-  (`validation/naca0012/README.md`), and it must be a **hard config error**.
+  (`validation/naca0012/README.md`, removed 2026-09-26; git history), and it must be a **hard config error**.
 - **`dwall` must be built without `[rans]`** and its sign marker must be
   ghost-inclusive (§8). A cut face on a block boundary needs both signs.
 - **Never rescale by a nodal value** the way COCO does: the conduction analogue

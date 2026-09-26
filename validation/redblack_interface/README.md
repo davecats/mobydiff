@@ -69,9 +69,9 @@ declaring R1 done, and they have not been run:
 
 - global mass residual with a refined patch → round-off;
 - Beltrami y-slab interface regression, and the laminar channel-patch
-  convergence order ≈ 2 against a uniform-fine reference (note
-  `validation/beltrami/run_beltrami.sh` is stale: it drives a `MOBY_BELTRAMI`
-  env hook removed in the 2026-06-30 cleanup);
+  convergence order ≈ 2 against a uniform-fine reference (the Beltrami inis
+  select their IC with `[flow] initial = beltrami`; `run_beltrami.sh` no longer
+  relies on the removed `MOBY_BELTRAMI` hook, updated 2026-09-26);
 - developed Re_τ 180 wall-band channel: no interface band in u′/v′, compared
   against the **Jacobi** solution of the same case;
 - `refine_body` stability over ~2000 steps on a body case;

@@ -1,88 +1,49 @@
 # NACA 0012 tutorials
 
-> **SUPERSEDED (2026-09-25). The live case is [`rans/`](rans/README.md)** — the
-> converged alpha = 5, Re_c = 4e5 validation against OpenFOAM (C_L 0.5199 vs
-> 0.5142, Cp_min matching to four digits). This README describes the earlier
-> polar-sweep generation, whose inis (`naca_base.ini`, `c10_base.ini`,
-> `b11_base.ini`) and drivers (`setup.sh`, `setup_b11.sh`, `run_sweep.sh`) were
-> REMOVED on that date, for two reasons: `rans/` replaces them, and their C_L/C_D
-> came from the penalization integral, which the control-volume budget replaced
-> (`docs/next_session_cv_forces.md`) — so re-running them would not reproduce
-> the numbers below even if the files were still here.
->
-> The text is kept because the modelling discussion (fully-turbulent vs
-> transitional, the XFOIL comparison, the blockage accounting) still applies.
-> Recover the files from git history if a polar sweep is wanted again; they will
-> need a `[case.airfoil] cv_box` and a re-measured reference.
+**The live case is [`rans/`](rans/README.md)** — the converged alpha = 5,
+Re_c = 4e5 k-omega SST validation against a body-fitted OpenFOAM reference
+(C_L 0.5199 vs 0.5142, Cp_min matching to four digits), with its drivers
+(`run_case.sh`, `postprocess.sh`), prepare inis and post-processing scripts
+(`rans/postProcess/`: control-volume forces, surface Cp/Cf, the OpenFOAM
+overlay). Start there.
 
-Production polar for comparison against XFOIL and OpenFOAM RANS: aoa =
--2, -1, 0, 1, 2, 3, 4, 5 at Re = 4e5, on the R2D 2D-refinement stack
-(docs/next_session_refine2d.md): span along y (`[case.airfoil] span =
-y`: chord x, LIFT z), `[blocks] refine_dims = xz`, `refine_levels = 6`.
+> **History (2026-09-25/26).** This directory used to hold an earlier
+> polar-sweep generation (aoa -2..5 at Re 4e5 against XFOIL/OpenFOAM, on the
+> R2D xz-quadtree stack with `span = y`) and its post-processing scripts. They
+> were REMOVED: `rans/` replaces them, and their C_L/C_D came from the
+> penalization integral, which the solver no longer computes — the runtime
+> force is the control-volume momentum budget over `[case.airfoil] cv_box`
+> (`docs/next_session_cv_forces.md`). The live versions of the Cp/Cf and
+> force scripts are in `rans/postProcess/`. Recover the sweep from git
+> history if it is wanted again; it will need a `cv_box` and a re-measured
+> reference.
 
-Physics/resolution choices (see naca_base.ini comments):
+## Modelling notes that still apply
 
-- **L6 surface Delta = 3.66e-4 c -> y+_1 ~ 2-3** at the turbulent
-  midchord (cf ~ 4e-3 at Re 4e5): resolved-wall SST, credible Cf. The
-  same grid in 3D octree mode would be ~121 M cells (it OOM'd a 49 GB
-  A6000 at Re 1e5); the xz quadtree makes it ~15 k blocks.
-- **Fully turbulent** (`[rans] transition` off): matches XFOIL run
-  fully-turbulent (or with forced transition at the LE) and avoids the
-  gamma-Re_thetat fine-grid unreliability documented in
-  validation/sd7003 ("R2D-3 follow-up").
-- **Keep-buried coefficients**: load-bearing for the penalization
-  C_L/C_D (validation/naca0012 README).
-- **12c box, Dirichlet far field**: costs ~10-15 % of the 2pi lift
-  slope (blockage); compare slopes with that in mind, or compare
-  against XFOIL shifted by the measured ratio.
-
-## Run
-
-```bash
-PY=$HOME/ibmc/bin/python ./setup.sh   # STL + grid.h5 + L7-xz block table
-# one host per queue, e.g. (cetus NEEDS the login shell -l):
-ssh istmcorax 'setsid bash -l tutorials/naca/run_sweep.sh corax -2 -1 0 1 &'
-ssh istmcetus 'setsid bash -l tutorials/naca/run_sweep.sh cetus 2 3 &'
-setsid bash run_sweep.sh local 4 5 &
-```
-
-~50 min/angle on the RTX 5090 (t_final = 10 at dt = 1e-4), ~2x that on
-the A6000 / RTX 3060.
-
-## Polars
-
-```bash
-python3 plot_polars.py --xfoil xfoil_polar.txt --openfoam of_polar.csv
-# -> polars.png (C_L-alpha + C_L-C_D), polar_mobydiff.dat
-```
-
-XFOIL reference (fully turbulent, matching this setup):
-`xfoil -> naca 0012 -> oper -> visc 4e5 -> vpar (xtr 0.01 0.01) ->
-pacc -> aseq -2 5 1` and save the polar dump.
-
-## Surface Cp / Cf
-
-```bash
-python3 surface_cp_cf.py naca_aoa4_100000.h5 --plot cpcf_aoa4.png
-python3 plot_cp_cf.py cpcf_naca_aoa4_100000.npz \
-    --xfoil-cp cpx_a4.txt --of-cp of_cp_a4.csv --of-cf of_cf_a4.csv
-```
-
-- **Cf** is a least-squares wall gradient over NEAR-WALL FLUID CELLS
-  ONLY, constrained through the origin by the EXACT immersed no-slip
-  condition u_t(0) = 0 (no solid/forced value enters): span-averaged
-  tangential velocities of cells within 2.5 fine cells of the analytic
-  section are fitted as u_t = g d (weights 1/d), then re-restricted to
-  d+ <= 5 with u_tau = sqrt(nu g) so only the viscous sublayer feeds
-  the fit. Cf = 2 nu g, signed TE-ward (negative = reversed flow).
-- **Cp** is a least-squares linear WALL EXTRAPOLATION of the same
-  cells' pressure to d = 0 (keeps dp/dn ~ 0 where the BL approximation
-  holds, still captures the finite normal gradient at the curved LE);
-  p_inf from a level-0 far-upstream box. A pure zero-gradient
-  (nearest-cell) Cp is the degenerate < 3-cell fallback.
-- Outputs: `cpcf_*.npz` + XFOIL-comparable `*_cp.dat` / `*_cf.dat`
-  (x/c value; upper block then lower).
-
-External reference formats accepted: XFOIL CPWR (x [y] Cp) and CF
-dumps; OpenFOAM as any '#'-commented CSV/whitespace table with x/c in
-column 1 and the value in the last column.
+- **Resolution.** A resolved-wall SST needs y+_1 of order 1-3 over the
+  turbulent chord (cf ~ 4e-3 at Re 4e5 puts that at a surface spacing of a
+  few 1e-4 c). The xz quadtree (`[blocks] refine_dims = xz`, span along y
+  via `[case.airfoil] span = y`: chord x, LIFT z) makes such grids cheap —
+  the same resolution in 3D octree mode is two orders of magnitude more
+  cells. `rans/` reaches c/12288 at the nose with `refine_body_levels` +
+  `refine_body_box`.
+- **Fully turbulent vs transitional.** A fully-turbulent run (`[rans]
+  transition` off) is what XFOIL with forced transition at the LE
+  (`vpar -> xtr 0.01 0.01`) and a plain OpenFOAM SST compare against; it
+  also avoids the gamma-Re_theta_t fine-grid unreliability found with the
+  first-order-upwind transition scalars (the front smears over ~100 cells
+  and separation-induced transition stops firing on finer grids — see
+  CLAUDE.md, R2D-3 and A3 increment 3). `rans/` instead reproduces
+  OpenFOAM's fvOptions forced transition with `[rans] kpin_box` /
+  `ktrip_box`.
+- **Forces.** Use the runtime control-volume budget (`cv_box`, a TIGHT box
+  around the profile) and a clean stored pressure (a higher projection
+  `niter`; long niter = 6 IBM runs carry a velocity-neutral pn mode that
+  pollutes the border integrals). Buried interior blocks may be removed —
+  the budget does not see them.
+- **Blockage.** A Dirichlet far field at ~12c costs ~10-15 % of the 2 pi
+  lift slope; compare slopes with that in mind or use a larger box (`rans/`
+  uses 128c x 96c).
+- **Surface Cp/Cf** from an immersed boundary: see the method notes at the
+  top of `rans/postProcess/surface_cp_cf.py` (Cf from the penalization band,
+  Cp by wall extrapolation).

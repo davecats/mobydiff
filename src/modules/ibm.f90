@@ -1030,7 +1030,8 @@ contains
             ! [blocks] keep_buried: never remove buried blocks. LOAD-BEARING
             ! for penalization forces -- a removed solid core absorbs the
             ! body's pressure loading through its closed faces outside the
-            ! coef bookkeeping (validation/naca0012/README.md; mobygeom's
+            ! coef bookkeeping (the A3 NACA 0012 finding; its README,
+            ! validation/naca0012/README.md, is in git history; mobygeom's
             ! --keep-buried writes zeroed masks the same way). File-based
             ! masks are read verbatim above: the file is authority there.
             if (dns%block_keep_buried) buried = 0_C_INT

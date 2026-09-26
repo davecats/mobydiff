@@ -1,8 +1,17 @@
 # Tutorials
 
-This guide walks through two representative cases shipped in `tutorials/`: a wall-bounded
-turbulent flow (`channel_kmm180`) and an external-aerodynamics flow around an immersed body
-(`sailplane`). Each tutorial directory contains a ready-to-run `input.ini`.
+The cases in `tutorials/` show how to set up and run real flows; each directory has its own
+README with the exact commands and recorded results. The index of every runnable case
+(tutorials and validation gates) is [`validation/README.md`](../validation/README.md).
+
+| Tutorial | What it shows |
+|----------|---------------|
+| `channel_kmm180/` | Re_τ 180 turbulent channel (Kim–Moin–Moser), natural-stretched y, `[case] name = channel` — walked through below. |
+| `min_channel/` | Minimal-span channel with a 2:1 wall-band refinement; also a regression-suite case (`input_gpu.ini`). |
+| `turbulentBoundaryLayer/` | Spatially developing ZPG turbulent boundary layer (`[case] name = boundarylayer`, Blasius inlet, trip) validated against SIMSON/CaNS/AMPHIBIOUS; `overheadTest/` holds the performance campaign. |
+| `naca/rans/` | NACA 0012, α = 5°, Re_c = 4e5, k-ω SST on an xz-refined grid vs OpenFOAM (control-volume C_L/C_D, Cp, Cf). |
+| `cht/` | Conjugate heat transfer: Flageul turbulent channel (`channel/`) and Neuhauser pipe (`pipe/`) vs published DNS. |
+| `sailplane/` | External flow around a CAD STL with the immersed boundary method, preprocessed by `moby_prepare` — walked through below. |
 
 Run every case through `mpirun`, even on a single rank.
 
@@ -68,15 +77,14 @@ large-scale disturbance plus small noise to trip transition to turbulence.
 
 ```bash
 # 8-rank CPU run (build_cpu is the reference build)
-mpirun -n 8 ./build_cpu/main tutorials/channel_kmm180/input.ini
+mpirun -n 8 ./build_cpu/moby_solve tutorials/channel_kmm180/input.ini
 
 # or single GPU
-mpirun -n 1 ./build_gpu/main tutorials/channel_kmm180/input.ini
+mpirun -n 1 ./build_gpu/moby_solve tutorials/channel_kmm180/input.ini
 ```
 
-A pre-computed restart (`restart.h5` / `channel_kmm180_restart.h5`) is provided so you can
-start from a developed field instead of waiting through transition — point `[restart] file`
-at it.
+No developed restart is shipped; to continue a run, point `[restart] file` at one of its
+own snapshots (e.g. `channel_kmm180_field_50000.h5`).
 
 ### Inspect
 
@@ -98,7 +106,7 @@ should match the reference DNS.
 
 Flow around a sailplane geometry supplied as an STL mesh, imposed with the volume-penalization
 immersed boundary method. It exercises the `generic` flow case, inflow/outflow/symmetry
-boundary conditions, and the full STL → IBM-coefficient preprocessing workflow.
+boundary conditions, and the STL → case-file preprocessing with `moby_prepare`.
 
 The source STL is in millimetres and symmetric about its `y = 0` plane. The tutorial works in
 metres, keeps the symmetry plane at computational `y = 0`, and simulates only the
@@ -123,7 +131,7 @@ re = 1.0e5
 
 [ibm]
 enabled = true
-coeff_file = sailplane_ibm_coeff.h5
+coeff_file = sailplane_ibm_coeff.h5   ; or the moby_prepare case file, see below
 
 [boundary]
 periodic_x = false
@@ -144,48 +152,46 @@ y_min_v_value = 0.0
 ```
 
 Uniform inflow enters at $x_{\min}$ with unit velocity; $x_{\max}$ is a pressure-reference
-outflow; the $y$ and $z$ faces are symmetry/far-field. `[ibm]` points at the coefficient file
-that encodes the solid geometry.
+outflow; the $y$ and $z$ faces are symmetry/far-field. `[ibm]` points at the file that
+encodes the solid geometry.
 
-### Generate the IBM coefficients
+### Prepare the case file
 
-The immersed body must be classified against the **exact** solver grid, so first export the
-grid with `mobygrid`, then run the `mobygeom` STL-to-coefficient step:
+The immersed body is classified against the solver's exact grid by `moby_prepare`. Make a
+copy of `input.ini` (say `prep_blocks.ini`) that adds a block layout and the STL:
+
+```ini
+[blocks]
+nb = 10
+
+[ibm]
+stl_file = "FRUE V0 ohneRundung.stl"
+stl_scale = 0.001
+stl_translate = 17.288649999032064 0.0 4.150549
+```
 
 ```bash
 cd tutorials/sailplane
-
-# 1. export the exact node lines the solver will use
-../../build_cpu/mobygrid input.ini sailplane_grid.h5
-
-# 2. classify the STL against that grid and write the coefficient file
-python3 ../../tools/mobygeom.py stl-ibm-coeff \
-    --geometry "FRUE V0 ohneRundung.stl" \
-    --output    sailplane_ibm_coeff.h5 \
-    --grid-file sailplane_grid.h5 \
-    --re 1.0e5 \
-    --scale 0.001 \
-    --translate 17.288649999032064 0.0 4.150549 \
-    --check-fluid-points fluid_points.txt \
-    --jobs 2 --tile-size 32 36 16
+mpirun -n 2 ../../build_cpu/moby_prepare prep_blocks.ini sailplane_case.h5
 ```
 
-`--scale 0.001` converts the STL from millimetres to metres; `--translate` centres the
-mirrored STL in the full domain (the solver then uses only the positive-`y` half).
-`fluid_points.txt` is a set of known-fluid probe points used as a fail-fast sanity check on
-the inside/outside classification. **Regenerate the coefficient file whenever the grid in
-`input.ini` changes.**
+then solve with `[blocks] nb = 10` and `[ibm] coeff_file = sailplane_case.h5`.
+`stl_scale = 0.001` converts the STL from millimetres to metres; `stl_translate` centres the
+mirrored STL in the full domain (the solver then uses only the positive-`y` half). The
+committed `sailplane_ibm_coeff.h5` is an older single-level coefficient file, still usable
+without `[blocks] nb`. **Regenerate the case file whenever the grid, the block layout or
+`re` changes.**
 
 ### Run
 
 ```bash
-mpirun -n 1 ./build_gpu/main tutorials/sailplane/input.ini
+mpirun -n 1 ./build_gpu/moby_solve tutorials/sailplane/input.ini
 ```
 
 The provided `input.ini` is sized as a single-step smoke case tuned to fit a 6 GB GPU; raise
 `[time] nsteps` (and `field_interval`) for an actual run. Field snapshots
-(`sailplane_field_*.h5`, with companion `.xdmf`) can be opened in ParaView, and the
-coefficient file itself has an `.xdmf` companion so you can visualize the classified geometry.
+(`sailplane_field_*.h5`) are in the block-table layout; reassemble them with
+`tools/compare_fields.py --export-global` for visualization. The committed coefficient file
+has an `.xdmf` companion for viewing the classified geometry.
 
-> See `tutorials/sailplane/README.md` for the exact bounding-box arithmetic and the
-> preprocessing options (bounding-box culling, ambiguous-winding repair, ray-vote debugging).
+> See `tutorials/sailplane/README.md` for the exact bounding-box arithmetic.

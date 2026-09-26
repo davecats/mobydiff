@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Assert that the interface-decay gate contracted.
 
-Reads the step-20 and step-200 snapshots of tutorials/interface_decay
+Reads the step-20 and step-200 snapshots of validation/interface_decay
 (block-table layout) and fails unless max|u|,|v|,|w|,|p| all decreased
 and are finite. Step 20 is the baseline rather than step 0 so the
 initial projection of the (divergent) white noise does not count as

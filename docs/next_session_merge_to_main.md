@@ -1,8 +1,13 @@
 # Handout — consolidate the branches and merge to main
 
-> **STATUS 2026-09-25: BOTH MERGES DONE AND GATED. The `main` fast-forward and
-> the branch deletions are NOT done — they are the user's call and are the only
-> things left.**
+> **STATUS 2026-09-26: DONE.** Both merges gated, `main` fast-forwarded, the
+> branches deleted (see "DONE at the user's instruction" below), and the
+> campaign re-run owed under STILL OPEN was done 2026-09-26 (job 5163909,
+> `results_horeka_2026-09-26.md`). Current state: CLAUDE.md "Active work".
+>
+> *(Original 2026-09-25 header: BOTH MERGES DONE AND GATED. The `main`
+> fast-forward and the branch deletions are NOT done — they are the user's
+> call and are the only things left.)*
 >
 > * `origin/boundaryLayer` merged at `965a92e`. §3 resolved as the handout
 >   recommended: their CaNS/SIMSON trip maths kept whole, our block-list +
@@ -60,7 +65,7 @@
 > `refine_body_levels`) — DO NOT DELETE IT. `claude/blocks` is now safe to
 > delete: `validation/channel_interface_mfu` is salvaged into the tree (its
 > whole tool chain survives here; carried over with a header saying it has not
-> been re-run), and `validation/poiseuille` cannot be salvaged — it drives the
+> been re-run; *removed again 2026-09-26, git history*), and `validation/poiseuille` cannot be salvaged — it drives the
 > case through `MOBY_POISEUILLE=1`, one of the 19 hooks deleted in the
 > 2026-06-30 cleanup, and `tools/check_poiseuille.py` is gone too. `multiGPU`
 > is a strict ancestor as stated. The stray local `origin` branch of §7 no
@@ -89,7 +94,7 @@
 > left on the remote is `main`, `claude/jacobi-interface` (43 commits, the six
 > features) and `assignment` (7 commits).
 >
-> **STILL OPEN:** the campaign-matrix re-run (`submit_matrix4.sh`, 4 nodes) that
+> **STILL OPEN** *(done 2026-09-26, job 5163909, `results_horeka_2026-09-26.md`)*: the campaign-matrix re-run (`submit_matrix4.sh`, 4 nodes) that
 > §5 asks for before any ratio in `results_horeka_2026-09-25.md` is quoted
 > again. Note that re-running the merge gate now needs its two reference
 > worktrees recreated, and BY SHA rather than by branch name, because both
@@ -147,7 +152,7 @@ conflicting files against 230 that merge cleanly**:
 | `src/modules/ibm.f90` | 1 | 35 | |
 | `src/modules/comm.f90` | 1 | **30** | tiny, despite 905 lines of our churn — the exchange rewrite and the scalar halos barely overlap |
 | `.gitignore` | 1 | 40 | |
-| `config.f90`, `init.f90`, `chron.f90`, `moby_prepare.f90`, `docs/next_session_profiling.md` | 1 each | 5–20 | trivial |
+| `config.f90`, `init.f90`, `chron.f90`, `moby_prepare.f90`, `docs/next_session_profiling.md` (removed 2026-09-26; git history) | 1 each | 5–20 | trivial |
 
 **~270 lines of real code conflict across 8 source files.** `scalar.f90` (3376
 lines), `scalar_stats.f90` (943), `test_scalar.f90` (398), `step.f90` and
@@ -190,7 +195,7 @@ its 43 unmerged commits name:
 |---|---|---|
 | `convection = skew` | yes | present |
 | `[ibm] band_filter` | yes | present |
-| `cv_forces` | `tutorials/naca/cv_forces.py` | present (tool, not Fortran) |
+| `cv_forces` | `tutorials/naca/cv_forces.py` (now `tutorials/naca/rans/postProcess/cv_forces.py`) | present (tool, not Fortran) |
 | `[rans] kpin_box` | **no** (only named in a doc) | **missing** |
 | `[rans] ktrip_box` | **no** | **missing** |
 | `[rans] kpin_dwall` | **no** | **missing** |

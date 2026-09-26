@@ -6,9 +6,12 @@
 > study. The inis have since been updated to the current defaults
 > (`sor = 0.8, niter = 6, accel = chebyshev`) and the interface treatment has been
 > reworked, so the runs below no longer reproduce as written -- re-measure if used.
+> Today the refined `input_gpu.ini` is the standard regression suite's blocks +
+> 2:1 interface + Chebyshev case (`validation/README.md`), run 1- and 4-rank for
+> bit-exactness; the blow-up study below is the record of how it got there.
 
 This is the **Step-1 confirmation gate** for the 2:1 interface projection
-instability (`docs/interface_review.md` §vi, `docs/next_step_prompt.md`). It
+instability (`docs/interface_review.md` §vi). It
 reproduces the `validation/channel_interface` turbulent blow-up at ~1/200th the
 cost by keeping the *exact* Reynolds number, wall-normal/streamwise grid and
 velocity scale of the Re_tau=180 channel but shrinking the spanwise extent to a
@@ -23,18 +26,18 @@ not, which is why it stayed stable at every Re.
 
 ## The two cases (run on GPU; CPU is ~80x slower)
 
-    module load /opt/nvidia/hpc_sdk/modulefiles/nvhpc-hpcx-cuda13/26.3
-    mpirun -n 1 build_gpu_nofma/main input_gpu.ini        # refined: 2:1 interface
-    mpirun -n 1 build_gpu_nofma/main input_gpu_noref.ini  # control: uniform, no interface
+    module load toolkits/nvhpc/25.9
+    mpirun -n 1 build_gpu/moby_solve input_gpu.ini        # refined: 2:1 interface
+    mpirun -n 1 build_gpu/moby_solve input_gpu_noref.ini  # control: uniform, no interface
 
 Both: 128 x 64 x 16, Re_tau=180, natural-y grid, forcing_x=1, the channel
 initialiser's mean profile + transition disturbance. `input_gpu.ini` refines
 both near-wall bands to level 1 (flat y-interfaces at y+=112, as in the
 validation); `input_gpu_noref.ini` is identical with `[blocks] refine` removed.
 
-Inspect with (max|u|, max|v| vs step):
-
-    python3 tools/check_interface_shear_mode.py <rundir> --prefix channel_field
+Inspect max|u|, max|v| vs step over the `channel_field_*.h5` snapshots (the
+original `tools/check_interface_shear_mode.py` no longer exists; a few lines of
+h5py over the `un`/`vn` datasets reproduce the table below).
 
 ## Result (current code, the defect)
 
@@ -56,4 +59,4 @@ channel velocity.
 The projection-coupling fix must make `input_gpu.ini` stay **bounded** (turbulent
 O(20), like the control) instead of diverging — while every exact gate
 (uniform-flow 0.0, channel nb=4 bit-exact, interface_decay contraction, mass
-round-off, MOBY_HALO_AUDIT clean) still passes.
+round-off, and the since-removed MOBY_HALO_AUDIT clean) still passes.

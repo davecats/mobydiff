@@ -4,13 +4,17 @@
 across the block decomposition and the 2:1 refinement interface (channel flow);
 see "Results" below. Open item 2 of `docs/next_session_edges_les.md` (item 1,
 edge/corner no-LES, is DONE in `../core_patch/`). Settings throughout: **WALE**,
-`momentum_reflux = false`, `interface_constant_half = true`.
+`momentum_reflux = false`, `interface_constant_half = true` (both keys removed
+2026-07-01; that configuration is now hardwired, so current inis omit them).
 
 > **CAVEAT — LES is still IBM-UNAWARE in practice.** This validation is channel
 > flow only (no immersed boundary). The LES↔IBM coupling — the `ibm_aware`
 > solid-cell `nut` masking in `les.f90` — was never exercised here and is
 > **untested with block refinement and across the 2:1 interface**. Validate the
 > LES+IBM+refinement combination before trusting LES on IBM bodies.
+>
+> *(Lifted 2026-06-30: the LES↔IBM coupling was validated with and without
+> refinement in `../les_ibm/`.)*
 
 ## Why WALE + a coarse grid
 
@@ -33,7 +37,8 @@ the KMM180 DNS restart (`tools/make_channel_restart.py`, coarse base via the new
   - nb-invariance: WALE, 1 block vs nb=8 (2048 blocks) vs nb=4 (16384 blocks).
   - rank-invariance: WALE, nb=8, 1 vs 2 ranks (x-split).
 - **LES ⊥ 2:1 interface mechanics** (`../core_patch/` geometry, CPU):
-  - `nut` cross-level exchange exact — `MOBY_HALO_AUDIT` (extended to audit the
+  - `nut` cross-level exchange exact — `MOBY_HALO_AUDIT` (a diagnostic hook,
+    removed in the 2026-06-30 cleanup; extended at the time to audit the
     `nut` scalar exchange): 0 bad / maxErr 0 / 0 unwritten at all levels.
   - `delta` per-level exact — same-footprint `delta_base/delta_fine = 2.000000`
     (midpoint subdivision); the fine filter width is exactly half the base.

@@ -9,32 +9,42 @@ detailed engineering log of the refactor phases.
 
 ```
 src/
-  main.f90                 solver entry point (RK3 time loop)
-  mobygrid.f90             serial grid / preprocessing tool (exports node lines)
+  moby_solve.f90           solver entry point (RK3 time loop)
+  moby_prepare.f90         MPI-parallel preprocessor: writes the block-table case file
+  test_*.f90               unit-test drivers (walldist, transition, leaftable, scalar)
   modules/
     config.f90             .ini parsing and validation
     init.f90               runtime/domain state shared across modules
     blocks.f90             block set: leaf blocks, Z-order ids, 2:1 refinement
     comm.f90               MPI halo exchange + 2:1 interface transfer entries
-    boundary.f90           physical boundary-condition application
-    step.f90               momentum predictor, corrector, body-force/LES kernels
-    pressure_solver.f90    damped-Jacobi / Chebyshev–Jacobi projection
-    ibm.f90                immersed boundary (volume penalization)
+    boundary.f90           physical boundary conditions, patch types, scalar ghosts
+    step.f90               momentum predictor, corrector, body-force/eddy-viscosity kernels
+    pressure_solver.f90    damped-Jacobi / Chebyshev–Jacobi (and red-black) projection
+    ibm.f90                immersed boundary (volume penalization), block classification
+    geometry_stl.f90       STL reader, BVH, inside test and exact wall distance
+    walldist.f90           geometry-agnostic analytic wall distance
+    turbulence.f90         model family, nut, IDDES blend
     les.f90                subgrid model (Smagorinsky / WALE)
-    bodyforce.f90          spatially varying volumetric force f(x)
-    io.f90                 HDF5 field / stats / restart I/O
+    rans.f90               k-ω SST, transition, wall functions
+    scalar.f90             passive scalars + conjugate heat transfer
+    scalar_stats.f90       in-solver scalar statistics
+    bodyforce.f90          spatially varying volumetric force f(x), trip forcing
+    io.f90                 HDF5 field / case-file / restart I/O
     field_hdf5.c           low-level HDF5 hyperslab helpers
     gpu_runtime.f90        OpenMP target-offload data mapping
-    chron.f90              timers
+    chron.f90 / profiling.f90   timers and the per-phase step profilers
     flow_case.f90 / flow_case_base.f90   flow-case dispatch
     flow/
-      generic_flow.f90     the "generic" case (IBM / external flows)
+      generic_flow.f90     the "generic" case (IBM / external flows, analytic ICs)
       case_config_helpers.f90
       channel/             channel case: initializer, profiles, statistics
+      boundaryLayer/       spatially developing boundary layer (Blasius inlet, trip, stats)
+      airfoil/             airfoil case: free-stream faces, control-volume forces
 ```
 
-Two executables come out of the build: `main` (the solver) and `mobygrid` (a serial tool
-that writes the exact node coordinates an IBM preprocessor needs).
+The build produces `moby_solve` (the solver; `main` is a compatibility symlink),
+`moby_prepare` (the preprocessor; see [`prepare_solve_strategy.md`](prepare_solve_strategy.md))
+and the unit-test drivers.
 
 ## Data model
 
@@ -70,8 +80,13 @@ The GPU path is **OpenMP target offload**, from the same source as the CPU build
 ```
 
 - Derived types own **flat, contiguous allocatable arrays**, mapped to the device once in
-  `enter_*_data` / `exit_*_data` routines (see `gpu_runtime.f90`, `blocks.f90`). Do not put
-  allocatable components inside arrays of derived types.
+  `enter_*_data` / `exit_*_data` routines (see `gpu_runtime.f90`, `blocks.f90`). Map the
+  parent object too, not only its components. Do not put allocatable components inside
+  arrays of derived types.
+- **After `enter_*_data`, host and device copies are independent.** Host code reading a
+  mapped array needs a preceding `!$omp target update from(x)`; a host write needs
+  `!$omp target update to(x)` before the device sees it. Such a bug is invisible on the
+  CPU build — test by checking that the GPU output moves.
 - Prefer OpenMP. Switch a kernel to OpenACC only if OpenMP genuinely lacks a needed feature
   or leaves significant performance behind — and say so explicitly when you do.
 - One MPI rank drives one GPU; GPU builds require a GPU-aware MPI so device halo buffers can
@@ -88,7 +103,8 @@ The GPU path is **OpenMP target offload**, from the same source as the CPU build
 ## Verification discipline
 
 - A pure refactor must be **bit-exact** vs. the pre-refactor code — build both sides with
-  `-Mnofma` (CPU) / `-Mnofma -gpu=nofma` (GPU) and compare with `tools/compare_fields.py`.
+  `./compile.sh cpu_nofma` / `gpu_nofma` (`-Mnofma` / `-Mnofma -gpu=nofma`) and compare with
+  `tools/compare_fields.py` or `tools/h5maxdiff`.
 - Build both the CPU and GPU paths; the CPU build is the reference for debugging.
 - Never declare work done with failing builds or unverified results.
 

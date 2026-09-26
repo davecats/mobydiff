@@ -1,5 +1,7 @@
 # Next session(s) — IDDES: k-ω SST(+transition) RANS, WALE LES, hybrid blend
 
+> STATUS (2026-09-26): T0-T5 (incl. increment 2) DONE (CLAUDE.md "Active work"). Still OPEN: transition / wall_function under `model = iddes` (hard config errors in `config.f90`), and a flat-plate inlet case. `tutorials/wavychannel` named below was removed 2026-09-26 (the analytic wavy IBM lives on in `validation/rans_geometry/`); `docs/next_session_profiling.md` (removed 2026-09-26; git history) is SUPERSEDED by `src/modules/profiling.f90`.
+
 Branch `claude/jacobi-interface`. Goal: extend the solver with **RANS
 (k-ω SST, optionally the 4-equation γ–Re_θt transition variant)** and an
 **IDDES hybrid** that blends the existing WALE LES (fine regions) with SST
@@ -285,7 +287,7 @@ inference is replaced by a declaration:
 
 The related AUGMENTED-q idea (transported RANS scalars as extra
 cell-centred q slots, one batched exchange) is deliberately deferred to
-the profiling phase — see docs/next_session_profiling.md.
+the profiling phase — see docs/next_session_profiling.md (removed 2026-09-26; git history).
 
 STEP-0 STATUS (implemented + gated 2026-07-10): `facePatchType` +
 `domain_face_is_wall` + `validate_patch_types` (config error checked in
@@ -680,7 +682,7 @@ dwall source → error; etc.).
 - The scalars ride `exchange_scalar_halos`, which is per-array — 4-5
   exchanges per substage on top of nut. Accept it now (correctness
   first); batching is a profiling-session item, and the profiling doc
-  (`docs/next_session_profiling.md`) should gain a note that RANS adds
+  (`docs/next_session_profiling.md` (removed 2026-09-26; git history)) should gain a note that RANS adds
   scalar exchanges to the halo-bound budget.
 - `restart`: k/ω(/γ/Re_θt) must round-trip through restart files; absent
   datasets (old restarts) → initialize from `tu`/`nut_ratio` and warn,
@@ -699,7 +701,7 @@ dwall source → error; etc.).
 ## record; the full elevating branch is DONE, see the phase plan above.
 ## Remaining IDDES-adjacent work: the flat-plate inlet increment,
 ## transition/wall_function under iddes, augmented-q scalar batching
-## (docs/next_session_profiling.md), and the GPU profiling task.)
+## (docs/next_session_profiling.md (removed 2026-09-26; git history)), and the GPU profiling task.)
 
 > Read `docs/next_session_iddes.md` and CLAUDE.md. Branch
 > `claude/jacobi-interface`. Implement the full IDDES elevating/WMLES
@@ -747,7 +749,7 @@ dwall source → error; etc.).
 > iddes180 legs run ~50 min on the local GPU (transient t=0..5, stats
 > t=5..25; channel_stats.h5 gets an INTERMEDIATE write mid-leg — read
 > gate-(b) numbers only from the FINAL file). Deferred, do NOT start:
-> augmented-q scalar batching (docs/next_session_profiling.md), the
+> augmented-q scalar batching (docs/next_session_profiling.md (removed 2026-09-26; git history)), the
 > flat-plate inlet increment (patch classification exists since STEP 0;
 > scalars still need inlet values via SCALAR_BC_VALUE + outflow
 > validation + the TVD revisit), transition/wall_function under iddes.
@@ -833,7 +835,7 @@ dwall source → error; etc.).
 > scripts so the big machine can rerun everything. THEN (separate
 > increment, same gates + the log-layer-mismatch metric) the full IDDES
 > f_B/f_e elevating branch. Deferred, do NOT start them here: the
-> augmented-q scalar batching (docs/next_session_profiling.md) and the
+> augmented-q scalar batching (docs/next_session_profiling.md (removed 2026-09-26; git history)) and the
 > flat-plate inlet increment (inlet-aware classification via a new patch
 > value or Dirichlet-inlet detection + scalar inlet values through the
 > STEP-0 applicator's Dirichlet mode + outflow validation + the TVD

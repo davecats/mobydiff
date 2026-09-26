@@ -1,6 +1,6 @@
 # The exchange at scale is a per-LAUNCH cost, not a per-cell or per-point one
 
-Phases 1 and 2 of `docs/next_session_2to1_performance.md`. Jobs 5139461 and
+Phases 1 and 2 of `docs/next_session_2to1_performance.md` (removed 2026-09-26; git history). Jobs 5139461 and
 5139581 (HoreKa `dev_accelerated`, hkn[0401,0403], 2 nodes, 1/4/8 ranks, 100
 steps, everything below in ONE allocation unless it says otherwise); sections 1
 and 2 are arithmetic on the committed 16-rank logs of job 5139351.

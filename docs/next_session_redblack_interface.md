@@ -1,5 +1,11 @@
 # Next session — 2:1 interfaces on the red-black SOR projection
 
+> **STATUS 2026-09-26: OPEN (R1 functional, its §6 physics/performance gates
+> still unrun).** The live list of what is owed is
+> `validation/redblack_interface/README.md` "NOT yet done". Performance context
+> since: red-black reached parity with Jacobi at 16 ranks (CLAUDE.md "Active
+> work", 2026-09-17 matrix). `overheadTest/` = `tutorials/turbulentBoundaryLayer/overheadTest/`.
+
 ## STATUS 2026-08-28 — R1a + R1b IMPLEMENTED, R1 NOT yet complete
 
 `[pressure] solver = redblack` now runs on a refined grid; the init guard's
@@ -65,8 +71,8 @@ multiplicative, at one extra phi exchange per colour) attacks exactly the
 
 **§6 items still NOT run — R1 cannot be declared done:** global mass residual
 with a patch; Beltrami y-slab and the laminar channel-patch convergence order
-(note `validation/beltrami/run_beltrami.sh` is stale — it drives the removed
-`MOBY_BELTRAMI` hook); developed Re_τ 180 no-interface-band vs the Jacobi
+(note `validation/beltrami/run_beltrami.sh` was stale — it drove the removed
+`MOBY_BELTRAMI` hook; fixed 2026-09-26, the inis now set `[flow] initial = beltrami`); developed Re_τ 180 no-interface-band vs the Jacobi
 solution; `refine_body` over ~2000 steps; and the refined **multi-rank** figure
 (red-black doubles the exchange rounds, and at 2 GPU ranks the exchange is
 already 17 % of the step, so it is likely worse than the single-rank 6 %).
@@ -281,7 +287,7 @@ the case falls through to the cross-level exchange — precisely where it belong
 
 **Payoff.** The Jacobi loop drops from two exchanges per iteration to one on
 single-level grids. With `niter = 6-12` that is a large share of the projection,
-and `docs/next_session_profiling.md` already names the per-iteration exchanges as
+and `docs/next_session_profiling.md` (removed 2026-09-26; git history) already names the per-iteration exchanges as
 the suspected dominant cost. Extra compute: divergence + denominator on `3*nb^2`
 cells against `nb^3` interior — **+9% of one kernel at nb=32**, +19% at nb=16.
 
@@ -422,7 +428,8 @@ Physics:
   validated reflux-off signature), compared against the *Jacobi* solution of the
   same case, not only against uniform-128.
 - `refine_body` stability over ~2000 steps on a body case (naca0012 or sd7003 at
-  reduced level).
+  reduced level — both removed 2026-09-26; use `validation/multilevel_body/` or
+  `tutorials/naca/rans` at reduced level).
 
 Performance / motivation:
 
@@ -495,6 +502,6 @@ overhead in the opposite direction.
   jump.
 - `docs/jacobi_interface_handout.md` — the diagnosis method (residual divergence,
   banded).
-- `docs/next_session_profiling.md` — why the exchange count matters (R0).
+- `docs/next_session_profiling.md` (removed 2026-09-26; git history) — why the exchange count matters (R0).
 - `docs/next_session_boundary_layer.md` + memory `boundary-layer-case` — the
   chebyshev/outlet instability that motivates a third smoother.

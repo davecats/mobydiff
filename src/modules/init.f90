@@ -122,7 +122,8 @@ module init
         ! Keep buried refine_body blocks (mobygeom --keep-buried):
         ! LOAD-BEARING for penalization forces -- a removed solid core
         ! absorbs the body's pressure loading through its closed faces
-        ! outside the coef bookkeeping (validation/naca0012/README.md).
+        ! outside the coef bookkeeping (the A3 NACA 0012 finding,
+        ! validation/naca0012/README.md in git history).
         logical(C_BOOL) :: block_keep_buried = .false.
         logical(C_BOOL) :: ibm_enabled = .true.
         character(len=256) :: ibm_coeff_file = ""
@@ -147,7 +148,8 @@ module init
         ! velocity in a thin near-body band (band_width cells, strength
         ! band_theta; theta = 1 annihilates the 2-cell mode per direction).
         ! Damps the cell-Reynolds parasite fan seeded by the staircase ring
-        ! (validation/naca0012 README "LE fan root cause"/R1: the ring SEED
+        ! (validation/naca0012 README "LE fan root cause"/R1, in git history
+        ! since 2026-09-26: the ring SEED
         ! controls the fan; refinement is the reference answer, the filter
         ! the production option). A separate correction pass — OFF means the
         ! pass is never called: bit-exact and zero cost by construction.

@@ -1,5 +1,7 @@
 # Block-Based Local Refinement and Solid-Block Removal Strategy
 
+> STATUS (2026-09-26): DONE -- Phases 0-3 implemented and validated (CLAUDE.md "Active work"). Historical design record. `mobygrid` was deleted in the prepare/solve split (P3): the leaf table is built by the solver/`moby_prepare` (`src/moby_prepare.f90`), which writes it into the case file.
+
 Design notes for extending mobydiff with (1) local mesh refinement following the
 Building-Cube Method (Nakahashi & Kim, AIAA 2004-434) and its HPC formulation in
 CUBE (Jansson et al., IJHPCA 2019), and (2) removal of decomposition blocks that
@@ -187,7 +189,7 @@ generalization is to make the *exchange entry*, not the rank, the unit:
 - The nonblocking `start/finish_halo_exchange` split survives unchanged, and
   the internal/external block zoning of Jansson (overlap local exchange and
   interior kernels with MPI) composes naturally with
-  `docs/nonblocking_overlap_strategy.md` later.
+  `docs/nonblocking_overlap_strategy.md` (removed 2026-09-26; git history) later.
 
 Halo width stays 1 (second-order stencils, including the diagonal terms in the
 momentum cross-fluxes — hence the full 26-direction adjacency, as today).
@@ -278,7 +280,7 @@ fine-owned faces carry full fine resolution. With the finest-level
 wall buffer (Section 4) interfaces sit in smooth flow, where this is a
 second-order-consistent approximation.
 
-A manufactured-field halo audit (`MOBY_HALO_AUDIT=1`, see `main.f90`)
+A manufactured-field halo audit (`MOBY_HALO_AUDIT=1`, removed in the 2026-06-30 cleanup; git history 5fcdd0c)
 checks every exchange-written halo cell against the design semantics
 above on the actual block layout; transfers should be verified with it
 before debugging the physics.
@@ -391,7 +393,7 @@ Each phase leaves the code releasable and is verified before the next.
    (c) Taylor-Green / channel with an artificial refinement patch vs uniform
    fine reference; (d) IBM case (sailplane tutorial) vs uniform-fine result.
 5. **Phase 4 — performance.** Internal/external block zoning + nonblocking
-   overlap (merges with `nonblocking_overlap_strategy.md`); profile pack/unpack
+   overlap (merges with `nonblocking_overlap_strategy.md` (removed 2026-09-26; git history)); profile pack/unpack
    vs sweep kernels.
 
 ## 12. Deferred: dynamic adaptation and load balancing

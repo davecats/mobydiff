@@ -1,5 +1,12 @@
 # Passive scalars (branch `scalar`) — implementation plan
 
+> **STATUS 2026-09-26: CONCLUDED (historical plan; merged to `main`).** Current
+> state: CLAUDE.md "Active work" + `validation/scalar/README.md`. Since this was
+> written the `[flow] convection` key was REMOVED (momentum skew is hardwired, the
+> key error-stops); the scalar's form is now `[scalar] convection = divergence
+> (default) | skew | advective` — every "`[flow] convection = skew` for the scalar"
+> below means `[scalar] convection = advective` (the full-subtraction form).
+
 STATUS: **CONCLUDED 2026-08-07.** S0 + S1 + S2 + S3 + S4 + S5a LANDED AND
 GATED (S0–S2 2026-08-03, S3 / S4 / S5a 2026-08-04, branch `scalar`), the
 2026-08-05/06 follow-up closed S5a's two open items, and the 2026-08-07
@@ -17,7 +24,8 @@ The two remaining plan items are RECLASSIFIED and both LOW PRIORITY
   and its measured motivation is the SD7003 gamma front (104 level-4 cells;
   at L5-xz separation-induced transition stops firing altogether), not
   anything a passive scalar failed. Its gates are the nb/rank-independence
-  and uniform-flow suites in `validation/interface_suite/` and
+  and uniform-flow suites in `validation/interface_suite/` (never created;
+  the nb/rank gates live in `validation/block_nb/`) and
   `validation/refine2d/`, not the scalar ones. §12's prompt still applies
   when someone takes it.
 - **S5c (Boussinesq) is parked.** The hook — `bodyforce.f90`'s `custom` path
@@ -1049,7 +1057,9 @@ in `moby_solve.f90`, the lifted `config.f90` rejection, the correlations in
    expect better than the velocity's near-body accuracy.
 8. The advecting velocity is divergence-free only to the projection tolerance
    (niter = 6 production runs) — use `[flow] convection = skew` for the scalar
-   in the same runs where it is used for momentum.
+   in the same runs where it is used for momentum. *(Now `[scalar] convection`;
+   the 2026-09-26 comparison found the forms barely differ on existing gates —
+   see `validation/scalar/README.md`.)*
 9. `keep_buried` if a body-integral flux diagnostic is added (A2 rule).
 
 ---
@@ -1092,7 +1102,8 @@ history.)
 >   scalars**, so budget it as a comm.f90 change: halo depth touches the
 >   per-dim affine gather maps and every 2:1 transfer, and the
 >   uniform-flow / 1-vs-4-rank / nb-independence gates in
->   `validation/interface_suite/` and `validation/refine2d/` are the ones
+>   `validation/interface_suite/` (never created; see `validation/block_nb/`)
+>   and `validation/refine2d/` are the ones
 >   that decide whether it is right. Rerun the L5-xz SD7003 afterwards —
 >   that is the measurement the increment exists for.
 > - **S5c — Boussinesq buoyancy.** The hook is `bodyforce.f90`'s `custom`

@@ -1,68 +1,49 @@
 # Tools reference
 
-The `tools/` directory holds the Python utilities that support `mobydiff`: geometry
-preprocessing for the immersed boundary method, verification checks against exact solutions,
-restart generation, and post-processing/plotting. They require Python 3 with `numpy`,
-`h5py`, and `matplotlib`.
+The `tools/` directory holds the utilities that support `mobydiff`: geometry helpers,
+verification checks against exact solutions, field comparison, restart generation, and
+post-processing/plotting. The Python tools need Python 3 with `numpy`, `h5py`, and
+`matplotlib`; each script's docstring is its full usage reference.
 
-All of these read the solver's HDF5 output directly and understand both the legacy global-3D
-layout and the block-table (refined) layout.
+The field readers understand the solver's block-table snapshot layout (and the legacy
+global-3D layout of old files).
 
----
-
-## Geometry / preprocessing
-
-### `mobygeom.py`
-
-Converts STL triangle meshes into IBM coefficient fields. Grid geometry is always imported
-from a Fortran-generated `mobygrid` HDF5 file, so the preprocessor reuses the solver's exact
-node lines, stretching, periodicity, and staggered coordinates.
-
-```bash
-python3 tools/mobygeom.py <subcommand> [options]
-```
-
-Main subcommands:
-
-| Subcommand | Purpose |
-|------------|---------|
-| `stl-ibm-coeff` | Compute IBM coefficients from one or more STL meshes (the main path). |
-| `block-active` | Write per-block solid-removal flags into a coefficient file. |
-| `block-table` | Write block-table IBM coefficients for refined (AMR) runs. |
-| `make-sphere-stl` / `make-bent-pipe-stl` / `make-lidded-bent-pipe-stl` | Generate STL test bodies. |
-| `check-stl-geometry` | Run generic STL mesh / probe classification checks. |
-| `test-stl-sphere`, `test-stl-bent-pipe`, … | Validate coefficients against analytic geometries. |
-| `stress-stl-watertightness` | Damaged-STL robustness stress tests. |
-
-Typical `stl-ibm-coeff` invocation (see the [`sailplane` tutorial](tutorials.md#sailplane-external-aerodynamics-with-ibm)):
-
-```bash
-python3 tools/mobygeom.py stl-ibm-coeff \
-    --geometry body.stl --output ibm_coeff.h5 --grid-file grid.h5 --re 1.0e5 \
-    [--scale S] [--translate X Y Z] [--tile-size NX NY NZ] [--jobs N] \
-    [--check-fluid-points file.txt]
-```
-
-The full workflow — exporting the grid with `./build_cpu/mobygrid input.ini grid.h5` and the
-complete option list — is documented in [`tools/README_mobygeom.md`](../tools/README_mobygeom.md).
+> The preprocessor for immersed-body cases is the Fortran executable `moby_prepare`, not a
+> tool in this directory — see [Running](running.md#preprocessing-immersed-bodies-moby_prepare).
 
 ---
 
-## Verification / validation checks
+## Geometry
 
-Each of these compares a solver field against a known solution and reports L2/L∞ error. See
-[Validation](validation.md) for how they fit into the verification workflow.
+| Tool | Purpose |
+|------|---------|
+| `make_airfoil_stl.py` | Extruded cylinder / NACA 4-digit / Selig-file airfoil STLs for quasi-2D cases (`--span y` for the `refine_dims = xz` orientation). |
+| `make_geometry_stl.py` | ASCII STLs for the conjugate-heat-transfer gates: tilted plane, cylinder, annular pipe shell. |
+| `check_annulus.py` | Checks an annular pipe body in a prepared case file against the analytic geometry. |
+| `mobygeom.py` | **Retired** Python STL-to-IBM preprocessor, kept only as the independent cross-implementation reference for the `validation/prepare/` gates (plus its STL generators and watertightness tests). See [`tools/README_mobygeom.md`](../tools/README_mobygeom.md); it reads the grid from a `moby_prepare` case file (`--grid-file case.h5`). |
 
-| Tool | Checks against | Invocation |
-|------|----------------|------------|
-| `check_beltrami.py` | Exact 3D Beltrami / ABC flow (2π-periodic cube) | `python3 tools/check_beltrami.py FIELD.h5` |
-| `check_tgv.py` | Exact 2D Taylor–Green vortex | `python3 tools/check_tgv.py FIELD.h5 [--error-map out.png]` |
-| `check_parabolic_channel.py` | Poiseuille profile of a forced channel | `python3 tools/check_parabolic_channel.py FIELD.h5 [--tolerance T]` |
-| `compare_fields.py` | Another solver output (bit-exact refactor checks) | `python3 tools/compare_fields.py REF.h5 CAND.h5 [DATASETS...] [--tolerance T] [--export-global FILE]` |
+---
 
-`compare_fields.py` handles both output layouts, reassembling refined fields onto the finest
-lattice; `--export-global` writes a single reassembled global field for visualization.
-Datasets default to `un vn wn pn` (the three velocity components and pressure).
+## Verification / comparison
+
+| Tool | Checks | Invocation |
+|------|--------|------------|
+| `check_beltrami.py` | Error vs the exact 3D Beltrami / ABC flow (`[flow] initial = beltrami`) | `python3 tools/check_beltrami.py FIELD.h5` |
+| `check_parabolic_channel.py` | Poiseuille profile of a forced laminar channel | `python3 tools/check_parabolic_channel.py FIELD.h5 [--tolerance T]` |
+| `check_interface_decay.py` | The `validation/interface_decay/` gate: noise on a refined patch must decay | see the case README |
+| `compare_fields.py` | Two solver outputs (bit-exact refactor checks) | `python3 tools/compare_fields.py REF.h5 CAND.h5 [DATASETS...] [--tolerance T] [--export-global FILE]` |
+| `h5maxdiff.c` | Max \|a−b\| per dataset, in C (for machines without `h5py`/`h5diff`); build line in its header | `h5maxdiff A.h5 B.h5 [DATASET...]` |
+
+`compare_fields.py` reassembles block-table fields onto the finest lattice (which can
+exhaust memory at deep refinement); `--export-global` writes the reassembled global field for
+visualization. With no dataset arguments it discovers the datasets present. `h5maxdiff`'s
+default list is `un vn wn pn`, `nut` and the RANS scalars — name passive scalars (e.g. `s1`)
+explicitly.
+
+Interface diagnostics used by the 2:1-interface validation: `interface_diagnostics.py`,
+`interface_coarse_gate.py` (Beltrami slab fields), `channel_band_profile.py`,
+`channel_interface_validation.py`, `patch_interface_diff.py`, `patch_interface_stats.py`
+(channel wall bands and embedded patches).
 
 ---
 
@@ -71,12 +52,12 @@ Datasets default to `un vn wn pn` (the three velocity components and pressure).
 ### `make_channel_restart.py`
 
 Generates initial-condition / restart files for the 2:1-interface channel validation by
-interpolating an existing channel restart onto a target grid (uniform reference or
-wall-band-refined block-table):
+interpolating an existing channel restart (`--source`) onto a target grid (uniform
+reference, wall-band-refined, base, or embedded patch; `--refine-dims xz` supported):
 
 ```bash
 python3 tools/make_channel_restart.py --mode {reference,refined,base,patch} \
-    --out OUT.h5 [--source SRC.h5] [--band-cells 24] \
+    --source SRC.h5 --out OUT.h5 [--band-cells 24] \
     [--refine-box x0 x1 y0 y1 z0 z1] [--dyw-plus 0.5] [--nx 128 --ny 64 --nz 128]
 ```
 
@@ -84,15 +65,18 @@ python3 tools/make_channel_restart.py --mode {reference,refined,base,patch} \
 
 ## Post-processing / plotting
 
-These write a PNG and accept one or more runs as `FIELD.h5:LABEL` (the label is used in the
-legend).
+The channel plotters write a PNG and accept one or more runs as `FIELD.h5:LABEL` (the label
+is used in the legend).
 
 | Tool | Produces |
 |------|----------|
 | `channel_loglaw.py` | Mean streamwise velocity in wall units ($U^+$ vs $y^+$, semilog), both walls folded. |
 | `channel_stats_profile.py` | Single-snapshot mean and rms fluctuation profiles ($x,z$-averaged per wall-normal row). |
-| `plot_channel_stats.py` | Time-averaged channel statistics from a developed run's `stats_file` (combines all refinement levels; `_l1`, `_l2`, … are found automatically). |
+| `plot_channel_stats.py` | Time-averaged channel statistics from a run's `stats_file` (combines all refinement levels; `_l1`, `_l2`, … are found automatically). |
 | `slice_channel.py` | An $x$–$y$ mid-span cross-section of a wall-band-refined channel field ($u,v,w,p$), reassembled onto the finest grid. |
+| `plot_patch_slice.py` | Cross-section of a refined-patch field vs a base-grid control, patch outline overlaid. |
+| `plot_beltrami_fields.py`, `plot_beltrami_slices.py` | Beltrami solver/exact/error slices, and single-block vs refined cross-sections over time. |
+| `scalar_stats.py` | Reads the passive-scalar statistics files (`[scalar] stats_file`). |
 
 Example:
 
@@ -100,3 +84,12 @@ Example:
 python3 tools/channel_loglaw.py loglaw.png run.h5:mycase reference.h5:ref
 python3 tools/plot_channel_stats.py stats.png channel_stats.h5:mycase
 ```
+
+---
+
+## Performance
+
+| Tool | Purpose |
+|------|---------|
+| `moby_tune.sh` | Finds a machine's best rank-to-GPU mapping (`MOBY_GPU_ORDER`) by measurement: `tools/moby_tune.sh <moby_solve> <case.ini> [outdir]`. |
+| `partition_analysis.py` | Offline analysis of how a block-to-rank partition cuts the 2:1 interface. |

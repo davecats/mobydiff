@@ -11,9 +11,10 @@ INSTEAD of the (chaotic, uninformative) long-time Beltrami stability:
   (iv) accuracy / order -> volume-weighted L2 / Linf error vs the exact solution,
        split band vs interior; pass two files (coarse, fine) for the order.
 
-  (ii) (mass / correct divU at the interface) is measured separately with the
-       solver's own dump_divergence (MOBY_RKDIV), not here -- python lacks the
-       ghost layers and ifGrad to reproduce the interface divergence operator.
+  (ii) (mass / correct divU at the interface) is NOT measured here -- python
+       lacks the ghost layers and ifGrad to reproduce the interface divergence
+       operator. (It used to come from the solver's dump_divergence / MOBY_RKDIV
+       hook, removed in the 2026-06-30 cleanup.)
 
 The exact 3D Beltrami / ABC solution (k=2pi/Lx, F=exp(-nu k^2 t)):
   u=sin(kz)+cos(ky)  v=sin(kx)+cos(kz)  w=sin(ky)+cos(kx)  p=-1/2|u|^2.

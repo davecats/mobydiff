@@ -1,5 +1,7 @@
 # 2:1 edge/corner reconstruction — strategy for a consistent (≥O(h)) corner
 
+> STATUS (2026-09-26): SUPERSEDED -- the deep-halo cubic/linear reconstruction was deleted in the 2026-07-01 production-config lockdown (const-1/2 interface hardwired; see CLAUDE.md "Active work"). Historical record; recover the code from git history (9343a3c / 902e30a / df697d8).
+
 Branch `claude/jacobi-interface`.
 
 ## RESOLUTION (read this first)
@@ -41,7 +43,7 @@ construction), out of scope here.
 ## The problem
 
 The momentum predictor needs accurate deep-halo ghosts across a 2:1 interface
-(see `validation/momentum_interface`). The ghost is a one-sided extrapolation
+(see `validation/momentum_interface`, removed 2026-09-26; git history). The ghost is a one-sided extrapolation
 from the fine interior, `q(0) = c1·q(1) + c2·q(2) + c3·q(3)`:
 
 - **Cubic** `(3,-3,1)` — 2nd-order accurate (the planar slab fine band is 2.0),
@@ -52,7 +54,7 @@ from the fine interior, `q(0) = c1·q(1) + c2·q(2) + c3·q(3)`:
   (`uv`/`uw`/`vw`); the combined gain **blows up** (3D-patch `interface_decay`).
   Decisive: the blow-up is **dt-scaled** (smaller dt → less growth) ⇒ the
   PREDICTOR reading amplified halos, not a projection null mode; and
-  `MOBY_NORECON` is fully stable.
+  `MOBY_NORECON` (env hook, removed in the 2026-06-30 cleanup) is fully stable.
 
 ## What is already done (commit e3a4a7a)
 
@@ -112,8 +114,8 @@ should rise from ~0.5 to ≥1 (O(h)), ideally toward 2.
 
 ## Gates (must all hold)
 
-- `tutorials/interface_decay` 3D-patch **stable** (the must-not-regress gate).
-- Planar slab fine band still **2.0** (`run_gate.sh`, slab Axis-1).
+- `validation/interface_decay` (moved from `tutorials/`) 3D-patch **stable** (the must-not-regress gate).
+- Planar slab fine band still **2.0** (`run_gate.sh`, slab Axis-1 -- retired with `validation/momentum_interface`).
 - **Patch fine band order rises from ~0.5 to ≥1** (the new target;
   `run_gate.sh`, patch Axis-1).
 - Axis-2 mass round-off; reflux still conserves; **bit-exact with no interface**;
@@ -122,7 +124,7 @@ should rise from ~0.5 to ≥1 (O(h)), ideally toward 2.
 ## Pointers
 
 - Reconstruction: `reconstruct_interface_halos` in `src/modules/step.f90`
-  (the `c1/c2/c3` coefficient switch on `nIf`).
+  (the `c1/c2/c3` coefficient switch on `nIf`) -- deleted 2026-07-01; git history.
 - Diffusion coefficients: `blk%lapY*` etc. built in `src/modules/blocks.f90`;
   the momentum diffusion is in `momentum` (`src/modules/step.f90`).
 - Reverted inc-1 reference: git history around commit `4960507`.

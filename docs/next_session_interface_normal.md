@@ -1,5 +1,7 @@
 # 2:1 interface-NORMAL velocity treatment (no LES) — RESOLVED 2026-06-30
 
+> STATUS (2026-09-26): RESOLVED 2026-06-30 (accepted, no code change). Since then the `interface_constant_half` / `momentum_reflux` keys were removed (const-1/2 hardwired, reflux deleted, 2026-07-01), the `MOBY_*` hooks are gone, and `src/main.f90` is `src/moby_solve.f90`.
+
 **OUTCOME: the ~9% coarse-owns v' asymmetry is ACCEPTED as the intrinsic price of
 the energy-conserving const-1/2 interface. No code change. The production
 interface is unchanged and stays validated.** The investigation below pinned the
@@ -124,7 +126,7 @@ a single conservative value — instead of coarse-owns(inject)/fine-owns(restric
   `src_samples`, the single weighted gather `entry_gather_map`; `interface_normal_dim`
   / the "skip prolong on the owned normal-velocity face" logic). This is where the
   ownership + transfer of the normal component lives.
-- `src/main.f90`: the post-predictor face sync (`c%syncFace`, ~the line after the
+- `src/main.f90` (now `src/moby_solve.f90`): the post-predictor face sync (`c%syncFace`, ~the line after the
   momentum predictor) and the momentum predictor's face pinning (only PHYS/CLOSED
   pinned; FACE_FINE/COARSE predicted on both sides).
 - `src/modules/step.f90`: the sweep denominator/correction noflux masks

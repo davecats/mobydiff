@@ -1,5 +1,7 @@
 # 2:1 interface pressure projection — correct SPD formulation and SOR recast
 
+> STATUS (2026-09-26): SUPERSEDED -- the SOR/MP/agglomeration prototypes below were abandoned; the projection was rebuilt on damped Jacobi/Chebyshev with the symmetric `face_grad` composite stencil (`docs/jacobi_interface_handout.md`, CLAUDE.md "Active work"). Every `MOBY_*` env hook named here was removed (2026-06-30 cleanup; git history 5fcdd0c), as were `tools/beltrami_regression.py` and `tools/plot_div_slice.py`. Historical record.
+
 Status: **design note** (2026-06-22). Captures the correct formulation after three
 failed bolt-on fixes (task #38). The diagnosis is settled; this note derives *why*
 the bolt-ons fail and *what* the consistent scheme must be, so the next session can
@@ -271,7 +273,7 @@ u_F,m = c0 + delta_m*(c_+ - c_-)/2,   delta_m = -1/4 (lower fine), +1/4 (upper)
 mean over the covered fine = c0 (conservative). Edge reads clamp to the injected
 halo (holds the right coarse per cell). Divergence of the exact Beltrami:
 injection 1.44 -> 0.021 (68x), beats the non-conservative 3/4-1/4 linear (0.056).
-Prototype: `apply_mp_interface_velocity` (main.f90, host, MOBY_RKLINPROLONG).
+Prototype: `apply_mp_interface_velocity` (main.f90 -- now `src/moby_solve.f90`; host, MOBY_RKLINPROLONG, removed).
 
 **Piece 2 — transpose restrict `P_mp^T` (G side, the crux).** The coarse low-halo
 pressure the coarse owner reconstructs against:
@@ -315,7 +317,7 @@ restrict is the remaining substantial implementation.
 All operator machinery is implemented behind `MOBY_MP=1` (off by default; the
 production path is the unchanged injection/average composite projection, verified
 **bit-exact** to the prior baseline on refined Beltrami and single-level
-poiseuille, CPU + GPU). `tools/beltrami_regression.py` drives the three tests.
+poiseuille, CPU + GPU). `tools/beltrami_regression.py` (removed; git history) drove the three tests.
 
 What landed (in `comm.f90 gather_taps`, a TENSOR product of 1D operators so the
 prolong P and restrict P^T are exact transposes; `gather_point` widened to 6
@@ -537,7 +539,7 @@ snapshot accumulations and a red-black apply once per iteration.
 - **Pressure-correction-alone (exact-overwrite, `MOBY_RKEXACT`):** corrector
   change to the exact div-free input must drop from 2e-2 toward ~0 (single block
   stays 0.0).
-- **Divergence-of-exact (`MOBY_RKDIV` + `tools/plot_div_slice.py`):** max|div|
+- **Divergence-of-exact (`MOBY_RKDIV` + `tools/plot_div_slice.py`, removed):** max|div|
   must drop from 1.44 toward the linear-prolong floor (~0.05) and below.
 - **Whole Beltrami t=8:** refined L2 must fall from 3.7e-2 toward the single-block
   1.4e-4; then the long t=40 run must stay bounded (no blow-up).

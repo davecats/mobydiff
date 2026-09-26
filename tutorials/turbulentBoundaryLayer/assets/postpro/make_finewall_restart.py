@@ -7,7 +7,7 @@ grid (same nx, nz; more ny), for the Dy+_max=4 case.
 The BL field is single-block: datasets (1, nz, ny, nx) for un/vn/wn/pn plus the
 x/y/z node lines. On the staggered grid u/w/p live at y cell CENTRES and v at
 the lower y FACES (nodes[:-1]) -- so u/w/p interpolate center->center and v
-face->face (the convention in tools/.../interpolate_channel_restart_dyw.py).
+face->face (the staggered convention of tools/make_channel_restart.py).
 The new y node line comes from the solver's own grid build for the target ny
 (a cold start), so the interpolated field lands exactly on the grid the restart
 will rebuild from config. Everything else (blocks table, x/z, attrs) is copied;

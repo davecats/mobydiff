@@ -1,5 +1,7 @@
 # Handout — `jacobi_apply` k2: can 88 registers become 64?
 
+> STATUS (2026-09-26): DONE (closed 2026-09-14, see below); current state in CLAUDE.md "Active work". `overheadTest/` below means `tutorials/turbulentBoundaryLayer/overheadTest/`.
+
 > **STATUS: CLOSED, 2026-09-14. Yes — by L2 alone, and the time followed.**
 >
 > Hoisting `face_grad_corr` out of the `collapse(4)` body (module arrays

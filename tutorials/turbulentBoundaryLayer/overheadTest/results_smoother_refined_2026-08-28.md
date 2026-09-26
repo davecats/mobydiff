@@ -100,7 +100,7 @@ because red-black exchanges once per **colour**.
 
 ## What this changes
 
-`docs/next_session_multirank_exchange.md` puts red-black first on the strength
+`docs/next_session_multirank_exchange.md` (removed 2026-09-26; git history) puts red-black first on the strength
 of the single-level 26–51 %. On refined grids — which is what the 2:1 machinery
 exists for — the honest figure is **6 % at equal residual, or 21 % under the
 zero-mode criterion**, so it no longer obviously dominates the overlap and

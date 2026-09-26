@@ -1,5 +1,7 @@
 # Next session: runtime C_L/C_D from the control-volume momentum budget
 
+> STATUS (2026-09-26): DONE (on `claude/jacobi-interface`, ported to `main` 2026-09-25). One deviation on `main`: a missing `cv_box` is a loud WARNING that disables force sampling, not an error stop (CLAUDE.md "Features ported", `docs/next_session_port_finish.md`). `validation/naca0012/` and `validation/sd7003/` were removed 2026-09-26 (git history); the live airfoil case is `tutorials/naca/rans/`.
+
 STATUS 2026-08-03: **DONE and COMMITTED.** The p_inf bug is fixed, the budget
 is validated on `validation/cylinder` (Re 40 steady + Re 100 unsteady), the
 penalization integral is REMOVED (`cv_box` now required), the keys are

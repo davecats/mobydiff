@@ -1,5 +1,7 @@
 # Next session — optional spatially-varying volumetric (body) force
 
+> STATUS (2026-09-26): DONE 2026-07-01 -- `src/modules/bodyforce.f90`, `[force]` config (CLAUDE.md "Spatially-varying volumetric body force"); the boundary-layer trip was later added to the same module. Historical plan.
+
 Branch `claude/jacobi-interface`. Goal: add a **config-gated, spatially-varying
 volumetric force** `f(x)` to the momentum equation, on top of the existing
 constant per-direction forcing. Off by default → **bit-exact** with the current

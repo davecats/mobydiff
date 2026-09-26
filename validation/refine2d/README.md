@@ -19,7 +19,8 @@ R2D-1.
 
 - **Gate (a)** — 7-case nofma suite bit-exact (xyz untouched), CPU AND
   GPU: PASS (max_abs 0 on all datasets incl. nut/k/omega/gamma/rethetat).
-- **Gate (b)** — `bash gate_leaftable.sh`: mobygeom block-table
+- **Gate (b)** — (driver `gate_leaftable.sh` REMOVED 2026-09-26: it needed the
+  deleted mobygrid and the retired mobygeom leaf builder; recover from git history): mobygeom block-table
   (`--refine-dims xz --refine-box`, out-of-domain sphere STL so body
   classification runs with all-fluid masks) vs the solver builder
   (`leaftable_test`, src/test_leaftable.f90) row-by-row on a non-cubic
@@ -31,11 +32,12 @@ R2D-1.
   (twin_xz.ini: 64x32x64 with `[grid.x/z] subdivided = true`,
   bitwise the level-1 lines): un/vn/wn/pn max_abs = 0.0 on CPU AND GPU
   (cetus A6000); 1 == 4 CPU ranks max_abs = 0.0 in xz mode.
-- **Barrier** — box_xz.ini (mixed-level xz table) error-stops at
+- **Barrier** — box_xz.ini (removed 2026-09-26; a historical check,
+  superseded by R2D-1) (mixed-level xz table) error-stops at
   exchange setup with "[blocks] refine_dims = xz: 2:1 interfaces are
   not implemented yet (R2D-1)". Never runs.
 
-Run gate (b): `PY=$HOME/ibmc/bin/python bash gate_leaftable.sh`
+Gate (b) was run with `gate_leaftable.sh` (removed 2026-09-26, see above).
 Run gate (c): solver on allref_xz.ini and twin_xz.ini, then
 `compare_fields.py twin_xz_5.h5 ar_xz_5.h5 un vn wn pn --tolerance 0`.
 
@@ -76,6 +78,8 @@ unused; non-uniform xz runs before R2D-2 are NOT validated).
   EXACTLY after 50 steps (max dev 0.0, pn spread 0.0) — mass residual
   exactly zero by the same token. 1 == 4 CPU ranks max_abs 0.0;
   CPU == GPU max_abs 0.0.
+  *Re-run 2026-09-26 at `niter = 12` (was 6), CPU 1 and 4 ranks: EXACT (0.0,
+  pn spread 0.0), same histogram, 1 == 4 ranks max_abs 0. PASS (GPU not re-run).*
 - **Zero-force body twin** (unibody_xz.ini, the multilevel_body pattern
   in xz mode): mobygeom block-table --refine-dims xz --levels 3 on the
   cylinder STL (508 leaves [220, 96, 192]) + make_uniform_twin.py (now
@@ -83,6 +87,14 @@ unused; non-uniform xz runs before R2D-2 are NOT validated).
   spread 0.0) on 1 CPU rank, == 4 ranks and == GPU to max_abs 0.0. Also
   exercises the file-based refine_body xz read path (anisotropic mask
   shapes + solver builder cross-check against the xz blocks table).
+  *Rebuilding `ibm_ml3_xz_zero.h5` (not in git) since 2026-09-26:*
+  `make_uniform_twin.py` and mobygeom's block-table are gone; follow
+  `../multilevel_body/setup.sh` step 2 on `unibody_xz.ini` (moby_prepare
+  with `stl_file = ../cylinder/cylinder.stl` + `keep_buried = true`, then
+  `../multilevel_body/zero_coef.py`). *Re-gated in this form 2026-09-26
+  (niter 12, CPU): prepared twin has the same 508 leaves [220, 96, 192];
+  uniform flow EXACT (0.0, pn spread 0.0) on 1 and 4 ranks, 1 == 4 ranks
+  max_abs 0. PASS.*
 
 ## R2D-2 — projection y-type + physics gates (2026-07-15)
 
@@ -151,7 +163,7 @@ global-3D restarts carry no layout to clash).
   + make_airfoil_stl --span y (axis-swapped extrusion, winding
   re-inverted; probe-verified inside = solid). 7-case suite bit-exact
   (span = z default arithmetically untouched), CPU AND GPU.
-- **Fan bench L5-xz** (validation/naca0012/xz_l5.ini + README "R2D-3"
+- **Fan bench L5-xz** (validation/naca0012/xz_l5.ini, removed 2026-09-26 -- git history; + README "R2D-3"
   section): 6748 leaves vs 65094 L5-3D (9.6x fewer); the fan strips
   REPRODUCE the R1a L5 ground-truth collapse identically
   (0.0014/0.0015/0.0013/0.0021/0.0011 vs 0.0014/0.0015/0.0012/0.0022/
@@ -161,6 +173,12 @@ global-3D restarts carry no layout to clash).
   the committed fanbox table to 1e-4); slice_field.py gains --span y +
   refine_dims-aware reassembly (regression-identical on the committed
   L5 field).
+
+> **Note (2026-09-26):** `validation/naca0012` and `validation/sd7003` (the fan
+> bench, `xz_l5.ini`, `fan_metric.py`, `slice_field.py`, the SD7003 inis) were
+> removed — they lacked a `cv_box`, so their force gates could no longer run.
+> The results above and below are the recorded ones; the files are in git
+> history. The live airfoil case is `tutorials/naca/rans/`.
 
 NEXT (the post-phase goals): the NACA AoA sweep 0/4/8 at L5-xz
 (keep-buried, xz_aoa*.ini, one host per angle) and the SD7003 rerun on

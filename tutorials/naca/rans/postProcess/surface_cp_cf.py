@@ -36,7 +36,8 @@ Method (per surface station on the ANALYTIC section polyline):
   Two independent estimators -- a wall-gradient fit over the cells
   OUTSIDE the band, and a viscous-integral estimator that differences
   nowhere near the wall -- agree with this one to ~10 % over 300
-  stations. See postProcess/cf_crosscheck.py.
+  stations (postProcess/cf_crosscheck.py, since removed -- recover it
+  from git at commit 8f2242d; see ../README.md).
 
   Cp — least-squares WALL EXTRAPOLATION: p of the near-wall CLEAN cells
   (those outside the penalization band entirely) is fitted linearly in d

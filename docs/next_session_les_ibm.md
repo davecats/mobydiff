@@ -1,5 +1,7 @@
 # Next session — LES ↔ IBM coupling validation
 
+> STATUS (2026-09-26): DONE 2026-06-30 -- LES<->IBM coupling validated (CLAUDE.md "LES<->IBM coupling", `validation/channel_interface/les_ibm/`). Historical handout: `src/main.f90` is now `src/moby_solve.f90`; the file-IBM preprocessor is `moby_prepare` (`tools/mobygeom.py` geometry subcommands retired); `MOBY_STEPDIV` was removed; the SGS code moved partly to `turbulence.f90` (T0).
+
 Branch `claude/jacobi-interface`. LES (WALE) is validated across block refinement
 and the 2:1 interface **for channel flow with grid-aligned walls** (see
 `validation/channel_interface/les/`, CLAUDE.md "edge/corner + LES"). The standing
@@ -99,7 +101,7 @@ LES↔IBM is validated. Either way, START by MEASURING the nut field at the IBM 
 - `src/modules/ibm.f90`: `set_ibm_coeff` (penalization coef, `SOLID/Re` in solid,
   finite second-order weights in the band), `isInBody` (analytic geometry — single
   wavy wall, NOT the test geometry).
-- `src/main.f90`: `update_les_viscosity(les, blk, dns, ibm)` call site (predictor),
+- `src/main.f90` (now `src/moby_solve.f90`): `update_les_viscosity(les, blk, dns, ibm)` call site (predictor),
   `exchange_scalar_halos(c, les%nut, blk)`.
 - Config: `[les] model = wale|smagorinsky|none`, `cw`, `cs`, `delta_scale`,
   `ibm_aware`; `[ibm] enabled`, `coeff_file`.

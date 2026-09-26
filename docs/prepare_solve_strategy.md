@@ -1,6 +1,11 @@
 # Strategy: splitting mobydiff into `moby_prepare` + `moby_solve`
 
-Status: PROPOSAL (2026-07-16). No code has been changed. Modeled on the
+Status: **DONE 2026-07-17 — P0-P3 all implemented and gated** (per-phase
+records below; `src/moby_prepare.f90` + `src/moby_solve.f90`, one case-file
+contract; mobygrid deleted, mobygeom retired to a validation reference).
+The P1b naca0012/sd7003 cases were removed 2026-09-26 (`run_gates_big.sh` now
+runs the sailplane leg only). Current state: CLAUDE.md "Active work".
+Original status line: PROPOSAL (2026-07-16). No code has been changed. Modeled on the
 AMPHIBIOUS (CPL) preproc/solver split, adapted to mobydiff's block/leaf
 architecture.
 
@@ -26,9 +31,9 @@ tools, two languages, and one redundant recomputation:
 
 | Step | Tool | Language | Parallel? |
 |---|---|---|---|
-| Grid export | `src/mobygrid.f90` | Fortran, serial (hard-errors on >1 rank) | no |
+| Grid export | `src/mobygrid.f90` (deleted in P3) | Fortran, serial (hard-errors on >1 rank) | no |
 | Geometry: masks, leaf table, `coef_blocks`, `dwall_blocks` | `tools/mobygeom.py` (~3200 lines) | Python (trimesh + libigl) | `multiprocessing`, single node |
-| Leaf table + exchange + (analytic) coefficients | solver init (`main.f90`) | Fortran + MPI (+GPU) | yes |
+| Leaf table + exchange + (analytic) coefficients | solver init (`main.f90`, now `moby_solve.f90`) | Fortran + MPI (+GPU) | yes |
 
 What is actually wrong with it:
 
@@ -369,7 +374,7 @@ file; the sphere gate generates its reference that way). The dead
 `write_grid_export`/`fdm_h5_write_grid` writers went with it; legacy
 mobygrid-written grid files (the committed les_ibm `grid.h5`) stay
 readable. The production preprocessing paths consolidated: the
-naca0012/sd7003 `setup.sh` now run moby_prepare (the venv survives only
+naca0012/sd7003 `setup.sh` (both directories removed 2026-09-26) now run moby_prepare (the venv survives only
 for STL GENERATION — make_airfoil_stl needs shapely/mapbox_earcut);
 `run_gates_big.sh` generates its mobygeom references from the case files;
 the sailplane tutorial README documents the prepare flow. mobygeom's

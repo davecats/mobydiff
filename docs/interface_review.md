@@ -1,5 +1,7 @@
 # Review: 2:1 interface treatment and the `channel_interface` failure
 
+> STATUS (2026-09-26): SUPERSEDED -- the `channel_interface` failure was resolved on the damped-Jacobi projection with the const-1/2, reflux-off interface (CLAUDE.md "Active work", `docs/next_session_edges_les.md`). The `MOBY_*` env hooks and the `smoke/` gates named below were removed (git history). Historical record.
+
 Independent review of the block-refinement work (branch `claude/blocks`)
 against `docs/block_refinement_strategy.md` and the two source papers
 (Nakahashi & Kim, AIAA 2004-434; Jansson et al., IJHPCA 33(4), 2019),
@@ -552,5 +554,5 @@ If the composite/approximate projection is chosen, the formally-clean strategy �
 single authoritative interface DOF set, conservative composite divergence `D`,
 gradient pinned by adjointness `G = −Dᵀ`, the SPD composite Poisson `L = −D Dᵀ`
 solved as one coupled system — is written up in
-`docs/composite_projection_strategy.md` (it supersedes the §6a "uniform-B +
+`docs/composite_projection_strategy.md` (not in the tree; git history 0bc9d19 -- superseded by the Jacobi rebuild, `docs/jacobi_interface_handout.md`) (it supersedes the §6a "uniform-B +
 reflux" plan in `block_refinement_strategy.md`).

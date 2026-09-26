@@ -1,5 +1,7 @@
 # Boundary-layer track (branch `boundaryLayer`)
 
+> STATUS (2026-09-26): SUPERSEDED -- the turbulent extension shipped as the ZPG TBL DNS in `tutorials/turbulentBoundaryLayer/` (README + `tests_record.md`; red-black SOR, CaNS/SIMSON trip) and the branch is merged into `main`. The Blasius precursor files named below (template.ini, make_blasius_ic.py, blasius2d.ini, compare_blasius.py) were removed in 4f819fc (2026-08-07; git history); the `blasius` inlet profile and `[grid.<d>] one_sided` key remain in the solver. The Chebyshev+outlet instability below is still OPEN (unexplained; the TBL case sidesteps it with red-black).
+
 STATUS 2026-07-19: laminar Blasius precursor DONE and gated
 (`tutorials/turbulentBoundaryLayer/`); one solver-level OPEN item (the
 Chebyshev finding below) and the 3D/turbulent extension pending.
@@ -16,7 +18,7 @@ Chebyshev finding below) and the 3D/turbulent extension pending.
 - `[grid.<d>] one_sided` key for the natural distribution (the
   `natural_one_sided` flag existed but had no config key). NOT persisted in
   snapshot metadata: restart inis must keep the [grid.y] section.
-- Case `tutorials/turbulentBoundaryLayer/`: Re_theta,in = 100, 400x100x4
+- Case `tutorials/turbulentBoundaryLayer/` (laminar precursor, since replaced by the turbulent case): Re_theta,in = 100, 400x100x4
   theta units, 384x160x4 (natural one-sided y: dy_wall 0.18, 31 pts in
   delta99_in), inlet/outlet/wall/outlet faces, plain damped Jacobi.
   Flow: template.ini (mint) -> make_blasius_ic.py (analytic Blasius field

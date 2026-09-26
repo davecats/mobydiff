@@ -10,7 +10,7 @@
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=davide.gatti@kit.edu
 #
-# Phases 1 and 2 of docs/next_session_2to1_performance.md in ONE allocation,
+# Phases 1 and 2 of docs/next_session_2to1_performance.md (removed 2026-09-26; git history) in ONE allocation,
 # plus the bit-exactness gate that the op-split diagnostic owes.
 #
 # TWO binaries are built here rather than reusing whatever build_gpu/ holds:

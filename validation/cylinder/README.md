@@ -15,14 +15,19 @@ rank count BY CONSTRUCTION).
 
 Setup (STL + per-Re coefficient files; coef = SOLID/re so one file per Re):
 
-    ./setup.sh          # needs moby_prepare + the ibmc venv
-                        # (trimesh + shapely + mapbox_earcut + h5py)
+    ./setup.sh          # needs build_cpu/moby_prepare; the ibmc venv
+                        # (trimesh + shapely + mapbox_earcut) only to
+                        # regenerate the committed cylinder.stl
+
+(Before 2026-09-26 setup.sh used the deleted `mobygrid` + the retired
+`mobygeom.py stl-ibm-coeff`; the recorded results below come from those
+legacy-format files. The moby_prepare files keep all 4096 blocks too.)
 
 Runs (GPU recommended; one job at a time):
 
-    mpirun -n 1 ../../build_gpu/main cyl_re40.ini     # steady drag
-    mpirun -n 1 ../../build_gpu/main cyl_re100.ini    # vortex shedding
-    mpirun -n 1 ../../build_cpu/main empty.ini        # empty-domain zero force
+    mpirun -n 1 ../../build_gpu/moby_solve cyl_re40.ini     # steady drag
+    mpirun -n 1 ../../build_gpu/moby_solve cyl_re100.ini    # vortex shedding
+    mpirun -n 1 ../../build_cpu/moby_solve empty.ini        # empty-domain zero force
 
 ## The force statistic changed (2026-08-03)
 

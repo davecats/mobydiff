@@ -6,17 +6,20 @@ The solver reads a single `.ini` configuration file and is **always** launched t
 `mpirun`, even on a single rank:
 
 ```bash
-mpirun -n <ranks> ./build_gpu/main path/to/input.ini
+mpirun -n <ranks> ./build_gpu/moby_solve path/to/input.ini
 ```
 
-- Use `build_cpu/main` for the CPU reference build, `build_gpu/main` for the GPU build.
+- Use `build_cpu/moby_solve` for the CPU reference build, `build_gpu/moby_solve` for the
+  GPU build (`main` in each build directory is a compatibility symlink to `moby_solve`).
 - On the GPU build, one MPI rank drives one GPU; launch as many ranks as you have devices.
+  On multi-node runs the rank-to-device order can be overridden with the `MOBY_GPU_ORDER`
+  environment variable; `tools/moby_tune.sh` finds a good mapping by measurement.
 
 Example — a single-GPU minimal channel and an 8-rank CPU channel:
 
 ```bash
-mpirun -n 1 ./build_gpu/main tutorials/min_channel/input_gpu.ini
-mpirun -n 8 ./build_cpu/main tutorials/channel_kmm180/input.ini
+mpirun -n 1 ./build_gpu/moby_solve tutorials/min_channel/input_gpu.ini
+mpirun -n 8 ./build_cpu/moby_solve tutorials/channel_kmm180/input.ini
 ```
 
 ## Domain decomposition
@@ -41,9 +44,24 @@ The base grid resolution and extent come from `[grid]`, with per-direction stret
 `[grid.x]`, `[grid.y]`, `[grid.z]`. Block decomposition and 2:1 refinement are configured
 in `[blocks]`. The full key list is in the [configuration reference](configuration.md).
 
-For IBM (immersed-body) cases, the grid must first be exported with `mobygrid` so the
-Python preprocessor can classify the STL geometry against the solver's exact node lines —
-see [Tutorials](tutorials.md) and the [tools reference](tools.md).
+## Preprocessing immersed bodies (`moby_prepare`)
+
+Analytic immersed walls (`[ibm] wall_shape`) can be set up inline by the solver. STL
+geometry — and, optionally, analytic geometry too — goes through the MPI-parallel
+preprocessor, which reuses the solver's own grid, block and classification code:
+
+```bash
+mpirun -n 4 ./build_cpu/moby_prepare case.ini case.h5
+```
+
+`case.ini` is the run's `.ini` plus the geometry declaration (`[ibm] stl_file`, optional
+`stl_scale` / `stl_translate`). The output is the block-table **case file** — node lines,
+leaf block table, per-block IBM coefficients, solid-removal masks and wall distance — which
+the solve then reads through `[ibm] coeff_file = case.h5`. Prepare with the CPU build (the
+canonical one). Regenerate the case file whenever the grid, the block layout or `[flow] re`
+changes (the coefficients carry the 1/Re scaling). The design is in
+[`prepare_solve_strategy.md`](prepare_solve_strategy.md); the retired Python `mobygeom`
+pipeline is kept only as a cross-implementation reference.
 
 ## Time stepping
 
@@ -58,16 +76,20 @@ Field snapshots are written as HDF5 by `[output]`:
 ```ini
 [output]
 field_interval = 50000            ; steps between field dumps
-field_prefix   = channel_field    ; → channel_field_1.h5, channel_field_2.h5, ...
+field_prefix   = channel_field    ; → channel_field_<step>.h5
 ```
 
-Each snapshot holds the velocity components and pressure. For refined (multi-level) runs
-the file uses the block-table layout (one dataset row-range per block); a companion `.xdmf`
-is written for cases where it applies. To reassemble a refined field onto a single global
-grid for visualization or comparison, use `tools/compare_fields.py --export-global`.
+Each snapshot holds the velocity components and pressure (`un vn wn pn`), plus whatever
+the active models carry (`nut`, the RANS scalars `k`/`omega`/…, passive scalars by name).
+Snapshots use the block-table layout (one dataset row per block, plus the `blocks` table);
+no XDMF is written. To reassemble a field onto a single global grid for visualization or
+comparison, use `tools/compare_fields.py --export-global` (for very deep refinement the
+finest-lattice reassembly can exhaust memory).
 
-Channel cases additionally accumulate turbulence statistics (see the `[case.channel]`
-keys), written to the configured `stats_file`.
+Channel and boundary-layer cases accumulate turbulence statistics (the `[case.channel]` /
+`[case.boundarylayer]` `stats_*` keys), passive scalars their own (`[scalar] stats_*`), and
+the airfoil case writes C_L/C_D to its `runtime_file`. `[output] profile = true` prints a
+per-phase timing breakdown after the run.
 
 ## Restart
 

@@ -1,5 +1,7 @@
 # 2:1 interface on a damped-Jacobi projection — handout
 
+> STATUS (2026-09-26): DONE -- the Jacobi/Chebyshev 2:1 projection is the production solver on `main` (CLAUDE.md "Active work"). Historical handout: the `MOBY_*` env hooks in the run recipe were removed (2026-06-30 cleanup), `validation/beltrami/refined_fast.ini` is gone (use `refined.ini`), `tools/check_tgv.py` is gone, and the executable is `moby_solve` (`main` is a symlink).
+
 Branch **`claude/jacobi-interface`** (forked from `cbd07d0`). This is a clean
 restart of the 2:1 coarse–fine interface treatment on a deliberately simple
 pressure solver, after every red-black scheme failed the local mass-conservation
@@ -113,7 +115,7 @@ cmake --build build_cpu -j        # build_cpu is -Mnofma; CPU is the reference
 # split coarse/fine interface band vs interior.
 ```
 
-Cases: `validation/beltrami/{uniform,slab_y,refined_fast}.ini` (set `initial =
+Cases: `validation/beltrami/{uniform,slab_y,refined_fast}.ini` (`refined_fast` removed 2026-09-26; `refined.ini` survives) (set `initial =
 beltrami`, `sor = 0.8` for Jacobi). `slab_y` isolates a single flat interface
 direction; `refined_fast` is the 3D patch (edges + corners). Diagnostics:
 `tools/interface_diagnostics.py` (band/interior error + roughness),

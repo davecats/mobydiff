@@ -20,7 +20,7 @@ analytic run to the last bit.
 |---|---|
 | `wavy.ini` | single-level blocks (nb 8), coef_blocks + block_active + dwall_blocks (`[rans]` geometry + ransgeom dump) |
 | `wavy_refine.ini` | refine_body, 2 levels: per-level touch/buried masks + multi-level coef/dwall tiles |
-| `wavysolid.ini` | solid-block removal at scale (200^3, nb 4): the Phase-2 wavychannel geometry, 1150/125000 blocks buried -> compacted blocks table |
+| `wavysolid.ini` | solid-block removal at scale (200^3, nb 4): the Phase-2 analytic wavy-wall geometry, 1150/125000 blocks buried -> compacted blocks table |
 
 ## Run
 
@@ -68,7 +68,7 @@ analytic bodies.
 
 | gate | reference | expectation |
 |---|---|---|
-| `flat.ini`, `flat_refine.ini` | committed mobygeom block-table files (`../rans_geometry/ibm_coeff_blocks_l{1,2}.h5`, les_ibm wall slabs) | blocks + all per-level masks IDENTICAL; coef ≤ 1e-6 rel (indicator bisection vs exact ray crossings); interior dwall ≤ 2e-9 |
+| `flat.ini`, `flat_refine.ini` | mobygeom block-table files (`../rans_geometry/ibm_coeff_blocks_l{1,2}.h5`, les_ibm wall slabs; not in git — generate them with `../rans_geometry/setup.sh`) | blocks + all per-level masks IDENTICAL; coef ≤ 1e-6 rel (indicator bisection vs exact ray crossings); interior dwall ≤ 2e-9 |
 | flat solve | 1-step solve, prepared file vs committed file | fields ≤ 1e-10, ransgeom dwall/yeff ≤ 1e-9, wallcell identical |
 | `sphere.ini` | freshly generated mobygeom reference (needs the ibmc venv; skipped without it) | same identity/tolerance classes on a curved, buried-leaf body |
 | `sphere_shift.ini` | the SAME mesh float32-EXACTLY translated onto the x-periodic boundary | masks/blocks the exactly rolled copy; coef/dwall tiles bit-identical (gates the minimum-image logic with zero tolerance) |
@@ -96,6 +96,11 @@ Conventions found while gating (documented in geometry_stl.f90):
   agreement to round-off).
 
 ## P1b — the big committed geometries (`run_gates_big.sh`)
+
+> **Note (2026-09-26):** `validation/naca0012` and `validation/sd7003` were
+> removed, so `run_gates_big.sh` now runs the sailplane leg only. The airfoil
+> rows below are the recorded 2026-07-17 results; their drivers are in git
+> history.
 
 The production airfoil/sailplane cases re-gated from prepare-built files
 (P1b additions: repeatable `[ibm] stl_file` for paths with spaces,

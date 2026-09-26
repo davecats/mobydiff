@@ -26,8 +26,16 @@ rank into shared datasets.
 ```
 
 Each invocation configures and builds into its own directory (`build_cpu/`, `build_gpu/`),
-so the two toolchains never collide. Both directories contain `main` (the solver) and
-`mobygrid` (the serial grid export tool).
+so the two toolchains never collide. `compile.sh` compiles through the MPI wrappers
+(`mpifort` / `mpicc`, overridable with `FC` / `CC` or `MPI_FC_WRAPPER` / `MPI_C_WRAPPER`).
+Both directories contain:
+
+- `moby_solve` — the solver (`main` is a compatibility symlink to it, kept for older
+  scripts);
+- `moby_prepare` — the MPI-parallel preprocessor that writes the block-table case file
+  (grid, block table, IBM coefficients, wall distance) for immersed-body runs;
+- the unit-test drivers `walldist_test`, `transition_test`, `leaftable_test`,
+  `scalar_test`.
 
 ### GPU build
 
@@ -59,6 +67,20 @@ FMA contraction disabled:
 
 - CPU: `-Mnofma`
 - GPU: `-Mnofma -gpu=nofma`
+
+`compile.sh` has dedicated modes for this, building into separate directories so a
+production build is never disturbed:
+
+```bash
+./compile.sh cpu_nofma   # → build_cpu_nofma/
+./compile.sh gpu_nofma   # → build_gpu_nofma/
+```
+
+When the arithmetic source is byte-identical between the two sides (e.g. only a launch
+parameter changed), comparing production builds is strictly tighter.
+
+For field comparison on machines without `h5py`/`h5diff`, `tools/h5maxdiff.c` builds a
+small C comparator (build line in its header).
 
 ## Troubleshooting
 

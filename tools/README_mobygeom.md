@@ -13,9 +13,10 @@ The STL generators/checkers (`make-*-stl`, watertightness tests) stay in
 normal use.
 
 `mobygeom.py` generates static IBM coefficient fields from STL triangle meshes.
-The grid definition always comes from a Fortran-generated `mobygrid` HDF5 file,
-so the preprocessor uses the same node lines, stretching, periodicity, and
-staggered coordinates as the solver.
+The grid definition always comes from a Fortran-generated grid file (a
+`moby_prepare` case file, see below; the `mobygrid` executable is gone), so the
+preprocessor uses the same node lines, stretching, periodicity, and staggered
+coordinates as the solver.
 
 ## Grid Export
 
@@ -50,7 +51,7 @@ converted or positioned in the solver domain before coefficient generation.
 The HDF5 file contains `coef` with shape `(nx+2, ny+2, nz+2, 3)` plus component
 virtual datasets `coef_u`, `coef_v`, and `coef_w`. A sidecar `.xdmf` file is
 written for ParaView and uses the staggered coordinates derived from the
-`mobygrid` node lines.
+grid file's node lines.
 
 `stl-ibm-coeff` writes tiled/chunked HDF5 by default. Use `--tile-size ix iy iz`
 to tune tile memory and `--jobs N` to process independent tiles in parallel.
@@ -90,10 +91,32 @@ For closed cavity STL sets where the inside is the fluid region, add
 
 ## STL Tests
 
-All grid-based tests require a `mobygrid` file:
+All grid-based tests require a grid file. Any `moby_prepare` case file serves;
+a tiny one needs no geometry at all (8^3 box, periodic x/z, walls in y — the
+grid of the removed `smoke/cpu_vs_gpu/tiny.ini`):
 
 ```bash
-./build_cpu/mobygrid smoke/cpu_vs_gpu/tiny.ini tools/mobygeom_tests/tiny_grid.h5
+cat > /tmp/tiny.ini <<'INI'
+[grid]
+nx = 8
+ny = 8
+nz = 8
+lx = 1.0
+ly = 1.0
+lz = 1.0
+[blocks]
+nb = 4
+[flow]
+re = 100.0
+[time]
+dt = 1.0e-4
+nsteps = 1
+[boundary]
+periodic_x = true
+periodic_y = false
+periodic_z = true
+INI
+mpirun -n 1 ./build_cpu/moby_prepare /tmp/tiny.ini tools/mobygeom_tests/tiny_grid.h5
 /home/davide/ibmc/bin/python tools/mobygeom.py test-stl-sphere \
   --grid-file tools/mobygeom_tests/tiny_grid.h5 \
   --re 100 \

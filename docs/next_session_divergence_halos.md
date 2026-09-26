@@ -1,5 +1,7 @@
 # Handout — the between-iteration velocity exchange, and what is left after it
 
+> STATUS (2026-09-26): Tasks 0-1 DONE (below); task 2 (`compute_rdenom` fp64 divide) and task 3 (split `step_momentum`) still OPEN -- see CLAUDE.md "Active work" (rdenom is now static on body-free blocks; the divide itself is untouched). `overheadTest/` below means `tutorials/turbulentBoundaryLayer/overheadTest/`.
+
 > **STATUS 2026-09-17 — TASKS 0 AND 1 ARE BOTH DONE.**
 >
 > **Task 1** (§4) landed at `95312d7`: `entry_round` makes the pure `+axis`

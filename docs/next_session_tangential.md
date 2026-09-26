@@ -1,10 +1,16 @@
 # The tangential-term escalation (route B) — implementation plan
 
+> **STATUS 2026-09-26: OPEN, ON HOLD.** Stages 0-1b (Python) done; stages 2-5
+> (Fortran) not started, blocked on the curved high-contrast multiplier (see
+> "Where it stands"). The shipped `tangential_correction` stays default OFF.
+> Current numbers: `validation/conjugate/README.md`.
+
 STATUS: **stages 0, 1 and 1b DONE. GATE 2 = TIER 1 (never worse, on all 36
 rows), and the SOLUTION convergence test passes: the C1 baseline as shipped is
 FIRST ORDER at a curved conjugate interface (measured 0.999 over an eightfold
 refinement range) and stage 1b restores SECOND ORDER (1.92).** Stages 2-5 (the Fortran) remain unstarted and are a deliberate
-decision, not a blocker -- see "What to do with this" at the end.
+decision, not a blocker -- see "Where it stands" below (the "What to do with
+this" section this pointed to was never written).
 Written 2026-09-14 on branch `scalar`; stages 0-1 the same day, all in Python,
 no solver and no Fortran. Measurements and tables in
 `validation/conjugate/README.md` ("Stage 0 of the route-B escalation" and

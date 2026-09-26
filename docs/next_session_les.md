@@ -1,5 +1,7 @@
 # Next session — LES across the block decomposition and the 2:1 interface
 
+> STATUS (2026-09-26): DONE 2026-06-30 -- LES (WALE) validated across blocks and the 2:1 interface (`validation/channel_interface/les/`, CLAUDE.md "edge/corner + LES"). Historical handout: `src/main.f90` is now `src/moby_solve.f90` (line numbers stale), the `MOBY_*` hooks are gone, and the SGS kernels now take `nut` from `turb_type` (`turbulence.f90`, T0).
+
 Branch `claude/jacobi-interface`. This is the handout for **open item 2** of
 `docs/next_session_edges_les.md` (LES validation). Open item 1 (edge/corner
 turbulence) is DONE — see `validation/channel_interface/core_patch/` and the
@@ -27,7 +29,7 @@ Validate the LES path with block refinement, in order:
 
 - **`les%nut(0:nb+1, 0:nb+1, 0:nb+1, nBlocks)`** — eddy viscosity, per block with
   a trailing block index, halos included. Recomputed every substage.
-- **Per step** (`src/main.f90:371`): `update_les_viscosity` (Smagorinsky/WALE
+- **Per step** (`src/main.f90:371`, now `src/moby_solve.f90`): `update_les_viscosity` (Smagorinsky/WALE
   strain from the velocity halos) → `exchange_scalar_halos(c, les%nut, blk)` →
   `momentum(..., les, les_prof)` which calls `add_les_momentum_correction`
   (adds the `2 nut S_ij` SGS stresses to the predictor RHS). `nut` also feeds the

@@ -17,9 +17,9 @@ Per case, two legs (mirrors ../les/run_les.py):
      per level) PLUS field snapshots every --snap-interval steps (snapshots carry
      `nut`, used for the wall-nut measurement and the 2:1-interface nut step).
 
-All prerequisite data files (grid.h5, ibm_coeff.h5, ibm_coeff_blocks.h5, IC.h5,
-IC_refine.h5) are committed alongside this script -- they were built with the
-geometry venv + mobygrid (see setup.sh / README). This driver needs only the
+The prerequisite data files grid.h5, ibm_coeff.h5 and IC.h5 are committed
+alongside this script; ibm_coeff_blocks.h5 and IC_refine.h5 (case c) are
+gitignored and rebuilt by setup.sh (moby_prepare + the geometry venv). This driver needs only the
 solver binary, numpy is not required to RUN (only to ANALYSE).
 
 Usage (pick the right mpirun for the host; on the dev box it is the hpcx one):
@@ -74,7 +74,7 @@ def run_case(name, a, binary):
     coef = os.path.join(HERE, coef_name)
     for p in (ini, ic, coef):
         if not os.path.isfile(p):
-            sys.exit(f"missing {p} -- run setup.sh first (needs geometry venv + mobygrid)")
+            sys.exit(f"missing {p} -- run setup.sh first (needs moby_prepare + geometry venv)")
     prefix = "channel_ibm"  # field_prefix in the .ini
     runs = os.path.join(HERE, "runs", name)
     dA, dB = os.path.join(runs, "transient"), os.path.join(runs, "stats")

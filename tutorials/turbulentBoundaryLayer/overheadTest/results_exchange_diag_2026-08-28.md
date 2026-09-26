@@ -54,7 +54,7 @@ Effective rates against the measured `mpi_wait`:
 
 ## This overturns part of the plan written an hour earlier
 
-The ranked plan in `docs/next_session_multirank_exchange.md` put
+The ranked plan in `docs/next_session_multirank_exchange.md` (removed 2026-09-26; git history) put
 "`sync_divergence_halos` with peers" first, at an estimated 5–6 % of the step.
 That estimate assumed the multi-rank fallback was a *full* exchange. **It is
 not** — it is `exchange_halos(interp=.false.)`, the copy-only prefix, and the
@@ -101,7 +101,7 @@ bytes on the GPU layout and 28 % on the CPU one. Do it after the above, and
 size it against the decomposition it will actually run on.
 
 `jacobi_compute_phi` kernel efficiency and the `bodyforce` trip mask are
-unchanged from `docs/next_session_multirank_exchange.md`.
+unchanged from `docs/next_session_multirank_exchange.md` (removed 2026-09-26; git history).
 
 ## Follow-up: the 2:1 interface always sits ON a rank boundary
 

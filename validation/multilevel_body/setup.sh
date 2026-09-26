@@ -56,6 +56,10 @@ mpirun -n 1 "$PREP" .prep_ml3.ini ibm_coeff_ml3.h5
 # removes the last mobygeom import from this directory.
 echo "== 2. the zero-force twin (buried leaves kept, then coefficients zeroed)"
 stl_ini dwall.ini .prep_ml3_zero.ini "keep_buried = true"
+# A [scalar] section makes prepare write coef_p_blocks too (zeroed below), so
+# the same twin also serves validation/scalar/uniform3.ini: a scalar run
+# hard-errors on a case file without that dataset. The flow gate ignores it.
+printf '\n[scalar]\ncount = 1\n\n[scalar.1]\npr = 1.0\n' >> .prep_ml3_zero.ini
 mpirun -n 1 "$PREP" .prep_ml3_zero.ini ibm_coeff_ml3_zero.h5
 $PY zero_coef.py ibm_coeff_ml3_zero.h5
 

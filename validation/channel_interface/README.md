@@ -3,27 +3,27 @@
 Re_tau = 180 channel (u_tau = 1: one time unit = one eddy turnover).
 Three cases:
 
-> **Solver + reflux (defaults set in the inis).** The projection is
+> **Solver (defaults set in the inis).** The projection is
 > Chebyshev-accelerated damped Jacobi (`accel = chebyshev`) at `sor` (omega)
 > `= 0.8`, `niter = 6`. `sor < 1` is REQUIRED -- simple Jacobi DIVERGES for
 > `sor > 0.8` (the old red-black SOR used 1.5). At this niter the projection is
 > under-converged for both accelerators (it plateaus on the large scales; a
 > multi-level Schwarz is the planned fix), but on the uniform reference (1000
 > steps) Chebyshev holds ~3.4x lower divergence than plain Jacobi at the same
-> niter=6 for ~1.6% more cost -- see `divergence_comparison.png`. The refined
-> cases run with `[blocks] momentum_reflux = true` -- the Berger-Colella reflux of
-> the interface advective momentum (conserves the 2:1 interface momentum flux, the
-> localized `-<u'v'>` / mean-shear defect; see `docs/interface_review.md` ii-iii
-> and `validation/momentum_interface`, where it is gated to round-off
-> conservation). The refine bands are full-extent planes (no corners), so the
-> reflux conserves the interface momentum exactly there.
+> niter=6 for ~1.6% more cost -- see `divergence_comparison.png`. Set
+> `[pressure] accel = jacobi` to compare against plain damped Jacobi.
 >
-> Run `./run_validation.sh gpu <n>` (reflux ON by default). For a reflux-on vs
-> reflux-off comparison add `NOREFLUX=1` -- those runs land in
-> `runs/<name>_noreflux/`. (`tools/divsum.py` / `momsum.py` assume uniform cell
-> volumes, so they are not meaningful on this stretched grid; conservation is
-> gated on the uniform `momentum_interface` cases. Set `[pressure] accel = jacobi`
-> to compare against plain damped Jacobi.)
+> **Note (2026-09-26): the reflux setup originally described here no longer
+> exists.** The refined cases were first run with `[blocks] momentum_reflux =
+> true` (Berger-Colella reflux of the interface advective momentum), and
+> `run_validation.sh` had a `NOREFLUX=1` mode for the on/off comparison. That
+> comparison (`developed/README.md`) showed the reflux to be the u'/v'
+> coarse-cell band artifact, so the key was REMOVED (2026-07-01) together with
+> `interface_constant_half` / `interface_skew`: the solver now always runs the
+> validated const-1/2, reflux-off interface, and the `NOREFLUX` mode is gone.
+> The uniform-grid conservation gates it cited (`validation/momentum_interface`,
+> `tools/divsum.py` / `momsum.py`) were removed with the `MOBY_*` diagnostic
+> hooks they needed; recover them from git history.
 
 | case          | grid                          | interfaces            |
 |---------------|-------------------------------|-----------------------|

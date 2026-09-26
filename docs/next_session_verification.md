@@ -1,6 +1,8 @@
 # Verification debt + the host/device staleness audit (branch `scalar`)
 
-STATUS: **DONE 2026-08-07.** Written 2026-08-06 at the end of the session
+STATUS: **DONE 2026-08-07** (historical record; the host/device rule it
+produced is now a CLAUDE.md coding convention, and the B1 `t_final` fix is in
+`trim_dt_for_final_time`). Written 2026-08-06 at the end of the session
 that created the debt (commits `2c90aea`, `7d54556`, `a69a615`); both halves
 were executed on 2026-08-07. Results are in §A (the audit) and §B (the gate
 re-runs) below; §1 and §2 are kept verbatim as the specification they were

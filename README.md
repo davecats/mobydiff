@@ -15,8 +15,9 @@
 finite differences on a staggered Cartesian grid, an explicit low-storage RK3 time
 integrator, and a segregated pressure-projection step. It supports per-direction grid
 stretching, block-structured **2:1 local refinement**, a volume-penalization **immersed
-boundary method** (IBM) for arbitrary STL geometries, and optional **large-eddy
-simulation** (LES). It runs distributed on CPUs (MPI) and offloads to NVIDIA GPUs
+boundary method** (IBM) for arbitrary STL geometries, optional **LES**, **RANS**
+(k-ω SST, transition, wall functions) and **IDDES**, and **passive scalars** with
+conjugate heat transfer. It runs distributed on CPUs (MPI) and offloads to NVIDIA GPUs
 (OpenMP target offload).
 
 ---
@@ -50,17 +51,22 @@ See [`docs/numerical-methods.md`](docs/numerical-methods.md) for the full discre
 
 - **Staggered second-order finite differences** on a Cartesian grid, uniform or stretched
   independently per direction (uniform / natural near-wall / custom node lines).
-- **Explicit low-storage RK3** advancement with CFL- and Péclet-limited adaptive `dt`.
+- **Skew-symmetric (energy-conserving) convection** and **explicit low-storage RK3** advancement with CFL- and Péclet-limited adaptive `dt`.
 - **Segregated pressure projection** by a **damped-Jacobi** smoother with optional
   **Chebyshev–Jacobi** acceleration — SPD and consistent across grid stretching and
-  refinement interfaces.
+  refinement interfaces (red-black SOR remains selectable).
 - **Block-structured grid with 2:1 local refinement** (BCM-style equal-size blocks): box-
   or geometry-driven refinement, removal of blocks buried inside solid bodies, and
   conservative 2:1 interface transfer.
 - **Immersed boundary method** (volume penalization) for arbitrary watertight STL
-  geometries, with a Python preprocessor (`mobygeom`) that reuses the solver's exact grid.
-- **Large-eddy simulation** (WALE subgrid model), validated across refinement interfaces
-  and IBM walls.
+  geometries or analytic walls, preprocessed by the MPI-parallel `moby_prepare`, which
+  reuses the solver's own grid and classification kernels.
+- **Turbulence models**: LES (Smagorinsky / WALE), k-ω SST RANS (γ–Re_θt transition, wall
+  functions) and SST-IDDES, validated across refinement interfaces and IBM walls.
+- **Passive scalars** (any number, each with its own Pr/Sc) with Dirichlet, adiabatic or
+  **conjugate** (solid conduction) treatment at the immersed interface.
+- **Flow cases**: generic, channel, spatially developing boundary layer (Blasius inlet +
+  trip), and airfoil (inlet/outlet faces, control-volume C_L/C_D).
 - **Distributed + GPU**: 3D MPI Cartesian decomposition with 26-neighbour halo exchange,
   and OpenMP target offload for NVIDIA GPUs from a single source.
 
@@ -83,8 +89,8 @@ See [`docs/numerical-methods.md`](docs/numerical-methods.md) for the full discre
 The build is driven by `compile.sh`, which selects the CPU or GPU toolchain:
 
 ```bash
-./compile.sh cpu     # → build_cpu/main  (reference build; gfortran)
-./compile.sh gpu     # → build_gpu/main  (NVIDIA GPU offload; NVHPC)
+./compile.sh cpu     # → build_cpu/{moby_solve,moby_prepare}  (reference build)
+./compile.sh gpu     # → build_gpu/{moby_solve,moby_prepare}  (NVIDIA GPU offload; NVHPC)
 ```
 
 Build both when you want the CPU path as a debugging reference. For the GPU build, load
@@ -98,8 +104,9 @@ module load /opt/nvidia/hpc_sdk/modulefiles/nvhpc-hpcx-cuda13/26.3
 If CMake cannot locate HDF5, point it at your parallel build:
 `HDF5_ROOT=/path/to/parallel-hdf5 ./compile.sh cpu`.
 
-The build also produces `mobygrid`, a serial grid/preprocessing tool used to export the
-exact node coordinates for IBM coefficient generation.
+Each build directory holds two executables: `moby_solve` (the solver; `main` is a
+compatibility symlink to it) and `moby_prepare` (the MPI-parallel preprocessor that writes
+the block-table case file for IBM runs — see [Running](docs/running.md)).
 
 ---
 
@@ -108,17 +115,17 @@ exact node coordinates for IBM coefficient generation.
 Run any case through `mpirun`, even on a single rank:
 
 ```bash
-mpirun -n 1 ./build_gpu/main tutorials/min_channel/input_gpu.ini
+mpirun -n 1 ./build_gpu/moby_solve tutorials/min_channel/input_gpu.ini
 ```
 
 This runs a minimal turbulent channel with a 2:1 wall-band refinement, writing HDF5 field
-snapshots you can inspect with the tools in `tools/`. A larger, publication-scale channel
-and an external-aerodynamics IBM case are documented in
+snapshots you can inspect with the tools in `tools/`. The other tutorials (turbulent
+channel, boundary layer, airfoil RANS, conjugate heat transfer, IBM sailplane) are listed in
 [the tutorials guide](docs/tutorials.md).
 
 ```bash
 # distributed CPU run over 8 ranks
-mpirun -n 8 ./build_cpu/main tutorials/channel_kmm180/input.ini
+mpirun -n 8 ./build_cpu/moby_solve tutorials/channel_kmm180/input.ini
 ```
 
 ---
@@ -130,9 +137,9 @@ mpirun -n 8 ./build_cpu/main tutorials/channel_kmm180/input.ini
 | [Installation](docs/installation.md) | Toolchains, HDF5, CPU vs GPU builds, troubleshooting |
 | [Running the solver](docs/running.md) | The run workflow, MPI decomposition, output, restart |
 | [Configuration reference](docs/configuration.md) | Every `.ini` section and key |
-| [Numerical methods](docs/numerical-methods.md) | Discretization, projection, refinement, IBM, LES |
-| [Tutorials](docs/tutorials.md) | `channel_kmm180` (turbulent channel) and `sailplane` (IBM) |
-| [Tools reference](docs/tools.md) | Geometry preprocessing, verification, post-processing |
+| [Numerical methods](docs/numerical-methods.md) | Discretization, projection, refinement, IBM, turbulence, scalars |
+| [Tutorials](docs/tutorials.md) | The shipped cases in `tutorials/` |
+| [Tools reference](docs/tools.md) | Geometry helpers, verification, post-processing |
 | [Validation & verification](docs/validation.md) | Test flows and how correctness is checked |
 | [Developer guide](docs/developer-guide.md) | Source layout, data model, GPU model, conventions |
 
@@ -148,7 +155,7 @@ flowchart TD
     B --> C[grid: node lines per direction]
     C --> D[blocks: build leaf blocks<br/>+ 2:1 refinement]
     D --> E[ibm: penalization coefficients<br/>optional]
-    E --> F[les: subgrid model<br/>optional]
+    E --> F[turbulence / scalars<br/>optional]
     F --> G{RK3 time loop}
     G --> H[momentum predictor]
     H --> I[pressure projection<br/>damped / Chebyshev–Jacobi]

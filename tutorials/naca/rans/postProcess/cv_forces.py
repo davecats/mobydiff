@@ -2,7 +2,9 @@
 """Control-volume (momentum-balance) drag and lift from a block-table
 snapshot — the AUTHORITATIVE force statistic for the B11 campaign: the
 buried interior is REMOVED, so the penalization integral under-reads the
-(pressure-dominated) lift by construction (validation/naca0012 README).
+(pressure-dominated) lift by construction (docs/next_session_airfoil.md,
+A3 increment 2). The solver's runtime statistic is now this same budget
+([case.airfoil] cv_box); this script is the offline cross-check.
 
   cv_forces.py <field.h5> [--boxes 1.5 2.5 4.0] [--re 4e5]
                [--nose 50 48] [--span-y]
