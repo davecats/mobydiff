@@ -1869,12 +1869,22 @@ immersed boundary. Phased, each phase verified before the next:
   scalar merge's dormant code (the `scalar` bucket reads 0.0007 ms and that merge
   does not touch the kernel); inside the kernel the only change is the lockdown
   removing the three `if (skew)` guards, and both columns EXECUTE those
-  corrections, so the arithmetic is identical. **The register explanation is
-  measured FALSE**: `cuobjdump -res-usage` puts the predictor at 128 regs before
-  and **100 after**, so occupancy rose while the step slowed -- the one case
-  CLAUDE.md's own rule is written for, and here the register count contradicts
-  the step time. Mechanism OPEN; ncu on `step_momentum` for both binaries is the
-  next measurement, not more reasoning.
+  corrections, so the arithmetic is identical. **MECHANISM NAMED by ncu (job 5163917, both binaries
+  on one node): the compiler spent freed registers badly.** Traffic is
+  byte-identical (16.87 doubles/cell, 1.05x the source minimum, same
+  sectors/request, same L2 hit), registers fell 128 -> 100, and **occupancy did
+  NOT move (23.76 -> 23.69 %)** -- this kernel is capped by grid/block shape, not
+  registers, so the 28 freed registers bought nothing -- while BOTH utilisation
+  axes fell (DRAM 34.51 -> 31.02 % of peak, SM 40.33 -> 34.09 %). Same bytes,
+  same occupancy, less issued per unit time: the shorter live ranges lengthened
+  dependency chains, and the solver's already occupancy-limited predictor has no
+  warps to hide them with. **RETRACTED along the way:** the first reading of
+  `cuobjdump` inferred "registers down, therefore occupancy up" -- occupancy was
+  assumed, not measured, and it was wrong. THE FIX, one line and ~1.5 % of the
+  step, not yet taken: put the corrections back inside a condition the compiler
+  cannot fold (a mapped always-true logical), restoring the 128-register
+  schedule at the cost of a never-taken branch. It needs its own before/after
+  ncu + the nofma suite. NOT `-gpu=maxregcount`, which is a target, not a cap.
 
 ## Verification
 

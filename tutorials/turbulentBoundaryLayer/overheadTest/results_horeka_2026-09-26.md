@@ -70,24 +70,51 @@ corrections** (the ref config carries the key — verified in the staged ini and
 in the run's own `config.ini`), so the arithmetic is identical and the guard was
 taken on both sides.
 
-**The mechanism is NOT established, and the obvious guess is measured false.**
-`cuobjdump -res-usage` on the two `step.f90.o`, off the queue:
+**MECHANISM, from ncu (job 5163917, `run_ncu.sh KERNEL_RE=step_momentum`, both
+binaries on one node).** The predictor kernel:
 
-| | ref (`8fa0fc2`) | new (`329e03b`) |
+| | ref (`8fa0fc2`) | new (`b624d16`) |
 |---|---|---|
-| predictor kernel | **REG:128** STACK:0 LOCAL:0 | **REG:100** STACK:0 LOCAL:0 |
+| time | 15,226 us | **16,938 us (+11.2 %)** |
+| doubles/cell | 16.87 | 16.87 |
+| vs source-counted minimum | 1.05x | 1.05x |
+| ld / st sectors per request | 3.62 / 8.67 | 3.50 / 8.67 |
+| L2 hit | 68.14 % | 68.15 % |
+| **occupancy** | 23.76 % | **23.69 %** |
+| DRAM % of peak | 34.51 | **31.02** |
+| SM % of peak | 40.33 | **34.09** |
+| registers | 128 | **100** |
 
-Registers went DOWN by 28 on a kernel CLAUDE.md records as occupancy-limited at
-128 — so occupancy went UP and the step got SLOWER, which rules out the register
-story rather than confirming it. (The new kernel also picks up a
-`CONSTANT[2]:8` the old one lacks; unexplained.) This is exactly the case
-CLAUDE.md's own rule is about: check the register count, do not infer it from a
-step time — and here the register count says the opposite of the step time.
+Read it in this order:
 
-**Next step is ncu, not more reasoning**: `horeka/exchange/run_ncu.sh` with
-`KERNEL_RE=step_momentum` against both binaries, which is a single-node dev job.
-Until that runs, the honest statement is: unconditional skew corrections cost
-1.5 % in the predictor for a reason not yet known.
+1. **Traffic is byte-for-byte identical** — same doubles/cell, same ratio to the
+   source-counted minimum, same sectors per request, same L2 hit rate. It is not
+   memory, and it is not extra work.
+2. **Occupancy did not move** (23.76 → 23.69) even though registers fell 128 →
+   100. So the 28 freed registers bought NOTHING: this kernel's occupancy is
+   capped by something else (grid/block shape under `collapse(4)`), not by
+   registers. **That retracts the inference in the first version of this
+   section**, which read "registers down, therefore occupancy up" — occupancy
+   was never measured there, only assumed, and it was wrong.
+3. **Both utilisation axes FELL** — DRAM 34.51 → 31.02 % of peak, SM 40.33 →
+   34.09 % — while the time rose. Same bytes, same occupancy, less issued per
+   unit time: the kernel got MORE LATENCY-BOUND.
+
+So the compiler spent the freed registers badly. Removing the three `if (skew)`
+guards let it cut register pressure by 28, which gained no occupancy because
+occupancy is capped elsewhere, and the shorter live ranges lengthened dependency
+chains — which a kernel running 15 of 48 warps per SM cannot hide. The
+predictor was ALREADY the solver's occupancy-limited kernel; it had no slack to
+absorb this.
+
+**The cheap fix, not yet taken:** put the corrections back inside a condition
+the compiler cannot fold (a mapped logical that is always true), which restores
+the ref binary's 128-register schedule at the cost of one never-taken branch.
+That is a one-line change worth ~1.5 % of the step, and it needs its own
+before/after ncu plus the nofma suite — an optimisation increment, not a
+footnote to this campaign, so it was left for a session that can gate it.
+Recommended AGAINST: `-gpu=maxregcount`, which CLAUDE.md records as a TARGET
+rather than a cap — it raises every other kernel toward it.
 
 ## Finding 2 — the cross-config ratios barely moved
 
@@ -119,7 +146,5 @@ parity at 16 ranks on 09-17. Whether it still does is job 5163915's question.
   needs a pre-lockdown binary run BOTH ways, which is a different job and a
   different question — and the branch's own figure (~+3.4 % s/step) was measured
   on another case and machine, so it should not be carried over.
-* **WHY the predictor got 1.5 % slower.** Finding 1 localises it to that one
-  kernel, establishes that the arithmetic is unchanged, and eliminates the
-  register explanation (registers fell 128 → 100). It does not explain it. ncu
-  on `step_momentum` for both binaries is the next measurement.
+* Nothing on the predictor regression — Finding 1 now carries the ncu
+  measurement and the mechanism. What remains is to TAKE the fix and gate it.
