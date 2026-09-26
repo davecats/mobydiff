@@ -123,11 +123,24 @@ family as the A2 velocity-neutral `pn` drift already in CLAUDE.md.
 
 ## 5 — What is still on claude/jacobi-interface
 
-After this port: the `boostconv` module and its `[rans] boostconv*` keys, the
-`[rans] kpin_dwall` band, the naca LES kickoff (`tutorials/naca/LES`,
-`atzori.pdf`), the two BoostConv papers, and the C10/C11 analysis history
-(`docs/next_session_naca_re4e5.md` came over; the per-commit dossiers did not).
-**Do not delete that branch yet** — nothing here supersedes the LES kickoff.
+**THE BRANCH IS GONE (2026-09-26), archived as the tag
+`archive/claude-jacobi-interface`.** What it held that `main` does not, and why:
+
+* `src/modules/boostconv.f90`, `docs/next_session_boostconv.md` and the two
+  BoostConv papers — DROPPED on the branch's own evidence (see §0). Recoverable
+  from the tag if ever revisited; the fix it would need is to mask trip/pin cells
+  out of the packed state.
+* `[rans] kpin_dwall` — DROPPED; skew convection addressed the instability it
+  patched at its root.
+* `tutorials/naca/LES/STRATEGY.md` + `atzori.pdf` — SALVAGED into `main`. A plan
+  for work never started, superseded by nothing.
+* `validation/channel_interface/developed/gate6_skew_stats.png` — SALVAGED, and
+  it had to be: `docs/next_session_skew_convection.md`, which came over with the
+  port, cites it by name, so the reference was dangling until it did.
+* `validation/multilevel_body/make_uniform_twin.py` and
+  `validation/naca0012/xz_aoa{0,4,8}.ini` — deliberately removed from `main`
+  (the first superseded by `zero_coef.py`, the others by request), so their
+  absence there is the point, not a gap.
 
 ## 5b — The scalar convection form is now selectable, and UNMEASURED
 

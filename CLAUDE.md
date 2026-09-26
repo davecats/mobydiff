@@ -1834,8 +1834,14 @@ immersed boundary. Phased, each phase verified before the next:
   never looks at the scalar.** `les_ibm` is the one case not yet run.
   Also brought over: `tutorials/naca/rans` (the converged OpenFOAM comparison,
   C_L 0.5199 vs 0.5142, Cp_min matching to four digits) and the cv_forces /
-  skew / naca docs. `claude/jacobi-interface` is now down to the naca LES
-  kickoff, the boostconv module and the C10/C11 analysis history.
+  skew / naca docs. **`claude/jacobi-interface` was then DELETED (2026-09-26),
+  archived as the tag `archive/claude-jacobi-interface`** -- it was not contained
+  in main, so the tag is what keeps `boostconv.f90` and `kpin_dwall` recoverable.
+  Three things were salvaged into main first: `tutorials/naca/LES/STRATEGY.md` +
+  `atzori.pdf` (a plan nothing supersedes) and
+  `validation/channel_interface/developed/gate6_skew_stats.png`, which
+  `docs/next_session_skew_convection.md` cites BY NAME -- that reference was
+  dangling from the moment the doc came over until the figure followed it.
 - **Campaign re-measured on the consolidated head (2026-09-26, job 5163909,
   `results_horeka_2026-09-26.md`), and it found a REGRESSION the bit-exactness
   gates could not see.** Two columns, `ref` = `8fa0fc2` (the head the 09-25
