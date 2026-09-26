@@ -1,11 +1,11 @@
 #!/bin/bash
 #SBATCH --job-name=moby_matrix5
-#SBATCH --nodes=4
+#SBATCH --nodes=2
 #SBATCH --ntasks-per-node=4
 #SBATCH --cpus-per-task=19
 #SBATCH --gres=gpu:4
-#SBATCH --time=04:00:00
-#SBATCH --partition=accelerated
+#SBATCH --time=01:00:00
+#SBATCH --partition=dev_accelerated
 #SBATCH --account=hk-project-exasim
 #SBATCH --no-requeue
 #SBATCH --mail-type=END,FAIL
@@ -39,8 +39,19 @@
 # NEW FIRST: if the wall clock bites, the column that describes today's solver
 # survives and only the continuity comparison is lost.
 #
+# SPLIT ACROSS PARTITIONS, because `accelerated` was backlogged to 09-28/09-29
+# when this was submitted while `dev_accelerated` (2 nodes, 1 h) schedules
+# same-day. 2 nodes = 8 GPUs covers rank counts 1/2/4/8, which is where every
+# per-cell effect lives; the 16-rank column needs 4 nodes and is a separate
+# submission with RANKS_SMALL=16 RANKS_BIG=16 into the same results directory,
+# which works because run_matrix.sh skips any run whose run.log already exists.
+# Override RANKS_SMALL / RANKS_BIG to choose.
+#
 # RESUMABLE: run_matrix.sh skips any run whose run.log exists.
 set -uo pipefail
+RANKS_SMALL="${RANKS_SMALL:-1,2,4,8}"
+RANKS_BIG="${RANKS_BIG:-4,8}"
+export RANKS_SMALL RANKS_BIG
 
 CODE_DIR="${CODE_DIR:?}"; RUN_DIR="${RUN_DIR:?}"; REF_DIR="${REF_DIR:?}"
 LBL_REF="${LBL_REF:-ref}"; LBL_NEW="${LBL_NEW:-new}"
