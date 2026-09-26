@@ -1,0 +1,8 @@
+job    : 5163909
+date   : 2026-09-26 07:04:09 CEST
+nodes  : 2  (hkn[0401,0403])
+new    : 2a0ed47ff993a0bcd132b10715f9262cb201de88  (new, configs as shipped)
+ref    : 8fa0fc2c38982e13c0a64a7bf773bd5d043e03b0  (ref, configs + convection = skew)
+gpu    : NVIDIA A100-SXM4-40GB
+nsteps : 200
+layout : --map-by numa --bind-to core (as every earlier matrix)

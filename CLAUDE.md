@@ -1836,6 +1836,39 @@ immersed boundary. Phased, each phase verified before the next:
   C_L 0.5199 vs 0.5142, Cp_min matching to four digits) and the cv_forces /
   skew / naca docs. `claude/jacobi-interface` is now down to the naca LES
   kickoff, the boostconv module and the C10/C11 analysis history.
+- **Campaign re-measured on the consolidated head (2026-09-26, job 5163909,
+  `results_horeka_2026-09-26.md`), and it found a REGRESSION the bit-exactness
+  gates could not see.** Two columns, `ref` = `8fa0fc2` (the head the 09-25
+  campaign measured) and `new` = the consolidated head, ranks 1/2/4/8 on
+  `dev_accelerated` (16 ranks is job 5163915, still queued on the backlogged
+  `accelerated`; every inter-node figure in the 09-25 report is still the latest
+  there is).
+  **LOAD-BEARING SETUP:** all EIGHT campaign configs carried
+  `[flow] convection = skew`, which the S3 lockdown turned into an error stop --
+  every campaign config was unrunnable on the merged head. The key is stripped
+  now, and the ref column gets it back through a staged config copy, because
+  `config.f90` has no `case default`: the old binary would silently run
+  DIVERGENCE convection on a stripped config and the comparison would have
+  measured the convection change instead of the consolidation. So these numbers
+  EXCLUDE the cost of skew, deliberately.
+  **THE RATIOS SURVIVED**: block tax 1.010/1.032/1.025/0.996 at 1/2/4/8 (within
+  0.005 of published at every rank count), the 2:1 machinery 0.997x
+  coarse-cell-equivalents at 4 ranks and 0.979x at 8, red-black 0.883-0.937 of
+  Jacobi and still closing with rank count, strong scaling at 8 ranks base 90% /
+  rect 92% / refined 80% / red-black 76% / big 96%.
+  **THE REGRESSION: the consolidation costs 1.3-2.0% of the step on every config
+  and every rank count**, flat in rank count, and the phase tables put ALL of it
+  in the fused momentum predictor (+2.644 ms/step on `rect_jacobi` at 4 ranks,
+  against a +2.238 ms total -- the projection got 0.343 ms faster). It is NOT the
+  scalar merge's dormant code (the `scalar` bucket reads 0.0007 ms and that merge
+  does not touch the kernel); inside the kernel the only change is the lockdown
+  removing the three `if (skew)` guards, and both columns EXECUTE those
+  corrections, so the arithmetic is identical. **The register explanation is
+  measured FALSE**: `cuobjdump -res-usage` puts the predictor at 128 regs before
+  and **100 after**, so occupancy rose while the step slowed -- the one case
+  CLAUDE.md's own rule is written for, and here the register count contradicts
+  the step time. Mechanism OPEN; ncu on `step_momentum` for both binaries is the
+  next measurement, not more reasoning.
 
 ## Verification
 
