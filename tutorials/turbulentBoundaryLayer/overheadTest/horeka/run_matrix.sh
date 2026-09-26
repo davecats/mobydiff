@@ -17,7 +17,7 @@ set -uo pipefail
 EXE="${1:?usage: run_matrix.sh <exe> <results_dir>}"
 RES="${2:?usage: run_matrix.sh <exe> <results_dir>}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CFG="$HERE/configs"
+CFG="${CFG_DIR:-$HERE/configs}"
 
 # Rank counts to sweep. On HoreKa accelerated (4x A100 per node): 1/2/4 are
 # intra-node (NVLink P2P), 8 and 16 cross the interconnect. The 4 -> 8 step is
