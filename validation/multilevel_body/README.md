@@ -1,5 +1,26 @@
 # A3 INCREMENT 0 — multi-level (3-level) refine_body prerequisite gates
 
+> **SETUP REPAIRED 2026-09-26.** The prerequisites were built by `mobygrid` and
+> `tools/mobygeom.py block-table`; mobygrid was DELETED in the prepare/solve
+> split P3 and mobygeom's geometry subcommands retired there, and because `*.h5`
+> is gitignored neither coefficient file was ever committed — so BOTH gates here,
+> and `validation/scalar/uniform3.ini` which reads the twin, were unrunnable on
+> any checkout. `setup.sh` is now two `moby_prepare` runs plus `zero_coef.py`
+> (which replaces `make_uniform_twin.py`, deleted: prepare's `[blocks]
+> keep_buried` does the mask half, so the Python no longer has to rebuild the
+> leaf table and no longer imports mobygeom). It needs only the CPU build and
+> h5py — the geometry venv is no longer required.
+>
+> Verified after the repair: the real file reproduces the documented leaf
+> histogram exactly, `[224, 192, 496]` = 912 leaves (the twin has 928, the 16
+> buried leaves kept); the uniform gate is EXACT (0.000e+00 on un/vn/wn/pn and
+> the pn spread) and 1 == 4 ranks exactly; the per-level dwall gate PASSES at
+> 1.8e-15 / 4.4e-16 / 8.6e-14 against the independent prism reference. That
+> level-2 figure is larger than the 3.6e-15 recorded when the file came from
+> mobygeom, and the reason is benign: the distances now come from
+> `moby_prepare`'s BVH rather than mobygeom's igl call, and P1b measured those
+> two agreeing to 1.3e-10 on far bigger geometries.
+
 Levels > 1 were lightly exercised before the airfoil physics (les_ibm used
 levels 2 = l1 only): these gates run `mobygeom.py block-table --levels 3` +
 `refine_body` with `refine_levels = 2` on the committed cylinder geometry
