@@ -108,12 +108,18 @@ CFG_DIR="$STG/configs_skew" NSTEPS="${NSTEPS:-200}" bash "$STG/run_matrix.sh" "$
 python3 "$STG/collect_scaling.py" "$RES/ref" "$RES/new" > "$RES/scaling_consolidation.md" 2>&1 \
     && { echo; cat "$RES/scaling_consolidation.md"; } || echo "=== collector failed ==="
 
-echo "=== s/step, every run ==="
+# The STEP time comes from the `timing:` line. NOT `grep seconds_per_step |
+# tail -1`: [output] profile is on for these runs, so the profiler prints
+# `exch_timing: total_measured ... seconds_per_step` AFTER it, and the naive
+# grep reports the exchange bucket as the step. It did, on the first run of
+# this job -- base_jacobi came out at 2.0e-3 s/step, which would have been
+# 68 Tcell/s.
+echo "=== s/step, every run (from the timing: line) ==="
 for col in new ref; do
     for d in "$RES/$col"/*/; do
         [ -f "$d/run.log" ] || continue
         printf "  %-8s %-46s %s\n" "$col" "$(basename "$d")" \
-            "$(grep -oE 'seconds_per_step +[0-9.E+-]+' "$d/run.log" | tail -1 | awk '{print $2}')"
+            "$(awk '/^timing:/ {v=$NF} END {print v}' "$d/run.log")"
     done
 done
 echo "=== matrix5 finished $(date '+%F %T') ==="
