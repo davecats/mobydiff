@@ -619,6 +619,13 @@ expression moves (`compile.sh cpu_nofma/gpu_nofma`, `submit_nofma_gate.sh`).
 in a PROVENANCE file, as `~/s5c_ref_binaries/` was. Half an hour. Everything
 below compares against it.
 
+> **MEASURED (2026-09-27).** DONE. `~/numrev_ref_binaries/` cut from commit
+> `6db60ef` (clean tree, `git status` empty), nvhpc 25.9, on ISTM-io2:
+> `moby_solve`/`moby_prepare` × {cpu, gpu} × {production, nofma}, eight
+> binaries with md5s in the PROVENANCE file. It supersedes `~/s5c_ref_binaries`
+> for work on `main`, whose binaries predate the skew lockdown and the
+> `[scalar] convection` key and cannot run today's inis.
+
 **Step 1 — F3, Chebyshev `lmax` (experiment, no code).** On the boundary-layer
 case that produced the B0 instability (`tutorials/turbulentBoundaryLayer`,
 `accel = chebyshev`, `niter = 6` and `12`, `dtmax = 0.5`), run the default
