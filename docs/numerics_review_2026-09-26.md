@@ -521,7 +521,7 @@ order and the interface machinery caps the stencil.
 
 | # | severity | what | where |
 |---|---|---|---|
-| F2 | correctness (local, first order) | conjugate cut-face convective mask inconsistent with continuity in divergence mode; uniform scalar not preserved at fluid-node cut faces of curved bodies; CHT pipe tutorials run this mode | `scalar.f90:2969-2985`, `:3002-3009` |
+| F2 | correctness (local, first order) — **FIXED 2026-09-27** (section 10 step 2: conjugate scalars default to `advective`, explicit `divergence` refused; measured drift 4.1e-5 → 0.0; conservation gate re-baselined to the O(h) leak) | conjugate cut-face convective mask inconsistent with continuity in divergence mode; uniform scalar not preserved at fluid-node cut faces of curved bodies; CHT pipe tutorials ran this mode | `scalar.f90:2969-2985`, `:3002-3009` |
 | F3 | ~~stability (likely the B0 outlet instability)~~ **RETRACTED 2026-09-27 as a cause** (section 10 step 1: the B0 instability reproduces on the B0-era binary with e-fold 33–37 t.u. and `lmax = 2.2` grows FASTER, 27–32 t.u.; `main` is stable at niter 6 with either bound). What stands is the polynomial fact: the auto `lmax` leaves λ = 2 undamped (\|P₁₂(2)\| = 0.99 vs 0.48 at 2.2), a property of the smoother with no measured consequence. No code change. | `pressure_solver.f90:185` |
 | F4 | consistency (SPD lost at one row) | Neumann normal-velocity faces rewritten inside the projection loop; used by the sailplane outflow | `boundary.f90:686-696`, `pressure_solver.f90:326`, `tutorials/sailplane/input.ini:66` |
 | F1 | consistency/conservation on stretched grids | molecular viscous term non-conservative in cell-centred directions; inconsistent with SGS and scalar diffusion; non-symmetric | `init.f90:592-598` |
@@ -697,6 +697,53 @@ non-conjugate changes); C1–C3 re-run, expecting ONE gate to move — the
 is the same quantity the divergence form put into the field. Finally re-run
 the pipe Nusselt comparison against the Neuhauser reduction. One to two
 sessions, the pipe run on a remote GPU.
+
+> **MEASURED (2026-09-27). PREDICTION CONFIRMED in kind; default changed.**
+> (a) Test on `validation/conjugate/wavy.ini` (the oblique analytic wavy wall,
+> 32×32×8, Re 100, `forcing_x = 1`, conjugate κ_s = 5, C_s = 2) with
+> `initial = solid_init = 1.0`, 1000 steps of `dt = 2e-4` from rest, CPU.
+> `max|θ − 1|` over the 256 FLUID CUT cells (centre in the fluid, ≥ 1 of 6
+> neighbour centres in the solid, analytic marker): **divergence 4.09e-5
+> (rms 1.35e-5), skew 2.05e-5 (exactly half), advective 0.0** — and 0.0 over
+> every fluid and solid cell. The divergence-form drift grows with the
+> spin-up (2.0e-5 / 2.9e-5 / 3.5e-5 / 4.1e-5 at steps 250 … 1000 while
+> max|u| = 0.053 / 0.106 / 0.157 / 0.204), i.e. ∝ the cut-face velocity as
+> the mechanism says. The review's "O(1e-2)" was sized for a developed DNS
+> thermal layer at h⁺ ≈ 1–2; the qualitative prediction (drift in divergence,
+> round-off in advective, half in skew) is what was tested and it holds.
+> (b) `scalar.f90`: `convSet` records whether `[scalar] convection` was
+> written; `validate_conjugate_config` resolves an UNSET key to advective
+> when any scalar is conjugate (printed at init), refuses an explicit
+> `divergence` with a message naming F2, and warns on explicit `skew`.
+> Non-conjugate scalars keep the divergence default (early return).
+> Verified: the key-less wavy run prints the resolution and is
+> `max_abs 0` (un/vn/wn/pn/theta) against the explicit-advective run;
+> explicit divergence exits 1 with the F2 message. No ini in the tree sets
+> the key on a conjugate case (every CHT tutorial and conjugate gate now
+> runs advective).
+> (c) Gates vs step 0 (`~/numrev_ref_binaries`, nofma): 9-case scalar suite
+> **9/9 max_abs 0 CPU and 9/9 GPU**; 7-case suite **7/7 max_abs 0 CPU**
+> (`turbles`/`turbslab`/`detles`/`les_ibm_refine` needed their generated
+> inputs linked from `mobydiff.scalar`/`mobydiff.bl`; not committed).
+> C1: exactly ONE gate moved, as predicted — the insulated-box `Σ C θ dV`
+> drift **1.22e-16 → 2.235e-11 relative** (1.286e-12 absolute, 100 steps),
+> the advective cut-cell leak; re-baselined as a leak-magnitude band
+> (`--tolerance 1e-9`, README (3) rewritten, `run_gates_c1.sh` comment).
+> All other C1 groups PASS incl. determinism 1 == 4 ranks / CPU == GPU at
+> tolerance 0. C2 **all PASS** (75 PASS lines, 0 FAIL, 42 min), C3 **all
+> PASS** (15/0, 13 min) — their gates are diffusion-only fixed points or
+> flow-on budgets that already carried the leak, so nothing else moved.
+> (d) Pipe Nusselt comparison: leg D of the 2026-09-20 campaign re-launched
+> on istmcorax (RTX 5090) at 17:10 from the SAME settled state
+> (`p_pr_settle2_30000.h5`, found with the whole campaign in
+> `mobydiff.scalar/validation/conjugate/`) and the SAME ini (168 000 steps,
+> `niter = 6` Chebyshev — kept so the binary is the ONLY change; the niter-12
+> re-measurement belongs to the one-by-one pass), new binary
+> `build_gpu_corax`, run dir `~/pipe_rerun_f2/` (`p_f2_stat.*`); log confirms
+> "resolved to advective". 0.59 s/step → ~27 h; **RESULT PENDING** — when it
+> ends: `pipe_stats.py` + `asset/compare_neuhauser.py thermal` against
+> `p_pr_statsD.npz`/the Neuhauser reduction, then update
+> `tutorials/cht/pipe/asset/` and its report.
 
 **Step 3 — F4, Neumann normal velocity.** (a) `tutorials/sailplane/input.ini`:
 replace the `x_max_{u,v,w}_type = neumann` rows by `x_max_patch = outlet`

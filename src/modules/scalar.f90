@@ -146,6 +146,14 @@ module scalar
         ! divergence form, so which form is best for a scalar is open -- see
         ! docs/next_session_port_finish.md.
         integer(C_INT) :: convMode = SC_CONV_DIV
+        ! Was [scalar] convection written in the ini? A conjugate scalar
+        ! resolves an UNSET key to advective (review finding F2, 2026-09-27):
+        ! the cut-face convective mask drops a genuine fluid flux at fluid-
+        ! centred cut faces, and only the advective form -- whose divergence
+        ! is built from the SAME masked velocities -- keeps a uniform scalar
+        ! uniform there (measured: drift exactly 0.0 vs 4.1e-5 in divergence
+        ! form on validation/conjugate/wavy.ini, 1000 steps, flow spinning up).
+        logical :: convSet = .false.
         ! Per-scalar configuration (all sized n; host + device).
         real(C_DOUBLE), allocatable :: pr(:), prt(:)
         integer(C_INT), allocatable :: prtModel(:)
@@ -953,6 +961,7 @@ contains
         if (index == 0) then
             select case (trim(key))
             case ("convection")
+                sc%convSet = .true.
                 select case (trim(value))
                 case ("divergence", "div", "")
                     sc%convMode = SC_CONV_DIV
@@ -1413,6 +1422,34 @@ contains
         sc%nTangential = int(nTang, C_INT)
         sc%nBanded = int(nBand, C_INT)
         if (nConj == 0) return
+
+        ! The convective form (review finding F2, 2026-09-27). In conjugate
+        ! mode convection is hard-masked on every cut face, including the
+        ! fluid-centred ones that carry a real fluid velocity, so the five
+        ! remaining fluxes of a fluid cut cell do not sum to zero: in
+        ! divergence form a UNIFORM scalar drifts there at the rate
+        ! s*u_face/h (skew halves it). Only the advective form, whose
+        ! div(u) is built from the same masked velocities, preserves it
+        ! exactly, and the same quantity then appears as the conservation
+        ! defect a cut cell honestly has. So an unset key resolves to
+        ! advective, and an explicit divergence is refused rather than run
+        ! silently wrong. Non-conjugate scalars keep the divergence default
+        ! (the early return above), which is their gated behaviour.
+        if (.not. sc%convSet) then
+            sc%convMode = SC_CONV_ADV
+            if (terminal) print *, " [scalar] convection unset with a conjugate scalar:", &
+                " resolved to advective (review finding F2)"
+        else if (sc%convMode == SC_CONV_DIV) then
+            if (terminal) print *, "error: [scalar] convection = divergence with", &
+                " ibm_wall = conjugate: the masked cut-face flux makes a uniform", &
+                " scalar drift in every fluid cut cell (numerics review F2)."
+            if (terminal) print *, "   Use convection = advective (the conjugate default", &
+                " when the key is absent)."
+            error stop "[scalar] convection = divergence with a conjugate scalar"
+        else if (sc%convMode == SC_CONV_SKEW .and. terminal) then
+            print *, " warning: [scalar] convection = skew with a conjugate scalar", &
+                " leaves half of the F2 cut-cell drift; advective removes it"
+        end if
 
         if (.not. dns%ibm_enabled) then
             if (terminal) print *, "error: [scalar.N] ibm_wall = conjugate needs an", &

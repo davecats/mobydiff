@@ -295,7 +295,7 @@ runs; `[turbulence] model = rans|iddes` additionally advances k/ω.
 | `[scalar]` key | Type | Default | Meaning |
 |-----|------|---------|---------|
 | `count` | int | number of `[scalar.N]` sections | Number of scalars (must match the sections if given). |
-| `convection` | enum | `divergence` | `divergence` (conservative), `skew`, or `advective` (preserves a uniform scalar for any velocity field). |
+| `convection` | enum | `divergence` (`advective` when any scalar is `conjugate`) | `divergence` (conservative), `skew`, or `advective` (preserves a uniform scalar for any velocity field). With an `ibm_wall = conjugate` scalar an unset key resolves to `advective` and an explicit `divergence` is a hard error: the masked cut-face flux makes a uniform scalar drift in fluid cut cells under the divergence form (numerics review F2, 2026-09-27). |
 | `stats_sample_interval`, `stats_write_interval` | int | off | In-solver scalar statistics. |
 | `stats_file` | string | — | Statistics output (read with `tools/scalar_stats.py`). |
 | `stats_layout` | enum | `profile` | `profile` (wall-normal rows, per level) or `plane` (x-y plane, z-averaged). |

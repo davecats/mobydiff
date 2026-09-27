@@ -169,17 +169,34 @@ solid has `α_s = κ_s` and equilibrates over `t ~ L²/α_s = 6e3`, so a
 7× the closed form and the rate read 0.58 instead of 1. The physics was
 right; the run simply was not steady.
 
-### (3) conservation — **PASS**
+### (3) conservation — **PASS (re-baselined 2026-09-27, review F2)**
 
 Insulated composite box on the oblique wavy wall, flow ON (so the masked
 convective flux is part of the statement), step initial condition (fluid 1,
 solid 0). The capacity map in the checker is the analytic wavy wall, so it is
-independent of the solver's own marker:
+independent of the solver's own marker.
+
+**What changed.** Since `docs/numerics_review_2026-09-26.md` section 10 step 2
+a conjugate scalar runs the **advective** convective form by default (an
+unset `[scalar] convection` resolves to it; an explicit `divergence` is a
+config error). The cut-face convective mask drops a genuine fluid flux at
+fluid-centred cut faces, so in divergence form a UNIFORM scalar drifted in
+every fluid cut cell (measured on this very case with `θ ≡ 1`, 1000 steps:
+max drift 4.09e-5 divergence, 2.05e-5 skew, **0.0** advective). The
+advective form keeps the uniform scalar exactly and puts the same quantity
+— the cut-cell leak `s·u_face·A` — into the conservation sum instead, which
+is the honest place for it. This gate is therefore no longer a round-off
+gate but a **leak-magnitude band** (`--tolerance 1e-9` relative):
 
 ```
-sum(C theta dV):  5.7128906250000007e-02 -> 5.7128906250000000e-02
-drift = -6.94e-18    relative = 1.22e-16      (100 steps)
+sum(C theta dV):  5.7128906250000007e-02 -> 5.7128906238e-02
+drift = 1.286e-12    relative = 2.235e-11      (100 steps, 2026-09-27)
+   (was  -6.94e-18 / 1.22e-16 in divergence form, C1 2026-08-27)
 ```
+
+The leak scales with the cut-face velocity, which is still spinning up from
+rest over these 100 steps; a return to ~1e-16 here would mean the
+divergence form had come back, not that conservation had improved.
 
 ### (3b) config guards — **PASS** (5/5 rejected)
 

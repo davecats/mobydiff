@@ -291,15 +291,24 @@ fi
 
 # --- (3) conservation ------------------------------------------------------
 # Insulated composite box on the OBLIQUE analytic wavy wall, with the flow on
-# so the masked convective flux is part of the statement. sum(C theta dV)
-# must be conserved to round-off; the reference capacity map is the analytic
-# wavy wall, so it is independent of the solver's own marker.
+# so the masked convective flux is part of the statement. The reference
+# capacity map is the analytic wavy wall, so it is independent of the
+# solver's own marker.
+# RE-BASELINED 2026-09-27 (numerics review F2, section 10 step 2): a
+# conjugate scalar now runs the ADVECTIVE convective form, which preserves a
+# uniform scalar at the masked cut faces exactly and, in exchange, gives up
+# exact conservation there -- the sum drifts by the cut-cell leak
+# s*u_face*A that the divergence form used to put INTO the field instead.
+# Measured on this case: relative drift 2.235e-11 over these 100 steps
+# (flow still spinning up), against 1.22e-16 before. The tolerance below is
+# therefore a LEAK-MAGNITUDE band, not a round-off gate; a return to 1e-16
+# would mean the divergence form came back.
 if want conserve; then
-    echo "== (3) sum(C theta dV) conserved in an insulated composite box"
+    echo "== (3) sum(C theta dV): the advective cut-cell leak stays small in an insulated composite box"
     run mpirun -n "$RANKS" "$BIN" $WAVY > wavy.log 2>&1
     if [ $? -ne 0 ]; then tail -20 wavy.log; report 1; else
         run $PY ./check_conjugate.py conserve wavy_100.h5 wavy_200.h5 \
-            --capacity 2.0 --wavy
+            --capacity 2.0 --wavy --tolerance 1e-9
         [ $? -eq 0 ] || status=1
     fi
 fi
