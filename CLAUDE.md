@@ -1920,6 +1920,20 @@ immersed boundary. Phased, each phase verified before the next:
   re-measurement campaign now. Inputs the long cases need (KMM180 restart,
   campaign snapshots) live in the sibling checkouts mobydiff.scalar /
   mobydiff.bl; zero `pn` when restarting a niter-6 snapshot.
+  **The code analysis is `docs/numerics_review_2026-09-26.md`** (findings
+  F1-F9, ranked, with the suggested order of work in its section 9). One
+  item is already a PLAN ENTRY there (2026-09-27): **F1, the flux-form
+  viscous stencil** -- `slice_grid_direction` uses the Taylor three-point
+  `2/(hm(hm+hp))` weights for every variable, which is the conservative
+  flux form only where the point is the midpoint of its control volume,
+  i.e. a component's face-staggered direction; in its cell-centred
+  directions that holds on `uniform` lines only, so on every stretched line
+  the molecular viscous term is non-conservative, non-symmetric and
+  inconsistent with the (flux-form) SGS and scalar diffusion (KMM180 natural
+  line: first-cell weight 0.913x the flux weight, 3.2 % asymmetry). The fix
+  is one formula, `lapM = d1/hm, lapP = d1/hp`; it is a numerics change
+  (truncation-level moves on stretched cases) and is scheduled with the
+  implicit-diffusion work or the stretched-case re-validation, not alone.
 
 ## Verification
 

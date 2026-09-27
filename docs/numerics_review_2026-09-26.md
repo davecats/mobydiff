@@ -1,0 +1,753 @@
+# Numerics review (2026-09-26, head `6f2c6c1`)
+
+Scope: the momentum predictor, the passive-scalar transport (including the
+conjugate branch), the pressure projection, the physical boundary conditions,
+and the prepare/solve split. The RANS/LES/IDDES kernels were read only where
+the momentum or scalar path calls them. Files read in full: `moby_solve.f90`,
+`moby_prepare.f90`, `step.f90`, `pressure_solver.f90`, `boundary.f90`, the
+transport half of `scalar.f90`, the metric builders in `init.f90` /
+`blocks.f90`, the exchange API of `comm.f90`, `update_ibm_mu` /
+`set_ibm_coeff` in `ibm.f90`, `docs/numerical-methods.md`,
+`docs/prepare_solve_strategy.md`, `docs/conjugate/conjugate_ibm.tex` and the
+STATUS header of `docs/next_session_conjugate.md`. Nothing was run except two
+small Python checks (appendix). Every "should" below is a recommendation, not
+a change; nothing in the tree was modified.
+
+The nine questions are answered in order. Section 9 collects the findings
+ranked by how much they matter, with the file and line of each.
+
+---
+
+## 1. Should `moby_prepare` do ALL preprocessing and `moby_solve` only solve?
+
+**Yes, and the code is closer to that than it looks.** Today the solver still
+has three init paths (`moby_solve.f90:94-120`): analytic `refine_body` (classify
+inline), analytic `remove_solid` (classify inline), and plain. The file path
+(`[ibm] coeff_file`) *also* rebuilds the leaf table from the masks and
+cross-checks the file row by row (`read_ibm_coeff_file`, `ibm.f90:420`;
+`check_block_table` in `field_hdf5.c`). And `moby_prepare` refuses two things
+the solver accepts: a body-free case and an unset `[blocks] nb`
+(`moby_prepare.f90:90-93`). So there are two grid/leaf-table builders in the
+solve path (ini-driven and file-driven) plus a cross-check whose only purpose is
+to guard the redundancy.
+
+What "prepare does everything" would look like:
+
+- **The case file becomes the single source of truth for the grid and the leaf
+  table**: node lines per level, the leaf table (`blocks`), face kinds, the
+  masks (kept only for diagnostics), and, when there is a body, the
+  coefficient / `dwall` tiles. The solver reads the table and never rebuilds
+  it; the `[grid]`/`[blocks]` ini keys become prepare inputs. The restart
+  cross-check then compares two files that were both written by the code, not a
+  file against an ini-derived rebuild.
+- **Prepare loses its two refusals**: body-free cases produce a case file with
+  no coefficient datasets; `nb` becomes mandatory (the one-block-per-rank
+  layout `DIST_RANKBOX` disappears with it, which also removes the "nothing to
+  narrow" caveat of `rdenomBlocks` and one whole branch of `build_block_metrics`).
+- **What must stay in the solver** because it depends on the rank count:
+  the Z-order split, the exchange entries (`init_block_exchange`), the boundary
+  point lists, the projection's static metric tables, the device maps. All of
+  these are cheap and rank-local.
+- **Load balancing fits this split cleanly**: prepare knows the geometry, so it
+  can write one *weight per leaf* (body block: `rdenom` recomputed every
+  substage; cut cells: the 3× conjugate rate; trip blocks; refined blocks cost
+  the interface kernels) without knowing the rank count. The solver replaces
+  the closed-form `zorder_start/count` by a weighted prefix sum over the same
+  Morton order. Results stay rank-count independent because the split only
+  moves work, never arithmetic. Autotuning (`nb`, GPU mapping) is a separate
+  axis and already lives in `tools/moby_tune.sh`.
+
+Costs and risks:
+
+- Every run needs a prepare step. For a channel that is seconds; a
+  `moby_solve --prepare-if-missing` convenience (case file absent or its
+  stored ini-hash stale) keeps the tutorials one-command.
+- The analytic IBM coefficients are computed on the device in the solver and on
+  the host in prepare (libm ulps). CLAUDE.md already declares the CPU prepare
+  canonical; making it the only path retires the GPU `set_ibm_coeff` kernel and
+  one bit-exactness reference moves once.
+- The 7-case suite's inline analytic cases (wavy walls, Beltrami) become
+  prepare+solve pairs; the P0 gates already prove they are bit-exact either way.
+
+Net: roughly −300 lines in `moby_solve.f90`/`ibm.f90`/`blocks.f90` (the inline
+classify dispatch, the legacy coefficient-file reader, the rank-box layout, the
+leaf-table cross-check), one fewer concept ("which of three init paths am I
+on"), and a natural home for load balancing. I would do it.
+
+---
+
+## 2. Correctness of the momentum, scalar and pressure equations
+
+### 2.1 Momentum (`step.f90:130-399`)
+
+**Time integration.** `rk_alpha/beta/gamma` (`step.f90:28-30`) are the Wray /
+Spalart-Moser-Rogers low-storage RK3: α = (8/15, 5/12, 3/4), β = (0, −17/60,
+−5/12), γ = α+β = (8/15, 2/15, 1/3). Correct. The predictor uses the *old*
+pressure gradient scaled by `dt_gamma` and the projection uses `dt_gamma`
+(`pressure_solver.f90:656`), i.e. the incremental (Le & Moin) form. Correct.
+
+**Convection.** Divergence form on pair sums (arithmetic means), with the
+skew correction `+0.25 u_i (Σ pair-sum differences)` (`step.f90:241-247`).
+Checked: the pair-sum difference is 2× the stencil divergence at the u point,
+so `0.25·u·2·div = ½ u div u`, and `div − ½ u div u = ½(div + adv)`. The
+interpolations are exact at the cell centre and first-order at a stretched
+face (the face is not the midpoint of two centres); that is the standard
+choice that preserves skew symmetry on non-uniform grids (Morinishi's
+non-uniform weights are not used, and the residual is documented). Correct as
+a second-order energy-neutral scheme.
+
+**Pressure gradient / divergence.** `d1x(i,VAR_U) = 1/(x_c(i) − x_c(i−1))`
+and `d1x(i,VAR_P) = 1/(x_f(i+1) − x_f(i))` (`init.f90:585-590`). The
+projection operator `D·diag(mu)·G` is then self-adjoint in the cell-volume
+inner product. Correct and SPD.
+
+**Diffusion — finding F1 (`init.f90:592-598`).** The three-point stencil
+`lapM = 2/(hm(hm+hp))`, `lapP = 2/(hp(hm+hp))` is used for every variable in
+every direction. For the *face-staggered* direction of a component (u in x) it
+is exactly the conservative flux form, because the centre-to-centre distance
+is (hm+hp)/2. For the *cell-centred* directions (u in y and z) it is **not**:
+the conservative form is `lapP = 1/(hp·Δy_j)`, and `Δy_j ≠ (hm+hp)/2` on a
+stretched line (geometric ratio r: they differ by (r−1)²/4r). Consequences:
+
+- the molecular viscous term is not discretely conservative on stretched
+  grids: the wall-normal momentum balance does not telescope to the two wall
+  stresses; the SGS correction (`step.f90:508-511`, flux form on
+  `turb%inv_dy`) and the scalar diffusion (flux form on `sc%invDy`) *are*
+  conservative, so the three diffusion operators are mutually inconsistent;
+- the operator is not symmetric, which matters the day diffusion goes implicit
+  (section 7): a Jacobi/Chebyshev solve needs the SPD flux form.
+
+Truncation order is unaffected on smoothly stretched lines (the difference is
+O(h·dh)). The fix is two lines in `slice_grid_direction` and changes results
+at the truncation level on every stretched case (the channels), so it needs
+its own re-validation, not a bit-exactness gate.
+
+**IBM penalization.** `qs *= mu` after the whole substage increment including
+the pressure term (`step.f90:252-253`), and the projection correction is
+`× mu` on every face (`pressure_solver.f90:704-711`). Inside the body
+(mu → 1e-30) the velocity stays zero; in a graded cut cell the *whole* substage
+update is penalized, which is consistent. `oldrhs` stores the unpenalized RHS,
+so the scheme is Luchini's centre-weight correction integrated with implicit
+Euler on the λ term instead of his exact factor B(λΔt). Stable for any Δt, but
+first order in time at cut cells — this is the `TODO` at the top of
+`moby_solve.f90`. Upgrading to the exact factor is two coefficients instead of
+one: `qs = (B·q + Δ)/(λΔt + B)` with `B = λΔt/(e^{λΔt} − 1)`; solid cells
+(B → 0) still give exactly zero. Cheap and worth doing (finding F7).
+
+**Time-step limiter (`step.f90:695-709`).** `cflmax` is compared against the
+*maximum* single-component CFL, not the sum over directions. RK3 with
+second-order central convection is stable for `Σ_d CFL_d ≤ √3`; the tutorials
+run `cflmax = 0.8`, so the safety margin is real only while one direction
+dominates (channels, boundary layers). Near a stagnation region or a nose,
+where two components are comparable, the sum can reach 1.6. Not a bug, but
+`cflmax` should be documented as a per-direction number, or the limiter
+should use the sum (finding F8).
+
+### 2.2 Passive scalar (`scalar.f90:2772-3368`)
+
+Called before `momentum` with the start-of-substage velocity and this
+substage's `nut` — the right choice, and the reasoning in the caller
+(`moby_solve.f90:364-378`) is correct. RK3 memory (`oldrhs`) is the momentum's
+scheme verbatim. Convection: divergence form on the six face velocities with
+arithmetic-mean face values; the optional `skew`/`advective` subtraction uses
+the same pair sums. Diffusion: flux form on `invDx`, the face diffusivity
+`1/(Re Pr) + ½(ν_t,L + ν_t,R)/Pr_t`. IBM dirichlet mode: the same implicit
+`mu_s` as momentum with `coef_p/Pr`, which is the scalar's own Luchini λ
+because the stored coefficient carries 1/Re. All correct.
+
+One design asymmetry worth stating: the momentum was moved to skew form
+because divergence form is energy-neutral only for a *discretely*
+divergence-free advecting field, which a 12-iteration projection never
+delivers. The scalar default (`convMode = SC_CONV_DIV`, `scalar.f90:148`) is
+the form the momentum team found unstable at 2:1 interfaces. It has been
+gated in the refined scalar cases (`ibmwavyr`) and it is conservative, so this
+is a documented trade, not a defect — except in the conjugate mode, where it
+interacts with the cut-face masking (section 5, finding F2).
+
+### 2.3 Pressure projection (`pressure_solver.f90:213-344`)
+
+Each iteration: residual `phi = −ω div(q)/denom`, optional Chebyshev combine,
+phi halo exchange (interface-row restrict), `p += phi/dt_γ`, `q_face +=
+(phi_L − phi_R)·d1f·mu`, then a halo refresh. The velocity is corrected
+every iteration, so the divergence of the *current* velocity is the residual:
+errors do not accumulate across steps (the projection is self-correcting),
+which is what makes a fixed small `niter` viable. The operator is
+`D diag(mu) G` with `G = −Dᵀ` in the volume inner product, including the
+outlet pair (2·d1f in the diagonal, d1f against the mirrored ghost) and the
+2:1 composite (2/3, 4/3) metrics. SPD as claimed.
+
+**Chebyshev recurrence.** `alpha/beta/gamma` (`pressure_solver.f90:300-311`)
+are Saad's Algorithm 12.1 with `α = 2ρ/δ`: verified term by term. Correct.
+
+**Chebyshev bounds — finding F3 (`pressure_solver.f90:185-189`).** `lmax` is
+set to the Gershgorin bound 2.0 *exactly*, and the checkerboard mode of the
+Jacobi-preconditioned Poisson operator attains λ = 2 exactly on a uniform
+periodic grid. The Chebyshev residual polynomial satisfies |T_k(−1)| = 1, so
+`|P_k(2)| = 1/T_k(d/c) ≈ 1/(1 + k²·lmin)`. Computed for N = 288:
+
+| bounds | k | \|P(2)\| | \|P(1.9)\| | \|P(10·lmin)\| |
+|---|---|---|---|---|
+| lmin auto, lmax = 2.0 | 12 | 0.989 | 0.637 | 0.889 |
+| lmin auto, lmax = 2.2 | 12 | 0.477 | 0.093 | 0.899 |
+| plain Jacobi ω = 0.8 | 12 | 0.002 | 0.007 | ≈1.000 |
+
+So the Chebyshev projection as configured **does not damp the 2-Δx divergence
+mode at all**; it relies on physical viscosity to remove it. That is stable
+in periodic channels (the mode is not excited there) and it is exactly the
+class of failure recorded for the boundary layer: "chebyshev + niter 6 +
+Dirichlet-p outlet + dt ~ 0.5 unstable, 2-Δx pressure mode, plain Jacobi
+niter 6 stable" (CLAUDE.md, B0). The standard remedy is `lmax = 1.1 × bound`
+(what every multigrid Chebyshev smoother does), or one damped-Jacobi sweep
+appended to the polynomial. This is a one-line config experiment
+(`cheb_lmax = 2.2`) on the B0 case before any code changes. I rate the causal
+link as likely but untested.
+
+The table also says something about what 12 Chebyshev iterations buy: the
+smooth modes are reduced by ~1 % per iteration (|P| ≈ 0.89–0.99 for λ ≤
+10·lmin) — the projection is a smoother, not a solver, at any `niter` a
+production run can afford. The residual divergence that the skew form was
+introduced to tolerate is therefore permanent by design. The block structure
+makes a two-level geometric multigrid (coarse level = each leaf at nb/2; the
+2:1 restrict/prolong entries already exist in `comm.f90`) the natural next
+step if the projection is ever to converge rather than smooth. That is a
+project, not a fix; noted here because it bounds what every other pressure
+tweak can achieve.
+
+---
+
+## 3. Boundary conditions: per RK stage, per projection iteration?
+
+**Per RK stage: required.** The tangential ghost (`ghost = 2v − interior`)
+and the pressure ghost are functions of the interior, and the interior changes
+every substage. With time-independent boundary data (every current case) the
+value written is the same; with time-dependent inlets the predictor should
+see the data at the substage time. Applying the end-of-step BC to the
+intermediate velocity `u*` is the standard incremental-projection choice and
+costs O(Δt) in the wall tangential slip; second order overall.
+
+**Per projection iteration (`pressure_solver.f90:326`, `:1021`): not needed
+for any consistent face kind.** Inside the loop the only consumer of halo or
+ghost data is the divergence, which reads the cell's own six faces (indices
+1..nb+1) and the `+axis` normal-component halo that `sync_divergence_halos`
+refreshes. Going through `apply_bc` (`boundary.f90:670-720`) face kind by face
+kind:
+
+| face kind inside the loop | what `apply_bc` writes | read by the loop? |
+|---|---|---|
+| Dirichlet normal velocity (wall, inlet) | the same pinned face value | no change (idempotent) |
+| outlet normal velocity (BC_OUTFLOW) | skipped (`ofc = 0`) | — |
+| tangential Dirichlet/Neumann ghosts | refreshed from the corrected interior | no (momentum reads them next substage) |
+| pressure ghosts | copy / mirror of interior | no (the predictor never reads a physical p ghost: `momentum_face_start` skips the wall face, the outlet high face is not predicted) |
+| **Neumann NORMAL velocity** (`boundary.f90:686-696`) | `q(nb+1) = q(nb) + dn·value` | **yes: it changes the last cell's divergence** |
+
+So the per-iteration call is dead work for every face kind except the last
+row, and the last row is a **consistency defect (finding F4)**: with the
+normal face copied from the interior face every iteration, the last cell's
+x-faces move together, its divergence does not respond to its own `phi`
+(true diagonal 0 in that direction while `compute_rdenom` counts `d1f·mu`),
+and the coupling to the neighbouring cell is one-sided. The projection
+operator is then not symmetric at that row, which is what neither the
+Chebyshev bounds nor the SPD argument cover. The only ini using it is
+`tutorials/sailplane/input.ini:66` (`x_max_u_type = neumann`, with Neumann p
+everywhere — the legacy "leaky outflow"); it runs red-black at `niter = 20`,
+which tolerates it. The A0 outlet patch (`x_max_patch = outlet`) is the
+consistent replacement and should be adopted there; after that, a Neumann
+type on a normal velocity component should be a config error, or be honoured
+only in the `outflow_copy` call.
+
+Once F4 is closed, `apply_bc` can leave the projection loop entirely: one
+call after the last `jacobi_apply`, before the final full exchange (the
+exchange's tangential extension copies a neighbour's ghosts into edge halos,
+so the BC write must precede it — that ordering is already what the loop
+does). That removes `(niter − 1)` launches per substage — 33 per step at
+`niter = 12`, i.e. roughly the 4 % `projection_bc` bucket. Same for the
+red-black path (per colour).
+
+---
+
+## 4. A unified ghost approach with BC "providers"
+
+The exchange already *is* a provider model: every halo point is a weighted
+gather from source rows given by per-dimension affine maps
+(`entry_gather_map`, `comm.f90:1052`), and the same kernel serves same-level
+copies, restrictions, prolongations and the blended pressure ghost. A physical
+boundary ghost is a degenerate case of exactly that map: one source (the
+interior cell, `ga = −1` reflected index or `ga = 1`), one weight (−1 for
+Dirichlet-mirror, +1 for Neumann/copy) and a per-point constant (`2·value`
+or `dn·value`). The gather kernel has weights (`lWp`) but no constant term, so
+the change is: one constant array indexed by point, filled from
+`pointBcValue`. Then:
+
+- `apply_bc`, `apply_scalar_bc` and `apply_scalar_bc_q` collapse into entries
+  (three kernels and two point-list formats become zero kernels and one
+  format); `bc%pointFace/slot/i/j/k` become ordinary entry boxes;
+- corner and edge ghosts at physical faces are defined by construction (today
+  they come from the neighbour block's `apply_bc`'d ghost through the
+  tangential extension, which is correct but only because of call ordering);
+- the divergence round, the copy-only round and the full round each pick the
+  entries they need, so the BC "cost" follows the same prefix/compaction
+  logic as everything else, and the ordering hazard of section 3 disappears.
+
+What cannot be a ghost: the **normal velocity on a physical face** is a face
+DOF on the boundary, not a halo cell. Two facts make it cheap anyway: (a) the
+predictor and the projection never write a pinned face, so a Dirichlet normal
+value needs to be written once — at init, restart, or when its value changes
+— and not every substage; (b) the outlet face is corrected by the projection
+and copied once per substage by `outflow_copy`. So the face writes reduce to
+one tiny kernel per substage for outflow faces only.
+
+Would it be faster? Marginally: it removes ~40 launches per step at `niter =
+12` (the 3–4 % BC buckets) and puts the BC points into kernels that run
+anyway. The real gain is one abstraction instead of three and a corner
+treatment that is right by construction. I would do it after the F4 fix and
+after the projection-loop `apply_bc` is gone, in that order, so each step is
+gated bit-exact.
+
+---
+
+## 5. The conjugate heat transfer treatment
+
+**The scheme is sound where it is one-dimensional, and the design note is
+honest about the rest.** The single face coefficient `dm/(w/κ_L +
+(1−w)/κ_R + R_c·dm/h)` on `w = φ_L/(φ_L − φ_R)` is the Patankar series
+resistance; it enforces temperature and flux continuity by construction,
+reduces to Luchini's centre-weight correction as κ_s → ∞ and to zero flux as
+κ_s → 0, and the obliquity lemma (both perpendicular distances shortened by
+the same cosine) is exact for a plane and O(h·curvature) otherwise. The C3
+fluid-fraction capacity `f + (1−f)C_s` with a plane reconstruction from ∇φ is
+the correct volume average and is what makes transients second order (gated
+1.99/2.00 against a 1.71/1.09 control). Conservation to round-off follows
+from writing everything as face fluxes. The dropped tangential term is
+measured, not assumed, and the C2 verdict (worse than dropping it at high
+contrast, because the discrete `s_t` does not vanish when the true one does)
+is the right reading of the numbers. The time-step analysis is correct: the
+interface is not stiff (R ≥ h/max κ), the binding limit is the solid
+diffusivity and the Gershgorin factor of a cut cell.
+
+**Finding F2 — the cut-face convective mask is inconsistent with continuity
+in the default divergence mode (`scalar.f90:2969-2985`, `:3002-3009`).**
+Convection is masked on every solid-node face *and every cut face*. A cut
+face whose staggered node lies on the fluid side (w > ½) carries a genuine
+fluid velocity `u_f ≈ δ·∂u/∂n` (the graded penalization is designed to give
+exactly that). Dropping its flux leaves the fluid cut cell with the other five
+fluxes, whose sum is `−u_f`, so in divergence form a uniform scalar changes at
+the rate `s·u_f/h ≈ s·(δ/h)·∂u/∂n` in every such cell. In wall units with the
+first cell at h⁺ the ratio of this spurious rate to the cell's own diffusive
+coupling is roughly `0.02·Pr·h⁺²` (δ/h averaged over cut positions ≈ 1/8,
+∂u⁺/∂y⁺ = 1, six-face coupling `6/(Re Pr h²)`), i.e. one to a few per cent at
+h⁺ ≈ 1–2. The
+`skew` mode halves it; only `advective` (`f = 1`, the divergence built from
+the same masked velocities, `:3002-3009`) removes it — and then the same
+quantity reappears as a conservation defect, which is the honest place for
+it, since the mass that crosses that face turns inside the fluid sliver of the
+solid-centred cell and the grid cannot represent that. It is first order and
+local either way, but the default should be the bounded, uniform-preserving
+form. The CHT tutorials (`tutorials/cht/pipe/*.ini`, `channel/*.ini`) set no
+`[scalar] convection` key, so they run divergence mode; the flat channel is
+immune (the wall lies on a face, all cut-face nodes are solid), the pipe is
+not. No gate sees it: conservation budgets are satisfied by construction and
+the uniform-scalar gates run without a curved conjugate body. Test: pipe
+flow, `θ ≡ 1` initial condition, conjugate on, divergence vs advective;
+the fluid cut cells drift in the first and not in the second. Then decide the
+default for conjugate scalars (I would force `advective`) and re-check the
+pipe Nusselt numbers.
+
+Smaller points:
+
+- `ν_t` is excluded from cut faces. Correct with a resolved wall (WALE →
+  0); the config error for wall functions guards the other case. Fine.
+- The band material (F2 shell) and the `CONJ_MIN_COSINE` grazing guard
+  (`w = ½` for near-tangent arms) are reasonable; the guard's threshold is a
+  tuning constant whose sensitivity is not recorded.
+- The volumetric source is weighted by `vfrac` on both sides. Correct.
+
+---
+
+## 6. Performance-neutral simplifications of the numerics logic
+
+Ordered by (simplification gained)/(risk):
+
+1. **Drop `apply_bc` from the projection loop** (after F4): −33 launches per
+   step, −1 ordering hazard, and the red-black path loses its per-colour BC
+   call too. Bit-exact once no Neumann-normal face exists.
+2. **Stop rewriting pinned normal faces every substage**: they are written at
+   init/restart and never modified by anything; the per-substage write is a
+   no-op in disguise. Bit-exact.
+3. **One BC mechanism instead of three** (`apply_bc`, `apply_scalar_bc`,
+   `apply_scalar_bc_q`): section 4. Bit-exact by construction if the
+   arithmetic is `2v − q` and `q + dn·v` as today.
+4. **One init path instead of three** (section 1): the inline classify
+   dispatch, the legacy global-layout coefficient reader
+   (`ibm.f90:454-473`), the rank-box layout, the leaf-table cross-check.
+5. **The three `interface_correct` kernels → one** (already noted in
+   CLAUDE.md as ~1 ms/step at 16 ranks): one launch over a face list instead
+   of three plane loops.
+6. **Split the scalar kernel by mode.** `scalar_transport_kernel` carries the
+   S1/S2/S3/S5a/C1/C2/F2 branches in one body with ~60 privates; the
+   `jacobi_apply` register lesson says the dormant branches cost occupancy
+   even when not taken. A conjugate kernel and a plain kernel, each half the
+   size, is simpler to read and probably faster; bit-exact if the expressions
+   are moved verbatim.
+7. **`qs → q` copy** (`step.f90:382-397`): a full three-component copy per
+   substage (6 doubles/cell of traffic). Avoidable by double-buffering `q`
+   with a substage index (`q(:,:,:,:,:,cur)`), but the device-mapped flat-array
+   convention makes a descriptor swap awkward and the exchange kernels index
+   `q` directly. Worth measuring, not obviously worth doing.
+8. **Chebyshev `cheb_combine`** could be fused into `jacobi_compute_phi`
+   (one launch, one fewer read of `phi`); bit-exact if the operation order is
+   kept.
+
+Not recommended: fusing the cross-level copy into the same-level kernel
+(register pressure on every round, already measured) and any
+`maxregcount` games (already measured to backfire).
+
+---
+
+## 7. Optional implicit diffusion with the existing iterative machinery
+
+**Feasible, but the iterative route only pays for moderate stiffness; the
+stiff cases want a per-block line solve. And the strongest practical case is
+the conjugate solid, not the momentum.**
+
+Where the explicit diffusion limit actually binds today (appendix A):
+
+- `tutorials/channel_kmm180`: natural stretching with `natural_dyw_plus =
+  0.05` gives a first cell of 0.053 wall units. The Péclet limiter then
+  caps `dt` at 7.7e-6, forty times below the ini's own 3.125e-4 and 230×
+  below the CFL limit. Either the wall spacing is ten times finer than a
+  wall-resolved channel needs (dy⁺ ≈ 0.5–1 is usual, which relaxes the limit
+  100–400×) or this case is exactly the one an implicit wall-normal treatment
+  is for. Check what the archived runs actually stepped at before choosing.
+- The CHT pipe cases with `solid_rhocp = 0.0625` (α_s/α_f = 16): the solid's
+  diffusive limit is 16× the fluid's and sets `dt` for the whole run; the
+  fluid cut cells are not affected (the harmonic mean keeps κ_face ≤ 2 at
+  κ_s = 1).
+- IBM/refined airfoil cases: convection-limited by a wide margin; implicit
+  diffusion buys nothing.
+
+Options, with what each costs:
+
+**(a) Chebyshev-Jacobi Helmholtz solve, a twin of `pressure_projection`.**
+The operator `I − dt_γ·ν·L` is SPD (once F1 puts the momentum Laplacian in
+flux form) and its Jacobi-preconditioned spectrum lies in `[1/(1+2σd), 2]`
+with `σ = ν dt/h²_min`, `d` = dimensions. It fits the exchange and kernel
+shapes exactly (~250 lines reusing `exchange_scalar_halos` and the metric
+tables), and the pressure update needs no rotational correction at second
+order in velocity (pressure carries an O(ν dt) wall error either way; Kim &
+Moin's form). But the iteration count scales with √(1+6σ): at σ ≈ 3–5 (a
+5–10× relaxation of the explicit limit) ~20–25 iterations reach 1e-4 on the
+increment, comparable to today's whole projection; at σ ≈ 100 (the KMM wall
+cell at its ini `dt`) it is hopeless. So this route buys about a factor 5 in
+`dt` on diffusion-limited cases at roughly the projection's cost. Not
+attractive for momentum.
+
+**(b) Per-block line-implicit in the stretched direction only (wall-normal
+y), block-Jacobi across block faces.** Exact tridiagonal solves per (i,k)
+line inside each block (one thread per line, nb = 32–64 unknowns), halo
+values lagged, one halo exchange and optionally a second pass. The coupling
+across a y block face is weak precisely where it matters (the stiff cells are
+in the wall block, the block face sits nb cells away where dy is large). This
+is the Kim–Moin/Le–Moin approximate factorization with the factorization
+error O(Δt²) inside RK3, restricted to one direction, and it is the only
+method that handles σ ≈ 100. Cost: a tridiagonal kernel (~150 lines), one
+extra exchange per substage, and the F1 flux-form Laplacian so the solve is
+consistent with the explicit x/z parts. Moderate complexity, contained in
+`step.f90` plus one kernel.
+
+**(c) Implicit solid conduction for conjugate scalars, fluid explicit.** The
+solid operator is static (coefficients never change), has no convection,
+lives on a minority of cells, and its Chebyshev bounds can be computed once.
+A Jacobi/Chebyshev Helmholtz solve restricted to solid cells with the fluid
+values as lagged Dirichlet data at cut faces removes the `C_s` limit entirely
+and keeps the fluid at its own explicit limit (which is where the harmonic
+mean already caps the cut-face coefficient). This is the note's own option 3
+(`conjugate_ibm.tex` §"What does constrain the time step") and it is the
+cheapest of the three to build (the operator is a subset of the existing
+transport kernel's diffusion line) with the largest measured payoff on the
+CHT campaign. I would do this one first.
+
+None of the three is a large code change; (b) and (c) do not complicate the
+projection at all. Prerequisite for all: F1.
+
+---
+
+## 8. Higher-order convection (4th-order central, QUICK) for momentum/scalar
+
+**Consistency with the pressure equation.** The projection enforces `D u = 0`
+with the second-order `D`; the predictor can use any convective operator
+without breaking that. What a 4th-order convective term cannot do is raise
+the *formal* order: the pressure gradient `G = −Dᵀ` stays second order, so the
+scheme is second order with reduced dispersion/aliasing error — a real
+benefit, but not "fourth order". Full fourth order (Morinishi 1998) needs the
+wide-stencil `D` and `G` together, a wide-stencil Poisson operator, and a
+consistent interface transfer; that is not compatible with the 2:1 machinery
+as built and I would not attempt it. Energy neutrality is preserved only if
+the 4th-order skew form is built with the matching 4th-order interpolation and
+difference pair; QUICK is upwind-biased and not energy-neutral by design, so
+it re-opens the interface instability that skew closed. QUICK/TVD is
+appropriate for RANS scalars (today first-order upwind) and for bounded
+passive-scalar fronts, not for DNS/LES momentum.
+
+**The blocker is halo depth, not the pressure.** Every candidate stencil
+needs a second halo layer, and `comm.f90` is single-layer everywhere: entry
+boxes, gather maps, the 2:1 restrict/prolong rows, the divergence subset,
+`phiIfaceRow`. That is the same increment S5b/TVD and the RANS van Leer have
+been waiting for; the CLAUDE.md log already carries its measured motivation
+(the SD7003 γ front). So the honest plan is: 2-layer halo first (comm-only,
+gated bit-exact because nothing reads the new layer), then per-cell order
+switching.
+
+**Order reduction where the stencil cannot reach.** Fourth order across a 2:1
+interface would need a two-layer prolongation of at least quadratic accuracy
+to keep its order; near a physical wall and inside the IBM band the wide
+stencil reads pinned/penalized values. Standard practice is a mask (a band of
+one cell around interfaces, physical faces and the near-body band that
+`init_ibm_band` already builds) that selects the second-order flux, applied as
+`F = F2 + m·(F4 − F2)` so the masked cells are bit-exact with today.
+
+**Cost.** The momentum kernel already moves ~17 doubles/cell and is
+occupancy-limited; a 4th-order version roughly doubles the loads. Expect a
+sizeable predictor slowdown unless the per-component split that CLAUDE.md
+lists as the next momentum idea is done first.
+
+Recommendation: yes for scalars (TVD/QUICK-class, after the halo increment,
+starting with the RANS scalars where the gain is measured); no for momentum
+beyond an experimental 4th-order central toggle, because the pressure caps the
+order and the interface machinery caps the stencil.
+
+---
+
+## 9. Problems found, ranked
+
+| # | severity | what | where |
+|---|---|---|---|
+| F2 | correctness (local, first order) | conjugate cut-face convective mask inconsistent with continuity in divergence mode; uniform scalar not preserved at fluid-node cut faces of curved bodies; CHT pipe tutorials run this mode | `scalar.f90:2969-2985`, `:3002-3009` |
+| F3 | stability (likely the B0 outlet instability) | Chebyshev `lmax` at the exact Gershgorin bound leaves the λ = 2 checkerboard divergence undamped (\|P₁₂(2)\| = 0.99); `lmax = 2.2` gives 0.48, Jacobi 0.002 | `pressure_solver.f90:185` |
+| F4 | consistency (SPD lost at one row) | Neumann normal-velocity faces rewritten inside the projection loop; used by the sailplane outflow | `boundary.f90:686-696`, `pressure_solver.f90:326`, `tutorials/sailplane/input.ini:66` |
+| F1 | consistency/conservation on stretched grids | molecular viscous term non-conservative in cell-centred directions; inconsistent with SGS and scalar diffusion; non-symmetric | `init.f90:592-598` |
+| F5 | dead work | `apply_bc` in the projection loop and pinned-face rewrites each substage | `pressure_solver.f90:326`, `:1021` |
+| F6 | configuration | `channel_kmm180` first cell 0.053 wall units → Péclet-capped `dt` 7.7e-6 vs the ini's 3.125e-4 | `tutorials/channel_kmm180/input.ini:39` |
+| F7 | accuracy (first order in time at cut cells) | implicit-Euler penalization factor instead of Luchini's exact B(λΔt) | `ibm.f90:1307-1350`, `step.f90:252` |
+| F8 | documentation/safety | `cflmax` compared against the max component, RK3 limit is on the sum (√3) | `step.f90:695-709` |
+| F9 | design | the scalar default (divergence) is the form the momentum abandoned; fine while gated, but it is why F2 bites | `scalar.f90:148` |
+
+Suggested order of work: F3 (one config experiment), F2 (one test run, then
+a default), F4 (sailplane to the outlet patch, config error), F5 and the
+section-4 unification, F1 (its own validation round on the stretched cases),
+F7, then the section-7 (c) implicit solid if the CHT campaign is to be re-run
+at `niter = 12`.
+
+### Plan item: F1, the flux-form viscous stencil (added 2026-09-27)
+
+**Do the two forms coincide in this code?** Only where `Δ = (hm+hp)/2`, and
+that is guaranteed in exactly one place: a component's face-staggered
+direction, because `cell_center_at` (`init.f90:722-730`) is by construction
+the midpoint of two nodes. In a component's cell-centred directions the
+control volume is the cell itself, `Δ_j = node(j+1) − node(j)`, while
+`(hm+hp)/2 = (Δ_{j−1} + 2Δ_j + Δ_{j+1})/4`; these agree only on a `uniform`
+line. Every stretched distribution (`natural`, `geometric`, `tanh`, `cosine`,
+`blayer`, `nodes_file`) breaks it. Measured on the KMM180 natural line: the
+code's `lapP` is 0.913× the flux weight at the first wall cell (local ratio
+1.66), the volume-weighted operator is 3.2 % asymmetric there, and the
+Poiseuille wall-normal budget misses the telescoped wall fluxes by 2.8e-5
+relative. On a geometric line with r = 1.10 the coefficients are 0.23 % off
+everywhere and the budget error is 2.3e-3.
+
+**The change** (`slice_grid_direction`, `init.f90:592-598`): one formula for
+every variable,
+
+```
+lapM(i,var) = d1(i,var)/hm
+lapP(i,var) = d1(i,var)/hp
+lap0(i,var) = -(lapM(i,var) + lapP(i,var))
+```
+
+where `d1(i,var)` is the inverse width of the variable's OWN control volume,
+already computed on the lines above (`1/(x_c(i) − x_c(i−1))` for the
+staggered direction, `1/(x_f(i+1) − x_f(i))` otherwise). In the staggered
+direction this is mathematically the old `2/(hm(hm+hp))`; keep the old
+expression textually there if a bit-exact uniform-grid gate is wanted,
+otherwise accept a few ulps.
+
+**What it buys**: the molecular momentum diffusion, the SGS correction and
+the scalar diffusion then share one face gradient at every face; the
+wall-normal operator becomes symmetric in the cell-volume inner product
+(the precondition for any implicit diffusion, section 7); the integrated
+momentum balance telescopes exactly to the wall stresses. Accuracy stays
+second order (the flux form trades pointwise exactness on quadratics for
+conservation).
+
+**How to gate it**: it is a numerics change, not a refactor. Uniform-grid
+cases (Beltrami, min_channel, the IBM/airfoil cases) must be bit-exact if the
+staggered expression is kept textually, else ≤ 1e-14. Stretched cases move
+at truncation level: re-run `validation/rans_sst` (natural y), the
+turbulentBoundaryLayer Blasius gate (geometric y, `compare_blasius.py`:
+expect θ/H/du errors to move by less than their recorded bands), and a short
+KMM180 statistics comparison against its archived reference. A conservation
+gate is new and cheap: on a laminar Poiseuille channel, the column sum of the
+discrete viscous term must equal the two wall fluxes to round-off.
+
+**When**: with the section-7 implicit-diffusion work, or in the one-by-one
+re-validation pass of the stretched-grid cases, whichever comes first. Not
+in isolation, because the validation it needs is the same run either way.
+
+---
+
+## Appendix A — the two numbers computed
+
+KMM180 natural line (`natural_wall_coordinate`, ny = 136, jb = 16, dyw = 0.05):
+y⁺_max = 179.4, first spacing 0.0526 wall units, centre spacing 3.79.
+Péclet rate (1/Re)/Δy²_min = 6.50e4 → `dt ≤ 0.5/rate = 7.7e-6`; the ini's
+3.125e-4 corresponds to σ_wall = 20.3. CFL at 3.125e-4 with u⁺ = 20 is 0.14;
+the CFL-limited step would be 1.75e-3.
+
+Chebyshev residual polynomial `P_k(λ) = T_k((d−λ)/c)/T_k(d/c)` with
+`lmin = (2/3) sin²(π/288) = 7.9e-5`: the table in section 2.3. Plain damped
+Jacobi factor `(1 − ωλ)^k` at ω = 0.8, λ = 2, k = 12: 2.2e-3.
+
+---
+
+## 10. Execution sequence, one item at a time (added 2026-09-27)
+
+Each step is self-contained, ends with a gate, and names what it depends on.
+"Bit-exact" means `max_abs 0` on the 7-case suite (+ the scalar legs) at
+production flags when the arithmetic source is untouched, at `nofma` when an
+expression moves (`compile.sh cpu_nofma/gpu_nofma`, `submit_nofma_gate.sh`).
+
+**Step 0 — reference set.** Cut CPU+GPU `nofma` binaries of `moby_solve` and
+`moby_prepare` from the current COMMIT (not a working tree), record the hash
+in a PROVENANCE file, as `~/s5c_ref_binaries/` was. Half an hour. Everything
+below compares against it.
+
+**Step 1 — F3, Chebyshev `lmax` (experiment, no code).** On the boundary-layer
+case that produced the B0 instability (`tutorials/turbulentBoundaryLayer`,
+`accel = chebyshev`, `niter = 6` and `12`, `dtmax = 0.5`), run the default
+bounds against `cheb_lmax = 2.2` and log `max|div|` and `max|pn|` per step
+over ~100 time units. Prediction: the default e-folds at ~36 t.u., the 2.2 run
+does not. Control: `min_channel` with both settings, divergence residual
+history only (the field moves at truncation level, which is expected). If
+confirmed: set the auto bound to `1.1 × 2.0` (`pressure_solver.f90:185`),
+note in `numerical-methods.md` that `cheb_lmax` is a safety margin, and
+re-gate the Chebyshev cases at the physics level (every Chebyshev ini moves,
+by construction). One session of runs, one line of code.
+
+**Step 2 — F2, conjugate convective mask (test, then a default).** Cheapest
+curved conjugate case in `validation/conjugate/` (the cylinder-type oblique
+case, or the pipe at reduced resolution), `θ ≡ 1` initial condition, flow on,
+conjugate on: run `[scalar] convection = divergence` and `= advective`, report
+`max|θ − 1|` restricted to fluid cut cells after ~1000 steps. Prediction:
+O(1e-2) drift in divergence, round-off in advective. Then: in
+`validate_conjugate_config`, resolve an UNSET `convection` to `advective` when
+any scalar is conjugate, and reject an explicit `divergence` with a message
+that names this finding. Gates: the 9-case scalar suite bit-exact (nothing
+non-conjugate changes); C1–C3 re-run, expecting ONE gate to move — the
+`Σ C θ dV` drift with the flow on becomes an O(h) cut-cell leak instead of
+1e-16, and its recorded band must be re-baselined, with a note that the leak
+is the same quantity the divergence form put into the field. Finally re-run
+the pipe Nusselt comparison against the Neuhauser reduction. One to two
+sessions, the pipe run on a remote GPU.
+
+**Step 3 — F4, Neumann normal velocity.** (a) `tutorials/sailplane/input.ini`:
+replace the `x_max_{u,v,w}_type = neumann` rows by `x_max_patch = outlet`
+(Dirichlet p at the outlet replaces the all-Neumann pressure; README updated).
+(b) `resolve_face_bcs`/`validate`: a `BC_NEUMANN` on the normal component of
+a non-periodic face is a config error pointing at the outlet patch. Gates:
+the sailplane 1-step legacy bit-exact leg of `run_gates_big.sh` is
+re-baselined (the BC changed on purpose); sailplane stable 200 steps with the
+DEFAULT Jacobi/Chebyshev solver (it needed red-black before, which is itself
+a data point); `validation/freestream` unchanged. Half a session.
+
+**Step 4 — F5, `apply_bc` out of the projection loop.** Depends on step 3.
+`pressure_projection`: one `apply_bc` after the last `jacobi_apply` /
+`interface_correct`, before the final full exchange; same for the red-black
+loop (once, after the last colour). Gate: bit-exact at production flags on
+the suite, `validation/freestream` (outlets) and `validation/redblack_interface`
+1 and 4 ranks — every write the removed calls made was idempotent, so
+`max_abs 0` is the expected result, and anything else means a face kind was
+missed. Measure `proj_timing: bc` before/after (expect ≈ −(niter−1)/niter of
+the bucket). Half a session.
+
+**Step 5 — F8 and F6, documentation-level.** `cflmax` documented as a
+per-direction number in `configuration.md`, plus an init-time print of the
+worst-case sum over directions (cheap, from the same reduction). KMM180: read
+the archived run's `cfl` prints in the sibling checkout to see what it
+actually stepped at; if the limiter cut it to ~8e-6, set `natural_dyw_plus`
+to a wall-resolved value (0.5) and the caps accordingly, and record the
+decision in the tutorial. An hour each. Step 5b decides whether the momentum
+half of step 11 has a customer.
+
+**Step 6 — Q4, one BC mechanism (refactor).** Depends on step 4. (a) Add a
+per-point constant to the gather (`lC`/`rC`, zero for every existing entry).
+(b) `init_block_exchange` emits physical-face ghost entries from
+`faceBcType`/`pointBcValue`: source = the adjacent interior cell (or its
+same-rank halo copy — ordering: BC entries run after the same-level copies,
+so edge/corner ghosts read a refreshed halo), weight −1 (Dirichlet mirror) or
++1 (Neumann/copy), constant `2v` or `dn·v`; scalars in `q` ride the same
+entries; the projection's outlet phi mirror becomes the same entry with
+weight −1 and constant 0. (c) Delete `apply_bc`'s ghost branch,
+`apply_scalar_bc_q` and `apply_scalar_bc`; keep one tiny kernel that writes
+pinned normal faces at init/restart and the outflow copy per substage.
+Gate: bit-exact at production flags — `2v − q` and `−q + 2v` are the same
+IEEE operation, and the corner ghosts are the same expression on the same
+values; `min_channel` 1 == 2 == 3 == 4 ranks EXACT is the load-bearing leg.
+Two to three sessions.
+
+**Step 7 — Q1, prepare does everything (refactor).** Independent of step 6.
+(a) `moby_prepare` accepts body-free cases and writes node lines + leaf
+table + face kinds always. (b) The solver reads the leaf table and stops
+rebuilding it; the row-by-row cross-check stays behind a flag for one
+release. (c) The solver requires a case file; `moby_solve --prepare` (or
+auto-prepare when the file is absent or its stored ini hash is stale) keeps
+the tutorials one command. (d) Delete the inline classify dispatch
+(`moby_solve.f90:94-120`), the legacy global-layout coefficient reader, the
+rank-box layout (`nb` becomes mandatory). (e) Later: a per-leaf weight column
+and the weighted Morton split. Gates: P0/P1/P1b prepare gates; the 7-case
+suite run FROM prepared files bit-exact vs the inline reference of step 0
+(the wavy/Beltrami P0 gates already prove this for the analytic path); the
+GPU `set_ibm_coeff` kernel is retired with the CPU prepare canonical. Two to
+three sessions.
+
+**Step 8 — F1, flux-form viscous stencil (numerics change).** The plan entry
+in section 9. Gates as stated there; run it in the same session as the
+stretched-case re-validation so the RANS channel and Blasius numbers are
+re-measured once, not twice. One session plus remote GPU reruns.
+
+**Step 9 — F7, exact penalization factor (numerics change at cut cells).**
+`update_ibm_mu` produces two factors, `muA = B/(λΔt + B)` on `q` and
+`muB = 1/(λΔt + B)` on the substage increment, `B = λΔt/expm1(λΔt)` with
+`B = 0` for `λΔt > 700`; the predictor applies them; the projection keeps
+`muB`. Body-free: `λ = 0` gives `B = 1`, both factors exactly 1.0, so
+bit-exact by construction. Body cases: cylinder Re 40 `C_D` and the `les_ibm`
+law of the wall re-measured; a `dt` halving study on the cylinder drag should
+show the cut-cell time error drop faster than before. One session.
+
+**Step 10 — Q7(c), implicit solid conduction for conjugate scalars.** Does
+NOT depend on step 8 (the scalar operator is already flux form). Design: a
+Chebyshev-Jacobi Helmholtz solve over solid + cut cells only, coefficients
+static (the conjugate face diffusivities), Gershgorin bounds computed once at
+init, fluid values lagged as Dirichlet data at cut faces, Crank–Nicolson per
+substage so the C3 transient order gates stay 2.00 (implicit Euler would make
+the solid first order). `scalar_conjugate_peclet_rate` then drops the solid
+cells' `C_s` term and keeps the fluid cut-cell share. Gates: every C1–C3
+gate reproduced (steady states identical, transient orders 2.00), the pipe
+`rhocp = 0.0625` case at the FLUID's `dt`. Two to three sessions.
+
+**Step 11 — Q7(b), line-implicit wall-normal momentum diffusion.** Only if
+step 5b shows a viscous-limited production case. Depends on step 8. Per-block
+tridiagonal per (i,k) line in y, block-Jacobi across y block faces with one
+extra exchange, approximate-factorization error O(Δt²) inside RK3. Gate:
+laminar Poiseuille exact at σ = 20; developed KMM statistics at the larger
+`dt` against the archived reference. Two sessions.
+
+**Step 12 — Q8, second halo layer, then bounded scalar convection.** Lowest
+priority, largest change. (a) `comm.f90` two-layer entries, gather maps, 2:1
+rows and the divergence subset; nothing reads layer 2 yet, so the gate is
+bit-exact. (b) TVD/van Leer for the RANS scalars (the SD7003 front is the
+measured motivation), then optionally for passive scalars. (c) A 4th-order
+central toggle for momentum with the interface/body/wall mask, as an
+experiment only. Several sessions.
+
+Dependency graph: 0 → {1, 2, 5, 7, 9, 10} in any order; 3 → 4 → 6;
+5b → 11; 8 → 11; 12 last. Steps 1–5 together are about three sessions and
+close every correctness finding; 6–7 are the simplifications; 8–12 are
+numerics changes and features, each with its own re-validation.
