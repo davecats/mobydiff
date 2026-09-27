@@ -136,7 +136,7 @@ every other face, and samples lift and drag from a control-volume momentum budge
 | `dt` | real | — | Nominal time step. **Required.** |
 | `nsteps` | int | 0 | Number of steps (one of `nsteps` / `t_final` must be > 0). |
 | `t_final` | real | 0.0 | Final time. |
-| `cflmax` | real | 0.0 | Maximum CFL for the adaptive step (≥ 0). |
+| `cflmax` | real | 0.0 | Maximum CFL for the adaptive step (≥ 0). **Per direction**: `dt` is bounded by `cflmax / max_cells,d |u_d|/Δx_d`, the largest single-component Courant number. The RK3 stability limit is on the SUM over directions (√3 with central convection), so a 3D flow with comparable components in all directions at `cflmax = 0.8` runs at a sum Courant number up to ~2.4 and can be unstable; the solver prints the initial field's worst-case sum/component ratio at init (`cfl:` line) — keep `cflmax × ratio < √3`. |
 | `pecletmax` | real | 0.0 | Maximum cell Péclet number (≥ 0). |
 | `dtmax` | real | — | Hard cap on `dt`. **Must be > 0.** |
 

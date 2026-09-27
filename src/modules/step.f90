@@ -666,7 +666,15 @@ contains
             wall_seconds() - profile_start)
     end subroutine add_eddy_viscosity_correction
 
-    subroutine get_timestep_rates(blk, dns, rates, turb, sc)
+    ! rates(CFL_COURANT) is the largest SINGLE-COMPONENT Courant rate
+    ! max|u_d|/dx_d over all cells and directions -- `cflmax` bounds dt times
+    ! THIS number. The explicit RK3 stability limit is on the SUM over
+    ! directions (sqrt(3) for the three-stage scheme with central
+    ! convection), so the optional `sum_rate` -- max over cells of
+    ! sum_d |u_d|/dx_d, the three staggered faces of the cell -- is what the
+    ! init-time print reports beside it (review finding F8, 2026-09-27). It
+    ! is a separate reduction variable: `rates` is untouched, bit for bit.
+    subroutine get_timestep_rates(blk, dns, rates, turb, sc, sum_rate)
         type(block_set_type), intent(inout) :: blk
         type(dns_type),   intent(in)    :: dns
         real(C_DOUBLE), intent(out) :: rates(1:NCFL)
@@ -678,10 +686,12 @@ contains
         ! precompute_peclet_rate). Absent / no scalars leaves both scale
         ! factors at exactly 1.
         type(scalar_type), intent(in), optional :: sc
+        real(C_DOUBLE), intent(out), optional :: sum_rate
 
         integer :: i,j,k,b
         integer :: nx, ny, nz, nBlocks
         real(C_DOUBLE) :: cfl_rate, peclet_rate, ire, nu_eff, pr_scale, prt_scale
+        real(C_DOUBLE) :: sum_cfl
         logical :: use_eddy_viscosity
 
         nx = int(blk%nb(1))
@@ -689,10 +699,11 @@ contains
         nz = int(blk%nb(3))
         nBlocks = int(blk%nBlocks)
         cfl_rate = 0.0d0
+        sum_cfl = 0.0d0
         use_eddy_viscosity = .false.
         if (present(turb)) use_eddy_viscosity = turbulence_is_enabled(turb) .and. allocated(turb%nut)
 
-        !$omp target teams distribute parallel do collapse(4) reduction(max:cfl_rate) &
+        !$omp target teams distribute parallel do collapse(4) reduction(max:cfl_rate,sum_cfl) &
         !$omp& map(to: blk%d1x, blk%d1y, blk%d1z, blk%q) &
         !$omp& private(i,j,k,b)
         do b = 1, nBlocks
@@ -702,6 +713,9 @@ contains
                     cfl_rate = max(cfl_rate, abs(blk%q(i,j,k,VAR_U,b)*blk%d1x(i,VAR_U,b)))
                     cfl_rate = max(cfl_rate, abs(blk%q(i,j,k,VAR_V,b)*blk%d1y(j,VAR_V,b)))
                     cfl_rate = max(cfl_rate, abs(blk%q(i,j,k,VAR_W,b)*blk%d1z(k,VAR_W,b)))
+                    sum_cfl = max(sum_cfl, abs(blk%q(i,j,k,VAR_U,b)*blk%d1x(i,VAR_U,b)) &
+                                         + abs(blk%q(i,j,k,VAR_V,b)*blk%d1y(j,VAR_V,b)) &
+                                         + abs(blk%q(i,j,k,VAR_W,b)*blk%d1z(k,VAR_W,b)))
                 end do
             end do
         end do
@@ -709,6 +723,7 @@ contains
         !$omp end target teams distribute parallel do
 
         rates(CFL_COURANT) = cfl_rate
+        if (present(sum_rate)) sum_rate = sum_cfl
         rates(CFL_PECLET) = dns%peclet_rate
         if (.not. use_eddy_viscosity) return
 
@@ -816,16 +831,41 @@ contains
         type(scalar_type), intent(in), optional :: sc
 
         real(C_DOUBLE) :: rates(1:NCFL), next_dt
+        real(C_DOUBLE) :: sum_rate(1)
         logical :: have_limit
+        ! The first call (init, on the initial field) reports how `cflmax`
+        ! relates to the RK3 limit; later calls skip the extra reduction.
+        logical, save :: reported = .false.
 
         if (dns%cflmax <= 0.0d0 .and. dns%pecletmax <= 0.0d0) return
 
-        if (present(turb)) then
-            call get_timestep_rates(blk, dns, rates, turb, sc)
+        if (.not. reported) then
+            if (present(turb)) then
+                call get_timestep_rates(blk, dns, rates, turb, sc, sum_rate(1))
+            else
+                call get_timestep_rates(blk, dns, rates, sum_rate=sum_rate(1))
+            end if
+            call comm_allreduce_max(c, sum_rate)
         else
-            call get_timestep_rates(blk, dns, rates)
+            if (present(turb)) then
+                call get_timestep_rates(blk, dns, rates, turb, sc)
+            else
+                call get_timestep_rates(blk, dns, rates)
+            end if
         end if
         call comm_allreduce_max(c, rates)
+        if (.not. reported) then
+            reported = .true.
+            if (c%has_terminal .and. rates(CFL_COURANT) > 0.0d0) then
+                print '(a,es10.3,a,es10.3,a,f5.2,a)', &
+                    " cfl: max single-component Courant rate ", rates(CFL_COURANT), &
+                    " (cflmax bounds dt x this); worst-case SUM over directions ", sum_rate(1), &
+                    " = ", sum_rate(1)/rates(CFL_COURANT), " x the component max"
+                print '(a,f5.2,a)', "      RK3 with central convection is stable for dt x SUM < sqrt(3):" // &
+                    " cflmax x ratio = ", dns%cflmax*sum_rate(1)/rates(CFL_COURANT), &
+                    " is the effective sum Courant bound (initial field only)"
+            end if
+        end if
 
         next_dt = dns%dtmax
         have_limit = .false.

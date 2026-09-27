@@ -1,9 +1,63 @@
 # Next session: numerics review, steps 0–5
 
-STATUS: NOT STARTED (written 2026-09-27 at `ac7b925`). This is the prompt for
-the session that executes the correctness tier of
-`docs/numerics_review_2026-09-26.md` section 10. Copy the block below into
-the session verbatim.
+STATUS: **STEPS 0–5 DONE (2026-09-27, one session; commits e126d1a → the
+step-5 commit on `main`).** One item is still in flight and one outcome
+overturned a prediction:
+
+- **Step 0** — `~/numrev_ref_binaries/` (8 binaries, PROVENANCE, hash
+  `6db60ef`). Use it for every comparison on `main` from here on.
+- **Step 1 (F3) — CONTRADICTED, retracted.** On the B0-era binary
+  (`5d44eb4`) the recorded instability reproduces (e-fold 33–37 t.u.) and
+  `cheb_lmax = 2.2` grows FASTER (27–32 t.u.); `main` is stable at niter 6
+  with either bound; the min_channel control cannot tell the bounds apart.
+  No code change. The one physics change in the `5d44eb4 → main` span is the
+  momentum convection form (divergence then, skew now) — a correlation, not a
+  proof. `docs/numerical-methods.md` was NOT touched.
+- **Step 2 (F2) — confirmed, default changed.** Conjugate scalars run the
+  advective form (unset key resolves; explicit `divergence` refused); drift
+  4.09e-5 → 0.0 on the wavy case. Suites 9/9 CPU + GPU and 7/7 CPU max_abs 0;
+  C1 moved exactly its conservation gate (1.22e-16 → 2.235e-11, re-baselined
+  as a leak band, 1e-9); C2, C3 all PASS. **IN FLIGHT: the pipe Nusselt
+  re-run**, leg D from the 2026-09-20 settled state with the new binary, on
+  istmcorax in `~/pipe_rerun_f2/` (`p_f2_stat.*`, 168 000 steps at 0.56
+  s/step, started 2026-09-27 17:10, expected to end ~2026-09-28 19:00). When
+  it ends: `tutorials/cht/pipe/pipe_stats.py` on the `p_f2_stat_*.h5`
+  snapshots, `asset/compare_neuhauser.py thermal … --scalar c0` etc. against
+  the old `p_pr_statsD.npz` and the Neuhauser reduction, then refresh
+  `asset/` (make_caches.py) and the report. The run keeps `niter = 6` so
+  the binary is the only change; the niter-12 re-measurement is the
+  one-by-one pass's job.
+- **Step 3 (F4)** — sailplane on `x_max_patch = outlet`; Neumann normal
+  velocity is a config error. Prepared-vs-legacy 1-step max_abs 0; 200 steps
+  bounded on plain Jacobi (sor 0.8) AND Chebyshev niter 12 on the GPU —
+  red-black is no longer required (kept in the ini as the faster choice);
+  freestream unchanged.
+- **Step 4 (F5)** — one `apply_bc` per projection in both solvers; max_abs
+  0 at PRODUCTION flags on the 7-case suite (CPU 1 + 4 ranks, GPU),
+  freestream and redblack_interface (1 + 4 ranks); `proj_timing: apply_bc`
+  −91.6 % on min_channel and pois_io.
+- **Step 5 (F8, F6)** — `cflmax` documented as per-direction with an
+  init-time `cfl:` print of the worst-case directional sum (inert: 7-case
+  suite max_abs 0 at production flags, CPU and GPU). KMM180: the archived run
+  HAD stepped at the Péclet cap `dt = 7.696e-6` (650 k steps for 5 h/u_τ);
+  the ini is now `natural_dyw_plus = 0.5` and steps at `dtmax = 3.125e-4`
+  (cfl 0.13, Péclet 0.23; 100-step GPU runs of both spacings, README
+  written). **5b's verdict: the momentum half of step 11 has no customer.**
+
+What steps 6–12 inherit: (i) the pipe result above (finish step 2d before
+touching the CHT tutorials); (ii) `main`'s Chebyshev projection has NO
+measured instability to fix, so any `lmax` change is a numerics preference
+without a gate — leave it; (iii) the generated inputs the suites need
+(`IC_turbles.h5`, `IC_turbslab.h5`, `IC_refine.h5`, `ibm_coeff_blocks.h5`)
+are symlinked from the `mobydiff.scalar` / `mobydiff.bl` checkouts and are
+not committed — `run_bitexact*.sh` fails their cases with an HDF5 "no such
+file" otherwise; (iv) step 6 (one BC mechanism) now starts from a projection
+loop that calls `apply_bc` once, which is the shape it wanted; (v) the
+`tools/h5maxdiff` landmine still holds (no dataset args = no passive scalars).
+
+Every measured number is in `docs/numerics_review_2026-09-26.md` section 10
+under its step (the MEASURED blocks) and section 9's table carries the
+per-finding verdicts. The original prompt follows, for the record.
 
 ---
 

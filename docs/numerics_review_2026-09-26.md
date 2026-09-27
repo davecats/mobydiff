@@ -526,9 +526,9 @@ order and the interface machinery caps the stencil.
 | F4 | consistency (SPD lost at one row) — **FIXED 2026-09-27** (section 10 step 3: sailplane on the outlet patch; a Neumann normal velocity is a config error) | Neumann normal-velocity faces rewritten inside the projection loop; was used by the sailplane outflow | `boundary.f90 resolve_face_bcs`, `tutorials/sailplane/input.ini` |
 | F1 | consistency/conservation on stretched grids | molecular viscous term non-conservative in cell-centred directions; inconsistent with SGS and scalar diffusion; non-symmetric | `init.f90:592-598` |
 | F5 | dead work — **FIXED 2026-09-27** (section 10 step 4: one `apply_bc` per projection, both solvers; max_abs 0 at production flags; bc bucket −91.6 %) | `apply_bc` in the projection loop and pinned-face rewrites each substage | `pressure_solver.f90` projection loops |
-| F6 | configuration | `channel_kmm180` first cell 0.053 wall units → Péclet-capped `dt` 7.7e-6 vs the ini's 3.125e-4 | `tutorials/channel_kmm180/input.ini:39` |
+| F6 | configuration — **FIXED 2026-09-27** (section 10 step 5: archived run confirmed at dt 7.696e-6; ini to `natural_dyw_plus = 0.5`, dt 3.125e-4 measured) | `channel_kmm180` first cell 0.053 wall units → Péclet-capped `dt` 7.7e-6 vs the ini's 3.125e-4 | `tutorials/channel_kmm180/input.ini`, README |
 | F7 | accuracy (first order in time at cut cells) | implicit-Euler penalization factor instead of Luchini's exact B(λΔt) | `ibm.f90:1307-1350`, `step.f90:252` |
-| F8 | documentation/safety | `cflmax` compared against the max component, RK3 limit is on the sum (√3) | `step.f90:695-709` |
+| F8 | documentation/safety — **DONE 2026-09-27** (section 10 step 5: documented in configuration.md; init-time print of the worst-case directional sum) | `cflmax` compared against the max component, RK3 limit is on the sum (√3) | `step.f90 get_timestep_rates` |
 | F9 | design | the scalar default (divergence) is the form the momentum abandoned; fine while gated, but it is why F2 bites | `scalar.f90:148` |
 
 Suggested order of work: F3 (one config experiment — DONE, retracted), F2 (one test run, then
@@ -823,6 +823,31 @@ actually stepped at; if the limiter cut it to ~8e-6, set `natural_dyw_plus`
 to a wall-resolved value (0.5) and the caps accordingly, and record the
 decision in the tutorial. An hour each. Step 5b decides whether the momentum
 half of step 11 has a customer.
+
+> **MEASURED (2026-09-27). DONE.** (a) F8: `docs/configuration.md` `cflmax`
+> row now says it bounds `dt` by the largest SINGLE-COMPONENT Courant rate
+> and that the RK3 limit is on the SUM (√3); `get_timestep_rates` gained an
+> optional `sum_rate` (max over cells of Σ_d |u_d|/Δx_d, a second reduction
+> variable in the same kernel — `rates` untouched) and
+> `update_timestep_limits` prints it ONCE, on the initial field:
+> `cfl: max single-component Courant rate X; worst-case SUM Y = r × the
+> component max; cflmax × ratio = …`. Inert: 7-case suite at production
+> flags vs the step-0 binaries, CPU 1 rank 7/7 AND GPU 7/7 max_abs 0. On min_channel and KMM180 the initial field is streamwise
+> (ratio 1.00), so the print is informational there; it exists for the 3D
+> cases. (b) F6: the archived KMM180 restart's metadata
+> (`mobydiff.scalar/tutorials/channel_kmm180/channel_kmm180_restart.h5`,
+> 2026-08-03) reads `dt = 7.696034892725926e-06`, `cfl = [0.0037, 0.5]`,
+> `step 650000` at `t = 5.0` — **the Péclet limiter had cut the step to
+> 7.7e-6, as Appendix A computed (7.7e-6), for 650 k steps per 5 h/u_τ.**
+> `tutorials/channel_kmm180/input.ini` now sets `natural_dyw_plus = 0.5`
+> (comments + a new README record the decision). 100-step GPU runs of the
+> ini, both spacings: 0.5 → `dt = 3.125e-4` (dtmax binds; cfl 0.1306,
+> Péclet 0.2268, dy_wall⁺ 0.498); 0.05 → `dt = 7.696035e-06` (Péclet 0.5
+> binding, cfl 0.0032) = the archived value to every digit. 40.6× fewer
+> steps. **Step 5b's verdict for step 11: the production KMM case is NOT
+> viscous-limited any more at the wall-resolved spacing (Péclet 0.23 vs
+> cfl 0.13, both under dtmax); the momentum half of step 11 has no customer
+> here** — a customer would be a case that must keep dy_wall⁺ ≪ 0.5.
 
 **Step 6 — Q4, one BC mechanism (refactor).** Depends on step 4. (a) Add a
 per-point constant to the gather (`lC`/`rC`, zero for every existing entry).
