@@ -178,6 +178,22 @@ contains
                     end do
                     call resolve_bc_row(bc, int(VAR_P), face_id, BC_DIRICHLET)
                 end select
+                ! A Neumann condition on the NORMAL velocity component is not a
+                ! boundary condition the projection can honour: apply_bc
+                ! rewrites the face from the corrected interior every
+                ! iteration, which un-does the correction the SPD operator
+                ! assumed at that row (numerics review F4, 2026-09-27). The
+                ! outflow patch is the supported way to let flow leave --
+                ! zero-gradient predictor write, then the Dirichlet-p
+                ! projection owns the face -- so point there.
+                if (.not. bc%isPeriodic(dir)) then
+                    if (bc%faceBcType(dir, face_id) == BC_NEUMANN) then
+                        print '(a,i0,a,i0,a)', " error: [boundary] Neumann type on the NORMAL velocity" // &
+                            " component of face ", face_id, " (direction ", dir, &
+                            "): declare the face `<dir>_<side>_patch = outlet` instead"
+                        error stop "[boundary] Neumann normal velocity: use the outlet patch"
+                    end if
+                end if
             end do
         end do
     end subroutine resolve_face_bcs

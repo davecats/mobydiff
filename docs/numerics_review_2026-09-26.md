@@ -523,7 +523,7 @@ order and the interface machinery caps the stencil.
 |---|---|---|---|
 | F2 | correctness (local, first order) — **FIXED 2026-09-27** (section 10 step 2: conjugate scalars default to `advective`, explicit `divergence` refused; measured drift 4.1e-5 → 0.0; conservation gate re-baselined to the O(h) leak) | conjugate cut-face convective mask inconsistent with continuity in divergence mode; uniform scalar not preserved at fluid-node cut faces of curved bodies; CHT pipe tutorials ran this mode | `scalar.f90:2969-2985`, `:3002-3009` |
 | F3 | ~~stability (likely the B0 outlet instability)~~ **RETRACTED 2026-09-27 as a cause** (section 10 step 1: the B0 instability reproduces on the B0-era binary with e-fold 33–37 t.u. and `lmax = 2.2` grows FASTER, 27–32 t.u.; `main` is stable at niter 6 with either bound). What stands is the polynomial fact: the auto `lmax` leaves λ = 2 undamped (\|P₁₂(2)\| = 0.99 vs 0.48 at 2.2), a property of the smoother with no measured consequence. No code change. | `pressure_solver.f90:185` |
-| F4 | consistency (SPD lost at one row) | Neumann normal-velocity faces rewritten inside the projection loop; used by the sailplane outflow | `boundary.f90:686-696`, `pressure_solver.f90:326`, `tutorials/sailplane/input.ini:66` |
+| F4 | consistency (SPD lost at one row) — **FIXED 2026-09-27** (section 10 step 3: sailplane on the outlet patch; a Neumann normal velocity is a config error) | Neumann normal-velocity faces rewritten inside the projection loop; was used by the sailplane outflow | `boundary.f90 resolve_face_bcs`, `tutorials/sailplane/input.ini` |
 | F1 | consistency/conservation on stretched grids | molecular viscous term non-conservative in cell-centred directions; inconsistent with SGS and scalar diffusion; non-symmetric | `init.f90:592-598` |
 | F5 | dead work | `apply_bc` in the projection loop and pinned-face rewrites each substage | `pressure_solver.f90:326`, `:1021` |
 | F6 | configuration | `channel_kmm180` first cell 0.053 wall units → Péclet-capped `dt` 7.7e-6 vs the ini's 3.125e-4 | `tutorials/channel_kmm180/input.ini:39` |
@@ -532,7 +532,7 @@ order and the interface machinery caps the stencil.
 | F9 | design | the scalar default (divergence) is the form the momentum abandoned; fine while gated, but it is why F2 bites | `scalar.f90:148` |
 
 Suggested order of work: F3 (one config experiment — DONE, retracted), F2 (one test run, then
-a default), F4 (sailplane to the outlet patch, config error), F5 and the
+a default), F4 (sailplane to the outlet patch, config error — DONE), F5 and the
 section-4 unification, F1 (its own validation round on the stretched cases),
 F7, then the section-7 (c) implicit solid if the CHT campaign is to be re-run
 at `niter = 12`.
@@ -754,6 +754,32 @@ the sailplane 1-step legacy bit-exact leg of `run_gates_big.sh` is
 re-baselined (the BC changed on purpose); sailplane stable 200 steps with the
 DEFAULT Jacobi/Chebyshev solver (it needed red-black before, which is itself
 a data point); `validation/freestream` unchanged. Half a session.
+
+> **MEASURED (2026-09-27). DONE.** (a) `tutorials/sailplane/input.ini`: the
+> five `x_max_{u,v,w}_type = neumann` / `x_max_p_*` rows replaced by
+> `x_max_patch = outlet` (README section added). (b) `boundary.f90
+> resolve_face_bcs`: after the patch resolution, a `BC_NEUMANN` on the
+> NORMAL component of any non-periodic face is an `error stop` whose message
+> names the face and points at the outlet patch; verified on a pois_io
+> variant without the outlet declaration (exit 1, the new message). On a
+> declared outlet an explicit `x_max_u_type = neumann` still trips the
+> earlier "contradicts the declared patch type" error first, which is what
+> the freestream config gate greps for. The only in-tree user of a Neumann
+> normal velocity was the sailplane. Gates: sailplane prepared case file
+> (nb 10, 2 ranks, 72 s) vs the committed legacy coefficient file, 1 step,
+> production CPU, SAME outlet ini both sides: **un/vn/wn/pn max_abs 0**
+> (re-baselined in the sense that both sides now carry the outlet).
+> Sailplane 200 steps on the DEFAULT projection, GPU (RTX 3060, 18 M cells):
+> plain damped Jacobi `sor 0.8, niter 20` **1.72 s/step, bounded**
+> (max|u| 1.33 / 2.00 / 2.71 / 1.98 at steps 50/100/150/200, max|p| 400–600,
+> no NaN) and Chebyshev `niter 12` **1.50 s/step, bounded** (max|u| 2.00 /
+> 2.00 / 1.00 / 1.71, max|p| 550–1120) — so the case no longer NEEDS
+> red-black; the earlier blow-up on the default solver was the `sor = 1.5`
+> Jacobi confound (CLAUDE.md, 2026-09-26), not the BC. `solver = redblack`
+> is kept in the ini as the faster choice. `validation/freestream/run_gates.sh
+> all` at production CPU: oblique exact, pois PASS, 1 == 4 ranks EXACT (both),
+> declared == inferred wall EXACT, both contradiction rows error-stop —
+> status 0, unchanged.
 
 **Step 4 — F5, `apply_bc` out of the projection loop.** Depends on step 3.
 `pressure_projection`: one `apply_bc` after the last `jacobi_apply` /
