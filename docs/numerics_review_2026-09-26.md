@@ -522,7 +522,7 @@ order and the interface machinery caps the stencil.
 | # | severity | what | where |
 |---|---|---|---|
 | F2 | correctness (local, first order) | conjugate cut-face convective mask inconsistent with continuity in divergence mode; uniform scalar not preserved at fluid-node cut faces of curved bodies; CHT pipe tutorials run this mode | `scalar.f90:2969-2985`, `:3002-3009` |
-| F3 | stability (likely the B0 outlet instability) | Chebyshev `lmax` at the exact Gershgorin bound leaves the λ = 2 checkerboard divergence undamped (\|P₁₂(2)\| = 0.99); `lmax = 2.2` gives 0.48, Jacobi 0.002 | `pressure_solver.f90:185` |
+| F3 | ~~stability (likely the B0 outlet instability)~~ **RETRACTED 2026-09-27 as a cause** (section 10 step 1: the B0 instability reproduces on the B0-era binary with e-fold 33–37 t.u. and `lmax = 2.2` grows FASTER, 27–32 t.u.; `main` is stable at niter 6 with either bound). What stands is the polynomial fact: the auto `lmax` leaves λ = 2 undamped (\|P₁₂(2)\| = 0.99 vs 0.48 at 2.2), a property of the smoother with no measured consequence. No code change. | `pressure_solver.f90:185` |
 | F4 | consistency (SPD lost at one row) | Neumann normal-velocity faces rewritten inside the projection loop; used by the sailplane outflow | `boundary.f90:686-696`, `pressure_solver.f90:326`, `tutorials/sailplane/input.ini:66` |
 | F1 | consistency/conservation on stretched grids | molecular viscous term non-conservative in cell-centred directions; inconsistent with SGS and scalar diffusion; non-symmetric | `init.f90:592-598` |
 | F5 | dead work | `apply_bc` in the projection loop and pinned-face rewrites each substage | `pressure_solver.f90:326`, `:1021` |
@@ -531,7 +531,7 @@ order and the interface machinery caps the stencil.
 | F8 | documentation/safety | `cflmax` compared against the max component, RK3 limit is on the sum (√3) | `step.f90:695-709` |
 | F9 | design | the scalar default (divergence) is the form the momentum abandoned; fine while gated, but it is why F2 bites | `scalar.f90:148` |
 
-Suggested order of work: F3 (one config experiment), F2 (one test run, then
+Suggested order of work: F3 (one config experiment — DONE, retracted), F2 (one test run, then
 a default), F4 (sailplane to the outlet patch, config error), F5 and the
 section-4 unification, F1 (its own validation round on the stretched cases),
 F7, then the section-7 (c) implicit solid if the CHT campaign is to be re-run
@@ -637,6 +637,50 @@ confirmed: set the auto bound to `1.1 × 2.0` (`pressure_solver.f90:185`),
 note in `numerical-methods.md` that `cheb_lmax` is a safety margin, and
 re-gate the Chebyshev cases at the physics level (every Chebyshev ini moves,
 by construction). One session of runs, one line of code.
+
+> **MEASURED (2026-09-27). PREDICTION CONTRADICTED — no code change; the
+> causal claim in section 9 is retracted (see F3 there).** The B0 case was
+> recovered from git (`4f819fc^:tutorials/turbulentBoundaryLayer/topbc_outlet/
+> {template,blasius2d}.ini` + `make_blasius_ic.py`; 384×160×4, Blasius inlet,
+> outlet x_max AND y_max, `dtmax = 0.5`, 4000 steps = 2000 t.u., snapshots
+> every 100 steps; `max|div|` = interior max of the staggered divergence,
+> `rms2dx` = the 2-Δx content of the z-mean u row at y ≈ 23 as in the
+> original `wiggle_rms.py`), and run on TWO binaries on the local RTX 3060:
+> `main` at `e126d1a` and the B0-era binary `5d44eb4` (the commit whose README
+> records the instability; it still had the `cheb_lmax` key).
+>
+> | binary | run | max\|div\| t=300 / 700 / 2000 | rms2dx t=300 / 700 / 2000 | verdict |
+> |---|---|---|---|---|
+> | `5d44eb4` (B0 era) | cheb, niter 6, lmax auto (2.0) | 2.7e-5 / **0.98** / 1.03 | 3.5e-5 / **0.092** / 0.146 | e-folds, saturates at O(1) div |
+> | `5d44eb4` | cheb, niter 6, **lmax 2.2** | 3.9e-5 / **0.99** / 1.01 | 3.8e-5 / **0.043** / 0.050 | e-folds, same schedule |
+> | `5d44eb4` | cheb, niter 12, lmax auto | 2.1e-6 / 8.9e-7 / 1.4e-8 | 3.0e-5 / 3.1e-5 / 3.1e-5 | stable |
+> | `5d44eb4` | plain Jacobi, niter 6 | 8.7e-5 / 1.1e-4 / 6.8e-5 | 4.0e-5 / 2.2e-5 / 3.3e-5 | stable |
+> | `e126d1a` (main) | cheb, niter 6, lmax auto | 2.8e-5 / 1.3e-5 / 5.9e-6 | 3.4e-5 / 3.1e-5 / 3.1e-5 | stable |
+> | `e126d1a` | cheb, niter 6, lmax 2.2 | 2.3e-5 / 1.2e-5 / 9.3e-6 | 3.2e-5 / 2.9e-5 / 3.2e-5 | stable |
+> | `e126d1a` | cheb, niter 12, lmax auto | 1.1e-5 / 9.5e-7 / 2.7e-8 | 2.6e-5 / 3.1e-5 / 3.1e-5 | stable |
+> | `e126d1a` | cheb, niter 12, lmax 2.2 | 2.7e-6 / 1.6e-6 / 2.2e-8 | 3.0e-5 / 3.1e-5 / 3.1e-5 | stable |
+> | `e126d1a` | plain Jacobi, niter 6 | 1.1e-4 / 1.3e-4 / 4.2e-5 | 3.8e-5 / 2.5e-5 / 3.9e-5 | stable |
+>
+> Growth in the window t = 350–600 on the B0 binary: e-folding time **32.6
+> t.u. (max|div|) / 36.9 (rms2dx)** at the default bound — the recorded "~36
+> t.u." reproduced — and **26.8 / 31.9 t.u. at `lmax = 2.2`**: the enlarged
+> bound does not damp the mode, it grows slightly FASTER. So the mode is not
+> the undamped λ = 2 checkerboard of the Chebyshev polynomial (which 2.2 would
+> have cut from |P| 0.99 to 0.48 per projection); what removes it is `niter`
+> (12 is stable on both binaries, as the B0 README's niter 60 was) and, on
+> `main`, whatever changed between `5d44eb4` and now — `main` is stable at
+> niter 6 with either bound. The one identified physics change in that span is
+> the momentum convection form: `5d44eb4` has no skew form at all (`git grep
+> skew 5d44eb4 -- src` is empty; the port is `df89591`, 2026-07-23) and ran
+> DIVERGENCE convection, which `main` can no longer run (error stop). That is
+> a correlation, not a proof; the retraction rests on the 2.2 run alone.
+> Control (`tutorials/min_channel/input_gpu.ini`, 200 steps, per-block
+> divergence residual, GPU): lmax 2.0 vs 2.2 read max|div| 1.60e-3 vs
+> 1.62e-3 at step 200 (rms 3.1e-4 vs 3.4e-4), interleaved over the whole
+> history — indistinguishable, as the polynomial table predicts for the
+> smooth modes the residual is made of. The recovered case, inis and the
+> history/fit scripts are not committed (the B0 case was retired on
+> 2026-09-26); the recipe above rebuilds them in minutes.
 
 **Step 2 — F2, conjugate convective mask (test, then a default).** Cheapest
 curved conjugate case in `validation/conjugate/` (the cylinder-type oblique
