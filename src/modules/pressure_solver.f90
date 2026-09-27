@@ -226,7 +226,6 @@ contains
         logical(C_BOOL) :: outLow(3), outHigh(3), refd(3)
         logical :: anyOutlet, hasIface
         integer(C_INT) :: phiMode(NFACES)
-        real(C_DOUBLE) :: t0
 
         if (ps%method == PRESSURE_REDBLACK) then
             call redblack_projection(ps, blk, dt_gamma, ibm, bc, c)
