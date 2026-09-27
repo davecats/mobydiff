@@ -1934,6 +1934,23 @@ immersed boundary. Phased, each phase verified before the next:
   is one formula, `lapM = d1/hm, lapP = d1/hp`; it is a numerics change
   (truncation-level moves on stretched cases) and is scheduled with the
   implicit-diffusion work or the stretched-case re-validation, not alone.
+  **Section 10 of that review is the execution sequence; steps 0–6 are DONE
+  (2026-09-27, `docs/next_session_numerics_steps.md` STATUS):** reference
+  binaries `~/numrev_ref_binaries` (commit `6db60ef`); F3 RETRACTED (the B0
+  Chebyshev instability reproduces on the B0 binary and `cheb_lmax = 2.2`
+  grows FASTER; `main` is stable); F2 conjugate scalars default to
+  ADVECTIVE convection (explicit divergence refused; the C1 conservation
+  gate re-baselined to the O(h) leak; pipe Nusselt re-run in flight on
+  istmcorax `~/pipe_rerun_f2/`); F4 sailplane on the outlet patch, Neumann
+  normal velocity a config error; F5 `apply_bc` once per projection (bucket
+  −91.6 %); F8 `cflmax` documented per-direction + a worst-case-sum print;
+  F6 KMM180 `natural_dyw_plus = 0.5` (the archive had stepped at the Péclet
+  cap 7.7e-6, 40.6× more steps); step 6 the boundary rows resolved into ONE
+  affine write `dst = w*src + C` (`bcKind/bcW/bcC`, velocity/pressure/scalar
+  columns, `apply_bc(blk, bc, vars, outflow_copy)` generic, `apply_scalar_bc_q`
+  deleted) — NOT exchange entries, since the same-level copy entries read
+  physical ghosts and pack runs first (reason in the review). Every step
+  gated `max_abs 0` (step 6: 61 comparisons, nofma + production).
 
 ## Verification
 

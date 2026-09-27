@@ -59,6 +59,27 @@ module boundary
     integer(C_INT), parameter :: SCALAR_BC_MIRROR = 2_C_INT
     integer(C_INT), parameter :: SCALAR_BC_VALUE = 3_C_INT
 
+    ! Resolved boundary-row kinds (bcKind). Every physical-face write of the
+    ! solver is ONE affine operation, dst = w*src + C, and the BC TYPE is
+    ! resolved at init into which cell pair (dst, src) it acts on, a
+    ! per-(variable, face) weight w and a per-(variable, point) constant C:
+    !   GHOST        tangential velocity, pressure, scalars: dst = the ghost
+    !                cell, src = the adjacent interior cell.
+    !                Dirichlet  w = -1, C = 2 v    (face midpoint carries v)
+    !                Neumann    w = +1, C = dn v   (v = the normal derivative)
+    !   FACE         normal velocity, Dirichlet: dst = the face dof, src =
+    !                the neighbouring interior face, w = 0, C = v (the pin).
+    !   FACE_OUTFLOW normal velocity of an outlet: w = +1, C = dn v (= 0),
+    !                the zero-gradient copy; written by the PREDICTOR-stage
+    !                call only (outflow_copy), never inside the projection.
+    ! The kernels then carry no geometry and no type branches, and the
+    ! velocity, pressure and scalar rows are columns of the same tables
+    ! (scalar.f90 fills its columns through set_scalar_bc_rows).
+    integer(C_INT), parameter :: BCK_NONE = 0_C_INT
+    integer(C_INT), parameter :: BCK_GHOST = 1_C_INT
+    integer(C_INT), parameter :: BCK_FACE = 2_C_INT
+    integer(C_INT), parameter :: BCK_FACE_OUTFLOW = 3_C_INT
+
     type :: boundary_type
         logical(C_BOOL) :: isPeriodic(1:3)
         integer(C_INT) :: nTotal = 0_C_INT
@@ -67,10 +88,18 @@ module boundary
         ! slot. Periodic and block/MPI halos are handled by comm.f90.
         integer(C_INT), allocatable :: pointFace(:), slot(:), i(:), j(:), k(:)
 
-        ! Face defaults seed pointwise values; apply_bc uses pointBcValue only.
+        ! Face defaults seed the pointwise values (host-only, profiles
+        ! evaluated per point); the kernels read the RESOLVED rows below.
         integer(C_INT) :: faceBcType(VAR_U:VAR_P,1:NFACES) = 0_C_INT
         real(C_DOUBLE) :: faceBcDefaultValue(VAR_U:VAR_P,1:NFACES) = 0.0d0
         real(C_DOUBLE), allocatable :: pointBcValue(:,:)
+
+        ! Resolved affine rows (see BCK_*), one column per q variable
+        ! 1..nVar (u, v, w, p, then the passive scalars at VAR_S0+is).
+        integer(C_INT) :: nVar = 0_C_INT
+        integer(C_INT), allocatable :: bcKind(:,:)   ! (nVar, NFACES)
+        real(C_DOUBLE), allocatable :: bcW(:,:)      ! (nVar, NFACES)
+        real(C_DOUBLE), allocatable :: bcC(:,:)      ! (nVar, nTotal)
 
         ! Which rows the ini set explicitly (_type/_value keys). Config is
         ! authority: read_restart_metadata keeps these rows over the restart
@@ -263,6 +292,11 @@ contains
 
         allocate(bc%pointFace(total), bc%slot(total), bc%i(total), bc%j(total), bc%k(total))
         allocate(bc%pointBcValue(VAR_U:VAR_P,total))
+        bc%nVar = dns%nVar
+        allocate(bc%bcKind(bc%nVar,NFACES), bc%bcW(bc%nVar,NFACES), bc%bcC(bc%nVar,total))
+        bc%bcKind = BCK_NONE
+        bc%bcW = 0.0d0
+        bc%bcC = 0.0d0
 
         pos = 0
         do b = 1, int(blk%nBlocks)
@@ -299,11 +333,10 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
         npts = int(bc%nTotal)
         !$omp target enter data map(to: bc)
-        !$omp target enter data map(to: bc%faceBcType)
         if (npts > 0) then
             !$omp target enter data map(to: bc%pointFace(1:npts), bc%slot(1:npts), &
             !$omp& bc%i(1:npts), bc%j(1:npts), bc%k(1:npts))
-            !$omp target enter data map(to: bc%pointBcValue(VAR_U:VAR_P,1:npts))
+            !$omp target enter data map(to: bc%bcKind, bc%bcW, bc%bcC(1:bc%nVar,1:npts))
         end if
 #endif
     end subroutine enter_boundary_data
@@ -315,11 +348,10 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
         npts = int(bc%nTotal)
         if (npts > 0) then
-            !$omp target exit data map(delete: bc%pointBcValue(VAR_U:VAR_P,1:npts))
+            !$omp target exit data map(delete: bc%bcKind, bc%bcW, bc%bcC(1:bc%nVar,1:npts))
             !$omp target exit data map(delete: bc%pointFace(1:npts), bc%slot(1:npts), &
             !$omp& bc%i(1:npts), bc%j(1:npts), bc%k(1:npts))
         end if
-        !$omp target exit data map(delete: bc%faceBcType)
         !$omp target exit data map(delete: bc)
 #endif
     end subroutine exit_boundary_data
@@ -333,6 +365,7 @@ contains
         if (allocated(bc%j)) deallocate(bc%j)
         if (allocated(bc%k)) deallocate(bc%k)
         if (allocated(bc%pointBcValue)) deallocate(bc%pointBcValue)
+        if (allocated(bc%bcKind)) deallocate(bc%bcKind, bc%bcW, bc%bcC)
         bc%nTotal = 0_C_INT
     end subroutine destroy_boundary_faces
 
@@ -358,7 +391,120 @@ contains
                 end if
             end do
         end do
+        do var = VAR_U, VAR_P
+            call resolve_affine_rows(bc, blk, var, bc%faceBcType(var,:), bc%pointBcValue(var,:))
+        end do
     end subroutine update_boundary_values
+
+    ! Boundary rows of a passive scalar stored in q at column `var`
+    ! (scalar.f90, after its patch-derived types are final and before
+    ! enter_boundary_data maps the tables): one type and one value per
+    ! face, no profiles.
+    subroutine set_scalar_bc_rows(bc, blk, var, bctype, value)
+        type(boundary_type), intent(inout) :: bc
+        type(block_set_type), intent(in) :: blk
+        integer, intent(in) :: var
+        integer(C_INT), intent(in) :: bctype(NFACES)
+        real(C_DOUBLE), intent(in) :: value(NFACES)
+
+        real(C_DOUBLE), allocatable :: pv(:)
+        integer :: n, npts
+
+        npts = int(bc%nTotal)
+        if (npts <= 0) return
+        allocate(pv(npts))
+        do n = 1, npts
+            pv(n) = value(int(bc%pointFace(n)))
+        end do
+        call resolve_affine_rows(bc, blk, var, bctype, pv)
+    end subroutine set_scalar_bc_rows
+
+    ! Resolve the BC type of column `var` on every face into the affine
+    ! rows the kernels apply (see BCK_*): the kind and weight per face, the
+    ! constant per point. `pointValue` is the row's boundary datum at each
+    ! point (a Dirichlet value or a Neumann normal derivative). The Neumann
+    ! constant is dn*v with dn the ghost-to-interior distance of the
+    ! variable's OWN staggered coordinate along the face normal -- what the
+    ! kernel used to compute per point; forming it here moves that product
+    ! out of the kernel, which is why a nonzero Neumann datum is gated at
+    ! nofma (the compiler used to contract q + dn*v into one FMA).
+    subroutine resolve_affine_rows(bc, blk, var, bctype, pointValue)
+        type(boundary_type), intent(inout) :: bc
+        type(block_set_type), intent(in) :: blk
+        integer, intent(in) :: var
+        integer(C_INT), intent(in) :: bctype(NFACES)
+        real(C_DOUBLE), intent(in) :: pointValue(:)
+
+        integer :: f, n, npts, dir, side, b, ndir
+        integer :: gi(3), ii(3)
+        real(C_DOUBLE) :: dn
+
+        npts = int(bc%nTotal)
+        do f = 1, NFACES
+            dir = boundary_face_dir(f)
+            if (var == dir) then
+                ! The normal velocity lives ON the face.
+                select case (bctype(f))
+                case (BC_DIRICHLET)
+                    bc%bcKind(var,f) = BCK_FACE
+                    bc%bcW(var,f) = 0.0d0
+                case (BC_OUTFLOW)
+                    bc%bcKind(var,f) = BCK_FACE_OUTFLOW
+                    bc%bcW(var,f) = 1.0d0
+                case default
+                    ! Refused by resolve_face_bcs (numerics review F4).
+                    error stop "boundary: Neumann normal velocity reached the row resolver"
+                end select
+            else
+                select case (bctype(f))
+                case (BC_DIRICHLET)
+                    bc%bcKind(var,f) = BCK_GHOST
+                    bc%bcW(var,f) = -1.0d0
+                case (BC_NEUMANN, BC_OUTFLOW)
+                    ! OUTFLOW never reaches a tangential/cell-centred row
+                    ! (resolve_face_bcs gives those Neumann); kept as a
+                    ! zero-gradient ghost should a caller pass it.
+                    bc%bcKind(var,f) = BCK_GHOST
+                    bc%bcW(var,f) = 1.0d0
+                case default
+                    error stop "boundary: unknown BC type in the row resolver"
+                end select
+            end if
+        end do
+
+        do n = 1, npts
+            f = int(bc%pointFace(n))
+            dir = boundary_face_dir(f)
+            side = boundary_face_side(f)
+            b = int(bc%slot(n))
+            ndir = int(blk%nb(dir))
+            gi = [int(bc%i(n)), int(bc%j(n)), int(bc%k(n))]
+            ii = gi
+            select case (bc%bcKind(var,f))
+            case (BCK_GHOST)
+                gi(dir) = merge(0, ndir + 1, side == SIDE_MIN)
+                ii(dir) = merge(1, ndir, side == SIDE_MIN)
+            case default
+                gi(dir) = merge(1, ndir + 1, side == SIDE_MIN)
+                ii(dir) = merge(2, ndir, side == SIDE_MIN)
+            end select
+            select case (dir)
+            case (DIR_X)
+                dn = blk%x(gi(1),var,b) - blk%x(ii(1),var,b)
+            case (DIR_Y)
+                dn = blk%y(gi(2),var,b) - blk%y(ii(2),var,b)
+            case default
+                dn = blk%z(gi(3),var,b) - blk%z(ii(3),var,b)
+            end select
+            if (bctype(f) == BC_DIRICHLET) then
+                ! Ghost mirror 2v - q, or the pinned face value v itself.
+                bc%bcC(var,n) = merge(2.0d0, 1.0d0, bc%bcKind(var,f) == BCK_GHOST)*pointValue(n)
+            else
+                ! Neumann data are stored as the normal derivative.
+                bc%bcC(var,n) = dn*pointValue(n)
+            end if
+        end do
+    end subroutine resolve_affine_rows
 
     ! Validate the blasius rows and build the similarity table once.
     ! Allowed: an x face (inlet) for u and v; a y face (top displacement)
@@ -621,26 +767,41 @@ contains
         side = modulo(face_id - 1, 2)
     end function boundary_face_side
 
-    ! outflow_copy: BC_OUTFLOW faces (the normal velocity of a declared
-    ! outlet) are written as a zero-gradient copy when .true. -- the
-    ! PREDICTOR-stage stance (post-momentum and at init/restart, where the
-    ! face would otherwise keep a stale value) -- and skipped when .false.
-    ! (inside the projection loop, which owns the face through the
-    ! Dirichlet-pressure correction and must not be stomped).
-    subroutine apply_bc(blk, bc, outflow_copy)
+    ! Physical-face boundary writes of the q variables `vars` (default
+    ! u, v, w, p; scalar_sync passes the scalar columns): every point's
+    ! resolved row, dst = w*src + C (see BCK_*). Runs post-predictor, at
+    ! init/restart and ONCE per projection after the last correction, always
+    ! BEFORE the halo exchange -- the exchange's tangential extension copies
+    ! a neighbour block's ghosts into edge/corner halos, so the ghosts must
+    ! be current when it reads them (same-level copies only; 2:1 entries do
+    ! not extend into physical ghost rows, comm.f90 interface_boxes).
+    !
+    ! outflow_copy: the FACE_OUTFLOW rows (the normal velocity of a declared
+    ! outlet) are written when .true. -- the PREDICTOR-stage stance
+    ! (post-momentum and at init/restart, where the face would otherwise keep
+    ! a stale value) -- and skipped when .false. (the projection owns the
+    ! face through the Dirichlet-pressure correction and must not be stomped).
+    subroutine apply_bc(blk, bc, vars, outflow_copy)
         type(block_set_type), intent(inout) :: blk
         type(boundary_type), intent(in) :: bc
+        integer(C_INT), intent(in), optional :: vars(:)
         logical, intent(in), optional :: outflow_copy
-        integer :: n, npts, b, i, j, k, face_id, var
-        integer :: dir, side
-        integer :: n_dir, ghost_idx, interior_idx_dir, face_idx_dir, neighbor_idx
+
+        integer :: n, npts, b, face_id, dir, side, v, nv, var, kind
+        integer :: ghost_idx, interior_idx, face_idx, neighbor_idx
+        integer :: gi(3), ii(3)
         integer(C_INT) :: local_n(1:3), ofc
-        integer :: idx(3), interior_idx(3), face_idx(3)
-        real(C_DOUBLE) :: dn, bc_value
+        integer(C_INT), allocatable :: vl(:)
 
         npts = int(bc%nTotal)
         if (npts <= 0) return
 
+        if (present(vars)) then
+            vl = vars
+        else
+            vl = [VAR_U, VAR_V, VAR_W, VAR_P]
+        end if
+        nv = size(vl)
         ofc = 0_C_INT
         if (present(outflow_copy)) then
             if (outflow_copy) ofc = 1_C_INT
@@ -648,101 +809,62 @@ contains
         local_n = blk%nb(1:3)
 
         !$omp target teams distribute parallel do &
-        !$omp& map(to: npts, ofc, local_n(1:3), blk%x, blk%y, blk%z, &
+        !$omp& map(to: npts, nv, ofc, local_n(1:3), vl, &
         !$omp& bc%pointFace(1:npts), bc%slot(1:npts), bc%i(1:npts), bc%j(1:npts), bc%k(1:npts), &
-        !$omp& bc%faceBcType(VAR_U:VAR_P,1:NFACES), bc%pointBcValue(VAR_U:VAR_P,1:npts)) &
+        !$omp& bc%bcKind, bc%bcW, bc%bcC(1:bc%nVar,1:npts)) &
         !$omp& map(tofrom: blk%q) &
-        !$omp& private(n,b,i,j,k,face_id,var,dir,side,n_dir, &
-        !$omp& ghost_idx,interior_idx_dir,face_idx_dir,neighbor_idx, &
-        !$omp& idx,interior_idx,face_idx,dn,bc_value)
+        !$omp& private(n,b,face_id,dir,side,v,var,kind, &
+        !$omp& ghost_idx,interior_idx,face_idx,neighbor_idx,gi,ii)
         do n = 1, npts
             ! Each entry is one active physical boundary point of one block.
             face_id = int(bc%pointFace(n))
             b = int(bc%slot(n))
             dir = (face_id + 1)/2
             side = modulo(face_id - 1, 2)
-            i = int(bc%i(n))
-            j = int(bc%j(n))
-            k = int(bc%k(n))
+            gi = [int(bc%i(n)), int(bc%j(n)), int(bc%k(n))]
+            ii = gi
 
-            idx = [i, j, k]
-            interior_idx = idx
-            face_idx = idx
-
-            n_dir = int(local_n(dir))
-            ! Pick the boundary/ghost/interior indices along the wall-normal direction.
+            ! The ghost/interior pair (cell-centred rows and tangential
+            ! velocities) and the face/neighbour pair (the normal velocity,
+            ! which lives on the boundary face in the staggered layout).
             if (side == SIDE_MIN) then
                 ghost_idx = 0
-                interior_idx_dir = 1
-                face_idx_dir = 1
+                interior_idx = 1
+                face_idx = 1
                 neighbor_idx = 2
             else
-                ghost_idx = n_dir + 1
-                interior_idx_dir = n_dir
-                face_idx_dir = n_dir + 1
-                neighbor_idx = n_dir
+                ghost_idx = int(local_n(dir)) + 1
+                interior_idx = int(local_n(dir))
+                face_idx = int(local_n(dir)) + 1
+                neighbor_idx = int(local_n(dir))
             end if
 
-            do var = VAR_U, VAR_P
-                bc_value = bc%pointBcValue(var,n)
-                if (var == dir) then
-                    ! Normal velocity lives on the boundary face itself in the staggered layout.
-                    face_idx(dir) = face_idx_dir
-                    interior_idx(dir) = neighbor_idx
-                    select case (dir)
-                    case (DIR_X)
-                        dn = blk%x(face_idx(1),var,b) - blk%x(interior_idx(1),var,b)
-                    case (DIR_Y)
-                        dn = blk%y(face_idx(2),var,b) - blk%y(interior_idx(2),var,b)
-                    case (DIR_Z)
-                        dn = blk%z(face_idx(3),var,b) - blk%z(interior_idx(3),var,b)
-                    end select
-                    if (bc%faceBcType(var,face_id) == BC_DIRICHLET) then
-                        blk%q(face_idx(1),face_idx(2),face_idx(3),var,b) = bc_value
-                    else if (bc%faceBcType(var,face_id) == BC_NEUMANN .or. ofc == 1_C_INT) then
-                        ! Neumann data are stored as the normal derivative.
-                        ! BC_OUTFLOW reaches this write only in the
-                        ! outflow_copy (predictor-stage) call: its value is 0,
-                        ! so the face gets the zero-gradient copy; inside the
-                        ! projection loop it is skipped (the Dirichlet-p
-                        ! correction owns the face there).
-                        blk%q(face_idx(1),face_idx(2),face_idx(3),var,b) = &
-                            blk%q(interior_idx(1),interior_idx(2),interior_idx(3),var,b) &
-                          + dn*bc_value
-                    end if
+            do v = 1, nv
+                var = int(vl(v))
+                kind = int(bc%bcKind(var,face_id))
+                if (kind == BCK_NONE) cycle
+                if (kind == BCK_FACE_OUTFLOW .and. ofc == 0_C_INT) cycle
+                if (kind == BCK_GHOST) then
+                    gi(dir) = ghost_idx
+                    ii(dir) = interior_idx
                 else
-                    ! Tangential velocities and pressure use the ghost layer next to the boundary.
-                    face_idx(dir) = ghost_idx
-                    interior_idx(dir) = interior_idx_dir
-                    select case (dir)
-                    case (DIR_X)
-                        dn = blk%x(face_idx(1),var,b) - blk%x(interior_idx(1),var,b)
-                    case (DIR_Y)
-                        dn = blk%y(face_idx(2),var,b) - blk%y(interior_idx(2),var,b)
-                    case (DIR_Z)
-                        dn = blk%z(face_idx(3),var,b) - blk%z(interior_idx(3),var,b)
-                    end select
-                    if (bc%faceBcType(var,face_id) == BC_DIRICHLET) then
-                        ! Dirichlet ghost value chosen so the boundary midpoint has bc_value.
-                        blk%q(face_idx(1),face_idx(2),face_idx(3),var,b) = &
-                            2.0d0*bc_value &
-                          - blk%q(interior_idx(1),interior_idx(2),interior_idx(3),var,b)
-                    else
-                        blk%q(face_idx(1),face_idx(2),face_idx(3),var,b) = &
-                            blk%q(interior_idx(1),interior_idx(2),interior_idx(3),var,b) &
-                          + dn*bc_value
-                    end if
+                    gi(dir) = face_idx
+                    ii(dir) = neighbor_idx
                 end if
+                blk%q(gi(1),gi(2),gi(3),var,b) = &
+                    bc%bcW(var,face_id)*blk%q(ii(1),ii(2),ii(3),var,b) + bc%bcC(var,n)
             end do
         end do
         !$omp end target teams distribute parallel do
     end subroutine apply_bc
 
-    ! Generic cell-centred scalar ghost update at physical domain faces:
-    ! one SCALAR_BC_* mode per face over the bc point lists (mechanics only
-    ! -- the caller supplies the per-scalar mode table). The optional value
-    ! array feeds the VALUE mode (face value via the ghost-mirror identity),
-    ! the hook a scalar inlet needs.
+    ! Physical-face ghosts of a standalone cell-centred scalar array (the
+    ! RANS transport scalars, the projection's phi): the same affine write
+    ! as apply_bc, with the row resolved per CALL from a per-face mode --
+    ! COPY (zero normal gradient) w = 1, C = 0; MIRROR (face value 0)
+    ! w = -1, C = 0; VALUE (prescribed face value) w = -1, C = 2 value;
+    ! NONE leaves the ghost untouched. A separate routine only because a
+    ! strided q slice cannot portably be passed under OpenMP target mapping.
     subroutine apply_scalar_bc(blk, bc, s, mode, value)
         type(block_set_type), intent(in) :: blk
         type(boundary_type), intent(in) :: bc
@@ -750,142 +872,46 @@ contains
         integer(C_INT), intent(in) :: mode(NFACES)
         real(C_DOUBLE), intent(in), optional :: value(NFACES)
 
-        integer :: n, npts, b, i, j, k, face_id, dir, side, m
-        integer :: ghost_idx, interior_idx_dir
+        integer :: n, npts, b, face_id, dir, side, f
         integer :: gi(3), ii(3)
-        integer(C_INT) :: local_n(1:3), mode_l(NFACES)
-        real(C_DOUBLE) :: value_l(NFACES)
+        integer(C_INT) :: local_n(1:3), on_l(NFACES)
+        real(C_DOUBLE) :: w_l(NFACES), c_l(NFACES)
 
         npts = int(bc%nTotal)
         if (npts <= 0) return
         if (all(mode == SCALAR_BC_NONE)) return
         local_n = blk%nb(1:3)
-        mode_l = mode
-        value_l = 0.0d0
-        if (present(value)) value_l = value
+
+        do f = 1, NFACES
+            on_l(f) = merge(1_C_INT, 0_C_INT, mode(f) /= SCALAR_BC_NONE)
+            w_l(f) = merge(1.0d0, -1.0d0, mode(f) == SCALAR_BC_COPY)
+            c_l(f) = 0.0d0
+            if (mode(f) == SCALAR_BC_VALUE .and. present(value)) c_l(f) = 2.0d0*value(f)
+        end do
 
         !$omp target teams distribute parallel do &
-        !$omp& map(to: npts, local_n(1:3), mode_l(1:NFACES), value_l(1:NFACES), &
+        !$omp& map(to: npts, local_n(1:3), on_l(1:NFACES), w_l(1:NFACES), c_l(1:NFACES), &
         !$omp& bc%pointFace(1:npts), bc%slot(1:npts), bc%i(1:npts), bc%j(1:npts), bc%k(1:npts)) &
         !$omp& map(tofrom: s) &
-        !$omp& private(n,b,i,j,k,face_id,dir,side,m,ghost_idx,interior_idx_dir,gi,ii)
+        !$omp& private(n,b,face_id,dir,side,gi,ii)
         do n = 1, npts
             face_id = int(bc%pointFace(n))
-            m = int(mode_l(face_id))
-            if (m == SCALAR_BC_NONE) cycle
+            if (on_l(face_id) == 0_C_INT) cycle
             b = int(bc%slot(n))
             dir = (face_id + 1)/2
             side = modulo(face_id - 1, 2)
-            i = int(bc%i(n))
-            j = int(bc%j(n))
-            k = int(bc%k(n))
-
-            if (side == 0) then
-                ghost_idx = 0
-                interior_idx_dir = 1
-            else
-                ghost_idx = int(local_n(dir)) + 1
-                interior_idx_dir = int(local_n(dir))
-            end if
-            gi = [i, j, k]
+            gi = [int(bc%i(n)), int(bc%j(n)), int(bc%k(n))]
             ii = gi
-            gi(dir) = ghost_idx
-            ii(dir) = interior_idx_dir
-
-            select case (m)
-            case (SCALAR_BC_COPY)
-                s(gi(1),gi(2),gi(3),b) = s(ii(1),ii(2),ii(3),b)
-            case (SCALAR_BC_MIRROR)
-                s(gi(1),gi(2),gi(3),b) = -s(ii(1),ii(2),ii(3),b)
-            case (SCALAR_BC_VALUE)
-                ! Ghost chosen so the face midpoint carries the value.
-                s(gi(1),gi(2),gi(3),b) = 2.0d0*value_l(face_id) &
-                                       - s(ii(1),ii(2),ii(3),b)
-            end select
+            if (side == SIDE_MIN) then
+                gi(dir) = 0
+                ii(dir) = 1
+            else
+                gi(dir) = int(local_n(dir)) + 1
+                ii(dir) = int(local_n(dir))
+            end if
+            s(gi(1),gi(2),gi(3),b) = w_l(face_id)*s(ii(1),ii(2),ii(3),b) + c_l(face_id)
         end do
         !$omp end target teams distribute parallel do
     end subroutine apply_scalar_bc
-
-    ! Physical-boundary ghosts of the passive scalars stored IN blk%q
-    ! (scalar `is` at VAR_S0+is). This is apply_bc's cell-centred branch,
-    ! var-indexed over the scalars instead of VAR_U:VAR_P, over the SAME
-    ! boundary point lists: Dirichlet via the ghost mirror
-    ! (ghost = 2 value - interior), Neumann via ghost = interior + dn value.
-    !
-    ! Deliberately a TWIN of apply_bc rather than an extension of its
-    ! `do var = VAR_U, VAR_P` loop: apply_bc runs nIter times per substage
-    ! INSIDE the projection loop and is bit-exactness-critical, while the
-    ! scalars are touched once per substage, outside it. (The generic
-    ! apply_scalar_bc above takes a standalone s(0:,0:,0:,1:) array and
-    ! cannot portably be fed a strided q slice under OpenMP target mapping.)
-    subroutine apply_scalar_bc_q(blk, bc, nScalar, bcType, bcValue)
-        type(block_set_type), intent(inout) :: blk
-        type(boundary_type), intent(in) :: bc
-        integer, intent(in) :: nScalar
-        integer(C_INT), intent(in) :: bcType(:,:)      ! (nScalar, NFACES)
-        real(C_DOUBLE), intent(in) :: bcValue(:,:)
-
-        integer :: n, npts, b, i, j, k, face_id, is, var, dir, side
-        integer :: ghost_idx, interior_idx_dir, ns
-        integer :: gi(3), ii(3)
-        integer(C_INT) :: local_n(1:3)
-        real(C_DOUBLE) :: dn
-
-        npts = int(bc%nTotal)
-        ns = nScalar
-        if (npts <= 0 .or. ns <= 0) return
-        local_n = blk%nb(1:3)
-
-        !$omp target teams distribute parallel do &
-        !$omp& map(to: npts, ns, local_n(1:3), blk%x, blk%y, blk%z, &
-        !$omp& bc%pointFace(1:npts), bc%slot(1:npts), bc%i(1:npts), bc%j(1:npts), bc%k(1:npts), &
-        !$omp& bcType, bcValue) &
-        !$omp& map(tofrom: blk%q) &
-        !$omp& private(n,b,i,j,k,face_id,is,var,dir,side,ghost_idx,interior_idx_dir,gi,ii,dn)
-        do n = 1, npts
-            face_id = int(bc%pointFace(n))
-            b = int(bc%slot(n))
-            dir = (face_id + 1)/2
-            side = modulo(face_id - 1, 2)
-            i = int(bc%i(n))
-            j = int(bc%j(n))
-            k = int(bc%k(n))
-
-            if (side == SIDE_MIN) then
-                ghost_idx = 0
-                interior_idx_dir = 1
-            else
-                ghost_idx = int(local_n(dir)) + 1
-                interior_idx_dir = int(local_n(dir))
-            end if
-            gi = [i, j, k]
-            ii = gi
-            gi(dir) = ghost_idx
-            ii(dir) = interior_idx_dir
-
-            ! The scalar sits at the pressure point, so its ghost distance is
-            ! the VAR_P column's.
-            select case (dir)
-            case (DIR_X)
-                dn = blk%x(gi(1),VAR_P,b) - blk%x(ii(1),VAR_P,b)
-            case (DIR_Y)
-                dn = blk%y(gi(2),VAR_P,b) - blk%y(ii(2),VAR_P,b)
-            case default
-                dn = blk%z(gi(3),VAR_P,b) - blk%z(ii(3),VAR_P,b)
-            end select
-
-            do is = 1, ns
-                var = int(VAR_S0) + is
-                if (bcType(is,face_id) == BC_DIRICHLET) then
-                    blk%q(gi(1),gi(2),gi(3),var,b) = 2.0d0*bcValue(is,face_id) &
-                        - blk%q(ii(1),ii(2),ii(3),var,b)
-                else
-                    blk%q(gi(1),gi(2),gi(3),var,b) = blk%q(ii(1),ii(2),ii(3),var,b) &
-                        + dn*bcValue(is,face_id)
-                end if
-            end do
-        end do
-        !$omp end target teams distribute parallel do
-    end subroutine apply_scalar_bc_q
 
 end module boundary

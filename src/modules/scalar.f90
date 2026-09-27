@@ -17,7 +17,7 @@
 !   * output/restart is one file, one collective write.
 ! `[scalar] count = 0` is bit-exact with a scalar-free build BY CONSTRUCTION:
 ! dns%nVar == NVAR reproduces every allocation shape, no kernel here is called,
-! apply_bc is untouched and no extra exchange is issued.
+! the boundary tables have no scalar column and no extra exchange is issued.
 !
 ! LANDMINE: the scalar index DIFFERS between the arrays -- q slot VAR_S0+is,
 ! qs/oldrhs slot SCR_S0+is (pressure has no scratch plane).
@@ -31,7 +31,7 @@ module scalar
         VAR_S0, SCR_S0, NVAR
     use :: blocks, only: block_set_type, FACE_CLOSED, FACE_COARSE, FACE_FINE
     use :: boundary, only: boundary_type, NFACES, boundary_face_id, &
-        apply_scalar_bc_q, BC_DIRICHLET, BC_NEUMANN, &
+        apply_bc, set_scalar_bc_rows, BC_DIRICHLET, BC_NEUMANN, &
         PATCH_GENERIC, PATCH_WALL, PATCH_INLET, PATCH_OUTLET
     use :: comm, only: comm_type, exchange_halos, comm_allreduce_sum, comm_allreduce_max
     use :: turbulence, only: turb_type, turbulence_is_enabled
@@ -1563,7 +1563,7 @@ contains
     subroutine init_scalar(sc, blk, bc, wall_function, has_terminal)
         type(scalar_type), intent(inout) :: sc
         type(block_set_type), intent(in) :: blk
-        type(boundary_type), intent(in) :: bc
+        type(boundary_type), intent(inout) :: bc
         ! [rans] wall_treatment = wall_function: allocate the wall-cell y+
         ! field and report the thermal wall function's per-scalar constants.
         logical, intent(in) :: wall_function
@@ -1606,6 +1606,12 @@ contains
                     end do
                 end select
             end do
+        end do
+        ! The scalar rows join the boundary tables as their own columns, so
+        ! apply_bc serves them exactly as it serves u, v, w, p (init order:
+        ! init_boundary_faces, this, then enter_boundary_data maps them).
+        do is = 1, int(sc%n)
+            call set_scalar_bc_rows(bc, blk, int(VAR_S0) + is, sc%bcType(is,:), sc%bcValue(is,:))
         end do
 
         nx = int(blk%nb(1))
@@ -2605,7 +2611,7 @@ contains
         !$omp target enter data map(to: sc%pr, sc%prt, sc%prtModel, sc%source, &
         !$omp& sc%srcType, sc%srcDir, &
         !$omp& sc%initValue, sc%ibmValue, sc%inlet, sc%ibmMode, sc%initProfile, &
-        !$omp& sc%bcType, sc%bcValue, sc%invDx, sc%invDy, sc%invDz, sc%nutNone, &
+        !$omp& sc%invDx, sc%invDy, sc%invDz, sc%nutNone, &
         !$omp& sc%cdx, sc%cdy, sc%cdz, &
         !$omp& sc%wfP, sc%wfYpt, sc%wfYplus, sc%phi, sc%vfrac, sc%solidK, sc%solidC, &
         !$omp& sc%solidSource, sc%contactR, sc%tangCorr, &
@@ -2622,7 +2628,7 @@ contains
         !$omp target exit data map(delete: sc%pr, sc%prt, sc%prtModel, sc%source, &
         !$omp& sc%srcType, sc%srcDir, &
         !$omp& sc%initValue, sc%ibmValue, sc%inlet, sc%ibmMode, sc%initProfile, &
-        !$omp& sc%bcType, sc%bcValue, sc%invDx, sc%invDy, sc%invDz, sc%nutNone, &
+        !$omp& sc%invDx, sc%invDy, sc%invDz, sc%nutNone, &
         !$omp& sc%cdx, sc%cdy, sc%cdz, &
         !$omp& sc%wfP, sc%wfYpt, sc%wfYplus, sc%phi, sc%vfrac, sc%solidK, sc%solidC, &
         !$omp& sc%solidSource, sc%contactR, sc%tangCorr, &
@@ -3443,7 +3449,8 @@ contains
     end subroutine scalar_finish
 
     ! Physical ghosts + one batched halo exchange over all scalar variables
-    ! (they ride the same entries, and the same message, as u,v,w,p).
+    ! (they ride the same boundary rows, the same entries and the same
+    ! message as u,v,w,p).
     subroutine scalar_sync(sc, blk, bc, c)
         type(scalar_type), intent(in) :: sc
         type(block_set_type), intent(inout) :: blk
@@ -3452,7 +3459,7 @@ contains
 
         if (.not. scalars_enabled(sc)) return
 
-        call apply_scalar_bc_q(blk, bc, int(sc%n), sc%bcType, sc%bcValue)
+        call apply_bc(blk, bc, vars=sc%varList)
         call exchange_halos(c, blk, sc%varList)
     end subroutine scalar_sync
 

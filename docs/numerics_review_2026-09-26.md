@@ -267,6 +267,14 @@ red-black path (per colour).
 
 ## 4. A unified ghost approach with BC "providers"
 
+> **STATUS (2026-09-27): done in REDUCED form** -- section 10 step 6. The
+> three kernels became one affine write `dst = w*src + C` from tables
+> resolved at init (velocity, pressure and scalar rows as columns of the
+> same tables), `apply_scalar_bc_q` is gone; the rows did NOT move into the
+> exchange entries, for the reasons measured/read there (the same-level copy
+> entries read physical ghosts and pack runs first, so a BC launch is needed
+> before the exchange in any design).
+
 The exchange already *is* a provider model: every halo point is a weighted
 gather from source rows given by per-dimension affine maps
 (`entry_gather_map`, `comm.f90:1052`), and the same kernel serves same-level
@@ -532,8 +540,8 @@ order and the interface machinery caps the stencil.
 | F9 | design | the scalar default (divergence) is the form the momentum abandoned; fine while gated, but it is why F2 bites | `scalar.f90:148` |
 
 Suggested order of work: F3 (one config experiment — DONE, retracted), F2 (one test run, then
-a default), F4 (sailplane to the outlet patch, config error — DONE), F5 (DONE) and the
-section-4 unification, F1 (its own validation round on the stretched cases),
+a default — DONE), F4 (sailplane to the outlet patch, config error — DONE), F5 (DONE) and the
+section-4 unification (DONE in reduced form, step 6), F1 (its own validation round on the stretched cases),
 F7, then the section-7 (c) implicit solid if the CHT campaign is to be re-run
 at `niter = 12`.
 
@@ -864,6 +872,55 @@ Gate: bit-exact at production flags — `2v − q` and `−q + 2v` are the same
 IEEE operation, and the corner ghosts are the same expression on the same
 values; `min_channel` 1 == 2 == 3 == 4 ranks EXACT is the load-bearing leg.
 Two to three sessions.
+
+> **MEASURED (2026-09-27). DONE, with a DELIBERATE REDUCTION of scope: the
+> boundary rows are resolved into ONE affine write and one kernel form, but
+> they stay a boundary.f90 kernel and did NOT become exchange entries.** Why
+> the entry version was not taken, found while reading comm.f90 before
+> writing any code: (1) the same-level COPY entries READ physical ghosts --
+> `entry_boxes` extends a face entry into the ghost row (index 0 / nb+1)
+> wherever the combined edge neighbour is absent, i.e. at every physical
+> wall, and `pack_entries` runs FIRST (to overlap the messages), so the BC
+> writes must complete in a launch of their own before pack whatever list
+> they sit in; "zero kernels" is unreachable and the launch count is
+> unchanged either way. (2) Adding a per-point constant to the existing
+> gather changes the arithmetic path of every halo point (`x + 0.0` flips
+> the sign of a negative zero), so the existing entries would need a branch
+> anyway. (3) The 2:1 cross-level entries do NOT extend into physical ghost
+> rows (`interface_boxes`), so the ordering hazard of section 3 is confined
+> to same-level copies, is stated at `apply_bc`, and is what the 1 == 4
+> ranks legs gate. What WAS done (boundary.f90, scalar.f90): the BC type of
+> every q variable is resolved at init into `bcKind(var,face)` (GHOST /
+> FACE / FACE_OUTFLOW / NONE), `bcW(var,face)` and `bcC(var,point)`
+> (`resolve_affine_rows`; the scalar columns come from `init_scalar` via
+> `set_scalar_bc_rows`, the tables are sized `dns%nVar`), and every write
+> is `dst = w*src + C`: Dirichlet ghost w=-1 C=2v, Neumann ghost w=+1 C=dn v,
+> pinned face w=0 C=v, outflow face w=+1 C=dn v (=0, predictor call only).
+> `apply_bc(blk, bc, vars, outflow_copy)` is generic over a variable list
+> (`scalar_sync` passes the scalar columns), `apply_scalar_bc_q` is DELETED,
+> `apply_scalar_bc` (standalone RANS/phi arrays) is the same line with its
+> per-face mode resolved per call; neither kernel maps `blk%x/y/z` or the
+> type table any more and neither has a type branch (the three kernels were
+> 110 + 62 + 69 = 241 lines, the two are 76 + 48 = 124; boundary.f90 as a
+> whole 891 -> 917 with the resolver and its comments). Bit-exactness
+> argument: `2v - q` and `(-1)*q + 2v` are the same IEEE operation, `0*q + v`
+> is `v` for every finite q, and the Neumann `dn*v` moved out of the kernel
+> (it used to be contractible into `fma(dn, v, q)`), so the formal gate is
+> nofma and the only rows that can move at PRODUCTION flags are nonzero
+> Neumann data -- present only in `tutorials/cht/channel` (heat-flux walls),
+> in no suite. Gates vs `~/numrev_ref_binaries`, all **max_abs 0**: 7-case
+> suite nofma CPU 1 rank 7/7, CPU 4 ranks 7/7, GPU 7/7; 9-case scalar suite
+> CPU 9/9, GPU 9/9 (uniform3 = scalar Dirichlet inlets + Neumann outlet);
+> extra legs -- freestream pois_io (parabola inlet, outlet, walls, 200
+> steps), oblique, lamboseen, `redblack_interface/refined_channel`, and
+> `rans_inlet/inlet_channel` (the SCALAR_BC_VALUE mode, k/omega inlet
+> ghosts) -- CPU 1 rank 5/5, CPU 4 ranks 5/5, GPU 5/5; and the 7-case suite
+> at PRODUCTION flags CPU 7/7, as predicted. **61 comparisons, every one
+> max_abs 0** (incl. every RANS scalar and nut). MEASUREMENT LANDMINE: the
+> suite drivers key their output prefix on `MODE`, so two suites with the
+> same MODE running concurrently in the same directories delete each
+> other's snapshots (one leg read NO OUTPUT and was rerun under its own
+> label); the drivers now say so.
 
 **Step 7 — Q1, prepare does everything (refactor).** Independent of step 6.
 (a) `moby_prepare` accepts body-free cases and writes node lines + leaf

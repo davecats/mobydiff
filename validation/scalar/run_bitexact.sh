@@ -12,6 +12,9 @@
 #   REF=/path/to/base_cpu_nofma NEW=../../build_cpu_nofma/moby_solve \
 #       RANKS=4 ./run_bitexact.sh
 #
+# The output prefix is keyed on MODE: two suites with the same MODE running
+# at once in this tree delete each other's snapshots (measured 2026-09-27,
+# one leg read NO OUTPUT). Give a concurrent run its own MODE label.
 # Environment: REF (required), NEW (default ../../build_<mode>_nofma/moby_solve),
 #              RANKS (default 1), STEPS (default 20), MODE (cpu|gpu, labels only)
 set -uo pipefail

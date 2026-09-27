@@ -1,5 +1,26 @@
 # Next session: numerics review, steps 0–5
 
+STATUS UPDATE (2026-09-27, second session): **STEP 6 DONE** on top of 0–5 —
+the boundary rows are ONE affine write from tables resolved at init
+(`bcKind/bcW/bcC`, velocity + pressure + scalar columns), `apply_bc` is
+generic over a variable list, `apply_scalar_bc_q` is deleted, and the two
+remaining kernels carry no geometry and no type branch. **REDUCED SCOPE,
+recorded in the review (section 10 step 6 MEASURED + the section 4 header):
+the rows did NOT become exchange entries**, because the same-level copy
+entries read physical ghosts and pack runs first, so a BC launch before the
+exchange is needed in any design — the "zero kernels" half of the plan was
+unreachable and the abstraction half is what shipped. 61 comparisons at
+`max_abs 0` (7-case CPU 1+4 ranks + GPU, 9-case CPU + GPU, freestream
+outlets/parabola + red-black 2:1 + RANS inlet CPU 1+4 ranks + GPU, all
+nofma; plus the 7-case suite at production flags). The pipe re-run below is
+still in flight (step ~50 000 of 168 000 at 19:40, on schedule for
+~2026-09-28 19:00). Steps 7–12 additionally inherit: `apply_bc(blk, bc,
+vars, outflow_copy)` is the one entry point for q-variable ghosts, so a new
+transported q variable gets its BCs by filling a column
+(`set_scalar_bc_rows`) — no new kernel; and NEVER run two `run_bitexact*.sh`
+suites with the same `MODE` label concurrently in one tree (their output
+prefixes collide and one deletes the other's snapshot).
+
 STATUS: **STEPS 0–5 DONE (2026-09-27, one session; commits e126d1a → the
 step-5 commit on `main`).** One item is still in flight and one outcome
 overturned a prediction:

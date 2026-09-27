@@ -20,6 +20,9 @@
 #
 #   REF=~/s2_ref/moby_solve_cpu_nofma NEW=../../build_cpu_nofma/moby_solve ./run_bitexact_s3.sh
 #
+# The output prefix is keyed on MODE: two suites with the same MODE running
+# at once in this tree delete each other's snapshots (measured 2026-09-27,
+# one leg read NO OUTPUT). Give a concurrent run its own MODE label.
 # Environment: REF (required), NEW, RANKS (default 1), MODE (cpu|gpu, labels)
 set -uo pipefail
 cd "$(dirname "$0")"
