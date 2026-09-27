@@ -322,9 +322,20 @@ contains
             call jacobi_apply(ps, blk, dt_gamma, ibm)
             if (hasIface) call interface_correct(blk, ibm, outLow, outHigh, refd)
             call prof_toc(proj_prof, PROF_APPLY, t0)
-            t0 = prof_tic()
-            call apply_bc(blk, bc)
-            call prof_toc(proj_prof, PROF_PROJ_BC, t0)
+            if (iIter == ps%nIter) then
+                ! The physical-face ghosts ONCE, after the last correction and
+                ! before the full exchange whose tangential extension copies
+                ! them into neighbouring blocks' corner halos (numerics review
+                ! F5, 2026-09-27). Nothing between iterations reads them: the
+                ! divergence stencil reads only the face-normal velocity at
+                ! q(nb+1), pinned Dirichlet faces are masked out of the
+                ! correction, phi has its own ghosts, and a Neumann NORMAL
+                ! velocity -- the one write that was NOT idempotent -- is a
+                ! config error since F4. Gated bit-exact at production flags.
+                t0 = prof_tic()
+                call apply_bc(blk, bc)
+                call prof_toc(proj_prof, PROF_PROJ_BC, t0)
+            end if
             t0 = prof_tic()
             if (iIter == ps%nIter) then
                 ! Last iteration: the full shell, all four variables, with the
@@ -1017,9 +1028,12 @@ contains
                     call interface_correct(blk, ibm, outLow, outHigh, refd)
                     call prof_toc(proj_prof, PROF_APPLY, t0)
                 end if
-                t0 = prof_tic()
-                call apply_bc(blk, bc)
-                call prof_toc(proj_prof, PROF_PROJ_BC, t0)
+                if (iIter == ps%nIter .and. color == 0_C_INT) then
+                    ! Ghosts once, after the last colour (see the Jacobi loop).
+                    t0 = prof_tic()
+                    call apply_bc(blk, bc)
+                    call prof_toc(proj_prof, PROF_PROJ_BC, t0)
+                end if
                 t0 = prof_tic()
                 if (iIter == ps%nIter .and. color == 0_C_INT) then
                     call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W, VAR_P])

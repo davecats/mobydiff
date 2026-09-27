@@ -525,14 +525,14 @@ order and the interface machinery caps the stencil.
 | F3 | ~~stability (likely the B0 outlet instability)~~ **RETRACTED 2026-09-27 as a cause** (section 10 step 1: the B0 instability reproduces on the B0-era binary with e-fold 33–37 t.u. and `lmax = 2.2` grows FASTER, 27–32 t.u.; `main` is stable at niter 6 with either bound). What stands is the polynomial fact: the auto `lmax` leaves λ = 2 undamped (\|P₁₂(2)\| = 0.99 vs 0.48 at 2.2), a property of the smoother with no measured consequence. No code change. | `pressure_solver.f90:185` |
 | F4 | consistency (SPD lost at one row) — **FIXED 2026-09-27** (section 10 step 3: sailplane on the outlet patch; a Neumann normal velocity is a config error) | Neumann normal-velocity faces rewritten inside the projection loop; was used by the sailplane outflow | `boundary.f90 resolve_face_bcs`, `tutorials/sailplane/input.ini` |
 | F1 | consistency/conservation on stretched grids | molecular viscous term non-conservative in cell-centred directions; inconsistent with SGS and scalar diffusion; non-symmetric | `init.f90:592-598` |
-| F5 | dead work | `apply_bc` in the projection loop and pinned-face rewrites each substage | `pressure_solver.f90:326`, `:1021` |
+| F5 | dead work — **FIXED 2026-09-27** (section 10 step 4: one `apply_bc` per projection, both solvers; max_abs 0 at production flags; bc bucket −91.6 %) | `apply_bc` in the projection loop and pinned-face rewrites each substage | `pressure_solver.f90` projection loops |
 | F6 | configuration | `channel_kmm180` first cell 0.053 wall units → Péclet-capped `dt` 7.7e-6 vs the ini's 3.125e-4 | `tutorials/channel_kmm180/input.ini:39` |
 | F7 | accuracy (first order in time at cut cells) | implicit-Euler penalization factor instead of Luchini's exact B(λΔt) | `ibm.f90:1307-1350`, `step.f90:252` |
 | F8 | documentation/safety | `cflmax` compared against the max component, RK3 limit is on the sum (√3) | `step.f90:695-709` |
 | F9 | design | the scalar default (divergence) is the form the momentum abandoned; fine while gated, but it is why F2 bites | `scalar.f90:148` |
 
 Suggested order of work: F3 (one config experiment — DONE, retracted), F2 (one test run, then
-a default), F4 (sailplane to the outlet patch, config error — DONE), F5 and the
+a default), F4 (sailplane to the outlet patch, config error — DONE), F5 (DONE) and the
 section-4 unification, F1 (its own validation round on the stretched cases),
 F7, then the section-7 (c) implicit solid if the CHT campaign is to be re-run
 at `niter = 12`.
@@ -790,6 +790,30 @@ the suite, `validation/freestream` (outlets) and `validation/redblack_interface`
 `max_abs 0` is the expected result, and anything else means a face kind was
 missed. Measure `proj_timing: bc` before/after (expect ≈ −(niter−1)/niter of
 the bucket). Half a session.
+
+> **MEASURED (2026-09-27). DONE.** `pressure_projection`: the per-iteration
+> `apply_bc` is gone; ONE call at `iIter == nIter` after `jacobi_apply` /
+> `interface_correct` and before the final full exchange (comment states why
+> nothing between iterations reads the ghosts, and that F4 removed the one
+> non-idempotent write). `redblack_projection`: once, after the last colour of
+> the last iteration, same position. Gates at PRODUCTION flags against the
+> step-0 production binaries (`~/numrev_ref_binaries/moby_solve_{cpu,gpu}`),
+> all **max_abs 0**: 7-case suite CPU 1 rank 7/7, CPU 4 ranks 7/7, GPU 7/7
+> (incl. every RANS scalar); `validation/freestream` pois_io (outlets, 200
+> steps) / oblique / lamboseen pre-vs-new 4/4 datasets each, and
+> `run_gates.sh all` status 0 unchanged; `validation/redblack_interface`
+> refined_channel pre-vs-new 1 rank and 4 ranks 4/4 datasets, and its own
+> driver ALL PASS. Profile (`[output] profile = true`, GPU RTX 3060, 200
+> steps, niter 12), `proj_timing: apply_bc` before → after:
+>
+> | case | calls | bc s/step | Δ | projection s/step | step s/step |
+> |---|---|---|---|---|---|
+> | min_channel (2:1, Chebyshev) | 7200 → 600 | 9.59e-4 → 8.07e-5 | **−91.6 %** | 36.7 → 35.7 ms (−2.8 %) | 46.0 → 41.6 ms |
+> | freestream pois_io (outlets) | 7200 → 600 | 6.38e-4 → 5.38e-5 | **−91.6 %** | 4.30 → 3.71 ms (−13.7 %) | 4.55 → 3.97 ms |
+>
+> −(niter−1)/niter = −91.7 % predicted; the bucket landed on it. The step
+> deltas beyond the bucket are single-run scatter on a shared workstation
+> GPU, not a claim.
 
 **Step 5 — F8 and F6, documentation-level.** `cflmax` documented as a
 per-direction number in `configuration.md`, plus an init-time print of the
