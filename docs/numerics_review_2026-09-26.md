@@ -748,10 +748,26 @@ sessions, the pipe run on a remote GPU.
 > `niter = 6` Chebyshev — kept so the binary is the ONLY change; the niter-12
 > re-measurement belongs to the one-by-one pass), new binary
 > `build_gpu_corax`, run dir `~/pipe_rerun_f2/` (`p_f2_stat.*`); log confirms
-> "resolved to advective". 0.59 s/step → ~27 h; **RESULT PENDING** — when it
-> ends: `pipe_stats.py` + `asset/compare_neuhauser.py thermal` against
-> `p_pr_statsD.npz`/the Neuhauser reduction, then update
-> `tutorials/cht/pipe/asset/` and its report.
+> "resolved to advective". **DONE 2026-09-28** (ended 17:28, 168 000 steps at
+> 0.520 s/step, no NaN). Post-processed with the tutorial's own recipe
+> (`pipe_stats.py` on the 15 snapshots and the plane statistics,
+> `make_caches.py`, `plot_pipe.py`, `pipe_numbers.py`, `variance_budget.py`),
+> old → new on the production grid: interface heat c0 9.760 → 9.761 (every
+> scalar within 0.04 %), q_w 0.24854 → 0.24856, ⟨θ⟩⁺ axis +0.1 → +0.7 %, θ′⁺
+> axis −6.2 → −6.0 %, θ′⁺ (y⁺ < 50) +0.7 → −0.1 %, interface signature at y⁺
+> 7.25 moved ≤ 0.004 toward the reference (c4 0.903 → 0.907, mbc 0.862 →
+> 0.866, isof 1.209 → 1.207); the ONE systematic move is θ′ through the
+> solid: 0.798/0.638/0.528/0.420/0.385/0.374 → 0.802/0.633/0.521/0.404/
+> 0.365/0.353 vs Neuhauser 0.757/0.591/0.490/0.388/0.353/0.343 — the deep
+> excess +9 → +3 %, and renormalised at 0.1 d the decay reads −2.0 … +0.4 %
+> where it read +0.1 … +7.7 %. Direction as F2 predicts (the drift was a
+> spurious source at the fluid cut faces, where the solid is forced), but
+> ONE realisation: the velocity statistics F2 cannot touch moved by
+> comparable amounts (u_z′ core +3.1 → −3.4 %, ⟨u_r′u_z′⟩ −1.2 → +1.0 %,
+> u_b 1.0075 → 1.0092), which bounds the claim. `tutorials/cht/pipe/asset/`
+> accumulators + figures 1–7 refreshed, README production tables updated
+> with a provenance note, `pipe_report.html` keeps the campaign and gains a
+> §11 addendum with the old/new table.
 
 **Step 3 — F4, Neumann normal velocity.** (a) `tutorials/sailplane/input.ini`:
 replace the `x_max_{u,v,w}_type = neumann` rows by `x_max_patch = outlet`

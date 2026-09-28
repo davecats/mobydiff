@@ -44,7 +44,7 @@ the grid.
 | grid | 256 × 256 × 896 = 58.7 M cells, uniform; Δ⁺ = 1.84, Δz⁺ = 5.06 |
 | blocks | `nb = 32`, 1792 leaves, **single level** (see "no 2:1 refinement" below) |
 | cut faces | 702 464 conjugate faces |
-| cost | 0.563 s/step on one RTX 5090; the statistics leg is 168 000 steps ≈ 26 h |
+| cost | 0.52–0.56 s/step on one RTX 5090; the statistics leg is 168 000 steps ≈ 24–26 h |
 
 **Seven scalars ride one velocity field**, so every comparison between them is
 at the same turbulence realisation. The dataset's (K, λ_sf) map to the solver
@@ -100,23 +100,55 @@ Statistics window t = 55…245 D/u_b, 168 000 steps. Every number below is
 printed by `asset/pipe_numbers.py` from the shipped accumulators; none is
 typed by hand.
 
+**Provenance of the shipped accumulators (2026-09-28).** They come from a
+RE-RUN of the statistics leg with the solver at numerics-review step 2
+(`docs/numerics_review_2026-09-26.md`, finding F2): a conjugate scalar now
+runs the ADVECTIVE convective form, where the original 2026-09-20 campaign
+ran the divergence form whose cut-face convective mask is inconsistent with
+continuity on a curved wall. Same settled state (`p_pr_settle2_30000.h5`),
+same ini (`niter = 6` Chebyshev, so the binary is the ONLY change), same
+window; the run diverges from the original realisation chaotically, so the
+two are different samples of the same statistics, not a bit-for-bit pair.
+What moved, old → new (the old numbers are the 2026-09-20 campaign's, the new
+are the tables below): interface heat balance 9.760 → 9.761 (c0; every
+scalar within 0.04 %), q_w 0.24854 → 0.24856, ⟨θ⟩⁺ at the axis +0.1 → +0.7 %,
+θ′⁺ at the axis −6.2 → −6.0 %, θ′⁺ for y⁺ < 50 +0.7 → −0.1 %, the interface
+signature at y⁺ 7.25 by ≤ 0.004 (c4 0.903 → 0.907, mbc 0.862 → 0.866, isof
+1.209 → 1.207, all toward the reference), and — the one systematic move —
+the fluctuation through the solid, normalised at the interface: 0.798 /
+0.638 / 0.528 / 0.420 / 0.385 / 0.374 → 0.802 / 0.633 / 0.521 / 0.404 /
+0.365 / 0.353 against Neuhauser's 0.757 / 0.591 / 0.490 / 0.388 / 0.353 /
+0.343, i.e. the deep-shell excess fell from +9 % to +3 %, and renormalised at
+depth 0.1 d the decay now reads −2.0 … +0.4 % where it read +0.1 … +7.7 %.
+That is the direction F2 predicts (the divergence-form drift at the fluid
+cut faces was a spurious low-frequency source at the interface, and the
+solid integrates exactly that), but one realisation cannot separate it from
+sampling: the VELOCITY statistics, which F2 does not touch at all, moved by
+comparable amounts between the two realisations (u_z′ in the core +3.1 →
+−3.4 %, ⟨u_r′u_z′⟩ −1.2 → +1.0 %, bulk velocity 1.0075 → 1.0092), which
+bounds what any single thermal difference can claim. The interface-heat and
+budget tables are unchanged to their printed digits. The `asset/` figures
+were regenerated from the new accumulators; `asset/pipe_report.html` keeps
+the 2026-09-20 campaign's figures and tables (they are a four-grid study of
+which this is one column) and carries the re-run as an addendum.
+
 ### Hydrodynamics — validated first, with no scalars present
 
 | quantity | deviation | where |
 |---|---|---|
-| ⟨u_z⟩ | **+0.2 %** | core, r < 0.1 |
-| u_z′ rms | +3.1 % | core |
-| u_r′ rms | −1.6 % | 0.35 < r < 0.47 |
-| u_θ′ rms | −1.6 % | " |
-| ⟨u_r′u_z′⟩ | −1.2 % | " |
-| bulk velocity | 1.0075 vs 1.0042 (**+0.3 %**) | Re_b 5340 vs 5322 |
+| ⟨u_z⟩ | **+1.1 %** | core, r < 0.1 |
+| u_z′ rms | −3.4 % | core |
+| u_r′ rms | −0.6 % | 0.35 < r < 0.47 |
+| u_θ′ rms | −0.1 % | " |
+| ⟨u_r′u_z′⟩ | +1.0 % | " |
+| bulk velocity | 1.0092 vs 1.0042 (**+0.5 %**) | Re_b 5349 vs 5322 |
 
 **An exact law, independent of the reference data.** Integrating the axial
 momentum balance of a steady, fully developed pipe once gives
 
     −ν d⟨u_z⟩/dr + ⟨u_r′u_z′⟩ = u_τ² r/R
 
-and the measured deviation is **max 3.5 %, mean 1.02 %** of u_τ² — confirming
+and the measured deviation is **max 3.1 %, mean 0.49 %** of u_τ² — confirming
 both statistical convergence and that the immersed wall delivers the stress it
 is driven with. *Sign note:* with r measured from the axis the mean shear is
 negative, so the down-gradient Reynolds stress is **positive** and adds to the
@@ -124,14 +156,14 @@ viscous term — the opposite of the channel's ⟨u′v′⟩ < 0.
 
 ### Thermal field, case c0
 
-q_w = 0.24854 from the interface-heat balance |Q|/(2πRL); θ_τ = q_w/u_τ =
-3.6348.
+q_w = 0.24856 from the interface-heat balance |Q|/(2πRL); θ_τ = q_w/u_τ =
+3.6351.
 
 | quantity | deviation |
 |---|---|
-| ⟨θ⟩⁺ at the axis | **+0.1 %** |
-| θ′⁺ for y⁺ < 50 | **+0.7 %** |
-| θ′⁺ at the axis | −6.2 % |
+| ⟨θ⟩⁺ at the axis | **+0.7 %** |
+| θ′⁺ for y⁺ < 50 | **−0.1 %** |
+| θ′⁺ at the axis | −6.0 % |
 
 The core θ′ deficit is the one residual, and §8 of the report traces it: it is
 **turbulent transport of variance into the core**, carried by z-elongated
@@ -146,20 +178,20 @@ outside the cut cells:
 
 | | c0 | c1 | c2 | c3 | c4 | mbc | isof |
 |---|---|---|---|---|---|---|---|
-| present | 1.000 | 0.996 | 1.002 | 1.104 | 0.903 | 0.862 | 1.209 |
+| present | 1.000 | 0.997 | 1.001 | 1.104 | 0.907 | 0.866 | 1.207 |
 | Neuhauser | 1.000 | 0.995 | 1.002 | 1.092 | 0.921 | 0.880 | 1.190 |
-| deviation | — | +0.1 % | 0.0 % | +1.1 % | −2.0 % | −2.0 % | +1.6 % |
+| deviation | — | +0.2 % | −0.1 % | +1.1 % | −1.5 % | −1.6 % | +1.4 % |
 
 The whole effusivity bracket — from isothermal to isoflux, a factor 1.4 in
-θ′ — is reproduced to ≤ 2 %. **The conductivity pair c1/c2 agrees to 0.1 %**,
-which is the face coefficient itself passing.
+θ′ — is reproduced to ≤ 1.6 %. **The conductivity pair c1/c2 agrees to
+0.2 %**, which is the face coefficient itself passing.
 
 **The quoting radius matters, and the caveat is measured rather than
 asserted.** The outermost fluid bin is a **cut cell**, where what is stored is
 a penalization blend over a cell straddling the wall; comparing that against a
 body-fitted DNS is not like-for-like, and it is where the profiles are
-steepest. At r = 0.4977 (y⁺ 0.83) the same table reads c3 1.486 vs 1.444 and
-mbc 0.117 vs 0.202 — that is what the caveat is worth, and `pipe_numbers.py`
+steepest. At r = 0.4977 (y⁺ 0.83) the same table reads c3 1.492 vs 1.444 and
+mbc 0.118 vs 0.202 — that is what the caveat is worth, and `pipe_numbers.py`
 prints the cut-cell row every time so the reader can see it.
 
 ### Through the solid
@@ -168,14 +200,15 @@ prints the cut-cell row every time so the reader can see it.
 
 | (r−R)/d | 0.1 | 0.2 | 0.3 | 0.5 | 0.7 | 0.9 |
 |---|---|---|---|---|---|---|
-| present | 0.798 | 0.638 | 0.528 | 0.420 | 0.385 | 0.374 |
+| present | 0.802 | 0.633 | 0.521 | 0.404 | 0.365 | 0.353 |
 | Neuhauser | 0.757 | 0.591 | 0.490 | 0.388 | 0.353 | 0.343 |
 
 The profile does not decay to zero — it **flattens over the last 30 %**, the
 signature of the adiabatic outer surface reflecting the fluctuation, and the
-solver reproduces that shape. The uniform ≈ +9 % offset is the cut-cell
-denominator: normalising one cell deeper (at depth 0.1, as Fig. 4a does)
-removes it.
+solver reproduces that shape. The +6 % (shallow) to +3 % (deep) offset is the
+cut-cell denominator: normalising one cell deeper (at depth 0.1, as Fig. 4a
+does) leaves −2.0 … +0.4 %. (The 2026-09-20 campaign read a uniform +9 %
+here; see the provenance note above.)
 
 ### The ⟨θ′²⟩ budget closes on both sides
 
@@ -183,12 +216,15 @@ Wall units, each side by its own θ_τ (`asset/variance_budget.py`):
 
 | y⁺ | | P | −ε | T_turb | T_mol | source | sum |
 |---|---|---|---|---|---|---|---|
-| 110.5 | present | 0.024 | −0.037 | 0.011 | 0.002 | 0.001 | 0.000 |
+| 110.5 | present | 0.026 | −0.038 | 0.012 | 0.001 | 0.002 | 0.002 |
 | 110.5 | Neuhauser | 0.025 | −0.038 | 0.011 | 0.001 | 0.002 | 0.001 |
-| 38.1 | present | 0.145 | −0.158 | 0.000 | 0.004 | 0.006 | −0.002 |
+| 38.1 | present | 0.148 | −0.154 | 0.007 | 0.002 | 0.006 | 0.009 |
 | 38.1 | Neuhauser | 0.154 | −0.168 | 0.000 | 0.003 | 0.007 | −0.005 |
-| 19.9 | present | 0.325 | −0.221 | −0.075 | −0.033 | 0.010 | 0.006 |
+| 19.9 | present | 0.334 | −0.221 | −0.070 | −0.027 | 0.010 | 0.025 |
 | 19.9 | Neuhauser | 0.338 | −0.237 | −0.075 | −0.038 | 0.010 | −0.001 |
+
+(Three snapshots; the residual at y⁺ 19.9 is the sampling floor of that
+count.)
 
 The `source` column is the **fluctuating** part of the Kasagi heating: it is
 proportional to u_z, so it feeds the variance directly at 2S⟨u_z′θ′⟩. It
@@ -206,7 +242,7 @@ scalars — each carries the same wall flux by construction):
 
 | c0 | c1 | c2 | c3 | c4 | mbc | isof |
 |---|---|---|---|---|---|---|
-| 9.760 | 9.768 | 9.739 | 9.772 | 9.720 | 9.818 | 9.756 |
+| 9.761 | 9.768 | 9.741 | 9.772 | 9.723 | 9.822 | 9.756 |
 
 Spread 1.0 %, which is the sampling scatter of the slowest scalars.
 
@@ -315,7 +351,7 @@ cd asset
 ./plot_pipe.py                        # figures 1-7
 ./plot_pipe.py --blocks               # figure 8
 ./compare_neuhauser.py velocity pipe_prod_snaps.npz
-./compare_neuhauser.py thermal  pipe_prod_statsD.npz --scalar c0 --wall-flux 0.24854
+./compare_neuhauser.py thermal  pipe_prod_statsD.npz --scalar c0 --wall-flux 0.24856
 ```
 
 The reference profiles come from `asset/neuhauser_profiles.npz`, a 250 kB

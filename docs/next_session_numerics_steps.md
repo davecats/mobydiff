@@ -12,9 +12,13 @@ exchange is needed in any design — the "zero kernels" half of the plan was
 unreachable and the abstraction half is what shipped. 61 comparisons at
 `max_abs 0` (7-case CPU 1+4 ranks + GPU, 9-case CPU + GPU, freestream
 outlets/parabola + red-black 2:1 + RANS inlet CPU 1+4 ranks + GPU, all
-nofma; plus the 7-case suite at production flags). The pipe re-run below is
-still in flight (step ~50 000 of 168 000 at 19:40, on schedule for
-~2026-09-28 19:00). Steps 7–12 additionally inherit: `apply_bc(blk, bc,
+nofma; plus the 7-case suite at production flags). The pipe re-run below
+FINISHED 2026-09-28 17:28 and step 2d is CLOSED: the production tables were
+re-measured (review section 10 step 2 MEASURED (d)); the fluid-side thermal
+statistics and the interface heat balance are within run-to-run scatter, the
+solid-side decay moved toward the reference (+9 → +3 % deep excess), and the
+pipe tutorial's `asset/` now ships the re-run's accumulators and figures with
+a provenance note (README) and an addendum (report). Steps 7–12 additionally inherit: `apply_bc(blk, bc,
 vars, outflow_copy)` is the one entry point for q-variable ghosts, so a new
 transported q variable gets its BCs by filling a column
 (`set_scalar_bc_rows`) — no new kernel; and NEVER run two `run_bitexact*.sh`

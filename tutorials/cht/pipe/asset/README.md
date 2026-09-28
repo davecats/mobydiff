@@ -8,7 +8,7 @@ Everything here reproduces the comparison in [`../README.md`](../README.md)
 ./plot_pipe.py                    # figures 1-7  -> figures/
 ./plot_pipe.py --blocks           # figure 8
 ./compare_neuhauser.py velocity pipe_prod_snaps.npz
-./compare_neuhauser.py thermal  pipe_prod_statsD.npz --scalar c0 --wall-flux 0.24854
+./compare_neuhauser.py thermal  pipe_prod_statsD.npz --scalar c0 --wall-flux 0.24856
 ```
 
 ## The reference
@@ -55,7 +55,7 @@ Conventions that must hold on both sides of every comparison, and do:
 |---|---|
 | `neuhauser_profiles.npz` | the reference: 7 cases × radial profiles + the c0 budget |
 | `extract_neuhauser.py` | rebuilds it from the published archive |
-| `pipe_prod_statsD.npz` | our plane statistics, binned into r (all 7 scalars, fluid and solid) |
+| `pipe_prod_statsD.npz` | our plane statistics, binned into r (all 7 scalars, fluid and solid) — from the 2026-09-28 re-run at the advective conjugate default (README, "Provenance") |
 | `pipe_prod_snaps.npz` | our snapshot statistics, binned into r (velocity + scalars) |
 | `pipe_prod_heat.txt` | the solver's interface-heat diagnostic over the statistics leg |
 | `grid_residual.npz` | the z-averaged cross-sections behind Fig. 6b,c |
@@ -75,5 +75,5 @@ and the case file.
 
 ```bash
 ./variance_budget.py /path/to/p_pr_stat_1[89]*.h5 \
-    --case /path/to/pipe_prod.h5 --qw 0.24854
+    --case /path/to/pipe_prod.h5 --qw 0.24856
 ```

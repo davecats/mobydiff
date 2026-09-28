@@ -1940,8 +1940,9 @@ immersed boundary. Phased, each phase verified before the next:
   Chebyshev instability reproduces on the B0 binary and `cheb_lmax = 2.2`
   grows FASTER; `main` is stable); F2 conjugate scalars default to
   ADVECTIVE convection (explicit divergence refused; the C1 conservation
-  gate re-baselined to the O(h) leak; pipe Nusselt re-run in flight on
-  istmcorax `~/pipe_rerun_f2/`); F4 sailplane on the outlet patch, Neumann
+  gate re-baselined to the O(h) leak; pipe Nusselt re-run DONE 2026-09-28 —
+  fluid-side statistics within scatter, solid-side decay excess +9 → +3 %,
+  `tutorials/cht/pipe/asset/` refreshed with a provenance note); F4 sailplane on the outlet patch, Neumann
   normal velocity a config error; F5 `apply_bc` once per projection (bucket
   −91.6 %); F8 `cflmax` documented per-direction + a worst-case-sum print;
   F6 KMM180 `natural_dyw_plus = 0.5` (the archive had stepped at the Péclet
