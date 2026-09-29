@@ -180,7 +180,7 @@ module comm
         logical :: phiIfaceRow = .false.
     end type comm_type
 
-    public :: comm_init_world, comm_init, comm_finalize
+    public :: comm_init_world, comm_init, comm_cart_dims, comm_finalize
     public :: comm_allreduce_max, comm_allreduce_sum, comm_allreduce_max_int
     public :: init_block_exchange, report_exchange_balance
     public :: start_halo_exchange, finish_halo_exchange, exchange_halos, exchange_scalar_halos
@@ -216,18 +216,7 @@ contains
         call comm_init_world(c)
 
         c%periodic = bc%isPeriodic
-
-        if (any(c%dims < 0)) then
-            error stop "MPI Cartesian dimensions must be non-negative"
-        end if
-        if (any(c%dims == 0)) then
-            call MPI_Dims_create(c%world_size, 3, c%dims, ierr)
-            if (ierr /= MPI_SUCCESS) error stop "MPI_Dims_create failed"
-        end if
-
-        if (product(c%dims) /= c%world_size) then
-            error stop "MPI Cartesian dimensions do not match the number of ranks"
-        end if
+        call comm_cart_dims(c, c%world_size, for_solve=.true.)
 
         call MPI_Cart_create(MPI_COMM_WORLD, 3, c%dims, c%periodic, .true., c%cart_comm, ierr)
         call MPI_Comm_rank(c%cart_comm, c%cart_rank, ierr)
@@ -252,6 +241,33 @@ contains
 
         c%initialized = .true.
     end subroutine comm_init
+
+    ! Resolve the Cartesian rank layout -- [mpi] dims with its zeros filled by
+    ! MPI_Dims_create over nranks -- WITHOUT creating the topology. Split out
+    ! of comm_init so the case builder can form the decomposition the SOLVE
+    ! would and apply the nb rule to it: in the solver nranks is its own
+    ! world size (and the product must match it); standalone moby_prepare
+    ! passes its own rank count too, but an explicit [mpi] dims there
+    ! describes the solve, not the prepare run, so the match is not enforced
+    ! (for_solve = .false.) and the rule uses product(dims).
+    subroutine comm_cart_dims(c, nranks, for_solve)
+        type(comm_type), intent(inout) :: c
+        integer, intent(in) :: nranks
+        logical, intent(in) :: for_solve
+
+        integer :: ierr
+
+        if (any(c%dims < 0)) then
+            error stop "MPI Cartesian dimensions must be non-negative"
+        end if
+        if (any(c%dims == 0)) then
+            call MPI_Dims_create(nranks, 3, c%dims, ierr)
+            if (ierr /= MPI_SUCCESS) error stop "MPI_Dims_create failed"
+        end if
+        if (for_solve .and. product(c%dims) /= nranks) then
+            error stop "MPI Cartesian dimensions do not match the number of ranks"
+        end if
+    end subroutine comm_cart_dims
 
     ! Give the ranks that own CROSS-NODE links the devices listed first, using
     ! the same order on every node.

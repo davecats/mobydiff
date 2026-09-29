@@ -962,6 +962,40 @@ three sessions.
 > inline-analytic-IBM cases that become prepare+solve pairs, and the
 > inherited landmines. Not started.
 
+> **MEASURED (2026-09-29, increments 7-0 … 7-2; production flags, ref =
+> `~/step7_ref_binaries` at `d2249b1`).** 7-0: eight binaries + PROVENANCE.
+> 7-1: `moby_prepare` accepts body-free and nb-less cases; the nb rule is
+> `derive_block_nb` (blocks.f90), the derived size rides the file as
+> `block_nb_auto`/`block_nb_ranks`. 7-2: the solver takes block size, leaf
+> table and node lines from the case file (`read_case_layout`,
+> `init_block_set_from_table`) and rebuilds nothing; the coefficient/dwall
+> readers lost the row-by-row self-comparison; a restart-snapshot row
+> cross-check was ADDED (`fdm_h5_check_block_table` — the one the handout
+> said "stays" only ever checked dataset extents). Gates
+> (`validation/prepare/run_gates_step7.sh` + the existing drivers), all
+> `max_abs 0`: min_channel and beltrami/slab_y (explicit nb) prepared on
+> 1 == 4 ranks IDENTICAL files, prepared(p)+solved(r) == inline ref(r) for
+> p, r ∈ {1, 4} (8 legs); wf180_y30 (8×6×8, nb-less) prepares to nb 8 6 8 on
+> 1 rank and 4 3 8 on 4 (dims 2 2 1 — an ODD nb, accepted: the red-black
+> `colorOffset` is `sum(origin) mod 2`, continuous across any block face,
+> so parity only matters for refinement, which still needs an explicit nb),
+> DIFFERENT tables and SAME fields on 1 and 4 ranks, and the 1-rank file on
+> 4 ranks stops with "rank owns no blocks" as rule 5 says; conduction
+> (4×16×4, scalar `s1`) the same at nb 4 16 4 / 2 8 4; wavy (analytic body,
+> pinned dims) 1 == 4 identical + solve == inline; GPU twin of all five
+> from the CPU-prepared files vs the GPU reference: 16/16. P0 22/22, P1 STL
+> 16/16, block_nb 7/7 (CPU). 7-case suite 1 and 4 ranks, 9-case suite 1 rank
+> (its `turbles`/`turbslab` pin `[mpi] dims`, so a 4-rank run of that suite
+> is not a valid invocation), GPU 7- and 9-case: every leg `max_abs 0` except
+> `les_ibm`, whose committed `ibm_coeff.h5` is a LEGACY global-layout file —
+> the handout named the sailplane as the last such user; this is a second —
+> gated after the layout reader learned to report a legacy file as
+> layout-less (below). FOUND: `[mpi] dims` in a prepare input describes
+> the SOLVE (the P0 wavy inis pin `1 1 1`), so `comm_cart_dims` takes a
+> `for_solve` flag and prepare uses `product(dims)` as the rank count;
+> `block_levels` means "number of levels" in mobygeom files and "finest
+> level" in prepare files — the reader derives the count from the table.
+
 **Step 8 — F1, flux-form viscous stencil (numerics change).** The plan entry
 in section 9. Gates as stated there; run it in the same session as the
 stretched-case re-validation so the RANS channel and Blasius numbers are

@@ -132,3 +132,26 @@ Notes:
 - mobygeom's geometry subcommands are RETIRED for production
   (tools/README_mobygeom.md) and survive as the reference implementation
   these gates compare against.
+
+## Step 7 — prepare does ALL preprocessing (`run_gates_step7.sh`)
+
+Numerics review step 7 (`docs/next_session_prepare_everything.md`): a case
+PREPARED by `moby_prepare` and SOLVED from the case file must reproduce the
+reference binary's inline solve at `max_abs 0`, at PRODUCTION flags (the file
+path copies values, nothing is recomputed). The driver covers body-free
+cases with an explicit `[blocks] nb` (prepare on 1 == 4 ranks writes
+identical files), body-free cases with NO `nb` (the nb rule: prepare on P
+ranks stores `nb = grid/dims(P)` — different `blocks` tables, same fields;
+the 1-rank file is one block and stops on 4 ranks with "rank owns no
+blocks", rule 5) and an analytic-body case.
+
+```bash
+REF=~/step7_ref_binaries/moby_solve_cpu NEW=../../build_cpu ./run_gates_step7.sh
+REF=~/step7_ref_binaries/moby_solve_gpu NEW=../../build_gpu PREP=../../build_cpu/moby_prepare \
+    MODE=gpu SOLVE_RANKS=1 ./run_gates_step7.sh
+```
+
+Status 2026-09-29 (7-1/7-2, ref `d2249b1`): CPU 20/20 + wavy 3/3, GPU 16/16,
+all `max_abs 0`. Derived sizes: wf180_y30 (8×6×8) → `8 6 8` on 1 rank,
+`4 3 8` on 4 (an odd nb is accepted — parity only matters for refinement);
+conduction (4×16×4) → `4 16 4` / `2 8 4`.

@@ -81,6 +81,15 @@ module init
         ! refinement (y under refine_dims = xz) wants the largest nb the
         ! interface placement tolerates.
         integer(C_INT) :: block_nb(3) = 0_C_INT
+        ! The nb RULE (docs/next_session_prepare_everything.md, step 7-1): when
+        ! nb is unset the case BUILDER derives it -- one block per rank of the
+        ! Cartesian decomposition it was built on, i.e. the old rank box, but
+        ! as a property of the case file. block_nb_auto marks a derived value
+        ! and block_nb_ranks the rank count it was derived for; both ride the
+        ! case file so a solve on another rank count can tell "one block per
+        ! rank" from an explicit choice.
+        logical(C_BOOL) :: block_nb_auto = .false.
+        integer(C_INT) :: block_nb_ranks = 0_C_INT
         ! [blocks] remove_solid: drop blocks buried inside the immersed body.
         logical(C_BOOL) :: block_remove_solid = .true.
         ! [blocks] refine = x0 x1 y0 y1 z0 z1 [level]: refine blocks

@@ -1195,10 +1195,11 @@ int fdm_h5_read_block_masks(const char *filename, int level, int n_raster,
 }
 
 /*
- * Check the file's leaf table against the solver's over this rank's
- * contiguous id range: origin (3) + level per global block id. Returns 0
- * on match, 2 on a row mismatch (stale or differently-built file) and 1
- * on a read failure.
+ * This rank's rows of the file's blocks table against the solver's leaf
+ * table: 0 = match, 2 = a row differs, 1 = read error. Since step 7-2 the
+ * solver's table IS a case file's, so this guards RESTART snapshots only
+ * (fdm_h5_check_block_table): a snapshot from a differently tiled run would
+ * otherwise be sliced silently onto the wrong blocks.
  */
 static int check_block_table(hid_t file, int n_blocks, int id_start,
                              const int *block_origin, const int *block_level)
@@ -1233,16 +1234,180 @@ static int check_block_table(hid_t file, int n_blocks, int id_start,
     return ierr;
 }
 
+/* Restart guard (see check_block_table). A file without a blocks table (a
+ * legacy global-3D restart) has no layout to disagree with: 0. */
+int fdm_h5_check_block_table(const char *filename, int n_blocks, int id_start,
+                             const int *block_origin, const int *block_level)
+{
+    hid_t file;
+    int ierr;
+
+    file = H5Fopen(filename, H5F_ACC_RDONLY, H5P_DEFAULT);
+    if (file < 0) return 1;
+    if (H5Lexists(file, "blocks", H5P_DEFAULT) <= 0) {
+        H5Fclose(file);
+        return 0;
+    }
+    ierr = check_block_table(file, n_blocks, id_start, block_origin, block_level);
+    if (H5Fclose(file) < 0 && ierr == 0) ierr = 1;
+    return ierr;
+}
+
 /*
- * Block-table coefficients (mobygeom block-table): coef_blocks rows are
- * (nb+2)^3 ghost windows x 3 staggered vars at each leaf's level. The
- * file's blocks table is checked against the solver's leaf table so a
- * stale or differently-built file cannot be applied silently.
+ * Case-file layout header (step 7-2, docs/next_session_prepare_everything.md):
+ * the attributes fdm_h5_case_create wrote plus the row count of the blocks
+ * table. This is what lets the solver take its block set FROM the file
+ * instead of rebuilding it from the ini. block_nb_xyz is the per-direction
+ * block size (the pre-per-direction scalar block_nb is accepted); the level
+ * count is NOT taken from the block_levels attribute, which the retired
+ * mobygeom wrote as "number of levels" and moby_prepare as "finest level"
+ * -- the reader derives it from the table itself. nb_auto/nb_ranks record a
+ * DERIVED nb (the nb rule) and the rank count it was derived for; absent on
+ * older files (0). */
+int fdm_h5_case_read_layout(const char *filename, int *nx, int *ny, int *nz,
+                            double *lx, double *ly, double *lz, double *re,
+                            int *block_nb, int *refine_mask,
+                            int *nb_auto, int *nb_ranks, int *n_blocks_global)
+{
+    hid_t file, dset = -1, space = -1;
+    hsize_t dims[2] = {0, 0};
+    int nb_scalar = 0;
+    int ierr = 0;
+
+    file = H5Fopen(filename, H5F_ACC_RDONLY, H5P_DEFAULT);
+    if (file < 0) return 1;
+
+    /* No blocks table: a legacy global-layout coefficient file (the retired
+     * mobygeom stl-ibm-coeff), which carries no layout at all and none of
+     * the block attributes -- reported as n_blocks_global = 0, not as an
+     * error, until step 7-4 retires it. */
+    *n_blocks_global = 0;
+    if (H5Lexists(file, "blocks", H5P_DEFAULT) <= 0) {
+        ierr |= H5Fclose(file) < 0;
+        return ierr != 0;
+    }
+
+    ierr |= read_attr_int(file, "nx", nx, 1);
+    ierr |= read_attr_int(file, "ny", ny, 1);
+    ierr |= read_attr_int(file, "nz", nz, 1);
+    ierr |= read_attr_double(file, "lx", lx, 1);
+    ierr |= read_attr_double(file, "ly", ly, 1);
+    ierr |= read_attr_double(file, "lz", lz, 1);
+    ierr |= read_attr_double(file, "re", re, 1);
+    block_nb[0] = block_nb[1] = block_nb[2] = 0;
+    if (read_attr_int_array(file, "block_nb_xyz", block_nb, 3, 0) != 0 ||
+        block_nb[0] <= 0) {
+        ierr |= read_attr_int(file, "block_nb", &nb_scalar, 1);
+        block_nb[0] = block_nb[1] = block_nb[2] = nb_scalar;
+    }
+    refine_mask[0] = refine_mask[1] = refine_mask[2] = 1;
+    ierr |= read_attr_int_array(file, "refine_dims", refine_mask, 3, 0);
+    *nb_auto = 0;
+    *nb_ranks = 0;
+    ierr |= read_attr_int(file, "block_nb_auto", nb_auto, 0);
+    ierr |= read_attr_int(file, "block_nb_ranks", nb_ranks, 0);
+
+    {
+        dset = H5Dopen2(file, "blocks", H5P_DEFAULT);
+        space = dset >= 0 ? H5Dget_space(dset) : -1;
+        if (dset < 0 || space < 0 || H5Sget_simple_extent_ndims(space) != 2) {
+            ierr = 1;
+        } else {
+            H5Sget_simple_extent_dims(space, dims, NULL);
+            if (dims[1] != 4 || dims[0] < 1) ierr = 1;
+            *n_blocks_global = (int)dims[0];
+        }
+        if (space >= 0) H5Sclose(space);
+        if (dset >= 0) H5Dclose(dset);
+    }
+    ierr |= H5Fclose(file) < 0;
+    return ierr != 0;
+}
+
+/* The whole blocks table, (n_blocks_global, 4) row-major: origin x,y,z in
+ * level-l cells and the level, row i = leaf id i (Morton order). Every rank
+ * reads all of it -- the table is global state, exactly as the builder
+ * held it. */
+int fdm_h5_case_read_blocks(const char *filename, int n_blocks_global, int *rows)
+{
+    hid_t file, dset = -1, space = -1;
+    hsize_t dims[2] = {0, 0};
+    int ierr = 0;
+
+    file = H5Fopen(filename, H5F_ACC_RDONLY, H5P_DEFAULT);
+    if (file < 0) return 1;
+    dset = H5Dopen2(file, "blocks", H5P_DEFAULT);
+    space = dset >= 0 ? H5Dget_space(dset) : -1;
+    if (dset < 0 || space < 0 || H5Sget_simple_extent_ndims(space) != 2) {
+        ierr = 1;
+    } else {
+        H5Sget_simple_extent_dims(space, dims, NULL);
+        if (dims[0] != (hsize_t)n_blocks_global || dims[1] != 4) {
+            ierr = 1;
+        } else {
+            ierr |= H5Dread(dset, H5T_NATIVE_INT, H5S_ALL, H5S_ALL, H5P_DEFAULT, rows) < 0;
+        }
+    }
+    if (space >= 0) H5Sclose(space);
+    if (dset >= 0) H5Dclose(dset);
+    ierr |= H5Fclose(file) < 0;
+    return ierr != 0;
+}
+
+static int read_dline(hid_t file, const char *name, int n, double *values)
+{
+    hid_t dset = -1, space = -1;
+    hsize_t dims[1] = {0};
+    int ierr = 0;
+
+    dset = H5Dopen2(file, name, H5P_DEFAULT);
+    space = dset >= 0 ? H5Dget_space(dset) : -1;
+    if (dset < 0 || space < 0 || H5Sget_simple_extent_ndims(space) != 1) {
+        ierr = 1;
+    } else {
+        H5Sget_simple_extent_dims(space, dims, NULL);
+        if (dims[0] != (hsize_t)n) {
+            ierr = 1;
+        } else {
+            ierr |= H5Dread(dset, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, values) < 0;
+        }
+    }
+    if (space >= 0) H5Sclose(space);
+    if (dset >= 0) H5Dclose(dset);
+    return ierr;
+}
+
+/* The level-0 node lines a case file carries (fdm_h5_case_append_grid).
+ * *found = 0 when the file has none (a retired-mobygeom block-table file
+ * built before P3), which is not an error. */
+int fdm_h5_case_read_grid(const char *filename, int nx, int ny, int nz,
+                          double *x_node, double *y_node, double *z_node, int *found)
+{
+    hid_t file;
+    int ierr = 0;
+
+    *found = 0;
+    file = H5Fopen(filename, H5F_ACC_RDONLY, H5P_DEFAULT);
+    if (file < 0) return 1;
+    if (H5Lexists(file, "x_nodes", H5P_DEFAULT) > 0) {
+        ierr |= read_dline(file, "x_nodes", nx + 1, x_node);
+        ierr |= read_dline(file, "y_nodes", ny + 1, y_node);
+        ierr |= read_dline(file, "z_nodes", nz + 1, z_node);
+        if (!ierr) *found = 1;
+    }
+    ierr |= H5Fclose(file) < 0;
+    return ierr != 0;
+}
+
+/*
+ * Block-table coefficients: coef_blocks rows are (nb+2)^3 ghost windows x 3
+ * staggered vars at each leaf's level, row id = leaf id of the file's own
+ * blocks table -- which the solver's leaf table IS since step 7-2
+ * (fdm_h5_case_read_blocks), so there is nothing to cross-check here.
  * *found = 0 when the file has no coef_blocks (legacy global layout).
  */
 int fdm_h5_read_ibm_coeff_blocks(const char *filename, int nbx, int nby, int nbz,
                                  int n_blocks, int id_start,
-                                 const int *block_origin, const int *block_level,
                                  double lx, double ly, double lz, double re,
                                  int n_comp, int *found, double *coef)
 {
@@ -1278,12 +1443,6 @@ int fdm_h5_read_ibm_coeff_blocks(const char *filename, int nbx, int nby, int nbz
     ierr |= read_attr_double(file, "re", &file_re, 1);
     ierr |= double_mismatch(file_lx, lx) || double_mismatch(file_ly, ly) ||
             double_mismatch(file_lz, lz) || double_mismatch(file_re, re);
-
-    /* The file's leaf table must match the solver's. */
-    {
-        int berr = check_block_table(file, n_blocks, id_start, block_origin, block_level);
-        if (berr) ierr = berr;
-    }
     if (ierr) {
         H5Fclose(file);
         return ierr;
@@ -1351,13 +1510,12 @@ int fdm_h5_read_ibm_coeff_blocks(const char *filename, int nbx, int nby, int nbz
  * nb+2), transposed into a Fortran-ordered destination whose per-block
  * stride and component-plane offset the caller supplies -- shared by
  * dwall_blocks and coef_p_blocks (which lands in the VAR_P plane of the
- * 4-component coefficient array). Cross-checked against the file's blocks
- * table exactly like coef_blocks (returns 2 on a stale table).
+ * 4-component coefficient array). Row id = leaf id of the file's own blocks
+ * table (see fdm_h5_read_ibm_coeff_blocks).
  * *found = 0 when the file carries no such dataset.
  */
 static int read_leaf_tiles(const char *filename, const char *name,
                            int nbx, int nby, int nbz, int n_blocks, int id_start,
-                           const int *block_origin, const int *block_level,
                            size_t dst_stride, size_t dst_offset,
                            int *found, double *dst)
 {
@@ -1380,12 +1538,6 @@ static int read_leaf_tiles(const char *filename, const char *name,
     if (H5Lexists(file, name, H5P_DEFAULT) <= 0) {
         H5Fclose(file);
         return 0;
-    }
-
-    ierr = check_block_table(file, n_blocks, id_start, block_origin, block_level);
-    if (ierr) {
-        H5Fclose(file);
-        return ierr;
     }
 
     dset = H5Dopen2(file, name, H5P_DEFAULT);
@@ -1448,13 +1600,12 @@ static int read_leaf_tiles(const char *filename, const char *name,
  * surface, evaluated at each leaf's level. */
 int fdm_h5_read_dwall_blocks(const char *filename, int nbx, int nby, int nbz,
                              int n_blocks, int id_start,
-                             const int *block_origin, const int *block_level,
                              int *found, double *dwall)
 {
     const size_t n = ((size_t)nbx + 2)*((size_t)nby + 2)*((size_t)nbz + 2);
 
     return read_leaf_tiles(filename, "dwall_blocks", nbx, nby, nbz, n_blocks,
-                           id_start, block_origin, block_level, n, 0, found, dwall);
+                           id_start, n, 0, found, dwall);
 }
 
 /* Per-leaf CELL-CENTRED (pressure-position) IBM coefficient tiles, the
@@ -1463,15 +1614,13 @@ int fdm_h5_read_dwall_blocks(const char *filename, int nbx, int nby, int nbz,
  * component 3 (0-based) of the solver's 4-component coefficient array. */
 int fdm_h5_read_ibm_coeff_p_blocks(const char *filename, int nbx, int nby, int nbz,
                                    int n_blocks, int id_start,
-                                   const int *block_origin, const int *block_level,
                                    int n_comp, int *found, double *coef)
 {
     const size_t n = ((size_t)nbx + 2)*((size_t)nby + 2)*((size_t)nbz + 2);
 
     if (n_comp < 4) return 1;
     return read_leaf_tiles(filename, "coef_p_blocks", nbx, nby, nbz, n_blocks,
-                           id_start, block_origin, block_level,
-                           n*(size_t)n_comp, n*3, found, coef);
+                           id_start, n*(size_t)n_comp, n*3, found, coef);
 }
 
 int fdm_h5_read_ibm_coeff(const char *filename, int nbx, int nby, int nbz,
@@ -1632,6 +1781,7 @@ int fdm_h5_case_create(const char *filename,
                        int nx, int ny, int nz,
                        double lx, double ly, double lz, double re,
                        const int *block_nb, int block_levels, const int *refine_mask,
+                       int nb_auto, int nb_ranks,
                        int n_blocks_global, int id_start, int n_blocks,
                        const int *block_origin, const int *block_level)
 {
@@ -1658,6 +1808,11 @@ int fdm_h5_case_create(const char *filename,
         ierr |= write_attr_int(file, "block_nb", block_nb[0]);
     }
     ierr |= write_attr_int(file, "block_levels", block_levels);
+    /* The nb rule (step 7-1): a DERIVED block size is a property of the file,
+     * tagged with the rank count it was derived for, so a solve on another
+     * rank count can tell "one block per rank" from an explicit choice. */
+    ierr |= write_attr_int(file, "block_nb_auto", nb_auto);
+    ierr |= write_attr_int(file, "block_nb_ranks", nb_ranks);
     if (refine_mask[0] != 1 || refine_mask[1] != 1 || refine_mask[2] != 1) {
         ierr |= write_attr_int_array(file, "refine_dims", refine_mask, 3);
     }

@@ -5,8 +5,8 @@
 
 program moby_solve
     use :: init
-    use :: blocks, only: block_set_type, init_block_set, destroy_block_set, &
-        enter_block_data, exit_block_data, zero_closed_halos, &
+    use :: blocks, only: block_set_type, init_block_set, init_block_set_from_table, &
+        destroy_block_set, enter_block_data, exit_block_data, zero_closed_halos, &
         FACE_FINE, FACE_PHYS, FACE_CLOSED
     use :: chron, only: chron_type, start_chron, stop_chron, write_chron, &
         profiler_type, wall_seconds, profiler_add, write_profiler
@@ -60,6 +60,10 @@ program moby_solve
     integer(C_INT), allocatable :: blockActive(:)
     integer(C_INT), allocatable :: blockTouch(:,:), blockBuried(:,:)
     integer(C_INT), allocatable :: blockMaskLo(:,:), blockMaskDims(:,:)
+    ! The case file's leaf table (step 7-2) and its block size / refinement mask.
+    integer(C_INT), allocatable :: leafRows(:,:)
+    integer(C_INT) :: fileNb(3), fileRefMask(3)
+    logical :: fileLayout
 
     call comm_init_world(c)
     call splash(c%has_terminal)
@@ -92,10 +96,25 @@ program moby_solve
     call validate_dns_values(dns, g)
 
     ! Block refactor (docs/block_refinement_strategy.md): the solver state
-    ! lives in a block set tiling the grid ([blocks] nb per block). With an
-    ! immersed boundary, blocks buried inside the body are removed from the
-    ! global table before the set is built.
-    if (all(dns%block_nb > 0_C_INT) .and. dns%block_refine_body) then
+    ! lives in a block set tiling the grid ([blocks] nb per block). With a
+    ! CASE FILE (step 7-2) the leaf table -- block size, removed blocks,
+    ! refinement, face kinds -- is READ from it and never rebuilt: the file
+    ! is the single source of truth, and an ini that disagrees is a stale
+    ! file, not an override (read_case_layout). Without a file the inline
+    ! builders below still run (they go in step 7-4, when every run has a
+    ! file): with an immersed boundary, blocks buried inside the body are
+    ! removed from the global table before the set is built.
+    fileLayout = .false.
+    if (len_trim(dns%ibm_coeff_file) > 0) then
+        if (c%has_terminal) print *, "reading case file layout: ", trim(dns%ibm_coeff_file)
+        call read_case_layout(dns, g, dns%ibm_coeff_file, fileNb, fileRefMask, leafRows, &
+            fileLayout, c%has_terminal)
+    end if
+    if (fileLayout) then
+        call init_block_set_from_table(blk, dns, g, bc%isPeriodic, int(c%cart_size, C_INT), &
+            int(c%cart_rank, C_INT), fileNb, fileRefMask, leafRows)
+        deallocate(leafRows)
+    else if (all(dns%block_nb > 0_C_INT) .and. dns%block_refine_body) then
         ! Geometry-driven refinement (analytic or file IBM): refine to the
         ! finest level at the surface with a one-block buffer, removing
         ! buried blocks at every level. ibmm produces the geometry masks.

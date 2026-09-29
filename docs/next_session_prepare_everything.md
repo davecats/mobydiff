@@ -1,6 +1,9 @@
 # Next session: numerics review step 7 — `moby_prepare` does ALL preprocessing
 
-STATUS: **NOT STARTED (handout written 2026-09-29; the `nb` rule below was settled the same day — `nb` stays optional, the rank-box LAYOUT goes).** Steps 0–6 of the
+STATUS (2026-09-29): **7-0, 7-1 and 7-2 DONE and gated** (review section 10,
+step 7 MEASURED). 7-3 in progress. Handout written 2026-09-29; the `nb` rule
+below was settled the same day — `nb` stays optional, the rank-box LAYOUT
+goes. Steps 0–6 of the
 review's execution sequence (`docs/numerics_review_2026-09-26.md` section
 10) are DONE and gated on `main`, and step 2d (the pipe re-run) is closed —
 see `docs/next_session_numerics_steps.md` STATUS. This is the next item.

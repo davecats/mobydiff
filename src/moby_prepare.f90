@@ -1,11 +1,13 @@
-! moby_prepare: the offline preparation step (docs/prepare_solve_strategy.md,
-! phase P0). Runs the solver's own init pipeline for an ANALYTIC-geometry
-! case -- node lines, geometry classification, leaf table, IBM coefficients,
-! RANS wall distance -- and writes ONE case file in the block-table
-! coefficient-file format the solver already reads. The solver then runs the
-! identical case from the file ([ibm] coeff_file = <case.h5>) on any rank
-! count, bit-exact vs its inline analytic path: every quantity in the file
-! comes from the very kernels the solver would run at init.
+! moby_prepare: the offline preparation step (docs/prepare_solve_strategy.md
+! P0-P3; numerics review step 7 makes it do ALL preprocessing). Runs the
+! solver's own init pipeline -- node lines, block size (the nb rule),
+! geometry classification, leaf table, IBM coefficients, RANS wall
+! distance -- and writes ONE case file, the single source of truth for the
+! grid and the leaf table. A body-free case gets attrs + node lines + leaf
+! table and no coefficient dataset. The solver runs the identical case from
+! the file ([ibm] coeff_file = <case.h5>) on any rank count, bit-exact vs
+! its inline path: every quantity in the file comes from the very kernels
+! the solver would run at init.
 !
 ! MPI-parallel: the global leaf table is built identically on every rank
 ! (exactly as in the solver) and the per-leaf work -- coefficient tiles,
@@ -16,7 +18,7 @@ program moby_prepare
     use, intrinsic :: iso_c_binding
     use :: init, only: dns_type, grid_type, init_grid, destroy_grid, &
         set_serial_local_size, VAR_U, VAR_V, VAR_W, VAR_P
-    use :: blocks, only: block_set_type, init_block_set, destroy_block_set
+    use :: blocks, only: block_set_type, init_block_set, destroy_block_set, derive_block_nb
     use :: flow_case, only: case_type, create_flow_case
     use :: config, only: config_seen_type, read_runtime_config, validate_dns_values
     use :: scalar, only: scalar_type, destroy_scalar, scalars_enabled, &
@@ -32,7 +34,7 @@ program moby_prepare
     use :: pressure_solver, only: pressure_solver_type
     use :: turbulence, only: turb_type
     use :: les_model, only: les_type
-    use :: comm, only: comm_type, comm_init_world, comm_finalize
+    use :: comm, only: comm_type, comm_init_world, comm_cart_dims, comm_finalize
     implicit none
 
     character(len=256) :: input_file, output_file
@@ -87,16 +89,23 @@ program moby_prepare
         c%has_terminal, config_seen)
     cell_centred = scalars_enabled(sc)
 
-    if (any(dns%block_nb <= 0_C_INT)) &
-        error stop "moby_prepare needs [blocks] nb: the case file is a block-table file"
-    if (.not. dns%ibm_enabled) &
-        error stop "moby_prepare needs [ibm] enabled = true (analytic or stl_file geometry)"
     if (len_trim(dns%ibm_coeff_file) > 0) &
         error stop "moby_prepare computes the coefficient file; drop [ibm] coeff_file from its input"
 
     call set_serial_local_size(dns)
     call init_grid(g, dns, bc%isPeriodic)
     call validate_dns_values(dns, g)
+    ! The nb rule (step 7-1): an unset [blocks] nb becomes one block per
+    ! rank of the Cartesian layout the solver would form -- [mpi] dims,
+    ! zeros filled over this rank count; an explicit dims here describes
+    ! the SOLVE, not this run -- and is stored in the file. Refinement and
+    ! buried-block removal keep needing an explicit nb (rule 4): with a
+    ! derived one they are not silently ignored (the old nb-less solver
+    ! path did that) but refused.
+    call comm_cart_dims(c, c%world_size, for_solve=.false.)
+    call derive_block_nb(dns, c%dims, product(c%dims), c%has_terminal)
+    if (dns%block_nb_auto .and. (dns%block_refine_body .or. dns%block_refine_nboxes > 0_C_INT)) &
+        error stop "[blocks] refine / refine_body need an explicit [blocks] nb"
 
     ! Geometry source: the analytic isInBody, or an STL body loaded behind
     ! the same indicator signature ([ibm] stl_file, P1).
@@ -112,10 +121,13 @@ program moby_prepare
         inside => isInBody
     end if
 
-    ! Geometry classification + block set: the solver's init dispatch
-    ! (main.f90), analytic branch. classify_* keep their masks here so they
-    ! can go into the case file after the block set consumed them.
-    if (c%has_terminal) print *, "classifying geometry..."
+    ! Geometry classification + block set: the solver's old init dispatch,
+    ! analytic branch. classify_* keep their masks here so they can go into
+    ! the case file after the block set consumed them. A body-free case
+    ! (step 7-1) is the plain lattice; so is a body with a DERIVED nb,
+    ! where buried-block removal is not applied (rule 4: the old nb-less
+    ! solver path removed nothing, and a file must reproduce it).
+    if (dns%ibm_enabled .and. c%has_terminal) print *, "classifying geometry..."
     if (dns%block_refine_body) then
         call classify_refinement_masks(blockTouch, blockBuried, blockMaskLo, &
             blockMaskDims, dns, g, ibm, bc%isPeriodic, c%has_terminal, inside, &
@@ -123,7 +135,7 @@ program moby_prepare
         call init_block_set(blk, dns, g, bc%isPeriodic, int(c%world_size, C_INT), &
             int(c%world_rank, C_INT), touch=blockTouch, buried=blockBuried, &
             maskLo=blockMaskLo, maskDims=blockMaskDims)
-    else if (dns%block_remove_solid) then
+    else if (dns%ibm_enabled .and. dns%block_remove_solid .and. .not. dns%block_nb_auto) then
         call classify_active_mask(blockActive, dns, g, ibm, bc%isPeriodic, &
             c%has_terminal, inside, cullLo, cullHi, c)
         call init_block_set(blk, dns, g, bc%isPeriodic, int(c%world_size, C_INT), &
@@ -137,6 +149,8 @@ program moby_prepare
     ! inline kernel verbatim (the P0 bit-exactness gate; on the device in
     ! offload builds -- prepare with the CPU build for the gates); STL runs
     ! the host twin over the indicator.
+    nCoefComp = 0_C_INT
+    if (dns%ibm_enabled) then
     if (c%has_terminal) print *, "computing IBM coefficients..."
     call init_ibm(ibm, blk, cell_centred)
     ! Analytic wall geometry from the config. Both binaries apply it -- see
@@ -158,6 +172,7 @@ program moby_prepare
         !$omp target update from(ibm%coef)
 #endif
     end if
+    end if
 
     ! RANS wall distance: the raw body distance (the domain-wall min and
     ! half-cell floor stay solve-time, applied after the file read).
@@ -170,7 +185,7 @@ program moby_prepare
     ! `ibm_wall = conjugate` triggers the build exactly as a [rans] section
     ! does. A TRIGGER only -- no new dataset, and a file prepared either way
     ! is identical (docs/next_session_conjugate.md Section 8, arrangement 1).
-    if (dns%rans_configured .or. scalar_conjugate_enabled(sc)) then
+    if (dns%ibm_enabled .and. (dns%rans_configured .or. scalar_conjugate_enabled(sc))) then
         if (c%has_terminal) print *, "computing wall distance..."
         allocate(dwall(0:int(blk%nb(1))+1, 0:int(blk%nb(2))+1, &
             0:int(blk%nb(3))+1, blk%nBlocks))
@@ -183,9 +198,13 @@ program moby_prepare
     end if
 
     if (c%has_terminal) print *, "writing case file: ", trim(output_file)
-    call write_case_file(output_file, blk, dns, g, bc, c, ibm%coef, nCoefComp, c%has_terminal, &
-        touch=blockTouch, buried=blockBuried, maskDims=blockMaskDims, &
-        active=blockActive, dwall=dwall, maskLo=blockMaskLo)
+    if (dns%ibm_enabled) then
+        call write_case_file(output_file, blk, dns, g, bc, c, nCoefComp, c%has_terminal, &
+            coef=ibm%coef, touch=blockTouch, buried=blockBuried, maskDims=blockMaskDims, &
+            active=blockActive, dwall=dwall, maskLo=blockMaskLo)
+    else
+        call write_case_file(output_file, blk, dns, g, bc, c, nCoefComp, c%has_terminal)
+    end if
     if (c%has_terminal) then
         print *, "case file written:", blk%nBlocksGlobal, "leaves,", &
             int(blk%nLevels) - 1, "refinement level(s)"
@@ -194,7 +213,7 @@ program moby_prepare
 
     if (use_stl) then
         call stl_geometry_destroy()
-    else
+    else if (dns%ibm_enabled) then
         call exit_ibm_data(ibm, dns)
     end if
     call destroy_block_set(blk)

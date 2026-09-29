@@ -89,12 +89,11 @@ module ibmm
         ! unchanged -- coef_blocks always carries the three staggered
         ! components, coef_p_blocks the one cell-centred component.
         function fdm_h5_read_ibm_coeff_blocks(file_name, nbx, nby, nbz, n_blocks, id_start, &
-                block_origin, block_level, lx, ly, lz, re, n_comp, found, coef) &
+                lx, ly, lz, re, n_comp, found, coef) &
                 bind(C, name="fdm_h5_read_ibm_coeff_blocks") result(ierr)
             import :: C_CHAR, C_INT, C_DOUBLE
             character(kind=C_CHAR), intent(in) :: file_name(*)
             integer(C_INT), value :: nbx, nby, nbz, n_blocks, id_start
-            integer(C_INT), intent(in) :: block_origin(*), block_level(*)
             real(C_DOUBLE), value :: lx, ly, lz, re
             integer(C_INT), value :: n_comp
             integer(C_INT), intent(out) :: found
@@ -103,12 +102,11 @@ module ibmm
         end function fdm_h5_read_ibm_coeff_blocks
 
         function fdm_h5_read_ibm_coeff_p_blocks(file_name, nbx, nby, nbz, n_blocks, &
-                id_start, block_origin, block_level, n_comp, found, coef) &
+                id_start, n_comp, found, coef) &
                 bind(C, name="fdm_h5_read_ibm_coeff_p_blocks") result(ierr)
             import :: C_CHAR, C_INT, C_DOUBLE
             character(kind=C_CHAR), intent(in) :: file_name(*)
             integer(C_INT), value :: nbx, nby, nbz, n_blocks, id_start
-            integer(C_INT), intent(in) :: block_origin(*), block_level(*)
             integer(C_INT), value :: n_comp
             integer(C_INT), intent(out) :: found
             real(C_DOUBLE), intent(inout) :: coef(*)
@@ -434,15 +432,12 @@ contains
         n_comp = int(ubound(ibm%coef,4) - lbound(ibm%coef,4) + 1, C_INT)
         c_file_name = to_c_string(dns%ibm_coeff_file)
         ! Block-table layout first (refined runs); fall back to the legacy
-        ! global ghost-layer layout, which holds level-0 data only.
+        ! global ghost-layer layout, which holds level-0 data only. No leaf
+        ! table cross-check any more: since step 7-2 the solver's leaf table
+        ! is read from this very file (read_case_layout).
         ierr = fdm_h5_read_ibm_coeff_blocks(c_file_name, blk%nb(1), blk%nb(2), blk%nb(3), &
-            blk%nBlocks, blk%idStart, blk%origin, blk%level, &
+            blk%nBlocks, blk%idStart, &
             dns%leng(1), dns%leng(2), dns%leng(3), dns%re, n_comp, found, ibm%coef)
-        if (ierr == 2_C_INT) then
-            if (has_terminal) print *, "error: coefficient file block table does not match", &
-                " the solver's leaf table (stale file?): ", trim(dns%ibm_coeff_file)
-            error stop
-        end if
         if (ierr /= 0_C_INT) then
             if (has_terminal) print *, "error: could not read IBM coefficient file: ", trim(dns%ibm_coeff_file)
             error stop
@@ -491,7 +486,7 @@ contains
         if (n_comp <= 3_C_INT) return
 
         ierr = fdm_h5_read_ibm_coeff_p_blocks(c_file_name, blk%nb(1), blk%nb(2), blk%nb(3), &
-            blk%nBlocks, blk%idStart, blk%origin, blk%level, n_comp, found, ibm%coef)
+            blk%nBlocks, blk%idStart, n_comp, found, ibm%coef)
         if (ierr /= 0_C_INT) then
             if (has_terminal) print *, "error: could not read coef_p_blocks from: ", &
                 trim(dns%ibm_coeff_file)

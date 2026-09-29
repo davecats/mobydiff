@@ -177,16 +177,63 @@ module io
         end function fdm_h5_read_block_active
 
         function fdm_h5_read_dwall_blocks(file_name, nbx, nby, nbz, n_blocks, id_start, &
-                block_origin, block_level, found, dwall) &
+                found, dwall) &
                 bind(C, name="fdm_h5_read_dwall_blocks") result(ierr)
             import :: C_CHAR, C_INT, C_DOUBLE
             character(kind=C_CHAR), intent(in) :: file_name(*)
             integer(C_INT), value :: nbx, nby, nbz, n_blocks, id_start
-            integer(C_INT), intent(in) :: block_origin(*), block_level(*)
             integer(C_INT), intent(out) :: found
             real(C_DOUBLE), intent(inout) :: dwall(*)
             integer(C_INT) :: ierr
         end function fdm_h5_read_dwall_blocks
+
+        ! Case-file LAYOUT readers (step 7-2): the header attrs + the leaf
+        ! table + the level-0 node lines, from which the solver builds its
+        ! block set without the leaf builder. Serial opens: the table is
+        ! global state every rank holds in full.
+        function fdm_h5_case_read_layout(file_name, nx, ny, nz, lx, ly, lz, re, &
+                block_nb, refine_mask, nb_auto, nb_ranks, n_blocks_global) &
+                bind(C, name="fdm_h5_case_read_layout") result(ierr)
+            import :: C_CHAR, C_INT, C_DOUBLE
+            character(kind=C_CHAR), intent(in) :: file_name(*)
+            integer(C_INT), intent(out) :: nx, ny, nz
+            real(C_DOUBLE), intent(out) :: lx, ly, lz, re
+            integer(C_INT), intent(out) :: block_nb(*), refine_mask(*)
+            integer(C_INT), intent(out) :: nb_auto, nb_ranks, n_blocks_global
+            integer(C_INT) :: ierr
+        end function fdm_h5_case_read_layout
+
+        function fdm_h5_case_read_blocks(file_name, n_blocks_global, rows) &
+                bind(C, name="fdm_h5_case_read_blocks") result(ierr)
+            import :: C_CHAR, C_INT
+            character(kind=C_CHAR), intent(in) :: file_name(*)
+            integer(C_INT), value :: n_blocks_global
+            integer(C_INT), intent(out) :: rows(*)
+            integer(C_INT) :: ierr
+        end function fdm_h5_case_read_blocks
+
+        function fdm_h5_case_read_grid(file_name, nx, ny, nz, x_node, y_node, z_node, found) &
+                bind(C, name="fdm_h5_case_read_grid") result(ierr)
+            import :: C_CHAR, C_INT, C_DOUBLE
+            character(kind=C_CHAR), intent(in) :: file_name(*)
+            integer(C_INT), value :: nx, ny, nz
+            real(C_DOUBLE), intent(out) :: x_node(*), y_node(*), z_node(*)
+            integer(C_INT), intent(out) :: found
+            integer(C_INT) :: ierr
+        end function fdm_h5_case_read_grid
+
+        ! Restart guard: this rank's rows of a snapshot's blocks table
+        ! against the solver's leaf table (0 match, 2 mismatch, 1 error; 0
+        ! for a legacy file without a table).
+        function fdm_h5_check_block_table(file_name, n_blocks, id_start, &
+                block_origin, block_level) &
+                bind(C, name="fdm_h5_check_block_table") result(ierr)
+            import :: C_CHAR, C_INT
+            character(kind=C_CHAR), intent(in) :: file_name(*)
+            integer(C_INT), value :: n_blocks, id_start
+            integer(C_INT), intent(in) :: block_origin(*), block_level(*)
+            integer(C_INT) :: ierr
+        end function fdm_h5_check_block_table
 
         function fdm_h5_write_rans_geometry(file_name, nbx, nby, nbz, n_blocks, &
                 n_blocks_global, id_start, block_origin, block_level, &
@@ -207,15 +254,15 @@ module io
         ! MPI_COMM_WORLD; write_data selects the one rank writing the
         ! lattice-global rasters.
         function fdm_h5_case_create(file_name, nx, ny, nz, lx, ly, lz, re, &
-                block_nb, block_levels, refine_mask, &
+                block_nb, block_levels, refine_mask, nb_auto, nb_ranks, &
                 n_blocks_global, id_start, n_blocks, block_origin, block_level) &
                 bind(C, name="fdm_h5_case_create") result(ierr)
             import :: C_CHAR, C_INT, C_DOUBLE
             character(kind=C_CHAR), intent(in) :: file_name(*)
             integer(C_INT), value :: nx, ny, nz
             real(C_DOUBLE), value :: lx, ly, lz, re
-            integer(C_INT), value :: block_levels
             integer(C_INT), intent(in) :: block_nb(*), refine_mask(*)
+            integer(C_INT), value :: block_levels, nb_auto, nb_ranks
             integer(C_INT), value :: n_blocks_global, id_start, n_blocks
             integer(C_INT), intent(in) :: block_origin(*), block_level(*)
             integer(C_INT) :: ierr
@@ -615,6 +662,114 @@ subroutine read_restart_metadata(dns, g, bc, pressure_niter, pressure_sor, file_
     dns%ibm_enabled = ibm_enabled /= 0_C_INT
 end subroutine read_restart_metadata
 
+! The case file's LAYOUT (step 7-2): header attributes checked against the
+! ini -- the file is the single source of truth for grid, block size and
+! leaf table, and an ini that disagrees is stale, which is a hard error
+! naming the key rather than a silent override -- then the leaf table and
+! the level-0 node lines. An explicit [blocks] nb must equal the file's; an
+! unset one takes the file's (the nb rule). The node lines are compared
+! BIT FOR BIT with the ones init_grid built from [grid.*]: one comparison
+! covers every grid key at once, and the file's lines are what the solver
+! keeps. Older block-table files (retired mobygeom) carry no node lines;
+! the ini's are used and a note is printed.
+subroutine read_case_layout(dns, g, file_name, nb, refMask, rows, has_layout, has_terminal)
+    type(dns_type), intent(inout) :: dns
+    type(grid_type), intent(inout) :: g
+    character(len=*), intent(in) :: file_name
+    integer(C_INT), intent(out) :: nb(3), refMask(3)
+    integer(C_INT), allocatable, intent(out) :: rows(:,:)
+    ! False for a LEGACY global-layout coefficient file, which carries no
+    ! leaf table (the caller then still builds the layout from the ini;
+    ! that path goes with the legacy reader in step 7-4).
+    logical, intent(out) :: has_layout
+    logical, intent(in) :: has_terminal
+
+    character(kind=C_CHAR,len=:), allocatable :: c_file_name
+    integer(C_INT) :: ierr, nx, ny, nz, nbAuto, nbRanks, nLeaves, found
+    real(C_DOUBLE) :: lx, ly, lz, re
+    real(C_DOUBLE), allocatable :: xn(:), yn(:), zn(:)
+
+    c_file_name = to_c_string(file_name)
+    ierr = fdm_h5_case_read_layout(c_file_name, nx, ny, nz, lx, ly, lz, re, &
+        nb, refMask, nbAuto, nbRanks, nLeaves)
+    if (ierr /= 0_C_INT) then
+        if (has_terminal) print *, "error: could not read the case-file layout of: ", trim(file_name)
+        error stop
+    end if
+    has_layout = nLeaves > 0_C_INT
+    if (.not. has_layout) then
+        if (has_terminal) print *, "note: legacy coefficient file without a leaf table;", &
+            " block layout from the ini: ", trim(file_name)
+        return
+    end if
+    if (nx /= dns%globalSize(1) .or. ny /= dns%globalSize(2) .or. nz /= dns%globalSize(3)) then
+        if (has_terminal) print *, "case file grid", nx, ny, nz, "differs from [grid] nx/ny/nz", &
+            dns%globalSize, " -- stale case file: ", trim(file_name)
+        error stop "case file / [grid] nx ny nz mismatch"
+    end if
+    if (lx /= dns%leng(1) .or. ly /= dns%leng(2) .or. lz /= dns%leng(3)) then
+        if (has_terminal) print *, "case file lengths", lx, ly, lz, "differ from [grid] lx/ly/lz", &
+            dns%leng, " -- stale case file: ", trim(file_name)
+        error stop "case file / [grid] lx ly lz mismatch"
+    end if
+    if (re /= dns%re) then
+        if (has_terminal) print *, "case file re", re, "differs from [flow] re", dns%re, &
+            " -- stale case file (the coefficients carry 1/Re): ", trim(file_name)
+        error stop "case file / [flow] re mismatch"
+    end if
+    if (any(refMask /= dns%block_refine_mask)) then
+        if (has_terminal) print *, "case file refine_dims mask", refMask, &
+            "differs from [blocks] refine_dims", dns%block_refine_mask, ": ", trim(file_name)
+        error stop "case file / [blocks] refine_dims mismatch"
+    end if
+    if (all(dns%block_nb > 0_C_INT)) then
+        if (any(nb /= dns%block_nb)) then
+            if (has_terminal) print *, "case file block size", nb, "differs from [blocks] nb", &
+                dns%block_nb, " -- stale case file: ", trim(file_name)
+            error stop "case file / [blocks] nb mismatch"
+        end if
+    else
+        dns%block_nb = nb
+        dns%block_nb_auto = nbAuto /= 0_C_INT
+        dns%block_nb_ranks = nbRanks
+        if (has_terminal) then
+            if (nbAuto /= 0_C_INT) then
+                print '(A,3(1X,I0),A,I0,A)', " [blocks] nb from the case file:", nb, &
+                    "  (one block per rank of a ", nbRanks, "-rank layout)"
+            else
+                print '(A,3(1X,I0))', " [blocks] nb from the case file:", nb
+            end if
+        end if
+    end if
+
+    allocate(rows(4, nLeaves))
+    ierr = fdm_h5_case_read_blocks(c_file_name, nLeaves, rows)
+    if (ierr /= 0_C_INT) then
+        if (has_terminal) print *, "error: could not read the blocks table of: ", trim(file_name)
+        error stop
+    end if
+
+    allocate(xn(0:int(nx)), yn(0:int(ny)), zn(0:int(nz)))
+    ierr = fdm_h5_case_read_grid(c_file_name, nx, ny, nz, xn, yn, zn, found)
+    if (ierr /= 0_C_INT) then
+        if (has_terminal) print *, "error: could not read the node lines of: ", trim(file_name)
+        error stop
+    end if
+    if (found /= 0_C_INT) then
+        if (any(xn /= g%xNode) .or. any(yn /= g%yNode) .or. any(zn /= g%zNode)) then
+            if (has_terminal) print *, "case file node lines differ from the [grid.x/y/z]", &
+                " distribution -- stale case file: ", trim(file_name)
+            error stop "case file / [grid.*] node-line mismatch"
+        end if
+        g%xNode = xn
+        g%yNode = yn
+        g%zNode = zn
+    else if (has_terminal) then
+        print *, "note: case file carries no node lines (pre-P3 block-table file);", &
+            " using the [grid.*] lines: ", trim(file_name)
+    end if
+end subroutine read_case_layout
+
 ! Per-block keep flags from the IBM coefficient file (mobygeom
 ! block-active). found is false when the file carries no table.
 subroutine read_block_active(active, found, dns, has_terminal)
@@ -682,9 +837,9 @@ subroutine read_mask_window(lo, dims, has_win, level, dns, has_terminal)
     has_win = c_has /= 0_C_INT
 end subroutine read_mask_window
 
-! Per-leaf wall-distance tiles from the IBM coefficient file (mobygeom
-! block-table, dataset dwall_blocks). found is false when the file carries
-! none; a stale blocks table is a hard error (like the coefficient read).
+! Per-leaf wall-distance tiles from the case file (dataset dwall_blocks,
+! row id = leaf id of the file's own blocks table). found is false when
+! the file carries none.
 subroutine read_dwall_blocks(dwall, found, dns, blk, has_terminal)
     real(C_DOUBLE), intent(inout) :: dwall(*)
     logical, intent(out) :: found
@@ -697,12 +852,7 @@ subroutine read_dwall_blocks(dwall, found, dns, blk, has_terminal)
 
     c_file_name = to_c_string(dns%ibm_coeff_file)
     ierr = fdm_h5_read_dwall_blocks(c_file_name, blk%nb(1), blk%nb(2), blk%nb(3), &
-        blk%nBlocks, blk%idStart, blk%origin, blk%level, c_found, dwall)
-    if (ierr == 2_C_INT) then
-        if (has_terminal) print *, "error: coefficient file block table does not match", &
-            " the solver's leaf table (stale file?): ", trim(dns%ibm_coeff_file)
-        error stop
-    end if
+        blk%nBlocks, blk%idStart, c_found, dwall)
     if (ierr /= 0_C_INT) then
         if (has_terminal) print *, "error: could not read dwall_blocks from: ", &
             trim(dns%ibm_coeff_file)
@@ -744,21 +894,23 @@ end subroutine write_rans_geometry_file
 ! and dwall_blocks ([rans]). Parallel HDF5: all ranks enter together; each
 ! rank writes its own contiguous leaf-row range, rank 0 the lattice-global
 ! rasters (full rasters, no window attrs -- the analytic convention).
-subroutine write_case_file(file_name, blk, dns, g, bc, c, coef, nCoefComp, has_terminal, &
-        touch, buried, maskDims, active, dwall, maskLo)
+subroutine write_case_file(file_name, blk, dns, g, bc, c, nCoefComp, has_terminal, &
+        coef, touch, buried, maskDims, active, dwall, maskLo)
     character(len=*), intent(in) :: file_name
     type(block_set_type), intent(in) :: blk
     type(dns_type), intent(in) :: dns
     type(grid_type), intent(in) :: g
     type(boundary_type), intent(in) :: bc
     type(comm_type), intent(in) :: c
-    real(C_DOUBLE), intent(in) :: coef(*)
     ! Component extent of coef: 3, or 4 when the case declares passive
     ! scalars, in which case the cell-centred column is written as the
     ! separate OPTIONAL coef_p_blocks dataset (increment S3) and every
-    ! other dataset in the file is untouched.
+    ! other dataset in the file is untouched. A BODY-FREE case (step 7-1)
+    ! passes no coef at all: the file then carries attrs + node lines +
+    ! the leaf table and no coefficient/mask/dwall dataset.
     integer(C_INT), intent(in) :: nCoefComp
     logical, intent(in) :: has_terminal
+    real(C_DOUBLE), intent(in), optional :: coef(*)
     integer(C_INT), intent(in), optional :: touch(:,:), buried(:,:), maskDims(:,:)
     integer(C_INT), intent(in), optional :: active(:)
     real(C_DOUBLE), intent(in), optional :: dwall(:,:,:,:)
@@ -770,16 +922,19 @@ subroutine write_case_file(file_name, blk, dns, g, bc, c, coef, nCoefComp, has_t
     character(kind=C_CHAR,len=:), allocatable :: c_file_name
     integer(C_INT) :: ierr, write_data, n_raster
     integer(C_INT) :: periodic(1:3), natural_one_sided(1:3)
+    integer(C_INT) :: nb_auto
     integer :: level
 
     c_file_name = to_c_string(file_name)
     ! has_terminal in comm_type is world rank 0 -- the one raster writer.
     write_data = merge(1_C_INT, 0_C_INT, c%has_terminal)
 
+    nb_auto = merge(1_C_INT, 0_C_INT, dns%block_nb_auto)
     ierr = fdm_h5_case_create(c_file_name, &
         dns%globalSize(1), dns%globalSize(2), dns%globalSize(3), &
         dns%leng(1), dns%leng(2), dns%leng(3), dns%re, &
         dns%block_nb, blk%nLevels - 1_C_INT, dns%block_refine_mask, &
+        nb_auto, dns%block_nb_ranks, &
         blk%nBlocksGlobal, blk%idStart, blk%nBlocks, blk%origin, blk%level)
     call check_case_write(ierr, "create", file_name, has_terminal)
 
@@ -820,14 +975,16 @@ subroutine write_case_file(file_name, blk, dns, g, bc, c, coef, nCoefComp, has_t
         call check_case_write(ierr, "block_active", file_name, has_terminal)
     end if
 
-    ierr = fdm_h5_case_append_coef(c_file_name, blk%nb(1), blk%nb(2), blk%nb(3), &
-        blk%nBlocks, blk%nBlocksGlobal, blk%idStart, nCoefComp, coef)
-    call check_case_write(ierr, "coef_blocks", file_name, has_terminal)
-
-    if (nCoefComp > 3_C_INT) then
-        ierr = fdm_h5_case_append_coef_p(c_file_name, blk%nb(1), blk%nb(2), blk%nb(3), &
+    if (present(coef)) then
+        ierr = fdm_h5_case_append_coef(c_file_name, blk%nb(1), blk%nb(2), blk%nb(3), &
             blk%nBlocks, blk%nBlocksGlobal, blk%idStart, nCoefComp, coef)
-        call check_case_write(ierr, "coef_p_blocks", file_name, has_terminal)
+        call check_case_write(ierr, "coef_blocks", file_name, has_terminal)
+
+        if (nCoefComp > 3_C_INT) then
+            ierr = fdm_h5_case_append_coef_p(c_file_name, blk%nb(1), blk%nb(2), blk%nb(3), &
+                blk%nBlocks, blk%nBlocksGlobal, blk%idStart, nCoefComp, coef)
+            call check_case_write(ierr, "coef_p_blocks", file_name, has_terminal)
+        end if
     end if
 
     if (present(dwall)) then
@@ -877,6 +1034,21 @@ subroutine read_field(blk, dns, file_name, c, scalar_names)
         if (c%has_terminal) print *, "restart file refine_dims mask", file_mask, &
             "does not match the configured [blocks] refine_dims", dns%block_refine_mask
         error stop "restart/config [blocks] refine_dims mismatch"
+    end if
+    ! A block-layout snapshot is sliced by leaf id, so its leaf table must
+    ! BE the solver's (row for row over this rank's id range): a snapshot
+    ! from a differently tiled or refined run would otherwise land silently
+    ! on the wrong blocks. Until step 7-2 only the dataset extents were
+    ! checked, which a same-count, different-layout table passes.
+    ierr = fdm_h5_check_block_table(c_file_name, blk%nBlocks, blk%idStart, blk%origin, blk%level)
+    if (ierr == 2_C_INT) then
+        if (c%has_terminal) print *, "error: restart file block table does not match", &
+            " the case layout (a snapshot of a different [blocks] tiling?): ", trim(file_name)
+        error stop "restart/case block-table mismatch"
+    end if
+    if (ierr /= 0_C_INT) then
+        if (c%has_terminal) print *, "error: could not read the blocks table of: ", trim(file_name)
+        error stop
     end if
     var_names = field_var_names(dns, scalar_names)
     allocate(found(int(dns%nVar)))

@@ -144,3 +144,11 @@ validation/conjugate/*.stl
 # ...and the C2 measurement tables (run_gates_c2.sh): every number they hold
 # is recorded in validation/conjugate/README.md, which is the durable record.
 validation/conjugate/c2_*.dat
+
+# step-7 prepare/solve gate scratch (validation/prepare/run_gates_step7.sh):
+# generated inis and case files in the case directories, and the suite
+# snapshots that the les_ibm exception above would otherwise sweep in.
+.s7_*
+s7_*
+validation/channel_interface/les_ibm/bx_*.h5
+validation/channel_interface/les_ibm/s3x_*.h5

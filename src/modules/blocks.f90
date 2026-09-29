@@ -30,7 +30,7 @@ module blocks
 
     private
     public :: block_set_type
-    public :: init_block_set, destroy_block_set
+    public :: init_block_set, init_block_set_from_table, derive_block_nb, destroy_block_set
     public :: enter_block_data, exit_block_data
     public :: subdivide_node_line
     public :: zorder_owner, zorder_start, zorder_count
@@ -225,6 +225,179 @@ contains
         call build_block_metrics(blk, dns, g, periodic)
         call allocate_flow_state(blk, dns)
     end subroutine init_block_set
+
+    ! The [blocks] nb RULE (docs/next_session_prepare_everything.md, decided
+    ! 2026-09-29). The block size is a property of the CASE FILE, never of
+    ! the run -- the one thing the old rank-box layout (block =
+    ! globalSize/dims, changing with the rank count) could not satisfy.
+    !   1. An explicit nb wins, with the config guards (even, >= 4, divides
+    !      the grid).
+    !   2. Unset: ONE BLOCK PER RANK of the Cartesian decomposition `dims`
+    !      the builder runs on -- exactly the old rank box (same halo
+    !      footprint, same ownership, bit-identical fields), written into the
+    !      file. No floor and no parity guard: the red-black colouring is
+    !      continuous across ANY block face (colorOffset = sum(origin) mod 2
+    !      in redblack_sweep), so an odd derived nb is as sound as the odd
+    !      rank box it replaces; the "even" guard exists for refinement
+    !      (a child block must cover a whole number of coarse cells), and
+    !      refinement keeps requiring an explicit nb (rule 4, moby_prepare).
+    !   3. When dims does not divide the grid (the rank boxes would be
+    !      unequal, which a lattice cannot express): per direction the
+    !      largest even divisor >= 4 up to 64 -- printed, and a hard error
+    !      when a direction admits none (report it, do not force one).
+    subroutine derive_block_nb(dns, dims, nranks, has_terminal)
+        type(dns_type), intent(inout) :: dns
+        integer, intent(in) :: dims(3), nranks
+        logical, intent(in) :: has_terminal
+
+        integer, parameter :: NB_CEILING = 64
+        integer :: d, n, cand
+
+        dns%block_nb_auto = .false.
+        dns%block_nb_ranks = 0_C_INT
+        if (all(dns%block_nb > 0_C_INT)) return
+
+        dns%block_nb_auto = .true.
+        dns%block_nb_ranks = int(nranks, C_INT)
+        if (all(mod(int(dns%globalSize), dims) == 0)) then
+            dns%block_nb = dns%globalSize/int(dims, C_INT)
+            if (has_terminal) print '(A,3(1X,I0),A,3(1X,I0),A)', &
+                " [blocks] nb unset: one block per rank, nb =", dns%block_nb, &
+                "  (rank layout", dims, ")"
+            return
+        end if
+
+        do d = 1, 3
+            n = int(dns%globalSize(d))
+            dns%block_nb(d) = 0_C_INT
+            do cand = min(n, NB_CEILING), 4, -1
+                if (mod(cand, 2) == 0 .and. mod(n, cand) == 0) then
+                    dns%block_nb(d) = int(cand, C_INT)
+                    exit
+                end if
+            end do
+            if (dns%block_nb(d) == 0_C_INT) then
+                print '(A,I0,A,I0,A)', " [blocks] nb unset and direction ", d, " (", n, &
+                    " cells) admits no even block size >= 4: set [blocks] nb explicitly"
+                error stop "[blocks] nb cannot be derived for this grid"
+            end if
+        end do
+        if (has_terminal) print '(A,3(1X,I0),A,3(1X,I0),A)', &
+            " [blocks] nb unset and the rank layout", dims, &
+            " does not divide the grid: nb =", dns%block_nb, " from the grid alone"
+    end subroutine derive_block_nb
+
+    ! Build this rank's blocks from a CASE FILE's leaf table (step 7-2): the
+    ! table is the truth, nothing is classified, removed or refined here.
+    ! Only the DERIVED lookups are formed -- the per-level node lines
+    ! (midpoint subdivision of the level-0 line, a pure function of it),
+    ! the per-level occupancy windows and lidOf, and the Z-order rank split.
+    ! rows(1:3, id+1) is the origin in level-l cells and rows(4, id+1) the
+    ! level, in the file's (Morton) row order; the level count is what the
+    ! table holds, and the row order is CHECKED to be the canonical curve
+    ! rather than assumed (both ends of every exchange derive entry order
+    ! from it).
+    subroutine init_block_set_from_table(blk, dns, g, periodic, nranks, myrank, nb, &
+            refMask, rows)
+        type(block_set_type), intent(inout) :: blk
+        type(dns_type), intent(in) :: dns
+        type(grid_type), intent(in) :: g
+        logical(C_BOOL), intent(in) :: periodic(1:3)
+        integer(C_INT), intent(in) :: nranks, myrank
+        integer(C_INT), intent(in) :: nb(3), refMask(3)
+        integer(C_INT), intent(in) :: rows(:,:)
+
+        integer :: d, i, n, l, lmax, idx, nRemoved
+        integer :: lo(3), hi(3), c(3)
+        integer(int64) :: key, prev
+
+        call destroy_block_set(blk)
+
+        n = size(rows, 2)
+        if (size(rows, 1) /= 4 .or. n < 1) error stop "case file: malformed blocks table"
+        blk%distMode = DIST_ZORDER
+        blk%refMask = refMask
+        blk%nb = nb
+        do d = 1, 3
+            if (nb(d) < 1_C_INT .or. mod(dns%globalSize(d), nb(d)) /= 0_C_INT) then
+                print *, "case file block size nb =", nb, "does not divide the grid", &
+                    dns%globalSize(1:3), "in direction", d
+                error stop "case file block size must divide the global grid"
+            end if
+        end do
+        blk%nTiles = dns%globalSize(1:3)/blk%nb
+        lmax = int(maxval(rows(4, 1:n)))
+        if (lmax < 0 .or. lmax > 60 .or. minval(rows(4, 1:n)) < 0_C_INT) &
+            error stop "case file: leaf level out of range"
+        blk%nLevels = int(lmax + 1, C_INT)
+        call build_level_lines(blk, dns, g)
+
+        blk%nBlocksGlobal = int(n, C_INT)
+        allocate(blk%leafLevel(n), blk%leafCoord(3, n))
+        do i = 1, n
+            blk%leafLevel(i) = rows(4, i)
+            if (any(mod(rows(1:3, i), blk%nb) /= 0_C_INT)) &
+                error stop "case file: leaf origin is not a multiple of the block size"
+            blk%leafCoord(:, i) = rows(1:3, i)/blk%nb
+        end do
+
+        ! Occupancy windows = the bounding box of the leaves at each level
+        ! (empty levels get a zero window); leaf_at answers "no leaf" outside
+        ! a window, which is exactly right for a table that IS complete.
+        allocate(blk%winLo(3, blk%nLevels), blk%winDims(3, blk%nLevels))
+        allocate(blk%levelOffset(0:int(blk%nLevels)))
+        blk%levelOffset(0) = 0_C_INT
+        do l = 0, lmax
+            lo = huge(1); hi = -1
+            do i = 1, n
+                if (int(blk%leafLevel(i)) /= l) cycle
+                lo = min(lo, int(blk%leafCoord(:, i)))
+                hi = max(hi, int(blk%leafCoord(:, i)))
+            end do
+            if (any(hi < 0)) then
+                blk%winLo(:, l+1) = 0_C_INT
+                blk%winDims(:, l+1) = 0_C_INT
+            else
+                if (any(lo < 0) .or. any(hi >= lattice_dims(blk, l))) &
+                    error stop "case file: leaf outside its level lattice"
+                blk%winLo(:, l+1) = int(lo, C_INT)
+                blk%winDims(:, l+1) = int(hi - lo + 1, C_INT)
+            end if
+            blk%levelOffset(l+1) = blk%levelOffset(l) &
+                + int(product(int(blk%winDims(:, l+1))), C_INT)
+        end do
+        allocate(blk%lidOf(int(blk%levelOffset(int(blk%nLevels)))))
+        blk%lidOf = -1_C_INT
+        prev = -1_int64
+        do i = 1, n
+            l = int(blk%leafLevel(i))
+            c = int(blk%leafCoord(:, i))
+            idx = lid_index(blk, l, c)
+            if (blk%lidOf(idx) /= -1_C_INT) error stop "case file: duplicate leaf"
+            blk%lidOf(idx) = int(i - 1, C_INT)
+            key = leaf_key(blk, lmax, l, c)
+            if (key <= prev) error stop "case file: blocks table is not in Morton order"
+            prev = key
+        end do
+
+        nRemoved = int(product(blk%nTiles)) - count_level0_leaves(blk)
+        if (nRemoved > 0 .and. myrank == 0_C_INT .and. blk%nLevels == 1_C_INT) then
+            print *, "removed", nRemoved, "of", product(blk%nTiles), &
+                "blocks buried inside the immersed boundary"
+        end if
+        if (lmax > 0 .and. myrank == 0_C_INT) then
+            print *, "block refinement:", n, "leaves,", &
+                count(blk%leafLevel(1:n) > 0_C_INT), "refined"
+        end if
+
+        blk%idStart = zorder_start(blk%nBlocksGlobal, nranks, myrank)
+        blk%nBlocks = zorder_count(blk%nBlocksGlobal, nranks, myrank)
+        if (blk%nBlocks < 1_C_INT) error stop "rank owns no blocks; use fewer ranks or smaller nb"
+
+        call build_block_metadata(blk, dns, periodic)
+        call build_block_metrics(blk, dns, g, periodic)
+        call allocate_flow_state(blk, dns)
+    end subroutine init_block_set_from_table
 
     ! Allocate and fill this rank's per-block metadata: global id, refinement
     ! level, cell origin (level-l index space) and the six face kinds.
