@@ -10,7 +10,7 @@ module config
         PATCH_GENERIC, PATCH_WALL, PATCH_INLET, PATCH_OUTLET, &
         PROFILE_CONSTANT, PROFILE_PARABOLA, PROFILE_BLASIUS
     use :: comm, only: comm_type
-    use :: scalar, only: scalar_type, apply_scalar_config, validate_scalar_config, &
+    use :: scalar, only: scalar_type, apply_scalar_config, validate_scalar_config, scalars_enabled, &
         scalar_section_index
     implicit none
 
@@ -268,7 +268,11 @@ subroutine apply_config_value(section, key, value, dns, g, turb, les, ps, bc, sc
         case ("enabled")
             call read_bool(value, dns%ibm_enabled, line_no)
         case ("coeff_file")
+            ! Alias of [case] file (step 7-3), kept for one release.
+            if (terminal_output) print *, "note: [ibm] coeff_file is now [case] file", &
+                " (input line", line_no, ")"
             dns%ibm_coeff_file = clean_string(value)
+            seen%ibm_coeff_file = .true.
         case ("wall_shape")
             dns%ibm_wall_shape = clean_string(value)
         case ("amp_x")
@@ -409,6 +413,14 @@ subroutine apply_config_value(section, key, value, dns, g, turb, les, ps, bc, sc
         case ("trip_seed")
             call read_int(value, dns%trip_seed, line_no)
         end select
+    case ("case")
+        ! [case] name and the [case.<name>] sections are read by the flow
+        ! case itself (flow_case.f90); the solver-wide key here is the case
+        ! FILE (step 7-3). Everything else in the section is the case's.
+        if (key_l == "file") then
+            dns%ibm_coeff_file = clean_string(value)
+            seen%case_file = .true.
+        end if
     case ("turbulence")
         call apply_turbulence_value(key_l, value, turb, seen, line_no)
     case ("les")
@@ -452,7 +464,110 @@ subroutine validate_runtime_config(dns, g, c, seen)
 
     call validate_dns_values(dns, g)
     if (any(c%dims < 0)) error stop "MPI dimensions must be non-negative"
+    if (seen%case_file .and. seen%ibm_coeff_file) &
+        error stop "[case] file and its alias [ibm] coeff_file are both set; keep [case] file"
 end subroutine validate_runtime_config
+
+! The INPUT ECHO of a case file (step 7-3): every ini value the builder's
+! output is a function of, one `key = value` per line, in a fixed order.
+! The builder stores it in the file (case_inputs) and the solver rebuilds
+! it from ITS ini and compares line by line, so a stale file is refused
+! with the offending key named -- attribute by attribute, not a hash. The
+! node lines are compared separately, bit for bit (read_case_layout), so
+! the [grid.*] distribution keys need not appear here. Real values are
+! printed at full precision with the same format on both sides.
+function case_input_echo(dns, bc, sc) result(text)
+    type(dns_type), intent(in) :: dns
+    type(boundary_type), intent(in) :: bc
+    type(scalar_type), intent(in) :: sc
+    character(len=:), allocatable :: text
+
+    character(len=64) :: buf
+    integer :: i, d
+
+    text = ""
+    call add_ints("grid", dns%globalSize)
+    call add_reals("length", dns%leng)
+    call add_reals("re", [dns%re])
+    call add_ints("periodic", merge(1_C_INT, 0_C_INT, bc%isPeriodic))
+    ! "auto" on BOTH sides of the comparison: the builder marks a derived
+    ! nb, the solver's ini simply has none.
+    if (dns%block_nb_auto .or. any(dns%block_nb <= 0_C_INT)) then
+        call add_line("nb", "auto")
+    else
+        call add_ints("nb", dns%block_nb)
+    end if
+    call add_ints("refine_dims", dns%block_refine_mask)
+    call add_ints("refine_levels", [dns%block_refine_levels])
+    do i = 1, int(dns%block_refine_nboxes)
+        write(buf, '(A,I0)') "refine_box_", i
+        call add_reals(trim(buf), dns%block_refine_box(:, i))
+        call add_ints(trim(buf)//"_level", [dns%block_refine_box_level(i)])
+    end do
+    call add_line("refine_body", merge("true ", "false", dns%block_refine_body))
+    call add_ints("refine_body_levels", [dns%block_refine_body_levels])
+    do i = 1, int(dns%block_refine_body_nboxes)
+        write(buf, '(A,I0)') "refine_body_box_", i
+        call add_reals(trim(buf), dns%block_refine_body_box(:, i))
+        call add_ints(trim(buf)//"_level", [dns%block_refine_body_box_level(i)])
+    end do
+    call add_line("remove_solid", merge("true ", "false", dns%block_remove_solid))
+    call add_line("keep_buried", merge("true ", "false", dns%block_keep_buried))
+    call add_line("ibm_enabled", merge("true ", "false", dns%ibm_enabled))
+    if (dns%ibm_enabled) then
+        if (dns%ibm_stl_count > 0_C_INT) then
+            do i = 1, int(dns%ibm_stl_count)
+                write(buf, '(A,I0)') "stl_file_", i
+                call add_line(trim(buf), trim(dns%ibm_stl_file(i)))
+            end do
+            call add_reals("stl_scale", [dns%ibm_stl_scale])
+            call add_reals("stl_translate", dns%ibm_stl_translate)
+        else
+            call add_line("wall_shape", trim(dns%ibm_wall_shape))
+            call add_ints("wall_n_wave", [dns%ibm_n_wave_x, dns%ibm_n_wave_z])
+            call add_reals("wall_amp", [dns%ibm_amp_x, dns%ibm_amp_z])
+            call add_reals("wall_phase", [dns%ibm_phase_x, dns%ibm_phase_z])
+        end if
+        call add_line("scalar_coef", merge("true ", "false", scalars_enabled(sc)))
+    end if
+
+contains
+
+    subroutine add_line(key, value)
+        character(len=*), intent(in) :: key, value
+
+        text = text // key // " = " // trim(value) // new_line("a")
+    end subroutine add_line
+
+    subroutine add_ints(key, values)
+        character(len=*), intent(in) :: key
+        integer(C_INT), intent(in) :: values(:)
+
+        character(len=32*size(values)) :: line
+
+        line = ""
+        do d = 1, size(values)
+            write(buf, '(I0)') values(d)
+            line = trim(line) // " " // trim(buf)
+        end do
+        call add_line(key, adjustl(line))
+    end subroutine add_ints
+
+    subroutine add_reals(key, values)
+        character(len=*), intent(in) :: key
+        real(C_DOUBLE), intent(in) :: values(:)
+
+        character(len=32*size(values)) :: line
+
+        line = ""
+        do d = 1, size(values)
+            write(buf, '(ES24.16E3)') values(d)
+            line = trim(line) // " " // trim(adjustl(buf))
+        end do
+        call add_line(key, adjustl(line))
+    end subroutine add_reals
+
+end function case_input_echo
 
 subroutine validate_turbulence_values(turb, les, dns)
     type(turb_type), intent(in) :: turb

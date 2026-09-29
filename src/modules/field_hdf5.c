@@ -2,6 +2,7 @@
 #include <hdf5.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
 
 #ifndef H5_HAVE_PARALLEL
 #error "field_hdf5.c requires HDF5 built with parallel MPI-IO support"
@@ -119,6 +120,57 @@ static int write_attr_double(hid_t file, const char *name, double value)
     H5Aclose(attr);
     H5Sclose(space);
     return status < 0;
+}
+
+/* Variable-length-free fixed string attribute (the case-input echo). */
+static int write_attr_string(hid_t file, const char *name, const char *text)
+{
+    hid_t space = H5Screate(H5S_SCALAR);
+    hid_t type = H5Tcopy(H5T_C_S1);
+    hid_t attr = -1;
+    size_t n = strlen(text);
+    herr_t status = -1;
+
+    if (space < 0 || type < 0 || H5Tset_size(type, n + 1) < 0) {
+        if (space >= 0) H5Sclose(space);
+        if (type >= 0) H5Tclose(type);
+        return 1;
+    }
+    attr = H5Acreate2(file, name, type, space, H5P_DEFAULT, H5P_DEFAULT);
+    if (attr >= 0) status = H5Awrite(attr, type, text);
+    if (attr >= 0) H5Aclose(attr);
+    H5Tclose(type);
+    H5Sclose(space);
+    return status < 0;
+}
+
+/* *found = 0 when the attribute is absent (older case files). The text is
+ * NUL-terminated into buf; longer texts are a read error. */
+static int read_attr_string(hid_t file, const char *name, char *buf, size_t cap, int *found)
+{
+    htri_t exists = H5Aexists(file, name);
+    hid_t attr = -1, type = -1;
+    size_t n;
+    herr_t status = -1;
+
+    *found = 0;
+    if (exists <= 0) return 0;
+    attr = H5Aopen(file, name, H5P_DEFAULT);
+    type = attr >= 0 ? H5Aget_type(attr) : -1;
+    if (attr < 0 || type < 0) {
+        if (attr >= 0) H5Aclose(attr);
+        return 1;
+    }
+    n = H5Tget_size(type);
+    if (n + 1 <= cap) {
+        status = H5Aread(attr, type, buf);
+        buf[n] = '\0';
+    }
+    H5Tclose(type);
+    H5Aclose(attr);
+    if (status < 0) return 1;
+    *found = 1;
+    return 0;
 }
 
 static int write_attr_int_array(hid_t file, const char *name, const int *values, hsize_t n)
@@ -1324,6 +1376,20 @@ int fdm_h5_case_read_layout(const char *filename, int *nx, int *ny, int *nz,
     return ierr != 0;
 }
 
+/* The case-input echo attribute (see fdm_h5_case_create); *found = 0 on a
+ * file written before step 7-3 or by the retired mobygeom. */
+int fdm_h5_case_read_inputs(const char *filename, char *buf, int cap, int *found)
+{
+    hid_t file;
+    int ierr;
+
+    file = H5Fopen(filename, H5F_ACC_RDONLY, H5P_DEFAULT);
+    if (file < 0) return 1;
+    ierr = read_attr_string(file, "case_inputs", buf, (size_t)cap, found);
+    ierr |= H5Fclose(file) < 0;
+    return ierr != 0;
+}
+
 /* The whole blocks table, (n_blocks_global, 4) row-major: origin x,y,z in
  * level-l cells and the level, row i = leaf id i (Morton order). Every rank
  * reads all of it -- the table is global state, exactly as the builder
@@ -1781,7 +1847,7 @@ int fdm_h5_case_create(const char *filename,
                        int nx, int ny, int nz,
                        double lx, double ly, double lz, double re,
                        const int *block_nb, int block_levels, const int *refine_mask,
-                       int nb_auto, int nb_ranks,
+                       int nb_auto, int nb_ranks, const char *inputs,
                        int n_blocks_global, int id_start, int n_blocks,
                        const int *block_origin, const int *block_level)
 {
@@ -1813,6 +1879,11 @@ int fdm_h5_case_create(const char *filename,
      * rank count can tell "one block per rank" from an explicit choice. */
     ierr |= write_attr_int(file, "block_nb_auto", nb_auto);
     ierr |= write_attr_int(file, "block_nb_ranks", nb_ranks);
+    /* The INPUT ECHO (step 7-3): every ini value this file is a function
+     * of, one key=value per line (config.f90 case_input_echo). The reader
+     * rebuilds the same text from its ini and names the first line that
+     * differs -- staleness attribute by attribute, readable with h5dump. */
+    ierr |= write_attr_string(file, "case_inputs", inputs);
     if (refine_mask[0] != 1 || refine_mask[1] != 1 || refine_mask[2] != 1) {
         ierr |= write_attr_int_array(file, "refine_dims", refine_mask, 3);
     }

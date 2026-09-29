@@ -39,6 +39,7 @@ set(MODULE_SOURCES
     ${MODULE_DIR}/scalar.f90
     ${MODULE_DIR}/scalar_stats.f90
     ${MODULE_DIR}/step.f90
+    ${MODULE_DIR}/prepare.f90
     ${MODULE_DIR}/pressure_solver.f90
     ${MODULE_DIR}/flow_case_base.f90
     ${MODULE_DIR}/flow/case_config_helpers.f90

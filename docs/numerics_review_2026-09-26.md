@@ -995,6 +995,35 @@ three sessions.
 > `for_solve` flag and prepare uses `product(dims)` as the rank count;
 > `block_levels` means "number of levels" in mobygeom files and "finest
 > level" in prepare files — the reader derives the count from the table.
+>
+> **MEASURED (2026-09-29, increment 7-3).** One builder, two entry points:
+> `src/modules/prepare.f90` `prepare_case(input, case_file, c)`;
+> `moby_prepare` is a thin main and `moby_solve` calls it IN-PROCESS when
+> the case file is absent (`--prepare` forces it). `[case] file` is the one
+> user-facing name (default `<field_prefix>_case.h5`); `[ibm] coeff_file`
+> is an alias for one release (a note is printed; both set = config
+> error). STALENESS is an INPUT ECHO, not a hash: `case_input_echo`
+> (config.f90) prints every value the file is a function of, one
+> `key = value` per line (grid, lengths, re, periodicity, nb or `auto`,
+> refine keys and boxes, remove_solid/keep_buried, ibm_enabled, STL list +
+> transform or the analytic wall parameters, the scalar column); the
+> builder stores it (`case_inputs` attr, readable with h5dump), the solver
+> rebuilds it from its ini and the first differing line stops the run with
+> both values printed. Files without the attr (mobygeom, pre-7-3) fall back
+> to the explicit checks. The committed legacy `les_ibm/ibm_coeff.h5` was
+> converted ONCE, number for number, with the temporary `moby_prepare
+> --convert-legacy` into `ibm_coeff_case.h5` (committed, 15 MB): a solve
+> from it equals the 7-0 reference's solve from the legacy file at
+> `max_abs 0` (un/vn/wn/pn/nut); `channel_ibm.ini` reads it, the legacy
+> file stays for `measure_nut.py`. Manual gates on min_channel: a run with
+> no case file prepares `<prefix>_case.h5` and reproduces the inline
+> reference at `max_abs 0`; a second run reads it; `--prepare` rebuilds it;
+> `re` 180 → 190 in the ini stops with `file has: re = 1.8…E+002 / ini
+> has: re = 1.9…E+002`; `[case] file` gives the same fields; the alias
+> prints its note; both keys error-stop. Suites, every run now
+> auto-preparing, all `max_abs 0` vs 7-0: step-7 driver CPU 23/23 + P0
+> 22/22 + STL 16/16 + block_nb 7/7 (65), 7-case 1 + 4 ranks (16), 9-case
+> (10), GPU step-7 driver + 7-case + 9-case (33).
 
 **Step 8 — F1, flux-form viscous stencil (numerics change).** The plan entry
 in section 9. Gates as stated there; run it in the same session as the

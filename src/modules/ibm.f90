@@ -446,27 +446,45 @@ contains
             call read_ibm_coeff_p(ibm, dns, blk, c_file_name, n_comp, has_terminal)
             return
         end if
+        call read_ibm_coeff_legacy(ibm, dns, blk, dns%ibm_coeff_file, has_terminal)
+    end subroutine read_ibm_coeff_file
 
+    ! The LEGACY global ghost-layer coefficient layout (the retired mobygeom
+    ! stl-ibm-coeff): level-0 data only, three staggered components. Public
+    ! for the one-off conversion into the case-file layout (moby_prepare
+    ! --convert-legacy, step 7-3); the reader itself goes in step 7-4.
+    subroutine read_ibm_coeff_legacy(ibm, dns, blk, file_name, has_terminal)
+        type(ibm_type), intent(inout) :: ibm
+        type(dns_type), intent(in) :: dns
+        type(block_set_type), intent(in) :: blk
+        character(len=*), intent(in) :: file_name
+        logical, intent(in) :: has_terminal
+
+        character(kind=C_CHAR,len=:), allocatable :: c_file_name
+        integer(C_INT) :: ierr, n_comp
+
+        n_comp = int(ubound(ibm%coef,4) - lbound(ibm%coef,4) + 1, C_INT)
         if (any(blk%level(1:blk%nBlocks) /= 0_C_INT)) then
-            if (has_terminal) print *, "error: legacy coefficient file needs single-level blocks;", &
-                " regenerate with mobygeom block-table"
+            if (has_terminal) print *, "error: legacy coefficient file needs single-level blocks: ", &
+                trim(file_name)
             error stop
         end if
         if (n_comp > 3_C_INT) then
             if (has_terminal) print *, "error: [scalar] needs cell-centred IBM coefficients,", &
                 " which the legacy coefficient-file layout cannot carry;", &
-                " re-run moby_prepare with [scalar]: ", trim(dns%ibm_coeff_file)
+                " re-run moby_prepare with [scalar]: ", trim(file_name)
             error stop
         end if
+        c_file_name = to_c_string(file_name)
         ierr = fdm_h5_read_ibm_coeff(c_file_name, blk%nb(1), blk%nb(2), blk%nb(3), &
             blk%nBlocks, blk%origin, &
             dns%globalSize(1), dns%globalSize(2), dns%globalSize(3), &
             dns%leng(1), dns%leng(2), dns%leng(3), dns%re, n_comp, ibm%coef)
         if (ierr /= 0_C_INT) then
-            if (has_terminal) print *, "error: could not read IBM coefficient file: ", trim(dns%ibm_coeff_file)
+            if (has_terminal) print *, "error: could not read IBM coefficient file: ", trim(file_name)
             error stop
         end if
-    end subroutine read_ibm_coeff_file
+    end subroutine read_ibm_coeff_legacy
 
     ! The cell-centred (pressure-position) coefficient tiles the passive
     ! scalars penalise with (increment S3): the OPTIONAL coef_p_blocks

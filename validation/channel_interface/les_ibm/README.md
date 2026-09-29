@@ -75,7 +75,13 @@ band-aware `nut` damping is needed; **no solver code change**. See `ibm_les_prof
 ## Files
 
 - `channel_ibm.ini` (a/b), `channel_ibm_refine.ini` (c).
-- `grid.h5`, `wall_{lo,hi}.stl`, `ibm_coeff.h5` (single level), `IC.h5` &mdash; committed.
+- `grid.h5`, `wall_{lo,hi}.stl`, `ibm_coeff.h5` (single level, the retired
+  mobygeom's LEGACY global layout &mdash; kept for `measure_nut.py`, which reads its
+  `coef` dataset), `ibm_coeff_case.h5` (the same numbers in the case-file layout,
+  converted once with `moby_prepare --convert-legacy` at numerics-review step 7-3
+  and gated `max_abs 0` against a solve from the legacy file; this is what
+  `channel_ibm.ini` reads since the solver dropped the legacy reader), `IC.h5`
+  &mdash; committed.
 - `ibm_coeff_blocks.h5`, `IC_refine.h5` (case c, larger) &mdash; gitignored; `./setup.sh`
   regenerates them (`moby_prepare` + the geometry venv; since 2026-09-26 — it used
   mobygrid + mobygeom before) or rsync them with the directory. `grid.h5` and

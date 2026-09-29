@@ -15,9 +15,16 @@
 # the mobygeom file). NOT regenerated any more, because they are committed:
 #   grid.h5      -- the old mobygrid grid; still read as --grid-file by the
 #                   mobygeom reference in ../../rans_geometry/setup.sh
-#   ibm_coeff.h5 -- the single-level legacy-format file the standard suite's
-#                   les_ibm case reads (a moby_prepare file of channel_ibm.ini
-#                   with stl_file is its block-table equivalent, ~1e-10 apart)
+#   ibm_coeff.h5 -- the single-level LEGACY-format (global layout) file the
+#                   retired mobygeom wrote; measure_nut.py still reads its
+#                   `coef` dataset. The solver no longer reads that layout
+#                   (numerics review step 7-4): the standard suite's les_ibm
+#                   case reads ibm_coeff_case.h5, the number-for-number
+#                   conversion of it into the case-file layout (committed;
+#                   made once with `moby_prepare --convert-legacy` at step
+#                   7-3, gated max_abs 0 against a solve from the legacy
+#                   file). A moby_prepare file of channel_ibm.ini with
+#                   stl_file is its recomputed equivalent, ~1e-10 apart.
 #
 # Usage:  ./setup.sh
 set -euo pipefail

@@ -42,6 +42,10 @@ module init
         logical :: pressure_niter = .false.
         logical :: pressure_sor = .false.
         logical :: turbulence_model = .false.
+        ! [case] file and its one-release alias [ibm] coeff_file: both set
+        ! is a config error.
+        logical :: case_file = .false.
+        logical :: ibm_coeff_file = .false.
     end type config_seen_type
 
     ! Runtime/domain state shared by the solver modules.
@@ -135,6 +139,11 @@ module init
         ! validation/naca0012/README.md in git history).
         logical(C_BOOL) :: block_keep_buried = .false.
         logical(C_BOOL) :: ibm_enabled = .true.
+        ! [case] file: THE case file (grid + leaf table + coefficients),
+        ! written by the builder and read by the solver; the solver names
+        ! <field_prefix>_case.h5 when the key is unset and prepares it
+        ! in-process when absent. [ibm] coeff_file is the pre-step-7 name,
+        ! accepted as an alias for one release.
         character(len=256) :: ibm_coeff_file = ""
         ! Analytic wall geometry ([ibm] wall_shape and its parameters). The
         ! defaults reproduce the hardcoded wavy wall exactly, so a case that

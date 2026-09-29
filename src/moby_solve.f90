@@ -12,6 +12,7 @@ program moby_solve
         profiler_type, wall_seconds, profiler_add, write_profiler
     use :: flow_case, only: case_type, create_flow_case
     use :: config
+    use :: prepare, only: prepare_case
     use :: boundary
     use :: io
     use :: step
@@ -63,14 +64,16 @@ program moby_solve
     ! The case file's leaf table (step 7-2) and its block size / refinement mask.
     integer(C_INT), allocatable :: leafRows(:,:)
     integer(C_INT) :: fileNb(3), fileRefMask(3)
-    logical :: fileLayout
+    logical :: fileLayout, force_prepare, case_exists
+    character(len=256) :: case_file
+    character(len=:), allocatable :: inputs
 
     call comm_init_world(c)
     call splash(c%has_terminal)
 
-    ! The first command-line argument can override the default input file.
-    call get_command_argument(1, input_file, status=arg_status)
-    if (arg_status /= 0 .or. len_trim(input_file) == 0) input_file = "input.ini"
+    ! Arguments: the input file (default input.ini) and --prepare, which
+    ! rebuilds the case file even when it exists.
+    call parse_solve_args(input_file, force_prepare)
 
     if (c%has_terminal) print *, "reading input data..."
     call create_flow_case(flow, input_file, c%has_terminal)
@@ -82,14 +85,28 @@ program moby_solve
     end if
     call comm_init(c, dns, bc)
 
-    ! STL geometry is prepared offline (docs/prepare_solve_strategy.md):
-    ! the solver consumes only the case file it produced.
-    if (dns%ibm_enabled .and. dns%ibm_stl_count > 0_C_INT &
-            .and. len_trim(dns%ibm_coeff_file) == 0) then
-        if (c%has_terminal) print *, "error: [ibm] stl_file is a moby_prepare input;", &
-            " run moby_prepare and point [ibm] coeff_file at its output"
-        error stop
+    ! THE CASE FILE (step 7-3): [case] file, or <field_prefix>_case.h5 when
+    ! unset. It is the single source of truth for grid, block size, leaf
+    ! table and coefficients; when it does not exist (or --prepare asks) it
+    ! is built here, in-process, by the same builder moby_prepare runs --
+    ! with THIS run's rank layout, which is what the nb rule keys on. A
+    ! file prepared on another rank count is read as it is (rule 5): it
+    ! solves as long as every rank owns a block.
+    case_file = dns%ibm_coeff_file
+    if (len_trim(case_file) == 0) case_file = trim(dns%field_prefix) // "_case.h5"
+    inquire(file=trim(case_file), exist=case_exists)
+    if (force_prepare .or. .not. case_exists) then
+        if (c%has_terminal) then
+            if (case_exists) then
+                print *, "--prepare: rebuilding the case file ", trim(case_file)
+            else
+                print *, "case file ", trim(case_file), " not found: preparing it"
+            end if
+        end if
+        call prepare_case(input_file, trim(case_file), c)
     end if
+    dns%ibm_coeff_file = case_file
+    inputs = case_input_echo(dns, bc, sc)
 
     if (c%has_terminal) print *, "initialising grid..."
     call init_grid(g, dns, bc%isPeriodic)
@@ -107,7 +124,7 @@ program moby_solve
     fileLayout = .false.
     if (len_trim(dns%ibm_coeff_file) > 0) then
         if (c%has_terminal) print *, "reading case file layout: ", trim(dns%ibm_coeff_file)
-        call read_case_layout(dns, g, dns%ibm_coeff_file, fileNb, fileRefMask, leafRows, &
+        call read_case_layout(dns, g, dns%ibm_coeff_file, inputs, fileNb, fileRefMask, leafRows, &
             fileLayout, c%has_terminal)
     end if
     if (fileLayout) then
@@ -493,4 +510,28 @@ program moby_solve
     call destroy_grid(g)
     call destroy_boundary_faces(bc)
     call comm_finalize(c)
+
+contains
+
+    subroutine parse_solve_args(input_file, force_prepare)
+        character(len=*), intent(out) :: input_file
+        logical, intent(out) :: force_prepare
+
+        character(len=256) :: arg
+        integer :: i, argc, positional
+
+        input_file = "input.ini"
+        force_prepare = .false.
+        positional = 0
+        argc = command_argument_count()
+        do i = 1, argc
+            call get_command_argument(i, arg)
+            if (trim(arg) == "--prepare") then
+                force_prepare = .true.
+            else
+                positional = positional + 1
+                if (positional == 1) input_file = arg
+            end if
+        end do
+    end subroutine parse_solve_args
 end program moby_solve

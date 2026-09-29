@@ -203,6 +203,16 @@ module io
             integer(C_INT) :: ierr
         end function fdm_h5_case_read_layout
 
+        function fdm_h5_case_read_inputs(file_name, buf, cap, found) &
+                bind(C, name="fdm_h5_case_read_inputs") result(ierr)
+            import :: C_CHAR, C_INT
+            character(kind=C_CHAR), intent(in) :: file_name(*)
+            character(kind=C_CHAR), intent(out) :: buf(*)
+            integer(C_INT), value :: cap
+            integer(C_INT), intent(out) :: found
+            integer(C_INT) :: ierr
+        end function fdm_h5_case_read_inputs
+
         function fdm_h5_case_read_blocks(file_name, n_blocks_global, rows) &
                 bind(C, name="fdm_h5_case_read_blocks") result(ierr)
             import :: C_CHAR, C_INT
@@ -254,11 +264,11 @@ module io
         ! MPI_COMM_WORLD; write_data selects the one rank writing the
         ! lattice-global rasters.
         function fdm_h5_case_create(file_name, nx, ny, nz, lx, ly, lz, re, &
-                block_nb, block_levels, refine_mask, nb_auto, nb_ranks, &
+                block_nb, block_levels, refine_mask, nb_auto, nb_ranks, inputs, &
                 n_blocks_global, id_start, n_blocks, block_origin, block_level) &
                 bind(C, name="fdm_h5_case_create") result(ierr)
             import :: C_CHAR, C_INT, C_DOUBLE
-            character(kind=C_CHAR), intent(in) :: file_name(*)
+            character(kind=C_CHAR), intent(in) :: file_name(*), inputs(*)
             integer(C_INT), value :: nx, ny, nz
             real(C_DOUBLE), value :: lx, ly, lz, re
             integer(C_INT), intent(in) :: block_nb(*), refine_mask(*)
@@ -672,10 +682,15 @@ end subroutine read_restart_metadata
 ! covers every grid key at once, and the file's lines are what the solver
 ! keeps. Older block-table files (retired mobygeom) carry no node lines;
 ! the ini's are used and a note is printed.
-subroutine read_case_layout(dns, g, file_name, nb, refMask, rows, has_layout, has_terminal)
+subroutine read_case_layout(dns, g, file_name, inputs, nb, refMask, rows, has_layout, has_terminal)
     type(dns_type), intent(inout) :: dns
     type(grid_type), intent(inout) :: g
     character(len=*), intent(in) :: file_name
+    ! The ini's input echo (config.f90 case_input_echo), compared line by
+    ! line with the one stored in the file: the first differing line names
+    ! the stale key. Files without the attribute (pre-step-7-3, or written
+    ! by the retired mobygeom) fall back to the explicit checks below.
+    character(len=*), intent(in) :: inputs
     integer(C_INT), intent(out) :: nb(3), refMask(3)
     integer(C_INT), allocatable, intent(out) :: rows(:,:)
     ! False for a LEGACY global-layout coefficient file, which carries no
@@ -688,6 +703,8 @@ subroutine read_case_layout(dns, g, file_name, nb, refMask, rows, has_layout, ha
     integer(C_INT) :: ierr, nx, ny, nz, nbAuto, nbRanks, nLeaves, found
     real(C_DOUBLE) :: lx, ly, lz, re
     real(C_DOUBLE), allocatable :: xn(:), yn(:), zn(:)
+    integer, parameter :: ECHO_CAP = 16384
+    character(kind=C_CHAR, len=ECHO_CAP) :: fileEcho
 
     c_file_name = to_c_string(file_name)
     ierr = fdm_h5_case_read_layout(c_file_name, nx, ny, nz, lx, ly, lz, re, &
@@ -701,6 +718,18 @@ subroutine read_case_layout(dns, g, file_name, nb, refMask, rows, has_layout, ha
         if (has_terminal) print *, "note: legacy coefficient file without a leaf table;", &
             " block layout from the ini: ", trim(file_name)
         return
+    end if
+    ierr = fdm_h5_case_read_inputs(c_file_name, fileEcho, int(ECHO_CAP, C_INT), found)
+    if (ierr /= 0_C_INT) then
+        if (has_terminal) print *, "error: could not read the case_inputs echo of: ", trim(file_name)
+        error stop
+    end if
+    if (found /= 0_C_INT) then
+        call compare_case_inputs(fileEcho(1:index(fileEcho, C_NULL_CHAR) - 1), inputs, &
+            file_name, has_terminal)
+    else if (has_terminal) then
+        print *, "note: case file carries no case_inputs echo (pre-step-7-3 file);", &
+            " staleness checked on grid/re/nb/refine_dims only: ", trim(file_name)
     end if
     if (nx /= dns%globalSize(1) .or. ny /= dns%globalSize(2) .or. nz /= dns%globalSize(3)) then
         if (has_terminal) print *, "case file grid", nx, ny, nz, "differs from [grid] nx/ny/nz", &
@@ -769,6 +798,38 @@ subroutine read_case_layout(dns, g, file_name, nb, refMask, rows, has_layout, ha
             " using the [grid.*] lines: ", trim(file_name)
     end if
 end subroutine read_case_layout
+
+! Line-by-line comparison of two input echoes; the first difference is
+! reported with its key and both values, then the run stops.
+subroutine compare_case_inputs(fileEcho, iniEcho, file_name, has_terminal)
+    character(len=*), intent(in) :: fileEcho, iniEcho, file_name
+    logical, intent(in) :: has_terminal
+
+    integer :: fa, fb, ia, ib, nf, ni
+    character(len=:), allocatable :: fline, iline
+
+    if (fileEcho == iniEcho) return
+    fa = 1; ia = 1
+    nf = len(fileEcho); ni = len(iniEcho)
+    do
+        if (fa > nf .and. ia > ni) exit
+        fb = index(fileEcho(fa:), new_line("a"))
+        ib = index(iniEcho(ia:), new_line("a"))
+        if (fb == 0) then; fline = fileEcho(fa:nf); fa = nf + 1
+        else; fline = fileEcho(fa:fa+fb-2); fa = fa + fb; end if
+        if (ib == 0) then; iline = iniEcho(ia:ni); ia = ni + 1
+        else; iline = iniEcho(ia:ia+ib-2); ia = ia + ib; end if
+        if (fline /= iline) then
+            if (has_terminal) then
+                print *, "case file is STALE: ", trim(file_name)
+                print *, "   file has: ", fline
+                print *, "   ini  has: ", iline
+                print *, "   re-run moby_prepare, or moby_solve --prepare"
+            end if
+            error stop "case file does not match the ini"
+        end if
+    end do
+end subroutine compare_case_inputs
 
 ! Per-block keep flags from the IBM coefficient file (mobygeom
 ! block-active). found is false when the file carries no table.
@@ -894,9 +955,12 @@ end subroutine write_rans_geometry_file
 ! and dwall_blocks ([rans]). Parallel HDF5: all ranks enter together; each
 ! rank writes its own contiguous leaf-row range, rank 0 the lattice-global
 ! rasters (full rasters, no window attrs -- the analytic convention).
-subroutine write_case_file(file_name, blk, dns, g, bc, c, nCoefComp, has_terminal, &
+subroutine write_case_file(file_name, blk, dns, g, bc, c, nCoefComp, inputs, has_terminal, &
         coef, touch, buried, maskDims, active, dwall, maskLo)
     character(len=*), intent(in) :: file_name
+    ! The input echo (config.f90 case_input_echo), stored for the read-side
+    ! staleness check.
+    character(len=*), intent(in) :: inputs
     type(block_set_type), intent(in) :: blk
     type(dns_type), intent(in) :: dns
     type(grid_type), intent(in) :: g
@@ -934,7 +998,7 @@ subroutine write_case_file(file_name, blk, dns, g, bc, c, nCoefComp, has_termina
         dns%globalSize(1), dns%globalSize(2), dns%globalSize(3), &
         dns%leng(1), dns%leng(2), dns%leng(3), dns%re, &
         dns%block_nb, blk%nLevels - 1_C_INT, dns%block_refine_mask, &
-        nb_auto, dns%block_nb_ranks, &
+        nb_auto, dns%block_nb_ranks, to_c_string(inputs), &
         blk%nBlocksGlobal, blk%idStart, blk%nBlocks, blk%origin, blk%level)
     call check_case_write(ierr, "create", file_name, has_terminal)
 
