@@ -1954,9 +1954,11 @@ immersed boundary. Phased, each phase verified before the next:
   gated `max_abs 0` (step 6: 61 comparisons, nofma + production). **NEXT is
   step 7 (prepare does ALL preprocessing): handout
   `docs/next_session_prepare_everything.md`** — five gated increments,
-  `nb` becomes mandatory (23 live inis gain one), the rank-box layout, the
-  legacy coefficient reader, the inline classify dispatch and the device
-  coefficient kernel go, one builder with two entry points.
+  `nb` STAYS OPTIONAL (unset = one block per rank, chosen by the builder
+  from its rank count and stored in the case file — today's rank box as a
+  file property), while the rank-box layout, the legacy coefficient reader,
+  the inline classify dispatch and the device coefficient kernel go; one
+  builder with two entry points.
 
 ## Verification
 

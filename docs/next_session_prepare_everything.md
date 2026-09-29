@@ -1,6 +1,6 @@
 # Next session: numerics review step 7 — `moby_prepare` does ALL preprocessing
 
-STATUS: **NOT STARTED (handout written 2026-09-29).** Steps 0–6 of the
+STATUS: **NOT STARTED (handout written 2026-09-29; the `nb` rule below was settled the same day — `nb` stays optional, the rank-box LAYOUT goes).** Steps 0–6 of the
 review's execution sequence (`docs/numerics_review_2026-09-26.md` section
 10) are DONE and gated on `main`, and step 2d (the pipe re-run) is closed —
 see `docs/next_session_numerics_steps.md` STATUS. This is the next item.
@@ -58,7 +58,9 @@ a body-free case writes attrs + node lines + `blocks` + face kinds, and NO
 coefficient/mask/dwall datasets. The solver's readers tolerate their
 absence (they already return `found = 0` for optional datasets — check
 each: `coef_blocks` is currently mandatory once `coeff_file` is set).
-Keep the `nb` refusal: `nb` becomes mandatory in 7-4.
+Drop the `nb` refusal too, replacing it by THE DEFAULT RULE (decided
+2026-09-29, see "The `nb` rule" below): an unset `nb` is chosen by the
+builder from its own rank count and stored in the file.
 Gate: `min_channel` and `beltrami/slab_y` prepared then solved == inline
 solve, `max_abs 0` at production flags, CPU 1 + 4 ranks and GPU.
 
@@ -92,7 +94,7 @@ reproduces the 7-2 result `max_abs 0`; a deliberately stale file (change
 `re` in the ini) error-stops with the key named; `config` gate: alias
 accepted, both keys set = error.
 
-**7-4 — delete, and `nb` mandatory.** Remove: the inline classify dispatch
+**7-4 — delete.** Remove: the inline classify dispatch
 in `moby_solve.f90` and the file branches of `classify_active_mask` /
 `classify_refinement_masks` (ibm.f90 ~895-975); the legacy global-layout
 coefficient reader (`fdm_h5_read_ibm_coeff` + the fallback in
@@ -102,14 +104,13 @@ keyed on `distMode` (`init_block_set` else-branch blocks.f90:214-220,
 and the rank-box peer enumeration in `init_block_exchange`,
 `set_serial_local_size`); the device `set_ibm_coeff` kernel (the host twin
 becomes THE kernel; keep the `KEEP IN LOCKSTEP` comment's partner honest by
-deleting it). The `[blocks] nb`-less live inis (list below) each gain an
-`nb`; choose it so every direction is even, ≥ 4 and divides the grid, and
-so 4 ranks still own ≥ 1 block. `validation/block_nb`'s "`nb` unset" gate
-is retired (its premise is gone), the other three stay.
-Gate: 7-case + 9-case suites `max_abs 0` at production flags vs 7-0 with
-the NEW inis on the NEW binary against the OLD inis on the old binary
-(the nb-independence property is what makes this exact — any non-zero
-here is a real defect); `validation/freestream`, `redblack_interface`,
+deleting it). The `[blocks] nb`-less live inis (list below) stay AS THEY
+ARE: under the `nb` rule they run one block per rank exactly as today.
+`validation/block_nb`'s "`nb` unset" gate stays and now states the rule
+(unset == the rank-derived lattice == `nb = 8`, `max_abs 0`).
+Gate: 7-case + 9-case suites `max_abs 0` at production flags vs 7-0 on the
+UNCHANGED inis (the nb-independence property is what makes this exact —
+any non-zero here is a real defect); `validation/freestream`, `redblack_interface`,
 `rans_inlet` 1 + 4 ranks; the analytic-IBM cases (list below) as
 prepare(CPU)+solve pairs on CPU AND GPU vs the old CPU inline binary
 (`max_abs 0` — the P0 property); `min_channel` 1 == 2 == 3 == 4 ranks EXACT.
@@ -120,10 +121,47 @@ share, trip blocks, refined blocks) and a weighted prefix sum replacing
 the closed-form `zorder_start/count`; results stay rank-count independent
 because the split moves work, never arithmetic.
 
+## The `nb` rule (decided 2026-09-29)
+
+The block size is a property of the CASE FILE, never of the run: that is
+the one thing the rank-box layout cannot satisfy (its block is
+`globalSize/dims`, which changes with the rank count), and it is why the
+layout goes while the KEY stays optional.
+
+1. Explicit `[blocks] nb` wins, with today's guards (per direction even,
+   ≥ 4, divides the grid; ≥ 4 is a typo guard from Phase 1a with no
+   derivation, "even" is the red-black colour continuity across block
+   faces, `colorOffset = modulo(sum(origin), 2)`).
+2. Unset: the builder — `moby_prepare`, or `moby_solve` preparing
+   in-process (7-3), which then knows the SOLVE's rank count — forms the
+   Cartesian decomposition the solver would (`MPI_Dims_create`) and sets
+   `nb = globalSize/dims` per direction: ONE BLOCK PER RANK, i.e. exactly
+   today's rank box (same halo footprint, same ownership, bit-identical
+   fields), but written into the file. On 1 rank that is the whole grid as
+   one block. No floor applies; the parity check applies only where it
+   matters — a direction split into > 1 block, or periodic — and the
+   session must CHECK what the current rank-box path does with an ODD
+   periodic direction (a single wrapped block of odd length breaks the
+   checkerboard today too) and keep that behaviour.
+3. If the decomposition does not divide the grid evenly (today's rank
+   boxes may be unequal, a lattice cannot express that): fall back to the
+   grid-only rule — per direction the largest even divisor ≥ 4 up to a
+   ceiling (64) — and PRINT it.
+4. Refinement and buried-block removal keep requiring an explicit `nb`
+   (they do today).
+5. Whatever was chosen is printed at init and stored in the case file; a
+   file prepared on R ranks solves on any rank count that still owns ≥ 1
+   block per rank, else the existing "rank owns no blocks" stop.
+
+Gate consequence: the P0 leg "prepare 1 == 4 ranks identical files" holds
+for explicit `nb` only; add a leg for the rank-derived default — DIFFERENT
+`blocks` tables, SAME fields at tolerance 0.
+
 ## The lists the increments need
 
 Live inis with NO `[blocks] nb` (archived `overheadTest/horeka/results_*`
-copies excluded — leave those alone, they are records):
+copies excluded). Under the `nb` rule they need NO edit; the list is here
+so the session can run a sample of them as the "unset == today" gate:
 `tutorials/channel_kmm180/input.ini`, `tutorials/sailplane/input.ini` (also
 the last user of the LEGACY coefficient file `sailplane_ibm_coeff.h5`: move
 the tutorial to its prepare flow, which `run_gates_big.sh` already runs at
@@ -134,9 +172,8 @@ the tutorial to its prepare flow, which `run_gates_big.sh` already runs at
 `validation/beltrami/uniform.ini`, `validation/block_nb/base.ini`,
 `validation/channel_interface/{reference,uniform128}.ini`,
 `validation/conjugate/{kasagi_channel,kasagi_uniform}.ini`,
-`validation/rans_sst/wf180_y30.ini` (grid 8 × 6 × 8: `nb = 8 6 8` or
-`4 6 4` — 6 is even, ≥ 4 and divides 6, so the "not nb-divisible" comment
-in that ini is stale), `validation/scalar/{conduction,prsweep,smoke,wferr,
+`validation/rans_sst/wf180_y30.ini` (grid 8 × 6 × 8 — a good test of rule
+2 on 4 ranks), `validation/scalar/{conduction,prsweep,smoke,wferr,
 wfs180_y05,wfs180_y15,wfs180_y30,wfs180_y45}.ini` (`conduction` has nx = 4).
 
 Live inis on the INLINE analytic IBM path (`[ibm] enabled`, no
@@ -177,6 +214,7 @@ A `max_abs` that is not 0 and not explained by the ONE expected move (the
 analytic coefficients now always come from the CPU host kernel, so a GPU
 analytic-IBM case compared against the OLD GPU inline binary differs by
 libm ulps — compare against the old CPU binary instead); a live case whose
-grid admits no valid `nb` (report it, do not force one); a restart file
+grid admits no `nb` under rules 2 AND 3 (report it, do not force one); a
+restart file
 that the new reader rejects for a reason other than a genuinely stale
 table. Commit after each increment with "step 7-N" in the subject.
