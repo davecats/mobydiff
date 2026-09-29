@@ -155,6 +155,7 @@ contains
         real(C_DOUBLE) :: ire
         real(C_DOUBLE) :: forcing(1:3)
         logical :: use_eddy_viscosity
+        logical :: skew
 
         nx = int(blk%nb(1))
         ny = int(blk%nb(2))
@@ -164,12 +165,17 @@ contains
         forcing = dns%forcing
         use_eddy_viscosity = .false.
         if (present(turb)) use_eddy_viscosity = turbulence_is_enabled(turb) .and. allocated(turb%nut)
+        ! Momentum convection form ([flow] convection): skew-symmetric (default,
+        ! production) or divergence/conservative (`conv_skew = .false.`, kept for
+        ! testing/research). Skew adds -1/2 u (div u_adv)|stencil to the divergence
+        ! flux; divergence omits it. The [scalar] convection key is INDEPENDENT.
+        skew = logical(dns%conv_skew)
 
         ! Predictor for all staggered velocity components. The face on a
         ! physical lower boundary is held by apply_bc: each block skips it via
         ! its own physLow mask.
         !$omp target teams distribute parallel do collapse(4) &
-        !$omp& map(to: dt_alpha, dt_beta, dt_gamma, &
+        !$omp& map(to: dt_alpha, dt_beta, dt_gamma, skew, &
         !$omp& ire, forcing(1:3), &
         !$omp& blk%physLow, blk%d1x, blk%d1y, blk%d1z, &
         !$omp& blk%lapX, blk%lapY, blk%lapZ, blk%q, ibm%mu) &
@@ -238,6 +244,7 @@ contains
                         ! discrete divergence-freedom, which the incremental
                         ! projection and 2:1 interface halos never grant
                         ! (the C11 v1 interface instability).
+                        if (skew) &
                         rhsu = rhsu + 0.25d0*blk%q(i,j,k,VAR_U,b)*( &
                                 ( blk%q(i,j,k,VAR_U,b)+blk%q(ip,j,k,VAR_U,b) &
                                  -blk%q(im,j,k,VAR_U,b)-blk%q(i,j,k,VAR_U,b))*blk%d1x(i,VAR_U,b) &
@@ -287,6 +294,7 @@ contains
                                     +(vw_p-vw_m)*blk%d1z(k,VAR_V,b)) &
                             + forcing(VAR_V) &
                             + ire*(diff_vx + diff_vy + diff_vz) )
+                        if (skew) &
                         rhsv = rhsv + 0.25d0*blk%q(i,j,k,VAR_V,b)*( &
                                 ( blk%q(ip,jm,k,VAR_U,b)+blk%q(ip,j,k,VAR_U,b) &
                                  -blk%q(i,jm,k,VAR_U,b)-blk%q(i,j,k,VAR_U,b))*blk%d1x(i,VAR_V,b) &
@@ -336,6 +344,7 @@ contains
                                      +(ww_p-ww_m)*blk%d1z(k,VAR_W,b)) &
                             + forcing(VAR_W) &
                             + ire*(diff_wx + diff_wy + diff_wz) )
+                        if (skew) &
                         rhsw = rhsw + 0.25d0*blk%q(i,j,k,VAR_W,b)*( &
                                 ( blk%q(ip,j,km,VAR_U,b)+blk%q(ip,j,k,VAR_U,b) &
                                  -blk%q(i,j,km,VAR_U,b)-blk%q(i,j,k,VAR_U,b))*blk%d1x(i,VAR_W,b) &

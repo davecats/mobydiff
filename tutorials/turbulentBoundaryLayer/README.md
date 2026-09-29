@@ -90,10 +90,10 @@ MPI="mpirun -n 4 ./build_gpu/moby_solve"      # one rank per GPU
 $MPI cold_start.ini
 mv coldstart_100000.h5 restart_field.h5        # the developed field
 
-# phase 1 — re-equilibrate on the shipped (grid, trip, solver), ~1000 t.u.
-$MPI production.ini                            # -> production_100000.h5
+# phase 1 — re-equilibrate on the shipped (grid, trip, solver), ~1500 t.u.
+$MPI production.ini                            # -> production_175000.h5
 
-# phase 2 — accumulate statistics, ~4000 t.u. -> production_stats.h5
+# phase 2 — accumulate statistics, ~10000 t.u. -> production_stats.h5
 $MPI production_stats.ini
 ```
 
