@@ -119,7 +119,7 @@ module rans
         domain_face_is_wall, apply_scalar_bc, PATCH_UNSET, &
         PATCH_GENERIC, PATCH_WALL, PATCH_INLET, PATCH_OUTLET, &
         SCALAR_BC_NONE, SCALAR_BC_COPY, SCALAR_BC_MIRROR, SCALAR_BC_VALUE
-    use :: ibmm, only: ibm_type, isInBody, body_indicator_i
+    use :: ibmm, only: ibm_type, body_indicator_i
     use :: walldist, only: walldist_type, build_walldist, destroy_walldist, &
         walldist_distance
     use :: turbulence, only: turb_type, velocity_gradient_tensor, &
@@ -290,14 +290,10 @@ contains
         allocate(sst%wallcell(nx,ny,nz,blk%nBlocks))
 
         sst%dwall = NO_WALL_DISTANCE
-        if (dns%ibm_enabled) then
-            if (len_trim(dns%ibm_coeff_file) > 0) then
-                call read_body_distance_file(sst, dns, blk, c%has_terminal)
-            else
-                call fill_body_distance_analytic(sst%dwall, dns, blk, bc, ibm, &
-                    c%has_terminal, isInBody)
-            end if
-        end if
+        ! Since step 7 the case file always carries the body distance the
+        ! builder computed (analytic indicator or STL); nothing is computed
+        ! here.
+        if (dns%ibm_enabled) call read_body_distance_file(sst, dns, blk, c%has_terminal)
         call min_in_domain_wall_distance(sst, dns, g, blk, bc)
         call apply_distance_floor(sst, blk)
         call classify_wall_cells(sst, dns, blk, ibm)

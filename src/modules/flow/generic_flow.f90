@@ -175,7 +175,6 @@ contains
         call init_bc(bc)
 
         dns%globalSize = 0_C_INT
-        dns%localSize = 0_C_INT
         dns%step_current = 0_C_INT
         dns%nsteps = 0_C_INT
         dns%leng = 0.0d0

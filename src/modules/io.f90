@@ -142,40 +142,6 @@ module io
             integer(C_INT) :: ierr
         end function fdm_h5_read_metadata
 
-        function fdm_h5_read_block_masks(file_name, level, n_raster, block_nb, found, touch, buried) &
-                bind(C, name="fdm_h5_read_block_masks") result(ierr)
-            import :: C_CHAR, C_INT
-            character(kind=C_CHAR), intent(in) :: file_name(*)
-            integer(C_INT), value :: level, n_raster
-            integer(C_INT), intent(in) :: block_nb(*)
-            integer(C_INT), intent(out) :: found
-            integer(C_INT), intent(out) :: touch(*), buried(*)
-            integer(C_INT) :: ierr
-        end function fdm_h5_read_block_masks
-
-        ! Per-level geometry-mask window attrs (deep-refinement files store
-        ! the rasters windowed to the padded STL bbox); has_win = 0 on
-        ! legacy full-raster files.
-        function fdm_h5_read_mask_window(file_name, level, lo, dims, has_win) &
-                bind(C, name="fdm_h5_read_mask_window") result(ierr)
-            import :: C_CHAR, C_INT
-            character(kind=C_CHAR), intent(in) :: file_name(*)
-            integer(C_INT), value :: level
-            integer(C_INT), intent(out) :: lo(*), dims(*), has_win
-            integer(C_INT) :: ierr
-        end function fdm_h5_read_mask_window
-
-        function fdm_h5_read_block_active(file_name, n_lattice, block_nb, found, active) &
-                bind(C, name="fdm_h5_read_block_active") result(ierr)
-            import :: C_CHAR, C_INT
-            character(kind=C_CHAR), intent(in) :: file_name(*)
-            integer(C_INT), value :: n_lattice
-            integer(C_INT), intent(in) :: block_nb(*)
-            integer(C_INT), intent(out) :: found
-            integer(C_INT), intent(out) :: active(*)
-            integer(C_INT) :: ierr
-        end function fdm_h5_read_block_active
-
         function fdm_h5_read_dwall_blocks(file_name, nbx, nby, nbz, n_blocks, id_start, &
                 found, dwall) &
                 bind(C, name="fdm_h5_read_dwall_blocks") result(ierr)
@@ -830,73 +796,6 @@ subroutine compare_case_inputs(fileEcho, iniEcho, file_name, has_terminal)
         end if
     end do
 end subroutine compare_case_inputs
-
-! Per-block keep flags from the IBM coefficient file (mobygeom
-! block-active). found is false when the file carries no table.
-subroutine read_block_active(active, found, dns, has_terminal)
-    integer(C_INT), intent(out) :: active(:)
-    logical, intent(out) :: found
-    type(dns_type), intent(in) :: dns
-    logical, intent(in) :: has_terminal
-
-    character(kind=C_CHAR,len=:), allocatable :: c_file_name
-    integer(C_INT) :: ierr, c_found
-
-    c_file_name = to_c_string(dns%ibm_coeff_file)
-    ierr = fdm_h5_read_block_active(c_file_name, int(size(active), C_INT), &
-        dns%block_nb, c_found, active)
-    if (ierr /= 0_C_INT) then
-        if (has_terminal) print *, "error: could not read block_active from: ", &
-            trim(dns%ibm_coeff_file)
-        error stop
-    end if
-    found = c_found /= 0_C_INT
-end subroutine read_block_active
-
-! Per-level refinement masks (mobygeom block-table); found is false when
-! the file carries none.
-subroutine read_block_masks(touch, buried, level, n_raster, found, dns, has_terminal)
-    integer(C_INT), intent(out) :: touch(:), buried(:)
-    integer, intent(in) :: level, n_raster
-    logical, intent(out) :: found
-    type(dns_type), intent(in) :: dns
-    logical, intent(in) :: has_terminal
-
-    character(kind=C_CHAR,len=:), allocatable :: c_file_name
-    integer(C_INT) :: ierr, c_found
-
-    c_file_name = to_c_string(dns%ibm_coeff_file)
-    ierr = fdm_h5_read_block_masks(c_file_name, int(level, C_INT), int(n_raster, C_INT), &
-        dns%block_nb, c_found, touch, buried)
-    if (ierr /= 0_C_INT) then
-        if (has_terminal) print *, "error: could not read block masks from: ", &
-            trim(dns%ibm_coeff_file)
-        error stop
-    end if
-    found = c_found /= 0_C_INT
-end subroutine read_block_masks
-
-! Per-level geometry-mask window (block coords) of a block-table file;
-! has_win false on legacy full-raster files.
-subroutine read_mask_window(lo, dims, has_win, level, dns, has_terminal)
-    integer(C_INT), intent(out) :: lo(3), dims(3)
-    logical, intent(out) :: has_win
-    integer, intent(in) :: level
-    type(dns_type), intent(in) :: dns
-    logical, intent(in) :: has_terminal
-
-    character(kind=C_CHAR,len=:), allocatable :: c_file_name
-    integer(C_INT) :: ierr, c_has
-
-    c_file_name = to_c_string(dns%ibm_coeff_file)
-    ierr = fdm_h5_read_mask_window(c_file_name, int(level, C_INT), lo, dims, c_has)
-    if (ierr /= 0_C_INT) then
-        if (has_terminal) print *, "error: could not read mask windows from: ", &
-            trim(dns%ibm_coeff_file)
-        error stop
-    end if
-    has_win = c_has /= 0_C_INT
-end subroutine read_mask_window
 
 ! Per-leaf wall-distance tiles from the case file (dataset dwall_blocks,
 ! row id = leaf id of the file's own blocks table). found is false when

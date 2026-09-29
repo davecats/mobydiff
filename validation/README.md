@@ -19,6 +19,12 @@ results; this file only says WHAT each case exercises.
 
 ## The standard regression suite
 
+Since numerics review step 7 every run reads a CASE FILE (`[case] file`,
+default `<field_prefix>.case.h5`, built in-process when absent), so a suite
+run leaves one `<prefix>.case.h5` per output prefix beside the snapshots; the
+`les_ibm` case reads the committed `ibm_coeff_case.h5` (the exact conversion
+of the legacy `ibm_coeff.h5`, which the solver no longer reads).
+
 The cases below are the "7-case suite" (+ the scalar legs) used for every
 bit-exactness gate (`-Mnofma` / `-gpu=nofma` on both sides, `tools/h5maxdiff`
 or `tools/compare_fields.py --tolerance 0`). Driver:
@@ -53,7 +59,7 @@ or `tools/compare_fields.py --tolerance 0`). Driver:
 | `rans_sst/` | k-omega SST (laminar decay, Re_tau 180/395, IBM channel, refined bands), wall functions (y+ sweep, IBM), transition (lam30t, laminart, turb180t) | `run_gates.sh`, `check_gates.sh` |
 | `rans_inlet/` | RANS scalar freestream values at declared inlet faces, 1 == 4 ranks | `run_gates.sh` |
 | `iddes/` | IDDES (SST + WALE blend): developed channel log layer, fd shielding profile, fd_force limits, IBM stability | `run_gates.sh`, `check_gates.py` |
-| `prepare/` | `moby_prepare`: analytic geometry bit-exact vs inline (P0: wavy, wavy_refine, wavysolid), STL geometry vs mobygeom references + periodic shift invariance (P1; the flat-slab references come from `rans_geometry/setup.sh`), big geometries (P1b: now the sailplane leg only) | `run_gates.sh`, `run_gates_stl.sh`, `run_gates_big.sh` |
+| `prepare/` | `moby_prepare`: analytic geometry bit-exact vs inline (P0: wavy, wavy_refine, wavysolid), STL geometry vs mobygeom references + periodic shift invariance (P1; the flat-slab references come from `rans_geometry/setup.sh`), big geometries (P1b: now the sailplane leg only), and step 7 -- prepared body-free / nb-less / analytic cases solved from the case file == the reference inline solve, on 1 and 4 ranks and on the GPU | `run_gates.sh`, `run_gates_stl.sh`, `run_gates_big.sh`, `run_gates_step7.sh` |
 | `scalar/` | passive scalars S0-S5a: uniform preservation, conservation, conduction, MMS, Pr sweep, determinism, LES/SST closures, IBM dirichlet/adiabatic, heated cylinder, in-solver statistics, thermal wall function (domain + IBM walls), `count = 0` bit-exactness | `run_gates*.sh`, `run_bitexact*.sh` |
 | `conjugate/` | conjugate heat transfer at the IBM interface (C1-C3, F1-F5): multi-material slabs, contact resistance, oblique/curved interfaces, transient capacity, Nusselt diagnostic, channel with conducting walls, annular pipe geometry | `run_gates_c{1,2,3}.sh`, `run_gates_pipe.sh` |
 

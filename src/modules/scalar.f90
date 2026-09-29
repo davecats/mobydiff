@@ -41,8 +41,8 @@ module scalar
     ! C1: the conjugate signed distance IS the RANS wall distance, so its two
     ! producers are use-associated rather than reimplemented (strategy doc
     ! Section 8: "no new computation, only a new trigger").
-    use :: rans, only: WF_KAPPA, WF_E, fill_body_distance_analytic
-    use :: ibmm, only: ibm_type, isInBody
+    use :: rans, only: WF_KAPPA, WF_E
+    use :: ibmm, only: ibm_type
     use :: io, only: read_dwall_blocks
     implicit none
 
@@ -1812,17 +1812,12 @@ contains
         nz = int(blk%nb(3))
         allocate(dwall(0:nx+1,0:ny+1,0:nz+1,blk%nBlocks))
 
-        if (len_trim(dns%ibm_coeff_file) > 0) then
-            call read_dwall_blocks(dwall, found, dns, blk, c%has_terminal)
-            if (.not. found) then
-                if (c%has_terminal) print *, "error: ibm_wall = conjugate needs the wall", &
-                    " distance, but the case file has no dwall_blocks; re-run", &
-                    " moby_prepare (it writes them by default): ", trim(dns%ibm_coeff_file)
-                error stop "conjugate needs dwall_blocks"
-            end if
-        else
-            call fill_body_distance_analytic(dwall, dns, blk, bc, ibm, &
-                c%has_terminal, isInBody)
+        call read_dwall_blocks(dwall, found, dns, blk, c%has_terminal)
+        if (.not. found) then
+            if (c%has_terminal) print *, "error: ibm_wall = conjugate needs the wall", &
+                " distance, but the case file has no dwall_blocks; re-run", &
+                " moby_prepare (it writes them by default): ", trim(dns%ibm_coeff_file)
+            error stop "conjugate needs dwall_blocks"
         end if
 
         ! A solid cell is given a STRICTLY negative phi, so that `phi < 0` is

@@ -1000,7 +1000,7 @@ three sessions.
 > `src/modules/prepare.f90` `prepare_case(input, case_file, c)`;
 > `moby_prepare` is a thin main and `moby_solve` calls it IN-PROCESS when
 > the case file is absent (`--prepare` forces it). `[case] file` is the one
-> user-facing name (default `<field_prefix>_case.h5`); `[ibm] coeff_file`
+> user-facing name (default `<field_prefix>.case.h5`); `[ibm] coeff_file`
 > is an alias for one release (a note is printed; both set = config
 > error). STALENESS is an INPUT ECHO, not a hash: `case_input_echo`
 > (config.f90) prints every value the file is a function of, one
@@ -1016,7 +1016,7 @@ three sessions.
 > from it equals the 7-0 reference's solve from the legacy file at
 > `max_abs 0` (un/vn/wn/pn/nut); `channel_ibm.ini` reads it, the legacy
 > file stays for `measure_nut.py`. Manual gates on min_channel: a run with
-> no case file prepares `<prefix>_case.h5` and reproduces the inline
+> no case file prepares `<prefix>.case.h5` and reproduces the inline
 > reference at `max_abs 0`; a second run reads it; `--prepare` rebuilds it;
 > `re` 180 → 190 in the ini stops with `file has: re = 1.8…E+002 / ini
 > has: re = 1.9…E+002`; `[case] file` gives the same fields; the alias
@@ -1024,6 +1024,53 @@ three sessions.
 > auto-preparing, all `max_abs 0` vs 7-0: step-7 driver CPU 23/23 + P0
 > 22/22 + STL 16/16 + block_nb 7/7 (65), 7-case 1 + 4 ranks (16), 9-case
 > (10), GPU step-7 driver + 7-case + 9-case (33).
+>
+> **MEASURED (2026-09-29, increment 7-4 — the deletions; −1097 / +279
+> lines over 17 files).** GONE: the inline classify dispatch in
+> `moby_solve.f90` and the file branches of `classify_active_mask` /
+> `classify_refinement_masks` (+ the mask readers `read_block_active` /
+> `read_block_masks` / `read_mask_window` and their C functions); the legacy
+> global-layout coefficient reader (`fdm_h5_read_ibm_coeff`,
+> `read_ibm_coeff_legacy`, the 7-3 converter); `DIST_RANKBOX` / `distMode`
+> and every branch keyed on it (`init_block_set` requires nb, `face_kind`,
+> `build_block_metadata/metrics`, `resolve_neighbors`, `owner_of_origin`,
+> the rank-box peer walk, `rank_box` / `local_range`, `dns%localSize`,
+> `set_serial_local_size`); the DEVICE `set_ibm_coeff` and its device
+> helpers (`bisection`, `add_neighbor_coeff`, the `declare target` lines) —
+> the host twin is now THE kernel, named `set_ibm_coeff`, over the
+> indicator; the solver-side analytic dwall branches in rans.f90 /
+> scalar.f90 (the file always carries dwall). Every run reads a case file;
+> a file without a blocks table (legacy layout) is refused naming the fix.
+> The sailplane tutorial declares its STL + `[blocks] nb = 10` + `[case]
+> file` and prepares on first run; its legacy `sailplane_ibm_coeff.h5` is
+> retired (git history, last at the 7-3 commit); `run_gates_big.sh`'s solve
+> leg is now prepared-file 1 == 2 ranks. GATES (production flags vs 7-0,
+> UNCHANGED inis): step-7 driver CPU 10 cases (the five of 7-1/7-2 + the
+> live analytic-IBM cases `validation/conjugate/wavy`, scalar `ibmwavy` /
+> `ibmwavyr` (refine_body), rans_geometry `wavy` / `wavy_refine`) + P0
+> 22/22 + STL 16/16 + block_nb 7/7 = 86/86; 7-case suite 1 + 4 ranks 16/16;
+> 9-case 10/10; freestream (oblique / Poiseuille in-out / Lamb–Oseen /
+> 1 == 4 ranks / CPU vs GPU / config twins), red-black 2:1 (1 == 4 ranks
+> EXACT), RANS inlet (1 == 4 EXACT), min_channel 1 == 2 == 3 == 4 ranks
+> EXACT — all `max_abs 0`. GPU: body-free cases vs the GPU reference and
+> the analytic cases vs the CPU reference 47 legs `max_abs 0`, plus
+> 7-case + 9-case + red-black GPU; the four "failures" — `ibmwavy` /
+> `ibmwavyr` GPU vs CPU-ref — are `theta` alone at **1.1e-16** and are
+> NOT this step: the new GPU binary solving from the prepared file equals
+> the OLD GPU binary's inline solve at `max_abs 0` on every field
+> (velocities, pn, theta, phi — the analytic coefficients even came out
+> identical between the device and host kernels on these cases), and the
+> old GPU binary shows the same 1.1e-16 against the CPU reference: it is
+> the scalar transport's CPU-vs-GPU production-flag arithmetic, which
+> predates step 7. So the "one expected move" of the handout (device libm
+> ulps) did not materialise on any gated case, and there is no measured
+> GPU deviation attributable to 7-4.
+> FOUND BY THE FREESTREAM DRIVER: the 7-3 default name `<prefix>_case.h5`
+> matched every driver's snapshot glob `<prefix>_*.h5` (the Lamb–Oseen
+> checker read the case file as a snapshot); the default is now
+> `<field_prefix>.case.h5`, re-gated: freestream 9/9 (reflected fraction
+> 2.230e-2, the niter-12 value), 7-case CPU 7/7 + GPU 7/7, red-black GPU,
+> min_channel step-7 legs 5/5.
 
 **Step 8 — F1, flux-form viscous stencil (numerics change).** The plan entry
 in section 9. Gates as stated there; run it in the same session as the

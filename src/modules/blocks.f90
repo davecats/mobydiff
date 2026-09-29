@@ -37,14 +37,8 @@ module blocks
     public :: zero_closed_halos, face_kind, leaf_at, level_cells
     public :: level_cell_width, occupied_any_level
     public :: parent_coord, child_origin
-    public :: DIST_RANKBOX, DIST_ZORDER
     public :: FACE_OPEN, FACE_PHYS, FACE_CLOSED, FACE_COARSE, FACE_FINE
     public :: LAP_M, LAP_0, LAP_P
-
-    ! Block ownership: one block per rank box (default), or the global
-    ! Z-order lattice split linearly over the ranks ([blocks] nb).
-    integer(C_INT), parameter :: DIST_RANKBOX = 0_C_INT
-    integer(C_INT), parameter :: DIST_ZORDER  = 1_C_INT
 
     ! Low bits reserved for the y coordinate in the xz-mode leaf ordering key
     ! (see leaf_key). Bounds the global ny at 2**21 cells, the same cap
@@ -65,9 +59,8 @@ module blocks
     integer(C_INT), parameter :: FACE_FINE   = 4_C_INT
 
     type :: block_set_type
-        ! All blocks of a set share the same cell count nb(1:3): the cubic
-        ! [blocks] nb when configured, otherwise the rank-local box (one
-        ! block per rank, the Phase-0 layout).
+        ! All blocks of a set share the same cell count nb(1:3): [blocks] nb,
+        ! or the size the case builder derived (the nb rule, derive_block_nb).
         integer(C_INT) :: nb(1:3) = 0_C_INT
         integer(C_INT) :: nBlocks = 0_C_INT
         integer(C_INT) :: nLevels = 1_C_INT
@@ -78,13 +71,10 @@ module blocks
         ! level scaling below is the per-direction form 2**(l*refMask(d)).
         integer(C_INT) :: refMask(1:3) = 1_C_INT
 
-        ! Distribution of the global block table over the ranks.
-        !   DIST_RANKBOX: one block per rank box; globalId == rank.
-        !   DIST_ZORDER:  global lattice nTiles = globalSize/nb numbered along
-        !                 a Z-order (Morton) curve; rank p owns the
-        !                 consecutive ids [zorder_start(p), +zorder_count(p)).
-        ! Local slot s holds global id idStart + s - 1 in both modes.
-        integer(C_INT) :: distMode = DIST_RANKBOX
+        ! Distribution of the global block table over the ranks: the global
+        ! lattice nTiles = globalSize/nb numbered along a Z-order (Morton)
+        ! curve; rank p owns the consecutive ids [zorder_start(p),
+        ! +zorder_count(p)). Local slot s holds global id idStart + s - 1.
         integer(C_INT) :: nTiles(1:3) = 0_C_INT        ! root (level-0) lattice
         integer(C_INT) :: nBlocksGlobal = 0_C_INT
         integer(C_INT) :: idStart = 0_C_INT
@@ -156,12 +146,12 @@ module blocks
 
 contains
 
-    ! Build this rank's blocks. With [blocks] nb the global grid is a
-    ! uniform block lattice numbered along a Z-order curve and split
-    ! linearly over the ranks (each owns floor((N+P-p-1)/P) consecutive
-    ! ids); without it every rank owns its Cartesian box as one block.
-    ! Coordinates and metrics are sliced from the global node lines via
-    ! slice_grid_direction either way.
+    ! BUILD this rank's blocks from the ini (the case builder's entry;
+    ! the solver takes the result from the case file through
+    ! init_block_set_from_table). The global grid is a uniform block lattice
+    ! numbered along a Z-order curve and split linearly over the ranks (each
+    ! owns floor((N+P-p-1)/P) consecutive ids). Coordinates and metrics are
+    ! sliced from the global node lines via slice_grid_direction.
     subroutine init_block_set(blk, dns, g, periodic, nranks, myrank, active, touch, buried, &
             maskLo, maskDims)
         type(block_set_type), intent(inout) :: blk
@@ -186,39 +176,31 @@ contains
         call destroy_block_set(blk)
 
         blk%refMask = dns%block_refine_mask
-        if (all(dns%block_nb > 0_C_INT)) then
-            blk%distMode = DIST_ZORDER
-            blk%nb = dns%block_nb
-            do d = 1, 3
-                if (mod(dns%globalSize(d), dns%block_nb(d)) /= 0_C_INT) then
-                    print *, "block size nb =", dns%block_nb, "does not divide the grid", &
-                        dns%globalSize(1:3), "in direction", d
-                    error stop "[blocks] nb must divide the global grid in every direction"
-                end if
-            end do
-            blk%nTiles = dns%globalSize(1:3)/blk%nb
-            blk%nLevels = 1_C_INT
-            if (refine_box_set(dns) .or. dns%block_refine_body) then
-                blk%nLevels = 1_C_INT + max(dns%block_refine_levels, 0_C_INT)
+        if (any(dns%block_nb <= 0_C_INT)) &
+            error stop "init_block_set needs [blocks] nb (derive_block_nb runs first)"
+        blk%nb = dns%block_nb
+        do d = 1, 3
+            if (mod(dns%globalSize(d), dns%block_nb(d)) /= 0_C_INT) then
+                print *, "block size nb =", dns%block_nb, "does not divide the grid", &
+                    dns%globalSize(1:3), "in direction", d
+                error stop "[blocks] nb must divide the global grid in every direction"
             end if
-            call build_level_lines(blk, dns, g)
-            call build_leaf_table(blk, dns, periodic, active, myrank, touch, buried, &
-                maskLo, maskDims)
-            nRemoved = int(product(blk%nTiles)) - count_level0_leaves(blk)
-            if (nRemoved > 0 .and. myrank == 0_C_INT .and. blk%nLevels == 1_C_INT) then
-                print *, "removed", nRemoved, "of", product(blk%nTiles), &
-                    "blocks buried inside the immersed boundary"
-            end if
-            blk%idStart = zorder_start(blk%nBlocksGlobal, nranks, myrank)
-            blk%nBlocks = zorder_count(blk%nBlocksGlobal, nranks, myrank)
-        else
-            blk%distMode = DIST_RANKBOX
-            blk%nb = dns%localSize(1:3,2)
-            blk%nBlocksGlobal = nranks
-            blk%idStart = myrank
-            blk%nBlocks = 1_C_INT
-            blk%nLevels = 1_C_INT
+        end do
+        blk%nTiles = dns%globalSize(1:3)/blk%nb
+        blk%nLevels = 1_C_INT
+        if (refine_box_set(dns) .or. dns%block_refine_body) then
+            blk%nLevels = 1_C_INT + max(dns%block_refine_levels, 0_C_INT)
         end if
+        call build_level_lines(blk, dns, g)
+        call build_leaf_table(blk, dns, periodic, active, myrank, touch, buried, &
+            maskLo, maskDims)
+        nRemoved = int(product(blk%nTiles)) - count_level0_leaves(blk)
+        if (nRemoved > 0 .and. myrank == 0_C_INT .and. blk%nLevels == 1_C_INT) then
+            print *, "removed", nRemoved, "of", product(blk%nTiles), &
+                "blocks buried inside the immersed boundary"
+        end if
+        blk%idStart = zorder_start(blk%nBlocksGlobal, nranks, myrank)
+        blk%nBlocks = zorder_count(blk%nBlocksGlobal, nranks, myrank)
         if (blk%nBlocks < 1_C_INT) error stop "rank owns no blocks; use fewer ranks or smaller nb"
 
         call build_block_metadata(blk, dns, periodic)
@@ -315,7 +297,6 @@ contains
 
         n = size(rows, 2)
         if (size(rows, 1) /= 4 .or. n < 1) error stop "case file: malformed blocks table"
-        blk%distMode = DIST_ZORDER
         blk%refMask = refMask
         blk%nb = nb
         do d = 1, 3
@@ -418,12 +399,8 @@ contains
         do b = 1, int(blk%nBlocks)
             id = int(blk%idStart) + b - 1
             blk%globalId(b) = int(id, C_INT)
-            if (blk%distMode == DIST_ZORDER) then
-                blk%level(b) = blk%leafLevel(id+1)
-                blk%origin(:,b) = blk%leafCoord(:,id+1)*blk%nb
-            else
-                blk%origin(:,b) = dns%localSize(1:3,0) - 1_C_INT
-            end if
+            blk%level(b) = blk%leafLevel(id+1)
+            blk%origin(:,b) = blk%leafCoord(:,id+1)*blk%nb
             do d = 1, 3
                 blk%physLow(d,b) = face_kind(blk, dns, periodic, blk%origin(:,b), &
                     blk%level(b), d, -1)
@@ -458,31 +435,19 @@ contains
         allocate(blk%lapZ(3,0:nz+1,NVAR,blk%nBlocks))
 
         do b = 1, int(blk%nBlocks)
-            if (blk%distMode == DIST_ZORDER) then
-                lcol = int(blk%level(b)) + 1
-                call slice_grid_direction(blk%lineX(:,lcol), blk%x(:,:,b), blk%d1x(:,:,b), &
-                    blk%lapX(LAP_M,:,:,b), blk%lapX(LAP_0,:,:,b), blk%lapX(LAP_P,:,:,b), &
-                    level_cells(dns, 1, blk%level(b)), blk%origin(1,b) + 1_C_INT, nx, &
-                    dns%leng(1), periodic(1), 1)
-                call slice_grid_direction(blk%lineY(:,lcol), blk%y(:,:,b), blk%d1y(:,:,b), &
-                    blk%lapY(LAP_M,:,:,b), blk%lapY(LAP_0,:,:,b), blk%lapY(LAP_P,:,:,b), &
-                    level_cells(dns, 2, blk%level(b)), blk%origin(2,b) + 1_C_INT, ny, &
-                    dns%leng(2), periodic(2), 2)
-                call slice_grid_direction(blk%lineZ(:,lcol), blk%z(:,:,b), blk%d1z(:,:,b), &
-                    blk%lapZ(LAP_M,:,:,b), blk%lapZ(LAP_0,:,:,b), blk%lapZ(LAP_P,:,:,b), &
-                    level_cells(dns, 3, blk%level(b)), blk%origin(3,b) + 1_C_INT, nz, &
-                    dns%leng(3), periodic(3), 3)
-            else
-                call slice_grid_direction(g%xNode, blk%x(:,:,b), blk%d1x(:,:,b), &
-                    blk%lapX(LAP_M,:,:,b), blk%lapX(LAP_0,:,:,b), blk%lapX(LAP_P,:,:,b), &
-                    dns%globalSize(1), blk%origin(1,b) + 1_C_INT, nx, dns%leng(1), periodic(1), 1)
-                call slice_grid_direction(g%yNode, blk%y(:,:,b), blk%d1y(:,:,b), &
-                    blk%lapY(LAP_M,:,:,b), blk%lapY(LAP_0,:,:,b), blk%lapY(LAP_P,:,:,b), &
-                    dns%globalSize(2), blk%origin(2,b) + 1_C_INT, ny, dns%leng(2), periodic(2), 2)
-                call slice_grid_direction(g%zNode, blk%z(:,:,b), blk%d1z(:,:,b), &
-                    blk%lapZ(LAP_M,:,:,b), blk%lapZ(LAP_0,:,:,b), blk%lapZ(LAP_P,:,:,b), &
-                    dns%globalSize(3), blk%origin(3,b) + 1_C_INT, nz, dns%leng(3), periodic(3), 3)
-            end if
+            lcol = int(blk%level(b)) + 1
+            call slice_grid_direction(blk%lineX(:,lcol), blk%x(:,:,b), blk%d1x(:,:,b), &
+                blk%lapX(LAP_M,:,:,b), blk%lapX(LAP_0,:,:,b), blk%lapX(LAP_P,:,:,b), &
+                level_cells(dns, 1, blk%level(b)), blk%origin(1,b) + 1_C_INT, nx, &
+                dns%leng(1), periodic(1), 1)
+            call slice_grid_direction(blk%lineY(:,lcol), blk%y(:,:,b), blk%d1y(:,:,b), &
+                blk%lapY(LAP_M,:,:,b), blk%lapY(LAP_0,:,:,b), blk%lapY(LAP_P,:,:,b), &
+                level_cells(dns, 2, blk%level(b)), blk%origin(2,b) + 1_C_INT, ny, &
+                dns%leng(2), periodic(2), 2)
+            call slice_grid_direction(blk%lineZ(:,lcol), blk%z(:,:,b), blk%d1z(:,:,b), &
+                blk%lapZ(LAP_M,:,:,b), blk%lapZ(LAP_0,:,:,b), blk%lapZ(LAP_P,:,:,b), &
+                level_cells(dns, 3, blk%level(b)), blk%origin(3,b) + 1_C_INT, nz, &
+                dns%leng(3), periodic(3), 3)
         end do
     end subroutine build_block_metrics
 
@@ -549,7 +514,6 @@ contains
         blk%nBlocks = 0_C_INT
         blk%nBlocksGlobal = 0_C_INT
         blk%idStart = 0_C_INT
-        blk%distMode = DIST_RANKBOX
         blk%nLevels = 1_C_INT
         blk%refMask = 1_C_INT
     end subroutine destroy_block_set
@@ -1168,15 +1132,6 @@ contains
         integer, intent(in) :: d, side
 
         integer :: to(3), cl(3), cc(3), l, sx, sy, sz
-
-        if (blk%distMode /= DIST_ZORDER) then
-            ! Rank-box mode: one block per rank, walls only.
-            to = int(origin)
-            to(d) = to(d) + side*int(blk%nb(d))
-            fk = FACE_OPEN
-            if ((to(d) < 0 .or. to(d) >= int(dns%globalSize(d))) .and. .not. periodic(d)) fk = FACE_PHYS
-            return
-        end if
 
         l = int(level)
         to = int(origin)

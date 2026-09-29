@@ -1,7 +1,19 @@
 # Next session: numerics review step 7 — `moby_prepare` does ALL preprocessing
 
-STATUS (2026-09-29): **7-0 … 7-3 DONE and gated** (review section 10,
-step 7 MEASURED). 7-4 in progress. Handout written 2026-09-29; the `nb` rule
+STATUS (2026-09-29): **7-0 … 7-4 DONE and gated in one session** (review
+section 10, step 7 MEASURED: every number, and the control that explains the
+only non-zero GPU comparison). 7-5 is the plan entry below and is NOT
+started. Deviations from the text below, all recorded in the MEASURED
+block: the solver keeps `build_level_lines` (a pure function of the level-0
+line) instead of reading per-level lines from the file — the file carries
+level 0 only, as P3 wrote it; the "restart cross-check that STAYS" did not
+exist (only dataset extents were checked) and was ADDED; les_ibm's
+committed `ibm_coeff.h5` was a SECOND legacy-layout user and was converted
+once (`ibm_coeff_case.h5`); the analytic-IBM inis needed no driver edits
+because the solver prepares in-process (their explicit prepare+solve legs
+live in `run_gates_step7.sh`); a derived nb carries NO parity guard (the
+red-black colour offset is per block origin); `[mpi] dims` in a prepare
+input describes the solve, not the prepare run. Handout written 2026-09-29; the `nb` rule
 below was settled the same day — `nb` stays optional, the rank-box LAYOUT
 goes. Steps 0–6 of the
 review's execution sequence (`docs/numerics_review_2026-09-26.md` section

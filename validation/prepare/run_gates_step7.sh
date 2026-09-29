@@ -111,6 +111,17 @@ gate beltrami    "$ROOT/validation/beltrami"        slab_y.ini    5  "un vn wn p
 gate wf180_y30   "$ROOT/validation/rans_sst"        wf180_y30.ini 20 "un vn wn pn nut k omega" 0
 gate conduction  "$ROOT/validation/scalar"          conduction.ini 50 "un vn wn pn s1" 0
 gate wavy        "$ROOT/validation/prepare"         wavy.ini      1  "un vn wn pn" 1 "1"
+# Step 7-4: the live analytic-IBM inis that used to run the solver's inline
+# coefficient kernel now run as prepare+solve pairs (the solver prepares
+# in-process; here the file is prepared explicitly and gated the same way).
+# On the GPU compare these against the CPU reference (REF=moby_solve_cpu):
+# the reference GPU binary computed the analytic coefficients on the device
+# (libm ulps), the case file carries the host kernel's.
+gate conj_wavy   "$ROOT/validation/conjugate"       wavy.ini      20 "un vn wn pn theta" 1
+gate ibmwavy     "$ROOT/validation/scalar"          ibmwavy.ini   20 "un vn wn pn theta phi" 1
+gate ibmwavyr    "$ROOT/validation/scalar"          ibmwavyr.ini  20 "un vn wn pn theta phi" 1
+gate rg_wavy     "$ROOT/validation/rans_geometry"   wavy.ini      1  "un vn wn pn" 1 "1"
+gate rg_wavyref  "$ROOT/validation/rans_geometry"   wavy_refine.ini 1 "un vn wn pn" 1 "1"
 
 echo
 echo "passed: $pass  failed: $fail"

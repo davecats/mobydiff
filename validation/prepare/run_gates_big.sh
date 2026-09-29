@@ -34,13 +34,13 @@ check() {
 }
 
 # ---- sailplane: ASCII STL + scale/translate, spaces in the path ----------
-(
-    cd ../../tutorials/sailplane
-    sed -e 's|^coeff_file = .*|stl_file = "FRUE V0 ohneRundung.stl"\nstl_scale = 0.001\nstl_translate = 17.288649999032064 0.0 4.150549|' \
-        -e 's|^\[ibm\]|[blocks]\nnb = 10\n\n[ibm]|' input.ini > prep_blocks.ini
-)
+# Since numerics review step 7 the tutorial ini itself carries [blocks] nb =
+# 10 and the STL declaration ([case] file = sailplane_case.h5): the gate
+# prepares it into its own file, compares against the mobygeom reference,
+# and checks the solve is rank-count independent (the legacy file the old
+# solve leg compared against was retired with the legacy reader).
 check "sailplane: prepare (ASCII + transform)" bash -c \
-    "cd ../../tutorials/sailplane && mpirun -n 2 --oversubscribe $BUILD/moby_prepare prep_blocks.ini prep_sailplane_case.h5"
+    "cd ../../tutorials/sailplane && mpirun -n 2 --oversubscribe $BUILD/moby_prepare input.ini prep_sailplane_case.h5"
 check "sailplane: mobygeom reference (grid from the case file)" bash -c \
     "cd ../../tutorials/sailplane && $PYG $HERE/../../tools/mobygeom.py block-table \
         --geometry 'FRUE V0 ohneRundung.stl' --grid-file prep_sailplane_case.h5 \
@@ -49,16 +49,14 @@ check "sailplane: mobygeom reference (grid from the case file)" bash -c \
         --output sailplane_ref_blocks.h5 --jobs 4"
 check "sailplane: vs mobygeom (2 grazing outliers of 93M)" bash -c \
     "cd ../../tutorials/sailplane && $PY $HERE/compare_case.py prep_sailplane_case.h5 sailplane_ref_blocks.h5 --coef-tol 2e-3"
-check "sailplane: solve prep == committed legacy (1 step)" bash -c '
+check "sailplane: solve from the prepared file, 1 == 2 ranks (1 step)" bash -c '
     cd ../../tutorials/sailplane
-    sed -e "s|^coeff_file = .*|coeff_file = prep_sailplane_case.h5|" \
-        -e "s|^\[ibm\]|[blocks]\nnb = 10\n\n[ibm]|" \
-        -e "s|^field_prefix = .*|field_prefix = sp_prep|" input.ini > solve_prep.ini
-    sed -e "s|^\[ibm\]|[blocks]\nnb = 10\n\n[ibm]|" \
-        -e "s|^field_prefix = .*|field_prefix = sp_ref|" input.ini > solve_ref.ini
-    mpirun -n 2 --oversubscribe '"$BUILD"'/moby_solve solve_ref.ini >/dev/null 2>&1 &&
-    mpirun -n 2 --oversubscribe '"$BUILD"'/moby_solve solve_prep.ini >/dev/null 2>&1 &&
-    '"$PY"' ../../tools/compare_fields.py --tolerance 0 sp_ref_1.h5 sp_prep_1.h5 un vn wn pn'
+    for r in 1 2; do
+        sed -e "s|^file = .*|file = prep_sailplane_case.h5|" \
+            -e "s|^field_prefix = .*|field_prefix = sp_r$r|" input.ini > solve_r$r.ini
+        mpirun -n $r --oversubscribe '"$BUILD"'/moby_solve solve_r$r.ini >/dev/null 2>&1 || exit 1
+    done
+    '"$PY"' ../../tools/compare_fields.py --tolerance 0 sp_r1_1.h5 sp_r2_1.h5 un vn wn pn'
 
 echo
 echo "passed: $pass  failed: $fail"

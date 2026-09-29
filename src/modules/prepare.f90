@@ -6,7 +6,10 @@
 ! grid and the leaf table. `moby_prepare` calls it standalone; `moby_solve`
 ! calls it IN-PROCESS when the case file its ini names is absent (or with
 ! --prepare), so every tutorial stays one command. A body-free case gets
-! attrs + node lines + leaf table and no coefficient dataset.
+! attrs + node lines + leaf table and no coefficient dataset. Host code
+! throughout: the coefficients come from ONE kernel over the indicator, so
+! a file is the same from the CPU and the GPU build (step 7-4 retired the
+! device twin and its libm ulps).
 !
 ! MPI-parallel: the global leaf table is built identically on every rank
 ! (exactly as in the solver) and the per-leaf work -- coefficient tiles,
@@ -17,7 +20,7 @@
 module prepare
     use, intrinsic :: iso_c_binding
     use :: init, only: dns_type, grid_type, init_grid, destroy_grid, &
-        set_serial_local_size, VAR_U, VAR_V, VAR_W, VAR_P
+        VAR_U, VAR_V, VAR_W, VAR_P
     use :: blocks, only: block_set_type, init_block_set, destroy_block_set, derive_block_nb
     use :: flow_case, only: case_type, create_flow_case
     use :: config, only: config_seen_type, read_runtime_config, validate_dns_values, &
@@ -26,9 +29,8 @@ module prepare
         scalar_conjugate_enabled
     use :: boundary, only: boundary_type
     use :: io, only: write_case_file, read_restart_metadata
-    use :: ibmm, only: ibm_type, init_ibm, set_ibm_geometry, enter_ibm_data, exit_ibm_data, &
-        set_ibm_coeff, set_ibm_coeff_host, classify_refinement_masks, &
-        classify_active_mask, isInBody, body_indicator_i, read_ibm_coeff_legacy
+    use :: ibmm, only: ibm_type, init_ibm, set_ibm_geometry, set_ibm_coeff, &
+        classify_refinement_masks, classify_active_mask, isInBody, body_indicator_i
     use :: geometry_stl, only: stl_geometry_load, stl_geometry_destroy, &
         stl_is_in_body, stl_fill_dwall, stl_cull_box
     use :: rans, only: fill_body_distance_analytic
@@ -45,14 +47,10 @@ contains
 
     ! Build the case named by input_file and write it to case_file. c is an
     ! initialised world communicator; its [mpi] dims (read from the ini
-    ! here too) describe the SOLVE's rank layout for the nb rule. legacy
-    ! (step 7-3 only): a retired-mobygeom global-layout coefficient file
-    ! whose numbers are copied, not recomputed, into the block-table
-    ! layout -- the one-off conversion of the committed legacy files.
-    subroutine prepare_case(input_file, case_file, c, legacy)
+    ! here too) describe the SOLVE's rank layout for the nb rule.
+    subroutine prepare_case(input_file, case_file, c)
         character(len=*), intent(in) :: input_file, case_file
         type(comm_type), intent(inout) :: c
-        character(len=*), intent(in), optional :: legacy
 
         class(case_type), allocatable :: flow
         type(dns_type) :: dns
@@ -73,7 +71,7 @@ contains
         real(C_DOUBLE), allocatable :: dwall(:,:,:,:)
         ! The one geometry switch: every downstream stage takes the indicator.
         procedure(body_indicator_i), pointer :: inside => null()
-        logical :: use_stl, from_legacy, restart_exists
+        logical :: use_stl, restart_exists
         ! Solid-possible box for classification culling (allocated for STL
         ! only; unallocated stays absent in the classify calls).
         real(C_DOUBLE), allocatable :: cullLo(:), cullHi(:)
@@ -83,7 +81,6 @@ contains
         integer(C_INT) :: nCoefComp
         character(len=:), allocatable :: inputs
 
-        from_legacy = present(legacy)
         if (c%has_terminal) print *, "preparing case: ", trim(input_file), " -> ", trim(case_file)
         call create_flow_case(flow, input_file, c%has_terminal)
         call flow%apply_defaults(dns, g, bc, c, ps)
@@ -106,7 +103,6 @@ contains
                 dns%restart_file, c, config_seen)
         end if
 
-        call set_serial_local_size(dns)
         call init_grid(g, dns, bc%isPeriodic)
         call validate_dns_values(dns, g)
         ! The nb rule (step 7-1): an unset [blocks] nb becomes one block per
@@ -121,16 +117,13 @@ contains
         call derive_block_nb(dns, c%dims, product(c%dims), c%has_terminal)
         if (dns%block_nb_auto .and. (dns%block_refine_body .or. dns%block_refine_nboxes > 0_C_INT)) &
             error stop "[blocks] refine / refine_body need an explicit [blocks] nb"
-        if (from_legacy .and. (dns%block_nb_auto .or. dns%block_refine_body &
-                .or. dns%block_refine_nboxes > 0_C_INT .or. .not. dns%ibm_enabled)) &
-            error stop "legacy conversion needs an explicit [blocks] nb, no refinement, [ibm] enabled"
         ! What this file is a function of, echoed into it for the staleness
         ! check on read (case_input_echo).
         inputs = case_input_echo(dns, bc, sc)
 
         ! Geometry source: the analytic isInBody, or an STL body loaded behind
         ! the same indicator signature ([ibm] stl_file, P1).
-        use_stl = dns%ibm_stl_count > 0_C_INT .and. .not. from_legacy
+        use_stl = dns%ibm_stl_count > 0_C_INT
         if (use_stl) then
             call stl_geometry_load(dns%ibm_stl_file(1:dns%ibm_stl_count), &
                 dns%ibm_stl_scale, dns%ibm_stl_translate, dns%leng, &
@@ -147,10 +140,8 @@ contains
         ! them. A body-free case (step 7-1) is the plain lattice; so is a body
         ! with a DERIVED nb, where buried-block removal is not applied (rule
         ! 4: the old nb-less solver path removed nothing, and a file must
-        ! reproduce it); so is a legacy conversion (the legacy layout held
-        ! every block).
-        if (dns%ibm_enabled .and. c%has_terminal .and. .not. from_legacy) &
-            print *, "classifying geometry..."
+        ! reproduce it).
+        if (dns%ibm_enabled .and. c%has_terminal) print *, "classifying geometry..."
         if (dns%block_refine_body) then
             call classify_refinement_masks(blockTouch, blockBuried, blockMaskLo, &
                 blockMaskDims, dns, g, ibm, bc%isPeriodic, c%has_terminal, inside, &
@@ -158,8 +149,7 @@ contains
             call init_block_set(blk, dns, g, bc%isPeriodic, int(c%world_size, C_INT), &
                 int(c%world_rank, C_INT), touch=blockTouch, buried=blockBuried, &
                 maskLo=blockMaskLo, maskDims=blockMaskDims)
-        else if (dns%ibm_enabled .and. dns%block_remove_solid .and. .not. dns%block_nb_auto &
-                .and. .not. from_legacy) then
+        else if (dns%ibm_enabled .and. dns%block_remove_solid .and. .not. dns%block_nb_auto) then
             call classify_active_mask(blockActive, dns, g, ibm, bc%isPeriodic, &
                 c%has_terminal, inside, cullLo, cullHi, c)
             call init_block_set(blk, dns, g, bc%isPeriodic, int(c%world_size, C_INT), &
@@ -169,10 +159,8 @@ contains
                 int(c%world_rank, C_INT))
         end if
 
-        ! IBM coefficients on this rank's leaves. Analytic keeps the solver's
-        ! inline kernel verbatim (the P0 bit-exactness gate; on the device in
-        ! offload builds -- prepare with the CPU build for the gates); STL runs
-        ! the host twin over the indicator; a legacy conversion copies.
+        ! IBM coefficients on this rank's leaves: one host kernel over the
+        ! indicator, analytic or STL.
         nCoefComp = 0_C_INT
         if (dns%ibm_enabled) then
             if (c%has_terminal) print *, "computing IBM coefficients..."
@@ -181,23 +169,10 @@ contains
             ! see set_ibm_geometry for why that is not optional.
             call set_ibm_geometry(ibm, dns)
             nCoefComp = int(ubound(ibm%coef,4) - lbound(ibm%coef,4) + 1, C_INT)
-            if (from_legacy) then
-                call read_ibm_coeff_legacy(ibm, dns, blk, legacy, c%has_terminal)
-            else if (use_stl) then
-                call set_ibm_coeff_host(dns, blk, ibm, VAR_U, inside)
-                call set_ibm_coeff_host(dns, blk, ibm, VAR_V, inside)
-                call set_ibm_coeff_host(dns, blk, ibm, VAR_W, inside)
-                if (cell_centred) call set_ibm_coeff_host(dns, blk, ibm, VAR_P, inside)
-            else
-                call enter_ibm_data(ibm, dns)
-                call set_ibm_coeff(dns, blk, ibm, VAR_U)
-                call set_ibm_coeff(dns, blk, ibm, VAR_V)
-                call set_ibm_coeff(dns, blk, ibm, VAR_W)
-                if (cell_centred) call set_ibm_coeff(dns, blk, ibm, VAR_P)
-#ifdef USE_OPENMP_OFFLOAD
-                !$omp target update from(ibm%coef)
-#endif
-            end if
+            call set_ibm_coeff(dns, blk, ibm, VAR_U, inside)
+            call set_ibm_coeff(dns, blk, ibm, VAR_V, inside)
+            call set_ibm_coeff(dns, blk, ibm, VAR_W, inside)
+            if (cell_centred) call set_ibm_coeff(dns, blk, ibm, VAR_P, inside)
         end if
 
         ! RANS wall distance: the raw body distance (the domain-wall min and
@@ -211,8 +186,7 @@ contains
         ! `ibm_wall = conjugate` triggers the build exactly as a [rans] section
         ! does. A TRIGGER only -- no new dataset, and a file prepared either way
         ! is identical (docs/next_session_conjugate.md Section 8, arrangement 1).
-        if (dns%ibm_enabled .and. .not. from_legacy .and. &
-                (dns%rans_configured .or. scalar_conjugate_enabled(sc))) then
+        if (dns%ibm_enabled .and. (dns%rans_configured .or. scalar_conjugate_enabled(sc))) then
             if (c%has_terminal) print *, "computing wall distance..."
             allocate(dwall(0:int(blk%nb(1))+1, 0:int(blk%nb(2))+1, &
                 0:int(blk%nb(3))+1, blk%nBlocks))
@@ -237,11 +211,7 @@ contains
                 int(blk%nLevels) - 1, "refinement level(s)"
         end if
 
-        if (use_stl) then
-            call stl_geometry_destroy()
-        else if (dns%ibm_enabled .and. .not. from_legacy) then
-            call exit_ibm_data(ibm, dns)
-        end if
+        if (use_stl) call stl_geometry_destroy()
         call destroy_block_set(blk)
         call destroy_grid(g)
         call destroy_scalar(sc)

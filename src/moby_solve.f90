@@ -5,7 +5,7 @@
 
 program moby_solve
     use :: init
-    use :: blocks, only: block_set_type, init_block_set, init_block_set_from_table, &
+    use :: blocks, only: block_set_type, init_block_set_from_table, &
         destroy_block_set, enter_block_data, exit_block_data, zero_closed_halos, &
         FACE_FINE, FACE_PHYS, FACE_CLOSED
     use :: chron, only: chron_type, start_chron, stop_chron, write_chron, &
@@ -58,9 +58,6 @@ program moby_solve
     type(scalar_stats_type) :: sstats
     type(config_seen_type) :: config_seen
     type(comm_type) :: c
-    integer(C_INT), allocatable :: blockActive(:)
-    integer(C_INT), allocatable :: blockTouch(:,:), blockBuried(:,:)
-    integer(C_INT), allocatable :: blockMaskLo(:,:), blockMaskDims(:,:)
     ! The case file's leaf table (step 7-2) and its block size / refinement mask.
     integer(C_INT), allocatable :: leafRows(:,:)
     integer(C_INT) :: fileNb(3), fileRefMask(3)
@@ -85,15 +82,17 @@ program moby_solve
     end if
     call comm_init(c, dns, bc)
 
-    ! THE CASE FILE (step 7-3): [case] file, or <field_prefix>_case.h5 when
-    ! unset. It is the single source of truth for grid, block size, leaf
+    ! THE CASE FILE (step 7-3): [case] file, or <field_prefix>.case.h5 when
+    ! unset -- a dot, not an underscore: every gate driver globs its
+    ! snapshots as <prefix>_*.h5, and <prefix>_case.h5 matched (the
+    ! freestream vortex checker read the case file as a snapshot). It is the single source of truth for grid, block size, leaf
     ! table and coefficients; when it does not exist (or --prepare asks) it
     ! is built here, in-process, by the same builder moby_prepare runs --
     ! with THIS run's rank layout, which is what the nb rule keys on. A
     ! file prepared on another rank count is read as it is (rule 5): it
     ! solves as long as every rank owns a block.
     case_file = dns%ibm_coeff_file
-    if (len_trim(case_file) == 0) case_file = trim(dns%field_prefix) // "_case.h5"
+    if (len_trim(case_file) == 0) case_file = trim(dns%field_prefix) // ".case.h5"
     inquire(file=trim(case_file), exist=case_exists)
     if (force_prepare .or. .not. case_exists) then
         if (c%has_terminal) then
@@ -113,47 +112,24 @@ program moby_solve
     call validate_dns_values(dns, g)
 
     ! Block refactor (docs/block_refinement_strategy.md): the solver state
-    ! lives in a block set tiling the grid ([blocks] nb per block). With a
-    ! CASE FILE (step 7-2) the leaf table -- block size, removed blocks,
-    ! refinement, face kinds -- is READ from it and never rebuilt: the file
-    ! is the single source of truth, and an ini that disagrees is a stale
-    ! file, not an override (read_case_layout). Without a file the inline
-    ! builders below still run (they go in step 7-4, when every run has a
-    ! file): with an immersed boundary, blocks buried inside the body are
-    ! removed from the global table before the set is built.
-    fileLayout = .false.
-    if (len_trim(dns%ibm_coeff_file) > 0) then
-        if (c%has_terminal) print *, "reading case file layout: ", trim(dns%ibm_coeff_file)
-        call read_case_layout(dns, g, dns%ibm_coeff_file, inputs, fileNb, fileRefMask, leafRows, &
-            fileLayout, c%has_terminal)
+    ! lives in a block set tiling the grid. Since step 7 the leaf table --
+    ! block size, removed blocks, refinement, face kinds -- is READ from the
+    ! case file and never rebuilt here: the file is the single source of
+    ! truth, and an ini that disagrees is a stale file, not an override
+    ! (read_case_layout). Only the rank-dependent derived state is formed in
+    ! the solver: the Z-order split, the exchange entries, the boundary point
+    ! lists, the metric tables, the device maps.
+    if (c%has_terminal) print *, "reading case file layout: ", trim(dns%ibm_coeff_file)
+    call read_case_layout(dns, g, dns%ibm_coeff_file, inputs, fileNb, fileRefMask, leafRows, &
+        fileLayout, c%has_terminal)
+    if (.not. fileLayout) then
+        if (c%has_terminal) print *, "error: ", trim(dns%ibm_coeff_file), " carries no leaf table", &
+            " (a retired-mobygeom global-layout file?); re-prepare the case"
+        error stop "case file without a blocks table"
     end if
-    if (fileLayout) then
-        call init_block_set_from_table(blk, dns, g, bc%isPeriodic, int(c%cart_size, C_INT), &
-            int(c%cart_rank, C_INT), fileNb, fileRefMask, leafRows)
-        deallocate(leafRows)
-    else if (all(dns%block_nb > 0_C_INT) .and. dns%block_refine_body) then
-        ! Geometry-driven refinement (analytic or file IBM): refine to the
-        ! finest level at the surface with a one-block buffer, removing
-        ! buried blocks at every level. ibmm produces the geometry masks.
-        ! The analytic classification is rank-split and exactly merged
-        ! (P2) -- identical masks on any rank count.
-        call classify_refinement_masks(blockTouch, blockBuried, blockMaskLo, &
-            blockMaskDims, dns, g, ibm, bc%isPeriodic, c%has_terminal, isInBody, c=c)
-        call init_block_set(blk, dns, g, bc%isPeriodic, int(c%cart_size, C_INT), &
-            int(c%cart_rank, C_INT), touch=blockTouch, buried=blockBuried, &
-            maskLo=blockMaskLo, maskDims=blockMaskDims)
-        deallocate(blockTouch, blockBuried, blockMaskLo, blockMaskDims)
-    else if (all(dns%block_nb > 0_C_INT) .and. dns%ibm_enabled .and. dns%block_remove_solid) then
-        ! Solid-block removal: drop blocks buried inside the immersed body.
-        call classify_active_mask(blockActive, dns, g, ibm, bc%isPeriodic, &
-            c%has_terminal, isInBody, c=c)
-        call init_block_set(blk, dns, g, bc%isPeriodic, int(c%cart_size, C_INT), &
-            int(c%cart_rank, C_INT), blockActive)
-        deallocate(blockActive)
-    else
-        call init_block_set(blk, dns, g, bc%isPeriodic, int(c%cart_size, C_INT), &
-            int(c%cart_rank, C_INT))
-    end if
+    call init_block_set_from_table(blk, dns, g, bc%isPeriodic, int(c%cart_size, C_INT), &
+        int(c%cart_rank, C_INT), fileNb, fileRefMask, leafRows)
+    deallocate(leafRows)
     call init_block_exchange(c, blk, dns)
     call precompute_peclet_rate(dns, blk, c, sc)
     call init_boundary_faces(bc, blk, dns)
@@ -187,19 +163,14 @@ program moby_solve
     ! (pressure-position) column: the scalars penalise with coef(VAR_P)/Pr
     ! (increment S3). The file path reads it from coef_p_blocks.
     call init_ibm(ibm, blk, scalars_enabled(sc))
-    ! Analytic wall geometry from the config. Both binaries apply it -- see
-    ! set_ibm_geometry for why that is not optional.
+    ! Analytic wall geometry from the config -- the case builder is where it
+    ! acts (the indicator drives coefficients, classification and wall
+    ! distance); the solver keeps the parameters for the diagnostics that
+    ! print them. The coefficients themselves come from the case file, on the
+    ! HOST, and enter_ibm_data maps that copy: host and device agree from here.
     call set_ibm_geometry(ibm, dns)
-    if (dns%ibm_enabled .and. len_trim(dns%ibm_coeff_file) > 0) then
-        call read_ibm_coeff_file(ibm, dns, blk, c%has_terminal)
-        call enter_ibm_data(ibm, dns)
-    else
-        call enter_ibm_data(ibm, dns)
-        call set_ibm_coeff(dns, blk, ibm, VAR_U)
-        call set_ibm_coeff(dns, blk, ibm, VAR_V)
-        call set_ibm_coeff(dns, blk, ibm, VAR_W)
-        if (scalars_enabled(sc)) call set_ibm_coeff(dns, blk, ibm, VAR_P)
-    end if
+    if (dns%ibm_enabled) call read_ibm_coeff_file(ibm, dns, blk, c%has_terminal)
+    call enter_ibm_data(ibm, dns)
     ! [ibm] band_filter: near-body band list from the device coefficients
     ! (off: nothing is built, allocated, or mapped).
     if (dns%ibm_enabled .and. dns%ibm_band_filter) &
@@ -222,8 +193,7 @@ program moby_solve
     ! was mapped by enter_block_data). Without this the fix above is a
     ! no-op on the GPU: measured 2026-08-05, the GPU binary reproduced the
     ! pre-fix result bit-for-bit and kept the x-dependent k (x-spread
-    ! 1.5e-02 after 20 steps, vs 0.0 on the CPU). Same pattern as the
-    ! `target update from(ibm%coef)` below.
+    ! 1.5e-02 after 20 steps, vs 0.0 on the CPU).
     !$omp target update from(blk%q)
 #endif
 
@@ -233,14 +203,10 @@ program moby_solve
     ! temperature. It must run HERE -- after the IBM coefficients exist (the
     ! marker IS the cell-centred coefficient) and after blk%q's host copy has
     ! been refreshed above. Both routines are host code writing device-mapped
-    ! arrays, so both pushes below are load-bearing on the GPU (the
+    ! arrays, so the pushes below are load-bearing on the GPU (the
     ! 2026-08-05 staleness class, CLAUDE.md).
     if (scalar_conjugate_enabled(sc)) then
         if (c%has_terminal) print *, "initialising conjugate interface..."
-#ifdef USE_OPENMP_OFFLOAD
-        ! The analytic IBM coefficients are computed on the device.
-        !$omp target update from(ibm%coef)
-#endif
         call init_scalar_conjugate(sc, dns, blk, bc, ibm, c)
         ! The explicit diffusive limit of the interface. It cannot be formed
         ! in precompute_peclet_rate (no signed distance yet) and it is NOT a
@@ -262,11 +228,6 @@ program moby_solve
     ! builds and advances the k-omega transport state (T2).
     if (dns%rans_configured) then
         if (c%has_terminal) print *, "initialising RANS geometry..."
-#ifdef USE_OPENMP_OFFLOAD
-        ! The analytic IBM coefficients are computed on the device; the
-        ! wall-cell classification reads the host copy.
-        !$omp target update from(ibm%coef)
-#endif
         call init_rans_geometry(sst, dns, g, blk, bc, ibm, c)
         if (turb%model == TURB_RANS .or. turb%model == TURB_IDDES) &
             call init_rans_transport(sst, dns, blk, bc, ibm, c%has_terminal)

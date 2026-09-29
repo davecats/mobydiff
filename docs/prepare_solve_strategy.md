@@ -1,5 +1,17 @@
 # Strategy: splitting mobydiff into `moby_prepare` + `moby_solve`
 
+Status 2026-09-29 (numerics review step 7, `docs/next_session_prepare_everything.md`):
+**the solver no longer has an inline path.** Two of the "key decisions" in
+section 4 were REVERSED on purpose: the solver reads the leaf table from the
+case file and never rebuilds it (the row-by-row cross-check went with the
+rebuild; a restart-snapshot cross-check exists instead), and the inline
+analytic coefficient kernel (the device `set_ibm_coeff`) is retired -- every
+run has a case file, which `moby_solve` builds in-process when it is absent
+(`[case] file`, default `<field_prefix>.case.h5`; `--prepare` rebuilds). The
+legacy global-layout coefficient reader is gone; `[blocks] nb` stays optional
+(the nb rule: unset = one block per rank of the build's layout, stored in the
+file). The text below is the P0-P3 record.
+
 Status: **DONE 2026-07-17 — P0-P3 all implemented and gated** (per-phase
 records below; `src/moby_prepare.f90` + `src/moby_solve.f90`, one case-file
 contract; mobygrid deleted, mobygeom retired to a validation reference).

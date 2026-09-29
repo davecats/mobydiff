@@ -25,27 +25,26 @@ by `(17.288649999032064, 0.0, 4.150549)`. This places the full mirrored STL at
 the centre of the corresponding full domain, while the solver only uses the
 positive-`y` half.
 
-Generate the IBM coefficients with moby_prepare (prepare/solve split,
-`docs/prepare_solve_strategy.md` — a `[blocks] nb = 10` block layout plus
-the STL declaration replace the retired mobygrid+mobygeom pipeline):
+The IBM coefficients live in the CASE FILE `sailplane_case.h5` (`[case] file`,
+prepare/solve split, `docs/prepare_solve_strategy.md` + numerics review step
+7): grid, `[blocks] nb = 10` block layout (40 x 45 x 10 = 18000 leaves), the
+STL declaration (`stl_file`, `stl_scale = 0.001`, `stl_translate`) and the
+coefficients themselves. The solver builds it on the first run (minutes on 2
+CPU ranks; a stale one -- grid, nb, transform or `re` changed -- is refused
+with the key named), or build it ahead of time:
 
 ```bash
 cd tutorials/sailplane
-# prep_blocks.ini = input.ini with:
-#   [blocks] nb = 10
-#   [ibm] stl_file = "FRUE V0 ohneRundung.stl"
-#         stl_scale = 0.001
-#         stl_translate = 17.288649999032064 0.0 4.150549
-mpirun -n 2 ../../build_cpu/moby_prepare prep_blocks.ini sailplane_case.h5
-# solve with [blocks] nb = 10 and [ibm] coeff_file = sailplane_case.h5
+mpirun -n 2 ../../build_cpu/moby_prepare input.ini sailplane_case.h5
+mpirun -n 2 ../../build_gpu/moby_solve input.ini      # or --prepare to rebuild
 ```
 
-The committed `sailplane_ibm_coeff.h5` (legacy mobygeom global layout,
-usable without `[blocks] nb`) remains for the original one-step tutorial;
-a 1-step solve from the prepared case file is bit-exact against it
-(validation/prepare/run_gates_big.sh). If the grid changes in `input.ini`,
-rerun moby_prepare. The retired mobygeom cross-check can read the grid
-straight from the case file (`--grid-file sailplane_case.h5`).
+The committed legacy `sailplane_ibm_coeff.h5` (the retired mobygeom's global
+layout) was retired with the legacy reader at step 7-4; it stays in git
+history (last at the step 7-3 commit). A 1-step solve from the prepared case
+file was bit-exact against it (validation/prepare/run_gates_big.sh, P1b), and
+the retired mobygeom cross-check still reads the grid straight from the case
+file (`--grid-file sailplane_case.h5`).
 
 ## Boundary conditions (changed 2026-09-27, numerics review F4)
 

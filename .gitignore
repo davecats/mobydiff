@@ -98,7 +98,8 @@ validation/channel_interface/les/runs/
 # Exceptions: reference data / figures that ARE committed on purpose.
 !.mobydiff.png
 !tools/mobygeom_tests/**/*.h5
-!tutorials/sailplane/*.h5
+# (tutorials/sailplane/*.h5 was an exception for the legacy coefficient file,
+#  retired at numerics-review step 7-4; the case file there is a build product)
 !validation/channel_interface/divergence_comparison.png
 !validation/channel_interface/les/*.png
 !validation/channel_interface/les_ibm/*.png

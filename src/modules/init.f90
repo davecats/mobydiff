@@ -51,8 +51,6 @@ module init
     ! Runtime/domain state shared by the solver modules.
     type :: dns_type
         integer(C_INT) :: globalSize(1:3) = 0_C_INT
-        ! Per-direction local first index, last index, and count.
-        integer(C_INT) :: localSize(1:3,0:2) = 0_C_INT
         integer(C_INT) :: step_current = 0_C_INT
         integer(C_INT) :: nsteps = 0_C_INT
         real(C_DOUBLE) :: leng(1:3) = 0.0d0
@@ -141,7 +139,7 @@ module init
         logical(C_BOOL) :: ibm_enabled = .true.
         ! [case] file: THE case file (grid + leaf table + coefficients),
         ! written by the builder and read by the solver; the solver names
-        ! <field_prefix>_case.h5 when the key is unset and prepares it
+        ! <field_prefix>.case.h5 when the key is unset and prepares it
         ! in-process when absent. [ibm] coeff_file is the pre-step-7 name,
         ! accepted as an alias for one release.
         character(len=256) :: ibm_coeff_file = ""
@@ -331,19 +329,6 @@ subroutine init_grid(g, dns, periodic)
         g%distribution(3), g%stretch(3), g%natural_one_sided(3), g%natural_dyw_plus(3), &
         g%natural_outer_height(3), g%subdivided(3), g%nodesFile(3))
 end subroutine init_grid
-
-! moby_prepare runs without the MPI Cartesian decomposition; give dns the
-! whole-grid local size it would otherwise get from comm_init.
-subroutine set_serial_local_size(dns)
-    type(dns_type), intent(inout) :: dns
-    integer :: dir
-
-    do dir = 1, 3
-        dns%localSize(dir,0) = 1_C_INT
-        dns%localSize(dir,1) = dns%globalSize(dir)
-        dns%localSize(dir,2) = dns%globalSize(dir)
-    end do
-end subroutine set_serial_local_size
 
 subroutine destroy_grid(g)
     type(grid_type), intent(inout) :: g

@@ -18,7 +18,7 @@ module ibmm
     use :: init, only: dns_type, grid_type, VAR_U, VAR_V, VAR_W, VAR_P, &
         is_face_staggered, face_at, cell_center_at
     use :: blocks, only: block_set_type, subdivide_node_line, FACE_PHYS, FACE_CLOSED
-    use :: io, only: to_c_string, read_block_active, read_block_masks, read_mask_window
+    use :: io, only: to_c_string
     use :: comm, only: comm_type, exchange_scalar_halos, comm_allreduce_max_int
     implicit none
 
@@ -67,13 +67,11 @@ module ibmm
 
     end type ibm_type
 
-    ! The one indicator signature every host-side geometry consumer takes
-    ! (walldist, the classify_* routines, moby_prepare's coefficient
-    ! tiles): exactly the analytic isInBody's. geometry_stl.f90 provides
-    ! the same signature reading its own module state, so STL and analytic
-    ! bodies flow through identical machinery. The DEVICE coefficient
-    ! kernel (set_ibm_coeff) keeps calling the concrete isInBody directly:
-    ! declare-target procedure arguments are not portable.
+    ! The one indicator signature every geometry consumer takes (walldist,
+    ! the classify_* routines, the coefficient kernel set_ibm_coeff): exactly
+    ! the analytic isInBody's. geometry_stl.f90 provides the same signature
+    ! reading its own module state, so STL and analytic bodies flow through
+    ! identical machinery -- all of it host code in the case builder.
     abstract interface
         logical function body_indicator_i(xIN, ibm, dns)
             import :: C_DOUBLE, ibm_type, dns_type
@@ -112,23 +110,8 @@ module ibmm
             real(C_DOUBLE), intent(inout) :: coef(*)
             integer(C_INT) :: ierr
         end function fdm_h5_read_ibm_coeff_p_blocks
-
-        function fdm_h5_read_ibm_coeff(file_name, nbx, nby, nbz, n_blocks, block_origin, &
-                global_nx, global_ny, global_nz, &
-                lx, ly, lz, re, n_comp, coef) bind(C, name="fdm_h5_read_ibm_coeff") result(ierr)
-            import :: C_CHAR, C_INT, C_DOUBLE
-            character(kind=C_CHAR), intent(in) :: file_name(*)
-            integer(C_INT), value :: nbx, nby, nbz, n_blocks
-            integer(C_INT), intent(in) :: block_origin(*)
-            integer(C_INT), value :: global_nx, global_ny, global_nz
-            real(C_DOUBLE), value :: lx, ly, lz, re
-            integer(C_INT), value :: n_comp
-            real(C_DOUBLE), intent(inout) :: coef(*)
-            integer(C_INT) :: ierr
-        end function fdm_h5_read_ibm_coeff
     end interface
 
-!$omp declare target(isInBody, distance3, bisection, add_neighbor_coeff)
 
     ! Is every penalization coefficient zero on this rank? Then mu is exactly
     ! 1/(1 + dt*0) = 1 for every entry, whatever dt_gamma is -- which is also
@@ -431,9 +414,7 @@ contains
 
         n_comp = int(ubound(ibm%coef,4) - lbound(ibm%coef,4) + 1, C_INT)
         c_file_name = to_c_string(dns%ibm_coeff_file)
-        ! Block-table layout first (refined runs); fall back to the legacy
-        ! global ghost-layer layout, which holds level-0 data only. No leaf
-        ! table cross-check any more: since step 7-2 the solver's leaf table
+        ! No leaf table cross-check: since step 7-2 the solver's leaf table
         ! is read from this very file (read_case_layout).
         ierr = fdm_h5_read_ibm_coeff_blocks(c_file_name, blk%nb(1), blk%nb(2), blk%nb(3), &
             blk%nBlocks, blk%idStart, &
@@ -442,49 +423,14 @@ contains
             if (has_terminal) print *, "error: could not read IBM coefficient file: ", trim(dns%ibm_coeff_file)
             error stop
         end if
-        if (found /= 0_C_INT) then
-            call read_ibm_coeff_p(ibm, dns, blk, c_file_name, n_comp, has_terminal)
-            return
+        if (found == 0_C_INT) then
+            if (has_terminal) print *, "error: [ibm] enabled but the case file carries no", &
+                " coef_blocks (prepared body-free, or a retired-mobygeom global-layout", &
+                " file); re-prepare the case: ", trim(dns%ibm_coeff_file)
+            error stop
         end if
-        call read_ibm_coeff_legacy(ibm, dns, blk, dns%ibm_coeff_file, has_terminal)
+        call read_ibm_coeff_p(ibm, dns, blk, c_file_name, n_comp, has_terminal)
     end subroutine read_ibm_coeff_file
-
-    ! The LEGACY global ghost-layer coefficient layout (the retired mobygeom
-    ! stl-ibm-coeff): level-0 data only, three staggered components. Public
-    ! for the one-off conversion into the case-file layout (moby_prepare
-    ! --convert-legacy, step 7-3); the reader itself goes in step 7-4.
-    subroutine read_ibm_coeff_legacy(ibm, dns, blk, file_name, has_terminal)
-        type(ibm_type), intent(inout) :: ibm
-        type(dns_type), intent(in) :: dns
-        type(block_set_type), intent(in) :: blk
-        character(len=*), intent(in) :: file_name
-        logical, intent(in) :: has_terminal
-
-        character(kind=C_CHAR,len=:), allocatable :: c_file_name
-        integer(C_INT) :: ierr, n_comp
-
-        n_comp = int(ubound(ibm%coef,4) - lbound(ibm%coef,4) + 1, C_INT)
-        if (any(blk%level(1:blk%nBlocks) /= 0_C_INT)) then
-            if (has_terminal) print *, "error: legacy coefficient file needs single-level blocks: ", &
-                trim(file_name)
-            error stop
-        end if
-        if (n_comp > 3_C_INT) then
-            if (has_terminal) print *, "error: [scalar] needs cell-centred IBM coefficients,", &
-                " which the legacy coefficient-file layout cannot carry;", &
-                " re-run moby_prepare with [scalar]: ", trim(file_name)
-            error stop
-        end if
-        c_file_name = to_c_string(file_name)
-        ierr = fdm_h5_read_ibm_coeff(c_file_name, blk%nb(1), blk%nb(2), blk%nb(3), &
-            blk%nBlocks, blk%origin, &
-            dns%globalSize(1), dns%globalSize(2), dns%globalSize(3), &
-            dns%leng(1), dns%leng(2), dns%leng(3), dns%re, n_comp, ibm%coef)
-        if (ierr /= 0_C_INT) then
-            if (has_terminal) print *, "error: could not read IBM coefficient file: ", trim(file_name)
-            error stop
-        end if
-    end subroutine read_ibm_coeff_legacy
 
     ! The cell-centred (pressure-position) coefficient tiles the passive
     ! scalars penalise with (increment S3): the OPTIONAL coef_p_blocks
@@ -525,7 +471,6 @@ contains
     ! bit-exact; WALL_EGGCARTON is a separate branch rather than a
     ! generalisation for exactly that reason.
     real(C_DOUBLE) function wavy_wall_height(x, z, ibm, dns) result(y_body)
-!$omp declare target
         real(C_DOUBLE), intent(in) :: x, z
         type(ibm_type), intent(in) :: ibm
         type(dns_type), intent(in) :: dns
@@ -562,51 +507,6 @@ contains
 
         d = sqrt((xB(1)-xA(1))**2 + (xB(2)-xA(2))**2 + (xB(3)-xA(3))**2)
     end function distance3
-
-    subroutine bisection(xAin,xB,ibm,dns)
-        real(C_DOUBLE), intent(in) :: xAin(1:3)
-        real(C_DOUBLE), intent(inout):: xB(1:3)
-        type(ibm_type), intent(in) :: ibm
-        type(dns_type), intent(in) :: dns
-
-        real(C_DOUBLE) :: xA(1:3), xM(1:3)
-        logical :: la, lm
-        integer(C_INT) :: it
-
-        xA = xAin
-        xM = xA
-        la = isInBody(xA, ibm, dns)
-
-        do it = 1, MAX_ITER
-            xM = 0.5d0*(xA + xB)
-            if (distance3(xA, xB) < DEFAULT_TOL) exit
-
-            lm = isInBody(xM, ibm, dns)
-            if (lm .eqv. la) then
-                xA = xM
-            else
-                xB = xM
-            end if
-        end do
-        xB = xM
-    end subroutine bisection
-
-    subroutine add_neighbor_coeff(coeff, xA, xB, ibm, dns)
-        real(C_DOUBLE), intent(inout) :: coeff
-        real(C_DOUBLE), intent(in) :: xA(1:3)
-        real(C_DOUBLE), intent(inout) :: xB(1:3)
-        type(ibm_type), intent(in) :: ibm
-        type(dns_type), intent(in) :: dns
-
-        real(C_DOUBLE) :: d0, d
-
-        if (isInBody(xB, ibm, dns)) then
-            d0 = distance3(xA, xB)
-            call bisection(xA, xB, ibm, dns)
-            d = distance3(xA, xB)
-            coeff = coeff + ((d0-d)/d)/d0**2
-        end if
-    end subroutine add_neighbor_coeff
 
     ! Phase 2 classification for the analytic IBM: a block is removable iff
     ! the block dilated by one halo cell is solid (isInBody) at cell centres
@@ -887,11 +787,10 @@ contains
     end subroutine classify_block_geometry
 
     ! Produce the per-block keep mask for solid-block removal ([blocks]
-    ! remove_solid): read it from the coefficient file (mobygeom
-    ! block-active) or classify it from the analytic geometry. The mask is
-    ! allocated here to the lattice size; the caller hands it to
-    ! init_block_set. This is the geometry input to block-set construction,
-    ! kept out of main so the construction dispatch stays thin.
+    ! remove_solid) from the indicator. The mask is allocated here to the
+    ! lattice size; the case builder hands it to init_block_set and writes
+    ! it to the case file (block_active, a diagnostic the readers no longer
+    ! need: the leaf table itself records the removal).
     subroutine classify_active_mask(active, dns, g, ibm, periodic, has_terminal, inside, &
             cullLo, cullHi, c)
         integer(C_INT), allocatable, intent(out) :: active(:)
@@ -907,8 +806,6 @@ contains
         ! bit-identical to the redundant single-rank scan.
         type(comm_type), intent(in), optional :: c
 
-        logical :: found
-
         if (any(mod(dns%globalSize, dns%block_nb) /= 0_C_INT)) then
             error stop "[blocks] nb must divide the global grid in every direction"
         end if
@@ -916,14 +813,7 @@ contains
             error stop "solid-block removal with box refinement is unsupported; use refine_body"
         end if
         allocate(active(product(dns%globalSize/dns%block_nb)))
-        if (len_trim(dns%ibm_coeff_file) > 0) then
-            call read_block_active(active, found, dns, has_terminal)
-            if (.not. found) then
-                if (has_terminal) print *, &
-                    "coefficient file has no block_active table; keeping all blocks"
-                active = 1_C_INT
-            end if
-        else if (present(c)) then
+        if (present(c)) then
             call classify_active_blocks(active, dns, g, ibm, periodic, inside, &
                 cullLo, cullHi, nsplit=c%world_size, isplit=c%world_rank)
             call comm_allreduce_max_int(c, active)
@@ -934,16 +824,16 @@ contains
     end subroutine classify_active_mask
 
     ! Produce the per-level touch/buried masks for geometry-driven
-    ! refinement ([blocks] refine_body): read them from the coefficient
-    ! file (mobygeom block-table) or classify them from the analytic
-    ! geometry. Both arrays are allocated here for the finest lattice (one
-    ! column per level); the caller hands them to init_block_set.
+    ! refinement ([blocks] refine_body) from the indicator. Both arrays are
+    ! allocated here for the finest lattice (one column per level); the case
+    ! builder hands them to init_block_set and writes them to the case file
+    ! (a diagnostic: the leaf table itself records the refinement).
     subroutine classify_refinement_masks(touch, buried, maskLo, maskDims, dns, g, ibm, &
             periodic, has_terminal, inside, cullLo, cullHi, c)
         integer(C_INT), allocatable, intent(out) :: touch(:,:), buried(:,:)
         ! Per-level mask windows (block coords): deep-refinement rasters
-        ! are stored/held windowed to the padded STL bbox; the analytic
-        ! path and legacy files use full-lattice windows.
+        ! are held windowed to the padded STL bbox; the analytic path uses
+        ! full-lattice windows.
         integer(C_INT), allocatable, intent(out) :: maskLo(:,:), maskDims(:,:)
         type(dns_type), intent(in) :: dns
         type(grid_type), intent(in) :: g
@@ -959,7 +849,6 @@ contains
 
         integer :: level, maskCount, nLevels, maxCount
         integer(int64) :: finest
-        logical :: found, has_win
 
         if (.not. dns%ibm_enabled) then
             error stop "[blocks] refine_body needs the IBM enabled"
@@ -969,86 +858,56 @@ contains
         end if
         nLevels = int(dns%block_refine_levels) + 1
         allocate(maskLo(3, nLevels), maskDims(3, nLevels))
-        if (len_trim(dns%ibm_coeff_file) > 0) then
-            ! File-based geometry: masks computed by mobygeom block-table,
-            ! WINDOWED on deep-refinement files (legacy = full rasters).
-            do level = 0, nLevels - 1
-                call read_mask_window(maskLo(:, level+1), maskDims(:, level+1), &
-                    has_win, level, dns, has_terminal)
-                if (.not. has_win) then
-                    maskLo(:, level+1) = 0_C_INT
-                    maskDims(:, level+1) = (dns%globalSize/dns%block_nb) &
-                        *2**(int(level, C_INT)*dns%block_refine_mask)
+        ! Indicator-driven geometry (moby_prepare STL / the solver's
+        ! inline analytic path). Per-level full lattices when they fit;
+        ! LEVELS ABOVE THE THRESHOLD go WINDOWED to the padded cull box
+        ! (the deep y+~2 quadtree lattices reach billions of blocks --
+        ! undenseable). Without a cull box (pure analytic bodies have
+        ! no bbox) deep lattices remain a hard error.
+        do level = 0, nLevels - 1
+            maskLo(:, level+1) = 0_C_INT
+            maskDims(:, level+1) = (dns%globalSize/dns%block_nb) &
+                *2**(int(level, C_INT)*dns%block_refine_mask)
+            if (product(int(maskDims(:, level+1), int64)) > 16000000_int64) then
+                if (.not. present(cullLo)) then
+                    error stop "[blocks] refine_body: per-level mask lattice too " &
+                        // "large to hold dense and no geometry bbox to window " &
+                        // "to (analytic body); reduce refine_levels"
                 end if
-            end do
-            maxCount = 0
-            do level = 0, nLevels - 1
-                maxCount = max(maxCount, int(product(maskDims(:, level+1))))
-            end do
-            allocate(touch(max(1, maxCount), nLevels))
-            allocate(buried(size(touch, 1), size(touch, 2)))
+                call mask_window_from_cull(maskLo(:, level+1), maskDims(:, level+1), &
+                    dns, g, level, cullLo, cullHi, periodic)
+            end if
+        end do
+        maxCount = 0
+        do level = 0, nLevels - 1
+            finest = product(int(maskDims(:, level+1), int64))
+            if (finest > int(huge(1_C_INT), int64)) then
+                error stop "[blocks] refine_body: windowed mask raster still too large"
+            end if
+            maxCount = max(maxCount, int(finest))
+        end do
+        allocate(touch(max(1, maxCount), nLevels))
+        allocate(buried(size(touch, 1), size(touch, 2)))
+        if (present(c)) then
+            call classify_block_geometry(touch, buried, dns, g, ibm, periodic, nLevels, &
+                inside, cullLo, cullHi, nsplit=c%world_size, isplit=c%world_rank, &
+                winLo=maskLo, winDims=maskDims)
             do level = 0, nLevels - 1
                 maskCount = int(product(maskDims(:, level+1)))
-                call read_block_masks(touch(1:maskCount, level+1), &
-                    buried(1:maskCount, level+1), level, maskCount, &
-                    found, dns, has_terminal)
-                if (.not. found) then
-                    error stop "coefficient file has no refinement masks; run mobygeom block-table"
-                end if
+                call comm_allreduce_max_int(c, touch(1:maskCount, level+1))
+                call comm_allreduce_max_int(c, buried(1:maskCount, level+1))
             end do
         else
-            ! Indicator-driven geometry (moby_prepare STL / the solver's
-            ! inline analytic path). Per-level full lattices when they fit;
-            ! LEVELS ABOVE THE THRESHOLD go WINDOWED to the padded cull box
-            ! (the deep y+~2 quadtree lattices reach billions of blocks --
-            ! undenseable). Without a cull box (pure analytic bodies have
-            ! no bbox) deep lattices remain a hard error.
-            do level = 0, nLevels - 1
-                maskLo(:, level+1) = 0_C_INT
-                maskDims(:, level+1) = (dns%globalSize/dns%block_nb) &
-                    *2**(int(level, C_INT)*dns%block_refine_mask)
-                if (product(int(maskDims(:, level+1), int64)) > 16000000_int64) then
-                    if (.not. present(cullLo)) then
-                        error stop "[blocks] refine_body: per-level mask lattice too " &
-                            // "large to hold dense and no geometry bbox to window " &
-                            // "to (analytic body); reduce refine_levels"
-                    end if
-                    call mask_window_from_cull(maskLo(:, level+1), maskDims(:, level+1), &
-                        dns, g, level, cullLo, cullHi, periodic)
-                end if
-            end do
-            maxCount = 0
-            do level = 0, nLevels - 1
-                finest = product(int(maskDims(:, level+1), int64))
-                if (finest > int(huge(1_C_INT), int64)) then
-                    error stop "[blocks] refine_body: windowed mask raster still too large"
-                end if
-                maxCount = max(maxCount, int(finest))
-            end do
-            allocate(touch(max(1, maxCount), nLevels))
-            allocate(buried(size(touch, 1), size(touch, 2)))
-            if (present(c)) then
-                call classify_block_geometry(touch, buried, dns, g, ibm, periodic, nLevels, &
-                    inside, cullLo, cullHi, nsplit=c%world_size, isplit=c%world_rank, &
-                    winLo=maskLo, winDims=maskDims)
-                do level = 0, nLevels - 1
-                    maskCount = int(product(maskDims(:, level+1)))
-                    call comm_allreduce_max_int(c, touch(1:maskCount, level+1))
-                    call comm_allreduce_max_int(c, buried(1:maskCount, level+1))
-                end do
-            else
-                call classify_block_geometry(touch, buried, dns, g, ibm, periodic, nLevels, &
-                    inside, cullLo, cullHi, winLo=maskLo, winDims=maskDims)
-            end if
-            ! [blocks] keep_buried: never remove buried blocks. LOAD-BEARING
-            ! for penalization forces -- a removed solid core absorbs the
-            ! body's pressure loading through its closed faces outside the
-            ! coef bookkeeping (the A3 NACA 0012 finding; its README,
-            ! validation/naca0012/README.md, is in git history; mobygeom's
-            ! --keep-buried writes zeroed masks the same way). File-based
-            ! masks are read verbatim above: the file is authority there.
-            if (dns%block_keep_buried) buried = 0_C_INT
+            call classify_block_geometry(touch, buried, dns, g, ibm, periodic, nLevels, &
+                inside, cullLo, cullHi, winLo=maskLo, winDims=maskDims)
         end if
+        ! [blocks] keep_buried: never remove buried blocks. LOAD-BEARING
+        ! for penalization forces -- a removed solid core absorbs the
+        ! body's pressure loading through its closed faces outside the
+        ! coef bookkeeping (the A3 NACA 0012 finding; its README,
+        ! validation/naca0012/README.md, is in git history; mobygeom's
+        ! --keep-buried writes zeroed masks the same way).
+        if (dns%block_keep_buried) buried = 0_C_INT
     end subroutine classify_refinement_masks
 
     ! Conservative per-level mask window from the geometry cull box: the
@@ -1122,89 +981,12 @@ contains
         end select
     end function base_node
 
-    subroutine set_ibm_coeff(dns, blk, ibm, var)
-        type(dns_type), intent(in) :: dns
-        type(block_set_type), intent(in) :: blk
-        type(ibm_type), intent(inout) :: ibm
-        integer(C_INT), intent(in) :: var
-
-        integer :: ix, iy, iz, b, nBlocks
-        integer :: ilo, ihi, jlo, jhi, klo, khi
-        real(C_DOUBLE) :: xA(1:3), xB(1:3), coeff
-        real(C_DOUBLE) :: re_inv, solid_coef
-        logical(C_BOOL) :: enabled
-
-        ! The kernel is generic in var -- it reads the position and the
-        ! graded stencil from blk%x/y/z(:,var,:) -- so VAR_P (the
-        ! cell-centred scalar column) is admissible exactly when init_ibm
-        ! allocated it.
-        if (var < VAR_U .or. var > ubound(ibm%coef,4)) &
-            error stop "invalid IBM coefficient variable"
-
-        ilo = lbound(ibm%coef,1)
-        ihi = ubound(ibm%coef,1)
-        jlo = lbound(ibm%coef,2)
-        jhi = ubound(ibm%coef,2)
-        klo = lbound(ibm%coef,3)
-        khi = ubound(ibm%coef,3)
-        nBlocks = size(ibm%coef,5)
-
-        enabled = dns%ibm_enabled
-        re_inv = 1.0d0/dns%re
-        solid_coef = SOLID*re_inv
-#ifdef USE_OPENMP_OFFLOAD
-        !$omp target teams distribute parallel do collapse(4) &
-        !$omp& map(to: var, enabled, re_inv, solid_coef, ilo, ihi, jlo, jhi, klo, khi, nBlocks, dns, ibm, blk, &
-        !$omp& blk%x, blk%y, blk%z) &
-        !$omp& map(tofrom: ibm%coef) &
-        !$omp& private(ix,iy,iz,b,xA,xB,coeff)
-#endif
-        do b = 1, nBlocks
-        do iz = klo, khi
-            do iy = jlo, jhi
-                do ix = ilo, ihi
-                    ibm%coef(ix,iy,iz,var,b) = 0.0d0
-                    if (.not. enabled) cycle
-
-                    xA(1) = blk%x(ix,var,b)
-                    xA(2) = blk%y(iy,var,b)
-                    xA(3) = blk%z(iz,var,b)
-                    if (isInBody(xA, ibm, dns)) then
-                        ibm%coef(ix,iy,iz,var,b) = solid_coef
-#ifdef USE_IBM_SECONDORDER
-                    else
-                        coeff = 0.0d0
-
-                        xB(1) = blk%x(ix-1,var,b); xB(2) = xA(2);             xB(3) = xA(3)
-                        call add_neighbor_coeff(coeff, xA, xB, ibm, dns)
-                        xB(1) = blk%x(ix+1,var,b); xB(2) = xA(2);             xB(3) = xA(3)
-                        call add_neighbor_coeff(coeff, xA, xB, ibm, dns)
-                        xB(1) = xA(1);             xB(2) = blk%y(iy-1,var,b); xB(3) = xA(3)
-                        call add_neighbor_coeff(coeff, xA, xB, ibm, dns)
-                        xB(1) = xA(1);             xB(2) = blk%y(iy+1,var,b); xB(3) = xA(3)
-                        call add_neighbor_coeff(coeff, xA, xB, ibm, dns)
-                        xB(1) = xA(1);             xB(2) = xA(2);             xB(3) = blk%z(iz-1,var,b)
-                        call add_neighbor_coeff(coeff, xA, xB, ibm, dns)
-                        xB(1) = xA(1);             xB(2) = xA(2);             xB(3) = blk%z(iz+1,var,b)
-                        call add_neighbor_coeff(coeff, xA, xB, ibm, dns)
-
-                        ibm%coef(ix,iy,iz,var,b) = coeff*re_inv
-#endif
-                    end if
-                end do
-            end do
-        end do
-        end do
-#ifdef USE_OPENMP_OFFLOAD
-        !$omp end target teams distribute parallel do
-#endif
-    end subroutine set_ibm_coeff
-
-    ! Host twin of set_ibm_coeff for moby_prepare's STL path: the same
-    ! graded sharp-interface arithmetic over ANY indicator (the device
-    ! kernel above keeps calling the concrete isInBody -- declare-target
-    ! procedure arguments are not portable). KEEP THE TWO IN LOCKSTEP.
-    subroutine set_ibm_coeff_host(dns, blk, ibm, var, inside)
+    ! THE coefficient kernel (case builder, host): the graded sharp-interface
+    ! penalization coefficient at every ghost-inclusive point of component
+    ! var, over ANY indicator. Until step 7-4 a device twin computed the
+    ! analytic case in the solver; a file now carries the same numbers from
+    ! either build.
+    subroutine set_ibm_coeff(dns, blk, ibm, var, inside)
         type(dns_type), intent(in) :: dns
         type(block_set_type), intent(in) :: blk
         type(ibm_type), intent(inout) :: ibm
@@ -1248,17 +1030,17 @@ contains
                         coeff = 0.0d0
 
                         xB(1) = blk%x(ix-1,var,b); xB(2) = xA(2);             xB(3) = xA(3)
-                        call add_neighbor_coeff_host(coeff, xA, xB, ibm, dns, inside)
+                        call add_neighbor_coeff(coeff, xA, xB, ibm, dns, inside)
                         xB(1) = blk%x(ix+1,var,b); xB(2) = xA(2);             xB(3) = xA(3)
-                        call add_neighbor_coeff_host(coeff, xA, xB, ibm, dns, inside)
+                        call add_neighbor_coeff(coeff, xA, xB, ibm, dns, inside)
                         xB(1) = xA(1);             xB(2) = blk%y(iy-1,var,b); xB(3) = xA(3)
-                        call add_neighbor_coeff_host(coeff, xA, xB, ibm, dns, inside)
+                        call add_neighbor_coeff(coeff, xA, xB, ibm, dns, inside)
                         xB(1) = xA(1);             xB(2) = blk%y(iy+1,var,b); xB(3) = xA(3)
-                        call add_neighbor_coeff_host(coeff, xA, xB, ibm, dns, inside)
+                        call add_neighbor_coeff(coeff, xA, xB, ibm, dns, inside)
                         xB(1) = xA(1);             xB(2) = xA(2);             xB(3) = blk%z(iz-1,var,b)
-                        call add_neighbor_coeff_host(coeff, xA, xB, ibm, dns, inside)
+                        call add_neighbor_coeff(coeff, xA, xB, ibm, dns, inside)
                         xB(1) = xA(1);             xB(2) = xA(2);             xB(3) = blk%z(iz+1,var,b)
-                        call add_neighbor_coeff_host(coeff, xA, xB, ibm, dns, inside)
+                        call add_neighbor_coeff(coeff, xA, xB, ibm, dns, inside)
 
                         ibm%coef(ix,iy,iz,var,b) = coeff*re_inv
 #endif
@@ -1268,9 +1050,9 @@ contains
         end do
         end do
         !$omp end parallel do
-    end subroutine set_ibm_coeff_host
+    end subroutine set_ibm_coeff
 
-    subroutine add_neighbor_coeff_host(coeff, xA, xB, ibm, dns, inside)
+    subroutine add_neighbor_coeff(coeff, xA, xB, ibm, dns, inside)
         real(C_DOUBLE), intent(inout) :: coeff
         real(C_DOUBLE), intent(in) :: xA(1:3)
         real(C_DOUBLE), intent(inout) :: xB(1:3)
@@ -1282,13 +1064,13 @@ contains
 
         if (inside(xB, ibm, dns)) then
             d0 = distance3(xA, xB)
-            call bisection_host(xA, xB, ibm, dns, inside)
+            call bisection(xA, xB, ibm, dns, inside)
             d = distance3(xA, xB)
             coeff = coeff + ((d0-d)/d)/d0**2
         end if
-    end subroutine add_neighbor_coeff_host
+    end subroutine add_neighbor_coeff
 
-    subroutine bisection_host(xAin, xB, ibm, dns, inside)
+    subroutine bisection(xAin, xB, ibm, dns, inside)
         real(C_DOUBLE), intent(in) :: xAin(1:3)
         real(C_DOUBLE), intent(inout):: xB(1:3)
         type(ibm_type), intent(in) :: ibm
@@ -1315,7 +1097,7 @@ contains
             end if
         end do
         xB = xM
-    end subroutine bisection_host
+    end subroutine bisection
 
     subroutine update_ibm_mu(ibm, dt_gamma)
         type(ibm_type), intent(inout) :: ibm

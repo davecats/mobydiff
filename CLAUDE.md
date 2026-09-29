@@ -1951,14 +1951,48 @@ immersed boundary. Phased, each phase verified before the next:
   columns, `apply_bc(blk, bc, vars, outflow_copy)` generic, `apply_scalar_bc_q`
   deleted) — NOT exchange entries, since the same-level copy entries read
   physical ghosts and pack runs first (reason in the review). Every step
-  gated `max_abs 0` (step 6: 61 comparisons, nofma + production). **NEXT is
-  step 7 (prepare does ALL preprocessing): handout
-  `docs/next_session_prepare_everything.md`** — five gated increments,
-  `nb` STAYS OPTIONAL (unset = one block per rank, chosen by the builder
-  from its rank count and stored in the case file — today's rank box as a
-  file property), while the rank-box layout, the legacy coefficient reader,
-  the inline classify dispatch and the device coefficient kernel go; one
-  builder with two entry points.
+  gated `max_abs 0` (step 6: 61 comparisons, nofma + production).
+- **Step 7 — prepare does ALL preprocessing (DONE 2026-09-29, increments
+  7-0 … 7-4, handout `docs/next_session_prepare_everything.md`, numbers in
+  the review section 10 step 7 MEASURED).** THE CONTRACT NOW: every run
+  reads a CASE FILE — `[case] file` (default `<field_prefix>.case.h5`;
+  `[ibm] coeff_file` is a one-release alias that prints a note; both set
+  = error) — which is the single source of truth for grid, block size,
+  leaf table, face kinds and IBM coefficients. `moby_solve` builds it
+  IN-PROCESS when it is absent (`moby_solve input.ini --prepare` rebuilds),
+  through the SAME builder `moby_prepare` runs (`src/modules/prepare.f90`,
+  `prepare_case`), so every tutorial stays one command. `[blocks] nb` STAYS
+  OPTIONAL: unset = one block per rank of the Cartesian layout the build
+  runs on (the old rank box, stored in the file as `block_nb_auto` +
+  `block_nb_ranks`; a file prepared on P ranks solves on any count that
+  still owns ≥ 1 block per rank, else "rank owns no blocks" — re-prepare);
+  no parity guard on a derived nb (the red-black `colorOffset` is
+  `sum(origin) mod 2`, continuous across ANY block face; "even" matters for
+  refinement only, which keeps needing an explicit nb). STALENESS is an
+  INPUT ECHO (`case_input_echo`, the `case_inputs` attr, h5dump-readable):
+  the first differing `key = value` line stops the run with both values.
+  GONE: the rank-box layout (`DIST_RANKBOX`, `dns%localSize`, `rank_box`/
+  `local_range`/`owner_of_origin`), the legacy global-layout coefficient
+  reader (`fdm_h5_read_ibm_coeff`; les_ibm's committed `ibm_coeff.h5` was
+  converted once, number for number, into `ibm_coeff_case.h5`; the
+  sailplane's legacy file is retired and the tutorial declares its STL),
+  the solver's inline classify dispatch and mask readers, the DEVICE
+  coefficient kernel (`set_ibm_coeff` is the host kernel over the
+  indicator — a case file is the same from either build; a GPU analytic
+  case therefore differs from the OLD GPU binary by libm ulps and is gated
+  against the CPU reference), the solver-side analytic dwall branches. The
+  coefficient/dwall readers lost the row-by-row self-comparison; a
+  RESTART-snapshot row cross-check was ADDED (`fdm_h5_check_block_table`;
+  the one the handout said "stays" only compared dataset extents). Gate
+  driver `validation/prepare/run_gates_step7.sh` (body-free explicit-nb,
+  nb-less, analytic ± refine_body cases: prepared 1/4 ranks + solved 1/4
+  ranks == the 7-0 reference's inline solve, CPU and GPU). FOUND: `[mpi]
+  dims` in a prepare input describes the SOLVE (the P0 wavy inis pin
+  `1 1 1`); `block_levels` meant "number of levels" in mobygeom files and
+  "finest level" in prepare files (the reader derives it from the table);
+  the 9-case suite cannot run at 4 ranks (`turbles`/`turbslab` pin dims).
+  Reference set `~/step7_ref_binaries` (`d2249b1`). 7-5 (a per-leaf weight
+  column + weighted Morton split) is the plan entry, not started.
 
 ## Verification
 

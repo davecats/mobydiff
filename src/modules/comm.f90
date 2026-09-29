@@ -2,7 +2,7 @@ module comm
     use, intrinsic :: iso_c_binding
     use :: mpi_f08
     use :: init, only: dns_type
-    use :: blocks, only: block_set_type, DIST_ZORDER, zorder_owner, zorder_start, zorder_count, &
+    use :: blocks, only: block_set_type, zorder_owner, zorder_start, zorder_count, &
         leaf_at, level_cells, level_cell_width, occupied_any_level, parent_coord, child_origin
     use :: boundary, only: boundary_type
     use :: profiling, only: prof_tic, prof_toc, exch_prof, &
@@ -210,8 +210,7 @@ contains
         type(boundary_type), intent(in) :: bc
 
         type(MPI_Comm) :: local_comm
-        integer :: ierr, dir
-        integer :: local_n(3)
+        integer :: ierr
 
         call comm_init_world(c)
 
@@ -225,15 +224,6 @@ contains
         if (c%has_terminal) then
             write(*,'(A,1X,I0,1X,I0,1X,I0)') "MPI Cartesian dimensions:", c%dims
         end if
-        do dir = 1, 3
-            call local_range(int(dns%globalSize(dir)), c%dims(dir), c%coords(dir), &
-                             dns%localSize(dir,0), dns%localSize(dir,1))
-            dns%localSize(dir,2) = dns%localSize(dir,1) - dns%localSize(dir,0) + 1_C_INT
-            local_n(dir) = int(dns%localSize(dir,2))
-        end do
-
-        if (any(local_n <= 0)) error stop "MPI decomposition produced an empty local block"
-
         call MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL, local_comm, ierr)
         call MPI_Comm_rank(local_comm, c%local_rank, ierr)
         call select_target_device(c, local_comm)
@@ -524,7 +514,6 @@ contains
         integer :: b, d, p, pass, cand, ncand
         integer :: owner(4), slot(4), opc(4), tqc(3,4)
         integer :: srcLo(3), dstLo(3), ext(3)
-        integer :: peerCoords(3), peerFirst(3), peerLast(3)
         integer :: peerBlocks, peerStart, pb, dorigin(3), dlevel
         integer :: nLocal, nSend, nRecv, pts, maxCount, ierr, e, round
         ! Per-entry face normal of the divergence subset (0 = not in it), held
@@ -640,27 +629,15 @@ contains
 
                 ! Send side of the message me -> peer p: walk the peer's
                 ! blocks exactly as the peer walks its own slot order above.
-                if (blk%distMode == DIST_ZORDER) then
-                    peerStart = int(zorder_start(blk%nBlocksGlobal, int(c%cart_size, C_INT), &
-                        int(c%peerRank(p), C_INT)))
-                    peerBlocks = int(zorder_count(blk%nBlocksGlobal, int(c%cart_size, C_INT), &
-                        int(c%peerRank(p), C_INT)))
-                else
-                    call MPI_Cart_coords(c%cart_comm, c%peerRank(p), 3, peerCoords, ierr)
-                    call rank_box(dns, c%dims, peerCoords, peerFirst, peerLast)
-                    peerStart = 0
-                    peerBlocks = 1
-                end if
+                peerStart = int(zorder_start(blk%nBlocksGlobal, int(c%cart_size, C_INT), &
+                    int(c%peerRank(p), C_INT)))
+                peerBlocks = int(zorder_count(blk%nBlocksGlobal, int(c%cart_size, C_INT), &
+                    int(c%peerRank(p), C_INT)))
                 c%peerSendOff(p) = c%peerSendOff(p-1)
                 do round = 1, 2
                     do pb = 1, peerBlocks
-                        if (blk%distMode == DIST_ZORDER) then
-                            dorigin = int(blk%leafCoord(:,peerStart + pb))*nb
-                            dlevel = int(blk%leafLevel(peerStart + pb))
-                        else
-                            dorigin = peerFirst - 1
-                            dlevel = 0
-                        end if
+                        dorigin = int(blk%leafCoord(:,peerStart + pb))*nb
+                        dlevel = int(blk%leafLevel(peerStart + pb))
                         do d = 1, 26
                             call resolve_neighbors(c, blk, dns, dlevel, dorigin, &
                                 off(:,d), ncand, owner, slot, opc, tqc)
@@ -923,16 +900,6 @@ contains
         n = 0
         call neighbor_origin(c, dns, level, dorigin, off, int(blk%nb), haveNeighbor, to)
         if (.not. haveNeighbor) return
-
-        if (blk%distMode /= DIST_ZORDER) then
-            call owner_of_origin(c, dns, to, owner(1), slot(1))
-            if (owner(1) >= 0) then
-                n = 1
-                op(1) = OP_COPY
-                tq(:,1) = 0
-            end if
-            return
-        end if
 
         cl = to/int(blk%nb)
         id = int(leaf_at(blk, level, cl))
@@ -1293,37 +1260,6 @@ contains
         end do
     end subroutine neighbor_origin
 
-    ! Owner rank and owner-local slot (always 1) of the block at origin `to`
-    ! in rank-box mode.
-    subroutine owner_of_origin(c, dns, to, owner, slot)
-        type(comm_type), intent(in) :: c
-        type(dns_type), intent(in) :: dns
-        integer, intent(in) :: to(3)
-        integer, intent(out) :: owner, slot
-
-        integer :: d, r, ierr
-        integer(C_INT) :: first, last
-        integer :: ownerCoords(3)
-
-        ! Rank-box mode only: the Z-order path resolves owners via id_owner_slot
-        ! in resolve_neighbors (this routine is called only when distMode is not
-        ! DIST_ZORDER). One block per rank, owner from the Cartesian ranges.
-        do d = 1, 3
-            ownerCoords(d) = -1
-            do r = 0, c%dims(d) - 1
-                call local_range(int(dns%globalSize(d)), c%dims(d), r, first, last)
-                if (to(d) >= int(first) - 1 .and. to(d) <= int(last) - 1) then
-                    ownerCoords(d) = r
-                    exit
-                end if
-            end do
-            if (ownerCoords(d) < 0) error stop "block neighbour outside the rank decomposition"
-        end do
-
-        call MPI_Cart_rank(c%cart_comm, ownerCoords, owner, ierr)
-        slot = 1
-    end subroutine owner_of_origin
-
     ! Source/destination boxes for the entry (dst block B, direction off):
     ! src is in the neighbour block's local frame, dst in B's. The
     ! tangential range in dim d extends into the halo on side s exactly
@@ -1378,12 +1314,10 @@ contains
         offc(d) = side
         call neighbor_origin(c, dns, level, dorigin, offc, nb, exists, to)
         if (.not. exists) return
-        if (blk%distMode == DIST_ZORDER) then
-            ! Occupied at the same, coarser, or finer level all count: the
-            ! corner data then arrives through an edge/corner entry (COPY,
-            ! RESTRICT or PROLONG), so the face entry must not extend.
-            exists = occupied_any_level(blk, level, to/nb)
-        end if
+        ! Occupied at the same, coarser, or finer level all count: the
+        ! corner data then arrives through an edge/corner entry (COPY,
+        ! RESTRICT or PROLONG), so the face entry must not extend.
+        exists = occupied_any_level(blk, level, to/nb)
     end function combined_neighbor_exists
 
     subroutine collect_peers(c, blk, dns, off)
@@ -2517,29 +2451,6 @@ contains
             c%activeVars(n) = vars(n)
         end do
     end subroutine set_active_vars
-
-    subroutine rank_box(dns, dims, coords, first, last)
-        type(dns_type), intent(in) :: dns
-        integer, intent(in) :: dims(3), coords(3)
-        integer, intent(out) :: first(3), last(3)
-
-        integer :: d
-        integer(C_INT) :: f, l
-
-        do d = 1, 3
-            call local_range(int(dns%globalSize(d)), dims(d), coords(d), f, l)
-            first(d) = int(f)
-            last(d) = int(l)
-        end do
-    end subroutine rank_box
-
-    subroutine local_range(n_global, nproc_dir, coord, first, last)
-        integer, intent(in) :: n_global, nproc_dir, coord
-        integer(C_INT), intent(out) :: first, last
-
-        first = int((coord*n_global)/nproc_dir + 1, C_INT)
-        last = int(((coord+1)*n_global)/nproc_dir, C_INT)
-    end subroutine local_range
 
     subroutine require_ready(c)
         type(comm_type), intent(in) :: c

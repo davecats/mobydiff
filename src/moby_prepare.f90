@@ -10,12 +10,12 @@ program moby_prepare
     use :: comm, only: comm_type, comm_init_world, comm_finalize
     implicit none
 
-    character(len=256) :: input_file, output_file, legacy_file
+    character(len=256) :: input_file, output_file
     logical :: show_help
     type(comm_type) :: c
 
     call comm_init_world(c)
-    call parse_prepare_args(input_file, output_file, legacy_file, show_help)
+    call parse_prepare_args(input_file, output_file, show_help)
 
     if (show_help) then
         if (c%has_terminal) call print_usage()
@@ -23,20 +23,15 @@ program moby_prepare
         stop
     end if
 
-    if (len_trim(legacy_file) > 0) then
-        call prepare_case(input_file, output_file, c, legacy=trim(legacy_file))
-    else
-        call prepare_case(input_file, output_file, c)
-    end if
+    call prepare_case(input_file, output_file, c)
     if (c%has_terminal) print *, "run the solver with [case] file = ", trim(output_file)
     call comm_finalize(c)
 
 contains
 
-    subroutine parse_prepare_args(input_file, output_file, legacy_file, show_help)
+    subroutine parse_prepare_args(input_file, output_file, show_help)
         character(len=*), intent(out) :: input_file
         character(len=*), intent(out) :: output_file
-        character(len=*), intent(out) :: legacy_file
         logical, intent(out) :: show_help
 
         character(len=256) :: arg
@@ -44,7 +39,6 @@ contains
 
         input_file = "input.ini"
         output_file = "moby_case.h5"
-        legacy_file = ""
         show_help = .false.
         positional = 0
         argc = command_argument_count()
@@ -63,13 +57,6 @@ contains
                 i = i + 1
                 if (i > argc) error stop "missing value after --output"
                 call get_command_argument(i, output_file)
-            case ("--convert-legacy")
-                ! One-off (step 7-3): copy a retired-mobygeom global-layout
-                ! coefficient file into the block-table case-file layout,
-                ! number for number.
-                i = i + 1
-                if (i > argc) error stop "missing value after --convert-legacy"
-                call get_command_argument(i, legacy_file)
             case default
                 positional = positional + 1
                 select case (positional)
@@ -88,7 +75,6 @@ contains
     subroutine print_usage()
         print '(A)', "usage: moby_prepare [input.ini] [case.h5]"
         print '(A)', "       moby_prepare --input input.ini --output case.h5"
-        print '(A)', "       moby_prepare --convert-legacy old_coeff.h5 input.ini case.h5"
     end subroutine print_usage
 
 end program moby_prepare
