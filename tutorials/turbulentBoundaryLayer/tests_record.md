@@ -170,13 +170,41 @@ Reduced through one common post-processor (`compare_codes.py`) against **SIMSON
 The mobydiff data are exported to the reference NetCDF format at
 `assets/mobydiff/xyz_4096_224_192/data.nc` (`make_mobydiff_nc.py`).
 
+## 12. CaNS-exact trip port — the shipped case
+
+The weak trip (§4) matched the developed layer but its *transition region* did not
+look like CaNS/AMPHIBIOUS: a sharp c_f spike at the trip (6.2) then a deep dip (3.9)
+as the flow partially relaminarized, then a slow re-transition — where the reference
+codes rise cleanly and monotonically to a single overshoot at x ≈ 73. The cause was
+a **normalization mismatch**: our trip normalized the spanwise signal `g(z)` to unit
+rms and scaled by `amp`, whereas CaNS scales a non-normalized cosine sum (mode 0 +
+`nmodes/2` flat harmonics) by `amp/nmodes` — an effective amplitude `amp/√nmodes`. So
+their `amp = 0.18854` (`nmodes = 16`) equals our old ~0.047, and applying it verbatim
+over-tripped ~4×.
+
+The trip was therefore **ported byte-faithfully from CaNS `trip.f90`** into
+`src/modules/bodyforce.f90` (mode-0 term + flat harmonics + `amp/nmodes` scaling +
+`nmodes/2` harmonics + the steady component). The CaNS/AMPHIBIOUS production
+parameters then apply directly (`trip_amp = 0.18854`, `x0 = 10`, `nmodes = 16`). A
+10000 t.u. run on HoreKa (4× A100) gives:
+
+- **the transition now matches CaNS** — a clean monotone rise to a single overshoot
+  at x ≈ 73, no spike/dip (the c_f transition in `assets/figures/code_comparison.png`);
+- **the developed statistics reproduce CaNS almost exactly** — c_f 0.00462 vs CaNS
+  0.00463, u′_rms peak 2.707 vs 2.706, H 1.499 (same trip → same layer);
+- **smoother statistics** — the 10000 t.u. window (2.5× the earlier 4000, 2× denser
+  sampling) cuts the developed-c_f point-to-point noise ~23 %.
+
+This CaNS-exact-trip run is the shipped `data.nc` / `production_stats.h5`.
+
 ## Bottom line
 
 The original 5 % c_f gap to the spectral reference was **not** a limitation of the
 2nd-order FD solver. It decomposed into an over-aggressive trip (which also caused
 the entire H discrepancy), streamwise under-resolution, and wall-normal outer
 resolution — all fixable — leaving only the intrinsic FV/FD-vs-spectral floor. The
-shipped **finey** configuration (gentle trip, Δx⁺≈Δz⁺≈4, Δy⁺_max≈4.3, red-black
-niter=6) reproduces the SIMSON spectral reference in c_f (−0.4 %), H, mean profile
-and Reynolds stresses to ~1–2 %, and sits squarely with CaNS and AMPHIBIOUS — the
-residual ~3 % near-wall u′_rms peak is a signature shared by all non-spectral codes.
+shipped configuration (CaNS-exact trip, Δx⁺≈Δz⁺≈4, Δy⁺_max≈4.3, red-black niter=6)
+reproduces CaNS and AMPHIBIOUS in the transition **and** the developed layer, and
+matches the SIMSON spectral reference in c_f (−1.8 %), H, mean profile and Reynolds
+stresses to ~1–2 % — the residual ~3 % near-wall u′_rms peak is a signature shared by
+all non-spectral codes.

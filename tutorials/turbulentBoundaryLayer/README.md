@@ -2,10 +2,11 @@
 
 A spatially-developing incompressible **ZPG turbulent boundary layer** DNS,
 non-dimensionalised by the inlet displacement thickness (Re_δ*,0 = 450, U∞ = 1).
-This is the shipped **"finey"** configuration — the best-resolved case from an
-extended trip / resolution / solver study (full history in
-**[`tests_record.md`](tests_record.md)**) — validated against three independent
-reference DNS: the **SIMSON** pseudo-spectral code, **CaNS**, and **AMPHIBIOUS**.
+The best-resolved case from an extended trip / resolution / solver study (full
+history in **[`tests_record.md`](tests_record.md)**) — the fine wall-normal grid
+plus a **byte-faithful port of the CaNS/AMPHIBIOUS trip** — validated against three
+independent reference DNS: the **SIMSON** pseudo-spectral code, **CaNS**, and
+**AMPHIBIOUS**.
 
 ## The case
 
@@ -15,17 +16,17 @@ reference DNS: the **SIMSON** pseudo-spectral code, **CaNS**, and **AMPHIBIOUS**
 | x-grid | geometric, stretch 1.5 | Δx⁺ ~ uniform as u_τ falls downstream |
 | y-grid | blayer (wall-clustered + freestream coarsening) | resolve the BL, keep the tall domain affordable |
 | domain | 750 × 100 × 32 δ*₀ | ly = 100 δ*₀ (very tall) so the top pins a true ZPG |
-| trip | Schlatter–Örlü, `trip_amp = 0.03` | gentle trip (matches the reference development) |
+| trip | Schlatter–Örlü, **CaNS-exact port**, `trip_amp = 0.18854`, `nmodes = 16` | byte-faithful port of the CaNS/AMPHIBIOUS trip (`src/modules/bodyforce.f90`) |
 | convection | skew-symmetric | energy-neutral under the incremental projection |
 | **pressure solver** | **red-black SOR, niter = 6, sor = 1.5** | stable at low niter on this outlet case, ~1.8× faster than Chebyshev-Jacobi niter=12 |
 
 ## Code comparison — SIMSON / CaNS / AMPHIBIOUS
 
-All four codes share the nondimensionalization (Re_δ*,in = 450), so the developed
-flow is compared directly at a matched **Re_θ ≈ 677**. The reference codes use the
-strong Schlatter–Örlü trip; mobydiff uses the gentle trip, so transition sits at a
-different Re_θ — the comparison is in the developed region where the trip is
-forgotten.
+All four codes share the nondimensionalization (Re_δ*,in = 450), so the flow is
+compared directly at a matched **Re_θ ≈ 677**. mobydiff now runs the **CaNS-exact
+trip** (same parameters as CaNS/AMPHIBIOUS), so the **transition region matches too**
+— a clean monotone rise to a single c_f overshoot at x ≈ 73, not the old weak trip's
+spike-then-dip (see `tests_record.md`).
 
 ![Code comparison vs SIMSON, CaNS, AMPHIBIOUS](assets/figures/code_comparison.png)
 
@@ -34,18 +35,19 @@ forgotten.
 | SIMSON (spectral) | 3072·301·— | 0.00471 | 1.507 | 2.631 | 0.882 |
 | CaNS | 3200·384·135 | 0.00463 | 1.503 | 2.706 | 0.874 |
 | AMPHIBIOUS | 3200·384·135 | 0.00460 | 1.508 | 2.723 | 0.899 |
-| **mobydiff (finey)** | **4096·224·192** | **0.00469** | **1.498** | **2.727** | **0.871** |
+| **mobydiff** | **4096·224·192** | **0.00462** | **1.499** | **2.707** | **0.867** |
 
 Mean U⁺(y⁺) and the Reynolds stresses of all four codes overlay through the
 sublayer, log region and wake. **Two takeaways:**
 
-- **mobydiff's c_f is the closest of the finite-volume/difference codes to the
-  spectral SIMSON** (−0.4 %, vs CaNS −1.7 %, AMPHIBIOUS −2.4 %).
+- **With the CaNS-exact trip, mobydiff reproduces CaNS almost exactly** — c_f 0.00462
+  vs CaNS 0.00463, u′_rms peak 2.707 vs 2.706 — as it must, since the same trip drives
+  the same developed layer. The three finite-volume/difference codes now cluster
+  tightly (c_f ≈ 0.0046, ~2 % below SIMSON).
 - **The near-wall u′_rms peak sits ~3 % above SIMSON for _all three_ non-spectral
-  codes** (mobydiff 2.73, CaNS 2.71, AMPHIBIOUS 2.72). This overshoot is therefore
-  a generic second-order finite-volume/difference signature relative to a spectral
-  method, **not** a mobydiff artifact — a trip-amplitude sweep (0.024 → 0.19)
-  confirmed it is independent of the trip (`tests_record.md`).
+  codes** (mobydiff 2.71, CaNS 2.71, AMPHIBIOUS 2.72). This overshoot is a generic
+  second-order finite-volume/difference signature relative to a spectral method,
+  **not** a mobydiff artifact.
 
 The mobydiff comparison data, in the same NetCDF format as the reference files, is
 committed at **`assets/mobydiff/xyz_4096_224_192/data.nc`**.

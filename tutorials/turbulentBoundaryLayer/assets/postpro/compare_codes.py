@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare the mobydiff ZPG-TBL (finey case) against the reference DNS codes of the
+"""Compare the mobydiff ZPG-TBL (CaNS-exact trip) against the reference DNS codes of the
 resolution study -- SIMSON (spectral), CaNS and AMPHIBIOUS -- all reduced through
 the SAME boundary-layer post-processing so the curves are strictly comparable.
 
@@ -10,7 +10,7 @@ the SAME boundary-layer post-processing so the curves are strictly comparable.
 
 All datasets share the nondimensionalization (length delta*_in, Re_delta*,in=450),
 so the mean flow and Reynolds stresses are compared directly at a matched Re_theta.
-The reference codes use the strong Schlatter-Orlu trip; mobydiff (finey) uses the
+The reference codes use the strong Schlatter-Orlu trip; mobydiff uses the SAME CaNS-exact trip (ported); the earlier finey case used a
 weak trip, so the transition location differs -- the comparison is at matched
 Re_theta in the DEVELOPED region, where the trip is forgotten.
 
@@ -109,7 +109,7 @@ def main():
     ap.add_argument("--mobydiff", default=os.path.join(HERE, "..", "mobydiff", "xyz_4096_224_192", "data.nc"))
     ap.add_argument("--simson", default=os.path.join(HERE, "passivewall.hdf5"))
     ap.add_argument("--cans", default=os.path.join(REF_DEFAULT, "cans", "xyz_3200_384_135", "data.nc"))
-    ap.add_argument("--amphibious", default=os.path.join(REF_DEFAULT, "amphibious", "xyz_3200_384_135", "data.nc"))
+    ap.add_argument("--amphibious", default=os.path.join(REF_DEFAULT, "amphibious", "xyz_3200_384_135_TRIP_SKEWSYM_CENTERED", "data.nc"))
     ap.add_argument("--retheta", type=float, default=677.0)
     ap.add_argument("--out", default=os.path.join(HERE, "..", "figures", "code_comparison.png"))
     a = ap.parse_args()
@@ -124,7 +124,7 @@ def main():
     add("SIMSON (spectral)", "k", load_simson, a.simson)
     add("CaNS", "C0", load_nc, a.cans)
     add("AMPHIBIOUS", "C1", load_nc, a.amphibious)
-    add("mobydiff (finey)", "C3", load_nc, a.mobydiff)
+    add("mobydiff", "C3", load_nc, a.mobydiff)
 
     print(f"{'code':22s} {'Re_th,max':>9s} {'cf@'+str(int(a.retheta)):>10s} {'H':>7s} "
           f"{'u_tau':>7s} {'u_rms+':>7s} {'-uv+':>7s}")
@@ -184,7 +184,7 @@ def main():
     ax[1, 1].set_xlabel(r"$y^+$"); ax[1, 1].set_xlim(0, 300); ax[1, 1].set_ylim(0, 3)
     ax[1, 1].legend(fontsize=9, loc="upper right"); ax[1, 1].set_title(f"Reynolds stresses at Re$_\\theta$≈{a.retheta:.0f}")
 
-    fig.suptitle(r"ZPG-TBL code comparison — mobydiff (finey) vs SIMSON / CaNS / AMPHIBIOUS "
+    fig.suptitle(r"ZPG-TBL code comparison — mobydiff vs SIMSON / CaNS / AMPHIBIOUS "
                  f"($Re_\\theta$≈{a.retheta:.0f})", fontsize=13)
     fig.tight_layout()
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
