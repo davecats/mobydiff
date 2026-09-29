@@ -953,6 +953,12 @@ suite run FROM prepared files bit-exact vs the inline reference of step 0
 GPU `set_ibm_coeff` kernel is retired with the CPU prepare canonical. Two to
 three sessions.
 
+> **HANDOUT (2026-09-29): `docs/next_session_prepare_everything.md`** —
+> increments 7-0 … 7-4 with their gates, the list of the 23 live inis without
+> `[blocks] nb` (incl. the suite case `wf180_y30`, grid 8 × 6 × 8, which
+> takes `nb = 8 6 8`) and of the 9 inline-analytic-IBM cases that become
+> prepare+solve pairs, and the inherited landmines. Not started.
+
 **Step 8 — F1, flux-form viscous stencil (numerics change).** The plan entry
 in section 9. Gates as stated there; run it in the same session as the
 stretched-case re-validation so the RANS channel and Blasius numbers are

@@ -1,5 +1,7 @@
 # Next session: numerics review, steps 0–5
 
+NEXT: step 7, handout `docs/next_session_prepare_everything.md` (2026-09-29).
+
 STATUS UPDATE (2026-09-27, second session): **STEP 6 DONE** on top of 0–5 —
 the boundary rows are ONE affine write from tables resolved at init
 (`bcKind/bcW/bcC`, velocity + pressure + scalar columns), `apply_bc` is

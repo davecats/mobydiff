@@ -1951,7 +1951,12 @@ immersed boundary. Phased, each phase verified before the next:
   columns, `apply_bc(blk, bc, vars, outflow_copy)` generic, `apply_scalar_bc_q`
   deleted) — NOT exchange entries, since the same-level copy entries read
   physical ghosts and pack runs first (reason in the review). Every step
-  gated `max_abs 0` (step 6: 61 comparisons, nofma + production).
+  gated `max_abs 0` (step 6: 61 comparisons, nofma + production). **NEXT is
+  step 7 (prepare does ALL preprocessing): handout
+  `docs/next_session_prepare_everything.md`** — five gated increments,
+  `nb` becomes mandatory (23 live inis gain one), the rank-box layout, the
+  legacy coefficient reader, the inline classify dispatch and the device
+  coefficient kernel go, one builder with two entry points.
 
 ## Verification
 
