@@ -1934,6 +1934,12 @@ immersed boundary. Phased, each phase verified before the next:
   is one formula, `lapM = d1/hm, lapP = d1/hp`; it is a numerics change
   (truncation-level moves on stretched cases) and is scheduled with the
   implicit-diffusion work or the stretched-case re-validation, not alone.
+  **F1 IS DONE (2026-09-30, step 8; review section 10 MEASURED):** the
+  cell-centred branch of `slice_grid_direction` is the flux form, gated by
+  `src/test_stencil.f90` (48/48 telescoping + symmetry identities), the
+  nofma suites (uniform lines round-off ≤ 1e-13, stretched truncation-level)
+  and the converged turb180 (T2 PASS, u_tau 1.0000). Owed: the Blasius and
+  KMM180 stretched re-validations (`docs/next_session_after_step7.md`).
   **Section 10 of that review is the execution sequence; steps 0–6 are DONE
   (2026-09-27, `docs/next_session_numerics_steps.md` STATUS):** reference
   binaries `~/numrev_ref_binaries` (commit `6db60ef`); F3 RETRACTED (the B0
@@ -2005,9 +2011,13 @@ immersed boundary. Phased, each phase verified before the next:
   (7-0), `5d95937 -> 91f01cc` (7-1/7-2), `18b95c1 -> fc7f05e` (7-3),
   `3461610 -> 0d2d18f` (7-4), `da64b37 -> 13fb213` (the separation). 7-5 (a per-leaf weight
   column + weighted Morton split) is the plan entry, not started. **NEXT:
-  `docs/next_session_after_step7.md`** — the HoreKa campaign drivers still
-  launch without a case file (item 1, blocks every campaign), the
-  `coeff_file` alias retirement behind a new reference set, then step 8.
+  `docs/next_session_after_step7.md`** — its loose ends 1, 2, 4, 5 and step 8
+  (F1) are DONE 2026-09-30 (STATUS block there: drivers prepare the case
+  file beside the binary's own checkout, NOT yet verified on the cluster;
+  `[ibm] coeff_file` RETIRED, `tools/set_case_file.sh` for drivers; the
+  turb180 T2 gate re-measured at niter 12; the archived Blasius IC generator
+  found unusable). Owed: the Blasius + KMM180 F1 re-validations, a fresh
+  reference set cut AFTER F1, then step 9.
 
 ## Verification
 

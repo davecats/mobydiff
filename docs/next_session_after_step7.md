@@ -173,7 +173,28 @@ refined blocks) and a weighted prefix sum replacing the closed-form
 `zorder_start/count`; results stay rank-count independent because the
 split moves work, never arithmetic. Not started; not needed for step 8.
 
-## Then: step 8 — F1, the flux-form viscous stencil
+## STEP 8 — F1, the flux-form viscous stencil: DONE 2026-09-30 (two re-validations owed)
+
+Implemented as the plan entry says (`slice_grid_direction`: cell-centred
+directions `lapM = 1/(hm·width)`, `lapP = 1/(hp·width)`; the staggered
+direction keeps the Taylor spelling, which is the same number). Gated by the
+new `src/test_stencil.f90` (`stencil_test`, 48/48 identities to ≤ 6.5e-14),
+the nofma suites CPU+GPU (uniform lines round-off, stretched truncation-level
+-- every number in the review's section 10 step 8 MEASURED block) and the
+converged turb180 RANS channel on its natural line (T2 gate PASS, u_tau
+1.0008 -> 1.0000, baseline vs F1 in the session scratch `turb180_base/` and
+`turb180_f1/`). `docs/numerical-methods.md` states the flux form.
+OWED, each needs its own run: (a) the Blasius precursor gate -- port
+`make_blasius_ic.py` first (finding above); (b) a KMM180 statistics
+comparison against the archived reference (`mobydiff.scalar/tutorials/
+channel_kmm180/`, remote GPU, thousands of steps). Until then the F1 change
+is validated on ONE stretched case (natural, RANS) and on the operator
+identities, not on a laminar stretched case.
+**The next reference set must be cut AFTER this commit** (the suites now
+read ulps against step7b on uniform lines, so step7b is no longer a
+max_abs-0 reference for anything downstream of the momentum predictor).
+
+## (plan text, as written before the work)
 
 Review section 9 (F1) and section 10 step 8. `slice_grid_direction` uses
 the Taylor three-point `2/(hm(hm+hp))` weights for every variable, which is

@@ -542,9 +542,8 @@ end subroutine solve_geom_ratio
 ! finite-difference metrics for a window of nLocal cells starting at the
 ! 1-based global cell index `first` of a given global node line.
 !
-! This is shared by the rank-local grid setup (init_grid_direction above) and
-! by the per-block metric setup in the blocks module, so the discrete
-! operators are defined in exactly one place.
+! This is the per-block metric setup's one source (blocks.f90), so the
+! discrete operators are defined in exactly one place.
 subroutine slice_grid_direction(node, coord, d1, lapM, lap0, lapP, nGlobal, first, nLocal, &
         length, periodic, dir)
     real(C_DOUBLE), intent(in) :: node(0:)
@@ -558,6 +557,7 @@ subroutine slice_grid_direction(node, coord, d1, lapM, lap0, lapP, nGlobal, firs
 
     integer :: i, var, n, loCoord, hiCoord
     real(C_DOUBLE) :: hm, hp
+    real(C_DOUBLE) :: width(0:nLocal+1)   ! the variable's own control-volume width
 
     n = int(nGlobal)
     loCoord = lbound(coord,1)
@@ -578,23 +578,43 @@ subroutine slice_grid_direction(node, coord, d1, lapM, lap0, lapP, nGlobal, firs
         lap0(:,var) = 0.0d0
         lapP(:,var) = 0.0d0
 
-        ! First-derivative inverse spacings connect the opposite staggering.
+        ! First-derivative inverse spacings connect the opposite staggering:
+        ! the width of the variable's own control volume (centre to centre
+        ! for a face-staggered DOF, face to face for a cell-centred one).
         do i = 0, nLocal+1
             if (is_face_staggered(dir, var)) then
-                d1(i,var) = 1.0d0 / (cell_center_at(node, n, length, int(first) + i - 1, periodic) &
-                                   - cell_center_at(node, n, length, int(first) + i - 2, periodic))
+                width(i) = cell_center_at(node, n, length, int(first) + i - 1, periodic) &
+                         - cell_center_at(node, n, length, int(first) + i - 2, periodic)
             else
-                d1(i,var) = 1.0d0 / (face_at(node, n, length, int(first) + i - 1, periodic) &
-                                   - face_at(node, n, length, int(first) + i - 2, periodic))
+                width(i) = face_at(node, n, length, int(first) + i - 1, periodic) &
+                         - face_at(node, n, length, int(first) + i - 2, periodic)
             end if
+            d1(i,var) = 1.0d0 / width(i)
         end do
 
-        ! Three-point second-derivative stencil on nonuniform spacing.
+        ! Second-derivative stencil = the FLUX form on that control volume
+        ! (numerics review F1, step 8):  L u = [(u_{i+1}-u_i)/hp - (u_i-u_{i-1})/hm] / width,
+        ! which telescopes to the two end fluxes and is symmetric in the
+        ! volume-weighted inner product on ANY node line. In a component's
+        ! face-staggered direction the width is (hm+hp)/2 by construction
+        ! (the DOF sits midway between two cell centres), so the flux form
+        ! IS the Taylor three-point stencil 2/(hm(hm+hp)) -- kept in that
+        ! spelling so the direction stays bit-exact. In a cell-centred
+        ! direction the width is the cell itself, which equals (hm+hp)/2 only
+        ! on a uniform line: the Taylor weights used here until 2026-09-30
+        ! were non-conservative and non-symmetric on every stretched line
+        ! (KMM180 natural line: first-cell weight 0.913x the flux weight),
+        ! and inconsistent with the flux-form SGS and scalar diffusion.
         do i = 1, nLocal
             hm = coord(i,var) - coord(i-1,var)
             hp = coord(i+1,var) - coord(i,var)
-            lapM(i,var) = 2.0d0 / (hm * (hm + hp))
-            lapP(i,var) = 2.0d0 / (hp * (hm + hp))
+            if (is_face_staggered(dir, var)) then
+                lapM(i,var) = 2.0d0 / (hm * (hm + hp))
+                lapP(i,var) = 2.0d0 / (hp * (hm + hp))
+            else
+                lapM(i,var) = 1.0d0 / (hm * width(i))
+                lapP(i,var) = 1.0d0 / (hp * width(i))
+            end if
             lap0(i,var) = -(lapM(i,var) + lapP(i,var))
         end do
     end do

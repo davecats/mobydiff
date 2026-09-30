@@ -545,7 +545,7 @@ section-4 unification (DONE in reduced form, step 6), F1 (its own validation rou
 F7, then the section-7 (c) implicit solid if the CHT campaign is to be re-run
 at `niter = 12`.
 
-### Plan item: F1, the flux-form viscous stencil (added 2026-09-27)
+### Plan item: F1, the flux-form viscous stencil (added 2026-09-27; DONE 2026-09-30, section 10 step 8 MEASURED)
 
 **Do the two forms coincide in this code?** Only where `Δ = (hm+hp)/2`, and
 that is guaranteed in exactly one place: a component's face-staggered
@@ -1108,6 +1108,34 @@ three sessions.
 in section 9. Gates as stated there; run it in the same session as the
 stretched-case re-validation so the RANS channel and Blasius numbers are
 re-measured once, not twice. One session plus remote GPU reruns.
+**MEASURED (DONE 2026-09-30, `docs/next_session_after_step7.md` STEP 8).**
+`slice_grid_direction` builds the flux form on the variable's own control
+volume: `lapM = 1/(hm·width)`, `lapP = 1/(hp·width)` in a cell-centred
+direction (`width` = the cell, computed once beside `d1`), the Taylor
+spelling `2/(hm(hm+hp))` kept textually in the face-staggered direction
+where the two coincide. New unit test `src/test_stencil.f90`
+(`build_cpu/stencil_test`): for uniform / geometric r = 1.10 / cosine /
+tanh lines, all three directions, all four variables, the telescoping
+identity holds to ≤ 2.7e-15 and the volume-weighted symmetry to ≤ 6.5e-14
+(48/48); the informational column puts the OLD weights 2.4 % / 33 % / 4.2 %
+off the flux weights on those lines and 0 on uniform and staggered ones.
+Suites vs `~/step7b_ref_binaries` at nofma, CPU AND GPU digit for digit:
+uniform-line cases move at ROUND-OFF only (les_ibm ± refine u ≤ 8.2e-14,
+pn ≤ 1.5e-12; Beltrami 1.0e-14 / 4.9e-14; det/conserve 1.1e-14 / 2.9e-13;
+lam30t 1e-37; uniform3, conduction, prsweep, wf180_y30 EXACTLY 0) — the
+cell width and the centre-to-centre spacings round differently, so the
+"bit-exact on uniform lines" half is ulps, not zero, as the plan allowed;
+stretched cases move at truncation level over 20 steps (min_channel u
+7.7e-4, turb180 1.2e-3, turbsst 9.3e-4, the turbulent LES channels
+turbles/turbslab/detles 2.2-2.4e-2 on a chaotic field). Converged RANS
+turb180 (natural line, GPU, 132 565 steps, ONE binary lineage, baseline
+run the same morning at niter 12): T2 gate PASS both before and after —
+u_tau 1.0008 → **1.0000**, log-law max dev 0.049 → 0.050 (tol 0.06), U+
+centreline 18.16 both (DNS 18.20); the converged field moved 7.8e-3 in u
+(0.05 % of the velocity scale), 1.7e-1 in omega (of 8.5e4). OWED (the two
+other stretched re-validations): the Blasius precursor (its archived IC
+generator diverges on today's snapshot layout — finding in the handout) and
+a KMM180 statistics comparison against the archived reference (remote GPU).
 
 **Step 9 — F7, exact penalization factor (numerics change at cut cells).**
 `update_ibm_mu` produces two factors, `muA = B/(λΔt + B)` on `q` and

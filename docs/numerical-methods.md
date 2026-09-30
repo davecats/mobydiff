@@ -38,7 +38,12 @@ Each direction can be stretched independently (`[grid.x/y/z] distribution`):
   layers); `geometric`; or an explicit node line from `nodes_file`.
 
 Metric terms from the stretching are carried per cell so the difference operators stay
-second order on the non-uniform mesh.
+second order on the non-uniform mesh. Every diffusion operator (molecular viscous term,
+SGS/eddy-viscosity correction, scalar diffusion) is the **flux form** on the variable's own
+control volume: the two face gradients divided by the volume width, which telescopes to the
+boundary fluxes exactly and is symmetric in the volume-weighted inner product on any node
+line (since 2026-09-30 for the molecular term too; the earlier Taylor three-point weights
+coincide with it only where the point is the midpoint of its control volume).
 
 ## Time integration
 
