@@ -29,7 +29,7 @@ in both (the forced channel's wall stress). Against KMM/Moser Re_tau 180
 (U+ centreline 18.3, u'+ peak 2.66 at y+ 15, v'+ 0.84, w'+ 1.08, -<u'v'>+ 0.73)
 both runs sit within ~1 %, U+ centreline +1.1 %.
 
-LANDMINE (fixed live, in tools/README of remote-hosts memory): two separate
+LANDMINE (fixed live during these runs): two separate
 `mpirun -n 1` on istmcetus both bind to core 0 and one rank sits on the wrong
 NUMA node -- GPU utilisation 67-71 % instead of 98 %; `taskset -pc` each
 rank onto its GPU's node (GPU0 cpus 0-63, GPU1 64-127).
