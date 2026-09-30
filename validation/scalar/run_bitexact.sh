@@ -66,7 +66,7 @@ for entry in "${CASES[@]}"; do
           pfx="${tag}_${name}_${side}"
           short_ini "$ini" ".${pfx}.ini" "$steps" "$pfx"
           rm -f "${pfx}_"*.h5
-          rm -f ".${pfx}.case.h5"   # step 7: a fresh case file per side, then solve
+          rm -f "${pfx}.case.h5"   # step 7: a fresh case file per side (the solver's default name, no leading dot)
           "$ROOT/tools/prepare_if_missing.sh" "$cranks" "$bin" ".${pfx}.ini" ".${pfx}.prep.log" \
               || { echo "   PREPARE FAILED ($side) -- see .${pfx}.prep.log"; exit 2; }
           if ! mpirun -n "$cranks" "$bin" ".${pfx}.ini" > ".${pfx}.log" 2>&1; then
