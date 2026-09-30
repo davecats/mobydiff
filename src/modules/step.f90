@@ -154,7 +154,7 @@ contains
         real(C_DOUBLE) :: mu_u, mu_v, mu_w
         real(C_DOUBLE) :: ire
         real(C_DOUBLE) :: forcing(1:3)
-        logical :: use_eddy_viscosity
+        logical :: use_eddy_viscosity, skew
 
         nx = int(blk%nb(1))
         ny = int(blk%nb(2))
@@ -162,6 +162,18 @@ contains
         nBlocks = int(blk%nBlocks)
         ire = 1.0d0/dns%re
         forcing = dns%forcing
+        ! Skew-symmetric convection is hardwired (S3 lockdown), so `skew` is
+        ! ALWAYS true -- it exists for the GPU register scheduler, not as a
+        ! switch. When the lockdown removed the `if (skew)` guards around the
+        ! three corrections below, the compiler used the shorter live ranges
+        ! to cut the kernel from 128 to 100 registers, which bought no
+        ! occupancy (the kernel is capped by grid/block shape) and lengthened
+        ! the dependency chains: +11 % on the kernel, 1.3-2.0 % of the step
+        ! (results_horeka_2026-09-26.md, ncu job 5163917). A guard the
+        ! compiler cannot fold restores the 128-register schedule for one
+        ! never-taken branch. It is derived from runtime data on purpose: a
+        ! literal .true. would be folded away again.
+        skew = dns%re > 0.0d0
         use_eddy_viscosity = .false.
         if (present(turb)) use_eddy_viscosity = turbulence_is_enabled(turb) .and. allocated(turb%nut)
 
@@ -170,7 +182,7 @@ contains
         ! its own physLow mask.
         !$omp target teams distribute parallel do collapse(4) &
         !$omp& map(to: dt_alpha, dt_beta, dt_gamma, &
-        !$omp& ire, forcing(1:3), &
+        !$omp& ire, forcing(1:3), skew, &
         !$omp& blk%physLow, blk%d1x, blk%d1y, blk%d1z, &
         !$omp& blk%lapX, blk%lapY, blk%lapZ, blk%q, ibm%mu) &
         !$omp& map(tofrom: blk%qs, blk%oldrhs) &
@@ -238,13 +250,15 @@ contains
                         ! discrete divergence-freedom, which the incremental
                         ! projection and 2:1 interface halos never grant
                         ! (the C11 v1 interface instability).
-                        rhsu = rhsu + 0.25d0*blk%q(i,j,k,VAR_U,b)*( &
-                                ( blk%q(i,j,k,VAR_U,b)+blk%q(ip,j,k,VAR_U,b) &
-                                 -blk%q(im,j,k,VAR_U,b)-blk%q(i,j,k,VAR_U,b))*blk%d1x(i,VAR_U,b) &
-                               +( blk%q(im,jp,k,VAR_V,b)+blk%q(i,jp,k,VAR_V,b) &
-                                 -blk%q(im,j,k,VAR_V,b)-blk%q(i,j,k,VAR_V,b))*blk%d1y(j,VAR_U,b) &
-                               +( blk%q(im,j,kp,VAR_W,b)+blk%q(i,j,kp,VAR_W,b) &
-                                 -blk%q(im,j,k,VAR_W,b)-blk%q(i,j,k,VAR_W,b))*blk%d1z(k,VAR_U,b))
+                        if (skew) then
+                            rhsu = rhsu + 0.25d0*blk%q(i,j,k,VAR_U,b)*( &
+                                    ( blk%q(i,j,k,VAR_U,b)+blk%q(ip,j,k,VAR_U,b) &
+                                     -blk%q(im,j,k,VAR_U,b)-blk%q(i,j,k,VAR_U,b))*blk%d1x(i,VAR_U,b) &
+                                   +( blk%q(im,jp,k,VAR_V,b)+blk%q(i,jp,k,VAR_V,b) &
+                                     -blk%q(im,j,k,VAR_V,b)-blk%q(i,j,k,VAR_V,b))*blk%d1y(j,VAR_U,b) &
+                                   +( blk%q(im,j,kp,VAR_W,b)+blk%q(i,j,kp,VAR_W,b) &
+                                     -blk%q(im,j,k,VAR_W,b)-blk%q(i,j,k,VAR_W,b))*blk%d1z(k,VAR_U,b))
+                        end if
 
                         blk%qs(i,j,k,VAR_U,b) = blk%q(i,j,k,VAR_U,b) + dt_alpha*rhsu &
                             + dt_beta*blk%oldrhs(i,j,k,VAR_U,b) - dt_gamma*dpx
@@ -287,13 +301,15 @@ contains
                                     +(vw_p-vw_m)*blk%d1z(k,VAR_V,b)) &
                             + forcing(VAR_V) &
                             + ire*(diff_vx + diff_vy + diff_vz) )
-                        rhsv = rhsv + 0.25d0*blk%q(i,j,k,VAR_V,b)*( &
-                                ( blk%q(ip,jm,k,VAR_U,b)+blk%q(ip,j,k,VAR_U,b) &
-                                 -blk%q(i,jm,k,VAR_U,b)-blk%q(i,j,k,VAR_U,b))*blk%d1x(i,VAR_V,b) &
-                               +( blk%q(i,j,k,VAR_V,b)+blk%q(i,jp,k,VAR_V,b) &
-                                 -blk%q(i,jm,k,VAR_V,b)-blk%q(i,j,k,VAR_V,b))*blk%d1y(j,VAR_V,b) &
-                               +( blk%q(i,jm,kp,VAR_W,b)+blk%q(i,j,kp,VAR_W,b) &
-                                 -blk%q(i,jm,k,VAR_W,b)-blk%q(i,j,k,VAR_W,b))*blk%d1z(k,VAR_V,b))
+                        if (skew) then
+                            rhsv = rhsv + 0.25d0*blk%q(i,j,k,VAR_V,b)*( &
+                                    ( blk%q(ip,jm,k,VAR_U,b)+blk%q(ip,j,k,VAR_U,b) &
+                                     -blk%q(i,jm,k,VAR_U,b)-blk%q(i,j,k,VAR_U,b))*blk%d1x(i,VAR_V,b) &
+                                   +( blk%q(i,j,k,VAR_V,b)+blk%q(i,jp,k,VAR_V,b) &
+                                     -blk%q(i,jm,k,VAR_V,b)-blk%q(i,j,k,VAR_V,b))*blk%d1y(j,VAR_V,b) &
+                                   +( blk%q(i,jm,kp,VAR_W,b)+blk%q(i,j,kp,VAR_W,b) &
+                                     -blk%q(i,jm,k,VAR_W,b)-blk%q(i,j,k,VAR_W,b))*blk%d1z(k,VAR_V,b))
+                        end if
 
                         blk%qs(i,j,k,VAR_V,b) = blk%q(i,j,k,VAR_V,b) + dt_alpha*rhsv &
                             + dt_beta*blk%oldrhs(i,j,k,VAR_V,b) - dt_gamma*dpy
@@ -336,13 +352,15 @@ contains
                                      +(ww_p-ww_m)*blk%d1z(k,VAR_W,b)) &
                             + forcing(VAR_W) &
                             + ire*(diff_wx + diff_wy + diff_wz) )
-                        rhsw = rhsw + 0.25d0*blk%q(i,j,k,VAR_W,b)*( &
-                                ( blk%q(ip,j,km,VAR_U,b)+blk%q(ip,j,k,VAR_U,b) &
-                                 -blk%q(i,j,km,VAR_U,b)-blk%q(i,j,k,VAR_U,b))*blk%d1x(i,VAR_W,b) &
-                               +( blk%q(i,jp,km,VAR_V,b)+blk%q(i,jp,k,VAR_V,b) &
-                                 -blk%q(i,j,km,VAR_V,b)-blk%q(i,j,k,VAR_V,b))*blk%d1y(j,VAR_W,b) &
-                               +( blk%q(i,j,k,VAR_W,b)+blk%q(i,j,kp,VAR_W,b) &
-                                 -blk%q(i,j,km,VAR_W,b)-blk%q(i,j,k,VAR_W,b))*blk%d1z(k,VAR_W,b))
+                        if (skew) then
+                            rhsw = rhsw + 0.25d0*blk%q(i,j,k,VAR_W,b)*( &
+                                    ( blk%q(ip,j,km,VAR_U,b)+blk%q(ip,j,k,VAR_U,b) &
+                                     -blk%q(i,j,km,VAR_U,b)-blk%q(i,j,k,VAR_U,b))*blk%d1x(i,VAR_W,b) &
+                                   +( blk%q(i,jp,km,VAR_V,b)+blk%q(i,jp,k,VAR_V,b) &
+                                     -blk%q(i,j,km,VAR_V,b)-blk%q(i,j,k,VAR_V,b))*blk%d1y(j,VAR_W,b) &
+                                   +( blk%q(i,j,k,VAR_W,b)+blk%q(i,j,kp,VAR_W,b) &
+                                     -blk%q(i,j,km,VAR_W,b)-blk%q(i,j,k,VAR_W,b))*blk%d1z(k,VAR_W,b))
+                        end if
 
                         blk%qs(i,j,k,VAR_W,b) = blk%q(i,j,k,VAR_W,b) + dt_alpha*rhsw &
                             + dt_beta*blk%oldrhs(i,j,k,VAR_W,b) - dt_gamma*dpz

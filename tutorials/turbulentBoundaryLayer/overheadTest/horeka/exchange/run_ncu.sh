@@ -80,7 +80,10 @@ for cfg in $CONFIGS; do
         "$EXE" config.ini > ncu.csv 2> ncu.log )
     rc=$?
     # Singleton MPI fallback if the launcher is the problem rather than ncu.
-    if [ $rc -ne 0 ] && ! grep -q jacobi "$run/ncu.csv" 2>/dev/null; then
+    # Success is judged on the kernel regex itself, not on a literal name: with
+    # KERNEL_RE=step_momentum the 09-26 run (job 5163917) printed FAILED over a
+    # CSV that was complete.
+    if [ $rc -ne 0 ] && ! grep -qE "$KERNEL_RE" "$run/ncu.csv" 2>/dev/null; then
         echo "    mpirun path failed; retrying without a launcher"
         ( cd "$run" && "$NCU" --csv --page raw --metrics "$METRICS" \
             --kernel-name "regex:$KERNEL_RE" \
@@ -88,11 +91,11 @@ for cfg in $CONFIGS; do
             "$EXE" config.ini > ncu.csv 2> ncu.log )
         rc=$?
     fi
-    if [ $rc -ne 0 ] || ! grep -q "jacobi" "$run/ncu.csv" 2>/dev/null; then
+    if [ $rc -ne 0 ] || ! grep -qE "$KERNEL_RE" "$run/ncu.csv" 2>/dev/null; then
         echo "    FAILED (exit $rc) -- see $run/ncu.log"
         head -20 "$run/ncu.log" | sed 's/^/    /'
     else
-        echo "    $(grep -c jacobi "$run/ncu.csv") metric rows"
+        echo "    $(grep -cE "$KERNEL_RE" "$run/ncu.csv") metric rows"
     fi
     rm -f "$run"/overhead_*.h5
 done
