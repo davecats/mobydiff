@@ -1132,10 +1132,12 @@ turb180 (natural line, GPU, 132 565 steps, ONE binary lineage, baseline
 run the same morning at niter 12): T2 gate PASS both before and after —
 u_tau 1.0008 → **1.0000**, log-law max dev 0.049 → 0.050 (tol 0.06), U+
 centreline 18.16 both (DNS 18.20); the converged field moved 7.8e-3 in u
-(0.05 % of the velocity scale), 1.7e-1 in omega (of 8.5e4). OWED (the two
-other stretched re-validations): the Blasius precursor (its archived IC
-generator diverges on today's snapshot layout — finding in the handout) and
-a KMM180 statistics comparison against the archived reference (remote GPU).
+(0.05 % of the velocity scale), 1.7e-1 in omega (of 8.5e4). Blasius
+precursor (laminar, one-sided natural y, recovered from `4f819fc^`; GPU,
+t = 2000 from the analytic IC): gate numbers unchanged to the printed digit
+between the pre-F1 and F1 binaries (theta 1.33 %, H 0.45-0.46 % at
+niter 12), fields 3.4e-5 apart in u. OWED: the KMM180 statistics
+comparison against the archived reference (remote GPU).
 
 **Step 9 — F7, exact penalization factor (numerics change at cut cells).**
 `update_ibm_mu` produces two factors, `muA = B/(λΔt + B)` on `q` and

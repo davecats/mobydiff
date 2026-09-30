@@ -69,24 +69,41 @@ ids cited below: `d2249b1 -> 59ea085` (7-0), `5d95937 -> 91f01cc`,
   left the tree; README/ini/setup comments follow.
 - **7**: plan entry only, untouched.
 
-FOUND ALONG THE WAY, not fixed: **the B0 Blasius precursor case cannot be
-re-run from its archived analytic IC.** Recovered from `4f819fc^`
-(`topbc_outlet/blasius2d.ini` == the original `d82a97c` ini; niter 6 -> 12,
-`[case] file` added): the documented flow (mint a 1-step template ->
-`make_blasius_ic.py` -> run) DIVERGES by t ~ 14 (dt collapses to 2e-6,
-|p| 1e10) -- and IDENTICALLY, to every digit, on `6db60ef`, `59ea085` and
-HEAD, so it is not a step 4-7 regression; the Dirichlet-top variant from the
-same IC runs but misses Blasius by 18 % in theta. The IMPULSIVE uniform
-start (no restart) is STABLE on HEAD (dt at its 0.5 cap to t = 2000, u in
-[0.011, 1.007]) but is not steady at t = 2000 (max |u(2000) - u(1000)| 0.07)
-and reads theta 5-13 % off with v_top up to 3.4 -- the ringing the analytic
-IC was introduced to avoid. Diagnosis: the archived `make_blasius_ic.py`
-scatters onto today's snapshot layout wrongly (its y profile looks right in a
-mid-slice, so it is a staggering/face convention, not an axis swap). The
-2026-09-27 F3 note's "main is stable" on this configuration is unexplained
-(it may have used the uniform start). OWED: port the IC generator, re-gate B0
-(theta <= 1.13 %, H <= 0.34 %), then it serves the F1 stretched re-validation.
-Scratch: the session's `scratchpad/blasius/` (IC, runs, checker output).
+FOUND ALONG THE WAY — first misdiagnosed, then resolved the same day:
+**the B0 Blasius precursor case reproduces on `main`, and its IC generator
+is fine.** Recovered from `4f819fc^` (`topbc_outlet/blasius2d.ini` == the
+original `d82a97c` ini; niter 6 -> 12, `[case] file` added). My first
+attempt minted the one-step TEMPLATE from the Dirichlet-top VARIANT's ini,
+and the analytic-IC run then diverged by t ~ 14 (dt collapsing to 2e-6,
+|p| 1e10), identically to every digit on `6db60ef`, `59ea085` and HEAD,
+while the uniform start was stable. The snapshot metadata explains it: a
+restart file carries its `bc_type`/`bc_value` rows and the ini overrides
+only the rows it sets explicitly, so the outlet-ini run restarted with the
+top face still pinned to the variant's Dirichlet u = 1, v = 1 -- a uniform
+inflow through the top, fatal on any binary. LESSON, general: **mint a
+restart template from the SAME ini whose faces the run will use**; a
+template from a sibling variant silently transplants its boundary rows.
+Re-minted from the outlet ini, the documented flow works on HEAD (F1
+binary, GPU): plain Jacobi niter 12 -> theta 1.33 %, H 0.46 %, du/Ue
+2.4e-3, dv 0.125 (gate PASS; B0 recorded 1.13 / 0.34 / 2.4e-3 / 0.066 on
+the pre-review code at niter 6); niter 6 -> 1.72 % / 0.70 %; dt at its 0.5
+cap throughout, |p| < 1e-2. The 2026-09-27 F3 note's "main is stable"
+therefore stands. Scratch: the session's `scratchpad/blasius/outlet_ic/`.
+PROJECTION SENSITIVITY on this case (same IC, HEAD binary, t = 2000):
+red-black SOR 1.5 niter 6 -> theta 1.55 %, H 0.58 %; Chebyshev-Jacobi
+niter 12 -> 1.55 % / 0.58 % (identical to four digits, i.e. the converged
+projection); Jacobi 12 -> 1.33 / 0.46; Jacobi 6 -> 1.72 / 0.70. All PASS
+the 2 % / 2 % / 1 % / 15 % bands; the residual differences between the
+Jacobi runs are the projection's own truncation on the outlet faces. The
+Chebyshev run holds dt = 0.5 to t = 2000 with |p| < 5e-3 -- the B0-era
+instability (e-fold ~36 t.u.) is absent, so the ini's "NO accel" comment
+is a stale warning on main.
+**F1 ON THIS CASE (the laminar stretched re-validation, DONE):** the same
+IC on the pre-F1 `~/step7b_ref_binaries` GPU binary gives theta 1.33 % /
+H 0.45 % (niter 12) and 1.71 % / 0.70 % (niter 6) -- unchanged to the
+printed digit -- and the t = 2000 fields differ by 3.4e-5 in u, 1.4e-6 in
+v, 2.9e-6 in p (u scale 1). The flux-form change is invisible at the gate
+level on a laminar one-sided natural line.
 
 ## The contract that now holds (one paragraph)
 
@@ -184,12 +201,12 @@ the nofma suites CPU+GPU (uniform lines round-off, stretched truncation-level
 converged turb180 RANS channel on its natural line (T2 gate PASS, u_tau
 1.0008 -> 1.0000, baseline vs F1 in the session scratch `turb180_base/` and
 `turb180_f1/`). `docs/numerical-methods.md` states the flux form.
-OWED, each needs its own run: (a) the Blasius precursor gate -- port
-`make_blasius_ic.py` first (finding above); (b) a KMM180 statistics
+DONE the same day: (a) the Blasius precursor gate (finding above: unchanged
+to the printed digit, fields 3.4e-5 apart). OWED: (b) a KMM180 statistics
 comparison against the archived reference (`mobydiff.scalar/tutorials/
 channel_kmm180/`, remote GPU, thousands of steps). Until then the F1 change
-is validated on ONE stretched case (natural, RANS) and on the operator
-identities, not on a laminar stretched case.
+is validated on two stretched cases (turb180 natural RANS, the Blasius
+laminar one-sided natural line) and on the operator identities.
 **The next reference set must be cut AFTER this commit** (the suites now
 read ulps against step7b on uniform lines, so step7b is no longer a
 max_abs-0 reference for anything downstream of the momentum predictor).

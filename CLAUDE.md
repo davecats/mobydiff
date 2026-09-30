@@ -2015,9 +2015,10 @@ immersed boundary. Phased, each phase verified before the next:
   (F1) are DONE 2026-09-30 (STATUS block there: drivers prepare the case
   file beside the binary's own checkout, NOT yet verified on the cluster;
   `[ibm] coeff_file` RETIRED, `tools/set_case_file.sh` for drivers; the
-  turb180 T2 gate re-measured at niter 12; the archived Blasius IC generator
-  found unusable). Owed: the Blasius + KMM180 F1 re-validations, a fresh
-  reference set cut AFTER F1, then step 9.
+  turb180 T2 gate re-measured at niter 12; the B0 Blasius case reproduces
+  on main once its template is minted from ITS OWN ini -- a restart file
+  carries boundary rows the ini does not override). Owed: the KMM180 F1
+  re-validation, a fresh reference set cut AFTER F1, then step 9.
 
 ## Verification
 
