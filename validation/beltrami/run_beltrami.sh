@@ -19,13 +19,16 @@ module load /opt/nvidia/hpc_sdk/modulefiles/nvhpc-hpcx-cuda13/26.3 2>/dev/null |
 export OMP_TARGET_OFFLOAD=MANDATORY
 # The analytic IC is selected by [flow] initial = beltrami in the inis.
 CHK=../../tools/check_beltrami.py
+# step 7: prepare the case file the solver will read, when it is missing
+PIM="$(cd ../.. && pwd)/tools/prepare_if_missing.sh"
 mkdir -p runs
 
 run() {  # run() <dir> <ini>
     local d="runs/$1"; mkdir -p "$d"; rm -f "$d"/beltrami_*.h5
     cp "$2" "$d/input.ini"
     [ -n "$NITER" ] && sed -i "s/^niter = .*/niter = $NITER/" "$d/input.ini"
-    ( cd "$d" && mpirun -x OMP_TARGET_OFFLOAD -n 1 "$BIN" input.ini > run.log 2>&1 )
+    ( cd "$d" && "$PIM" 1 "$BIN" input.ini \
+        && mpirun -x OMP_TARGET_OFFLOAD -n 1 "$BIN" input.ini > run.log 2>&1 )
     python3 "$CHK" "$(ls -1 "$d"/beltrami_*.h5 | sort -t_ -k2 -n | tail -1)"
 }
 

@@ -1958,10 +1958,18 @@ immersed boundary. Phased, each phase verified before the next:
   reads a CASE FILE — `[case] file` (default `<field_prefix>.case.h5`;
   `[ibm] coeff_file` is a one-release alias that prints a note; both set
   = error) — which is the single source of truth for grid, block size,
-  leaf table, face kinds and IBM coefficients. `moby_solve` builds it
-  IN-PROCESS when it is absent (`moby_solve input.ini --prepare` rebuilds),
-  through the SAME builder `moby_prepare` runs (`src/modules/prepare.f90`,
-  `prepare_case`), so every tutorial stays one command. `[blocks] nb` STAYS
+  leaf table, face kinds and IBM coefficients, written by `mpirun -n N
+  moby_prepare input.ini` (`src/modules/prepare.f90`, `prepare_case`; the
+  output name is resolved by the ONE function `case_file_name` both
+  executables use). `moby_solve` never builds one: a missing file stops
+  with the moby_prepare command printed, a stale one with the key named.
+  (The 7-3 in-process auto-prepare was REMOVED the same day at the user's
+  request -- preparing and solving stay separate with nothing repeated
+  between them.) Every gate driver runs `tools/prepare_if_missing.sh
+  <ranks> <solver> <ini>` before a solve: prepares the file the solver will
+  read only when it does not exist, with the SAME rank count (an unset nb is
+  one block per prepare rank) and the moby_prepare next to the solver (a
+  pre-step-7 reference binary has none and builds inline). `[blocks] nb` STAYS
   OPTIONAL: unset = one block per rank of the Cartesian layout the build
   runs on (the old rank box, stored in the file as `block_nb_auto` +
   `block_nb_ranks`; a file prepared on P ranks solves on any count that

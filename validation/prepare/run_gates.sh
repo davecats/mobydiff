@@ -36,7 +36,7 @@ run_case() { # <base> <steps-suffix-of-final-field> <ransgeom:0|1>
     pfx="$(grep '^field_prefix' "${base}.ini" | awk '{print $3}')"
     pfxf="${pfx}f"
 
-    rm -f "$case" "${base}_case_np4.h5" "${pfx}_${step}.h5" "${pfxf}_${step}.h5" \
+    rm -f "$case" "${base}_case_np4.h5" "${pfx}_${step}.h5" "${pfxf}_${step}.h5" "${pfx}.case.h5" \
         "${pfx}_ransgeom.h5" "${pfxf}_ransgeom.h5" "${base}_file.ini"
 
     # prepare (1 rank) + the rank-count-independence twin (4 ranks)
@@ -44,9 +44,13 @@ run_case() { # <base> <steps-suffix-of-final-field> <ransgeom:0|1>
     check "${base}: prepare (4 ranks)" mpirun -n 4 --oversubscribe "$BUILD/moby_prepare" "${base}.ini" "${base}_case_np4.h5"
     check "${base}: case file 1==4 ranks" $PY h5same.py "$case" "${base}_case_np4.h5"
 
-    # inline analytic reference vs the solve from the prepared file
+    # the default-named case file (`moby_prepare base.ini`, what a user types)
+    # vs the explicitly named twin: two prepares, two solves, one answer
     twin "$base" "$case" "$pfxf"
-    check "${base}: inline solve" mpirun -n 1 "$BUILD/main" "${base}.ini"
+    rm -f "${pfx}.case.h5"
+    check "${base}: prepare (default name)" mpirun -n 1 "$BUILD/moby_prepare" "${base}.ini"
+    check "${base}: default-named == named case file" $PY h5same.py "${pfx}.case.h5" "$case"
+    check "${base}: solve (default-named case file)" mpirun -n 1 "$BUILD/main" "${base}.ini"
     check "${base}: solve from case file" mpirun -n 1 "$BUILD/main" "${base}_file.ini"
     check "${base}: fields bit-exact" $CMP "${pfx}_${step}.h5" "${pfxf}_${step}.h5" un vn wn pn
     if [ "$rans" = 1 ]; then

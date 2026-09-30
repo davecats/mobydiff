@@ -30,6 +30,8 @@ run() {
     local ini=".gate_${tag}.ini"
     { cat "$body"; printf '\n[blocks]\n'; printf '%s\n' "$@"; } \
         | sed "s/^field_prefix = gate/field_prefix = gate_${tag}/" > "$ini"
+    "$ROOT/tools/prepare_if_missing.sh" "$ranks" "$BIN" "$ini" ".gate_${tag}.prep.log" \
+        || { echo "PREPARE FAILED $tag"; tail -4 ".gate_${tag}.prep.log"; fail=1; return 1; }
     if ! mpirun -n "$ranks" "$BIN" "$ini" > ".gate_${tag}.log" 2>&1; then
         echo "RUN FAILED $tag"; tail -4 ".gate_${tag}.log"; fail=1; return 1
     fi
@@ -77,6 +79,7 @@ echo
 echo "== 2:1 interface with non-cubic nb: uniform oblique flow must be EXACT ($MODE)"
 for f in uniform_rect uniform_rect_xyz; do
     pfx=$(grep '^field_prefix' "$f.ini" | awk '{print $3}')
+    "$ROOT/tools/prepare_if_missing.sh" "$RANKS" "$BIN" "$f.ini"
     if mpirun -n "$RANKS" "$BIN" "$f.ini" > ".$f.log" 2>&1; then
         grep -h "block refinement" ".$f.log" | tail -1
         "$PY" - "$pfx"_50.h5 "$f" <<'EOF' || fail=1

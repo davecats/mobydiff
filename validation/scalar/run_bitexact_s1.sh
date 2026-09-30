@@ -44,6 +44,9 @@ for entry in "${CASES[@]}"; do
             -e "s/^field_interval.*/field_interval = $steps/" \
             -e "s/^field_prefix.*/field_prefix = $pfx/" "$ini" > ".${pfx}.ini"
         rm -f "${pfx}_"*.h5
+        rm -f ".${pfx}.case.h5"   # step 7: a fresh case file per side, then solve
+        "$ROOT/tools/prepare_if_missing.sh" "$cranks" "$bin" ".${pfx}.ini" ".${pfx}.prep.log" \
+            || { echo "   PREPARE FAILED ($side) -- see .${pfx}.prep.log"; status=1; continue 2; }
         if ! mpirun -n "$cranks" "$bin" ".${pfx}.ini" > ".${pfx}.log" 2>&1; then
             echo "   RUN FAILED ($side) -- see .${pfx}.log"; status=1; continue 2
         fi

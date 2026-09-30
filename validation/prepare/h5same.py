@@ -7,7 +7,9 @@ installed on every machine).
 
 --ignore drops the named datasets from the comparison AND from the dataset
 lists, which is how the scalar gates check that declaring [scalar] adds
-coef_p_blocks to a prepared case file and changes nothing else."""
+coef_p_blocks to a prepared case file and changes nothing else;
+--ignore-attr does the same for root attributes (the case_inputs echo
+legitimately records what was declared)."""
 import sys
 
 import h5py
@@ -17,6 +19,11 @@ import numpy as np
 def main():
     argv = sys.argv[1:]
     ignore = set()
+    ignore_attr = set()
+    if "--ignore-attr" in argv:
+        cut = argv.index("--ignore-attr")
+        ignore_attr = set(argv[cut + 1:])
+        argv = argv[:cut]
     if "--ignore" in argv:
         cut = argv.index("--ignore")
         ignore = set(argv[cut + 1:])
@@ -40,8 +47,8 @@ def main():
                 print(f"{name}: values differ (max abs diff "
                       f"{np.max(np.abs(da.astype(np.float64) - db.astype(np.float64)))})")
                 ok = False
-        a_attrs = dict(a.attrs)
-        b_attrs = dict(b.attrs)
+        a_attrs = {k: v for k, v in a.attrs.items() if k not in ignore_attr}
+        b_attrs = {k: v for k, v in b.attrs.items() if k not in ignore_attr}
         if sorted(a_attrs) != sorted(b_attrs):
             print(f"attribute lists differ: {sorted(a_attrs)} vs {sorted(b_attrs)}")
             ok = False

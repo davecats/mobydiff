@@ -25,6 +25,7 @@ legacy-format files. The moby_prepare files keep all 4096 blocks too.)
 
 Runs (GPU recommended; one job at a time):
 
+    mpirun -n 1 ../../build_cpu/moby_prepare empty.ini       # its case file (the cyl_* inis name theirs)
     mpirun -n 1 ../../build_gpu/moby_solve cyl_re40.ini     # steady drag
     mpirun -n 1 ../../build_gpu/moby_solve cyl_re100.ini    # vortex shedding
     mpirun -n 1 ../../build_cpu/moby_solve empty.ini        # empty-domain zero force

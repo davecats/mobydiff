@@ -82,6 +82,9 @@ def main():
     dims_key_sub = [(r"^refine_levels = 1$", "refine_levels = 1\nrefine_dims = xz")] if xz else []
     ic = os.path.join(HERE, "IC_xz.h5") if xz else IC
     mpirun = ["mpirun", "-n", str(a.ranks)]
+    # step 7: prepare the case file the solver will read, when it is missing
+    # (same rank count as the solve: an unset nb is one block per prepare rank).
+    pim = os.path.join(ROOT, "tools", "prepare_if_missing.sh")
     dims_sub = [(r"^dims = .*$", f"dims = {a.ranks} 1 1")]
 
     # 0. initial condition
@@ -104,6 +107,7 @@ def main():
     make_ini(os.path.join(HERE, "transient.ini"), os.path.join(dirA, "input.ini"),
              [(r"^t_final = .*$", f"t_final = {a.t_transient}"),
               (r"^file = .*$", f"file = {ic}")] + dims_sub + dims_key_sub)
+    sh([pim, str(a.ranks), binary, "input.ini"], cwd=dirA)
     sh(mpirun + [binary, "input.ini"], cwd=dirA)
     restart = final_field(dirA)
     print(f"   transient final field: {restart}")
@@ -117,6 +121,7 @@ def main():
     make_ini(os.path.join(HERE, "developed.ini"), os.path.join(dirB, "input.ini"),
              [(r"^t_final = .*$", f"t_final = {t_end}"),
               (r"^file = .*$", f"file = {restart}")] + dims_sub + dims_key_sub)
+    sh([pim, str(a.ranks), binary, "input.ini"], cwd=dirB)
     sh(mpirun + [binary, "input.ini"], cwd=dirB)
 
     stats = os.path.join(dirB, "channel_stats.h5")

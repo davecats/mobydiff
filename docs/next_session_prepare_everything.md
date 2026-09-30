@@ -3,8 +3,13 @@
 STATUS (2026-09-29): **7-0 … 7-4 DONE and gated in one session** (review
 section 10, step 7 MEASURED: every number, and the control that explains the
 only non-zero GPU comparison). 7-5 is the plan entry below and is NOT
-started. Deviations from the text below, all recorded in the MEASURED
-block: the solver keeps `build_level_lines` (a pure function of the level-0
+started. ONE DESIGN REVERSAL after 7-4, at the user's request: 7-3's
+in-process auto-prepare (`moby_solve` building the case file when absent,
+`--prepare`) was REMOVED -- the executables stay separate, the solver refuses
+a missing file naming the `moby_prepare` command, `moby_prepare input.ini`
+defaults its output to the solver's name (`case_file_name`, config.f90), and
+the gate drivers call `tools/prepare_if_missing.sh` before every solve.
+Deviations from the text below, all recorded in the MEASURED block: the solver keeps `build_level_lines` (a pure function of the level-0
 line) instead of reading per-level lines from the file — the file carries
 level 0 only, as P3 wrote it; the "restart cross-check that STAYS" did not
 exist (only dataset extents were checked) and was ADDED; les_ibm's

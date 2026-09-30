@@ -10,6 +10,7 @@ gates (uniform flow, band-refined channels) are blind to it.
 Run and check (about a minute on a GPU):
 
 ```bash
+mpirun -n 1 ../../build_cpu/moby_prepare input.ini   # the case file, once
 mpirun -n 1 ../../build_gpu/main input.ini
 python3 ../../tools/check_interface_decay.py .
 ```

@@ -27,6 +27,8 @@ not, which is why it stayed stable at every Re.
 ## The two cases (run on GPU; CPU is ~80x slower)
 
     module load toolkits/nvhpc/25.9
+    mpirun -n 1 build_cpu/moby_prepare input_gpu.ini      # the case files, once
+    mpirun -n 1 build_cpu/moby_prepare input_gpu_noref.ini
     mpirun -n 1 build_gpu/moby_solve input_gpu.ini        # refined: 2:1 interface
     mpirun -n 1 build_gpu/moby_solve input_gpu_noref.ini  # control: uniform, no interface
 

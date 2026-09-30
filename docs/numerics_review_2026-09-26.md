@@ -1071,6 +1071,38 @@ three sessions.
 > `<field_prefix>.case.h5`, re-gated: freestream 9/9 (reflected fraction
 > 2.230e-2, the niter-12 value), 7-case CPU 7/7 + GPU 7/7, red-black GPU,
 > min_channel step-7 legs 5/5.
+>
+> **REVERSED (2026-09-30, at the user's request): no in-process prepare.**
+> "Keep prepare / solve separate without repetitions." The builder was one
+> routine with two callers, so no code was duplicated, but the solver
+> re-read the ini and re-built the grid inside `prepare_case`, applied the
+> restart metadata twice, carried the whole preprocessing in its binary and
+> answered "which rank layout" in two places. Now: `moby_solve` never
+> builds a case file — a missing one stops with the exact `mpirun -n N
+> moby_prepare input.ini` printed, a stale one with the key named;
+> `moby_prepare input.ini` defaults its output to the solver's name through
+> the ONE resolver `case_file_name` (config.f90); `--prepare` is gone. The
+> gate drivers (25 scripts, ~60 launch sites) call
+> `tools/prepare_if_missing.sh <ranks> <solver> <ini>` before a solve: it
+> resolves the file the solver will read and prepares it ONLY when absent —
+> a blind prepare would have recomputed the committed `ibm_coeff_case.h5`
+> and the zero-force twins the multilevel_body/refine2d inis point at — with
+> the same rank count as the solve and the moby_prepare next to the solver
+> (none beside a pre-step-7 reference: it builds inline). The tutorials
+> gained the explicit prepare line. FOUND: the P1 convention (prepare ini
+> names the STL, the solve ini drops it) made the input echo report the STL
+> line as stale on every conjugate/CHT/NACA case; `compare_case_inputs` is
+> now key-based with the GEOMETRY RULE — an ini naming no geometry source
+> accepts the file's stl_*/wall_* lines, one naming STL files must match
+> them — and `h5same.py --ignore-attr case_inputs` lets the S3 "coef_p_blocks
+> is the only change" gate ignore the echo, which legitimately records
+> `scalar_coef`. Re-gated with the drivers: step-7 driver + P0 + STL +
+> block_nb 92/92, 7-case CPU 1 + 4 ranks 16/16, 9-case 10/10, freestream /
+> red-black / RANS inlet / min_channel 1 == 2 == 3 == 4 (12/12), conjugate C1
+> + scalar S3 88 legs (S3's cylinder leg SKIPPED: its campaign restart is
+> not on this machine, as before), GPU 47 + the four known 1.1e-16 `theta`
+> legs. S4 is not runnable here either (needs `turbles_67600.h5` from the S2
+> LES campaign) and was not re-gated.
 
 **Step 8 — F1, flux-form viscous stencil (numerics change).** The plan entry
 in section 9. Gates as stated there; run it in the same session as the

@@ -20,10 +20,17 @@ results; this file only says WHAT each case exercises.
 ## The standard regression suite
 
 Since numerics review step 7 every run reads a CASE FILE (`[case] file`,
-default `<field_prefix>.case.h5`, built in-process when absent), so a suite
-run leaves one `<prefix>.case.h5` per output prefix beside the snapshots; the
-`les_ibm` case reads the committed `ibm_coeff_case.h5` (the exact conversion
-of the legacy `ibm_coeff.h5`, which the solver no longer reads).
+default `<field_prefix>.case.h5`) that `moby_prepare` writes from the same ini
+-- the solver never builds one and refuses a missing or stale file. Every
+driver here therefore runs `tools/prepare_if_missing.sh <ranks> <solver> <ini>`
+before a solve: it resolves the file the solver will read and prepares it
+only when it does not exist (the inis that name a committed or generated
+reference file are never recomputed), with the moby_prepare next to the
+solver binary and the SAME rank count as the solve (an unset `[blocks] nb`
+is one block per prepare rank). A suite run leaves one `<prefix>.case.h5`
+per output prefix beside the snapshots; the `les_ibm` case reads the
+committed `ibm_coeff_case.h5` (the exact conversion of the legacy
+`ibm_coeff.h5`, which the solver no longer reads).
 
 The cases below are the "7-case suite" (+ the scalar legs) used for every
 bit-exactness gate (`-Mnofma` / `-gpu=nofma` on both sides, `tools/h5maxdiff`

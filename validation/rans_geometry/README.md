@@ -43,9 +43,11 @@ Workflow:
 
 ```bash
 ./setup.sh                                   # block-table coeff files with dwall_blocks
-mpirun -n 1 ../../build_cpu/main flat_l1.ini
+mpirun -n 1 ../../build_cpu/main flat_l1.ini          # (name their prepared files)
 mpirun -n 1 ../../build_cpu/main flat_refine.ini
+mpirun -n 1 ../../build_cpu/moby_prepare wavy.ini     # the analytic cases: prepare, then solve
 mpirun -n 1 ../../build_cpu/main wavy.ini
+mpirun -n 1 ../../build_cpu/moby_prepare wavy_refine.ini
 mpirun -n 1 ../../build_cpu/main wavy_refine.ini
 mpirun -n 1 ../../build_cpu/walldist_test    # T1b gate b (sphere)
 python3 check_rans_geometry.py --mode flat  flat_l1_ransgeom.h5

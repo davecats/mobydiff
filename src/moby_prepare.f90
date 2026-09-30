@@ -1,9 +1,9 @@
-! moby_prepare: the standalone entry point of the case builder
-! (src/modules/prepare.f90, docs/prepare_solve_strategy.md). The solver
-! runs the identical case from the file ([case] file = <case.h5>) on any
-! rank count, bit-exact vs its inline path, and prepares in-process itself
-! when the file is absent -- this executable exists for preparing once,
-! elsewhere, or on a different rank count than the solve.
+! moby_prepare: the case builder's executable (src/modules/prepare.f90,
+! docs/prepare_solve_strategy.md). `mpirun -n N moby_prepare input.ini`
+! writes the case file moby_solve will look for ([case] file, else
+! <field_prefix>.case.h5) with N ranks' worth of blocks when [blocks] nb is
+! unset; the solver never builds one. A second argument names the output
+! explicitly (the gate drivers' twins).
 program moby_prepare
     use, intrinsic :: iso_c_binding
     use :: prepare, only: prepare_case
@@ -23,8 +23,7 @@ program moby_prepare
         stop
     end if
 
-    call prepare_case(input_file, output_file, c)
-    if (c%has_terminal) print *, "run the solver with [case] file = ", trim(output_file)
+    call prepare_case(input_file, trim(output_file), c)
     call comm_finalize(c)
 
 contains
@@ -38,7 +37,7 @@ contains
         integer :: argc, i, positional
 
         input_file = "input.ini"
-        output_file = "moby_case.h5"
+        output_file = ""
         show_help = .false.
         positional = 0
         argc = command_argument_count()
@@ -75,6 +74,7 @@ contains
     subroutine print_usage()
         print '(A)', "usage: moby_prepare [input.ini] [case.h5]"
         print '(A)', "       moby_prepare --input input.ini --output case.h5"
+        print '(A)', "       (no case.h5: the ini's [case] file, else <field_prefix>.case.h5)"
     end subroutine print_usage
 
 end program moby_prepare

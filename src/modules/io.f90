@@ -765,36 +765,117 @@ subroutine read_case_layout(dns, g, file_name, inputs, nb, refMask, rows, has_la
     end if
 end subroutine read_case_layout
 
-! Line-by-line comparison of two input echoes; the first difference is
-! reported with its key and both values, then the run stops.
+! Key-by-key comparison of the file's input echo with the ini's; the first
+! difference is reported with its key and both values, then the run stops.
+! THE GEOMETRY RULE: an ini that names NO geometry source (no stl_file --
+! the P1 convention, where the solve ini drops the STL and keeps only the
+! case file) accepts the file's geometry lines (stl_* and wall_*) as they
+! are: the coefficients in the file ARE its geometry. An ini that names STL
+! files must match the file's list and transform exactly.
 subroutine compare_case_inputs(fileEcho, iniEcho, file_name, has_terminal)
     character(len=*), intent(in) :: fileEcho, iniEcho, file_name
     logical, intent(in) :: has_terminal
 
-    integer :: fa, fb, ia, ib, nf, ni
-    character(len=:), allocatable :: fline, iline
+    integer, parameter :: MAXL = 256
+    character(len=256) :: fkey(MAXL), fval(MAXL), ikey(MAXL), ival(MAXL)
+    integer :: nf, ni, i, j
+    logical :: iniHasStl, fileHasStl, geometry
 
     if (fileEcho == iniEcho) return
-    fa = 1; ia = 1
-    nf = len(fileEcho); ni = len(iniEcho)
-    do
-        if (fa > nf .and. ia > ni) exit
-        fb = index(fileEcho(fa:), new_line("a"))
-        ib = index(iniEcho(ia:), new_line("a"))
-        if (fb == 0) then; fline = fileEcho(fa:nf); fa = nf + 1
-        else; fline = fileEcho(fa:fa+fb-2); fa = fa + fb; end if
-        if (ib == 0) then; iline = iniEcho(ia:ni); ia = ni + 1
-        else; iline = iniEcho(ia:ia+ib-2); ia = ia + ib; end if
-        if (fline /= iline) then
-            if (has_terminal) then
-                print *, "case file is STALE: ", trim(file_name)
-                print *, "   file has: ", fline
-                print *, "   ini  has: ", iline
-                print *, "   re-run moby_prepare, or moby_solve --prepare"
-            end if
-            error stop "case file does not match the ini"
+    call split_echo(fileEcho, fkey, fval, nf)
+    call split_echo(iniEcho, ikey, ival, ni)
+    iniHasStl = .false.
+    do i = 1, ni
+        if (ikey(i)(1:4) == "stl_") iniHasStl = .true.
+    end do
+    fileHasStl = .false.
+    do i = 1, nf
+        if (fkey(i)(1:4) == "stl_") fileHasStl = .true.
+    end do
+
+    ! Every key the file recorded must be in the ini with the same value --
+    ! except the geometry lines when the ini restates none.
+    do i = 1, nf
+        geometry = fkey(i)(1:4) == "stl_" .or. fkey(i)(1:5) == "wall_"
+        if (geometry .and. .not. iniHasStl .and. fileHasStl) cycle
+        j = find_key(ikey, ni, fkey(i))
+        if (j == 0) then
+            call stale(trim(fkey(i)) // " = " // trim(fval(i)), "(absent)")
+        else if (fval(i) /= ival(j)) then
+            call stale(trim(fkey(i)) // " = " // trim(fval(i)), trim(ikey(j)) // " = " // trim(ival(j)))
         end if
     end do
+    ! ...and the ini must add nothing the file did not see (an analytic
+    ! wall_* line under an STL file is the ini's default, not an input).
+    do i = 1, ni
+        geometry = ikey(i)(1:4) == "stl_" .or. ikey(i)(1:5) == "wall_"
+        if (geometry .and. .not. iniHasStl .and. fileHasStl) cycle
+        if (find_key(fkey, nf, ikey(i)) == 0) &
+            call stale("(absent)", trim(ikey(i)) // " = " // trim(ival(i)))
+    end do
+
+contains
+
+    subroutine stale(fileLine, iniLine)
+        character(len=*), intent(in) :: fileLine, iniLine
+
+        if (has_terminal) then
+            print *, "case file is STALE: ", trim(file_name)
+            print *, "   file has: ", fileLine
+            print *, "   ini  has: ", iniLine
+            print *, "   re-run moby_prepare"
+        end if
+        error stop "case file does not match the ini"
+    end subroutine stale
+
+    integer function find_key(keys, n, key) result(idx)
+        character(len=*), intent(in) :: keys(:), key
+        integer, intent(in) :: n
+
+        integer :: k
+
+        idx = 0
+        do k = 1, n
+            if (keys(k) == key) then
+                idx = k
+                return
+            end if
+        end do
+    end function find_key
+
+    ! "key = value" lines -> keys and values (MAXL lines at most).
+    subroutine split_echo(text, keys, vals, n)
+        character(len=*), intent(in) :: text
+        character(len=*), intent(out) :: keys(:), vals(:)
+        integer, intent(out) :: n
+
+        integer :: a, b, eq
+        character(len=:), allocatable :: line
+
+        n = 0
+        a = 1
+        do while (a <= len(text))
+            b = index(text(a:), new_line("a"))
+            if (b == 0) then
+                line = text(a:)
+                a = len(text) + 1
+            else
+                line = text(a:a+b-2)
+                a = a + b
+            end if
+            if (len_trim(line) == 0) cycle
+            if (n >= size(keys)) error stop "case_inputs echo has too many lines"
+            n = n + 1
+            eq = index(line, " = ")
+            if (eq == 0) then
+                keys(n) = line
+                vals(n) = ""
+            else
+                keys(n) = line(1:eq-1)
+                vals(n) = line(eq+3:)
+            end if
+        end do
+    end subroutine split_echo
 end subroutine compare_case_inputs
 
 ! Per-leaf wall-distance tiles from the case file (dataset dwall_blocks,

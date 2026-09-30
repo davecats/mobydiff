@@ -29,14 +29,14 @@ The IBM coefficients live in the CASE FILE `sailplane_case.h5` (`[case] file`,
 prepare/solve split, `docs/prepare_solve_strategy.md` + numerics review step
 7): grid, `[blocks] nb = 10` block layout (40 x 45 x 10 = 18000 leaves), the
 STL declaration (`stl_file`, `stl_scale = 0.001`, `stl_translate`) and the
-coefficients themselves. The solver builds it on the first run (minutes on 2
-CPU ranks; a stale one -- grid, nb, transform or `re` changed -- is refused
-with the key named), or build it ahead of time:
+coefficients themselves. `moby_prepare` writes it (minutes on 2 CPU ranks),
+`moby_solve` only reads it and refuses a stale one -- grid, nb, transform or
+`re` changed -- with the key named (re-run moby_prepare):
 
 ```bash
 cd tutorials/sailplane
-mpirun -n 2 ../../build_cpu/moby_prepare input.ini sailplane_case.h5
-mpirun -n 2 ../../build_gpu/moby_solve input.ini      # or --prepare to rebuild
+mpirun -n 2 ../../build_cpu/moby_prepare input.ini    # -> sailplane_case.h5 ([case] file)
+mpirun -n 2 ../../build_gpu/moby_solve input.ini
 ```
 
 The committed legacy `sailplane_ibm_coeff.h5` (the retired mobygeom's global

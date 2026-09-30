@@ -31,13 +31,15 @@ BIN="../../build_${ARCH}/moby_solve"
 TRANSIENT_T=5.0
 AVERAGE_T=20.0
 
+# step 7: prepare the case file the solver will read, when it is missing
+PIM="$(cd ../.. && pwd)/tools/prepare_if_missing.sh"
 [ -x "$BIN" ] && BIN="$(cd "$(dirname "$BIN")" && pwd)/moby_solve" || {
     echo "binary $BIN not found (build with ./compile.sh $ARCH)"; exit 1; }
 
 echo "== quick interface-decay gate (3D refined patch, edges+corners)"
 ( cd ../interface_decay
   rm -f decay_*.h5
-  mpirun -n 1 "$BIN" input.ini > run.log 2>&1 )
+  "$PIM" 1 "$BIN" input.ini && mpirun -n 1 "$BIN" input.ini > run.log 2>&1 )
 python3 ../../tools/check_interface_decay.py ../interface_decay
 
 echo "== generating initial conditions from channel_kmm180_restart.h5"
@@ -63,7 +65,7 @@ run_case () {
         -e "s|^stats_write_interval = .*|stats_write_interval = 0|" \
         -e "s|^field_interval = .*|field_interval = 0|" \
         "$name.ini" > "$dirA/input.ini"
-    ( cd "$dirA" && mpirun -n "$NRANKS" "$BIN" input.ini > run.log 2>&1 )
+    ( cd "$dirA" && "$PIM" "$NRANKS" "$BIN" input.ini && mpirun -n "$NRANKS" "$BIN" input.ini > run.log 2>&1 )
     local final
     final=$(ls -1 "$dirA"/channel_field_*.h5 | sort -t_ -k3 -n | tail -1)
     echo "   transient final field: $final"
@@ -72,7 +74,7 @@ run_case () {
     sed -e "s|^t_final = .*|t_final = $(python3 -c "print($TRANSIENT_T+$AVERAGE_T)")|" \
         -e "s|^file = RESTART_PLACEHOLDER|file = ../../../$final|" \
         "$name.ini" > "$dirB/input.ini"
-    ( cd "$dirB" && mpirun -n "$NRANKS" "$BIN" input.ini > run.log 2>&1 )
+    ( cd "$dirB" && "$PIM" "$NRANKS" "$BIN" input.ini && mpirun -n "$NRANKS" "$BIN" input.ini > run.log 2>&1 )
     echo "   done: stats in $dirB"
 }
 

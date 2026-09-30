@@ -20,10 +20,13 @@ V0=0.3420201433256687
 W0=0.2
 sel=${1:-all}
 status=0
+# step 7: prepare the case file the solver will read, when it is missing
+PIM="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/tools/prepare_if_missing.sh"
 
 run() { # bin ini ranks log
     local bin=$1 ini=$2 ranks=$3 log=$4
     echo "== $log (ranks $ranks) =="
+    "$PIM" "$ranks" "$bin" "$ini" "$log.prep.log" || { echo "   PREPARE FAILED -- see $log.prep.log"; status=1; return 1; }
     if ! mpirun -n "$ranks" "$bin" "$ini" > "$log.log" 2>&1; then
         echo "   FAILED — see $log.log"; status=1; return 1
     fi

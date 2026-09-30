@@ -22,10 +22,13 @@ GBIN=${GBIN:-../../build_gpu/moby_solve}
 RANKS=${RANKS:-1}
 sel=${1:-all}
 status=0
+# step 7: prepare the case file the solver will read, when it is missing
+PIM="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/tools/prepare_if_missing.sh"
 
 run() {  # ini ranks logname [binary]
     local ini=$1 ranks=$2 log=$3 bin=${4:-$BIN}
     echo "== $log (ranks $ranks)"
+    "$PIM" "$ranks" "$bin" "$ini" "$log.prep.log" || { echo "   PREPARE FAILED -- see $log.prep.log"; status=1; return 1; }
     if ! mpirun -n "$ranks" "$bin" "$ini" > "$log.log" 2>&1; then
         echo "   RUN FAILED -- see $log.log"; status=1; return 1
     fi

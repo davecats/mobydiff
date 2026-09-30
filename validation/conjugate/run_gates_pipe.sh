@@ -48,6 +48,7 @@ solve() {  # <template> <prefix> <steps> <sed-expr...>
     local tpl=$1 pre=$2 steps=$3; shift 3
     local ini=".$pre.ini"
     sed -e "s|@PREFIX@|$pre|" -e "s|@STEPS@|$steps|" "$@" "$tpl" > "$ini"
+    "$ROOT/tools/prepare_if_missing.sh" 1 "$BIN" "$ini" || return 1   # step 7
     mpirun -n 1 "$BIN" "$ini" > "$pre.log" 2>&1
 }
 
@@ -86,6 +87,7 @@ if want guard; then
     probe_ini uniform-source z 's|^source_type = velocity|source_type = uniform|'
     probe_ini bad-direction q
     for name in uniform-source bad-direction; do
+        "$ROOT/tools/prepare_if_missing.sh" 1 "$BIN" ".kg_$name.ini"   # a config guard fires here too
         if mpirun -n 1 "$BIN" ".kg_$name.ini" > ".kg_$name.log" 2>&1; then
             echo "   $name: ACCEPTED -- it must be a hard config error"; report 1
         else
@@ -245,6 +247,7 @@ if want bandguard; then
     band_probe with-tangential \
         's|^solid_thickness = .*|solid_thickness = 0.125\ntangential_correction = true|'
     for name in thin negative non-conjugate with-tangential; do
+        "$ROOT/tools/prepare_if_missing.sh" 1 "$BIN" ".bg_$name.ini"
         if mpirun -n 1 "$BIN" ".bg_$name.ini" > ".bg_$name.log" 2>&1; then
             echo "   $name: ACCEPTED -- it must be a hard config error"; report 1
         else

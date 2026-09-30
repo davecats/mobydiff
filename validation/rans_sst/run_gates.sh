@@ -29,11 +29,14 @@ BIN=${BIN:-../../build_cpu/main}
 RANKS=${RANKS:-4}
 sel=${1:-all}
 status=0
+# step 7: prepare the case file the solver will read, when it is missing
+PIM="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/tools/prepare_if_missing.sh"
 
 run_case() {
     local ini=$1 ranks=$2
     local name=${ini%.ini}
     echo "== $name (ranks $ranks) =="
+    "$PIM" "$ranks" "$BIN" "$ini" "$name.prep.log" || { echo "   PREPARE FAILED -- see $name.prep.log"; status=1; return; }
     if ! mpirun -n "$ranks" "$BIN" "$ini" > "$name.log" 2>&1; then
         echo "   FAILED — see $name.log"
         status=1

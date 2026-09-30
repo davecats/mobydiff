@@ -3,13 +3,13 @@
 ! runs the solver's own init pipeline -- node lines, block size (the nb
 ! rule), geometry classification, leaf table, IBM coefficients, RANS wall
 ! distance -- and writes ONE case file, the single source of truth for the
-! grid and the leaf table. `moby_prepare` calls it standalone; `moby_solve`
-! calls it IN-PROCESS when the case file its ini names is absent (or with
-! --prepare), so every tutorial stays one command. A body-free case gets
-! attrs + node lines + leaf table and no coefficient dataset. Host code
-! throughout: the coefficients come from ONE kernel over the indicator, so
-! a file is the same from the CPU and the GPU build (step 7-4 retired the
-! device twin and its libm ulps).
+! grid and the leaf table, which `moby_solve` only reads (preparing and
+! solving are separate executables; the solver refuses a missing file and
+! names the moby_prepare command). A body-free case gets attrs + node lines
+! + leaf table and no coefficient dataset. Host code throughout: the
+! coefficients come from ONE kernel over the indicator, so a file is the
+! same from the CPU and the GPU build (step 7-4 retired the device twin and
+! its libm ulps).
 !
 ! MPI-parallel: the global leaf table is built identically on every rank
 ! (exactly as in the solver) and the per-leaf work -- coefficient tiles,
@@ -24,7 +24,7 @@ module prepare
     use :: blocks, only: block_set_type, init_block_set, destroy_block_set, derive_block_nb
     use :: flow_case, only: case_type, create_flow_case
     use :: config, only: config_seen_type, read_runtime_config, validate_dns_values, &
-        case_input_echo, has_restart_file
+        case_input_echo, case_file_name, has_restart_file
     use :: scalar, only: scalar_type, destroy_scalar, scalars_enabled, &
         scalar_conjugate_enabled
     use :: boundary, only: boundary_type
@@ -45,7 +45,9 @@ module prepare
 
 contains
 
-    ! Build the case named by input_file and write it to case_file. c is an
+    ! Build the case named by input_file and write it to case_file -- or,
+    ! when that is empty, to the name the solver will look for
+    ! (case_file_name: [case] file, else <field_prefix>.case.h5). c is an
     ! initialised world communicator; its [mpi] dims (read from the ini
     ! here too) describe the SOLVE's rank layout for the nb rule.
     subroutine prepare_case(input_file, case_file, c)
@@ -79,9 +81,8 @@ contains
         ! the case file gains coef_p_blocks.
         logical :: cell_centred
         integer(C_INT) :: nCoefComp
-        character(len=:), allocatable :: inputs
+        character(len=:), allocatable :: inputs, out_file
 
-        if (c%has_terminal) print *, "preparing case: ", trim(input_file), " -> ", trim(case_file)
         call create_flow_case(flow, input_file, c%has_terminal)
         call flow%apply_defaults(dns, g, bc, c, ps)
         ! A [scalar] section here means one thing: the case file must also carry
@@ -92,6 +93,9 @@ contains
         call read_runtime_config(dns, g, turb, les, ps, bc, sc, c, input_file, &
             c%has_terminal, config_seen)
         cell_centred = scalars_enabled(sc)
+        out_file = trim(case_file)
+        if (len(out_file) == 0) out_file = case_file_name(dns)
+        if (c%has_terminal) print *, "preparing case: ", trim(input_file), " -> ", out_file
         ! A restart file supplies whatever the ini leaves unset (grid, re,
         ! periodicity, ibm_enabled), exactly as in the solver -- the file
         ! must describe the case the SOLVER will see. When it does not exist
@@ -198,17 +202,18 @@ contains
             end if
         end if
 
-        if (c%has_terminal) print *, "writing case file: ", trim(case_file)
+        if (c%has_terminal) print *, "writing case file: ", out_file
         if (dns%ibm_enabled) then
-            call write_case_file(case_file, blk, dns, g, bc, c, nCoefComp, inputs, c%has_terminal, &
+            call write_case_file(out_file, blk, dns, g, bc, c, nCoefComp, inputs, c%has_terminal, &
                 coef=ibm%coef, touch=blockTouch, buried=blockBuried, maskDims=blockMaskDims, &
                 active=blockActive, dwall=dwall, maskLo=blockMaskLo)
         else
-            call write_case_file(case_file, blk, dns, g, bc, c, nCoefComp, inputs, c%has_terminal)
+            call write_case_file(out_file, blk, dns, g, bc, c, nCoefComp, inputs, c%has_terminal)
         end if
         if (c%has_terminal) then
             print *, "case file written:", blk%nBlocksGlobal, "leaves,", &
                 int(blk%nLevels) - 1, "refinement level(s)"
+            print *, "solve with: mpirun -n ", product(c%dims), " moby_solve ", trim(input_file)
         end if
 
         if (use_stl) call stl_geometry_destroy()

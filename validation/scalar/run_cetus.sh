@@ -20,4 +20,5 @@ export LD_LIBRARY_PATH=$NV/compilers/lib:$NV/comm_libs/12.9/hpcx/latest/ompi/lib
 export CUDA_VISIBLE_DEVICES=$dev
 echo "host $(hostname)  device $dev  ini $ini"
 nvidia-smi --query-gpu=index,name,memory.used --format=csv,noheader
+../../tools/prepare_if_missing.sh 1 ../../build_gpu/moby_solve "$ini" || exit 1   # step 7
 exec mpirun -n 1 ../../build_gpu/moby_solve "$ini"

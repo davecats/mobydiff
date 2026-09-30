@@ -8,6 +8,7 @@ projection. Statistics go to `channel_kmm180_stats.h5`
 `tools/channel_loglaw.py`), the per-step runtime line to `runtimedata.txt`.
 
 ```bash
+mpirun -n 4 ../../build_cpu/moby_prepare input.ini   # the case file (once; same rank count)
 mpirun -n 4 ../../build_gpu/moby_solve input.ini
 ```
 

@@ -32,6 +32,8 @@ fail=0
 run() {  # run <tag> <ini> <ranks>
     local tag="$1" ini="$2" ranks="$3"
     sed "s/^field_prefix = .*/field_prefix = gate_${tag}/" "$ini" > ".gate_${tag}.ini"
+    "$ROOT/tools/prepare_if_missing.sh" "$ranks" "$BIN" ".gate_${tag}.ini" \
+        || { echo "PREPARE FAILED $tag"; fail=1; return 1; }
     if ! mpirun -n "$ranks" "$BIN" ".gate_${tag}.ini" > ".gate_${tag}.log" 2>&1; then
         echo "RUN FAILED $tag"; tail -4 ".gate_${tag}.log"; fail=1; return 1
     fi
@@ -73,6 +75,7 @@ echo "   (gates the TRANSFER operators only -- see the header: blind to the patc
 sed -e 's/^accel = chebyshev/solver = redblack/' -e 's/^sor = 0.8/sor = 1.5/' \
     -e 's/^field_prefix = .*/field_prefix = gate_uni/' \
     ../block_nb/uniform_rect.ini > .gate_uni.ini
+"$ROOT/tools/prepare_if_missing.sh" 1 "$BIN" .gate_uni.ini
 if mpirun -n 1 "$BIN" .gate_uni.ini > .gate_uni.log 2>&1; then
     grep -h "^ block refinement:" .gate_uni.log | tail -1
     "$PY" - gate_uni_50.h5 <<'EOF' || fail=1

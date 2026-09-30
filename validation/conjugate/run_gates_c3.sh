@@ -59,6 +59,7 @@ if want guard; then
     echo "== (0b) heat_interval with tangential_correction is a hard error"
     sed -e 's|^ibm_wall = conjugate|ibm_wall = conjugate\ntangential_correction = true|' \
         -e 's|^\[time\]|[scalar]\nheat_interval = 10\n\n[time]|' wavy.ini > .g6.ini
+    "$ROOT/tools/prepare_if_missing.sh" 1 "$BIN" wavy.ini   # step 7: the guard must reach the config check
     mpirun -n 1 "$BIN" .g6.ini > g6.log 2>&1
     if [ $? -ne 0 ] && grep -q "heat_interval with tangential_correction" g6.log; then
         echo "   rejected  PASS"
@@ -218,6 +219,7 @@ if want budget; then
             -e "s|^\\[time\\]|[scalar]\\nheat_interval = 1\\nheat_file = wbud_$tag.heat.txt\\n\\n[time]|" \
             -e "s|field_prefix = wavy|field_prefix = wbud_$tag|" wavy.ini > ".wbud_$tag.ini"
         rm -f "wbud_$tag.heat.txt" wbud_${tag}_*.h5
+        "$ROOT/tools/prepare_if_missing.sh" "$RANKS" "$BIN" ".wbud_$tag.ini"
         mpirun -n "$RANKS" "$BIN" ".wbud_$tag.ini" > "wbud_$tag.log" 2>&1 || {
             tail -20 "wbud_$tag.log"; report 1; continue; }
         echo "   -- niter = $ni, dt = $dtl, whole fluid (the interface is the only border)"

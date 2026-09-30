@@ -468,6 +468,22 @@ subroutine validate_runtime_config(dns, g, c, seen)
         error stop "[case] file and its alias [ibm] coeff_file are both set; keep [case] file"
 end subroutine validate_runtime_config
 
+! THE case-file name: [case] file, or <field_prefix>.case.h5 when unset -- a
+! dot, not an underscore, because every gate driver globs its snapshots as
+! <prefix>_*.h5. moby_prepare writes it, moby_solve reads it; one rule in one
+! place is what lets `mpirun -n N moby_prepare input.ini` precede
+! `mpirun -n N moby_solve input.ini` with no name repeated anywhere.
+function case_file_name(dns) result(name)
+    type(dns_type), intent(in) :: dns
+    character(len=:), allocatable :: name
+
+    if (len_trim(dns%ibm_coeff_file) > 0) then
+        name = trim(dns%ibm_coeff_file)
+    else
+        name = trim(dns%field_prefix) // ".case.h5"
+    end if
+end function case_file_name
+
 ! The INPUT ECHO of a case file (step 7-3): every ini value the builder's
 ! output is a function of, one `key = value` per line, in a fixed order.
 ! The builder stores it in the file (case_inputs) and the solver rebuilds

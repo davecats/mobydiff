@@ -76,6 +76,8 @@ trial() {
            -e "s/^t_final *=.*/t_final = 0.0/" \
            -e "s/^field_interval *=.*/field_interval = 0/" \
            -e "s/^runtime_interval *=.*/runtime_interval = $NSTEPS/" "$d/config.ini"
+    # step 7: the case file (same rank count: an unset nb is one block per rank)
+    ( cd "$d" && "$(dirname "$0")/prepare_if_missing.sh" "$RANKS" "$EXE_ABS" config.ini ) || return 1
     ( cd "$d" && env ${order:+MOBY_GPU_ORDER=$order} \
         mpirun -n "$RANKS" --map-by "ppr:${PER_NODE}:node" --bind-to core \
         -x MOBY_GPU_ORDER $MPIRUN_EXTRA "$EXE_ABS" config.ini > run.log 2>&1 < /dev/null )

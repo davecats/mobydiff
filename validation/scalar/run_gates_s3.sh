@@ -23,6 +23,8 @@ PREP=${PREP:-$(dirname "$BIN")/moby_prepare}
 NBIN=${NBIN:-$ROOT/build_cpu_nofma/moby_solve}
 NPREP=${NPREP:-$ROOT/build_cpu_nofma/moby_prepare}
 GBIN=${GBIN:-$ROOT/build_gpu_nofma/moby_solve}
+# step 7: prepare the case file the solver will read, when it is missing
+PIM="$ROOT/tools/prepare_if_missing.sh"
 RANKS=${RANKS:-1}
 PY=${PY:-python3}
 CMP="$PY $ROOT/tools/compare_fields.py --tolerance 0"
@@ -61,6 +63,7 @@ EOF
 if want solid || want conserve; then
     echo "== (n) dirichlet body mode: solid cell == ibm_value"
     rm -f ibmwavy_200.h5
+    "$PIM" "$RANKS" "$BIN" ibmwavy.ini
     run mpirun -n "$RANKS" "$BIN" ibmwavy.ini > ibmwavy.log 2>&1
     run $PY check_scalar_ibm.py solid ibmwavy_200.h5 --scalar theta --value 1.0
     report $?
@@ -78,6 +81,7 @@ if want conserve; then
     sed -e "s|^field_prefix.*|field_prefix = ibmwc|" ibmwavy.ini > .ibmwc.ini
     printf '\n[restart]\nfile = ibmw_ic.h5\n' >> .ibmwc.ini
     rm -f ibmwc_400.h5
+    "$PIM" "$RANKS" "$BIN" .ibmwc.ini
     run mpirun -n "$RANKS" "$BIN" .ibmwc.ini > ibmwc.log 2>&1
     run $PY check_scalar_ibm.py conserve ibmw_ic.h5 ibmwc_400.h5 --scalar phi
     report $?
@@ -101,6 +105,7 @@ if want balance; then
             -e "s|^field_interval.*|field_interval = 10|" ibmwavy.ini > .ibmbal.ini
         printf '\n[restart]\nfile = ibmw_ic.h5\n' >> .ibmbal.ini
         rm -f ibmbal_*.h5
+        "$PIM" "$RANKS" "$BIN" .ibmbal.ini
         run mpirun -n "$RANKS" "$BIN" .ibmbal.ini > ibmbal.log 2>&1
         run $PY check_scalar_ibm.py balance ibmbal_210.h5 ibmbal_220.h5 \
             --case ibmwavy_case.h5 --scalar theta --re 100 --pr 0.71 --tol 0.01
@@ -115,7 +120,8 @@ if want prep; then
     rm -f ibmwavy_case.h5 ibmwavy_case_ns.h5 ibmwavy_case_np4.h5
     run mpirun -n 1 "$PREP" ibmwavy.ini ibmwavy_case.h5 > prep_ibmwavy.log 2>&1
     run mpirun -n 1 "$PREP" .ibmwavy_noscalar.ini ibmwavy_case_ns.h5 >> prep_ibmwavy.log 2>&1
-    run $PY ../prepare/h5same.py ibmwavy_case_ns.h5 ibmwavy_case.h5 --ignore coef_p_blocks
+    run $PY ../prepare/h5same.py ibmwavy_case_ns.h5 ibmwavy_case.h5 --ignore coef_p_blocks \
+        --ignore-attr case_inputs   # the echo records scalar_coef, by design
     report $?
     echo "   coef_p_blocks vs an independent transcription of the graded formula"
     run $PY check_scalar_ibm.py coefp ibmwavy_case.h5 --re 100.0
@@ -161,6 +167,7 @@ if want refine; then
     report $?
     echo "   solve from the multi-level case file == the inline analytic solve"
     with_file ibmwavyr.ini ibmwavyr_case.h5 ibmwavyrf .ibmwavyrf.ini
+    "$PIM" "$RANKS" "$BIN" ibmwavyr.ini
     run mpirun -n "$RANKS" "$BIN" ibmwavyr.ini > ibmwavyr.log 2>&1
     run mpirun -n "$RANKS" "$BIN" .ibmwavyrf.ini > ibmwavyrf.log 2>&1
     run $CMP ibmwavyr_50.h5 ibmwavyrf_50.h5 un vn wn pn theta phi
@@ -178,6 +185,7 @@ if want det; then
             ibmwavy.ini > ".ibmd_$tag.ini"
         rm -f "ibmd_${tag}_50.h5"
     done
+    "$PIM" 1 "$NBIN" .ibmd_r1.ini; "$PIM" 4 "$NBIN" .ibmd_r4.ini; "$PIM" 1 "$GBIN" .ibmd_gpu.ini
     run mpirun -n 1 "$NBIN" .ibmd_r1.ini > ibmd_r1.log 2>&1
     run mpirun -n 4 --oversubscribe "$NBIN" .ibmd_r4.ini > ibmd_r4.log 2>&1
     run $CMP ibmd_r1_50.h5 ibmd_r4_50.h5 un vn wn pn theta phi
@@ -199,6 +207,7 @@ if want det; then
             >> ".ibmd_$tag.ini"
         rm -f "ibmd_${tag}_50.h5"
     done
+    "$PIM" 1 "$NBIN" .ibmd_lr1.ini; "$PIM" 1 "$GBIN" .ibmd_lgpu.ini
     run mpirun -n 1 "$NBIN" .ibmd_lr1.ini > ibmd_lr1.log 2>&1
     run $PY check_scalar_ibm.py solid ibmd_lr1_50.h5 --scalar theta --value 1.0
     report $?

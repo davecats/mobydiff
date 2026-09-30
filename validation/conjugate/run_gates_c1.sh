@@ -18,6 +18,8 @@ ROOT=$(cd ../.. && pwd)
 BIN=${BIN:-$ROOT/build_cpu/moby_solve}
 PREP=${PREP:-$(dirname "$BIN")/moby_prepare}
 NBIN=${NBIN:-$ROOT/build_cpu_nofma/moby_solve}
+# step 7: prepare the case file the solver will read, when it is missing
+PIM="$ROOT/tools/prepare_if_missing.sh"
 NPREP=${NPREP:-$ROOT/build_cpu_nofma/moby_prepare}
 GBIN=${GBIN:-$ROOT/build_gpu_nofma/moby_solve}
 RANKS=${RANKS:-1}
@@ -224,6 +226,7 @@ if want stats; then
     for tag in cpu gpu; do
         bin=$BIN; [ "$tag" = gpu ] && bin=$GBIN
         sed "s|stats_file = wavy_stats.h5|stats_file = wavy_stats_$tag.h5|" .wstat.ini > ".wstat_$tag.ini"
+        "$PIM" 1 "$bin" ".wstat_$tag.ini"
         mpirun -n 1 "$bin" ".wstat_$tag.ini" > "wstat_$tag.log" 2>&1
         if [ $? -ne 0 ]; then tail -12 "wstat_$tag.log"; report 1; continue; fi
         $PY -c "
@@ -305,6 +308,7 @@ fi
 # would mean the divergence form came back.
 if want conserve; then
     echo "== (3) sum(C theta dV): the advective cut-cell leak stays small in an insulated composite box"
+    "$PIM" "$RANKS" "$BIN" $WAVY
     run mpirun -n "$RANKS" "$BIN" $WAVY > wavy.log 2>&1
     if [ $? -ne 0 ]; then tail -20 wavy.log; report 1; else
         run $PY ./check_conjugate.py conserve wavy_100.h5 wavy_200.h5 \
@@ -355,6 +359,7 @@ if want refine; then
     sed -e 's|^nb = 8|nb = 4\nrefine = 0.0 1.0 0.0 0.03125 0.0 0.25\nrefine_levels = 1|' \
         -e 's|^nsteps.*|nsteps = 5|' -e 's|^field_interval.*|field_interval = 5|' \
         -e 's|field_prefix = wavy|field_prefix = ref_bad|' $WAVY > .ref_bad.ini
+    "$PIM" 1 "$BIN" .ref_bad.ini
     mpirun -n 1 "$BIN" .ref_bad.ini > ref_bad.log 2>&1
     if [ $? -ne 0 ] && grep -q "2:1 block face" ref_bad.log; then
         echo "   hand-placed refinement box across the wall: rejected  PASS"
@@ -364,6 +369,7 @@ if want refine; then
     sed -e 's|^nb = 8|nb = 8\nrefine_body = true\nkeep_buried = true\nrefine_levels = 1|' \
         -e 's|^nsteps.*|nsteps = 20|' -e 's|^field_interval.*|field_interval = 20|' \
         -e 's|field_prefix = wavy|field_prefix = ref_ok|' $WAVY > .ref_ok.ini
+    "$PIM" 1 "$BIN" .ref_ok.ini
     run mpirun -n 1 "$BIN" .ref_ok.ini > ref_ok.log 2>&1
     if [ $? -eq 0 ]; then
         grep -E "conjugate interface:" ref_ok.log | sed 's/^/  /'
@@ -373,6 +379,7 @@ if want refine; then
     fi
     # ...and the same case WITHOUT keep_buried must be a hard config error.
     sed 's|^keep_buried = true|keep_buried = false|' .ref_ok.ini > .ref_nb.ini
+    "$PIM" 1 "$BIN" .ref_nb.ini   # the config guard fires in prepare too; the solve reports it
     mpirun -n 1 "$BIN" .ref_nb.ini > ref_nb.log 2>&1
     if [ $? -ne 0 ]; then echo "   refine_body without keep_buried: rejected  PASS"
     else echo "   refine_body without keep_buried: ACCEPTED  FAIL"; status=1; fi
@@ -386,6 +393,7 @@ if want det; then
         -e 's|^field_prefix = wavy|field_prefix = det_r1|' $WAVY > .det_r1.ini
     sed 's|field_prefix = det_r1|field_prefix = det_r4|' .det_r1.ini > .det_r4.ini
     sed 's|field_prefix = det_r1|field_prefix = det_gpu|' .det_r1.ini > .det_gpu.ini
+    "$PIM" 1 "$NBIN" .det_r1.ini; "$PIM" 4 "$NBIN" .det_r4.ini; "$PIM" 1 "$GBIN" .det_gpu.ini
     run mpirun -n 1 "$NBIN" .det_r1.ini  > det_r1.log  2>&1
     run mpirun -n 4 "$NBIN" .det_r4.ini  > det_r4.log  2>&1
     run mpirun -n 1 "$GBIN" .det_gpu.ini > det_gpu.log 2>&1

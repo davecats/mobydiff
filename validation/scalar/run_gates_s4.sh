@@ -26,6 +26,8 @@ ROOT=$(cd ../.. && pwd)
 
 BIN=${BIN:-$ROOT/build_cpu/moby_solve}
 GBIN=${GBIN:-$ROOT/build_gpu/moby_solve}
+# step 7: prepare the case file the solver will read, when it is missing
+PIM="$ROOT/tools/prepare_if_missing.sh"
 RANKS=${RANKS:-1}
 PY=${PY:-python3}
 sel=${1:-all}
@@ -61,6 +63,7 @@ if want stats; then
             -e "s|^stats_file = s4stats.h5|stats_file = s4one.h5|" \
             -e "s|^field_prefix = s4stats|field_prefix = s4one|" .s4one.ini
     rm -f s4one*.h5
+    "$PIM" "$RANKS" "$BIN" .s4one.ini
     run mpirun -n "$RANKS" "$BIN" .s4one.ini > s4one.log 2>&1
     check_profile s4one.h5 s4one_67610.h5
 fi
@@ -69,6 +72,7 @@ fi
 if want accum || want restart || want tools; then
     echo "== (t2) profile layout, FOUR samples: the accumulated file"
     rm -f s4stats*.h5
+    "$PIM" "$RANKS" "$BIN" s4stats.ini
     run mpirun -n "$RANKS" "$BIN" s4stats.ini > s4stats.log 2>&1
     if want accum; then check_profile s4stats.h5 s4stats_676[1-4]0.h5; fi
 fi
@@ -84,6 +88,7 @@ if want plane; then
             -e "s|^field_prefix = s4stats|field_prefix = s4plane|" \
             -e "s|^nsteps = 40|nsteps = 10|" .s4plane.ini
     rm -f s4plane*.h5
+    "$PIM" "$RANKS" "$BIN" .s4plane.ini
     run mpirun -n "$RANKS" "$BIN" .s4plane.ini > s4plane.log 2>&1
     run $PY check_scalar_stats.py plane s4plane.h5 s4plane_67610.h5 --scalar theta --index 1
     report $?
@@ -105,6 +110,7 @@ if want levels; then
         -e "s|^nsteps.*|nsteps = 10|" \
         -e "s|^field_prefix.*|field_prefix = s4slab|" turbslab.ini > .s4slab.ini
     rm -f s4slab*.h5
+    "$PIM" "$RANKS" "$BIN" .s4slab.ini
     run mpirun -n "$RANKS" "$BIN" .s4slab.ini > s4slab.log 2>&1
     for lev in 0 1; do
         f=s4slab.h5; [ "$lev" = 1 ] && f=s4slab_l1.h5
@@ -122,7 +128,9 @@ if want restart; then
             -e "s|^field_prefix = s4stats|field_prefix = s4rst|" .s4rst1.ini
     sed -e "s|^file = turbles_67600.h5|file = s4rst_67620.h5|" .s4rst1.ini > .s4rst2.ini
     rm -f s4rst*.h5
+    "$PIM" "$RANKS" "$BIN" .s4rst1.ini
     run mpirun -n "$RANKS" "$BIN" .s4rst1.ini > s4rst1.log 2>&1
+    "$PIM" "$RANKS" "$BIN" .s4rst2.ini
     run mpirun -n "$RANKS" "$BIN" .s4rst2.ini > s4rst2.log 2>&1
     grep -h "continuing scalar statistics" s4rst2.log
     run $PY check_scalar_stats.py diff s4stats.h5 s4rst.h5 --tol 0
@@ -141,11 +149,14 @@ if want det; then
     sed -e "s|^dims = 1 1 1||" -e "s|s4d_r1|s4d_r4|g" .s4d_r1.ini > .s4d_r4.ini
     sed -e "s|s4d_r1|s4d_gpu|g" .s4d_r1.ini > .s4d_gpu.ini
     rm -f s4d_r1*.h5 s4d_r4*.h5 s4d_gpu*.h5
+    "$PIM" 1 "$BIN" .s4d_r1.ini
     run mpirun -n 1 "$BIN" .s4d_r1.ini > s4d_r1.log 2>&1
+    "$PIM" 4 "$BIN" .s4d_r4.ini
     run mpirun -n 4 --oversubscribe "$BIN" .s4d_r4.ini > s4d_r4.log 2>&1
     run $PY check_scalar_stats.py diff s4d_r1.h5 s4d_r4.h5 --tol 1e-12
     report $?
     if [ -x "$GBIN" ]; then
+        "$PIM" 1 "$GBIN" .s4d_gpu.ini
         run mpirun -n 1 "$GBIN" .s4d_gpu.ini > s4d_gpu.log 2>&1
         run $PY check_scalar_stats.py diff s4d_r1.h5 s4d_gpu.h5 --tol 1e-11
         report $?
@@ -164,7 +175,9 @@ if want noeffect; then
         -e "s|^stats_write_interval = 10|stats_write_interval = 0|" \
         -e "s|s4d_r1|s4off|g" .s4d_r1.ini > .s4off.ini
     rm -f s4d_r1*.h5 s4off_*.h5
+    "$PIM" "$RANKS" "$BIN" .s4d_r1.ini
     run mpirun -n "$RANKS" "$BIN" .s4d_r1.ini > s4d_r1.log 2>&1
+    "$PIM" "$RANKS" "$BIN" .s4off.ini
     run mpirun -n "$RANKS" "$BIN" .s4off.ini > s4off.log 2>&1
     run $PY $ROOT/tools/compare_fields.py s4d_r1_67610.h5 s4off_67610.h5 --tolerance 0
     report $?
@@ -181,6 +194,7 @@ if want heat; then
         -e "s|^field_interval = 200|field_interval = 10|" \
         -e "s|^field_prefix = ibmwavy|field_prefix = s4heat|" ibmwavy.ini > .s4heat.ini
     rm -f s4heat_*.h5 s4heat.txt
+    "$PIM" "$RANKS" "$BIN" .s4heat.ini
     run mpirun -n "$RANKS" "$BIN" .s4heat.ini > s4heat.log 2>&1
     run $PY check_scalar_stats.py heat s4heat.txt "s4heat_STEP.h5" --case ibmwavy_case.h5 \
         --scalar theta --re 100 --pr 0.71 --value 1.0 --balance
@@ -201,6 +215,7 @@ if want adia; then
         -e "s|^field_prefix = ibmwavy|field_prefix = s4adia|" ibmwavy.ini > .s4adia.ini
     printf '\n[restart]\nfile = ibmw_ic.h5\n' >> .s4adia.ini
     rm -f s4adia_*.h5 s4adia.txt
+    "$PIM" "$RANKS" "$BIN" .s4adia.ini
     run mpirun -n "$RANKS" "$BIN" .s4adia.ini > s4adia.log 2>&1
     $PY - <<'EOF'
 import sys, h5py, numpy as np
@@ -233,6 +248,7 @@ if want cyl; then
         printf '\n[restart]\nfile = cylheat_24000.h5\n' >> .s4cyl.ini
         rm -f s4cyl_*.h5 s4cyl.txt
         cbin=$BIN; [ -x "$GBIN" ] && cbin=$GBIN
+        "$PIM" 1 "$cbin" .s4cyl.ini
         run mpirun -n 1 "$cbin" .s4cyl.ini > s4cyl.log 2>&1
         run $PY check_scalar_stats.py heat s4cyl.txt "s4cyl_STEP.h5" --case cylheat_case.h5 \
             --scalar theta --re 40 --pr 0.71 --value 1.0
