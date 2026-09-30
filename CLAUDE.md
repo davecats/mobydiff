@@ -2019,7 +2019,9 @@ immersed boundary. Phased, each phase verified before the next:
   turb180 T2 gate re-measured at niter 12; the B0 Blasius case reproduces
   on main once its template is minted from ITS OWN ini -- a restart file
   carries boundary rows the ini does not override; KMM180 F1 statistics
-  within scatter). Owed: a fresh reference set cut AFTER F1, then step 9.
+  within scatter). **NEXT: `docs/next_session_after_step8.md`** -- cut
+  `~/step8_ref_binaries` AFTER F1 (step7b reads ulps now), verify the HoreKa
+  drivers on the cluster, then step 9 (F7, the exact penalization factor).
 
 ## Verification
 
