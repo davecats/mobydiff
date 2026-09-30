@@ -56,6 +56,7 @@ or `tools/compare_fields.py --tolerance 0`). Driver:
 
 | directory | exercises | driver |
 |---|---|---|
+| `blasius/` | laminar ZPG Blasius boundary layer on a one-sided natural (stretched) y line, Blasius u+v inlet, Dirichlet-p outlets at x_max and the top: the analytic similarity field is minted into a restart and must be HELD to t = 2000 (theta, H, u/v profiles vs the independent ODE); the laminar stretched-line gate the F1 flux-form stencil was validated on | `run_blasius.sh`, `compare_blasius.py` |
 | `beltrami/` | 3D Beltrami/ABC exact decaying NS solution (`[flow] initial = beltrami`): 2nd-order convergence (`uniform.ini`, nx 32/64/128) and the 2:1 interface artifact for x/y/z slabs (`slab_{x,y,z}.ini`) and a 3D patch with edges+corners (`refined.ini`) | `run_beltrami.sh`, `tools/check_beltrami.py` |
 | `interface_decay/` | stability of the 2:1 interface: white noise on a 3D refined patch must decay everywhere (catches interface-localized growth that smooth-flow gates miss). ~35 s on 4 CPU ranks | README, `tools/check_interface_decay.py` |
 | `block_nb/` | per-direction `[blocks] nb`: single-level nb-independence (bit-exact across tilings and rank counts) and uniform oblique flow through a 3-level patch with non-cubic nb | `run_gates.sh` |
