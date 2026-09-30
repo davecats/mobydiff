@@ -2000,7 +2000,10 @@ immersed boundary. Phased, each phase verified before the next:
   "finest level" in prepare files (the reader derives it from the table);
   the 9-case suite cannot run at 4 ranks (`turbles`/`turbslab` pin dims).
   Reference set `~/step7_ref_binaries` (`d2249b1`). 7-5 (a per-leaf weight
-  column + weighted Morton split) is the plan entry, not started.
+  column + weighted Morton split) is the plan entry, not started. **NEXT:
+  `docs/next_session_after_step7.md`** — the HoreKa campaign drivers still
+  launch without a case file (item 1, blocks every campaign), the
+  `coeff_file` alias retirement behind a new reference set, then step 8.
 
 ## Verification
 

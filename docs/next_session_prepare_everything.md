@@ -1,5 +1,7 @@
 # Next session: numerics review step 7 — `moby_prepare` does ALL preprocessing
 
+NEXT: `docs/next_session_after_step7.md` (2026-09-30).
+
 STATUS (2026-09-29): **7-0 … 7-4 DONE and gated in one session** (review
 section 10, step 7 MEASURED: every number, and the control that explains the
 only non-zero GPU comparison). 7-5 is the plan entry below and is NOT
