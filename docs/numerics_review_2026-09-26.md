@@ -1136,8 +1136,12 @@ centreline 18.16 both (DNS 18.20); the converged field moved 7.8e-3 in u
 precursor (laminar, one-sided natural y, recovered from `4f819fc^`; GPU,
 t = 2000 from the analytic IC): gate numbers unchanged to the printed digit
 between the pre-F1 and F1 binaries (theta 1.33 %, H 0.45-0.46 % at
-niter 12), fields 3.4e-5 apart in u. OWED: the KMM180 statistics
-comparison against the archived reference (remote GPU).
+niter 12), fields 3.4e-5 apart in u. KMM180 developed statistics (natural
+y, dyw+ 0.5; 20 t.u. windows after a 30 t.u. transient from the archived
+restart, pre-F1 and F1 in parallel on istmcetus): every profile within the
+sampling scatter -- U+ centreline 18.515 / 18.510, u'+ peak 2.652 / 2.623,
+-<u'v'>+ 0.7192 / 0.7193, u_tau 1.0000 both, both ~1 % from KMM DNS
+(`tutorials/channel_kmm180/asset/f1_2026-09-30/`). Nothing owed.
 
 **Step 9 — F7, exact penalization factor (numerics change at cut cells).**
 `update_ibm_mu` produces two factors, `muA = B/(λΔt + B)` on `q` and

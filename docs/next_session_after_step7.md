@@ -202,11 +202,16 @@ converged turb180 RANS channel on its natural line (T2 gate PASS, u_tau
 1.0008 -> 1.0000, baseline vs F1 in the session scratch `turb180_base/` and
 `turb180_f1/`). `docs/numerical-methods.md` states the flux form.
 DONE the same day: (a) the Blasius precursor gate (finding above: unchanged
-to the printed digit, fields 3.4e-5 apart). OWED: (b) a KMM180 statistics
-comparison against the archived reference (`mobydiff.scalar/tutorials/
-channel_kmm180/`, remote GPU, thousands of steps). Until then the F1 change
-is validated on two stretched cases (turb180 natural RANS, the Blasius
-laminar one-sided natural line) and on the operator identities.
+to the printed digit, fields 3.4e-5 apart); (b) KMM180 developed statistics,
+pre-F1 vs F1 on istmcetus (two-leg runs from the archived dyw+ 0.5 restart,
+30 t.u. discarded + 20 t.u. averaged, 64 000 steps each): every profile
+within the 20-t.u. sampling scatter (U+ centreline 18.515 vs 18.510, u'+
+peak 2.652 vs 2.623, -<u'v'>+ peak 0.7192 vs 0.7193; max |dU+| 0.041 at
+y+ 21), u_tau 1.0000 both, both ~1 % from KMM DNS --
+`tutorials/channel_kmm180/asset/f1_2026-09-30/`. F1 is therefore validated
+on three stretched cases (turb180 RANS, Blasius laminar, KMM180 DNS) and the
+operator identities; NOTHING is owed for step 8. (The archived reference
+statistics were NOT used: they are the t = 0..5 cold-start transient.)
 **The next reference set must be cut AFTER this commit** (the suites now
 read ulps against step7b on uniform lines, so step7b is no longer a
 max_abs-0 reference for anything downstream of the momentum predictor).

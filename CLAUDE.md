@@ -1938,8 +1938,9 @@ immersed boundary. Phased, each phase verified before the next:
   cell-centred branch of `slice_grid_direction` is the flux form, gated by
   `src/test_stencil.f90` (48/48 telescoping + symmetry identities), the
   nofma suites (uniform lines round-off ≤ 1e-13, stretched truncation-level)
-  and the converged turb180 (T2 PASS, u_tau 1.0000). Owed: the Blasius and
-  KMM180 stretched re-validations (`docs/next_session_after_step7.md`).
+  the converged turb180 (T2 PASS, u_tau 1.0000), the B0 Blasius case
+  (unchanged to the printed digit) and KMM180 developed statistics (within
+  the 20-t.u. sampling scatter, `tutorials/channel_kmm180/asset/f1_2026-09-30/`).
   **Section 10 of that review is the execution sequence; steps 0–6 are DONE
   (2026-09-27, `docs/next_session_numerics_steps.md` STATUS):** reference
   binaries `~/numrev_ref_binaries` (commit `6db60ef`); F3 RETRACTED (the B0
@@ -2017,8 +2018,8 @@ immersed boundary. Phased, each phase verified before the next:
   `[ibm] coeff_file` RETIRED, `tools/set_case_file.sh` for drivers; the
   turb180 T2 gate re-measured at niter 12; the B0 Blasius case reproduces
   on main once its template is minted from ITS OWN ini -- a restart file
-  carries boundary rows the ini does not override). Owed: the KMM180 F1
-  re-validation, a fresh reference set cut AFTER F1, then step 9.
+  carries boundary rows the ini does not override; KMM180 F1 statistics
+  within scatter). Owed: a fresh reference set cut AFTER F1, then step 9.
 
 ## Verification
 
