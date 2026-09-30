@@ -267,12 +267,6 @@ subroutine apply_config_value(section, key, value, dns, g, turb, les, ps, bc, sc
         select case (key_l)
         case ("enabled")
             call read_bool(value, dns%ibm_enabled, line_no)
-        case ("coeff_file")
-            ! Alias of [case] file (step 7-3), kept for one release.
-            if (terminal_output) print *, "note: [ibm] coeff_file is now [case] file", &
-                " (input line", line_no, ")"
-            dns%ibm_coeff_file = clean_string(value)
-            seen%ibm_coeff_file = .true.
         case ("wall_shape")
             dns%ibm_wall_shape = clean_string(value)
         case ("amp_x")
@@ -417,10 +411,7 @@ subroutine apply_config_value(section, key, value, dns, g, turb, les, ps, bc, sc
         ! [case] name and the [case.<name>] sections are read by the flow
         ! case itself (flow_case.f90); the solver-wide key here is the case
         ! FILE (step 7-3). Everything else in the section is the case's.
-        if (key_l == "file") then
-            dns%ibm_coeff_file = clean_string(value)
-            seen%case_file = .true.
-        end if
+        if (key_l == "file") dns%case_file = clean_string(value)
     case ("turbulence")
         call apply_turbulence_value(key_l, value, turb, seen, line_no)
     case ("les")
@@ -464,8 +455,6 @@ subroutine validate_runtime_config(dns, g, c, seen)
 
     call validate_dns_values(dns, g)
     if (any(c%dims < 0)) error stop "MPI dimensions must be non-negative"
-    if (seen%case_file .and. seen%ibm_coeff_file) &
-        error stop "[case] file and its alias [ibm] coeff_file are both set; keep [case] file"
 end subroutine validate_runtime_config
 
 ! THE case-file name: [case] file, or <field_prefix>.case.h5 when unset -- a
@@ -477,8 +466,8 @@ function case_file_name(dns) result(name)
     type(dns_type), intent(in) :: dns
     character(len=:), allocatable :: name
 
-    if (len_trim(dns%ibm_coeff_file) > 0) then
-        name = trim(dns%ibm_coeff_file)
+    if (len_trim(dns%case_file) > 0) then
+        name = trim(dns%case_file)
     else
         name = trim(dns%field_prefix) // ".case.h5"
     end if

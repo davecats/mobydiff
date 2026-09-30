@@ -37,8 +37,8 @@ report() { if [ "$1" -eq 0 ]; then echo "   PASS"; else echo "   FAIL"; status=1
 
 # ini variant helpers -------------------------------------------------------
 with_file() {  # <base.ini> <case.h5> <prefix> <out.ini>
-    sed -e "s|^enabled = true|enabled = true\ncoeff_file = $2|" \
-        -e "s|^field_prefix.*|field_prefix = $3|" "$1" > "$4"
+    sed -e "s|^field_prefix.*|field_prefix = $3|" "$1" > "$4"
+    "$ROOT/tools/set_case_file.sh" "$4" "$2"
 }
 strip_scalar() {  # <in.ini> <out.ini>: drop every [scalar]/[scalar.N] section
     $PY - "$1" "$2" <<'EOF'

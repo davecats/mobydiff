@@ -71,9 +71,15 @@ for entry in $CASES; do
         cp "$src" "$run/config.ini"
         sed -i -e "s/^nsteps *=.*/nsteps = $NSTEPS/" -e "s/^t_final *=.*/t_final = 0.0/" \
                "$run/config.ini"
+        bin="$EXE"; [ "$side" = ref ] && bin="$REF"
+        # Step 7: the case file, prepared beside the binary's own checkout on
+        # the same rank count (see run_matrix.sh); no helper = pre-contract.
+        pim="$(dirname "$bin")/../tools/prepare_if_missing.sh"
+        if [ -x "$pim" ] && ! ( cd "$run" && "$pim" "$ranks" "$bin" config.ini prepare.log ); then
+            echo "  $name $side PREPARE FAILED -- see $run/prepare.log"; continue
+        fi
         ( cd "$run" && mpirun -n "$ranks" --bind-to core --map-by numa \
-              "$( [ "$side" = ref ] && echo "$REF" || echo "$EXE" )" \
-              config.ini > run.log 2>&1 )
+              "$bin" config.ini > run.log 2>&1 )
         rc=$?
         [ $rc -ne 0 ] && { echo "  $name $side FAILED (exit $rc) -- see $run/run.log"; continue; }
     done

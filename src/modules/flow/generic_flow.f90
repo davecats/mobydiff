@@ -189,7 +189,7 @@ contains
         dns%forcing = 0.0d0
         dns%initial_velocity = 0.0d0
         dns%ibm_enabled = .true.
-        dns%ibm_coeff_file = ""
+        dns%case_file = ""
         dns%field_prefix = "field"
         dns%field_interval = 0
         dns%restart_file = ""

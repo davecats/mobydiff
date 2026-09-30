@@ -6,7 +6,7 @@
 # stl-ibm-coeff (legacy global-grid files); mobygrid was DELETED in the
 # prepare/solve split P3 and mobygeom's geometry subcommands retired, so the
 # script could not run. The coefficient files now come from moby_prepare (the
-# case ini with coeff_file swapped for stl_file). `remove_solid = false` keeps
+# case ini plus the stl_file lines; its [case] file is the output). `remove_solid = false` keeps
 # the blocks buried inside the cylinder, as the legacy files did (they carried
 # no block_active table, so nothing was removed).
 #
@@ -27,7 +27,7 @@ fi
 
 echo "== 2. coefficient files (moby_prepare)"
 for re in 40 100; do
-    sed -e 's|^coeff_file = .*|stl_file = cylinder.stl|' \
+    sed -e 's|^\[ibm\]|[ibm]\nstl_file = cylinder.stl|' \
         -e 's|^nb = 8$|nb = 8\nremove_solid = false|' \
         cyl_re${re}.ini > .prep_re${re}.ini
     mpirun -n 1 "$PREP" .prep_re${re}.ini ibm_coeff_re${re}.h5

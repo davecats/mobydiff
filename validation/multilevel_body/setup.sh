@@ -26,10 +26,11 @@ PY="${PY:-python3}"
 # The prepare inis are DERIVED from the gate inis rather than written out, so
 # the grid, nb and refine_levels cannot drift out of sync with the cases that
 # consume the files -- the failure the original script was one edit away from.
-# `stl_file` replaces `coeff_file`: prepare reads the geometry, the solver reads
-# the file prepare writes.
+# `stl_file` is added under [ibm]: prepare reads the geometry, the solver reads
+# the file prepare writes (named by the explicit argument below, which wins
+# over the ini's [case] file -- the zero twin is prepared from dwall.ini).
 stl_ini() {   # stl_ini <src.ini> <dst.ini> [extra blocks key]
-    sed -e 's|^coeff_file = .*|stl_file = ../cylinder/cylinder.stl|' "$1" > "$2"
+    sed -e 's|^\[ibm\]|[ibm]\nstl_file = ../cylinder/cylinder.stl|' "$1" > "$2"
     # NOT `[ -n "$3" ] && sed ...`: under `set -e` that construct returns 1
     # from the whole function when the optional argument is absent, and the
     # script dies after step 1 with no message. It did exactly that once.

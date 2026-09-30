@@ -66,6 +66,12 @@ for cfg in $CONFIGS; do
     # timing, so binding buys nothing anyway.
     # --launch-skip 108 = two full steps of the 54 matching launches per step, so
     # the profiled ones are steady.
+    # Step 7: the case file, prepared beside the binary's own checkout (one
+    # rank, like the profiled solve); no helper = pre-contract binary.
+    pim="$(dirname "$EXE")/../tools/prepare_if_missing.sh"
+    if [ -x "$pim" ] && ! ( cd "$run" && "$pim" 1 "$EXE" config.ini prepare.log ); then
+        echo "    PREPARE FAILED -- see $run/prepare.log"; continue
+    fi
     echo "=== ncu $cfg ($(date '+%F %T'))"
     ( cd "$run" && mpirun -n 1 --bind-to none "$NCU" --target-processes all \
         --csv --page raw --metrics "$METRICS" \

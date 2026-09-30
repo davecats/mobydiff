@@ -29,8 +29,20 @@ decide whether the 2:1 machinery is production-ready:
 ## What it runs
 
 Five configs, all cold-starting from their `.ini` (the `boundaryLayer` case is
-analytic — **no restart field, no `moby_prepare` step**, so this whole package is
-a few hundred kB), each profiled (`[output] profile = true`).
+analytic — **no restart field**, so this whole package is a few hundred kB), each
+profiled (`[output] profile = true`). Since numerics-review step 7 (2026-09-29)
+every solve reads a CASE FILE that `moby_prepare` writes, body or not: each
+driver runs `tools/prepare_if_missing.sh` in the run directory before its
+`mpirun`, on the SAME rank count (an unset `[blocks] nb` is one block per
+prepare rank — `base_jacobi` at 16 ranks is a different file from `base_jacobi`
+at 8), outside the timed step loop, leaving `overhead.case.h5` + `prepare.log`
+beside `run.log`. The helper is looked up beside the binary's own checkout
+(`<dir of moby_solve>/../tools/prepare_if_missing.sh`), so the `ref` column of a
+two-binary job resolves to the ref checkout's helper — or to nothing for a
+pre-step-7 checkout, which builds inline. **Not yet verified on the cluster**
+(edited 2026-09-30 without cluster access; `run_matrix.sh` and `run_mapgate.sh`
+were exercised locally on the CPU build): run one short `submit.sh` before any
+campaign number is quoted.
 
 | config | grid (level 0) | blocks | leaves | cells | role |
 |---|---|---|---|---|---|

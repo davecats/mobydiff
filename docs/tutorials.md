@@ -131,7 +131,7 @@ re = 1.0e5
 
 [ibm]
 enabled = true
-coeff_file = sailplane_ibm_coeff.h5   ; or the moby_prepare case file, see below
+; [case] file = sailplane_case.h5 names the moby_prepare case file, see below
 
 [boundary]
 periodic_x = false
@@ -175,7 +175,7 @@ cd tutorials/sailplane
 mpirun -n 2 ../../build_cpu/moby_prepare prep_blocks.ini sailplane_case.h5
 ```
 
-then solve with `[blocks] nb = 10` and `[ibm] coeff_file = sailplane_case.h5`.
+then solve with `[blocks] nb = 10` and `[case] file = sailplane_case.h5`.
 `stl_scale = 0.001` converts the STL from millimetres to metres; `stl_translate` centres the
 mirrored STL in the full domain (the solver then uses only the positive-`y` half). The
 committed `sailplane_ibm_coeff.h5` is an older single-level coefficient file, still usable

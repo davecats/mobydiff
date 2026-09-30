@@ -61,9 +61,8 @@ oblique_case() {
         -e "s|@KAPPA@|1.0|" -e "s|@CAP@|1.0|" -e "s|@NSTEPS@|1|" -e "s|@WRITE@|1|" \
         -e "s|@GX@|0.0|" -e "s|@GY@|0.0|" -e "s|@DT@|1.0e-5|" -e "s|@IND@|0|" \
         -e "s|@TANG@|false|" ".$tag.full.ini"
-    sed '/^coeff_file/d' ".$tag.full.ini" > ".$tag.prep.ini"
     sed '/^stl_file/d'   ".$tag.full.ini" > ".$tag.ini"
-    mpirun -n "$RANKS" "$PREP" ".$tag.prep.ini" "$tag.h5" > "$tag.prep.log" 2>&1 || {
+    mpirun -n "$RANKS" "$PREP" ".$tag.full.ini" "$tag.h5" > "$tag.prep.log" 2>&1 || {
         tail -5 "$tag.prep.log"; return 1; }
     return 0
 }
@@ -210,9 +209,8 @@ if want cylinder; then
             -e "s|@KAPPA@|10.0|" -e "s|@CAP@|1.0|" -e "s|@NSTEPS@|1|" -e "s|@WRITE@|1|" \
             -e "s|@GX@|0.0|" -e "s|@GY@|0.0|" -e "s|@DT@|1.0e-5|" -e "s|@IND@|0|" \
             -e "s|@TANG@|false|" oblique.ini > ".$tag.full.ini"
-        sed '/^coeff_file/d' ".$tag.full.ini" > ".$tag.prep.ini"
         sed '/^stl_file/d'   ".$tag.full.ini" > ".$tag.ini"
-        mpirun -n "$RANKS" "$PREP" ".$tag.prep.ini" "$tag.h5" > "$tag.prep.log" 2>&1 || {
+        mpirun -n "$RANKS" "$PREP" ".$tag.full.ini" "$tag.h5" > "$tag.prep.log" 2>&1 || {
             tail -5 "$tag.prep.log"; report 1; continue; }
         for ka in 10.0 1000.0; do
             run $PY ./check_cylinder.py flux "$tag.h5" --radius 0.25 --kappa "$ka" \
@@ -315,8 +313,7 @@ if want converge; then
             -e "s|@KAPPA@|10.0|" -e "s|@CAP@|1.0|" -e "s|@NSTEPS@|1|" -e "s|@WRITE@|1|" \
             -e "s|@GX@|0.0|" -e "s|@GY@|0.0|" -e "s|@DT@|1.0e-5|" -e "s|@IND@|0|" \
             -e "s|@TANG@|false|" oblique.ini > ".cyl_$n.full.ini"
-        sed '/^coeff_file/d' ".cyl_$n.full.ini" > ".cyl_$n.prep.ini"
-        mpirun -n "$RANKS" "$PREP" ".cyl_$n.prep.ini" "cyl_$n.h5" \
+        mpirun -n "$RANKS" "$PREP" ".cyl_$n.full.ini" "cyl_$n.h5" \
             > "cyl_$n.prep.log" 2>&1 || { tail -5 "cyl_$n.prep.log"; report 1; }
     done
     # kappa_s = 1 is the degeneracy check, not a data point: with no contrast

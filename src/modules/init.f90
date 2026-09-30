@@ -42,10 +42,6 @@ module init
         logical :: pressure_niter = .false.
         logical :: pressure_sor = .false.
         logical :: turbulence_model = .false.
-        ! [case] file and its one-release alias [ibm] coeff_file: both set
-        ! is a config error.
-        logical :: case_file = .false.
-        logical :: ibm_coeff_file = .false.
     end type config_seen_type
 
     ! Runtime/domain state shared by the solver modules.
@@ -138,11 +134,11 @@ module init
         logical(C_BOOL) :: block_keep_buried = .false.
         logical(C_BOOL) :: ibm_enabled = .true.
         ! [case] file: THE case file (grid + leaf table + coefficients),
-        ! written by the builder and read by the solver; the solver names
-        ! <field_prefix>.case.h5 when the key is unset and prepares it
-        ! in-process when absent. [ibm] coeff_file is the pre-step-7 name,
-        ! accepted as an alias for one release.
-        character(len=256) :: ibm_coeff_file = ""
+        ! written by moby_prepare and read by moby_solve, which names
+        ! <field_prefix>.case.h5 when the key is unset and stops when the
+        ! file is missing (case_file_name, config.f90). The pre-step-7 alias
+        ! [ibm] coeff_file was retired on 2026-09-30.
+        character(len=256) :: case_file = ""
         ! Analytic wall geometry ([ibm] wall_shape and its parameters). The
         ! defaults reproduce the hardcoded wavy wall exactly, so a case that
         ! names none of them is unchanged. BOTH moby_solve and moby_prepare
@@ -153,7 +149,7 @@ module init
         real(C_DOUBLE) :: ibm_amp_x = 2.5d-2, ibm_amp_z = 2.5d-2
         real(C_DOUBLE) :: ibm_phase_x = 0.0d0, ibm_phase_z = 0.0d0
         ! STL geometry (moby_prepare input only; the solver rejects it
-        ! without a coeff_file). stl_file is repeatable -- one binary STL
+        ! without a case file). stl_file is repeatable -- one binary STL
         ! path per occurrence, so paths may contain spaces. The optional
         ! transform is v*scale + translate (mobygeom's convention).
         character(len=256) :: ibm_stl_file(8) = ""

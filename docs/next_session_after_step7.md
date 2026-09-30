@@ -1,14 +1,92 @@
 # Next session: after numerics review step 7 — loose ends, then step 8
 
-STATUS: **NOT STARTED (handout written 2026-09-30).** Step 7 of the review's
-execution sequence (`docs/numerics_review_2026-09-26.md` section 10) is
-DONE and gated: commits `5d95937` (7-1/7-2), `18b95c1` (7-3), `3461610`
-(7-4), `da64b37` (the separation reversal). Its record is the step-7
-MEASURED blocks in the review and the STATUS header of
-`docs/next_session_prepare_everything.md`. Read `CLAUDE.md` (the step-7
-bullet states the CONTRACT that now holds), then work the loose ends below
-in order — the first one blocks every HoreKa campaign — and only then start
-step 8. Do not start steps 9–12.
+STATUS (2026-09-30): **loose ends 1, 2, 4, 5 DONE and gated; 3, 6, 7
+are notes; step 8 (F1) IN PROGRESS — see the STEP 8 block at the end.**
+The step-7 commits were rebased onto origin before the push (the pre-rebase
+ids cited below: `d2249b1 -> 59ea085` (7-0), `5d95937 -> 91f01cc`,
+`18b95c1 -> fc7f05e`, `3461610 -> 0d2d18f`, `da64b37 -> 13fb213`).
+
+- **1 (HoreKa drivers) DONE.** Every launch site (`run_matrix.sh`,
+  `exchange/run_{exchange,portgate,mapgate,timeline,ncu}.sh`,
+  `submit_rdblk.sh`, `submit_port_gate.sh` pass 2) prepares the case file in
+  the run directory before its `mpirun`, on the SAME rank count. The helper is
+  looked up BESIDE THE BINARY'S OWN CHECKOUT
+  (`<dir of moby_solve>/../tools/prepare_if_missing.sh`), not through
+  `MOBY_ROOT` or `$HERE` (the submit scripts stage the drivers into a run
+  directory and half of them do not pass `MOBY_ROOT`): the `ref` column of a
+  two-binary job resolves to the ref checkout's helper, or to nothing for a
+  pre-step-7 checkout, which builds inline -- the helper arrived in the same
+  commit that made the solver refuse a missing file, so "helper present" is
+  exactly "case file needed". A local reference set must therefore carry
+  `tools/prepare_if_missing.sh` (the map-gate test failed once because it did
+  not). Exercised LOCALLY on the CPU build: `run_matrix.sh` (1 and 2 ranks,
+  `overhead.case.h5` + `prepare.log` per run directory, 1600 leaves split
+  800/rank) and `run_mapgate.sh` (min_channel + Beltrami, new vs the step7b
+  reference, `max_abs 0`). **NOT verified on the cluster** -- run one short
+  `submit.sh` before quoting any campaign number (README says so too).
+- **2 (alias retirement) DONE.** Reference set `~/step7b_ref_binaries`
+  (commit `784ee0b`, PROVENANCE inside; one directory per build + the
+  helper, `REF=~/step7b_ref_binaries/build_cpu/moby_solve`). Then: the 24
+  committed inis moved to `[case] file` (the `results_job*/` copies are
+  records and were left alone), `[ibm] coeff_file` deleted from config.f90
+  (`seen%case_file`/`seen%ibm_coeff_file` and the both-set error with it),
+  `dns%ibm_coeff_file` RENAMED `dns%case_file` (20 sites), the helper's
+  alias branch dropped, and every driver that wrote the alias into a
+  generated ini rewritten: the conjugate/pipe drivers pass the FULL ini to
+  prepare (its `[case] file` names the output; the explicit second argument
+  still wins -- multilevel's zero twin relies on that), the STL-swap drivers
+  insert `stl_file` under `[ibm]` instead of replacing the alias line, and
+  the four that inject a case-file key use the new `tools/set_case_file.sh
+  <ini> <case.h5>` (writes `file =` into `[case]`, adds the section when
+  absent, replaces an existing line, never touches `[restart] file`).
+  `run_ibm_les.py` got a section-aware key setter for the same reason
+  (`[case] file` and `[restart] file` share a key name; its bare `^file =`
+  regex would have rewritten both). Docs: configuration.md (`file` row in
+  `[case]`, `coeff_file` row gone), running.md, tutorials.md, CLAUDE.md.
+  GATES, all at PRODUCTION flags (nothing recomputed), ref = step7b:
+  moved-ini gate (iddes_ibm, multilevel dwall/uniform, rans_geometry
+  flat_l1/flat_refine incl. the ransgeom dump, ibm180, ibm180wf) `max_abs 0`
+  on every dataset, CPU AND GPU; 7-case suite `max_abs 0` CPU 1 rank, CPU 4
+  ranks, GPU; 9-case scalar suite `max_abs 0` CPU; P0 prepare gates 26/26
+  and P1 STL gates 15/15 (both use `set_case_file.sh` through their twins);
+  step-7 prepare gates vs the 7-0 INLINE reference (`~/step7_ref_binaries`,
+  the only set that can still build inline): 44/44 PASS (the driver's `short_ini` now goes through `set_case_file.sh`).
+- **3, 6 (campaign restarts, sibling checkouts)**: unchanged, notes only.
+  The turb180 RANS channel was re-run in full at niter 12 on the consolidated
+  head as the step-8 baseline (see below) and PASSES its T2 gate: u_tau
+  1.0008, log-law 0.049 (tol 0.06), U+ centreline 18.16 vs DNS 18.20 -- one
+  long-tier re-measurement discharged.
+- **4 DONE**: `ibmwavy` at `cpu_nofma` vs `gpu_nofma`, 200 steps from ONE
+  prepared case file: `max_abs 0` on un/vn/wn/pn/theta/phi. The 1.1e-16
+  production-flag `theta` difference is FMA contraction, not a branch.
+- **5 DONE**: `measure_nut.py` reads the case file's `coef_blocks` tiles
+  (axes (x, y, z, var) per leaf, as `fdm_h5_case_append_coef` writes them --
+  NOT the (z, y, x) of the snapshot blocks; this geometry varies only in y so
+  the two orders are indistinguishable on it, the writer settles it). Gate:
+  the ported solid mask is IDENTICAL to the legacy loader's (69632 of 327680
+  cells) and the script's output on the 51 archived `a_wale` stats snapshots
+  (mobydiff.scalar) is unchanged to the printed digit. `ibm_coeff.h5` (25 MB)
+  left the tree; README/ini/setup comments follow.
+- **7**: plan entry only, untouched.
+
+FOUND ALONG THE WAY, not fixed: **the B0 Blasius precursor case cannot be
+re-run from its archived analytic IC.** Recovered from `4f819fc^`
+(`topbc_outlet/blasius2d.ini` == the original `d82a97c` ini; niter 6 -> 12,
+`[case] file` added): the documented flow (mint a 1-step template ->
+`make_blasius_ic.py` -> run) DIVERGES by t ~ 14 (dt collapses to 2e-6,
+|p| 1e10) -- and IDENTICALLY, to every digit, on `6db60ef`, `59ea085` and
+HEAD, so it is not a step 4-7 regression; the Dirichlet-top variant from the
+same IC runs but misses Blasius by 18 % in theta. The IMPULSIVE uniform
+start (no restart) is STABLE on HEAD (dt at its 0.5 cap to t = 2000, u in
+[0.011, 1.007]) but is not steady at t = 2000 (max |u(2000) - u(1000)| 0.07)
+and reads theta 5-13 % off with v_top up to 3.4 -- the ringing the analytic
+IC was introduced to avoid. Diagnosis: the archived `make_blasius_ic.py`
+scatters onto today's snapshot layout wrongly (its y profile looks right in a
+mid-slice, so it is a staggering/face convention, not an axis swap). The
+2026-09-27 F3 note's "main is stable" on this configuration is unexplained
+(it may have used the uniform start). OWED: port the IC generator, re-gate B0
+(theta <= 1.13 %, H <= 0.34 %), then it serves the F1 stretched re-validation.
+Scratch: the session's `scratchpad/blasius/` (IC, runs, checker output).
 
 ## The contract that now holds (one paragraph)
 

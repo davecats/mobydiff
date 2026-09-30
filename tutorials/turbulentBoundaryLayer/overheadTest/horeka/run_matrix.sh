@@ -98,6 +98,16 @@ for entry in $MATRIX; do
             "$run/config.ini"
 
         echo "=== ${cfg}  n=${n}  ($(date '+%F %T'))"
+        # The solver reads a case file that moby_prepare writes (numerics
+        # review step 7): the helper beside the binary's own checkout prepares
+        # it on the SAME rank count (an unset [blocks] nb is one block per
+        # prepare rank), outside the timed loop. A checkout without the helper
+        # predates the contract and builds inline -- the ref column of a
+        # two-binary job resolves to ITS helper or to nothing, as it should.
+        pim="$(dirname "$EXE")/../tools/prepare_if_missing.sh"
+        if [ -x "$pim" ] && ! ( cd "$run" && "$pim" "$n" "$EXE" config.ini prepare.log ); then
+            echo "    PREPARE FAILED -- see $run/prepare.log"; continue
+        fi
         # --map-by numa --bind-to core keeps each rank on the socket nearest its
         # GPU; mobydiff binds rank -> device as local_rank mod n_devices.
         ( cd "$run" && mpirun -n "$n" --bind-to core --map-by numa $MPIRUN_EXTRA \

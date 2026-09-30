@@ -51,14 +51,17 @@ geometry — and, optionally, analytic geometry too — goes through the MPI-par
 preprocessor, which reuses the solver's own grid, block and classification code:
 
 ```bash
-mpirun -n 4 ./build_cpu/moby_prepare case.ini case.h5
+mpirun -n 4 ./build_cpu/moby_prepare input.ini          # writes [case] file, else <field_prefix>.case.h5
+mpirun -n 4 ./build_cpu/moby_solve   input.ini          # reads it; stops if missing or stale
 ```
 
-`case.ini` is the run's `.ini` plus the geometry declaration (`[ibm] stl_file`, optional
-`stl_scale` / `stl_translate`). The output is the block-table **case file** — node lines,
-leaf block table, per-block IBM coefficients, solid-removal masks and wall distance — which
-the solve then reads through `[ibm] coeff_file = case.h5`. Prepare with the CPU build (the
-canonical one). Regenerate the case file whenever the grid, the block layout or `[flow] re`
+`input.ini` is the run's `.ini` plus, for an STL body, the geometry declaration
+(`[ibm] stl_file`, optional `stl_scale` / `stl_translate`). The output is the block-table
+**case file** — node lines, leaf block table, per-block IBM coefficients, solid-removal
+masks and wall distance — named by `[case] file` (an explicit second argument to
+`moby_prepare` overrides it). EVERY run reads one, body or not: an unset `[blocks] nb` is one
+block per rank of the PREPARE run, so prepare on the rank count you solve with. Prepare with
+the CPU build (the canonical one). Regenerate the case file whenever the grid, the block layout or `[flow] re`
 changes (the coefficients carry the 1/Re scaling). The design is in
 [`prepare_solve_strategy.md`](prepare_solve_strategy.md); the retired Python `mobygeom`
 pipeline is kept only as a cross-implementation reference.

@@ -239,12 +239,12 @@ if want cyl; then
     if [ ! -f cylheat_24000.h5 ] || [ ! -f cylheat_case.h5 ]; then
         echo "   cylheat_24000.h5 / cylheat_case.h5 missing -- run ./run_gates_s3.sh cyl -- SKIPPED"
     else
-        sed -e "s|^enabled = true|enabled = true\ncoeff_file = cylheat_case.h5|" \
-            -e "s|^field_prefix.*|field_prefix = s4cyl|" \
+        sed -e "s|^field_prefix.*|field_prefix = s4cyl|" \
             -e "s|^field_interval.*|field_interval = 20|" \
             -e "s|^t_final.*|t_final = 130.0\nnsteps = 20|" \
             -e "s|^count = 1|count = 1\nheat_interval = 20\nheat_file = s4cyl.txt|" \
             -e "s|^runtime_file.*|runtime_file = forces_s4cyl.txt|" cylheat.ini > .s4cyl.ini
+        "$ROOT/tools/set_case_file.sh" .s4cyl.ini cylheat_case.h5
         printf '\n[restart]\nfile = cylheat_24000.h5\n' >> .s4cyl.ini
         rm -f s4cyl_*.h5 s4cyl.txt
         cbin=$BIN; [ -x "$GBIN" ] && cbin=$GBIN

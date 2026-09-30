@@ -1956,8 +1956,8 @@ immersed boundary. Phased, each phase verified before the next:
   7-0 … 7-4, handout `docs/next_session_prepare_everything.md`, numbers in
   the review section 10 step 7 MEASURED).** THE CONTRACT NOW: every run
   reads a CASE FILE — `[case] file` (default `<field_prefix>.case.h5`;
-  `[ibm] coeff_file` is a one-release alias that prints a note; both set
-  = error) — which is the single source of truth for grid, block size,
+  the `[ibm] coeff_file` alias was RETIRED 2026-09-30, every ini and driver
+  moved to `[case] file`) — which is the single source of truth for grid, block size,
   leaf table, face kinds and IBM coefficients, written by `mpirun -n N
   moby_prepare input.ini` (`src/modules/prepare.f90`, `prepare_case`; the
   output name is resolved by the ONE function `case_file_name` both
@@ -1999,7 +1999,11 @@ immersed boundary. Phased, each phase verified before the next:
   `1 1 1`); `block_levels` meant "number of levels" in mobygeom files and
   "finest level" in prepare files (the reader derives it from the table);
   the 9-case suite cannot run at 4 ranks (`turbles`/`turbslab` pin dims).
-  Reference set `~/step7_ref_binaries` (`d2249b1`). 7-5 (a per-leaf weight
+  Reference set `~/step7_ref_binaries` (`d2249b1`). HASHES: the step-7
+  commits were rebased onto origin on 2026-09-30 before the push, so the
+  pre-rebase ids cited here and in the docs map to `d2249b1 -> 59ea085`
+  (7-0), `5d95937 -> 91f01cc` (7-1/7-2), `18b95c1 -> fc7f05e` (7-3),
+  `3461610 -> 0d2d18f` (7-4), `da64b37 -> 13fb213` (the separation). 7-5 (a per-leaf weight
   column + weighted Morton split) is the plan entry, not started. **NEXT:
   `docs/next_session_after_step7.md`** — the HoreKa campaign drivers still
   launch without a case file (item 1, blocks every campaign), the

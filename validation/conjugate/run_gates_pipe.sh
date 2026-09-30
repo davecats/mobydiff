@@ -119,7 +119,7 @@ pipe_case() {
         -e "s|^periodic_x = .*|periodic_x = ${per[0]}|" \
         -e "s|^periodic_y = .*|periodic_y = ${per[1]}|" \
         -e "s|^periodic_z = .*|periodic_z = ${per[2]}|" \
-        pipe_geom.ini | sed '/^coeff_file/d' > ".$tag.prep.ini"
+        pipe_geom.ini > ".$tag.prep.ini"
     if grep -v '^;' ".$tag.prep.ini" | grep -q '@'; then
         echo "   unsubstituted placeholder in .$tag.prep.ini"; return 1
     fi
@@ -168,11 +168,10 @@ band_case() {
         -e "s|@PREFIX@|$pre|" -e "s|@NSTEPS@|$ns|" -e "s|@WRITE@|$wr|" \
         -e "${BAND_EXTRA_SED:-s|^\\[case\\]|[case]|}" \
         band_slab.ini > ".$pre.full.ini"
-    # moby_prepare COMPUTES the coefficients, so its input must not name a
-    # coefficient file; the solve input takes the file and drops the STL.
-    sed '/^coeff_file/d' ".$pre.full.ini" > ".$pre.prep.ini"
+    # moby_prepare takes the full ini (its [case] file names the output it
+    # writes); the solve input takes the file and drops the STL.
     sed '/^stl_file/d'   ".$pre.full.ini" > ".$pre.ini"
-    mpirun -n "$nr" "$prep" ".$pre.prep.ini" "$pre.h5" > "$pre.prep.log" 2>&1 || {
+    mpirun -n "$nr" "$prep" ".$pre.full.ini" "$pre.h5" > "$pre.prep.log" 2>&1 || {
         tail -5 "$pre.prep.log"; return 1; }
     mpirun -n "$nr" "$bin" ".$pre.ini" > "$pre.log" 2>&1 || { tail -20 "$pre.log"; return 1; }
     return 0

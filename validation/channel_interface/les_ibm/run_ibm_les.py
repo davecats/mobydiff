@@ -17,7 +17,7 @@ Per case, two legs (mirrors ../les/run_les.py):
      per level) PLUS field snapshots every --snap-interval steps (snapshots carry
      `nut`, used for the wall-nut measurement and the 2:1-interface nut step).
 
-The prerequisite data files grid.h5, ibm_coeff.h5 and IC.h5 are committed
+The prerequisite data files grid.h5, ibm_coeff_case.h5 and IC.h5 are committed
 alongside this script; ibm_coeff_blocks.h5 and IC_refine.h5 (case c) are
 gitignored and rebuilt by setup.sh (moby_prepare + the geometry venv). This driver needs only the
 solver binary, numpy is not required to RUN (only to ANALYSE).
@@ -41,8 +41,8 @@ ROOT = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
 
 # (ini template, restart IC, coefficient file) per case. Paths relative to HERE.
 CASES = {
-    "a_wale":   ("channel_ibm.ini",        "IC.h5",        "ibm_coeff.h5"),
-    "b_none":   ("channel_ibm.ini",        "IC.h5",        "ibm_coeff.h5"),
+    "a_wale":   ("channel_ibm.ini",        "IC.h5",        "ibm_coeff_case.h5"),
+    "b_none":   ("channel_ibm.ini",        "IC.h5",        "ibm_coeff_case.h5"),
     "c_refine": ("channel_ibm_refine.ini", "IC_refine.h5", "ibm_coeff_blocks.h5"),
 }
 
@@ -52,11 +52,26 @@ def sh(cmd, cwd=None):
     subprocess.run(cmd, cwd=cwd, check=True)
 
 
-def make_ini(template, dest, subs):
+def make_ini(template, dest, subs, keys=()):
+    """subs: (regex, replacement) pairs over the whole file; keys: (section, key,
+    value) triples set INSIDE their section -- [case] file and [restart] file
+    share a key name, so a bare `^file =` regex would rewrite both."""
     t = open(template).read()
     for pat, repl in subs:
         t = re.sub(pat, repl, t, flags=re.MULTILINE)
-    open(dest, "w").write(t)
+    lines = t.split("\n")
+    for section, key, value in keys:
+        out, insec, done = [], False, False
+        for line in lines:
+            if re.match(r"^\s*\[", line):
+                insec = re.match(rf"^\s*\[{re.escape(section)}\]\s*$", line) is not None
+            elif insec and re.match(rf"^\s*{re.escape(key)}\s*=", line):
+                line, done = f"{key} = {value}", True
+            out.append(line)
+        if not done:
+            raise SystemExit(f"[{section}] {key} not found in {template}")
+        lines = out
+    open(dest, "w").write("\n".join(lines))
 
 
 def final_field(d, prefix):
@@ -81,8 +96,8 @@ def run_case(name, a, binary):
     os.makedirs(dA, exist_ok=True)
     os.makedirs(dB, exist_ok=True)
     mpirun = a.mpirun.split() + ["-n", str(a.ranks)]
-    common = [(r"^dims = .*$", f"dims = {a.ranks} 1 1"),
-              (r"^coeff_file = .*$", f"coeff_file = {coef}")]
+    common = [(r"^dims = .*$", f"dims = {a.ranks} 1 1")]
+    case_key = [("case", "file", coef)]
     model = [(r"^model = .*$", "model = none")] if name == "b_none" else []
 
     # 1. transient: stats OFF, no snapshots
@@ -91,8 +106,8 @@ def run_case(name, a, binary):
              [(r"^t_final = .*$", f"t_final = {a.t_transient}"),
               (r"^stats_sample_interval = .*$", "stats_sample_interval = -1"),
               (r"^stats_write_interval = .*$", "stats_write_interval = -1"),
-              (r"^field_interval = .*$", "field_interval = 0"),
-              (r"^file = .*$", f"file = {ic}")] + common + model)
+              (r"^field_interval = .*$", "field_interval = 0")] + common + model,
+             keys=case_key + [("restart", "file", ic)])
     sh(mpirun + [binary, "input.ini"], cwd=dA)
     restart = final_field(dA, prefix)
 
@@ -105,8 +120,8 @@ def run_case(name, a, binary):
         os.remove(stale)
     make_ini(ini, os.path.join(dB, "input.ini"),
              [(r"^t_final = .*$", f"t_final = {a.t_transient + a.t_average}"),
-              (r"^field_interval = .*$", f"field_interval = {a.snap_interval}"),
-              (r"^file = .*$", f"file = {restart}")] + common + model)
+              (r"^field_interval = .*$", f"field_interval = {a.snap_interval}")] + common + model,
+             keys=case_key + [("restart", "file", restart)])
     sh(mpirun + [binary, "input.ini"], cwd=dB)
     nsnap = len(glob.glob(os.path.join(dB, f"{prefix}_*.h5")))
     print(f"== {name} done: channel_stats + {nsnap} snapshots in {dB}", flush=True)

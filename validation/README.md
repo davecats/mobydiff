@@ -30,7 +30,10 @@ solver binary and the SAME rank count as the solve (an unset `[blocks] nb`
 is one block per prepare rank). A suite run leaves one `<prefix>.case.h5`
 per output prefix beside the snapshots; the `les_ibm` case reads the
 committed `ibm_coeff_case.h5` (the exact conversion of the legacy
-`ibm_coeff.h5`, which the solver no longer reads).
+`ibm_coeff.h5`, which left the tree on 2026-09-30).
+A driver that derives a solve ini from a case ini points it at a case file
+with `tools/set_case_file.sh <ini> <case.h5>` (writes `file =` into `[case]`,
+adding the section when absent); `[ibm] coeff_file` is no longer a key.
 
 The cases below are the "7-case suite" (+ the scalar legs) used for every
 bit-exactness gate (`-Mnofma` / `-gpu=nofma` on both sides, `tools/h5maxdiff`

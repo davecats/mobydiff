@@ -409,24 +409,24 @@ contains
 
         integer(C_INT) :: found
 
-        if (len_trim(dns%ibm_coeff_file) == 0) return
-        if (has_terminal) print *, "reading IBM coefficients: ", trim(dns%ibm_coeff_file)
+        if (len_trim(dns%case_file) == 0) return
+        if (has_terminal) print *, "reading IBM coefficients: ", trim(dns%case_file)
 
         n_comp = int(ubound(ibm%coef,4) - lbound(ibm%coef,4) + 1, C_INT)
-        c_file_name = to_c_string(dns%ibm_coeff_file)
+        c_file_name = to_c_string(dns%case_file)
         ! No leaf table cross-check: since step 7-2 the solver's leaf table
         ! is read from this very file (read_case_layout).
         ierr = fdm_h5_read_ibm_coeff_blocks(c_file_name, blk%nb(1), blk%nb(2), blk%nb(3), &
             blk%nBlocks, blk%idStart, &
             dns%leng(1), dns%leng(2), dns%leng(3), dns%re, n_comp, found, ibm%coef)
         if (ierr /= 0_C_INT) then
-            if (has_terminal) print *, "error: could not read IBM coefficient file: ", trim(dns%ibm_coeff_file)
+            if (has_terminal) print *, "error: could not read IBM coefficient file: ", trim(dns%case_file)
             error stop
         end if
         if (found == 0_C_INT) then
             if (has_terminal) print *, "error: [ibm] enabled but the case file carries no", &
                 " coef_blocks (prepared body-free, or a retired-mobygeom global-layout", &
-                " file); re-prepare the case: ", trim(dns%ibm_coeff_file)
+                " file); re-prepare the case: ", trim(dns%case_file)
             error stop
         end if
         call read_ibm_coeff_p(ibm, dns, blk, c_file_name, n_comp, has_terminal)
@@ -453,13 +453,13 @@ contains
             blk%nBlocks, blk%idStart, n_comp, found, ibm%coef)
         if (ierr /= 0_C_INT) then
             if (has_terminal) print *, "error: could not read coef_p_blocks from: ", &
-                trim(dns%ibm_coeff_file)
+                trim(dns%case_file)
             error stop
         end if
         if (found == 0_C_INT) then
             if (has_terminal) print *, "error: [scalar] is configured but the coefficient file", &
                 " carries no coef_p_blocks (cell-centred scalar coefficients);", &
-                " re-run moby_prepare with [scalar]: ", trim(dns%ibm_coeff_file)
+                " re-run moby_prepare with [scalar]: ", trim(dns%case_file)
             error stop
         end if
     end subroutine read_ibm_coeff_p

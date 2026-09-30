@@ -10,10 +10,11 @@ IBM wall from the stats-leg snapshots.
 
 The mask uses the SAME rule as src/modules/les.f90 (solid_cell = any of coef(VAR_U,i),
 coef(VAR_U,i+1), coef(VAR_V,j), coef(VAR_V,j+1), coef(VAR_W,k), coef(VAR_W,k+1)
-exceeds 1e20). For the single-level run the coefficients are the global `coef`
-dataset of ibm_coeff.h5; nut snapshots are the block-table layout.
+exceeds 1e20). The coefficients come from the case file's per-leaf
+`coef_blocks` tiles (ghost-inclusive, (x, y, z, var) per leaf, reassembled onto
+the single-level lattice); nut snapshots are the block-table layout.
 
-Usage:  python3 measure_nut.py [--run runs/a_wale/stats] [--coef ibm_coeff.h5]
+Usage:  python3 measure_nut.py [--run runs/a_wale/stats] [--coef ibm_coeff_case.h5]
 """
 from __future__ import annotations
 import argparse
@@ -31,18 +32,28 @@ NB = 8
 
 def load_coef_solid_mask(coef_path, ny):
     """Per global cell (x,y,z): True if the les.f90 ibm_aware rule marks it solid.
-    coef dataset shape (nx+2, ny+2, nz+2, 3) with a one-cell ghost layer."""
+    The case file holds one ghost-inclusive (nb+2)^3 x 3 tile per leaf, axes
+    (x, y, z, var) as fdm_h5_case_append_coef writes them; neighbouring tiles
+    repeat each other's ghost planes with the same values, so the global
+    ghost-inclusive array (nx+2, ny+2, nz+2, 3) is the plain union."""
     with h5py.File(coef_path, "r") as f:
-        c = f["coef"][...]                       # (nx+2, ny+2, nz+2, 3) ghost-incl
+        bl = f["blocks"][...]                    # (n_leaves, 4): origin x,y,z + level
+        tiles = f["coef_blocks"][...]            # (n_leaves, nb+2, nb+2, nb+2, 3)
+        nb = int(f.attrs["block_nb"])
+        nx, nz = int(f.attrs["nx"]), int(f.attrs["nz"])
+    if bl[:, 3].max() != 0:
+        raise SystemExit("measure_nut.py reassembles a SINGLE-LEVEL case only")
+    c = np.zeros((nx + 2, ny + 2, nz + 2, 3))
+    for (ox, oy, oz, _lev), t in zip(bl, tiles):
+        c[ox:ox + nb + 2, oy:oy + nb + 2, oz:oz + nb + 2, :] = t
     sol = np.abs(c) > SOLID_TH                    # (.,.,.,var)
-    nx, nyt, nz = c.shape[0] - 2, c.shape[1] - 2, c.shape[2] - 2
     # interior cells 1..n ; faces: u(i),u(i+1); v(j),v(j+1); w(k),w(k+1)
     u, v, w = sol[..., 0], sol[..., 1], sol[..., 2]
     i = slice(1, nx + 1)
-    j = slice(1, nyt + 1)
+    j = slice(1, ny + 1)
     k = slice(1, nz + 1)
     ip = slice(2, nx + 2)
-    jp = slice(2, nyt + 2)
+    jp = slice(2, ny + 2)
     kp = slice(2, nz + 2)
     solid = (u[i, j, k] | u[ip, j, k] | v[i, j, k] | v[i, jp, k] |
              w[i, j, k] | w[i, j, kp])           # (nx, ny, nz)
@@ -68,7 +79,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--run", default=os.path.join(HERE, "runs", "a_wale", "stats"),
                     help="stats-leg dir with channel_ibm_*.h5 snapshots")
-    ap.add_argument("--coef", default=os.path.join(HERE, "ibm_coeff.h5"))
+    ap.add_argument("--coef", default=os.path.join(HERE, "ibm_coeff_case.h5"))
     ap.add_argument("--prefix", default="channel_ibm")
     a = ap.parse_args()
 

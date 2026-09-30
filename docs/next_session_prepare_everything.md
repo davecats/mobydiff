@@ -105,6 +105,7 @@ calls it; `moby_solve` calls it IN-PROCESS when the case file named by the
 ini is absent (`moby_solve --prepare` forces it), so every tutorial stays
 one command. The case-file key becomes the ONE user-facing name — proposal
 `[case] file = x.h5`, with `[ibm] coeff_file` accepted as an alias for one
+(RETIRED 2026-09-30, `docs/next_session_after_step7.md` item 2)
 release and a deprecation line printed. STALENESS is attribute-by-attribute,
 not a hash: the readers already take `leng`, `re`, `nb`; add the refine
 keys, `periodic_*`, `refine_dims`, `remove_solid`, `keep_buried`, the STL

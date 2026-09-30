@@ -58,7 +58,7 @@ set(SOLVER_TARGETS moby_solve moby_prepare walldist_test transition_test leaftab
     scalar_test)
 
 # The prepare/solve pair (docs/prepare_solve_strategy.md): moby_prepare
-# writes the block-table case file, moby_solve runs it ([ibm] coeff_file).
+# writes the block-table case file, moby_solve runs it ([case] file).
 # mobygrid was absorbed in P3 -- the case file carries the grid datasets.
 add_executable(moby_solve ${SRC_DIR}/moby_solve.f90 ${MODULE_SOURCES})
 add_executable(moby_prepare ${SRC_DIR}/moby_prepare.f90 ${MODULE_SOURCES})

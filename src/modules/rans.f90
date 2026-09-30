@@ -406,7 +406,7 @@ contains
         if (.not. found) then
             if (has_terminal) print *, "error: [rans] needs the wall distance, but the", &
                 " coefficient file has no dwall_blocks; regenerate it with mobygeom block-table: ", &
-                trim(dns%ibm_coeff_file)
+                trim(dns%case_file)
             error stop
         end if
     end subroutine read_body_distance_file

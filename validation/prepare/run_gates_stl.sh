@@ -48,10 +48,11 @@ done
 # 1-step solve: prepared file vs the committed mobygeom file (coef differ
 # at the bisection tolerance, so fields/ransgeom match tightly, not to 0).
 pfx_ref=flatS; pfx_new=flatP
-sed -e "s|^stl_file = .*|coeff_file = ../rans_geometry/ibm_coeff_blocks_l1.h5|" \
+sed -e "/^stl_file = /d" \
     -e "s|^field_prefix = .*|field_prefix = ${pfx_ref}|" flat.ini > flat_solve_ref.ini
-sed -e "s|^stl_file = \(.*\)|stl_file = \1\ncoeff_file = flat_case.h5|" \
-    -e "s|^field_prefix = .*|field_prefix = ${pfx_new}|" flat.ini > flat_solve_new.ini
+../../tools/set_case_file.sh flat_solve_ref.ini ../rans_geometry/ibm_coeff_blocks_l1.h5
+sed -e "s|^field_prefix = .*|field_prefix = ${pfx_new}|" flat.ini > flat_solve_new.ini
+../../tools/set_case_file.sh flat_solve_new.ini flat_case.h5
 check "flat: solve from committed file" mpirun -n 1 "$BUILD/main" flat_solve_ref.ini
 check "flat: solve from prepared file" mpirun -n 1 "$BUILD/main" flat_solve_new.ini
 check "flat: 1-step fields match (1e-10)" $PY ../../tools/compare_fields.py \

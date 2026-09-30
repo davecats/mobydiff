@@ -5,8 +5,8 @@
 #     tools/prepare_if_missing.sh <ranks> <solver-binary> <input.ini> [log]
 #
 # Resolves the case file the solver will read from the ini -- [case] file,
-# else the [ibm] coeff_file alias, else <field_prefix>.case.h5 (the same rule
-# as config.f90 case_file_name) -- and, when that file does NOT exist, runs
+# else <field_prefix>.case.h5 (the same rule as config.f90 case_file_name) --
+# and, when that file does NOT exist, runs
 # the moby_prepare that sits next to the solver binary on <ranks> ranks (the
 # same rank count as the solve: an unset [blocks] nb is one block per prepare
 # rank). An existing file is left alone, whatever produced it: the committed
@@ -27,7 +27,6 @@ case_of() {  # the case file the solver will read
     local f
     f=$(awk -F'=' '/^[ \t]*\[/{s=$0; gsub(/[ \t]/,"",s)}
                    s=="[case]" && $1 ~ /^[ \t]*file[ \t]*$/ {v=$2; sub(/[;#].*/,"",v); gsub(/^[ \t"]+|[ \t"]+$/,"",v); print v; exit}' "$1")
-    [ -n "$f" ] || f=$(awk -F'=' '$1 ~ /^[ \t]*coeff_file[ \t]*$/ {v=$2; sub(/[;#].*/,"",v); gsub(/^[ \t"]+|[ \t"]+$/,"",v); print v; exit}' "$1")
     if [ -z "$f" ]; then
         local pfx
         pfx=$(awk -F'=' '$1 ~ /^[ \t]*field_prefix[ \t]*$/ {v=$2; sub(/[;#].*/,"",v); gsub(/^[ \t"]+|[ \t"]+$/,"",v); print v; exit}' "$1")

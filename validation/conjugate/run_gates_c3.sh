@@ -89,9 +89,8 @@ transient_case() {   # <ny> <kappa> <cap> <tag> <bin> <prep>
         -e "s|@KAPPA@|$ka|" -e "s|@CAP@|$cap|" -e "s|@PREFIX@|$pre|" \
         -e "s|@NSTEPS@|1|" -e "s|@WRITE@|1|" -e "s|@DT@|$dt|" \
         -e "s|@HEAT@|-1|" -e "s|@HEATFILE@|$pre.heat.txt|" transient.ini > ".$pre.full.ini"
-    sed '/^coeff_file/d' ".$pre.full.ini" > ".$pre.prep.ini"
     sed '/^stl_file/d'   ".$pre.full.ini" > ".$pre.ini"
-    mpirun -n "$RANKS" "$prep" ".$pre.prep.ini" "$pre.h5" > "$pre.prep.log" 2>&1 || {
+    mpirun -n "$RANKS" "$prep" ".$pre.full.ini" "$pre.h5" > "$pre.prep.log" 2>&1 || {
         tail -5 "$pre.prep.log"; return 1; }
     # step 1 only, to mint a snapshot with the right layout to seed into
     mpirun -n 1 "$bin" ".$pre.ini" > "$pre.log" 2>&1 || { tail -20 "$pre.log"; return 1; }
@@ -178,10 +177,9 @@ if want nusselt; then
     sed -i -e "s|^solid_init.*|solid_init = 0.0\nsolid_source = $src|" \
         -e "s|^y_min_type.*|y_min_type = neumann|" \
         -e "s|^y_min_value.*|y_min_value = 0.0|" .nus.full.ini
-    sed '/^coeff_file/d' .nus.full.ini > .nus.prep.ini
     sed '/^stl_file/d'   .nus.full.ini > .nus.ini
     rm -f nus.heat.txt
-    mpirun -n "$RANKS" "$PREP" .nus.prep.ini nus.h5 > nus.prep.log 2>&1 || {
+    mpirun -n "$RANKS" "$PREP" .nus.full.ini nus.h5 > nus.prep.log 2>&1 || {
         tail -5 nus.prep.log; report 1; }
     mpirun -n "$RANKS" "$BIN" .nus.ini > nus.log 2>&1 || { tail -20 nus.log; report 1; }
     run $PY ./check_nusselt.py slab --heat nus.heat.txt --y-wall "$yw" \
@@ -260,7 +258,7 @@ chan_case() {   # <tag> <refine-lines> <case.h5> <restart|->
     sed -e "s|@CASE@|$case|" -e "s|@PREFIX@|$tag|" -e "s|@NSTEPS@|1|" \
         -e "s|@WRITE@|1|" -e "s|@HEAT@|-1|" -e "s|@HEATFILE@|$tag.heat.txt|" \
         -e "s|@REFINE@|$ref|" -e "s|@RESTART@|$rst|" chan_conj.ini > ".$tag.full.ini"
-    sed -e '/^coeff_file/d' -e '/^\[restart\]/,$d' \
+    sed -e '/^\[restart\]/,$d' \
         -e "s|^\\[ibm\\]|[ibm]\\nstl_file = $LES/wall_lo.stl\\nstl_file = $LES/wall_hi.stl|" \
         ".$tag.full.ini" > ".$tag.prep.ini"
     if [ "$rst" = "-" ]; then

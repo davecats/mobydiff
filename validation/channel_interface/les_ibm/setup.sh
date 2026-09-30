@@ -15,16 +15,14 @@
 # the mobygeom file). NOT regenerated any more, because they are committed:
 #   grid.h5      -- the old mobygrid grid; still read as --grid-file by the
 #                   mobygeom reference in ../../rans_geometry/setup.sh
-#   ibm_coeff.h5 -- the single-level LEGACY-format (global layout) file the
-#                   retired mobygeom wrote; measure_nut.py still reads its
-#                   `coef` dataset. The solver no longer reads that layout
-#                   (numerics review step 7-4): the standard suite's les_ibm
-#                   case reads ibm_coeff_case.h5, the number-for-number
-#                   conversion of it into the case-file layout (committed;
-#                   made once with `moby_prepare --convert-legacy` at step
-#                   7-3, gated max_abs 0 against a solve from the legacy
-#                   file). A moby_prepare file of channel_ibm.ini with
-#                   stl_file is its recomputed equivalent, ~1e-10 apart.
+#   ibm_coeff_case.h5 -- the retired mobygeom's single-level legacy-format
+#                   coefficients converted once, number for number, into the
+#                   case-file layout (`moby_prepare --convert-legacy` at
+#                   numerics-review step 7-3, gated max_abs 0 against a solve
+#                   from the legacy file, which left the tree on 2026-09-30).
+#                   The standard suite's les_ibm case and measure_nut.py read
+#                   it. A moby_prepare file of channel_ibm.ini with stl_file
+#                   is its recomputed equivalent, ~1e-10 apart.
 #
 # Usage:  ./setup.sh
 set -euo pipefail
@@ -42,7 +40,7 @@ $PY make_walls_stl.py
 echo "== 2. block-table coefficient file for refine_body (ibm_coeff_blocks.h5, moby_prepare)"
 # The case ini with the coefficient file swapped for the STLs and [restart]
 # stripped (the IC does not exist yet and must not drive the grid).
-sed -e '/^coeff_file/d' -e '/^\[restart\]/,$d' \
+sed -e '/^\[restart\]/,$d' \
     -e 's|^\[ibm\]|[ibm]\nstl_file = wall_lo.stl\nstl_file = wall_hi.stl|' \
     channel_ibm_refine.ini > _prep.ini
 $MPIRUN -n 1 "$PREP" _prep.ini ibm_coeff_blocks.h5

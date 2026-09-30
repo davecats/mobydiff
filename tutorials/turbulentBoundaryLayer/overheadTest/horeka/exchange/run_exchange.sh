@@ -60,6 +60,12 @@ launch() {  # launch <exe> <ranks> <nodes|0 for numa> <run_dir>
     if [ "$nodes" != 0 ]; then
         mapflag="--map-by ppr:$(( ranks / nodes )):node"
     fi
+    # Step 7: the case file, prepared beside the binary's own checkout on the
+    # same rank count (see run_matrix.sh); no helper = pre-contract binary.
+    local pim; pim="$(dirname "$exe")/../tools/prepare_if_missing.sh"
+    if [ -x "$pim" ] && ! ( cd "$run" && "$pim" "$ranks" "$exe" config.ini prepare.log ); then
+        echo "    PREPARE FAILED -- see $run/prepare.log"; return 1
+    fi
     ( cd "$run" && mpirun -n "$ranks" $mapflag --bind-to core --display-map \
           "$exe" config.ini > run.log 2>&1 )
     rc=$?

@@ -77,6 +77,9 @@ run1() {  # run1 <tag> <ini> <extra-fragment>
     sed -e 's/^nsteps *=.*/nsteps = 100/' -e 's/^t_final *=.*/t_final = 0.0/' \
         "$CODE_DIR/$ini" > "$d/cfg.ini"
     printf '%s' "$extra" >> "$d/cfg.ini"
+    # Step 7: the case file (the NEW binary always has the helper beside it).
+    ( cd "$d" && "$CODE_DIR/tools/prepare_if_missing.sh" 1 "$NEW" cfg.ini prepare.log ) \
+        || { echo "  $tag PREPARE FAILED -- $d/prepare.log"; return; }
     ( cd "$d" && mpirun -n 1 "$NEW" cfg.ini > run.log 2>&1 ) || echo "  $tag FAILED"
 }
 # kpin: pinning the whole domain must make the answer independent of tu --

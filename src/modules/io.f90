@@ -891,12 +891,12 @@ subroutine read_dwall_blocks(dwall, found, dns, blk, has_terminal)
     character(kind=C_CHAR,len=:), allocatable :: c_file_name
     integer(C_INT) :: ierr, c_found
 
-    c_file_name = to_c_string(dns%ibm_coeff_file)
+    c_file_name = to_c_string(dns%case_file)
     ierr = fdm_h5_read_dwall_blocks(c_file_name, blk%nb(1), blk%nb(2), blk%nb(3), &
         blk%nBlocks, blk%idStart, c_found, dwall)
     if (ierr /= 0_C_INT) then
         if (has_terminal) print *, "error: could not read dwall_blocks from: ", &
-            trim(dns%ibm_coeff_file)
+            trim(dns%case_file)
         error stop
     end if
     found = c_found /= 0_C_INT
@@ -930,7 +930,7 @@ end subroutine write_rans_geometry_file
 
 ! moby_prepare output (docs/prepare_solve_strategy.md P0): one case file in
 ! the block-table coefficient-file format the solver reads via [ibm]
-! coeff_file -- header attributes + blocks leaf table + coef_blocks, plus
+! case file -- header attributes + blocks leaf table + coef_blocks, plus
 ! the per-level refinement masks (refine_body), block_active (remove_solid)
 ! and dwall_blocks ([rans]). Parallel HDF5: all ranks enter together; each
 ! rank writes its own contiguous leaf-row range, rank 0 the lattice-global

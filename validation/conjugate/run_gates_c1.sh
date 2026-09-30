@@ -55,11 +55,10 @@ slab_case() {
     sed -e "s|@STL@|$pre.stl|" -e "s|@CASE@|$pre.h5|" \
         -e "s|@KAPPA@|$ka|" -e "s|@CAP@|$cap|" -e "s|@PREFIX@|$pre|" \
         -e "s|@NSTEPS@|$ns|" -e "s|@WRITE@|$wr|" $SLAB > ".$pre.full.ini"
-    # moby_prepare COMPUTES the coefficient file, so its input must not name
-    # one; the solve input takes the file and drops the STL.
-    sed '/^coeff_file/d' ".$pre.full.ini" > ".$pre.prep.ini"
+    # moby_prepare takes the full ini (its [case] file names the output it
+    # writes); the solve input takes the file and drops the STL.
     sed '/^stl_file/d'   ".$pre.full.ini" > ".$pre.ini"
-    mpirun -n "$nr" "$prep" ".$pre.prep.ini" "$pre.h5" > "$pre.prep.log" 2>&1 || {
+    mpirun -n "$nr" "$prep" ".$pre.full.ini" "$pre.h5" > "$pre.prep.log" 2>&1 || {
         tail -5 "$pre.prep.log"; return 1; }
     mpirun -n "$nr" "$bin" ".$pre.ini" > "$pre.log" 2>&1 || { tail -20 "$pre.log"; return 1; }
     return 0

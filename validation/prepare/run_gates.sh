@@ -24,9 +24,9 @@ check() { # <name> <cmd...>
 
 twin() { # <base.ini> <case.h5> <new_prefix> -> writes <base>_file.ini
     local base="$1" case="$2" prefix="$3"
-    sed -e "s|^enabled = true|enabled = true\ncoeff_file = ${case}|" \
-        -e "s|^field_prefix = .*|field_prefix = ${prefix}|" \
+    sed -e "s|^field_prefix = .*|field_prefix = ${prefix}|" \
         "${base}.ini" > "${base}_file.ini"
+    ../../tools/set_case_file.sh "${base}_file.ini" "${case}"
 }
 
 run_case() { # <base> <steps-suffix-of-final-field> <ransgeom:0|1>

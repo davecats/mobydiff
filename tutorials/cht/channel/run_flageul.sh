@@ -103,7 +103,8 @@ ini() {  # <prefix> <nsteps> <write> <restart> <sample> <flush> <statsfile>
 # check compares lx/ly/lz/re and the block table, but NOT the node lines).
 if want prepare; then
     echo "== prepare: $CASE from the wall slabs"
-    sed -e "s|^coeff_file = @CASE@|stl_file = wall_lo_f.stl\nstl_file = wall_hi_f.stl|" \
+    sed -e "s|^\[ibm\]|[ibm]\nstl_file = wall_lo_f.stl\nstl_file = wall_hi_f.stl|" \
+        -e "s|@CASE@|$CASE|" \
         -e "s|@SAMPLE@|0|g" -e "s|@STATS@|0|g" -e "s|@STATSFILE@|x|g" \
         -e "s|@NSTEPS@|1|" -e "s|@WRITE@|1|" -e "s|@RESTART@|-|" \
         -e "s|@PREFIX@|fprep|" \

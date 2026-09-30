@@ -33,6 +33,7 @@ Everything else is optional and falls back to the defaults listed below. If
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
 | `name` | string | `generic` | Flow case: `generic`, `channel` (`[case.channel]`), `boundarylayer` (`[case.boundarylayer]`) or `airfoil` (`[case.airfoil]`). An unknown name warns and falls back to `generic`. |
+| `file` | string | `<field_prefix>.case.h5` | The **case file**: grid, block size, leaf table, face kinds, IBM coefficients and wall distance. `mpirun -n N moby_prepare input.ini` writes it, `moby_solve` only reads it (a missing file stops with the prepare command printed, a stale one with the offending `key = value` named). The pre-2026-09-30 alias `[ibm] coeff_file` is gone. |
 
 A case sets its own defaults (boundary faces, grid distribution, forcing, …) before the
 rest of the file is applied, so explicit keys elsewhere in the `.ini` still win.
@@ -183,12 +184,11 @@ override those stored in a restart file.
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
 | `enabled` | bool | true | Enable the volume-penalization IBM. |
-| `coeff_file` | string | (empty) | Case file written by `moby_prepare` (block table + coefficients + wall distance). Empty = analytic wall computed inline. |
 | `wall_shape` | enum | `wavy` | Analytic wall: `wavy` or `eggcarton` (alias `rough`; 3D sinusoidal roughness). |
 | `amp_x`, `amp_z` | real | 0.025 | Analytic wall amplitudes. |
 | `n_wave_x`, `n_wave_z` | int | 1 | Wavelengths per domain length. |
 | `phase_x`, `phase_z` | real | 0.0 | Phase offsets. |
-| `stl_file` | string | — | **`moby_prepare` only.** STL body (binary or ASCII); repeatable, up to 8. The solver refuses it without `coeff_file`. |
+| `stl_file` | string | — | **`moby_prepare` only.** STL body (binary or ASCII); repeatable, up to 8. The solver accepts it only beside a case file that carries the same geometry. |
 | `stl_scale`, `stl_translate` | real, 3 reals | 1.0, `0 0 0` | **`moby_prepare` only.** Transform `v·scale + translate`. |
 | `band_filter` | bool | false | 3-point low-pass on the predicted velocity in a thin band around the body (damps the staircase cell-Reynolds fan). |
 | `band_width` | int | 3 | Band width in cells. |

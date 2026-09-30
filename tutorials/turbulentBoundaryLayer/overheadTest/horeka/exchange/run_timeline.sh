@@ -63,6 +63,15 @@ stage() {   # stage <cfg> <run_dir>
            -e "s/^runtime_interval *=.*/runtime_interval = $NSTEPS/" "$run/config.ini"
 }
 
+prepare() {   # prepare <run_dir> <ranks>
+    # Step 7: the case file, prepared beside the binary's own checkout on the
+    # same rank count (see run_matrix.sh); no helper = pre-contract binary.
+    local pim; pim="$(dirname "$EXE")/../tools/prepare_if_missing.sh"
+    [ -x "$pim" ] || return 0
+    ( cd "$1" && "$pim" "$2" "$EXE" config.ini prepare.log ) \
+        || { echo "    PREPARE FAILED -- see $1/prepare.log"; return 1; }
+}
+
 echo "=== timeline start $(date '+%F %T')  nsteps=$NSTEPS"
 for spec in $SPECS; do
     cfg="${spec%%:*}"; rest="${spec#*:}"; ranks="${rest%%:*}"; nodes="${rest##*:}"
@@ -72,6 +81,7 @@ for spec in $SPECS; do
     run="$RES/host_${cfg}_r${ranks}N${nodes}"
     if [ ! -f "$run/run.log" ]; then
         stage "$cfg" "$run" || { echo "MISSING CONFIG $cfg"; continue; }
+        prepare "$run" "$ranks" || continue
         echo "=== host $cfg ${ranks}x${nodes} ($(date '+%F %T'))"
         ( cd "$run" && mpirun -n "$ranks" --map-by "ppr:${per_node}:node" --bind-to core \
             --display-map "$EXE" config.ini > run.log 2>&1 )
@@ -84,6 +94,7 @@ for spec in $SPECS; do
     run="$RES/nsys_${cfg}_r${ranks}N${nodes}"
     [ -f "$run/run.log" ] && { echo "--- skip nsys $spec (done)"; continue; }
     stage "$cfg" "$run" || continue
+    prepare "$run" "$ranks" || continue
     # Paths baked in at write time: OpenMPI forwards only OMPI_* to remote nodes.
     # exit 0 because the solver segfaults during process EXIT under nsys, after
     # the main loop and every timing line; without this mpirun kills the siblings

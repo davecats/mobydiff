@@ -47,6 +47,12 @@ run_case() {
     cp "$CODE_DIR/$ini" "$run/config.ini"
     sed -i -e "s/^nsteps *=.*/nsteps = ${NSTEPS:-50}/" -e "s/^t_final *=.*/t_final = 0.0/" "$run/config.ini"
     printf '%b' "$extra" >> "$run/config.ini"
+    # Step 7: the case file, prepared beside the binary's own checkout on the
+    # same rank count; no helper = pre-contract binary (builds inline).
+    local pim; pim="$(dirname "$exe")/../tools/prepare_if_missing.sh"
+    if [ -x "$pim" ] && ! ( cd "$run" && "$pim" "$ranks" "$exe" config.ini prepare.log ); then
+        echo "    $name $side PREPARE FAILED -- see $run/prepare.log"; return
+    fi
     ( cd "$run" && mpirun -n "$ranks" --bind-to core --map-by numa "$exe" config.ini > run.log 2>&1 ) \
         || echo "    $name $side FAILED"
 }

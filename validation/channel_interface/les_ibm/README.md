@@ -75,17 +75,19 @@ band-aware `nut` damping is needed; **no solver code change**. See `ibm_les_prof
 ## Files
 
 - `channel_ibm.ini` (a/b), `channel_ibm_refine.ini` (c).
-- `grid.h5`, `wall_{lo,hi}.stl`, `ibm_coeff.h5` (single level, the retired
-  mobygeom's LEGACY global layout &mdash; kept for `measure_nut.py`, which reads its
-  `coef` dataset), `ibm_coeff_case.h5` (the same numbers in the case-file layout,
-  converted once with `moby_prepare --convert-legacy` at numerics-review step 7-3
-  and gated `max_abs 0` against a solve from the legacy file; this is what
-  `channel_ibm.ini` reads since the solver dropped the legacy reader), `IC.h5`
-  &mdash; committed.
+- `grid.h5`, `wall_{lo,hi}.stl`, `ibm_coeff_case.h5` (single level; the retired
+  mobygeom's legacy global-layout `ibm_coeff.h5` converted once, number for number,
+  with `moby_prepare --convert-legacy` at numerics-review step 7-3 and gated
+  `max_abs 0` against a solve from the legacy file; `channel_ibm.ini` reads it
+  through `[case] file`), `IC.h5` &mdash; committed. The legacy `ibm_coeff.h5` left
+  the tree on 2026-09-30 (git history keeps it) once `measure_nut.py` was ported to
+  the case file's `coef_blocks` tiles &mdash; the ported solid mask is identical to
+  the legacy one (69632 of 327680 cells) and the script's output on the 51
+  archived `a_wale` stats snapshots is unchanged to the printed digit.
 - `ibm_coeff_blocks.h5`, `IC_refine.h5` (case c, larger) &mdash; gitignored; `./setup.sh`
   regenerates them (`moby_prepare` + the geometry venv; since 2026-09-26 — it used
-  mobygrid + mobygeom before) or rsync them with the directory. `grid.h5` and
-  `ibm_coeff.h5` came from the retired mobygrid/mobygeom and are not rebuilt.
+  mobygrid + mobygeom before) or rsync them with the directory. `grid.h5` came
+  from the retired mobygrid and is not rebuilt.
 - `make_walls_stl.py`, `make_ibm_ic.py`, `setup.sh` &mdash; data generators.
 - `run_ibm_les.py` &mdash; campaign driver. `measure_nut.py` &mdash; gates 1-2.
   `ibm_les_stats.py` &mdash; gates 3-4.

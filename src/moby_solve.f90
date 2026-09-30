@@ -89,11 +89,11 @@ program moby_solve
     ! [blocks] nb is one block per rank of the PREPARE run's layout (the nb
     ! rule), and a file with fewer blocks than solve ranks stops with
     ! "rank owns no blocks".
-    dns%ibm_coeff_file = case_file_name(dns)
-    inquire(file=trim(dns%ibm_coeff_file), exist=case_exists)
+    dns%case_file = case_file_name(dns)
+    inquire(file=trim(dns%case_file), exist=case_exists)
     if (.not. case_exists) then
         if (c%has_terminal) then
-            print *, "error: case file not found: ", trim(dns%ibm_coeff_file)
+            print *, "error: case file not found: ", trim(dns%case_file)
             print '(A,I0,A,A)', "        prepare it first:  mpirun -n ", c%world_size, &
                 " moby_prepare ", trim(input_file)
         end if
@@ -113,11 +113,11 @@ program moby_solve
     ! (read_case_layout). Only the rank-dependent derived state is formed in
     ! the solver: the Z-order split, the exchange entries, the boundary point
     ! lists, the metric tables, the device maps.
-    if (c%has_terminal) print *, "reading case file layout: ", trim(dns%ibm_coeff_file)
-    call read_case_layout(dns, g, dns%ibm_coeff_file, inputs, fileNb, fileRefMask, leafRows, &
+    if (c%has_terminal) print *, "reading case file layout: ", trim(dns%case_file)
+    call read_case_layout(dns, g, dns%case_file, inputs, fileNb, fileRefMask, leafRows, &
         fileLayout, c%has_terminal)
     if (.not. fileLayout) then
-        if (c%has_terminal) print *, "error: ", trim(dns%ibm_coeff_file), " carries no leaf table", &
+        if (c%has_terminal) print *, "error: ", trim(dns%case_file), " carries no leaf table", &
             " (a retired-mobygeom global-layout file?); re-prepare the case"
         error stop "case file without a blocks table"
     end if

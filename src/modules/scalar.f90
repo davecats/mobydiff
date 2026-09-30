@@ -1816,7 +1816,7 @@ contains
         if (.not. found) then
             if (c%has_terminal) print *, "error: ibm_wall = conjugate needs the wall", &
                 " distance, but the case file has no dwall_blocks; re-run", &
-                " moby_prepare (it writes them by default): ", trim(dns%ibm_coeff_file)
+                " moby_prepare (it writes them by default): ", trim(dns%case_file)
             error stop "conjugate needs dwall_blocks"
         end if
 

@@ -40,20 +40,14 @@ expect_fail() { local name="$1"; shift
     else echo "PASS  $name"; pass=$((pass+1)); fi; }
 
 # short_ini <src> <dst> <steps> <prefix> [case.h5]: a fixed-step run with its
-# own output prefix; with a case file, [ibm] coeff_file points at it (the
-# section is appended when the ini has none).
+# own output prefix; with a case file, [case] file points at it (the
+# section is added when the ini has none).
 short_ini() {
     sed -e "s/^nsteps.*/nsteps = $3/" -e "s/^t_final.*/t_final = 0.0/" \
         -e "s/^field_interval.*/field_interval = $3/" -e "s/^field_prefix.*/field_prefix = $4/" \
         -e "s/^stats_sample_interval.*/stats_sample_interval = 0/" \
         -e "s/^stats_write_interval.*/stats_write_interval = 0/" "$1" > "$2"
-    if [ -n "${5:-}" ]; then
-        if grep -q '^\[ibm\]' "$2"; then
-            sed -i "s|^\[ibm\]|[ibm]\ncoeff_file = $5|" "$2"
-        else
-            printf '\n[ibm]\ncoeff_file = %s\n' "$5" >> "$2"
-        fi
-    fi
+    [ -n "${5:-}" ] && "$ROOT/tools/set_case_file.sh" "$2" "$5"
 }
 
 # gate <name> <dir> <ini> <steps> <datasets> <explicit_nb 0|1> [solve ranks]
@@ -71,7 +65,7 @@ gate() {
           mpirun -n $r --oversubscribe "$REF" ".${tag}_${name}_ref${r}.ini" > ".${tag}_${name}_ref${r}.log" 2>&1 \
               || { echo "   REF run failed ($r ranks)"; exit 2; }
       done
-      # prepare on 1 and 4 ranks (no coeff_file in the prepare input)
+      # prepare on 1 and 4 ranks (no [case] file in the prepare input)
       for p in 1 4; do
           short_ini "$ini" ".${tag}_${name}_prep${p}.ini" "$steps" "${tag}_${name}_x"
           mpirun -n $p --oversubscribe "$PREP" ".${tag}_${name}_prep${p}.ini" "${tag}_${name}_case${p}.h5" \

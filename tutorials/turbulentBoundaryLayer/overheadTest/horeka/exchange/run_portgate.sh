@@ -40,7 +40,7 @@ pass=0; fail=0
 
 leg() {   # leg <tag> <ini> <ranks> <ref-extra> <new-extra> <datasets...>
     local tag="$1" ini="$2" ranks="$3" rx="$4" nx="$5"; shift 5
-    local ds="$*" side bin extra d pfx a b out
+    local ds="$*" side bin extra d pfx a b out pim
     local src="$ROOT/$ini"
     [ -f "$src" ] || { echo "  MISSING CASE $ini"; fail=$((fail+1)); return; }
     for side in ref new; do
@@ -52,6 +52,12 @@ leg() {   # leg <tag> <ini> <ranks> <ref-extra> <new-extra> <datasets...>
         sed -e "s/^nsteps *=.*/nsteps = $NSTEPS/" -e "s/^t_final *=.*/t_final = 0.0/" \
             "$src" > "$d/cfg.ini"
         printf '%s' "$extra" >> "$d/cfg.ini"
+        # Step 7: the case file, prepared beside the binary's own checkout on
+        # the same rank count (see run_matrix.sh); no helper = pre-contract.
+        pim="$(dirname "$bin")/../tools/prepare_if_missing.sh"
+        if [ -x "$pim" ] && ! ( cd "$d" && "$pim" "$ranks" "$bin" cfg.ini prepare.log ); then
+            echo "  $tag $side PREPARE FAILED -- $d/prepare.log"; fail=$((fail+1)); return
+        fi
         ( cd "$d" && mpirun -n "$ranks" --bind-to core --map-by numa "$bin" cfg.ini \
               > run.log 2>&1 )
         [ $? -ne 0 ] && { echo "  $tag $side FAILED -- $d/run.log"; fail=$((fail+1)); return; }
