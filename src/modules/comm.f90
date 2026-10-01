@@ -1,9 +1,11 @@
 module comm
     use, intrinsic :: iso_c_binding
+    use, intrinsic :: iso_fortran_env, only: int64
     use :: mpi_f08
     use :: init, only: dns_type
     use :: blocks, only: block_set_type, zorder_owner, zorder_start, zorder_count, &
-        leaf_at, level_cells, level_cell_width, occupied_any_level, parent_coord, child_origin
+        leaf_at, level_cells, level_cell_width, occupied_any_level, parent_coord, child_origin, &
+        partition_surface
     use :: boundary, only: boundary_type
     use :: profiling, only: prof_tic, prof_toc, exch_prof, &
         PROF_PACK, PROF_MPI_POST, PROF_MPI_WAIT, PROF_UNPACK, PROF_LOCAL_COPY, &
@@ -36,6 +38,9 @@ module comm
         integer :: cart_rank = 0
         integer :: cart_size = 1
         integer :: local_rank = 0
+        ! Node this rank runs on: the smallest world rank sharing its memory
+        ! (MPI_COMM_TYPE_SHARED), i.e. one id per node.
+        integer :: node_id = 0
         logical :: has_terminal = .true.
         ! [output] exchange_barrier -- diagnostic, see finish_halo_exchange.
         logical :: exchangeBarrier = .false.
@@ -182,7 +187,7 @@ module comm
 
     public :: comm_init_world, comm_init, comm_cart_dims, comm_finalize
     public :: comm_allreduce_max, comm_allreduce_sum, comm_allreduce_max_int
-    public :: init_block_exchange, report_exchange_balance
+    public :: init_block_exchange, report_exchange_balance, report_partition
     public :: start_halo_exchange, finish_halo_exchange, exchange_halos, exchange_scalar_halos
     public :: sync_divergence_halos
 
@@ -226,6 +231,7 @@ contains
         end if
         call MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL, local_comm, ierr)
         call MPI_Comm_rank(local_comm, c%local_rank, ierr)
+        call MPI_Allreduce(c%world_rank, c%node_id, 1, MPI_INTEGER, MPI_MIN, local_comm, ierr)
         call select_target_device(c, local_comm)
         call MPI_Comm_free(local_comm, ierr)
 
@@ -503,6 +509,38 @@ contains
                 "  slowest rank ", nint(pairMax(2))
         end if
     end subroutine report_exchange_balance
+
+    ! The audit line of the block distribution: how many face cells the
+    ! linear split of the leaf table puts between ranks, and between NODES
+    ! (blocks.f90 partition_surface). The cross-node number is the one a
+    ! multi-node run pays for in exchange wait; a leaf order whose coarsest
+    ! cut lies across the large faces shows up here at init instead of as an
+    ! unexplained step time (results_horeka_2026-09-30.md section 3: 1442 k
+    ! cells where 34 k were possible, +70 % on the step).
+    subroutine report_partition(c, blk)
+        type(comm_type), intent(in) :: c
+        type(block_set_type), intent(in) :: blk
+
+        integer, allocatable :: nodeOf(:)
+        integer(int64) :: cellsRank, cellsNode
+        integer :: ierr, r, nNodes
+
+        ! Node id of every rank, indexed by the Cartesian rank the leaf
+        ! ownership (zorder_owner) is expressed in.
+        allocate(nodeOf(0:c%cart_size - 1))
+        call MPI_Allgather(c%node_id, 1, MPI_INTEGER, nodeOf, 1, MPI_INTEGER, c%cart_comm, ierr)
+        if (.not. c%has_terminal) return
+
+        call partition_surface(blk, logical(c%periodic, C_BOOL), int(c%cart_size, C_INT), nodeOf, &
+            cellsRank, cellsNode)
+        nNodes = 0
+        do r = 0, c%cart_size - 1
+            if (.not. any(nodeOf(0:r-1) == nodeOf(r))) nNodes = nNodes + 1
+        end do
+        write(*,'(A,I0,A,I0,A,I0,A,I0,A)') " partition: face cells shared across ranks ", &
+            cellsRank, " (", c%cart_size, " ranks), across nodes ", cellsNode, &
+            " (", nNodes, " nodes)"
+    end subroutine report_partition
 
     subroutine init_block_exchange(c, blk, dns)
         type(comm_type), intent(inout) :: c

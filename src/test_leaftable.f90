@@ -3,9 +3,12 @@
 ! table (blocks.f90 build_leaf_table) for a box-refined case and prints
 ! it row-by-row in the mobygeom blocks-dataset convention (origin in
 ! level-l cells for refined directions, global cells for fixed ones;
-! rows ordered along the canonical Morton curve of the refine_dims
-! mode). validation compares this against mobygeom's Python mirror
-! (build_leaf_table_py). Run:
+! rows in the builder's key order: the xz-mode key, or in xyz mode the
+! minimum-surface bit order of blocks.f90 min_surface_key_order).
+! validation/refine2d compares the xz table against mobygeom's Python
+! mirror (build_leaf_table_py) row by row; in xyz mode the retired
+! mobygeom keeps the legacy interleave, so compare as SETS there, or
+! against tools/partition_analysis.py --order minsurface. Run:
 !   mpirun -n 1 build_cpu/leaftable_test nx ny nz lx ly lz nb levels \
 !       dims x0 x1 y0 y1 z0 z1 [px py pz]
 ! dims = xyz | xz; px py pz = 1/0 periodicity flags (default periodic).

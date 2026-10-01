@@ -133,11 +133,17 @@ def morton_key2(cx, cz):
 
 
 def morton_sort(leaves, lmax=1, mask=(1, 1, 1)):
-    """Canonical leaf order (blocks.f90 leaf_key): 3D Morton (xyz octree)
-    or the mixed y-major form (xz quadtree: y tile in bits 42+ over the
-    2D x,z Morton key of the finest-lattice coords in the HIGH bits, above y
-    in the low LEAF_KEY_YBITS -- so the order runs down each (x,z) column; see
-    blocks.f90 leaf_key for why y moved out of the high bits)."""
+    """Leaf order of the written file: the LEGACY 3D Morton interleave (xyz
+    octree, x lowest and z on top) or the xz-quadtree key (2D x,z Morton key
+    of the finest-lattice coords in the HIGH bits, above y in the low
+    LEAF_KEY_YBITS -- so the order runs down each (x,z) column).
+
+    This is no longer required to be the solver's order: a case file built
+    since 2026-10-01 carries the minimum-surface bit order in xyz mode
+    (blocks.f90 min_surface_key_order), and the restart reader matches a
+    field file's rows to its blocks on (origin, level) through the file's own
+    `blocks` table (field_hdf5.c block_row_map). Any row order restarts; the
+    solver notes a differing one in its log."""
     def key(leaf):
         lev, cx, cy, cz = leaf
         fx, fy, fz = (2**((lmax - lev)*m) for m in mask)

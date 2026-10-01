@@ -33,10 +33,23 @@ dims = 0 0 0     ; 0 = let MPI choose the factorization for this direction
 ```
 
 A `0` lets MPI pick the number of ranks along that axis; fixed non-zero values pin the
-process grid. Blocks are distributed over the ranks along a Z-order (Morton) space-filling
-curve, and each rank owns a contiguous run of block ids. Results are independent of the
-number of ranks and of the block count (`[blocks] nb`) — see
+process grid. Blocks are distributed over the ranks along a Z-order (Morton-type)
+space-filling curve, and each rank owns a contiguous run of block ids. Results are
+independent of the number of ranks and of the block count (`[blocks] nb`) — see
 [Numerical methods](numerical-methods.md#block-structured-grid-and-21-refinement).
+
+The curve's bit order is chosen by `moby_prepare` from the geometry, so that the coarsest
+cuts of the block list — which become the rank and, with ranks filled node by node, the
+**node** boundaries — fall across the planes that carry the fewest cells. The solver prints
+the result at start-up:
+
+```
+ partition: face cells shared across ranks 2262016 (8 ranks), across nodes 33792 (2 nodes)
+```
+
+The cross-node number is what a multi-node run pays for in exchange wait; if it is of the
+order of the cross-rank number, the case file predates the ordering (re-run `moby_prepare`)
+or the rank placement does not fill nodes in rank order.
 
 ## Grid, blocks and refinement
 

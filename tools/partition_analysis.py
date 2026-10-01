@@ -19,6 +19,25 @@ finest-lattice index space, and scores candidate partitionings.
 
 The traffic proxy is the SHARED AREA in finest cells, which is what an exchange
 entry actually carries; pair counts alone would weight a corner like a face.
+
+BLOCK ORDER (docs/next_session_after_step9.md item 2). `--order` re-sorts the
+leaves before the linear split and reports, for each order asked for, the FACE
+CELLS SHARED ACROSS RANKS AND ACROSS NODES (`--per-node` ranks fill a node) --
+the numbers the solver prints at init (`partition: face cells shared ...`,
+blocks.f90 partition_surface), counted the same way: every interface once, in
+cells of its finer side.
+
+  file        the row order of the input (what a run from that case file uses)
+  legacy      the plain interleave, x lowest and z on top (xyz mode before
+              2026-10-01; xz mode: the x,z interleave above y, unchanged)
+  minsurface  blocks.f90 min_surface_key_order: the next key bit goes to the
+              direction whose bisecting plane carries the fewest cells (a
+              periodic direction's first cut counted twice), ties in x, y, z
+
+Without a leaf file the uniform single-level lattice of `--grid`/`--nb` is used:
+
+  ./partition_analysis.py lattice --grid 4096 176 192 --nb 2048 88 96 \
+      --periodic 0 0 1 --ranks 8 --per-node 4 --order legacy minsurface
 """
 
 import argparse
@@ -120,6 +139,104 @@ def neighbour_pairs(ext, dom, periodic, tile):
     return pairs
 
 
+# --- block orders (mirrors of blocks.f90 leaf_key and its key-bit orders) ----
+
+def bitlen(n):
+    """Bits needed for coordinates 0 .. n-1."""
+    return max(0, (n - 1).bit_length())
+
+
+def min_surface_order(grid, nb, periodic, nlev):
+    """blocks.f90 min_surface_key_order: directions 0..2 from the most to the
+    least significant key bit."""
+    left = [bitlen(grid[d] // nb[d] * 2 ** (nlev - 1)) for d in range(3)]
+    ext = [grid[d] * 2 ** (nlev - 1) for d in range(3)]       # finest cells
+    first = [True] * 3
+    seq = []
+    while any(left):
+        best, bd = None, None
+        for d in range(3):
+            if not left[d]:
+                continue
+            area = ext[(d + 1) % 3] * ext[(d + 2) % 3]
+            if periodic[d] and first[d]:
+                area *= 2
+            if best is None or area < best:
+                best, bd = area, d
+        seq.append(bd)
+        left[bd] -= 1
+        first[bd] = False
+        ext[bd] = min(ext[bd], nb[bd] << left[bd])
+    return seq
+
+
+def legacy_order(grid, nb, nlev):
+    """The plain interleave: z above y above x in every bit triple."""
+    nbit = max(bitlen(grid[d] // nb[d] * 2 ** (nlev - 1)) for d in range(3))
+    return [d for _ in range(nbit) for d in (2, 1, 0)]
+
+
+def order_key(c, seq):
+    """Key of finest-lattice tile coords c under the bit order seq."""
+    left = [seq.count(d) for d in range(3)]
+    k = 0
+    for d in seq:
+        left[d] -= 1
+        k = (k << 1) | ((c[d] >> left[d]) & 1)
+    return k
+
+
+def sort_rows(rows, nb, mask, nlev, seq):
+    """Leaves in the order of a key-bit sequence (xyz mode), or of the xz key
+    (x,z interleave above y; seq is ignored there)."""
+    def key(r):
+        cf = [(r[d] // nb[d]) * 2 ** ((nlev - 1 - r[3]) * mask[d]) for d in range(3)]
+        if mask == [1, 1, 1]:
+            return order_key(cf, seq)
+        return (morton_key(cf[0], cf[2]) << 21) | cf[1]
+    return sorted(rows, key=key)
+
+
+def face_cells(rows, nb, mask, grid, periodic, owner, node):
+    """blocks.f90 partition_surface: face cells shared by leaves of different
+    ranks / nodes, every interface once (from the HIGH face of its low-side
+    leaf), in cells of its finer side."""
+    at = {(r[3], r[0] // nb[0], r[1] // nb[1], r[2] // nb[2]): i
+          for i, r in enumerate(rows)}
+    tiles = [grid[d] // nb[d] for d in range(3)]
+    crank = cnode = 0
+    for i, r in enumerate(rows):
+        l = r[3]
+        c = [r[d] // nb[d] for d in range(3)]
+        for d in range(3):
+            cn = list(c)
+            cn[d] += 1
+            if cn[d] >= tiles[d] * 2 ** (l * mask[d]):
+                if not periodic[d]:
+                    continue
+                cn[d] = 0
+            area = nb[(d + 1) % 3] * nb[(d + 2) % 3]
+            others = []
+            j = at.get((l, *cn))
+            if j is None and l > 0:
+                j = at.get((l - 1, *[cn[e] // (1 + mask[e]) for e in range(3)]))
+            if j is not None:
+                others.append(j)
+            else:
+                for s in product(*[range(1 + mask[e]) for e in range(3)]):
+                    if s[d] != 0:
+                        continue
+                    j = at.get((l + 1, *[cn[e] * (1 + mask[e]) + s[e] for e in range(3)]))
+                    if j is not None:
+                        others.append(j)
+            for j in others:
+                if owner[i] != owner[j]:
+                    crank += area
+                if node[owner[i]] != node[owner[j]]:
+                    cnode += area
+    return crank, cnode
+
+
 def morton_key(cx, cz):
     k = 0
     for b in range(20):
@@ -206,17 +323,47 @@ def score(owner, pairs, nranks, label):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("leaves")
+    p.add_argument("leaves", help="leaf table (.h5 / leaftable_test stdout), or "
+                   "'lattice' for the uniform single-level lattice of --grid/--nb")
     p.add_argument("--nb", nargs=3, type=int, required=True)
     p.add_argument("--grid", nargs=3, type=int, required=True)
     p.add_argument("--dims", default="xyz")
     p.add_argument("--periodic", nargs=3, type=int, default=[1, 1, 1])
     p.add_argument("--ranks", nargs="+", type=int, default=[2, 4, 8, 16])
+    p.add_argument("--order", nargs="+", choices=["file", "legacy", "minsurface"],
+                   help="report the face cells shared across ranks and nodes "
+                        "for these block orders (and nothing else)")
+    p.add_argument("--per-node", type=int, default=4, help="ranks per node")
     a = p.parse_args()
 
     mask = [1, 1, 1] if a.dims == "xyz" else [1, 0, 1]
-    rows = read_leaves(a.leaves)
+    if a.leaves == "lattice":
+        rows = [(i * a.nb[0], j * a.nb[1], k * a.nb[2], 0)
+                for k in range(a.grid[2] // a.nb[2])
+                for j in range(a.grid[1] // a.nb[1])
+                for i in range(a.grid[0] // a.nb[0])]
+    else:
+        rows = read_leaves(a.leaves)
     nlev = max(r[3] for r in rows) + 1
+
+    if a.order:
+        if "file" in a.order and a.leaves == "lattice":
+            sys.exit("--order file needs a leaf file")
+        seqs = {"legacy": legacy_order(a.grid, a.nb, nlev),
+                "minsurface": min_surface_order(a.grid, a.nb, a.periodic, nlev)}
+        print(f"{len(rows)} leaves, {nlev} level(s), {a.per_node} ranks per node")
+        for name in a.order:
+            ordered = rows if name == "file" else sort_rows(rows, a.nb, mask, nlev, seqs[name])
+            bits = "" if name == "file" or mask != [1, 1, 1] else \
+                "   key bits high -> low: " + " ".join("xyz"[d] for d in seqs[name])
+            print(f"order = {name}{bits}")
+            for R in a.ranks:
+                owner = assign_current(ordered, R)
+                node = [r // a.per_node for r in range(R)]
+                crank, cnode = face_cells(ordered, a.nb, mask, a.grid, a.periodic, owner, node)
+                print(f"  ranks = {R:<4d} face cells shared across ranks {crank:>12,}"
+                      f"   across nodes {cnode:>12,}")
+        return
     ext = extents(rows, a.nb, mask, nlev)
     dom = [a.grid[d] * 2 ** ((nlev - 1) * mask[d]) for d in range(3)]
     tile = [a.nb[d] * 2 ** ((nlev - 1) * mask[d]) for d in range(3)]

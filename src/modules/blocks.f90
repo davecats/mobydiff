@@ -34,11 +34,17 @@ module blocks
     public :: enter_block_data, exit_block_data
     public :: subdivide_node_line
     public :: zorder_owner, zorder_start, zorder_count
+    public :: KEY_MAX_BITS, min_surface_key_order, partition_surface
     public :: zero_closed_halos, face_kind, leaf_at, level_cells
     public :: level_cell_width, occupied_any_level
     public :: parent_coord, child_origin
     public :: FACE_OPEN, FACE_PHYS, FACE_CLOSED, FACE_COARSE, FACE_FINE
     public :: LAP_M, LAP_0, LAP_P
+
+    ! Width of the leaf ordering key (a positive int64) and of one
+    ! coordinate in it: the caps both key forms share.
+    integer, parameter :: KEY_MAX_BITS = 63
+    integer, parameter :: KEY_COORD_BITS = 21
 
     ! Low bits reserved for the y coordinate in the xz-mode leaf ordering key
     ! (see leaf_key). Bounds the global ny at 2**21 cells, the same cap
@@ -78,6 +84,19 @@ module blocks
         integer(C_INT) :: nTiles(1:3) = 0_C_INT        ! root (level-0) lattice
         integer(C_INT) :: nBlocksGlobal = 0_C_INT
         integer(C_INT) :: idStart = 0_C_INT
+
+        ! The SIGNIFICANCE of the coordinate bits in the xyz-mode leaf key
+        ! (leaf_key): keyOrder(1:nKeyBits) lists directions 1..3 from the
+        ! most to the least significant key bit, each occurrence of a
+        ! direction taking its next-lower coordinate bit; keyPos(k,d) is the
+        ! key position that results for bit k of direction d. The case
+        ! builder chooses the order (min_surface_key_order) and the case
+        ! file records it; a file without the record is read with the legacy
+        ! interleave (x lowest, z on top). Unused in xz mode (nKeyBits = 0),
+        ! which keeps its own key.
+        integer(C_INT) :: nKeyBits = 0_C_INT
+        integer(C_INT) :: keyOrder(KEY_MAX_BITS) = 0_C_INT
+        integer(C_INT) :: keyPos(0:KEY_COORD_BITS-1, 3) = 0_C_INT
 
         ! Global leaf table, identical on every rank (host only). Leaves of
         ! the refinement forest are numbered along the Z-order curve of the
@@ -171,7 +190,8 @@ contains
         integer(C_INT), intent(in), optional :: touch(:,:), buried(:,:)
         integer(C_INT), intent(in), optional :: maskLo(:,:), maskDims(:,:)
 
-        integer :: d, nRemoved
+        integer :: d, nRemoved, nOrder
+        integer(C_INT) :: order(KEY_MAX_BITS)
 
         call destroy_block_set(blk)
 
@@ -192,6 +212,11 @@ contains
             blk%nLevels = 1_C_INT + max(dns%block_refine_levels, 0_C_INT)
         end if
         call build_level_lines(blk, dns, g)
+        if (all(blk%refMask == 1_C_INT)) then
+            call min_surface_key_order(dns%globalSize(1:3), blk%nb, blk%nLevels, periodic, &
+                order, nOrder)
+            call set_key_order(blk, order(1:nOrder))
+        end if
         call build_leaf_table(blk, dns, periodic, active, myrank, touch, buried, &
             maskLo, maskDims)
         nRemoved = int(product(blk%nTiles)) - count_level0_leaves(blk)
@@ -280,13 +305,16 @@ contains
     ! rather than assumed (both ends of every exchange derive entry order
     ! from it).
     subroutine init_block_set_from_table(blk, dns, g, periodic, nranks, myrank, nb, &
-            refMask, rows)
+            refMask, keyOrder, rows)
         type(block_set_type), intent(inout) :: blk
         type(dns_type), intent(in) :: dns
         type(grid_type), intent(in) :: g
         logical(C_BOOL), intent(in) :: periodic(1:3)
         integer(C_INT), intent(in) :: nranks, myrank
         integer(C_INT), intent(in) :: nb(3), refMask(3)
+        ! The file's key-bit order (see block_set_type keyOrder); size 0 for
+        ! a file that records none, which is then read with the legacy order.
+        integer(C_INT), intent(in) :: keyOrder(:)
         integer(C_INT), intent(in) :: rows(:,:)
 
         integer :: d, i, n, l, lmax, idx, nRemoved
@@ -312,6 +340,13 @@ contains
             error stop "case file: leaf level out of range"
         blk%nLevels = int(lmax + 1, C_INT)
         call build_level_lines(blk, dns, g)
+        if (all(blk%refMask == 1_C_INT)) then
+            if (size(keyOrder) > 0) then
+                call set_key_order(blk, keyOrder)
+            else
+                call set_key_order(blk, legacy_key_order())
+            end if
+        end if
 
         blk%nBlocksGlobal = int(n, C_INT)
         allocate(blk%leafLevel(n), blk%leafCoord(3, n))
@@ -356,8 +391,10 @@ contains
             idx = lid_index(blk, l, c)
             if (blk%lidOf(idx) /= -1_C_INT) error stop "case file: duplicate leaf"
             blk%lidOf(idx) = int(i - 1, C_INT)
+            if (.not. key_covers(blk, lmax, l, c)) &
+                error stop "case file: a leaf needs more key bits than block_key_order records"
             key = leaf_key(blk, lmax, l, c)
-            if (key <= prev) error stop "case file: blocks table is not in Morton order"
+            if (key <= prev) error stop "case file: blocks table is not in its key order"
             prev = key
         end do
 
@@ -516,6 +553,9 @@ contains
         blk%idStart = 0_C_INT
         blk%nLevels = 1_C_INT
         blk%refMask = 1_C_INT
+        blk%nKeyBits = 0_C_INT
+        blk%keyOrder = 0_C_INT
+        blk%keyPos = 0_C_INT
     end subroutine destroy_block_set
 
     ! Device mapping, mirroring enter_grid_data/enter_field_data in
@@ -1231,19 +1271,6 @@ contains
 #endif
     end subroutine zero_closed_halos
 
-    pure integer(int64) function morton_key(gx, gy, gz) result(key)
-        integer, intent(in) :: gx, gy, gz
-
-        integer :: bit
-
-        key = 0_int64
-        do bit = 0, 20
-            key = ior(key, ishft(iand(int(gx, int64), ishft(1_int64, bit)), 2*bit))
-            key = ior(key, ishft(iand(int(gy, int64), ishft(1_int64, bit)), 2*bit + 1))
-            key = ior(key, ishft(iand(int(gz, int64), ishft(1_int64, bit)), 2*bit + 2))
-        end do
-    end function morton_key
-
     pure integer(int64) function morton2_key(gx, gz) result(key)
         integer, intent(in) :: gx, gz
 
@@ -1256,8 +1283,11 @@ contains
         end do
     end function morton2_key
 
-    ! Ordering key of a level-l leaf. xyz mode: the 3D Morton key of the
-    ! finest-lattice coords (Phase 3a, unchanged).
+    ! Ordering key of a level-l leaf. xyz mode: a BIT PERMUTATION of the
+    ! finest-lattice coords -- bit k of direction d sits at key position
+    ! blk%keyPos(k,d). With the legacy order that is the 3D Morton interleave
+    ! (x lowest, z on top); a case file built since 2026-10-01 carries the
+    ! minimum-surface order instead (min_surface_key_order).
     !
     ! xz quadtree mode: the 2D (x,z) Morton key of the finest-lattice coords
     ! (x even bits, z odd) in the HIGH bits, above the y coordinate — i.e.
@@ -1275,8 +1305,8 @@ contains
     ! becomes column-wise and keeps cross-level pairs on one rank: total peer
     ! area falls 14.5x/10.2x/5.0x at 4/8/16 ranks with load imbalance unchanged
     ! at 1.000 (tools/partition_analysis.py, docs/next_session_2to1_penalty.md).
-    ! xyz mode is NOT touched: the 3D Morton curve already has that locality
-    ! (cross-level cut 1.4 % at 4 ranks on the 5-level NACA case).
+    ! The xyz key already has that locality whatever its bit order (cross-level
+    ! cut 1.4 % at 4 ranks on the 5-level NACA case with the legacy interleave).
     !
     ! Both ends of every exchange derive entry order from this SAME curve, and
     ! it fixes the leaf-table row order in case and restart files.
@@ -1289,16 +1319,154 @@ contains
         type(block_set_type), intent(in) :: blk
         integer, intent(in) :: lmax, l, c(3)
 
-        integer :: cf(3)
+        integer :: cf(3), d, k
 
         cf = c*2**((lmax - l)*int(blk%refMask))
         if (all(blk%refMask == 1_C_INT)) then
-            key = morton_key(cf(1), cf(2), cf(3))
+            key = 0_int64
+            do d = 1, 3
+                do k = 0, KEY_COORD_BITS - 1
+                    if (btest(cf(d), k)) key = ibset(key, int(blk%keyPos(k, d)))
+                end do
+            end do
         else
             key = ior(ishft(morton2_key(cf(1), cf(3)), LEAF_KEY_YBITS), &
                       int(cf(2), int64))
         end if
     end function leaf_key
+
+    ! True when the key order has a bit for every set bit of this leaf's
+    ! finest-lattice coords (xyz mode). A leaf beyond it would alias another
+    ! key position silently; the table reader checks instead.
+    pure logical function key_covers(blk, lmax, l, c) result(ok)
+        type(block_set_type), intent(in) :: blk
+        integer, intent(in) :: lmax, l, c(3)
+
+        integer :: cf(3), d
+
+        ok = .true.
+        if (any(blk%refMask /= 1_C_INT)) return
+        cf = c*2**(lmax - l)
+        do d = 1, 3
+            if (cf(d) >= 2**count(blk%keyOrder(1:blk%nKeyBits) == d)) ok = .false.
+        end do
+    end function key_covers
+
+    ! Install a key-bit order: order(:) lists directions 1..3 from the most to
+    ! the least significant key bit, and each occurrence of a direction takes
+    ! its next-lower coordinate bit (so a direction named m times owns bits
+    ! m-1 .. 0). keyPos is the resulting position table leaf_key reads.
+    subroutine set_key_order(blk, order)
+        type(block_set_type), intent(inout) :: blk
+        integer(C_INT), intent(in) :: order(:)
+
+        integer :: i, d, n, left(3)
+
+        n = size(order)
+        if (n > KEY_MAX_BITS) error stop "leaf key order: more than 63 bits"
+        if (n > 0) then
+            if (any(order < 1_C_INT .or. order > 3_C_INT)) &
+                error stop "leaf key order: a direction is not 1, 2 or 3"
+        end if
+        do d = 1, 3
+            left(d) = count(order == d)
+        end do
+        if (any(left > KEY_COORD_BITS)) error stop "leaf key order: more than 21 bits in one direction"
+
+        blk%nKeyBits = int(n, C_INT)
+        blk%keyOrder = 0_C_INT
+        blk%keyOrder(1:n) = order
+        blk%keyPos = 0_C_INT
+        do i = 1, n
+            d = int(order(i))
+            left(d) = left(d) - 1
+            blk%keyPos(left(d), d) = int(n - i, C_INT)
+        end do
+    end subroutine set_key_order
+
+    ! The order every xyz case file had before 2026-10-01 and that a file
+    ! without the block_key_order record is read with: the plain 3D Morton
+    ! interleave, z above y above x in every bit triple.
+    pure function legacy_key_order() result(order)
+        integer(C_INT) :: order(3*KEY_COORD_BITS)
+
+        integer :: i
+
+        do i = 1, KEY_COORD_BITS
+            order(3*i-2:3*i) = [3_C_INT, 2_C_INT, 1_C_INT]
+        end do
+    end function legacy_key_order
+
+    ! The MINIMUM-SURFACE key-bit order (decided 2026-10-01,
+    ! docs/next_session_after_step9.md item 2). The linear rank split
+    ! (zorder_owner) cuts the leaf list at the high key bits first, so the
+    ! most significant bit decides which plane the coarsest partition
+    ! boundary -- with ranks filled node by node, the NODE boundary -- lies
+    ! on. The plain interleave puts z on top whatever the geometry: on a
+    ! 4096 x 176 x 192 domain in 2 x 2 x 2 blocks at 8 ranks on two nodes
+    ! that cut 1442 k face cells across the node boundary where an x cut
+    ! takes 34 k, and the step cost +70 % (results_horeka_2026-09-30.md).
+    !
+    ! The rule is a recursive bisection of the domain box: among the
+    ! directions with coordinate bits left, the next key bit goes to the one
+    ! whose bisecting plane carries the FEWEST cells -- the product of the
+    ! other two box extents, counted twice for a periodic direction's first
+    ! cut (halving a periodic direction makes two interfaces) -- ties in
+    ! x, y, z order; the box is then halved in that direction. It depends on
+    ! the grid, the block size, the level count and the periodicity alone,
+    ! NOT on the rank count, so the order is canonical for a case file. For
+    ! cubic blocks on a non-periodic cube it is the ordinary interleave with
+    ! x on top (x y z x y z ...); a long direction's extra bits come first,
+    ! and a periodic direction's doubled first cut groups its top two bits
+    ! (a periodic channel 256 x 128 x 256 in 32^3 blocks: x x y z z x y z).
+    ! Unit-tested in src/test_keyorder.f90, mirrored in
+    ! tools/partition_analysis.py.
+    !
+    ! A greedy minimum of the exchanged cells at every power-of-two split,
+    ! not a proof of minimum run time: load balance is the other half.
+    pure subroutine min_surface_key_order(globalSize, nb, nLevels, periodic, order, n)
+        integer(C_INT), intent(in) :: globalSize(3), nb(3), nLevels
+        logical(C_BOOL), intent(in) :: periodic(3)
+        integer(C_INT), intent(out) :: order(KEY_MAX_BITS)
+        integer, intent(out) :: n
+
+        integer :: d, best, left(3)
+        integer(int64) :: ext(3), tileF(3), area, areaBest
+        logical :: firstCut(3)
+
+        ! Finest-lattice tile counts, their bit lengths, and the box in
+        ! finest-level cells.
+        tileF = int(globalSize/nb, int64)*2_int64**(int(nLevels) - 1)
+        ext = int(globalSize, int64)*2_int64**(int(nLevels) - 1)
+        do d = 1, 3
+            left(d) = 0
+            do while (ishft(1_int64, left(d)) < tileF(d))
+                left(d) = left(d) + 1
+            end do
+        end do
+        firstCut = .true.
+        order = 0_C_INT
+        n = 0
+        do while (any(left > 0))
+            best = 0
+            areaBest = huge(areaBest)
+            do d = 1, 3
+                if (left(d) == 0) cycle
+                area = ext(1 + mod(d, 3))*ext(1 + mod(d + 1, 3))
+                if (periodic(d) .and. firstCut(d)) area = 2_int64*area
+                if (area < areaBest) then
+                    areaBest = area
+                    best = d
+                end if
+            end do
+            n = n + 1
+            order(n) = int(best, C_INT)
+            left(best) = left(best) - 1
+            firstCut(best) = .false.
+            ! The half-box this bit selects: 2**left tiles of the finest lattice.
+            ext(best) = min(ext(best), int(nb(best), int64)*ishft(1_int64, left(best)))
+        end do
+    end subroutine min_surface_key_order
 
     subroutine heapsort_index(keys, order)
         integer(int64), intent(in) :: keys(:)
@@ -1345,6 +1513,78 @@ contains
 
     ! Linear distribution of N Z-ordered blocks over P ranks: rank p owns
     ! floor((N + P - p - 1)/P) consecutive ids.
+    ! How much block surface the linear split puts between ranks, and between
+    ! NODES: the face cells shared by leaves of different owners (cellsRank)
+    ! and of owners on different nodes (cellsNode), over the whole leaf table.
+    ! Every interface is visited once, from the HIGH face of its low-side
+    ! leaf, and counted in the cells of its FINER side -- what an exchange
+    ! carries across it. A periodic direction two tiles wide contributes both
+    ! of its interfaces. nodeOf(r) is the node id of rank r. Host only; the
+    ! solver prints the result at init so a bad distribution is visible
+    ! rather than silent (the node-boundary finding of 2026-09-30).
+    subroutine partition_surface(blk, periodic, nranks, nodeOf, cellsRank, cellsNode)
+        type(block_set_type), intent(in) :: blk
+        logical(C_BOOL), intent(in) :: periodic(1:3)
+        integer(C_INT), intent(in) :: nranks
+        integer, intent(in) :: nodeOf(0:)
+        integer(int64), intent(out) :: cellsRank, cellsNode
+
+        integer :: i, d, l, c(3), cn(3), cc(3), nl(3), sx, sy, sz, s(3)
+        integer(C_INT) :: other
+        integer(int64) :: area
+
+        cellsRank = 0_int64
+        cellsNode = 0_int64
+        do i = 1, int(blk%nBlocksGlobal)
+            l = int(blk%leafLevel(i))
+            c = int(blk%leafCoord(:, i))
+            nl = lattice_dims(blk, l)
+            do d = 1, 3
+                cn = c
+                cn(d) = c(d) + 1
+                if (cn(d) >= nl(d)) then
+                    if (.not. periodic(d)) cycle
+                    cn(d) = 0
+                end if
+                ! One block face, in cells of its own level.
+                area = int(blk%nb(1 + mod(d, 3)), int64)*int(blk%nb(1 + mod(d + 1, 3)), int64)
+
+                other = leaf_at(blk, l, cn)
+                if (other < 0_C_INT) other = leaf_at(blk, l - 1, parent_coord(blk, cn))
+                if (other >= 0_C_INT) then
+                    ! Same level, or a coarser leaf: this (finer) face, once.
+                    call add_pair(i - 1, int(other), area)
+                    cycle
+                end if
+                ! Finer leaves: the children of cn on its low side in d.
+                do sz = 0, int(blk%refMask(3))
+                    do sy = 0, int(blk%refMask(2))
+                        do sx = 0, int(blk%refMask(1))
+                            s = [sx, sy, sz]
+                            if (s(d) /= 0) cycle
+                            cc = child_origin(blk, cn) + s
+                            other = leaf_at(blk, l + 1, cc)
+                            if (other >= 0_C_INT) call add_pair(i - 1, int(other), area)
+                        end do
+                    end do
+                end do
+            end do
+        end do
+
+    contains
+
+        subroutine add_pair(idA, idB, cells)
+            integer, intent(in) :: idA, idB
+            integer(int64), intent(in) :: cells
+            integer :: ra, rb
+
+            ra = int(zorder_owner(int(idA, C_INT), blk%nBlocksGlobal, nranks))
+            rb = int(zorder_owner(int(idB, C_INT), blk%nBlocksGlobal, nranks))
+            if (ra /= rb) cellsRank = cellsRank + cells
+            if (nodeOf(ra) /= nodeOf(rb)) cellsNode = cellsNode + cells
+        end subroutine add_pair
+    end subroutine partition_surface
+
     pure integer(C_INT) function zorder_count(n, p_total, p) result(cnt)
         integer(C_INT), intent(in) :: n, p_total, p
 

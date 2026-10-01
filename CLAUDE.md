@@ -2043,11 +2043,41 @@ immersed boundary. Phased, each phase verified before the next:
     (~43x the cross-node cells). Same binary + case file with `--map-by node`:
     77.6 ms, `mpi_wait` 58.9 → 3.4 ms. Fields unaffected; explicit-nb configs
     unaffected. **Do not form the block tax at 8+ ranks from a default-placed
-    post-step-7 `base_jacobi`.** DECIDED 2026-10-01, not yet implemented: a
-    MINIMUM-SURFACE BIT ORDER for the Morton key (bit significance chosen by
-    recursive bisection across the cheapest plane; still a pure key, legacy
-    order kept for files without the attribute) --
-    `docs/next_session_after_step9.md` item 2.
+    post-step-7 `base_jacobi`** (true of every case file prepared before
+    2026-10-01; see the next bullet).
+  - **THE BLOCK ORDER IS CHOSEN FROM THE GEOMETRY (DONE 2026-10-01, handout
+    item 2; HoreKa measurement submitted, see the handout).** In xyz mode
+    `leaf_key` is a bit permutation read from `blk%keyPos`;
+    `min_surface_key_order` picks the bit significance by recursive
+    bisection across the plane with the fewest cells (a periodic direction's
+    first cut counted twice, ties x, y, z) and `moby_prepare` records it in
+    the case file as `block_key_order`. **A file WITHOUT the record is read
+    with the legacy interleave (x lowest, z on top), unchanged** — every
+    committed and mobygeom-written file keeps working; xz mode keeps its own
+    key. `base_jacobi` at 8 ranks: order x y z, 33,792 face cells across the
+    node boundary where the legacy order put 1,441,792 (16 ranks: 101,376 vs
+    1,475,584); `rect_jacobi` and the 32³-block channel are ties. The solver
+    prints `partition: face cells shared across ranks N, across nodes M` at
+    init (`report_partition`): **read it on every multi-node run** — a
+    cross-node number of the order of the cross-rank one means a pre-order
+    case file (re-prepare) or a placement that does not fill nodes in rank
+    order. RESTARTS: field files are sliced by row in their writer's order,
+    and `field_hdf5.c block_row_map` matches rows to blocks on
+    (origin, level), so a snapshot or generated IC restarts under any order
+    (a note is printed). **LANDMINE: comparing two block-layout files by row
+    POSITION is wrong across orders** — `tools/h5maxdiff` (rebuild any binary
+    older than 2026-10-01), `validation/prepare/compare_case.py`,
+    `compare_snapshots.py` now match rows (`h5rows.py`);
+    `tools/compare_fields.py` always reassembled. Gates:
+    `validation/prepare/run_gates_order.sh` 43/43 CPU and GPU, `keyorder_test`,
+    the nofma suites `max_abs 0` vs `~/step9b_ref_binaries` (32/32), P0 26/26,
+    P1 15/15. Mirror of the rule and of the init line:
+    `tools/partition_analysis.py --order legacy|minsurface|file --per-node N`.
+    NOT what the handout's prose said: on a PERIODIC lattice the rule does
+    not give the plain interleave (periodic cube: x x y y z z) — same cut
+    sizes, different curve. `run_gates_step7.sh` is no longer a `max_abs 0`
+    gate (its 7-0 inline reference predates F1/F7: 18/26 with any current
+    binary).
   - **Step 9 (F7), the exact penalization factor.** `ibm%mu` =
     `(1 − e^{−x})/x`, x = λ dt_γ (`penal_incr_factor`; the review's
     `1/(x + B)`), and the state factor `e^{−x}` is applied by a SEPARATE

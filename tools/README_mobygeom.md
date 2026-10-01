@@ -1,5 +1,14 @@
 # mobyGeom STL-to-IBM Utility
 
+> **Block order (2026-10-01).** mobygeom writes its leaf tables in the legacy
+> xyz interleave (x lowest, z on top) and records no `block_key_order`; the
+> solver reads such a file with exactly that order, so every mobygeom-written
+> file keeps working unchanged. `moby_prepare` now chooses the
+> minimum-surface bit order (blocks.f90 `min_surface_key_order`) and records
+> it. The mirror of that rule is `tools/partition_analysis.py`; it was NOT
+> ported here (mobygeom is retired). Compare an xyz leaf table of the two
+> implementations as a SET, not row by row.
+
 **RETIRED FOR PRODUCTION (prepare/solve split P1b, 2026-07-16,
 `docs/prepare_solve_strategy.md`).** The geometry subcommands below
 (`stl-ibm-coeff`, `block-active`, `block-table`) are superseded by the

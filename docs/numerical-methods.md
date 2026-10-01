@@ -90,7 +90,9 @@ across the interface.
 The grid is organized into **equal-size blocks** (BCM-style, after Nakahashi & Kim 2004 and
 Jansson et al. 2019). A block is an `nb × nb × nb` box of cells; `[blocks] nb` sets the edge
 length (even, ≥ 4, and must divide the global grid). Blocks are numbered along a **Z-order
-(Morton) space-filling curve** and split linearly over the MPI ranks. Because each block
+(Morton-type) space-filling curve** and split linearly over the MPI ranks; the significance of
+the curve's coordinate bits is chosen per case so that the coarsest cuts cross the fewest
+cells (see [Running](running.md)). Because each block
 redundantly sweeps its open halo layer with its owner, the results are **exactly independent
 of the block count and the number of ranks**.
 

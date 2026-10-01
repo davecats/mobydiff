@@ -21,7 +21,7 @@ program moby_solve
     use :: scalar_stats, only: scalar_stats_type, scalar_stats_setup, &
         scalar_stats_after_step, scalar_stats_finalize
     use :: comm, only: comm_type, comm_init_world, comm_init, comm_finalize, &
-        report_exchange_balance, &
+        report_exchange_balance, report_partition, &
         init_block_exchange, exchange_halos, exchange_scalar_halos, &
         comm_allreduce_sum, comm_allreduce_max
     use :: profiling, only: init_step_profilers, write_step_profilers, prof_tic, prof_toc, &
@@ -55,6 +55,8 @@ program moby_solve
     ! The case file's leaf table (step 7-2) and its block size / refinement mask.
     integer(C_INT), allocatable :: leafRows(:,:)
     integer(C_INT) :: fileNb(3), fileRefMask(3)
+    ! ... and its leaf-key bit order (size 0: the legacy order).
+    integer(C_INT), allocatable :: fileKeyOrder(:)
     logical :: fileLayout, case_exists
     character(len=:), allocatable :: inputs
 
@@ -109,16 +111,17 @@ program moby_solve
     ! the solver: the Z-order split, the exchange entries, the boundary point
     ! lists, the metric tables, the device maps.
     if (c%has_terminal) print *, "reading case file layout: ", trim(dns%case_file)
-    call read_case_layout(dns, g, dns%case_file, inputs, fileNb, fileRefMask, leafRows, &
-        fileLayout, c%has_terminal)
+    call read_case_layout(dns, g, dns%case_file, inputs, fileNb, fileRefMask, fileKeyOrder, &
+        leafRows, fileLayout, c%has_terminal)
     if (.not. fileLayout) then
         if (c%has_terminal) print *, "error: ", trim(dns%case_file), " carries no leaf table", &
             " (a retired-mobygeom global-layout file?); re-prepare the case"
         error stop "case file without a blocks table"
     end if
     call init_block_set_from_table(blk, dns, g, bc%isPeriodic, int(c%cart_size, C_INT), &
-        int(c%cart_rank, C_INT), fileNb, fileRefMask, leafRows)
-    deallocate(leafRows)
+        int(c%cart_rank, C_INT), fileNb, fileRefMask, fileKeyOrder, leafRows)
+    deallocate(leafRows, fileKeyOrder)
+    call report_partition(c, blk)
     call init_block_exchange(c, blk, dns)
     call precompute_peclet_rate(dns, blk, c, sc)
     call init_boundary_faces(bc, blk, dns)

@@ -59,9 +59,14 @@ check "flat: 1-step fields match (1e-10)" $PY ../../tools/compare_fields.py \
     --tolerance 1e-10 "${pfx_ref}_1.h5" "${pfx_new}_1.h5" un vn wn pn
 check "flat: ransgeom dwall match (1e-9)" $PY - <<EOF
 import h5py, numpy as np, sys
+from h5rows import match_rows
 a = h5py.File("${pfx_ref}_ransgeom.h5","r"); b = h5py.File("${pfx_new}_ransgeom.h5","r")
-dd = max(float(np.max(np.abs(a[k][...]-b[k][...]))) for k in ("dwall","yeff"))
-wc = int(np.sum(a["wallcell"][...] != b["wallcell"][...]))
+# The committed mobygeom file is in the legacy block order, the prepared one in
+# the minimum-surface order: match the dumps' rows on (origin, level).
+perm = match_rows(b["blocks"][...], a["blocks"][...])
+assert perm is not None, "the two dumps hold different leaves"
+dd = max(float(np.max(np.abs(a[k][...]-b[k][...][perm]))) for k in ("dwall","yeff"))
+wc = int(np.sum(a["wallcell"][...] != b["wallcell"][...][perm]))
 print("dwall/yeff max", dd, "wallcell diffs", wc)
 sys.exit(0 if dd <= 1e-9 and wc == 0 else 1)
 EOF

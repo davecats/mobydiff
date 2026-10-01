@@ -1,7 +1,8 @@
 # Next session: after numerics review step 9
 
-STATUS: **ITEM 1 DONE (2026-10-01), items 4a and 4b DONE; item 2 see its
-own status line.** Steps 0–9 of `docs/numerics_review_2026-09-26.md`
+STATUS: **ITEMS 1 AND 2 DONE (2026-10-01) except item 2's HoreKa
+measurement, which is SUBMITTED and pre-registered (see the end of item 2);
+items 4a and 4b DONE.** Steps 0–9 of `docs/numerics_review_2026-09-26.md`
 section 10 are done. Item 3 is an open investigation, item 5 the plan.
 
 ## What holds now
@@ -115,7 +116,47 @@ and update the review's step-9 MEASURED block, `validation/penalization/README.m
 and CLAUDE.md.
 
 **2. The block order: a minimum-surface bit order for the Morton key
-(decided 2026-10-01).**
+(decided 2026-10-01). IMPLEMENTED AND GATED LOCALLY 2026-10-01; the HoreKa
+measurement is submitted.**
+
+*Result.* As designed below, point by point:
+(1) `blocks.f90`: `blk%keyOrder/keyPos`, `min_surface_key_order` (the rule),
+`set_key_order`, `legacy_key_order`; `leaf_key` reads the table in xyz mode;
+`morton_key` is gone. (2) Case file: attribute `block_key_order` (directions
+1..3, most to least significant bit); absent = legacy order, and the table
+reader checks that the recorded bits cover every leaf. (3) Restart:
+`field_hdf5.c block_row_map` matches rows on (origin, level) for
+`fdm_h5_read_field` / `fdm_h5_read_scalar` (so the body-force file and the
+RANS scalars too); consecutive rows are still one hyperslab; the solver
+prints a note when a restart file is in another order. (4) Mirrors:
+`tools/partition_analysis.py --order file|legacy|minsurface --per-node N`
+(it reproduces the table below from `lattice` input, no file needed);
+`make_channel_restart.py` keeps the legacy order, which the row map makes
+immaterial; mobygeom not ported (noted in its README). (5) xz mode keeps
+its key and writes no record. (6) Init line
+`partition: face cells shared across ranks N (R ranks), across nodes M (K nodes)`
+(`blocks.f90 partition_surface`, `comm.f90 report_partition`; node id = the
+smallest world rank sharing the node's memory).
+Also needed, not foreseen: `tools/h5maxdiff`, `validation/prepare/compare_case.py`
+and `compare_snapshots.py` compared rows BY POSITION and now match them on
+(origin, level) — every comparison of a new-order file with a legacy-order
+or mobygeom one would otherwise read as different fields (the P1 `ransgeom`
+check did, until fixed).
+Gates, all PASS (`validation/prepare/README.md`, last section):
+`keyorder_test`; `run_gates_order.sh` 43/43 on CPU and on GPU (legacy vs
+re-prepared file: identical fields at 1/4/8 ranks, identical tiles, restart
+across the orders, the init line == the Python mirror, incl. two refined
+cases); the 7-case + 9-case nofma suites vs `~/step9b_ref_binaries`
+`max_abs 0`, CPU and GPU (32/32); P0 26/26, P1 15/15; S3 scalar body gates.
+**One statement below is not what the rule gives:** "for cubic blocks on any
+lattice this IS the ordinary Morton curve" holds on a NON-periodic lattice
+(x y z x y z, x on top); a periodic direction's doubled first cut groups its
+top two bits (periodic cube: x x y y z z; the 256 x 128 x 256 channel:
+x x y z z x y z). The cut sizes are the same in the cases of the table (66 k
+both ways); the rule was implemented as specified.
+HoreKa: `horeka/exchange/submit_order.sh`, `PREREGISTERED_order.md`
+(ref `5bdc5eb`, new = the order commit): job ids and results are appended at
+the end of this item when the jobs have run.
 
 *The defect* (`results_horeka_2026-09-30.md` section 3). The leaf order is
 the Morton key of the finest-lattice block coordinates with x in the lowest
@@ -240,6 +281,25 @@ Re 40 steady drag and the `les_ibm` developed statistics (case a_wale).
   (main), run trees beside it; `dev_accelerated` runs ONE job per user at a
   time, so a queued moby job waits behind any other job of yours there.
   `h5dump`/h5py are not available on the login node: dump case files locally.
+- **`validation/prepare/run_gates_step7.sh` is not a `max_abs 0` gate any
+  more** (found 2026-10-01): its reference is the 7-0 inline binary, which
+  predates F1 and the penalization factors. 18 pass / 26 fail with ANY
+  current binary (control: `~/step9b_ref_binaries` reads the same pattern).
+  Do not chase those failures; use the suites and `run_gates_order.sh`.
+- **A field or case-file comparison by ROW POSITION is wrong across block
+  orders** (2026-10-01): `h5maxdiff`, `compare_case.py`,
+  `compare_snapshots.py` and the `run_gates_stl.sh` ransgeom check now match
+  rows on (origin, level); `tools/compare_fields.py` always reassembled.
+  Any NEW script that reads two block-layout files must do the same
+  (`validation/prepare/h5rows.py`). An `h5maxdiff` binary built before
+  2026-10-01 compares by position: rebuild it (the HoreKa submit scripts
+  that build it only when missing would keep a stale one).
+- **Local `mpirun -n 1` launches all bind to core 0** (the istmcetus
+  landmine holds on the workstation): three suite legs in parallel ran at
+  20 % CPU each until `OMPI_MCA_hwloc_base_binding_policy=none` was exported.
+- **`[ibm] enabled` defaults to TRUE**: a `generic` case with no `[ibm]`
+  section gets the default flat analytic wall and coefficient tiles (the
+  order gates' "box" case is therefore a body case).
 - `nvhpc 25.9` (workstation) folds the unguarded predictor to 78 registers,
   `25.3` (HoreKa) to 100: register counts are per compiler, read them from
   the machine that runs.

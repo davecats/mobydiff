@@ -75,7 +75,7 @@ set_source_files_properties(${MODULE_DIR}/build_info.c PROPERTIES
     COMPILE_DEFINITIONS "MOBY_COMMIT=\"${MOBY_COMMIT}\"")
 
 set(SOLVER_TARGETS moby_solve moby_prepare walldist_test transition_test leaftable_test
-    scalar_test stencil_test penalization_test)
+    scalar_test stencil_test penalization_test keyorder_test)
 
 # The prepare/solve pair (docs/prepare_solve_strategy.md): moby_prepare
 # writes the block-table case file, moby_solve runs it ([case] file).
@@ -99,6 +99,8 @@ add_executable(scalar_test ${SRC_DIR}/test_scalar.f90 ${MODULE_SOURCES})
 add_executable(stencil_test ${SRC_DIR}/test_stencil.f90 ${MODULE_SOURCES})
 # Penalization integrating factors vs exact rational reference values (numerics review F7).
 add_executable(penalization_test ${SRC_DIR}/test_penalization.f90 ${MODULE_SOURCES})
+# Minimum-surface key-bit order + the partition audit (blocks.f90, handout item 2 after step 9).
+add_executable(keyorder_test ${SRC_DIR}/test_keyorder.f90 ${MODULE_SOURCES})
 
 # =========================
 # Module directory

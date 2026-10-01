@@ -53,7 +53,14 @@ type or global metric array: the grid (`grid_type`) keeps only the generation pa
 the per-direction node lines, and blocks slice their local geometry from them.
 
 - A block is an `nb × nb × nb` box of cells with a one-cell halo. Blocks are numbered along a
-  **Z-order (Morton) curve** and split contiguously over MPI ranks.
+  **Z-order (Morton-type) curve** and split contiguously over MPI ranks. The curve is a bit
+  permutation of the finest-lattice block coordinates (`blocks.f90 leaf_key`); which
+  coordinate bit is how significant is decided by the case builder
+  (`min_surface_key_order`: recursive bisection across the plane with the fewest cells) and
+  recorded in the case file as `block_key_order`. A case file without the record is read with
+  the plain interleave (x lowest, z on top); `refine_dims = xz` has its own fixed key.
+  Field files are sliced by ROW in their writer's block order, and the restart reader
+  matches rows to blocks on (origin, level), so a snapshot restarts under any order.
 - Volume kernels loop `do b = 1, blk%nBlocks` folded into their `collapse`; field arrays carry
   a **trailing block index** (e.g. `ibm%coef(...,b)`, `les%nut(...,b)`).
 - Per-block face descriptors drive everything geometry-dependent: momentum start indices, the

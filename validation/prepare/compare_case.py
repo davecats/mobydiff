@@ -6,6 +6,11 @@ geometry); coef_blocks and dwall_blocks match to a tolerance (bisection
 crossings and indicator-polished distances vs mobygeom's exact ray/igl
 queries).
 
+The blocks table must hold the same LEAVES; its row order may differ (a
+prepared xyz file carries the minimum-surface key-bit order, a mobygeom
+reference the legacy interleave), in which case the per-leaf tiles are
+matched on (origin, level) before they are compared (h5rows.py).
+
 Reference masks may be WINDOWED (mask_win_lo_l{l}/mask_win_dims_l{l},
 level-l block coords, x-fastest within the window); prepared files carry
 full rasters. Both are expanded to the full lattice before comparing.
@@ -18,6 +23,8 @@ import sys
 
 import h5py
 import numpy as np
+
+from h5rows import match_rows
 
 
 def full_raster(f, name, level, lattice_dims):
@@ -48,8 +55,14 @@ def main():
 
     ok = True
     with h5py.File(args.candidate, "r") as cand, h5py.File(args.reference, "r") as ref:
-        nb = int(ref.attrs["block_nb"])
-        assert nb == int(cand.attrs["block_nb"])
+        # Per-direction block size; the scalar block_nb is what cubic and
+        # mobygeom-written files carry.
+        def block_nb(f):
+            if "block_nb_xyz" in f.attrs:
+                return np.array(f.attrs["block_nb_xyz"], dtype=int)
+            return np.full(3, int(f.attrs["block_nb"]), dtype=int)
+        nb = block_nb(ref)
+        assert np.array_equal(nb, block_nb(cand))
         gs = np.array([ref.attrs["nx"], ref.attrs["ny"], ref.attrs["nz"]], dtype=int)
         mask = np.ones(3, dtype=int)
         if "refine_dims" in ref.attrs:
@@ -57,11 +70,15 @@ def main():
 
         # blocks leaf table: identical.
         cb, rb = cand["blocks"][...], ref["blocks"][...]
-        if cb.shape != rb.shape or not np.array_equal(cb, rb):
+        perm = match_rows(cb, rb)
+        if perm is None:
             print(f"blocks tables differ: {cb.shape} vs {rb.shape}")
-            ok = False
-        else:
+            sys.exit(1)
+        if np.array_equal(cb, rb):
             print(f"blocks: {cb.shape[0]} leaves identical")
+        else:
+            print(f"blocks: {cb.shape[0]} leaves identical as a set; row orders"
+                  " differ, tiles matched on (origin, level)")
 
         # per-level masks: identical after window expansion. mobygeom
         # always writes them; prepare only for refine_body cases -- a
@@ -99,7 +116,7 @@ def main():
         # crossings, where ((d0-d)/d)/d0^2 has exploding relative
         # sensitivity while the absolute value stays negligible -- their
         # count is reported.
-        c, r = cand["coef_blocks"][...], ref["coef_blocks"][...]
+        c, r = cand["coef_blocks"][...][perm], ref["coef_blocks"][...]
         solid = 0.5e30 / float(ref.attrs["re"])
         flips = int(np.sum((c >= solid) != (r >= solid)))
         rel_all = np.abs(c - r) / (np.abs(r) + 1.0)
@@ -118,7 +135,7 @@ def main():
             # distance -- the solver's own analytic-walldist convention --
             # while mobygeom stores the base-mesh distance. The ghost gap
             # is reported informationally.
-            d, s = cand["dwall_blocks"][...], ref["dwall_blocks"][...]
+            d, s = cand["dwall_blocks"][...][perm], ref["dwall_blocks"][...]
             diff = np.abs(d - s)
             dd = np.max(diff[:, 1:-1, 1:-1, 1:-1])
             ghost = diff.copy()

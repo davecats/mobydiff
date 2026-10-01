@@ -2,9 +2,9 @@ module io
     use, intrinsic :: iso_c_binding
     use :: init, only: dns_type, grid_type, VAR_U, VAR_V, VAR_W, VAR_P, NVAR, NVEL, &
         config_seen_type
-    use :: blocks, only: block_set_type
+    use :: blocks, only: block_set_type, KEY_MAX_BITS
     use :: boundary, only: boundary_type, NFACES
-    use :: comm, only: comm_type
+    use :: comm, only: comm_type, comm_allreduce_max_int
     implicit none
 
     ! Stride of one slot in the packed field-variable name table handed to
@@ -73,11 +73,14 @@ module io
         end function fdm_h5_append_scalar
 
         function fdm_h5_read_scalar(file_name, name, nbx, nby, nbz, n_blocks, &
-                n_blocks_global, id_start, found, s) &
+                n_blocks_global, id_start, block_origin, block_level, found, s) &
                 bind(C, name="fdm_h5_read_scalar") result(ierr)
             import :: C_CHAR, C_INT, C_DOUBLE
             character(kind=C_CHAR), intent(in) :: file_name(*), name(*)
             integer(C_INT), value :: nbx, nby, nbz, n_blocks, n_blocks_global, id_start
+            ! The file's rows are matched to this rank's blocks on
+            ! (origin, level), whatever the file's row order.
+            integer(C_INT), intent(in) :: block_origin(*), block_level(*)
             integer(C_INT), intent(out) :: found
             real(C_DOUBLE), intent(inout) :: s(*)
             integer(C_INT) :: ierr
@@ -158,7 +161,8 @@ module io
         ! block set without the leaf builder. Serial opens: the table is
         ! global state every rank holds in full.
         function fdm_h5_case_read_layout(file_name, nx, ny, nz, lx, ly, lz, re, &
-                block_nb, refine_mask, nb_auto, nb_ranks, n_blocks_global) &
+                block_nb, refine_mask, nb_auto, nb_ranks, key_cap, n_key_bits, key_order, &
+                n_blocks_global) &
                 bind(C, name="fdm_h5_case_read_layout") result(ierr)
             import :: C_CHAR, C_INT, C_DOUBLE
             character(kind=C_CHAR), intent(in) :: file_name(*)
@@ -166,6 +170,10 @@ module io
             real(C_DOUBLE), intent(out) :: lx, ly, lz, re
             integer(C_INT), intent(out) :: block_nb(*), refine_mask(*)
             integer(C_INT), intent(out) :: nb_auto, nb_ranks, n_blocks_global
+            ! The leaf key's bit order (blocks.f90 keyOrder): n_key_bits = 0
+            ! when the file records none.
+            integer(C_INT), value :: key_cap
+            integer(C_INT), intent(out) :: n_key_bits, key_order(*)
             integer(C_INT) :: ierr
         end function fdm_h5_case_read_layout
 
@@ -198,16 +206,18 @@ module io
             integer(C_INT) :: ierr
         end function fdm_h5_case_read_grid
 
-        ! Restart guard: this rank's rows of a snapshot's blocks table
-        ! against the solver's leaf table (0 match, 2 mismatch, 1 error; 0
-        ! for a legacy file without a table).
-        function fdm_h5_check_block_table(file_name, n_blocks, id_start, &
-                block_origin, block_level) &
+        ! Restart guard: every block of this rank must have a row, matched
+        ! on (origin, level), in a snapshot's blocks table (0 it has, 2 a
+        ! different tiling, 1 error; 0 for a legacy file without a table).
+        ! reordered = 1 when the file's row order is not this run's.
+        function fdm_h5_check_block_table(file_name, n_blocks, n_blocks_global, id_start, &
+                block_origin, block_level, reordered) &
                 bind(C, name="fdm_h5_check_block_table") result(ierr)
             import :: C_CHAR, C_INT
             character(kind=C_CHAR), intent(in) :: file_name(*)
-            integer(C_INT), value :: n_blocks, id_start
+            integer(C_INT), value :: n_blocks, n_blocks_global, id_start
             integer(C_INT), intent(in) :: block_origin(*), block_level(*)
+            integer(C_INT), intent(out) :: reordered
             integer(C_INT) :: ierr
         end function fdm_h5_check_block_table
 
@@ -231,6 +241,7 @@ module io
         ! lattice-global rasters.
         function fdm_h5_case_create(file_name, nx, ny, nz, lx, ly, lz, re, &
                 block_nb, block_levels, refine_mask, nb_auto, nb_ranks, inputs, &
+                n_key_bits, key_order, &
                 n_blocks_global, id_start, n_blocks, block_origin, block_level) &
                 bind(C, name="fdm_h5_case_create") result(ierr)
             import :: C_CHAR, C_INT, C_DOUBLE
@@ -239,6 +250,8 @@ module io
             real(C_DOUBLE), value :: lx, ly, lz, re
             integer(C_INT), intent(in) :: block_nb(*), refine_mask(*)
             integer(C_INT), value :: block_levels, nb_auto, nb_ranks
+            integer(C_INT), value :: n_key_bits
+            integer(C_INT), intent(in) :: key_order(*)
             integer(C_INT), value :: n_blocks_global, id_start, n_blocks
             integer(C_INT), intent(in) :: block_origin(*), block_level(*)
             integer(C_INT) :: ierr
@@ -307,13 +320,13 @@ module io
         end function fdm_h5_case_append_dwall
 
         function fdm_h5_read_field(file_name, nbx, nby, nbz, n_blocks, &
-                n_blocks_global, id_start, block_origin, &
+                n_blocks_global, id_start, block_origin, block_level, &
                 global_nx, global_ny, global_nz, n_var, var_names, found, q) &
                 bind(C, name="fdm_h5_read_field") result(ierr)
             import :: C_CHAR, C_INT, C_DOUBLE
             character(kind=C_CHAR), intent(in) :: file_name(*)
             integer(C_INT), value :: nbx, nby, nbz, n_blocks, n_blocks_global, id_start
-            integer(C_INT), intent(in) :: block_origin(*)
+            integer(C_INT), intent(in) :: block_origin(*), block_level(*)
             integer(C_INT), value :: global_nx, global_ny, global_nz
             integer(C_INT), value :: n_var
             character(kind=C_CHAR), intent(in) :: var_names(*)
@@ -561,7 +574,7 @@ subroutine read_scalar_field(blk, name, file_name, s, found, has_terminal)
     c_file_name = to_c_string(file_name)
     c_name = to_c_string(name)
     ierr = fdm_h5_read_scalar(c_file_name, c_name, blk%nb(1), blk%nb(2), blk%nb(3), &
-        blk%nBlocks, blk%nBlocksGlobal, blk%idStart, ifound, s)
+        blk%nBlocks, blk%nBlocksGlobal, blk%idStart, blk%origin, blk%level, ifound, s)
     if (ierr /= 0_C_INT) then
         if (has_terminal) print *, "error: could not read ", name, " from: ", trim(file_name)
         error stop
@@ -648,7 +661,8 @@ end subroutine read_restart_metadata
 ! covers every grid key at once, and the file's lines are what the solver
 ! keeps. Older block-table files (retired mobygeom) carry no node lines;
 ! the ini's are used and a note is printed.
-subroutine read_case_layout(dns, g, file_name, inputs, nb, refMask, rows, has_layout, has_terminal)
+subroutine read_case_layout(dns, g, file_name, inputs, nb, refMask, keyOrder, rows, has_layout, &
+        has_terminal)
     type(dns_type), intent(inout) :: dns
     type(grid_type), intent(inout) :: g
     character(len=*), intent(in) :: file_name
@@ -658,6 +672,9 @@ subroutine read_case_layout(dns, g, file_name, inputs, nb, refMask, rows, has_la
     ! by the retired mobygeom) fall back to the explicit checks below.
     character(len=*), intent(in) :: inputs
     integer(C_INT), intent(out) :: nb(3), refMask(3)
+    ! The file's leaf-key bit order (blocks.f90 keyOrder); size 0 when the
+    ! file records none (written before 2026-10-01, or xz mode).
+    integer(C_INT), allocatable, intent(out) :: keyOrder(:)
     integer(C_INT), allocatable, intent(out) :: rows(:,:)
     ! False for a LEGACY global-layout coefficient file, which carries no
     ! leaf table (the caller then still builds the layout from the ini;
@@ -667,6 +684,7 @@ subroutine read_case_layout(dns, g, file_name, inputs, nb, refMask, rows, has_la
 
     character(kind=C_CHAR,len=:), allocatable :: c_file_name
     integer(C_INT) :: ierr, nx, ny, nz, nbAuto, nbRanks, nLeaves, found
+    integer(C_INT) :: nKey, keyBuf(KEY_MAX_BITS)
     real(C_DOUBLE) :: lx, ly, lz, re
     real(C_DOUBLE), allocatable :: xn(:), yn(:), zn(:)
     integer, parameter :: ECHO_CAP = 16384
@@ -674,11 +692,12 @@ subroutine read_case_layout(dns, g, file_name, inputs, nb, refMask, rows, has_la
 
     c_file_name = to_c_string(file_name)
     ierr = fdm_h5_case_read_layout(c_file_name, nx, ny, nz, lx, ly, lz, re, &
-        nb, refMask, nbAuto, nbRanks, nLeaves)
+        nb, refMask, nbAuto, nbRanks, int(KEY_MAX_BITS, C_INT), nKey, keyBuf, nLeaves)
     if (ierr /= 0_C_INT) then
         if (has_terminal) print *, "error: could not read the case-file layout of: ", trim(file_name)
         error stop
     end if
+    keyOrder = keyBuf(1:nKey)
     has_layout = nLeaves > 0_C_INT
     if (.not. has_layout) then
         if (has_terminal) print *, "note: legacy coefficient file without a leaf table;", &
@@ -979,6 +998,7 @@ subroutine write_case_file(file_name, blk, dns, g, bc, c, nCoefComp, inputs, has
         dns%leng(1), dns%leng(2), dns%leng(3), dns%re, &
         dns%block_nb, blk%nLevels - 1_C_INT, dns%block_refine_mask, &
         nb_auto, dns%block_nb_ranks, to_c_string(inputs), &
+        blk%nKeyBits, blk%keyOrder, &
         blk%nBlocksGlobal, blk%idStart, blk%nBlocks, blk%origin, blk%level)
     call check_case_write(ierr, "create", file_name, has_terminal)
 
@@ -1058,7 +1078,7 @@ subroutine read_field(blk, dns, file_name, c, scalar_names)
     character(len=*), intent(in), optional :: scalar_names(:)
 
     character(kind=C_CHAR,len=:), allocatable :: c_file_name, var_names
-    integer(C_INT) :: ierr, file_mask(1:3), has_blocks
+    integer(C_INT) :: ierr, file_mask(1:3), has_blocks, reordered, reorderedAny(1)
     integer(C_INT), allocatable :: found(:)
     integer :: v
 
@@ -1079,12 +1099,22 @@ subroutine read_field(blk, dns, file_name, c, scalar_names)
             "does not match the configured [blocks] refine_dims", dns%block_refine_mask
         error stop "restart/config [blocks] refine_dims mismatch"
     end if
-    ! A block-layout snapshot is sliced by leaf id, so its leaf table must
-    ! BE the solver's (row for row over this rank's id range): a snapshot
-    ! from a differently tiled or refined run would otherwise land silently
-    ! on the wrong blocks. Until step 7-2 only the dataset extents were
-    ! checked, which a same-count, different-layout table passes.
-    ierr = fdm_h5_check_block_table(c_file_name, blk%nBlocks, blk%idStart, blk%origin, blk%level)
+    ! A block-layout snapshot is sliced by ROW, so every block of this run
+    ! must have a row in the file's own leaf table: a snapshot from a
+    ! differently tiled or refined run would otherwise land silently on the
+    ! wrong blocks. The rows are matched on (origin, level), NOT by position:
+    ! the file's row order is its writer's leaf order, which differs from
+    ! this run's when the two case files carry different key-bit orders
+    ! (blocks.f90 leaf_key) -- such a snapshot restarts all the same.
+    ierr = fdm_h5_check_block_table(c_file_name, blk%nBlocks, blk%nBlocksGlobal, blk%idStart, &
+        blk%origin, blk%level, reordered)
+    ! (Any rank may be the one whose rows moved: report it once, globally.)
+    reorderedAny(1) = reordered
+    call comm_allreduce_max_int(c, reorderedAny)
+    if (reorderedAny(1) /= 0_C_INT .and. c%has_terminal) then
+        print *, "note: restart file is in a different block order than the case file;", &
+            " rows matched by (origin, level): ", trim(file_name)
+    end if
     if (ierr == 2_C_INT) then
         if (c%has_terminal) print *, "error: restart file block table does not match", &
             " the case layout (a snapshot of a different [blocks] tiling?): ", trim(file_name)
@@ -1097,7 +1127,7 @@ subroutine read_field(blk, dns, file_name, c, scalar_names)
     var_names = field_var_names(dns, scalar_names)
     allocate(found(int(dns%nVar)))
     ierr = fdm_h5_read_field(c_file_name, blk%nb(1), blk%nb(2), blk%nb(3), &
-        blk%nBlocks, blk%nBlocksGlobal, blk%idStart, blk%origin, &
+        blk%nBlocks, blk%nBlocksGlobal, blk%idStart, blk%origin, blk%level, &
         dns%globalSize(1), dns%globalSize(2), dns%globalSize(3), &
         dns%nVar, var_names, found, blk%q)
     if (ierr /= 0_C_INT) then
@@ -1160,7 +1190,7 @@ subroutine read_force_file(f, blk, dns, file_name, has_terminal)
 
     c_file_name = to_c_string(file_name)
     ierr = fdm_h5_read_field(c_file_name, blk%nb(1), blk%nb(2), blk%nb(3), &
-        blk%nBlocks, blk%nBlocksGlobal, blk%idStart, blk%origin, &
+        blk%nBlocks, blk%nBlocksGlobal, blk%idStart, blk%origin, blk%level, &
         dns%globalSize(1), dns%globalSize(2), dns%globalSize(3), &
         NVAR, var_names, found, qtmp)
     if (ierr /= 0_C_INT .or. any(found(VAR_U:VAR_W) == 0_C_INT)) then
