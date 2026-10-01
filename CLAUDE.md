@@ -2118,6 +2118,33 @@ immersed boundary. Phased, each phase verified before the next:
     non-dyadic constants as multiplies in any per-DOF kernel. The handout's
     cost figures (22.7 ms) were RTX 3060 numbers; a pre-registered number
     needs its device named. Reference set: `~/step9b_ref_binaries`.
+  - **THE OUTLET PRESSURE MODE IS RUN DOWN (2026-10-01, handout item 3;
+    `validation/cylinder/README.md` last section). It is the OUTLET ROW, not
+    the projection and not the corner.** Chebyshev / plain Jacobi / red-black
+    at 60 and 240 iterations give the same polluted pressure to 1 %. The
+    predictor's `apply_bc(outflow_copy)` RESETS the outlet face to its
+    interior neighbour every substage; the projection re-supplies
+    `u_out − u_nx = −dx dv/dy` each time, and the INCREMENTAL stored pressure
+    integrates those `phi` in the last cell column with no `p_face = 0` to
+    anchor it. The discrete outlet is therefore "the outflow must be
+    parallel", stiffer the smaller dt — which is the cylinder's C_L ±3.9 at
+    dt 6.25e-4, the Lamb-Oseen regrowth (reflected fraction 2.2e-2) and the
+    factor 2 in the Poiseuille last-cell pressure. **A prototype that removes
+    it is on the LOCAL branch `proto/outflow-incremental` (`4908e7c`), NOT on
+    main**: the outlet face takes its neighbour's increment plus its OWN
+    pressure gradient against the held outlet pressure (`save_outflow_gap`,
+    one kernel over the boundary points filling the constant of the existing
+    `dst = src + C` row). Measured: cylinder stored p rms 0.89 / 1.65 →
+    0.080 / 0.073 (dt 5e-3 / 6.25e-4), velocity difference between the two
+    step sizes 0.15 → 6e-5; Poiseuille last-cell p 2.41e-3 → 1.247e-3 (exact
+    1.25e-3); Lamb-Oseen 2.2e-2 → 9.8e-5; oblique exact. A version WITHOUT
+    the face's own pressure gradient leaves the last column unanchored
+    (frozen relic, drifting outflow) — the pressure terms are load-bearing.
+    SHIPPING IT IS AN OPEN DECISION: it changes every outlet case, and needs
+    the restart of the outlet face (not in the field file), `mu` next to a
+    body and 2:1 interfaces on an outlet face first. Until then: any
+    stored-pressure or CV-force number of an unsteady outlet case carries
+    this mode, and the clean-p protocol is not clean.
   - Smaller: `validation/blasius/` is back as the laminar stretched-line gate
     (four projections measured; Chebyshev stable to t = 2000); the suite
     drivers deleted the wrong case-file name before re-preparing (fixed); the

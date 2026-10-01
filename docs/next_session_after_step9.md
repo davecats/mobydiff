@@ -1,8 +1,9 @@
 # Next session: after numerics review step 9
 
 STATUS: **ITEMS 1 AND 2 DONE (2026-10-01) except item 2's HoreKa
-measurement, which is SUBMITTED and pre-registered (see the end of item 2);
-items 4a and 4b DONE.** Steps 0–9 of `docs/numerics_review_2026-09-26.md`
+measurement, which is SUBMITTED and pre-registered (see the end of item 2;
+estimated start 2026-10-05); item 3 RUN DOWN with a measured prototype, the
+decision to ship it open; items 4a and 4b DONE.** Steps 0–9 of `docs/numerics_review_2026-09-26.md`
 section 10 are done. Item 3 is an open investigation, item 5 the plan.
 
 ## What holds now
@@ -246,7 +247,37 @@ other half (increment 7-5, the per-leaf weight column + weighted split,
 still a plan entry). Until item 2 lands: no block tax at 8+ ranks from a
 default-placed post-step-7 `base_jacobi`.
 
-**3. The outlet pressure mode on the cylinder** (`validation/cylinder/README.md`,
+**3. The outlet pressure mode on the cylinder: RUN DOWN 2026-10-01, a
+prototype fix measured, the decision to ship it is OPEN.**
+`validation/cylinder/README.md`, last section, has the tables.
+(a) It is not the projection: Chebyshev, plain Jacobi and red-black at 60
+and 240 iterations give the same pressure to 1 % and the same velocity to
+1e-3 on the same leg. (b) It is the outlet row: `apply_bc(outflow_copy)`
+resets the outlet face to its interior neighbour every substage, the
+projection re-supplies `u_out − u_nx = −dx dv/dy` each time, and the
+incremental stored pressure integrates those `phi` in the last cell column,
+with no `p_face = 0` to anchor it. The discrete outlet is "the outflow must
+be parallel", stiffer the smaller dt (rms dv/dy in the last column over its
+value at x = 15: 0.23 at dt 5e-3, 0.08 at 6.25e-4). Not the corner. (c)
+Prototype on the local branch `proto/outflow-incremental` (`4908e7c`,
+worktree `~/moby_outlet_proto2`): the outlet face takes its neighbour's
+increment plus its own pressure gradient against the held outlet pressure
+(one kernel over the boundary points, `save_outflow_gap`). Cylinder: stored
+p rms 0.89 / 1.65 → 0.080 / 0.073 at dt 5e-3 / 6.25e-4, the two step sizes
+agree to 6e-5 in velocity (0.15 before); freestream gates: oblique exact,
+Poiseuille last-cell p 2.41e-3 → 1.247e-3 (exact 1.25e-3), Lamb-Oseen
+reflected fraction 2.2e-2 → 9.8e-5.
+**TO DECIDE:** ship it. It changes every outlet case. Work it needs first:
+the outlet face at restart (reconstruct from continuity; it is not in the
+field file), `ibm%mu` at a face next to a body, 2:1 interfaces on an outlet
+face, then re-measure the cylinder (C_D, St, C_L amplitude: 0.40 with the
+prototype against the old 0.51), `validation/blasius`, the boundary-layer
+tutorial, `tutorials/naca/rans`, the sailplane. Cases without an outlet are
+untouched by construction.
+The clean-p protocol (zero `pn`, 300 steps) is NOT clean on main either: the
+CV lift is still ringing at ±0.8 when it ends.
+
+*The text of the handout, for the record:* (`validation/cylinder/README.md`,
 last section). From a clean pressure, one time unit at Chebyshev niter 60
 takes p rms from 0.30 to 0.9–1.6 and the CV lift to ±3.9 at dt 6.25e-4;
 velocity differences between step sizes peak in the OUTLET CORNERS. It is

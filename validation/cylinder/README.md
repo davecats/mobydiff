@@ -214,3 +214,117 @@ Chebyshev projection that does not converge the long waves in 60 iterations
 the B0 outlet finding. Only the body-box column falls like a time error
 (ratios 4.4 and 3.4). Open; it belongs with the outlet / projection work, not
 with F7.
+
+## The outlet pressure mode, run down (2026-10-01; handout item 3 after step 9)
+
+`run_outlet_mode.sh` repeats the one-time-unit leg of the table above with
+different PROJECTIONS, everything else fixed (the same clean-p state, fixed
+dt); `outlet_mode.py` analyses the legs. Inputs as for `run_f7_gates.sh`.
+
+    NEW=/abs/build_gpu/moby_solve [OUT=outlet] ./run_outlet_mode.sh [<name>:<k>[:<T>] ...]
+
+**1. It is not the projection.** dt = 5e-3, 200 steps, final state:
+
+| projection | p rms | max \|p\| | p rms: outlet band (x > 15) / lateral bands / body box / rest | div rms left | velocity vs red-black 240: max |
+|---|---|---|---|---|---|
+| Chebyshev, niter 60 | 0.891 | 3.09 | 2.013 / 1.046 / 0.267 / 0.727 | 1.4e-5 | 1.6e-4 |
+| Chebyshev, niter 240 | 0.889 | 3.05 | 2.012 / 1.044 / 0.268 / 0.725 | 1.4e-6 | 1.9e-4 |
+| plain Jacobi, niter 60 | 0.901 | 3.11 | 2.027 / 1.060 / 0.268 / 0.736 | 3.5e-4 | 6.0e-3 |
+| red-black SOR, niter 60 | 0.894 | 3.04 | 2.014 / 1.053 / 0.270 / 0.730 | 1.7e-4 | 1.1e-3 |
+| red-black SOR, niter 240 | 0.890 | 3.05 | 2.013 / 1.045 / 0.270 / 0.725 | 3.4e-5 | (reference) |
+
+Three projections at two iteration counts, residuals a factor 250 apart, give
+the same pressure to 1 % and the same velocity to 1e-3. The state is the
+converged solution of the discrete problem: not the Chebyshev bounds, not
+unconverged long waves. Its 2-dx content is 9.6e-4 in every leg: it is a
+smooth field.
+
+**2. What it is.** The stored pressure is ANTISYMMETRIC in y and largest in
+the LAST CELL COLUMN: the y-rms of p grows from 0.19 at the inlet to 2.2 at
+x = 15.98, half a cell from the face where the pressure is held at zero. Over
+ten time units (Chebyshev 60, dt = 5e-3) it spikes at every vortex passage
+through the outlet, with alternating sign and growing peaks:
+
+| t | 202 | 203 | 204 | 205 | 206 | 207 | 208 | 209 | 210 | 211 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| p rms | 0.63 | 0.22 | 0.15 | 0.79 | 0.38 | 0.28 | 0.91 | 0.49 | 0.36 | 0.99 |
+| antisymmetric amplitude | +0.53 | −0.19 | +0.12 | −0.68 | +0.33 | −0.24 | +0.79 | −0.44 | +0.32 | −0.86 |
+
+(amplitude: half the difference of the mean pressure of the upper and the
+lower quarter of the domain, x < 15). So the one-time-unit numbers of the
+table above are a snapshot of an oscillation, taken near a peak.
+
+**3. The mechanism (from the code).** Every substage `apply_bc(...,
+outflow_copy = .true.)` RESETS the outlet face to its interior neighbour,
+`u_out := u_nx`. The cell on the outlet then needs
+`u_out − u_nx = −dx (dv/dy + dw/dz)` for continuity, and the projection
+supplies exactly that through the outlet face's correction `2 phi_nx/dx`,
+again in every substage, because the next reset throws it away. The stored
+pressure is incremental (`p += phi/dt_gamma`), so in the last column it
+accumulates `−(dx²/2 dt_gamma) dv/dy` per substage: a time integral with no
+`p_face = 0` to anchor it (the outlet face's "predictor" carries no pressure
+gradient). Its y-gradient acts on v in that column until `dv/dy` vanishes
+there. The discrete outlet is therefore not "do nothing" but "the outflow
+must be parallel", enforced by a constraint force that is stiffer the
+smaller dt. Measured at the same instant (t = 202.5) from the same state:
+
+| dt | rms dv/dy at x = 15.0 | in the last column | ratio | p y-rms, last column |
+|---|---|---|---|---|
+| 5.0e-3 | 0.0528 | 0.0120 | 0.23 | 2.2 |
+| 2.5e-3 | 0.0532 | 0.0047 | 0.09 | 1.4 |
+| 1.25e-3 | 0.0534 | 0.0055 | 0.10 | 2.0 |
+| 6.25e-4 | 0.0535 | 0.0042 | 0.08 | 4.1 |
+
+That is why the pollution is not monotone in dt, why the largest
+dt-to-dt velocity differences sit at the outlet, and why the steady Re 40
+flow is immune (it settles with dv/dy = 0 at the outlet, where phi vanishes).
+The same reading covers the Lamb-Oseen exit of `../freestream/` (energy
+regrowth during the exit, reflected fraction 2.2e-2) and the factor 2 in its
+Poiseuille last-cell pressure.
+
+**4. A prototype that removes it** (branch `proto/outflow-incremental`,
+commit `4908e7c`, NOT on main). The outlet face gets a predictor of its own,
+built from its neighbour's: the neighbour's increment over the substage, with
+the neighbour's pressure gradient taken out and the face's own put in,
+against the held outlet pressure:
+
+    u_out* = u_out + (u_nx* − u_nx) + dt_gamma [ dp/dx|face nx − dp/dx|outlet face ]
+
+It is one small kernel over the boundary point list (`save_outflow_gap`)
+that fills the per-point constant of the existing `dst = src + C` row before
+`momentum()`; cases without an outlet are untouched by construction. A first
+version without the pressure terms removed the reset but left the last
+column's pressure unanchored (a frozen relic and a drifting outflow
+imbalance): the outlet face needs its own pressure gradient.
+
+| | main | prototype |
+|---|---|---|
+| p rms after one time unit, dt 5e-3 / 6.25e-4 | 0.89 / 1.65 | **0.080 / 0.073** |
+| max \|p\| | 3.1 / 6.0 | 0.72 / 0.73 |
+| p rms, outlet band | 2.0 / 3.7 | 0.040 / 0.011 |
+| p y-rms, last column | 2.2 / 4.1 | 0.000 / 0.000 |
+| rms dv/dy, last column over x = 15.0 | 0.23 / 0.08 | 1.12 / 1.12 |
+| velocity, dt 5e-3 against 6.25e-4 at T: max | 0.15 | **6.0e-5** |
+| ten time units: p rms | 0.15 … 0.99, spiking | 0.072 … 0.075 |
+| ten time units: control-volume C_L (t > 203.5) | −0.65 … +0.62, sample-to-sample rms 0.046 | −0.40 … +0.42, 0.015 |
+| mean C_D (t > 203.5) | 1.4478 | 1.4464 |
+| `../freestream` oblique | exact | exact |
+| `../freestream` Poiseuille: profile dev at x/lx 0.5 / 0.9 | 1.639e-3 / 1.539e-3 | 1.637e-3 / 1.521e-3 |
+| Poiseuille: last-cell p (exact: G dx/2 = 1.25e-3) | 2.41e-3 | **1.247e-3** |
+| Poiseuille: drift | 1.3e-15 | 5.6e-16 |
+| Lamb-Oseen exit, E/E0 at t = 2.5 | 2.2e-2, regrowing (0.049 → 0.228) | **9.8e-5**, monotone |
+
+The body-box pressure (0.27) is the same in both: what the prototype removes
+is the part of the stored pressure that was never physical. With it, the
+time-convergence statement the F7 study could not make becomes possible: the
+two step sizes agree to 6e-5 in velocity after one time unit.
+
+**Not done, and why it is not on main.** It changes the numerics of every
+outlet case. Before it ships: the outlet face at RESTART (it is not in the
+field file; today it is re-copied, which with the prototype is a one-time
+kick — reconstruct it from continuity instead), the penalization factor of a
+face next to a body, 2:1 interfaces on an outlet face, and a re-measurement
+of every outlet case (this one incl. the Strouhal gate, `../blasius`, the
+boundary-layer tutorial, `tutorials/naca/rans`, the sailplane). The lift
+amplitude 0.40 of the prototype against 0.51 of the old penalization series
+(literature, unbounded: ~0.33) is 1.5 shedding periods and wants a long run.

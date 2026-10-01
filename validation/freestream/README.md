@@ -66,3 +66,25 @@ Notes:
   a spurious steady state with a plug outlet profile and 0.2 crossflow.
   Inside the projection loop the copy stays OFF — the Dirichlet-p correction
   owns the face there.
+
+## 2026-10-01: what the outlet does to these gates, and a prototype
+
+`../cylinder/README.md` (last section) runs down the outlet pressure mode:
+the predictor's zero-gradient copy RESETS the outlet face every substage, the
+projection re-supplies the continuity correction each time, and the
+incremental stored pressure integrates it in the last cell column. Two
+numbers of this directory are that mechanism: the Lamb-Oseen exit (energy
+regrowth 0.049 → 0.228 during the exit, reflected fraction 2.2e-2) and the
+Poiseuille last-cell pressure (2.41e-3 where the held outlet pressure gives
+G dx/2 = 1.25e-3). With the prototype of that section (branch
+`proto/outflow-incremental`, not on main), same commands, CPU, niter 12:
+
+| gate | main (`~/step9b_ref_binaries`) | prototype |
+|---|---|---|
+| oblique | exact (0.0) | exact (0.0) |
+| pois: profile dev at x/lx 0.5 / 0.9 | 1.639e-3 / 1.539e-3 | 1.637e-3 / 1.521e-3 |
+| pois: slope / nonlinearity | −0.079579 / 9.54e-5 | −0.079572 / 9.37e-5 |
+| pois: last-cell p | 2.412e-3 | **1.247e-3** |
+| pois: drift | 1.3e-15 | 5.6e-16 |
+| vortex: E/E0 at t = 0.5 … 2.5 | 0.856 1.083 1.050 0.750 0.346 0.049 0.228 0.059 0.022 | 0.958 0.889 0.749 0.502 0.240 0.077 0.0079 0.0007 0.0001 |
+| vortex: reflected fraction | 2.23e-2 | **9.8e-5** |
