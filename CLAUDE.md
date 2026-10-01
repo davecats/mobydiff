@@ -2053,7 +2053,9 @@ immersed boundary. Phased, each phase verified before the next:
     between the two orders at production flags (138 M points); block tax at
     8 ranks 0.997 again. The pre-registered 77.7 ms was missed on the fast
     side — it predated the predictor guard: take a pre-registered absolute
-    time from the head it is compared with. 16 ranks: job 5174077 queued.**
+    time from the head it is compared with. 16 ranks (job 5174077, the first
+    post-step-7 measurement there): 67.40 → 41.52 ms, `mpi_wait` 27.90 →
+    3.61 ms, block tax 1.024.**
     In xyz mode
     `leaf_key` is a bit permutation read from `blk%keyPos`;
     `min_surface_key_order` picks the bit significance by recursive

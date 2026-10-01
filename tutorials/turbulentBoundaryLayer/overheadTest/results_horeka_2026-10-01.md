@@ -1,8 +1,9 @@
 # HoreKa, 2026-10-01: the minimum-surface block order — the node-boundary finding of 09-30 is resolved
 
-Job **5174076**, `accelerated`, 2 nodes (hkn[0526,0535]), 8 x A100-40GB,
-nvhpc 25.3, `horeka/exchange/submit_order.sh`, 9 min wall. Two binaries
-built in the job:
+Jobs **5174076** (`accelerated`, 2 nodes hkn[0526,0535], 8 x A100-40GB,
+9 min wall: the field gate and 4 / 8 ranks) and **5174077** (4 nodes
+hkn[0502,0526,0535,0617], 16 ranks, 2 min), nvhpc 25.3,
+`horeka/exchange/submit_order.sh`. Two binaries built in the job:
 
 | column | commit | block order of its case files |
 |---|---|---|
@@ -12,7 +13,7 @@ built in the job:
 Shipped configs on both sides, each run directory prepared by its own
 column's `moby_prepare`, `--map-by numa --bind-to core` (the DEFAULT
 placement of every matrix), 200 steps. Raw material:
-`horeka/results_job5174076/`. Pre-registration:
+`horeka/results_job5174076/`, `horeka/results_job5174077/`. Pre-registration:
 `horeka/exchange/PREREGISTERED_order.md`.
 
 ## 1. The step
@@ -25,6 +26,8 @@ placement of every matrix), 200 steps. Raw material:
 | `rect_jacobi` | 8 | 76.06 ms | 75.72 ms | −0.44 % | 2.32 → 2.44 ms |
 | `refined_yp82_rect_jacobi` | 4 | 69.07 ms | 69.06 ms | −0.01 % | 2.03 → 2.09 ms |
 | `refined_yp82_rect_jacobi` | 8 | 38.43 ms | 38.45 ms | +0.07 % | 1.43 → 1.61 ms |
+| `base_jacobi` | **16** | **67.40 ms** | **41.52 ms** | **−38.4 %** | **27.90 → 3.61 ms** |
+| `rect_jacobi` | 16 | 42.70 ms | 42.50 ms | −0.47 % | 3.16 → 3.20 ms |
 
 `base_jacobi` at 8 ranks, phase by phase: projection 95.26 → 51.70 ms,
 momentum 19.95 → 20.22 ms; the wait balance over ranks goes from 1.03
@@ -39,6 +42,8 @@ base_jacobi  n=8   partition: face cells shared across ranks 2262016 (8 ranks), 
 rect_jacobi  n=8   partition: face cells shared across ranks 236544 (8 ranks), across nodes 33792 (2 nodes)
 refined_yp82 n=8   partition: face cells shared across ranks 147840 (8 ranks), across nodes 21120 (2 nodes)
 base_jacobi  n=4   partition: face cells shared across ranks 820224 (4 ranks), across nodes 0 (1 nodes)
+base_jacobi  n=16  partition: face cells shared across ranks 2329600 (16 ranks), across nodes 101376 (4 nodes)
+rect_jacobi  n=16  partition: face cells shared across ranks 506880 (16 ranks), across nodes 101376 (4 nodes)
 ```
 
 `tools/partition_analysis.py lattice ... --order legacy` gives 1,441,792
@@ -74,7 +79,7 @@ them in different row orders); the fields are the same numbers.
 | 4 | `rect_jacobi` n=4, n=8 unchanged within 0.5 % | −0.75 %, −0.44 % | n=8 HIT, n=4 just outside |
 | 5 | `refined_yp82_rect_jacobi` unchanged within 0.5 % | −0.01 %, +0.07 % | HIT |
 | 6 | field gate `max_abs 0` with the row-order note | as predicted, both configs | HIT |
-| 7 | 16 ranks | job 5174077 queued | pending |
+| 7 | 16 ranks: init line 101,376 across nodes; block tax `rect / base` in 1.00–1.03; ref `base_jacobi` at least 30 % slower than new | 101376 (4 nodes); 42.50 / 41.52 = **1.024**; ref 67.40 ms = +62 % | HIT |
 
 The miss of row 2 is in the pre-registered number, not in the change: 77.7 ms
 was the 09-26 value of the old rank box, measured BEFORE the predictor
@@ -95,7 +100,12 @@ The block tax can be formed at 8 ranks again from a default-placed
 above from a post-step-7 `base_jacobi`") applies to case files prepared
 before `d2ac839` only: re-prepare, and read the `partition:` line.
 
-16 ranks (4 nodes) is job 5174077, same script with
-`RANKS_SMALL=16 RANKS_BIG=16 GATE=0 CONFIGS="base_jacobi rect_jacobi"`, run
-directory `order16_run`; `base_jacobi` is 4 x 2 x 2 blocks there, order
-x x y z, 101,376 cells across nodes against 1,475,584 in the legacy order.
+At 16 ranks (job 5174077: the same script with
+`RANKS_SMALL=16 RANKS_BIG=16 GATE=0 CONFIGS="base_jacobi rect_jacobi"`)
+`base_jacobi` is 4 x 2 x 2 blocks of 1024 x 88 x 96, order x x y z, 101,376
+cells across nodes against 1,475,584 in the legacy order: the first
+post-step-7 measurement at that rank count. Block tax `rect / base` =
+42.50 / 41.52 = **1.024** (published 09-23 / 09-25: 1.007 / 1.030).
+Strong scaling 8 → 16 ranks: `base_jacobi` 75.93 → 41.52 ms (91 %),
+`rect_jacobi` 75.72 → 42.50 ms (89 %); across two allocations, so read them
+to a few per cent.

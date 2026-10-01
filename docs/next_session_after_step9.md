@@ -1,13 +1,11 @@
 # Next session: after numerics review step 9
 
-STATUS: **ITEMS 1 AND 2 DONE (2026-10-01), item 2 measured on HoreKa at 4
-and 8 ranks (16 ranks: job 5174077 still queued); item 3 RUN DOWN with a
+STATUS: **ITEMS 1 AND 2 DONE (2026-10-01), item 2 measured on HoreKa at
+4, 8 and 16 ranks; item 3 RUN DOWN with a
 measured prototype, the decision to ship it open; items 4a and 4b DONE.**
 Steps 0–9 of `docs/numerics_review_2026-09-26.md` section 10 are done. What
 is open for the next session: (i) the DECISION on the outflow predictor
-(item 3, branch `proto/outflow-incremental`); (ii) the 16-rank rows of
-`results_horeka_2026-10-01.md` once job 5174077 has run; (iii) item 5, the
-plan. The commits of 2026-10-01 after `5c53a96` are LOCAL (not pushed).
+(item 3, branch `proto/outflow-incremental`); (ii) item 5, the plan. The commits of 2026-10-01 after `5c53a96` are LOCAL (not pushed).
 
 ## What holds now
 
@@ -128,7 +126,8 @@ unchanged (−0.4 %, +0.1 % at 8 ranks); fields `max_abs 0` between the two
 orders at production flags (138 M points, rows matched). The pre-registered
 77.7 ms ± 1 % was MISSED on the fast side: that number predates the
 predictor guard. Block tax at 8 ranks from a default-placed `base_jacobi`:
-0.997. 16 ranks: job 5174077, queued.**
+0.997. 16 ranks (job 5174077): 67.40 → 41.52 ms, `mpi_wait` 27.90 → 3.61 ms,
+101,376 cells across nodes, block tax 1.024 — prediction 7 hit.**
 
 *Result.* As designed below, point by point:
 (1) `blocks.f90`: `blk%keyOrder/keyPos`, `min_surface_key_order` (the rule),
@@ -175,10 +174,8 @@ HoreKa: `moby-2to1-order` (`d2ac839`) and `moby-2to1-order-ref` (`5bdc5eb`),
 transferred by `git push` into the HoreKa clone (branches `gate-order`,
 `gate-order-ref`), NOT through GitHub — `origin/main` is still at `5c53a96`,
 the commits of this session are local. Job 5174076 ran the same evening
-(the scheduler's estimate had been 2026-10-05) and is written up in
-`results_horeka_2026-10-01.md`; when 5174077 has run, add its two rows
-(`base_jacobi` / `rect_jacobi` at 16 ranks, both columns) there and check
-prediction 7 of `PREREGISTERED_order.md`.
+(the scheduler's estimate had been 2026-10-05), 5174077 forty minutes
+later; both are written up in `results_horeka_2026-10-01.md`.
 
 *The defect* (`results_horeka_2026-09-30.md` section 3). The leaf order is
 the Morton key of the finest-lattice block coordinates with x in the lowest

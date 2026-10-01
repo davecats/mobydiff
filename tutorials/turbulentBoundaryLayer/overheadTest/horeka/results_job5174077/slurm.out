@@ -1,0 +1,211 @@
+=== building /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-order-ref (5bdc5eb)
+MPI Fortran module dir: /hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+HDF5_ROOT: /home/hk-project-exasim/xt8786/hdf5
+-- HDF5 include dir: /home/hk-project-exasim/xt8786/hdf5/include
+-- HDF5 C library: /home/hk-project-exasim/xt8786/hdf5/lib/libhdf5.so
+-- Pressure solver: red-black SOR
+-- MPI support: required
+-- MPI wrapper compile flags: -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/hwloc/hwloc201/hwloc/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/event/libevent2022/libevent -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/event/libevent2022/libevent/include -pthread -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+-- MPI wrapper link flags: -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -L/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -Wl,-rpath -Wl,/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -Wl,--enable-new-dtags -lmpi_usempif08 -lmpi_usempi_ignore_tkr -lmpi_mpifh -lmpi
+-- MPI Fortran module dir: /hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+-- Configuring done (3.0s)
+-- Generating done (1.1s)
+-- Build files have been written to: /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-order-ref/build_gpu
+[ 82%] Built target leaftable_test
+[ 92%] Built target walldist_test
+[ 92%] Built target moby_prepare
+[100%] Built target transition_test
+[100%] Built target penalization_test
+[100%] Built target scalar_test
+[100%] Built target moby_solve
+[100%] Built target stencil_test
+
+========================================
+Build summary: gpu
+========================================
+Build directory       : build_gpu
+Executables           : build_gpu/moby_solve (+ main symlink), build_gpu/moby_prepare
+Fortran compiler      : /software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/compilers/bin/nvfortran
+C compiler            : /software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/compilers/bin/nvc
+Pressure solver       : damped Jacobi (+Chebyshev); red-black via [pressure] solver
+MPI                   : ON
+MPI wrapper compile   : -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/hwloc/hwloc201/hwloc/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/event/libevent2022/libevent -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/event/libevent2022/libevent/include -pthread -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+MPI wrapper link      : -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -L/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -Wl,-rpath -Wl,/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -Wl,--enable-new-dtags -lmpi_usempif08 -lmpi_usempi_ignore_tkr -lmpi_mpifh -lmpi
+MPI Fortran mod dir   : /hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+USE_OPENMP_OFFLOAD    : ON
+USE_IBM_SECONDORDER   : ON
+OPENMP_OFFLOAD_FLAGS  : -mp=gpu
+HDF5_ROOT             : /home/hk-project-exasim/xt8786/hdf5
+HDF5 include dir      : /home/hk-project-exasim/xt8786/hdf5/include
+HDF5 C library        : /home/hk-project-exasim/xt8786/hdf5/lib/libhdf5.so
+========================================
+
+=== building /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-order (d2ac839)
+MPI Fortran module dir: /hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+HDF5_ROOT: /home/hk-project-exasim/xt8786/hdf5
+-- HDF5 include dir: /home/hk-project-exasim/xt8786/hdf5/include
+-- HDF5 C library: /home/hk-project-exasim/xt8786/hdf5/lib/libhdf5.so
+-- Pressure solver: red-black SOR
+-- MPI support: required
+-- MPI wrapper compile flags: -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/hwloc/hwloc201/hwloc/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/event/libevent2022/libevent -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/event/libevent2022/libevent/include -pthread -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+-- MPI wrapper link flags: -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -L/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -Wl,-rpath -Wl,/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -Wl,--enable-new-dtags -lmpi_usempif08 -lmpi_usempi_ignore_tkr -lmpi_mpifh -lmpi
+-- MPI Fortran module dir: /hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+-- Configuring done (2.0s)
+-- Generating done (1.1s)
+-- Build files have been written to: /hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-order/build_gpu
+[ 11%] Built target moby_solve
+[ 68%] Built target scalar_test
+[ 68%] Built target leaftable_test
+[ 84%] Built target transition_test
+[ 84%] Built target penalization_test
+[ 99%] Built target moby_prepare
+[ 99%] Built target walldist_test
+[100%] Built target keyorder_test
+[100%] Built target stencil_test
+
+========================================
+Build summary: gpu
+========================================
+Build directory       : build_gpu
+Executables           : build_gpu/moby_solve (+ main symlink), build_gpu/moby_prepare
+Fortran compiler      : /software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/compilers/bin/nvfortran
+C compiler            : /software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/compilers/bin/nvc
+Pressure solver       : damped Jacobi (+Chebyshev); red-black via [pressure] solver
+MPI                   : ON
+MPI wrapper compile   : -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/hwloc/hwloc201/hwloc/include -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/event/libevent2022/libevent -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/include/openmpi/opal/mca/event/libevent2022/libevent/include -pthread -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+MPI wrapper link      : -I/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -L/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -Wl,-rpath -Wl,/hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib -Wl,--enable-new-dtags -lmpi_usempif08 -lmpi_usempi_ignore_tkr -lmpi_mpifh -lmpi
+MPI Fortran mod dir   : /hkfs/home/software/all/toolkit/nvidia_hpc_sdk/25.3/Linux_x86_64/25.3/comm_libs/12.8/hpcx/hpcx-2.22.1/ompi/lib
+USE_OPENMP_OFFLOAD    : ON
+USE_IBM_SECONDORDER   : ON
+OPENMP_OFFLOAD_FLAGS  : -mp=gpu
+HDF5_ROOT             : /home/hk-project-exasim/xt8786/hdf5
+HDF5 include dir      : /home/hk-project-exasim/xt8786/hdf5/include
+HDF5 C library        : /home/hk-project-exasim/xt8786/hdf5/lib/libhdf5.so
+========================================
+
+job    : 5174077
+date   : 2026-10-01 17:47:42 CEST
+nodes  : 4  (hkn[0502,0526,0535,0617])
+new    : d2ac8397684f4ac786c3343d954475bb595e58bd  (minimum-surface order)
+ref    : 5bdc5eb4ceb6cce423789cf360563169bd49bb3a  (legacy order)
+gpu    : NVIDIA A100-SXM4-40GB
+nsteps : 200
+layout : --map-by numa --bind-to core (the default placement of every matrix)
+############ NEW (minimum-surface order) ############
+=== matrix start 2026-10-01 17:47:42  exe=/hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-order/build_gpu/moby_solve
+=== base_jacobi  n=16  (2026-10-01 17:47:42)
+           150   1.50000000E-01   1.09909909E-05   1.94884679E+00   1.00202410E+00   6.73467512E-03   2.09364619E-02   4.16678473E-02
+           200   2.00000000E-01   1.07256407E-05   1.74283916E+00   1.00228451E+00   6.73467512E-03   2.09364619E-02   4.15260300E-02
+=== rect_jacobi  n=16  (2026-10-01 17:48:02)
+           150   1.50000000E-01   1.09909909E-05   1.94884679E+00   1.00202410E+00   6.73467512E-03   2.09364619E-02   4.28084993E-02
+           200   2.00000000E-01   1.07256407E-05   1.74283916E+00   1.00228451E+00   6.73467512E-03   2.09364619E-02   4.25739345E-02
+=== matrix done 2026-10-01 17:48:22
+############ REF (legacy order) ############
+=== matrix start 2026-10-01 17:48:22  exe=/hkfs/work/workspace/scratch/xt8786-roughBoundaryLayer/optimiseBlockRefinement/moby-2to1-order-ref/build_gpu/moby_solve
+=== base_jacobi  n=16  (2026-10-01 17:48:22)
+           150   1.50000000E-01   1.09909909E-05   1.94884679E+00   1.00202410E+00   6.73467512E-03   2.09364619E-02   6.74623133E-02
+           200   2.00000000E-01   1.07256407E-05   1.74283916E+00   1.00228451E+00   6.73467512E-03   2.09364619E-02   6.74132500E-02
+=== rect_jacobi  n=16  (2026-10-01 17:48:46)
+           150   1.50000000E-01   1.09909909E-05   1.94884679E+00   1.00202410E+00   6.73467512E-03   2.09364619E-02   4.28834800E-02
+           200   2.00000000E-01   1.07256407E-05   1.74283916E+00   1.00228451E+00   6.73467512E-03   2.09364619E-02   4.27067455E-02
+=== matrix done 2026-10-01 17:49:06
+
+# The campaign, re-measured
+
+The 23-run matrix (`run_matrix.sh`, `--map-by numa --bind-to core`), run
+TWICE IN ONE ALLOCATION -- `ref` is the pre-change binary, `new` the
+post-change one, and the two columns differ only in that change. WHICH
+change is recorded in the run directory's provenance.txt, not here: this
+collector has now served two of them (the rank-to-GPU mapping, 2026-09-10,
+and the comm_type parent map, 2026-09-14), and hard-coding either into the
+header is how a table gets quoted against the wrong question.
+
+```
+job    : 5174077
+date   : 2026-10-01 17:47:42 CEST
+nodes  : 4  (hkn[0502,0526,0535,0617])
+new    : d2ac8397684f4ac786c3343d954475bb595e58bd  (minimum-surface order)
+ref    : 5bdc5eb4ceb6cce423789cf360563169bd49bb3a  (legacy order)
+gpu    : NVIDIA A100-SXM4-40GB
+nsteps : 200
+layout : --map-by numa --bind-to core (the default placement of every matrix)
+```
+
+## s/step, and what the mapping is worth
+
+| config | ranks | ref | new | gain |
+|---|---|---|---|---|
+| `base_jacobi` | 16 | 0.06740 | 0.04152 | **+38.4 %** |
+| `rect_jacobi` | 16 | 0.04270 | 0.04250 | **+0.5 %** |
+
+## Per-round `mpi_wait`
+
+| config | n=1 | n=2 | n=4 | n=8 | n=16 |
+|---|---|---|---|---|---|
+| `base_jacobi` (ref) | - | - | - | - | 715.3 us |
+| `base_jacobi` (new) | - | - | - | - | 92.4 us |
+| `rect_jacobi` (ref) | - | - | - | - | 81.0 us |
+| `rect_jacobi` (new) | - | - | - | - | 82.1 us |
+
+## Block tax — inverse per-GPU throughput `t_step * n / cells` (ns)
+
+| ranks | Mcell/GPU | base ref | base new | rect ref | rect new | **tax ref** | **tax new** |
+|---|---|---|---|---|---|---|---|
+| 1 | - | - | - | - | - | - | - |
+| 2 | - | - | - | - | - | - | - |
+| 4 | - | - | - | - | - | - | - |
+| 8 | - | - | - | - | - | - | - |
+| 16 | 8.65 | 7.791 | 4.799 | 4.936 | 4.913 | **0.634** | **1.024** |
+
+## Strong-scaling efficiency (vs each config's smallest rank count)
+
+| config | n=1 | n=2 | n=4 | n=8 | n=16 |
+|---|---|---|---|---|---|
+| `base_jacobi` (ref) | - | - | - | - | 100 % |
+| `base_jacobi` (new) | - | - | - | - | 100 % |
+| `rect_jacobi` (ref) | - | - | - | - | 100 % |
+| `rect_jacobi` (new) | - | - | - | - | 100 % |
+
+## Headline 1 -- the 2:1 machinery, like for like
+
+`refined_big_rect_jacobi` shares grid, block shape and solver with
+`rect_jacobi`; it just refines one y-tile. Cost of the ADDED cells
+against the coarse cells beside them:
+
+| ranks | binary | rect s/step | big s/step | ns per EXTRA cell | vs coarse-cell avg |
+|---|---|---|---|---|---|
+
+## Headline 3 — red-black against Jacobi
+
+| binary | n=1 | n=2 | n=4 | n=8 | n=16 |
+|---|---|---|---|---|---|
+| ref | - | - | - | - | - |
+| new | - | - | - | - | - |
+=== step, mpi_wait and the partition line, every run ===
+  base_jacobi_n16                  step   67.398 ->   41.516 ms (-38.40%)   mpi_wait  27.896 ->   3.605 ms
+      new: partition: face cells shared across ranks 2329600 (16 ranks), across nodes 101376 (4 nodes)
+  rect_jacobi_n16                  step   42.703 ->   42.501 ms ( -0.47%)   mpi_wait   3.161 ->   3.203 ms
+      new: partition: face cells shared across ranks 506880 (16 ranks), across nodes 101376 (4 nodes)
+=== order job finished 2026-10-01 17:49:06 ===
+
+============================= JOB FEEDBACK =============================
+
+Job ID: 5174077
+Cluster: hk
+User/Group: xt8786/hk-project-exasim
+Account: hk-project-exasim
+State: COMPLETED (exit code 0)
+Partition: accelerated
+Nodes: 4
+Cores per node: 80
+Nodelist: hkn[0502,0526,0535,0617]
+CPU Utilized: 00:15:35
+CPU Efficiency: 2.28% of 11:22:40 core-walltime
+Job Wall-clock time: 00:02:08
+Starttime: Thu Oct  1 17:46:58 2026
+Endtime: Thu Oct  1 17:49:06 2026
+Memory Utilized: 25.32 GB
+Memory Efficiency: 1.30% of 1.90 TB (485.84 GB/node)
+The task which had the largest memory consumption differs by 100.15% from the average task max memory consumption
+Energy Consumed: 621521 Joule / 172.644722222222 Watthours
+Average node power draw: 4855.6328125 Watt

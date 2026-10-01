@@ -1,0 +1,8 @@
+job    : 5174077
+date   : 2026-10-01 17:47:42 CEST
+nodes  : 4  (hkn[0502,0526,0535,0617])
+new    : d2ac8397684f4ac786c3343d954475bb595e58bd  (minimum-surface order)
+ref    : 5bdc5eb4ceb6cce423789cf360563169bd49bb3a  (legacy order)
+gpu    : NVIDIA A100-SXM4-40GB
+nsteps : 200
+layout : --map-by numa --bind-to core (the default placement of every matrix)
