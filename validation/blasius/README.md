@@ -66,3 +66,28 @@ warning was removed from the ini on 2026-09-30.
 
 Figure: `blasius.png` (u/Ue and v profiles in similarity form, theta growth)
 from the shipped-ini run.
+
+## 2026-10-01: the outflow-predictor prototype on this gate
+
+`../cylinder/README.md` (last section) traces the outlet pressure mode to the
+predictor's reset of the outlet face; a prototype (local branch
+`proto/outflow-incremental`, not on main) gives that face a predictor of its
+own. This case has two outlets (x_max and the top), so it was run with both
+binaries, the shipped ini (damped Jacobi, niter 12), GPU, 1 rank:
+
+| | main (`~/step9b_ref_binaries`) | prototype |
+|---|---|---|
+| theta error at x/lx 0.15 / 0.30 / 0.50 / 0.70 | 0.24 / 0.39 / 0.08 / −1.33 % | 0.26 / 0.74 / 1.27 / 1.65 % |
+| H error | −0.12 / −0.19 / −0.09 / 0.45 % | −0.12 / −0.35 / −0.63 / −0.82 % |
+| du/Ue, worst | 2.40e-3 | 1.48e-3 |
+| dv/v_edge, worst | 0.124 | **0.013** |
+| `v_top` (relative entrainment error aloft) | +0.013 +0.002 −0.041 −0.202 | +0.025 +0.030 +0.028 +0.033 |
+| gate | PASS | PASS |
+
+The wall-normal velocity is ten times closer to Blasius and the top
+entrainment deficit ("the p = 0 top under-drives the entrainment aloft",
+above) is gone: it was the outlet treatment, not the p = 0 condition. The
+momentum thickness now grows 0.3 → 1.7 % above Blasius along the plate where
+main reads within 0.4 % up to x/lx = 0.5 and −1.3 % at 0.7; both are inside
+the 2 % gate, and which of the two is the grid's own error is not settled by
+one run (main's converged-projection value is 1.55 %).

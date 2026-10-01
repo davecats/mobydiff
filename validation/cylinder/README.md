@@ -313,6 +313,9 @@ imbalance): the outlet face needs its own pressure gradient.
 | Poiseuille: last-cell p (exact: G dx/2 = 1.25e-3) | 2.41e-3 | **1.247e-3** |
 | Poiseuille: drift | 1.3e-15 | 5.6e-16 |
 | Lamb-Oseen exit, E/E0 at t = 2.5 | 2.2e-2, regrowing (0.049 → 0.228) | **9.8e-5**, monotone |
+| `../blasius` (outlets at x_max and at the top), worst theta / H | 1.33 % / 0.45 % | 1.65 % / 0.82 % (gate 2 %) |
+| `../blasius` worst du/Ue / dv/v_edge | 2.40e-3 / 0.124 | 1.48e-3 / **0.013** |
+| `../blasius` top entrainment `v_top` at x/lx 0.15 … 0.7 | +0.013 +0.002 −0.041 −0.202 | +0.025 +0.030 +0.028 +0.033 |
 
 The body-box pressure (0.27) is the same in both: what the prototype removes
 is the part of the stored pressure that was never physical. With it, the
