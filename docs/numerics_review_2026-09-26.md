@@ -1152,6 +1152,38 @@ bit-exact by construction. Body cases: cylinder Re 40 `C_D` and the `les_ibm`
 law of the wall re-measured; a `dt` halving study on the cylinder drag should
 show the cut-cell time error drop faster than before. One session.
 
+**MEASURED (DONE 2026-10-01, `docs/next_session_after_step8.md` item 3).**
+Implemented in the equivalent closed form `x = λΔt`: `ibm%mu` =
+`(1 − e^{−x})/x` (= `muB`, series below x = 0.1) and the state factor
+`e^{−x}` (= `muA`), `ibm.f90 penal_incr_factor` / `penal_state_factor`.
+DEVIATION from the text above, for bit-exactness and cost: the fused
+predictor is NOT touched (`qs = (q + Δ)·mu`); the missing `(e^{−x} − mu)·q`
+is a separate kernel over the BODY BLOCKS only
+(`step.f90 add_penalization_state_correction`), and `update_ibm_mu` visits
+the same list — so a body-free rank runs neither, by construction, and a
+body case pays an `exp` only where there is a body.
+Gates: unit test `penalization_test` (factors vs `expm1` references ≤ 6e-16,
+exact at x = 0 and x = 1e28); nofma suites vs `~/step8_ref_binaries`, CPU
+and GPU — the 5 body-free flow cases and all 9 scalar cases `max_abs 0`
+(28/28), `les_ibm` ± refine move (1e-3 in u after 20 steps), as intended;
+with a body: 1 == 4 ranks `max_abs 0`, CPU == GPU `max_abs 0`, solid-cell
+velocity 3e-28. THE ORDER, measured where it can be
+(`validation/penalization/`, `du/dt = f − λu` in a uniform periodic box):
+implicit Euler 1.23e-2 → 1.45e-3 over three halvings (order 1.04, 1.03,
+1.01), exact factor ≤ 5.6e-17 at every dt. Body cases: cylinder Re 40
+`C_D` 1.69234524 → 1.69234525 (same steady fixed point); `les_ibm`
+developed statistics t = 5..25 paired old/new — U+(29) 13.08 / 13.10, bulk U
+15.065 / 15.066, differences of opposite sign at the two walls (sampling
+scatter). **The predicted "cut-cell time error drops faster" on the cylinder
+is NOT observable: it was never visible.** On the Re 100 shedding flow the
+two factors differ by ≤ 1.1e-5 in velocity at every dt from 5e-3 to
+6.25e-4, three orders below the dt-to-dt differences near the body — a body
+at rest keeps its cut cells quasi-steady. And the dt study is not a clean
+convergence test anyway: the stored pressure pollutes within one time unit
+at the Dirichlet-p outlet (Chebyshev niter 60; `validation/cylinder/README.md`),
+identically for both binaries. NOT done, same first-order factor: the
+Dirichlet SCALAR penalization (`scalar.f90` `mus = 1/(1 + dt_γ coef_p/Pr)`).
+
 **Step 10 — Q7(c), implicit solid conduction for conjugate scalars.** Does
 NOT depend on step 8 (the scalar operator is already flux form). Design: a
 Chebyshev-Jacobi Helmholtz solve over solid + cut cells only, coefficients

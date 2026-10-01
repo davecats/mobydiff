@@ -1,7 +1,32 @@
 # Next session: after numerics review step 8 — reference set, cluster check, then step 9
 
-STATUS: **NOT STARTED (handout written 2026-09-30, HEAD `35864a3`).** The
-previous handout (`docs/next_session_after_step7.md`) is closed: its loose
+STATUS: **DONE (2026-09-30 / 10-01). Items 1, 2, 3 and 4 are closed; the
+successor is `docs/next_session_after_step9.md`.** What happened, item by
+item (numbers in the files named):
+
+1. `~/step8_ref_binaries` cut from `0811811` (source `0737b88`), four
+   builds + helper + PROVENANCE.
+2. HoreKa drivers verified (jobs 5172140, 5172166, 5173620;
+   `overheadTest/results_horeka_2026-09-30.md`): the case file and
+   `prepare.log` appear beside every `run.log`, leaf counts as expected, 7 of
+   8 step times within 0.4 % of the 09-26 matrix. The eighth is a FINDING:
+   `base_jacobi` at 8 ranks is +70 % because the nb-less lattice is
+   Morton-numbered and the node boundary now cuts the large z-faces; with
+   `--map-by node` the same binary reads the old time. An ordering decision,
+   not taken. The predictor register guard was taken, pre-registered and
+   measured: 100 → 128 registers, kernel −10.1 %, step −1.4 to −2.0 %.
+3. Step 9 (F7) implemented and gated; see the review's step-9 MEASURED
+   block. The cylinder dt study could not show "the cut-cell error dropping
+   faster": the two factors differ by 1e-5 there. The order is measured in
+   `validation/penalization/` instead (first order → round-off).
+4. `validation/blasius/` re-added, four projections measured.
+5. Notes: the cylinder gates were run on the separated executables for the
+   first time and needed their inis fixed (5a); the rest stands.
+
+The text below is the handout as written, kept for the landmines.
+
+STATUS (original): NOT STARTED (handout written 2026-09-30, HEAD `35864a3`).
+The previous handout (`docs/next_session_after_step7.md`) is closed: its loose
 ends 1, 2, 4, 5 and step 8 (F1) are DONE and gated, 3, 6, 7 are notes.
 Read `CLAUDE.md` (the step-7 bullet states the case-file CONTRACT; the
 "F1 IS DONE" paragraph states what step 8 changed), then work the items

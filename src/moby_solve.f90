@@ -1,8 +1,3 @@
-! TODO:
-!
-!      (*) second-order IBM in space, then in time
-
-
 program moby_solve
     use :: init
     use :: blocks, only: block_set_type, init_block_set_from_table, &

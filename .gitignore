@@ -153,3 +153,4 @@ validation/conjugate/c2_*.dat
 s7_*
 validation/channel_interface/les_ibm/bx_*.h5
 validation/channel_interface/les_ibm/s3x_*.h5
+validation/channel_interface/les_ibm/runs_f7/

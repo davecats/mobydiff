@@ -23,6 +23,12 @@ Setup (STL + per-Re coefficient files; coef = SOLID/re so one file per Re):
 `mobygeom.py stl-ibm-coeff`; the recorded results below come from those
 legacy-format files. The moby_prepare files keep all 4096 blocks too.)
 
+Since 2026-10-01 the two `cyl_re*.ini` name the STL and `remove_solid =
+false` themselves and `setup.sh` prepares FROM them: the solver compares the
+case file's input echo with its own ini, and a case file prepared from a
+sed-derived variant was refused as stale (this gate had not been run since
+the step-7 contract).
+
 Runs (GPU recommended; one job at a time):
 
     mpirun -n 1 ../../build_cpu/moby_prepare empty.ini       # its case file (the cyl_* inis name theirs)
@@ -133,3 +139,63 @@ accumulation over a full multi-10 000-step run that eventually poisons it.
 Note: the control-volume force is the TOTAL force (pressure + friction
 combined; modeled turbulent stress enters through the eddy-viscosity part of
 tau) — the split needs surface integration, which is not planned.
+
+## Exact penalization factor (numerics review step 9, F7) — measured 2026-10-01
+
+`run_f7_gates.sh` runs two legs with TWO binaries from the same state (the
+restarts live in a sibling checkout, `SIB`; `REF` = `~/step8_ref_binaries`,
+the implicit-Euler factor; `NEW` = the exact factor); `dt_study.py` analyses
+the second.
+
+**steady — the drag does not move.** Re 40 from the clean-p converged state
+(`cvpz_20301.h5`), 2000 steps at the production settings:
+
+| | C_D (last 1000 steps) | C_L |
+|---|---|---|
+| implicit Euler | 1.69234524 ± 8.2e-4 | −3.9e-4 |
+| exact | 1.69234525 ± 8.2e-4 | −3.9e-4 |
+
+As it must: both factors have the same steady fixed point, `lambda q = R`.
+
+**dt — the factor is not what limits the time accuracy of this flow.** Re
+100 shedding state, pressure cleaned (zero `pn`, 300 steps at niter 60), then
+ONE time unit at fixed dt = 5e-3 / 2^k, k = 0..3, Chebyshev niter 60.
+2208 cut DOFs with `lambda dt_gamma` from 1e-4 to 44 at dt = 5e-3.
+
+| dt | old − new, cut rms | cut max | fluid rms | body-box rms vs the finest run | C_D(T) old / new |
+|---|---|---|---|---|---|
+| 5.0e-3 | 2.5e-6 | 1.1e-5 | 6.3e-8 | 9.7e-3 | 1.50084002 / 1.50084006 |
+| 2.5e-3 | 2.2e-6 | 8.6e-6 | 4.5e-8 | 2.2e-3 | 1.52468122 / 1.52467630 |
+| 1.25e-3 | 1.8e-6 | 6.7e-6 | 3.0e-8 | 6.4e-4 | 1.45727014 / 1.45727675 |
+| 6.25e-4 | 2.2e-6 | 8.0e-6 | 2.3e-8 | (reference) | 1.46381330 / 1.46381342 |
+
+The two factors differ by ~1e-5 in velocity at every step size, three orders
+of magnitude below the dt-to-dt differences near the body. A body at rest
+keeps its cut cells quasi-steady (u ~ 0, slaved to the neighbours), so the
+first-order error of the old factor multiplies a time derivative that is
+nearly zero. **The expectation "the cut-cell time error drops faster" cannot
+be observed here because that error was never visible**; the place where the
+factor's order IS measured is `validation/penalization/` (first order →
+round-off). A moving or impulsively started body would be the flow where it
+matters.
+
+**FOUND, pre-existing and identical for both binaries: this study is NOT a
+clean time-convergence test, because the stored pressure pollutes within one
+time unit.** From the cleaned state (p rms 0.30, max 1.4):
+
+| dt | p rms at T | max |p| | C_L range over the run | where the largest velocity difference to the finest run sits |
+|---|---|---|---|---|
+| 5.0e-3 | 0.89 | 3.0 | −0.07 .. +1.16 | outlet corner (x = 15.9, y = 15.9), 0.15 |
+| 2.5e-3 | 0.58 | 2.3 | −0.19 .. +0.73 | outlet corner, 2.4e-2 |
+| 1.25e-3 | 0.79 | 3.1 | −0.75 .. +1.33 | outlet corner, 1.7e-2 |
+| 6.25e-4 | 1.65 | 6.0 | −3.09 .. +3.90 | — |
+
+The physical C_L amplitude is 0.5. The dt-to-dt velocity differences peak in
+the outlet corners and the lateral far field, not in the wake, and the fluid
+rms is non-monotone in dt (2.7e-2, 1.2e-3, 2.2e-3): this is the
+velocity-neutral-then-active pressure mode at the Dirichlet-p outlet under a
+Chebyshev projection that does not converge the long waves in 60 iterations
+(`lmin` ~ 2.5e-5 on N = 512), the family of the clean-p section above and of
+the B0 outlet finding. Only the body-box column falls like a time error
+(ratios 4.4 and 3.4). Open; it belongs with the outlet / projection work, not
+with F7.

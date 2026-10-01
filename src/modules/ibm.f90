@@ -113,24 +113,27 @@ module ibmm
     end interface
 
 
-    ! Is every penalization coefficient zero on this rank? Then mu is exactly
-    ! 1/(1 + dt*0) = 1 for every entry, whatever dt_gamma is -- which is also
-    ! what init_ibm already wrote -- so the per-substage refresh writes back the
-    ! values mu already holds and can be skipped entirely. On a case with no
-    ! immersed body that kernel was an fp64 DIVIDE per ghost-inclusive cell x 3
-    ! components x 3 substages, 3.2-3.8 % of the step at 16 ranks (measured), all
-    ! of it producing the constant 1.
+    ! The block slots of this rank that hold any penalization coefficient
+    ! (ibm_body_blocks), found once on the first update_ibm_mu call and kept
+    ! on the device. mu is EXACTLY 1.0 wherever coef is zero, whatever dt_gamma
+    ! is -- which is also what init_ibm already wrote -- so the per-substage
+    ! refresh and the predictor's state correction (step.f90
+    ! add_penalization_state_correction) visit these blocks only, and on a
+    ! body-free rank neither kernel runs at all. Refreshing mu everywhere on a
+    ! case with no immersed body used to cost 3.2-3.8 % of the step at 16
+    ! ranks (measured), all of it producing the constant 1.
     !
-    ! The answer is a LOCAL one and correctly so: mu is pointwise, so a rank
-    ! whose own coefficients are all zero has mu = 1 regardless of what any other
-    ! rank holds, and the field values are bit-identical either way.
+    ! The answer is LOCAL and correctly so: mu is pointwise, so a block whose
+    ! own coefficients are all zero has mu = 1 regardless of what any other
+    ! block or rank holds, and the field values are bit-identical either way.
     !
-    ! Computed once, on the first call: coef is final before the first substage
-    ! (set_ibm_coeff runs at init and nothing writes coef afterwards) and the
-    ! check must run on the DEVICE, because the analytic path fills coef there
-    ! and leaves the host copy stale. Cached like pressure_solver's ifaceAny.
-    logical, save :: muKnown = .false.
-    logical, save :: muIsUnit = .false.
+    ! Computed once: coef is final before the first substage (it comes from
+    ! the case file at init and nothing writes it afterwards). Cached like
+    ! pressure_solver's ifaceAny.
+    logical, save :: bodyKnown = .false.
+    integer, allocatable, public :: bodyBlocks(:)
+    integer, save, public :: nBodyBlocks = 0
+    public :: penal_incr_factor, penal_state_factor
 
 contains
 
@@ -222,6 +225,9 @@ contains
         if (allocated(ibm%bandI)) then
             !$omp target exit data map(delete: ibm%bandI, ibm%bandJ, ibm%bandK, &
             !$omp& ibm%bandVar, ibm%bandBlk, ibm%bandDirs)
+        end if
+        if (allocated(bodyBlocks)) then
+            !$omp target exit data map(delete: bodyBlocks)
         end if
         !$omp target exit data map(delete: ibm%coef, ibm%mu)
         !$omp target exit data map(delete: ibm)
@@ -1099,22 +1105,66 @@ contains
         xB = xM
     end subroutine bisection
 
+    ! The EXACT integrating factors of the penalization term (numerics review
+    ! F7; Luchini's B(lambda dt)). Over one RK substage of length dt the
+    ! predictor solves du/dt = R - lambda u with R frozen:
+    !
+    !     u+ = e^{-x} u + ((1 - e^{-x})/x) (dt R),        x = lambda dt >= 0.
+    !
+    ! penal_state_factor is the factor on the STATE u; penal_incr_factor is
+    ! the factor on every INCREMENT (the substage update, the projection's
+    ! velocity correction, the SGS / body-force / band-filter passes) and is
+    ! what ibm%mu holds. In the review's notation, B = x/(e^x - 1), they are
+    ! B/(x + B) and 1/(x + B). The implicit-Euler factor they replaced,
+    ! 1/(1 + x) on both, is their first-order approximation: stable for any
+    ! dt, but first order in time at cut cells.
+    !
+    ! Limits, all exact in floating point: x = 0 gives 1 and 1 (no body, the
+    ! predictor is untouched); x -> infinity gives 0 and 1/x (a solid cell,
+    ! the velocity stays zero). Below x = 0.1 the increment factor is its
+    ! series sum_n (-x)^n/(n+1)!, because (1 - e^{-x})/x loses as many digits
+    ! as x has leading zeros; ten terms leave 2.5e-18 at the switch, where
+    ! the closed form is good to ~1e-15. Unit-tested in src/test_penalization.f90.
+    pure real(C_DOUBLE) function penal_incr_factor(x) result(mu)
+!$omp declare target
+        real(C_DOUBLE), intent(in) :: x
+
+        if (x < 0.1d0) then
+            mu = 1.0d0 - x*(1.0d0/2.0d0 - x*(1.0d0/6.0d0 - x*(1.0d0/24.0d0 &
+                 - x*(1.0d0/120.0d0 - x*(1.0d0/720.0d0 - x*(1.0d0/5040.0d0 &
+                 - x*(1.0d0/40320.0d0 - x*(1.0d0/362880.0d0 - x/3628800.0d0))))))))
+        else
+            mu = (1.0d0 - exp(-x))/x
+        end if
+    end function penal_incr_factor
+
+    pure real(C_DOUBLE) function penal_state_factor(x) result(a)
+!$omp declare target
+        real(C_DOUBLE), intent(in) :: x
+
+        a = exp(-x)
+    end function penal_state_factor
+
+    ! Refresh ibm%mu -- the penalization factor on every velocity increment of
+    ! this substage (penal_incr_factor) -- on the body blocks of this rank.
+    ! The first call finds them (see the bodyBlocks declaration).
     subroutine update_ibm_mu(ibm, dt_gamma)
         type(ibm_type), intent(inout) :: ibm
         real(C_DOUBLE), intent(in) :: dt_gamma
 
-        integer :: ix, iy, iz, var, b, nBlocks
+        integer :: ix, iy, iz, var, b, n, nBody
         integer :: ilo, ihi, jlo, jhi, klo, khi
 
-        ! See the muIsUnit declaration: with no body anywhere on this rank the
-        ! kernel below writes 1.0 into every entry of a mu that is already 1.0.
-        if (.not. muKnown) then
-            muIsUnit = ibm_coef_all_zero(ibm)
-            muKnown = .true.
+        if (.not. bodyKnown) then
+            call ibm_body_blocks(ibm, bodyBlocks, nBodyBlocks)
+#ifdef USE_OPENMP_OFFLOAD
+            !$omp target enter data map(to: bodyBlocks)
+#endif
+            bodyKnown = .true.
         end if
-        if (muIsUnit) return
+        if (nBodyBlocks == 0) return
 
-        nBlocks = size(ibm%coef,5)
+        nBody = nBodyBlocks
         ilo = lbound(ibm%coef,1)
         ihi = ubound(ibm%coef,1)
         jlo = lbound(ibm%coef,2)
@@ -1124,16 +1174,17 @@ contains
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do collapse(5) &
-        !$omp& map(to: dt_gamma, ilo, ihi, jlo, jhi, klo, khi, nBlocks, ibm%coef) &
+        !$omp& map(to: dt_gamma, ilo, ihi, jlo, jhi, klo, khi, nBody, ibm%coef, bodyBlocks) &
         !$omp& map(tofrom: ibm%mu) &
-        !$omp& private(ix,iy,iz,var,b)
+        !$omp& private(ix,iy,iz,var,b,n)
 #endif
-        do b = 1, nBlocks
+        do n = 1, nBody
         do var = VAR_U, VAR_W
             do iz = klo, khi
                 do iy = jlo, jhi
                     do ix = ilo, ihi
-                        ibm%mu(ix,iy,iz,var,b) = 1.0d0/(1.0d0 + dt_gamma*ibm%coef(ix,iy,iz,var,b))
+                        b = bodyBlocks(n)
+                        ibm%mu(ix,iy,iz,var,b) = penal_incr_factor(dt_gamma*ibm%coef(ix,iy,iz,var,b))
                     end do
                 end do
             end do
@@ -1144,54 +1195,14 @@ contains
 #endif
     end subroutine update_ibm_mu
 
-    ! Device-side "is coef identically zero on this rank?". One pass, once per
-    ! run. It must read the DEVICE copy: the analytic path fills coef with a
-    ! target kernel and never copies it back.
-    logical function ibm_coef_all_zero(ibm)
-        type(ibm_type), intent(in) :: ibm
-
-        integer :: ix, iy, iz, var, b, nBlocks
-        integer :: ilo, ihi, jlo, jhi, klo, khi
-        real(C_DOUBLE) :: peak
-
-        nBlocks = size(ibm%coef,5)
-        ilo = lbound(ibm%coef,1); ihi = ubound(ibm%coef,1)
-        jlo = lbound(ibm%coef,2); jhi = ubound(ibm%coef,2)
-        klo = lbound(ibm%coef,3); khi = ubound(ibm%coef,3)
-        peak = 0.0d0
-
-#ifdef USE_OPENMP_OFFLOAD
-        !$omp target teams distribute parallel do collapse(5) &
-        !$omp& map(to: ilo, ihi, jlo, jhi, klo, khi, nBlocks, ibm%coef) &
-        !$omp& map(tofrom: peak) reduction(max: peak) &
-        !$omp& private(ix,iy,iz,var,b)
-#endif
-        do b = 1, nBlocks
-        do var = VAR_U, VAR_W
-            do iz = klo, khi
-                do iy = jlo, jhi
-                    do ix = ilo, ihi
-                        peak = max(peak, abs(ibm%coef(ix,iy,iz,var,b)))
-                    end do
-                end do
-            end do
-        end do
-        end do
-#ifdef USE_OPENMP_OFFLOAD
-        !$omp end target teams distribute parallel do
-#endif
-
-        ibm_coef_all_zero = peak == 0.0d0
-    end function ibm_coef_all_zero
-
     ! The block slots holding any non-zero IBM coefficient, and how many.
     !
-    ! mu = 1/(1 + dt*coef) is EXACTLY 1.0 wherever coef is zero, whatever dt
-    ! does, so a block with no coefficient anywhere in its ghost-inclusive range
-    ! has a dt-independent mu and everything derived from it is fixed for the
-    ! run. That is what lets the projection recompute rdenom for the body blocks
-    ! alone (see rdenomBlocks) -- the per-rank "no body at all" answer
-    ! update_ibm_mu caches, one level finer.
+    ! mu = penal_incr_factor(dt*coef) is EXACTLY 1.0 wherever coef is zero,
+    ! whatever dt does, so a block with no coefficient anywhere in its
+    ! ghost-inclusive range has a dt-independent mu and everything derived
+    ! from it is fixed for the run. That is what lets update_ibm_mu and the
+    ! predictor's state correction visit the body blocks alone (bodyBlocks),
+    ! and the projection recompute rdenom for them alone (rdenomBlocks).
     !
     ! ONE kernel, not one per block. The obvious shape -- a device reduction per
     ! block -- costs a LAUNCH per block (measured: 36.5 us x 640 blocks on

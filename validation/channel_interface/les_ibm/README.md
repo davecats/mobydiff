@@ -100,3 +100,38 @@ band-aware `nut` damping is needed; **no solver code change**. See `ibm_les_prof
   hands `moby_prepare`, since the IC does not exist yet at that point.
 - les.f90 solid rule: cell solid iff **any** of its 6 staggered faces has `|coef|>1e20`
   (so the cell straddling the wall is masked; the first full-`nut` cell is ~1.5 cells in).
+
+## Re-measured 2026-10-01 — exact penalization factor (numerics review step 9, F7)
+
+Paired campaign, case `a_wale`, the full developed-statistics protocol
+(transient t = 0..5, statistics t = 5..25, `niter = 12` Chebyshev), same IC,
+one run per binary on the same GPU:
+
+```bash
+python3 run_ibm_les.py --case a_wale --binary ~/step8_ref_binaries/build_gpu/moby_solve --runs runs_f7/old
+python3 run_ibm_les.py --case a_wale --binary ../../../build_gpu/moby_solve          --runs runs_f7/new
+```
+
+(`--binary` and `--runs` are new options of the driver; the defaults are the
+old behaviour.)
+
+| | implicit-Euler factor (`0811811`) | exact factor |
+|---|---|---|
+| bulk U (fluid gap) | 15.0647 | 15.0658 |
+| centreline U | 17.425 | 17.420 |
+| U+ at y+ = 1.1 (first fluid row, lower wall) | 1.187 | 1.201 |
+| U+ at y+ = 29.3 (log law 13.24) | 13.084 | 13.105 |
+| peak u' / peak −<u'v'> | 2.819 / 0.750 | 2.825 / 0.762 |
+| solid rows | 0 (1e-29) | 0 (1e-29) |
+
+Gate 3 holds unchanged. The largest mean-profile difference between the two
+runs is 0.093 (0.53 % of U_max) and has OPPOSITE sign at the two walls
+(+0.06 at the lower, −0.09 at the upper, y+ ~ 7–10), i.e. it is the
+20-t.u. sampling scatter of two decorrelated realisations, not a shift: a
+developed channel is statistically steady, and the two factors share their
+steady fixed point (lambda q = R), so only the time accuracy at the cut cells
+differs — which the cylinder dt study measures (`validation/cylinder/`).
+After 20 steps from the common IC the fields differ by 1e-3 in u (the
+bit-exactness suite's les_ibm legs, which are EXPECTED to move with F7).
+Today's bulk U (15.07, both binaries) against the 15.09 recorded above is the
+`niter` 6 → 12 change of 2026-09-26, not F7.

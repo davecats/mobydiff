@@ -55,7 +55,7 @@ set(MODULE_SOURCES
 )
 
 set(SOLVER_TARGETS moby_solve moby_prepare walldist_test transition_test leaftable_test
-    scalar_test stencil_test)
+    scalar_test stencil_test penalization_test)
 
 # The prepare/solve pair (docs/prepare_solve_strategy.md): moby_prepare
 # writes the block-table case file, moby_solve runs it ([case] file).
@@ -77,6 +77,8 @@ add_executable(leaftable_test ${SRC_DIR}/test_leaftable.f90 ${MODULE_SOURCES})
 add_executable(scalar_test ${SRC_DIR}/test_scalar.f90 ${MODULE_SOURCES})
 # Flux-form viscous stencil identities on stretched lines (numerics review F1, step 8).
 add_executable(stencil_test ${SRC_DIR}/test_stencil.f90 ${MODULE_SOURCES})
+# Exact penalization factors vs expm1 reference values (numerics review F7, step 9).
+add_executable(penalization_test ${SRC_DIR}/test_penalization.f90 ${MODULE_SOURCES})
 
 # =========================
 # Module directory

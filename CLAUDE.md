@@ -2022,6 +2022,54 @@ immersed boundary. Phased, each phase verified before the next:
   within scatter). **NEXT: `docs/next_session_after_step8.md`** -- cut
   `~/step8_ref_binaries` AFTER F1 (step7b reads ulps now), verify the HoreKa
   drivers on the cluster, then step 9 (F7, the exact penalization factor).
+- **After step 8 — reference set, cluster check, predictor guard, step 9
+  (DONE 2026-09-30 / 10-01, `docs/next_session_after_step8.md` STATUS).**
+  `~/step8_ref_binaries` (`0811811`) is the post-F1 set. The HoreKa drivers
+  prepare the case file as designed (jobs 5172140/5172166/5173620,
+  `overheadTest/results_horeka_2026-09-30.md`): case file + prepare log
+  beside every run, leaf counts right, 7 of 8 step times within 0.4 % of the
+  09-26 matrix.
+  - **The predictor register guard is TAKEN**: the three skew corrections sit
+    inside `if (skew)`, `skew = dns%re > 0` (always true, mapped, not
+    foldable — a literal `.true.` would be folded again). Pre-registered and
+    hit: 100 → 128 registers, occupancy unmoved, kernel −10.1 %, step −1.40
+    to −1.95 % at 4/8 ranks, controls flat; nofma suites `max_abs 0`. Do NOT
+    "simplify" that guard away.
+  - **OPEN FINDING: an nb-less case at 8+ ranks across nodes is +70 % since
+    step 7.** `base_jacobi` n=8: 132.0 ms vs 77.7. The one-block-per-rank
+    lattice is Morton-numbered (`morton_key`: x in the LOWEST bit) where the
+    old rank box was Cartesian (x slowest), so with ranks filled node by node
+    the node boundary cuts the 2048x88 z-faces instead of the 88x96 x-faces
+    (~43x the cross-node cells). Same binary + case file with `--map-by node`:
+    77.6 ms, `mpi_wait` 58.9 → 3.4 ms. Fields unaffected; explicit-nb configs
+    unaffected. **Do not form the block tax at 8+ ranks from a default-placed
+    post-step-7 `base_jacobi`.** The fix is an ORDERING DECISION (Cartesian
+    order for nb-auto; face-area-aware bit significance; or explicit
+    placement), not taken.
+  - **Step 9 (F7), the exact penalization factor.** `ibm%mu` =
+    `(1 − e^{−x})/x`, x = λ dt_γ (`penal_incr_factor`; the review's
+    `1/(x + B)`), and the state factor `e^{−x}` is applied by a SEPARATE
+    body-blocks-only pass (`add_penalization_state_correction`) after the
+    untouched predictor — body-free is bit-exact by construction (28/28
+    nofma comparisons `max_abs 0`, CPU + GPU) and `update_ibm_mu` now visits
+    body blocks only. The order is measured in `validation/penalization/`
+    (uniform `du/dt = f − λu`): old factor first order (1.04/1.03/1.01), new
+    one round-off at any dt. **Both factors share the steady fixed point**, so
+    the Re 40 cylinder C_D (1.69234524 / …25) and the developed `les_ibm`
+    statistics do not move; on the Re 100 cylinder the two differ by ≤ 1e-5 at
+    every dt — the "cut-cell time error" of a body at rest was never visible,
+    so no dt study can show it dropping. FOUND there, pre-existing: the stored
+    pressure pollutes within ONE time unit at Chebyshev niter 60 with the
+    Dirichlet-p outlet (C_L to ±3.9 at dt 6.25e-4), which is what dominates
+    any dt comparison on that case. The Dirichlet SCALAR penalization
+    (`scalar.f90 mus`) still uses the first-order factor.
+  - Smaller: `validation/blasius/` is back as the laminar stretched-line gate
+    (four projections measured; Chebyshev stable to t = 2000); the suite
+    drivers deleted the wrong case-file name before re-preparing (fixed); the
+    cylinder inis now carry the STL + `remove_solid = false` (the solver
+    refused setup.sh's case file as stale); the banner `commit:` in init.f90
+    is a hard-coded string. Reference set for what follows:
+    `~/step9_ref_binaries`. **NEXT: `docs/next_session_after_step9.md`.**
 
 ## Verification
 

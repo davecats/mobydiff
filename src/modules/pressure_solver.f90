@@ -135,8 +135,9 @@ module pressure_solver
     ! ONCE on the host and mapped once.
     !
     ! rdenom follows ibm%mu, which update_ibm_mu rewrites every substage -- but
-    ! only where there is a body to rewrite it for. mu = 1/(1 + dt*coef) is
-    ! EXACTLY 1.0 wherever coef is zero, whatever dt does, so a block holding no
+    ! only where there is a body to rewrite it for. mu, the penalization factor
+    ! of dt*coef (ibm.f90 penal_incr_factor), is EXACTLY 1.0 wherever coef is
+    ! zero, whatever dt does, so a block holding no
     ! coefficient has a dt-independent rdenom and needs computing once, like the
     ! tables above. The first projection visits every block; afterwards only the
     ! body blocks (rdenomBlocks, from ibm_body_blocks), which on a body-free
