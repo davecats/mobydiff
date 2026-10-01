@@ -1,9 +1,8 @@
 # Next session: after numerics review step 9
 
-STATUS: **ITEMS 1 AND 2 DONE (2026-10-01) except item 2's HoreKa
-measurement, which is SUBMITTED and pre-registered (see the end of item 2;
-estimated start 2026-10-05); item 3 RUN DOWN with a measured prototype, the
-decision to ship it open; items 4a and 4b DONE.** Steps 0–9 of `docs/numerics_review_2026-09-26.md`
+STATUS: **ITEMS 1 AND 2 DONE (2026-10-01), item 2 measured on HoreKa at 4
+and 8 ranks (16 ranks: job 5174077 still queued); item 3 RUN DOWN with a
+measured prototype, the decision to ship it open; items 4a and 4b DONE.** Steps 0–9 of `docs/numerics_review_2026-09-26.md`
 section 10 are done. Item 3 is an open investigation, item 5 the plan.
 
 ## What holds now
@@ -117,8 +116,15 @@ and update the review's step-9 MEASURED block, `validation/penalization/README.m
 and CLAUDE.md.
 
 **2. The block order: a minimum-surface bit order for the Morton key
-(decided 2026-10-01). IMPLEMENTED AND GATED LOCALLY 2026-10-01; the HoreKa
-measurement is submitted.**
+(decided 2026-10-01). DONE 2026-10-01, measured on HoreKa (job 5174076,
+`results_horeka_2026-10-01.md`): `base_jacobi` at 8 ranks, default
+placement, 130.67 → 75.93 ms, `mpi_wait` 59.07 → 3.63 ms; init line
+2262016 / 33792 as pre-registered; `rect_jacobi` and the refined config
+unchanged (−0.4 %, +0.1 % at 8 ranks); fields `max_abs 0` between the two
+orders at production flags (138 M points, rows matched). The pre-registered
+77.7 ms ± 1 % was MISSED on the fast side: that number predates the
+predictor guard. Block tax at 8 ranks from a default-placed `base_jacobi`:
+0.997. 16 ranks: job 5174077, queued.**
 
 *Result.* As designed below, point by point:
 (1) `blocks.f90`: `blk%keyOrder/keyPos`, `min_surface_key_order` (the rule),
@@ -164,9 +170,11 @@ nodes, 16 ranks, `order16_run`, starts after the first). Worktrees on
 HoreKa: `moby-2to1-order` (`d2ac839`) and `moby-2to1-order-ref` (`5bdc5eb`),
 transferred by `git push` into the HoreKa clone (branches `gate-order`,
 `gate-order-ref`), NOT through GitHub — `origin/main` is still at `5c53a96`,
-the three commits of this session are local. Read the results with the
-table of `PREREGISTERED_order.md` next to them and write
-`results_horeka_<date>.md`.
+the commits of this session are local. Job 5174076 ran the same evening
+(the scheduler's estimate had been 2026-10-05) and is written up in
+`results_horeka_2026-10-01.md`; when 5174077 has run, add its two rows
+(`base_jacobi` / `rect_jacobi` at 16 ranks, both columns) there and check
+prediction 7 of `PREREGISTERED_order.md`.
 
 *The defect* (`results_horeka_2026-09-30.md` section 3). The leaf order is
 the Morton key of the finest-lattice block coordinates with x in the lowest

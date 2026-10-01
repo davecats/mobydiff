@@ -2046,7 +2046,15 @@ immersed boundary. Phased, each phase verified before the next:
     post-step-7 `base_jacobi`** (true of every case file prepared before
     2026-10-01; see the next bullet).
   - **THE BLOCK ORDER IS CHOSEN FROM THE GEOMETRY (DONE 2026-10-01, handout
-    item 2; HoreKa measurement submitted, see the handout).** In xyz mode
+    item 2). MEASURED on HoreKa the same day (job 5174076,
+    `results_horeka_2026-10-01.md`): `base_jacobi` at 8 ranks with the
+    DEFAULT placement 130.67 → 75.93 ms (−41.9 %), `mpi_wait` 59.07 → 3.63 ms;
+    `rect_jacobi` −0.4 %, the xz-refined config +0.1 %; fields `max_abs 0`
+    between the two orders at production flags (138 M points); block tax at
+    8 ranks 0.997 again. The pre-registered 77.7 ms was missed on the fast
+    side — it predated the predictor guard: take a pre-registered absolute
+    time from the head it is compared with. 16 ranks: job 5174077 queued.**
+    In xyz mode
     `leaf_key` is a bit permutation read from `blk%keyPos`;
     `min_surface_key_order` picks the bit significance by recursive
     bisection across the plane with the fewest cells (a periodic direction's

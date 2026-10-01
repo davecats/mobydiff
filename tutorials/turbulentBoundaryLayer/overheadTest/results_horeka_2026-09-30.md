@@ -1,5 +1,7 @@
 # HoreKa, 2026-09-30 / 10-01: the drivers under the case-file contract, the predictor register guard, and a node-boundary finding
 
+> **Section 3 RESOLVED 2026-10-01** (`results_horeka_2026-10-01.md`, job 5174076): the case builder now chooses the block order from the geometry (`min_surface_key_order`, commit `d2ac839`); `base_jacobi` at 8 ranks with the default placement reads 75.9 ms, `mpi_wait` 3.6 ms. The warning below holds for case files prepared before that commit only.
+
 Three jobs on `dev_accelerated` (2 nodes, 8 x A100-40GB, nvhpc 25.3), all
 200 steps, `--map-by numa --bind-to core` unless stated:
 
