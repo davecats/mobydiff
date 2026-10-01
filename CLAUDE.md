@@ -2043,9 +2043,11 @@ immersed boundary. Phased, each phase verified before the next:
     (~43x the cross-node cells). Same binary + case file with `--map-by node`:
     77.6 ms, `mpi_wait` 58.9 → 3.4 ms. Fields unaffected; explicit-nb configs
     unaffected. **Do not form the block tax at 8+ ranks from a default-placed
-    post-step-7 `base_jacobi`.** The fix is an ORDERING DECISION (Cartesian
-    order for nb-auto; face-area-aware bit significance; or explicit
-    placement), not taken.
+    post-step-7 `base_jacobi`.** DECIDED 2026-10-01, not yet implemented: a
+    MINIMUM-SURFACE BIT ORDER for the Morton key (bit significance chosen by
+    recursive bisection across the cheapest plane; still a pure key, legacy
+    order kept for files without the attribute) --
+    `docs/next_session_after_step9.md` item 2.
   - **Step 9 (F7), the exact penalization factor.** `ibm%mu` =
     `(1 − e^{−x})/x`, x = λ dt_γ (`penal_incr_factor`; the review's
     `1/(x + B)`), and the state factor `e^{−x}` is applied by a SEPARATE
@@ -2062,7 +2064,12 @@ immersed boundary. Phased, each phase verified before the next:
     pressure pollutes within ONE time unit at Chebyshev niter 60 with the
     Dirichlet-p outlet (C_L to ±3.9 at dt 6.25e-4), which is what dominates
     any dt comparison on that case. The Dirichlet SCALAR penalization
-    (`scalar.f90 mus`) still uses the first-order factor.
+    (`scalar.f90 mus`) still uses the first-order factor. DECIDED 2026-10-01,
+    not yet implemented: replace the exp by the AMPHIBIOUS rational form
+    (`state = 1/P3(x)`, third-order Taylor of e^x; indistinguishable from the
+    exponential once the forcing varies in time, and the exp version costs
+    +3.6 % of the step on les_ibm), for momentum AND the scalar -- handout
+    item 1.
   - Smaller: `validation/blasius/` is back as the laminar stretched-line gate
     (four projections measured; Chebyshev stable to t = 2000); the suite
     drivers deleted the wrong case-file name before re-preparing (fixed); the
