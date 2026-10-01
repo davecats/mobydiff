@@ -2,8 +2,12 @@
 
 STATUS: **ITEMS 1 AND 2 DONE (2026-10-01), item 2 measured on HoreKa at 4
 and 8 ranks (16 ranks: job 5174077 still queued); item 3 RUN DOWN with a
-measured prototype, the decision to ship it open; items 4a and 4b DONE.** Steps 0–9 of `docs/numerics_review_2026-09-26.md`
-section 10 are done. Item 3 is an open investigation, item 5 the plan.
+measured prototype, the decision to ship it open; items 4a and 4b DONE.**
+Steps 0–9 of `docs/numerics_review_2026-09-26.md` section 10 are done. What
+is open for the next session: (i) the DECISION on the outflow predictor
+(item 3, branch `proto/outflow-incremental`); (ii) the 16-rank rows of
+`results_horeka_2026-10-01.md` once job 5174077 has run; (iii) item 5, the
+plan. The commits of 2026-10-01 after `5c53a96` are LOCAL (not pushed).
 
 ## What holds now
 
