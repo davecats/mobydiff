@@ -23,6 +23,9 @@ So the order of work is fixed:
 1. **Investigate the whole time step first** (section "What to investigate").
    No code before the write-up of what each stage does to an outlet face, at
    a LOW index and at a HIGH index, and where that is wrong or accidental.
+   The write-up also answers the two further checks the user asked for:
+   whether the low/high indexing itself is the right one, and whether
+   boundary-normal velocities should be placed on the boundaries.
 2. **Choose the simplest design that is correct on both sides** and say why
    the alternatives lose. Record it here before implementing.
 3. Implement, gate, re-measure every outlet case (section "Gates").
@@ -138,6 +141,66 @@ and followed to its consequences:
   stored pressure ghost (Dirichlet 0), `phi` (mirror), scalars. Are they
   consistent with a face that now has a momentum equation?
 
+### Two further checks, asked for by the user (2026-10-01)
+
+These widen the investigation from "the outlet face" to "how boundary faces
+are indexed and stored". They belong in the same write-up, BEFORE a design
+is chosen, because the outlet answer may fall out of them.
+
+> * if the low/high indices make sense as presently done, or better solution
+>   that can simply handle periodicity and other bc with the least number of
+>   if conditions exist
+> * if it is worth to change convention and have boundary-normal velocities
+>   be placed on boundaries. Would this simply everything?
+
+**(A) Does the present low/high indexing make sense, or is there a scheme
+that handles periodicity and every other boundary condition with the fewest
+conditionals?** The present convention, as found in the code:
+
+- The normal velocity of cell `i` lives on its LOW face; a block stores
+  `q(0:nb+1)` and owns faces `1..nb`. Its HIGH face `nb+1` is a halo slot:
+  the neighbour block's face 1, the periodic image, or — on a physical high
+  boundary — a face that NO block owns.
+- So one and the same physical object, a boundary-normal face, is an
+  interior index on the low side and a halo index on the high side. The
+  special cases this produces are worth listing in full; known so far:
+  `momentum_face_start` (start index 2 on `FACE_PHYS` / `FACE_CLOSED` low
+  faces), the final `qs → q` copy over `1..nb` regardless of pinning,
+  `cfLow(idx,d,b)` per normal index against `cfHigh(d,b)` per block,
+  `dnLow/dnHigh`, the `if (i == nx)` plane branches of `jacobi_apply`, the
+  `noflux_low` / `noflux_high` pair, `side == SIDE_MIN` branches in
+  `apply_bc` (face 1 / neighbour 2 against face `nb+1` / neighbour `nb`),
+  the exchange's "+axis face" divergence subset, the field file holding the
+  low boundary face but not the high one, `oldrhs(1:nb)`.
+- Count the conditionals each boundary kind costs today (periodic, wall,
+  inlet, outlet, closed, 2:1 coarse / fine) per stage, low and high
+  separately, and ask of each whether it is essential or an artefact of the
+  indexing. The target is the treatment with the least number of `if`s that
+  is still exact for periodicity (where low and high are the same face).
+
+**(B) Is it worth changing the convention so that boundary-normal velocities
+are PLACED ON the boundaries — owned, stored unknowns on both sides — and
+would that simplify everything?** To be assessed, not assumed:
+
+- What it would mean concretely: the high boundary face becomes a real
+  degree of freedom of the last block (a predictor range, an RK memory
+  slot, a row in the field file), exactly like the low one; a Dirichlet
+  face is then a pinned unknown, an outlet face a predicted one, on either
+  side, by the same code.
+- What it would remove (candidates: the outflow row and `outflow_copy`, the
+  restart hole of the high face, the low / high asymmetry of the projection
+  tables, the pinned-face repair by `apply_bc`) and what it would cost: the
+  array extents and the "block owns `1..nb`" rule that every kernel, the
+  exchange (a high face is today ALWAYS the neighbour's), the 2:1
+  low-block-owns-face rule, the io layout and existing restart files rest
+  on; periodic directions, where an extra stored face would be a duplicate;
+  bit-exactness of every outlet-free case.
+- A middle form to weigh against both: keep the storage, but give physical
+  high faces an explicit owner (per-block plane tables as `cfHigh` already
+  is), so that "who predicts and who stores this face" has one answer.
+- State the verdict with the count from (A): how many conditionals and
+  special tables each option leaves, and what each breaks.
+
 Questions the write-up must answer:
 
 1. What is the momentum equation of an outlet face, stated once, for both
@@ -152,6 +215,12 @@ Questions the write-up must answer:
    nothing uses them after the change, they go.
 5. Is the pinned-low-face overwrite by the final copy part of this, or a
    separate finding to record?
+6. (A) Is the present low/high indexing the one with the fewest
+   conditionals across periodic and all other boundary kinds? If not, which
+   is, and what does moving to it cost?
+7. (B) Should boundary-normal velocities be stored unknowns on both
+   boundaries? Verdict with what it removes, what it breaks, and whether
+   the outlet fix should wait for it or precede it.
 
 ## Gates
 
