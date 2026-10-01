@@ -2,10 +2,11 @@
 
 STATUS: **ITEMS 1 AND 2 DONE (2026-10-01), item 2 measured on HoreKa at
 4, 8 and 16 ranks; item 3 RUN DOWN with a
-measured prototype, the decision to ship it open; items 4a and 4b DONE.**
+measured prototype and DECIDED by the user the same day (the root fix,
+investigation first: `docs/next_session_outlet.md`); items 4a and 4b DONE.**
 Steps 0–9 of `docs/numerics_review_2026-09-26.md` section 10 are done. What
-is open for the next session: (i) the DECISION on the outflow predictor
-(item 3, branch `proto/outflow-incremental`); (ii) item 5, the plan. The commits of 2026-10-01 after `5c53a96` are LOCAL (not pushed).
+is open for the next session: (i) **`docs/next_session_outlet.md`, which
+comes FIRST**; (ii) item 5, the plan. The commits of 2026-10-01 after `5c53a96` are LOCAL (not pushed).
 
 ## What holds now
 
@@ -276,7 +277,16 @@ p rms 0.89 / 1.65 → 0.080 / 0.073 at dt 5e-3 / 6.25e-4, the two step sizes
 agree to 6e-5 in velocity (0.15 before); freestream gates: oblique exact,
 Poiseuille last-cell p 2.41e-3 → 1.247e-3 (exact 1.25e-3), Lamb-Oseen
 reflected fraction 2.2e-2 → 9.8e-5.
-**TO DECIDE:** ship it. It changes every outlet case. Work it needs first:
+**DECIDED 2026-10-01 (user): do NOT merge the prototype.** The predictor
+is to own the outlet face (it can, without an extra call: old and new values
+coexist inside `momentum()`), and the next session first investigates the
+whole time step for the simplest correct treatment of outlet faces at low
+and high indices, without working around errors —
+`docs/next_session_outlet.md`. The prototype compensates for the outflow row
+of `apply_bc` (a reset bolted onto the original "predictor never writes the
+face" design) instead of correcting it; the projection's outlet correction
+is sound. What the prototype would have needed, for the record: it changes
+every outlet case. Work it needs first:
 the outlet face at restart (reconstruct from continuity; it is not in the
 field file), `ibm%mu` at a face next to a body, 2:1 interfaces on an outlet
 face, then re-measure the cylinder (C_D, St, C_L amplitude: 0.40 with the

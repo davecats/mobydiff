@@ -2150,9 +2150,20 @@ immersed boundary. Phased, each phase verified before the next:
     1.25e-3); Lamb-Oseen 2.2e-2 → 9.8e-5; oblique exact. A version WITHOUT
     the face's own pressure gradient leaves the last column unanchored
     (frozen relic, drifting outflow) — the pressure terms are load-bearing.
-    SHIPPING IT IS AN OPEN DECISION: it changes every outlet case, and needs
-    the restart of the outlet face (not in the field file), `mu` next to a
-    body and 2:1 interfaces on an outlet face first. Until then: any
+    **DECIDED (user, 2026-10-01): the prototype is NOT merged; it is the
+    reference.** It works around the defect — the outflow row of `apply_bc`,
+    a value reset bolted onto the original "predictor never writes the face"
+    design — by pre-loading the row's constant; the projection's outlet
+    correction is sound (only its comment is stale). The root fix is that
+    the PREDICTOR owns the outlet face, and the next session must FIRST
+    investigate the whole time step for the simplest, most elegant treatment
+    of outlet faces at LOW and HIGH indices, without working around errors:
+    **`docs/next_session_outlet.md` is the next thing to do.** Known going
+    in: low and high are not symmetric in storage (a low-side outlet face is
+    index 1, in the loop range, with `oldrhs` and in the field file; a
+    high-side one is `nx+1` with none of the three), no low-side outlet has
+    ever run, and the predictor's final copy overwrites pinned low faces
+    with stale `qs` that `apply_bc` repairs afterwards. Until then: any
     stored-pressure or CV-force number of an unsteady outlet case carries
     this mode, and the clean-p protocol is not clean.
   - Smaller: `validation/blasius/` is back as the laminar stretched-line gate
