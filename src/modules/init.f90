@@ -285,6 +285,15 @@ contains
 subroutine splash(has_terminal)
   logical, intent(in), optional :: has_terminal
   logical :: terminal
+  ! The commit this binary was built from (build_info.c, set by CMake).
+  character(kind=C_CHAR,len=40) :: commit
+  interface
+      subroutine moby_build_commit(buf, len) bind(C, name="moby_build_commit")
+          import :: C_CHAR, C_INT
+          character(kind=C_CHAR), intent(inout) :: buf(*)
+          integer(C_INT), value :: len
+      end subroutine moby_build_commit
+  end interface
 
   terminal = .true.
   if (present(has_terminal)) terminal = has_terminal
@@ -295,7 +304,8 @@ subroutine splash(has_terminal)
   write(*,'(A)') " \\  ||       __--  --    ,   ~~~~"
   write(*,'(A)') " , \\|\____---    o   \    ~~~    ~~~~"
   write(*,'(A)') ",   \ _            __/   ~~ ,  ~~~               mobyDiff"          
-  write(*,'(A)') ",       \---/ / __--   ~~   ,~~                  commit: 7aa1c7b"
+  call moby_build_commit(commit, len(commit, kind=C_INT))
+  write(*,'(A)') ",       \---/ / __--   ~~   ,~~                  commit: "//trim(commit)
   write(*,'(A)') " ,          \/       ~~   ~~"
   write(*,'(A)') "  ,         ~~~ ~~~     ~~,"
   write(*,'(A)') "    ,    ~~~           , '"

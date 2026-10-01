@@ -32,6 +32,7 @@ set(MODULE_SOURCES
     ${MODULE_DIR}/config.f90
     ${MODULE_DIR}/gpu_runtime.f90
     ${MODULE_DIR}/field_hdf5.c
+    ${MODULE_DIR}/build_info.c
     ${MODULE_DIR}/io.f90
     ${MODULE_DIR}/rans.f90
     ${MODULE_DIR}/bodyforce.f90
@@ -53,6 +54,25 @@ set(MODULE_SOURCES
     ${MODULE_DIR}/flow/boundaryLayer/boundarylayer_flow.f90
     ${MODULE_DIR}/flow_case.f90
 )
+
+# The commit printed in the solver banner (build_info.c), asked from git at
+# configure time; "unknown" outside a git checkout.
+set(MOBY_COMMIT "unknown")
+find_package(Git QUIET)
+if(GIT_FOUND)
+    execute_process(
+        COMMAND ${GIT_EXECUTABLE} describe --always --dirty --abbrev=7 --exclude *
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        OUTPUT_VARIABLE MOBY_COMMIT_GIT
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+        RESULT_VARIABLE MOBY_COMMIT_RESULT)
+    if(MOBY_COMMIT_RESULT EQUAL 0 AND MOBY_COMMIT_GIT)
+        set(MOBY_COMMIT "${MOBY_COMMIT_GIT}")
+    endif()
+endif()
+set_source_files_properties(${MODULE_DIR}/build_info.c PROPERTIES
+    COMPILE_DEFINITIONS "MOBY_COMMIT=\"${MOBY_COMMIT}\"")
 
 set(SOLVER_TARGETS moby_solve moby_prepare walldist_test transition_test leaftable_test
     scalar_test stencil_test penalization_test)
@@ -77,7 +97,7 @@ add_executable(leaftable_test ${SRC_DIR}/test_leaftable.f90 ${MODULE_SOURCES})
 add_executable(scalar_test ${SRC_DIR}/test_scalar.f90 ${MODULE_SOURCES})
 # Flux-form viscous stencil identities on stretched lines (numerics review F1, step 8).
 add_executable(stencil_test ${SRC_DIR}/test_stencil.f90 ${MODULE_SOURCES})
-# Exact penalization factors vs expm1 reference values (numerics review F7, step 9).
+# Penalization integrating factors vs exact rational reference values (numerics review F7).
 add_executable(penalization_test ${SRC_DIR}/test_penalization.f90 ${MODULE_SOURCES})
 
 # =========================
