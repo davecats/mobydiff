@@ -135,3 +135,27 @@ After 20 steps from the common IC the fields differ by 1e-3 in u (the
 bit-exactness suite's les_ibm legs, which are EXPECTED to move with F7).
 Today's bulk U (15.07, both binaries) against the 15.09 recorded above is the
 `niter` 6 → 12 change of 2026-09-26, not F7.
+
+**The rational factor (2026-10-01, the form now shipped).** The exponential
+was replaced the same day by its third-order rational form (`ibm.f90 penal_*`,
+`../../penalization/README.md`). After the same 20 steps from the common IC
+the rational and the exponential binaries differ by 2.5e-9 in u (single
+level) and 5.0e-7 (`refine_body`), against the 1e-3 between the exponential
+and implicit Euler: the developed statistics above are those of the shipped
+factor to within a chaotic decorrelation, and were not re-run. CPU == GPU on
+both cases at `max_abs 0` (un vn wn pn nut, nofma). Cost on this case
+(256/640 body blocks, 400 steps, `[output] profile`), ms/step:
+
+| | implicit Euler (`0811811`) | exponential (`878868f`) | rational |
+|---|---|---|---|
+| RTX 3060, `ibm_mu` | 0.54 | 1.06 | 0.40 |
+| RTX 3060, `momentum` | 3.87 | 4.21 | 4.16 |
+| RTX 3060, step | 24.01 | 24.74 (+3.0 %) | 24.01 (+0.0 %) |
+| A6000, `ibm_mu` | 0.257 | 0.439 | 0.212 |
+| A6000, `momentum` | 1.481 | 1.668 | 1.646 |
+| A6000, step | 13.35 | 13.72 (+2.8 %) | 13.47 (+0.9 %) |
+
+(Means of three interleaved runs per binary; the A6000 series with the
+statistics off.) What remains in `momentum` is the separate state-correction
+pass over the body blocks, about 0.17 ms on the A6000; `ibm_mu` is now below
+the implicit-Euler binary, which refreshed all 640 blocks.

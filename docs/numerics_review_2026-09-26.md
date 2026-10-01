@@ -1184,6 +1184,55 @@ at the Dirichlet-p outlet (Chebyshev niter 60; `validation/cylinder/README.md`),
 identically for both binaries. NOT done, same first-order factor: the
 Dirichlet SCALAR penalization (`scalar.f90` `mus = 1/(1 + dt_γ coef_p/Pr)`).
 
+**REVISED THE SAME DAY (2026-10-01, `docs/next_session_after_step9.md`
+item 1): the exponential is replaced by the AMPHIBIOUS rational form, for
+momentum AND the Dirichlet scalar.** With `P3 = 1 + x + x²/2 + x³/6`:
+`state = 1/P3`, `incr = (1 + x/2 + x²/6)/P3` (`ibm%mu`), and
+`state − incr = −x(1/2 + x/6)/P3` from its own function
+(`penal_state_minus_incr`), so the correction kernel no longer reads
+`ibm%mu`. The structure above is unchanged (untouched predictor + the
+body-blocks pass). The scalar: `ss = (s0 + Δ)·incr + (state − incr)·s0 +
+(1 − state)·s_body` at `x = dt_γ coef_p/Pr`, in cells with `coef_p ≠ 0`
+only. A one-time `min(coef) ≥ 0` check at the case-file read replaces
+AMPHIBIOUS's per-cell clamp (P3 has a root at −1.596).
+Why: with a time-varying right-hand side the RK3 coupling sets the error and
+the two factors are indistinguishable (handout table), the exponential cost
+an `exp` per DOF and substage, and a rational function calls no libm on the
+device. MEASURED:
+- `penalization_test`: the three functions vs exact rational references
+  ≤ 2e-16, `state + x·incr = 1` ≤ 1.1e-16, exactly (1, 1, 0) at x = 0,
+  `1 − state` exactly 1 in a solid cell, positive and monotone over
+  1e-8 … 1e30, `(state − e^{−x})/(x⁴/24) → 1`.
+- `validation/penalization/` is now a THIRD-ORDER gate with a scalar twin:
+  velocity 1.01e-4 → 2.61e-7 over three halvings (orders 2.77, 2.88, 2.94 —
+  the pre-registered row), scalar 7.46e-5 → 1.92e-7 (the same orders; implicit
+  Euler 9.06e-3 → 1.07e-3, order 1); `λ = 200` reaches the steady fixed point
+  to ≤ 2.9e-15; CPU and GPU give the same 16 digits.
+- nofma suites vs `~/step9_ref_binaries`, CPU and GPU: the 5 body-free flow
+  cases and the 9 scalar cases `max_abs 0` (28/28). Body cases move at
+  O(x⁴): `les_ibm` 2.5e-9 in u after 20 steps (the exponential had moved it
+  1e-3 from implicit Euler), `refine_body` 5.0e-7; CPU == GPU `max_abs 0` on
+  both, and on the wavy-wall body case with scalars (1 == 4 ranks too).
+- Cylinder Re 40 control-volume `C_D`, exponential / rational:
+  1.6923452515 / 1.6923452519 (the sampled series differ by ≤ 1.0e-8).
+- Scalar body gates (`validation/scalar/README.md`, last section): solid cell
+  == body value exactly, heat diagnostic 2.7e-15, the `ibmwf180` /
+  `ibmwf1000` closed-form budgets 3.7e-15 / 4.4e-15; the two energy-budget
+  residuals fall 3× (3.9e-4 → 1.2e-4, 4.5e-4 → 1.5e-4), as a time error
+  should.
+- Cost, `les_ibm` (256/640 body blocks), 400 steps, ms/step, implicit Euler /
+  exponential / rational — RTX 3060: `ibm_mu` 0.54 / 1.06 / 0.40, step
+  24.01 / 24.74 / 24.01; A6000: `ibm_mu` 0.257 / 0.439 / 0.212, step
+  13.35 / 13.72 / 13.47. PRE-REGISTERED `ibm_mu ≤ 0.6 ms` and the step within
+  1 % of the implicit-Euler binary: met (+0.0 % and +0.9 %). **It was NOT met
+  by the first form of the functions**, which wrote the cubic coefficient as
+  `x/6.0d0`: a second fp64 divide per DOF that the compiler may not turn into
+  a multiply (0.72 ms and +2.5 % on the 3060). The 1/6 is now a constant
+  multiply; one divide per evaluation. What remains over implicit Euler is the
+  separate state-correction pass (`momentum` +0.17 ms on the A6000), which
+  the exponential version carried too.
+Reference set: `~/step9b_ref_binaries`.
+
 **Step 10 — Q7(c), implicit solid conduction for conjugate scalars.** Does
 NOT depend on step 8 (the scalar operator is already flux form). Design: a
 Chebyshev-Jacobi Helmholtz solve over solid + cut cells only, coefficients

@@ -44,12 +44,15 @@ bookkeeping only while the solid interior is present, and production runs
 remove the buried core (`[blocks] remove_solid`). The runtime now reports the
 control-volume budget, and every ini here carries a `cv_box`.
 
-CONSEQUENCE, not yet done: `forces_re40.txt` and `forces_re100.txt` are still
-the OLD penalization series, so the `steady` and `strouhal` gates below quote
-penalization numbers. They must be REGENERATED before they can be quoted as
-control-volume results — and the Re 100 one needs the clean-p protocol below,
-because a 40 000-step run at `niter = 6` pollutes the stored pressure that the
-budget reads. The `empty` and determinism gates were re-run and pass as stated.
+CONSEQUENCE: the original `forces_re40.txt` and `forces_re100.txt` are the
+OLD penalization series (generated files, not in git). The Re 40 gate below
+is RE-MEASURED on the control-volume series (2026-10-01,
+`run_f7_gates.sh steady` writes `f7/forces_st_new.txt`). The Re 100
+`strouhal` gate still quotes penalization numbers: regenerating it needs the
+clean-p protocol below, because a 40 000-step run at `niter = 6` pollutes the
+stored pressure that the budget reads — and the outlet pressure mode of the
+last section limits how long a clean-p leg stays clean. The `empty` and
+determinism gates were re-run and pass as stated.
 
 Cross-validation of the new statistic, on the converged Re 40 state
 (`cvpz_20301.h5`, step 20310, box 4-8 x 6.5-9.5): runtime C_D = 1.70387475,
@@ -62,14 +65,15 @@ C_D = 1.698 (margin 1.5 D) / 1.704 / 1.726 / 1.765 (6 D) — use a TIGHT box.
 
 Gates (python3 check_cylinder.py ...):
 
-- `steady forces_re40.txt` — PASS (2026-07-13, PENALIZATION series):
-  C_D = 1.6924 +- 2.7e-5 over the last 20% (t = 80..100), |C_L| = 4.0e-4.
-  The value sits ABOVE the unbounded-flow 1.5-1.6 band as expected for this
-  setup: ~6% Dirichlet-far-field blockage at 16D plus the first-order
-  penalization's effective diameter (~D + h = 1.03D); the hard gate band is
-  1.4-1.7. The control-volume budget on the converged state reads 1.704 for
-  the committed box, i.e. inside the same band and 0.7 % above the
-  penalization value.
+- `steady f7/forces_st_new.txt` — PASS (2026-10-01, CONTROL-VOLUME series,
+  2000 steps from the clean-p converged state, t = 101.5..111.5):
+  C_D = 1.6924 +- 6.7e-4 over the last 20%, |C_L| = 1.6e-4 (over the last
+  1000 steps: 1.69234525 +- 8.2e-4, the number the penalization-factor
+  section below tracks). The value sits ABOVE the unbounded-flow 1.5-1.6
+  band as expected for this setup: ~6% Dirichlet-far-field blockage at 16D
+  plus the first-order penalization's effective diameter
+  (~D + h = 1.03D); the hard gate band is 1.4-1.7. History: the 2026-07-13
+  PENALIZATION series read 1.6924 +- 2.7e-5 over t = 80..100.
 - `strouhal forces_re100.txt` — PASS (2026-07-13, PENALIZATION series):
   St = 0.168 (spectral FUNDAMENTAL of C_L over t = 100..200), mean
   C_D = 1.448, mean C_L = 2.4e-4 (symmetric), C_L amplitude 0.51. Shedding
@@ -140,7 +144,13 @@ Note: the control-volume force is the TOTAL force (pressure + friction
 combined; modeled turbulent stress enters through the eddy-viscosity part of
 tau) — the split needs surface integration, which is not planned.
 
-## Exact penalization factor (numerics review step 9, F7) — measured 2026-10-01
+## The penalization factor (numerics review step 9, F7) — measured 2026-10-01
+
+The factor now shipped is the RATIONAL third-order form
+(`ibm.f90 penal_*`, `../penalization/README.md`); the `dt` study below was
+run with the exact exponential that preceded it by a few hours, and its
+conclusion (the factor is not what limits this flow) carries over: on a
+time-varying right-hand side the two are indistinguishable.
 
 `run_f7_gates.sh` runs two legs with TWO binaries from the same state (the
 restarts live in a sibling checkout, `SIB`; `REF` = `~/step8_ref_binaries`,
@@ -153,9 +163,14 @@ the second.
 | | C_D (last 1000 steps) | C_L |
 |---|---|---|
 | implicit Euler | 1.69234524 ± 8.2e-4 | −3.9e-4 |
-| exact | 1.69234525 ± 8.2e-4 | −3.9e-4 |
+| exact exponential (step 9) | 1.69234525 ± 8.2e-4 | −3.9e-4 |
+| rational P3 (2026-10-01, the shipped factor) | 1.69234525 ± 8.2e-4 | −3.9e-4 |
 
-As it must: both factors have the same steady fixed point, `lambda q = R`.
+As it must: all three factors have the same steady fixed point,
+`lambda q = R`. Exponential against rational, the same leg with
+`REF = ~/step9_ref_binaries`: mean C_D 1.6923452515 / 1.6923452519, and the
+two sampled series differ by at most 1.0e-8 in C_D and 2.2e-9 in C_L (the
+file's print precision is 1e-8).
 
 **dt — the factor is not what limits the time accuracy of this flow.** Re
 100 shedding state, pressure cleaned (zero `pn`, 300 steps at niter 60), then

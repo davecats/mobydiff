@@ -2063,20 +2063,40 @@ immersed boundary. Phased, each phase verified before the next:
     so no dt study can show it dropping. FOUND there, pre-existing: the stored
     pressure pollutes within ONE time unit at Chebyshev niter 60 with the
     Dirichlet-p outlet (C_L to ±3.9 at dt 6.25e-4), which is what dominates
-    any dt comparison on that case. The Dirichlet SCALAR penalization
-    (`scalar.f90 mus`) still uses the first-order factor. DECIDED 2026-10-01,
-    not yet implemented: replace the exp by the AMPHIBIOUS rational form
-    (`state = 1/P3(x)`, third-order Taylor of e^x; indistinguishable from the
-    exponential once the forcing varies in time, and the exp version costs
-    +3.6 % of the step on les_ibm), for momentum AND the scalar -- handout
-    item 1.
+    any dt comparison on that case.
+  - **The factor now shipped is RATIONAL, not the exponential (DONE
+    2026-10-01, handout item 1), for momentum AND the Dirichlet scalar.**
+    With `P3 = 1 + x + x²/2 + x³/6` (AMPHIBIOUS `limiter`): `state = 1/P3`,
+    `incr = (1 + x/2 + x²/6)/P3` (= `ibm%mu`), `state − incr` from its own
+    function `penal_state_minus_incr` (the correction kernel no longer reads
+    `ibm%mu`). Third order on a frozen right-hand side
+    (`validation/penalization/`: 1.0e-4 → 2.6e-7, orders 2.77/2.88/2.94, the
+    scalar twin the same), indistinguishable from the exponential once the
+    forcing varies in time, no libm on the device (CPU == GPU `max_abs 0` on
+    every body case), same steady fixed point (cylinder Re 40 C_D
+    1.6923452515 / …19; `les_ibm` moves 2.5e-9 in 20 steps, so the step-9
+    developed statistics stand). The scalar penalizes cells with
+    `coef_p ≠ 0` only and holds the body value EXACTLY in a solid cell
+    (`1 − state` is exactly 1). `read_ibm_coeff_file` checks
+    `min(coef) ≥ 0` once (P3 has a root at −1.596). Body-free 28/28
+    `max_abs 0` vs `~/step9_ref_binaries`. COST, `les_ibm`, step vs the
+    implicit-Euler binary: +0.0 % (RTX 3060) / +0.9 % (A6000), where the
+    exponential was +3.0 % / +2.8 %. **LANDMINE, measured: `x/6.0d0` is a
+    second fp64 DIVIDE** the compiler may not turn into a multiply — the
+    first form of the functions read `ibm_mu` 0.72 ms and the step +2.5 % on
+    the 3060; with the constant `PENAL_SIXTH` 0.40 ms. Write reciprocals of
+    non-dyadic constants as multiplies in any per-DOF kernel. The handout's
+    cost figures (22.7 ms) were RTX 3060 numbers; a pre-registered number
+    needs its device named. Reference set: `~/step9b_ref_binaries`.
   - Smaller: `validation/blasius/` is back as the laminar stretched-line gate
     (four projections measured; Chebyshev stable to t = 2000); the suite
     drivers deleted the wrong case-file name before re-preparing (fixed); the
     cylinder inis now carry the STL + `remove_solid = false` (the solver
-    refused setup.sh's case file as stale); the banner `commit:` in init.f90
-    is a hard-coded string. Reference set for what follows:
-    `~/step9_ref_binaries`. **NEXT: `docs/next_session_after_step9.md`.**
+    refused setup.sh's case file as stale); the banner `commit:` is now the
+    BUILD's commit (`build_info.c`, `git describe --always --dirty` at
+    configure time, defined on that one file so a new commit relinks instead
+    of rebuilding; `-dirty` means the tree had uncommitted changes).
+    **NEXT: `docs/next_session_after_step9.md`.**
 
 ## Verification
 

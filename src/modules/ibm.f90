@@ -23,6 +23,8 @@ module ibmm
     implicit none
 
     real(C_DOUBLE), parameter :: SOLID = 1.0d30
+    ! The x^3/6 coefficient of the penalization factors (penal_incr_factor).
+    real(C_DOUBLE), parameter :: PENAL_SIXTH = 1.0d0/6.0d0
     real(C_DOUBLE), parameter :: DEFAULT_TOL = 1.0d-10
     integer(C_INT), parameter :: MAX_ITER = 200
 
@@ -49,7 +51,7 @@ module ibmm
         ! scalars are on: they sit at the PRESSURE point and need their own
         ! cell-centred coefficient column (increment S3). mu keeps
         ! VAR_U:VAR_W -- the scalar penalization factor is Prandtl-dependent
-        ! (mu_s = 1/(1 + dt_gamma coef_p/Pr)) and is formed inline per
+        ! (penal_incr_factor(dt_gamma coef_p/Pr)) and is formed inline per
         ! scalar, so a VAR_P mu plane would be dead memory.
         real(C_DOUBLE), allocatable :: coef(:,:,:,:,:)
         real(C_DOUBLE), allocatable :: mu(:,:,:,:,:)
@@ -133,7 +135,7 @@ module ibmm
     logical, save :: bodyKnown = .false.
     integer, allocatable, public :: bodyBlocks(:)
     integer, save, public :: nBodyBlocks = 0
-    public :: penal_incr_factor, penal_state_factor
+    public :: penal_incr_factor, penal_state_factor, penal_state_minus_incr
 
 contains
 
@@ -436,6 +438,16 @@ contains
             error stop
         end if
         call read_ibm_coeff_p(ibm, dns, blk, c_file_name, n_comp, has_terminal)
+
+        ! The penalization factors (penal_incr_factor and friends) are built
+        ! for x = dt*coef >= 0: their denominator has a root at x = -1.596.
+        ! Every coefficient the case builder writes is non-negative, so this
+        ! is a one-time check of the file, not a per-cell clamp in the kernels.
+        if (minval(ibm%coef) < 0.0d0) then
+            print *, "error: negative IBM penalization coefficient in the case file: ", &
+                trim(dns%case_file), " min = ", minval(ibm%coef)
+            error stop
+        end if
     end subroutine read_ibm_coeff_file
 
     ! The cell-centred (pressure-position) coefficient tiles the passive
@@ -1105,45 +1117,75 @@ contains
         xB = xM
     end subroutine bisection
 
-    ! The EXACT integrating factors of the penalization term (numerics review
-    ! F7; Luchini's B(lambda dt)). Over one RK substage of length dt the
-    ! predictor solves du/dt = R - lambda u with R frozen:
+    ! The integrating factors of the penalization term (numerics review F7).
+    ! Over one RK substage of length dt the predictor solves
+    ! du/dt = R - lambda u with R frozen, whose exact solution is
     !
     !     u+ = e^{-x} u + ((1 - e^{-x})/x) (dt R),        x = lambda dt >= 0.
     !
-    ! penal_state_factor is the factor on the STATE u; penal_incr_factor is
-    ! the factor on every INCREMENT (the substage update, the projection's
-    ! velocity correction, the SGS / body-force / band-filter passes) and is
-    ! what ibm%mu holds. In the review's notation, B = x/(e^x - 1), they are
-    ! B/(x + B) and 1/(x + B). The implicit-Euler factor they replaced,
-    ! 1/(1 + x) on both, is their first-order approximation: stable for any
-    ! dt, but first order in time at cut cells.
+    ! We use the AMPHIBIOUS form of it (solver-timestep.cpl `limiter`): e^x
+    ! replaced by its THIRD-ORDER Taylor polynomial
     !
-    ! Limits, all exact in floating point: x = 0 gives 1 and 1 (no body, the
-    ! predictor is untouched); x -> infinity gives 0 and 1/x (a solid cell,
-    ! the velocity stays zero). Below x = 0.1 the increment factor is its
-    ! series sum_n (-x)^n/(n+1)!, because (1 - e^{-x})/x loses as many digits
-    ! as x has leading zeros; ten terms leave 2.5e-18 at the switch, where
-    ! the closed form is good to ~1e-15. Unit-tested in src/test_penalization.f90.
+    !     P3 = 1 + x N,     N = 1 + x (1/2 + x/6),
+    !
+    !     state = 1/P3      (for e^{-x}:         the factor on the STATE u)
+    !     incr  = N/P3      (for (1 - e^{-x})/x: the factor on every INCREMENT)
+    !
+    ! penal_incr_factor is what ibm%mu holds: it multiplies the substage
+    ! update, the projection's velocity correction and the SGS / body-force /
+    ! band-filter passes. penal_state_minus_incr = -x (1/2 + x/6)/P3 is the
+    ! difference the predictor's state correction applies (step.f90), written
+    ! without the cancellation.
+    !
+    ! Why the rational form and not the exponential (measured 2026-10-01,
+    ! validation/penalization/): once the right-hand side varies in time the
+    ! RK3 coupling, not the factor, sets the error, and the two are
+    ! indistinguishable (third order on a frozen R, where the exponential is
+    ! exact; the implicit-Euler factor 1/(1 + x) on both that preceded them is
+    ! first order). It costs one divide instead of an exp per DOF and
+    ! substage, needs no small-x series branch, and calls no libm on the
+    ! device, so CPU == GPU by construction.
+    !
+    ! Properties the scheme relies on, all unit-tested in
+    ! src/test_penalization.f90: positive and monotone for x >= 0; EXACTLY
+    ! (1, 1) at x = 0 (no body: the predictor is untouched); (~0, 1/x) for a
+    ! solid cell (x ~ 1e28: state ~ 6/x^3, and x^3 stays far from overflow);
+    ! and incr = (1 - state)/x algebraically, so the steady fixed point
+    ! lambda u = R is the exact one.
+    !
+    ! x < 0 is NOT supported: P3 has a root at x = -1.596 (AMPHIBIOUS clamps
+    ! its argument because its coefficients can be negative). Ours are
+    ! non-negative by construction, and read_ibm_coeff_file checks it once.
+    !
+    ! ONE divide per evaluation: the 1/6 is the constant PENAL_SIXTH, a
+    ! multiply. Written as x/6 it is a second fp64 divide per DOF and
+    ! substage, which the compiler may not turn into a multiply (1/6 is not
+    ! exact) -- measured on les_ibm, RTX 3060: update_ibm_mu 0.72 ms/step
+    ! with it against 0.52 for the single-divide 1/(1 + x) it replaced.
     pure real(C_DOUBLE) function penal_incr_factor(x) result(mu)
 !$omp declare target
         real(C_DOUBLE), intent(in) :: x
+        real(C_DOUBLE) :: n
 
-        if (x < 0.1d0) then
-            mu = 1.0d0 - x*(1.0d0/2.0d0 - x*(1.0d0/6.0d0 - x*(1.0d0/24.0d0 &
-                 - x*(1.0d0/120.0d0 - x*(1.0d0/720.0d0 - x*(1.0d0/5040.0d0 &
-                 - x*(1.0d0/40320.0d0 - x*(1.0d0/362880.0d0 - x/3628800.0d0))))))))
-        else
-            mu = (1.0d0 - exp(-x))/x
-        end if
+        n = 1.0d0 + x*(0.5d0 + x*PENAL_SIXTH)
+        mu = n/(1.0d0 + x*n)
     end function penal_incr_factor
 
     pure real(C_DOUBLE) function penal_state_factor(x) result(a)
 !$omp declare target
         real(C_DOUBLE), intent(in) :: x
 
-        a = exp(-x)
+        a = 1.0d0/(1.0d0 + x*(1.0d0 + x*(0.5d0 + x*PENAL_SIXTH)))
     end function penal_state_factor
+
+    pure real(C_DOUBLE) function penal_state_minus_incr(x) result(d)
+!$omp declare target
+        real(C_DOUBLE), intent(in) :: x
+        real(C_DOUBLE) :: h
+
+        h = x*(0.5d0 + x*PENAL_SIXTH)
+        d = -h/(1.0d0 + x*(1.0d0 + h))
+    end function penal_state_minus_incr
 
     ! Refresh ibm%mu -- the penalization factor on every velocity increment of
     ! this substage (penal_incr_factor) -- on the body blocks of this rank.

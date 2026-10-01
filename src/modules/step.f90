@@ -17,7 +17,7 @@ module step
         CFL_COURANT, CFL_PECLET, NCFL
     use :: blocks, only: block_set_type, FACE_PHYS, FACE_CLOSED, FACE_COARSE, FACE_FINE, &
         LAP_M, LAP_0, LAP_P
-    use :: ibmm, only: ibm_type, bodyBlocks, nBodyBlocks, penal_state_factor
+    use :: ibmm, only: ibm_type, bodyBlocks, nBodyBlocks, penal_state_minus_incr
     use :: comm, only: comm_type, comm_allreduce_max
     use :: turbulence, only: turb_type, turbulence_is_enabled, TURB_PROF_SGS
     use :: chron, only: profiler_type, wall_seconds, profiler_add
@@ -376,12 +376,12 @@ contains
         end do
         !$omp end target teams distribute parallel do
 
-        ! Exact penalization (numerics review F7). The kernel above advanced
-        ! qs = (q + increment)*mu with mu the exact factor on an INCREMENT;
-        ! the state q wants e^{-lambda dt} instead. The difference is added
-        ! here, on the body blocks only, so the fused predictor stays
-        ! untouched and a body-free rank never runs this: bit-exact and zero
-        ! cost by construction.
+        ! Penalization of the STATE (numerics review F7). The kernel above
+        ! advanced qs = (q + increment)*mu with mu the integrating factor on
+        ! an INCREMENT; the state q wants its own, smaller factor (ibm.f90
+        ! penal_state_factor). The difference is added here, on the body
+        ! blocks only, so the fused predictor stays untouched and a body-free
+        ! rank never runs this: bit-exact and zero cost by construction.
         if (nBodyBlocks > 0) call add_penalization_state_correction(blk, ibm, dt_gamma)
 
         ! use_eddy_viscosity is .true. only when turb is present; turb_prof is
@@ -425,14 +425,15 @@ contains
     end subroutine momentum
 
 
-    ! qs += (e^{-x} - mu) q on the body blocks, x = dt_gamma*coef: with the
-    ! predictor's qs = (q + increment)*mu this completes the exact
-    ! penalization update  qs = e^{-x} q + mu*increment  (ibm.f90
-    ! penal_incr_factor / penal_state_factor). The factor is identically zero
-    ! where coef is zero, so fluid cells are skipped by a test, not by an
-    ! exp; in a solid cell it is -mu = -1/x and cancels the q the predictor
-    ! carried. Reads the START-of-substage q, touches the faces the predictor
-    ! advanced (the physLow start masks) and nothing else.
+    ! qs += (state - incr) q on the body blocks, x = dt_gamma*coef: with the
+    ! predictor's qs = (q + increment)*incr (incr = ibm%mu) this completes the
+    ! penalization update  qs = state*q + incr*increment  (the factors of
+    ! ibm.f90; their difference comes from penal_state_minus_incr, which has
+    ! no cancellation). The factor is identically zero where coef is zero, so
+    ! fluid cells are skipped by a test; in a solid cell it is -incr = -1/x
+    ! and cancels the q the predictor carried. Reads the START-of-substage q,
+    ! touches the faces the predictor advanced (the physLow start masks) and
+    ! nothing else.
     subroutine add_penalization_state_correction(blk, ibm, dt_gamma)
         type(block_set_type), intent(inout) :: blk
         type(ibm_type), intent(in) :: ibm
@@ -447,7 +448,7 @@ contains
         nBody = nBodyBlocks
 
         !$omp target teams distribute parallel do collapse(4) &
-        !$omp& map(to: dt_gamma, nBody, bodyBlocks, blk%physLow, blk%q, ibm%coef, ibm%mu) &
+        !$omp& map(to: dt_gamma, nBody, bodyBlocks, blk%physLow, blk%q, ibm%coef) &
         !$omp& map(tofrom: blk%qs) &
         !$omp& private(i,j,k,b,n,x,uStartX,vStartY,wStartZ)
         do n = 1, nBody
@@ -462,15 +463,15 @@ contains
                     x = dt_gamma*ibm%coef(i,j,k,VAR_U,b)
                     if (i >= uStartX .and. x /= 0.0d0) &
                         blk%qs(i,j,k,VAR_U,b) = blk%qs(i,j,k,VAR_U,b) &
-                            + (penal_state_factor(x) - ibm%mu(i,j,k,VAR_U,b))*blk%q(i,j,k,VAR_U,b)
+                            + penal_state_minus_incr(x)*blk%q(i,j,k,VAR_U,b)
                     x = dt_gamma*ibm%coef(i,j,k,VAR_V,b)
                     if (j >= vStartY .and. x /= 0.0d0) &
                         blk%qs(i,j,k,VAR_V,b) = blk%qs(i,j,k,VAR_V,b) &
-                            + (penal_state_factor(x) - ibm%mu(i,j,k,VAR_V,b))*blk%q(i,j,k,VAR_V,b)
+                            + penal_state_minus_incr(x)*blk%q(i,j,k,VAR_V,b)
                     x = dt_gamma*ibm%coef(i,j,k,VAR_W,b)
                     if (k >= wStartZ .and. x /= 0.0d0) &
                         blk%qs(i,j,k,VAR_W,b) = blk%qs(i,j,k,VAR_W,b) &
-                            + (penal_state_factor(x) - ibm%mu(i,j,k,VAR_W,b))*blk%q(i,j,k,VAR_W,b)
+                            + penal_state_minus_incr(x)*blk%q(i,j,k,VAR_W,b)
                 end do
             end do
         end do

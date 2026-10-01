@@ -1377,3 +1377,36 @@ in `cmd_band`.** It makes the metric measure what the gate is about — a
 localized departure — instead of inheriting the control's convergence state,
 and it would have reported -0.027 rather than a number that looks like a
 regression. It changes a recorded gate number, so it wants its own decision.
+
+## Re-gate 2026-10-01 — the rational penalization factor in the Dirichlet scalar
+
+`ibm_wall = dirichlet` now penalizes with the momentum predictor's
+integrating factors (`ibm.f90 penal_*`, third order on a frozen right-hand
+side) instead of the implicit-Euler `mu_s = 1/(1 + dt_gamma coef_p/Pr)`:
+with x = dt_gamma coef_p/Pr and `s0` the start-of-substage value,
+
+    ss = (s0 + increment)*incr(x) + (state(x) - incr(x))*s0 + (1 - state(x))*s_body,
+
+applied where `coef_p /= 0` only (a fluid cell is skipped, so the divides are
+paid in the body's cells). The steady fixed point is unchanged
+(`state + x incr = 1`), which is what every gate below rests on; the order
+itself is gated in `../penalization/` (7.5e-5 → 1.9e-7 over three halvings,
+orders 2.77 / 2.88 / 2.94, against 9.1e-3 → 1.1e-3 at order 1).
+
+| gate | result |
+|---|---|
+| `run_bitexact_s3.sh` vs `~/step9_ref_binaries` (no body: the branch is not entered), CPU and GPU, nofma | 9/9 **max_abs 0** on both |
+| `run_gates_s3.sh solid` | 704 solid cells, `max\|theta − 1\|` = **0.000e+00** — `1 − state` is exactly 1 in a solid cell |
+| `run_gates_s3.sh conserve` | adiabatic drift **0.000e+00**, 624 sealed cells frozen exactly; the dirichlet scalar again exact after the restart |
+| `run_gates_s3.sh balance` | body heat release vs storage rate: relative difference **1.212e-04** (recorded with implicit Euler: 3.9e-4 — a time-discretisation residual, so it shrinks with the factor's order) |
+| `run_gates_s3.sh prep` / `missing` / `refine` | ALL PASS; `coef_p` vs the independent transcription 1.399e-16 (level 0) / 2.173e-16 (level 1); solve from the case file == inline, tolerance 0 |
+| `run_gates_s3.sh det` (nofma) | 1 == 4 ranks and CPU == GPU **max_abs 0** on `un vn wn pn theta phi`, the LES variant (+ `nut`) and the file path |
+| `run_gates_s4.sh heat` | solver vs the Python form, worst relative deviation **2.661e-15**; energy budget **1.491e-04** (recorded 4.485e-04) |
+| `run_gates_s4.sh adia` | heat columns exactly **0.0** |
+| `ibmwf180.ini`, closed-form budget (`check_scalar_ibmwf.py budget`, t = 998.9) | staircase −4.3874549475e-01 + graded −2.3892211554e-02 = total **−4.6263770630e-01**, rel dev **3.7e-15** vs `source*V_fluid`; graded vs the snapshot's unpinned sum 1.6e-15; the snapshot identity 3.6e-15 |
+| `ibmwf1000.ini`, the same (t = 999.2, CPU) | staircase −4.5829992214e-01 + graded −4.3377841647e-03 = total **−4.6263770630e-01**, rel dev **4.4e-15**; graded 2.0e-16; snapshot identity 3.4e-15 |
+
+Not re-run: the `cyl` groups (the heated-cylinder campaign) and the `wall`
+analysis of the two `ibmwf` cases (the runs above carried no `ransgeom`
+dump; the wall-cell classification and `y+` do not involve the scalar
+penalization).

@@ -1,32 +1,49 @@
 # Next session: after numerics review step 9
 
-STATUS: **NOT STARTED (handout written 2026-10-01, items 1 and 2 DECIDED
-the same day).** Steps 0–9 of `docs/numerics_review_2026-09-26.md` section 10
-are done. Read `CLAUDE.md` (the "After step 8" bullet), then work items 1
-and 2 in that order: both are decided designs with their evidence below,
-each is a session's worth including gates. Item 3 is an open investigation,
-item 4 small fixes, item 5 the plan.
+STATUS: **ITEM 1 DONE (2026-10-01), items 4a and 4b DONE; item 2 see its
+own status line.** Steps 0–9 of `docs/numerics_review_2026-09-26.md`
+section 10 are done. Item 3 is an open investigation, item 5 the plan.
 
 ## What holds now
 
-- **Reference set `~/step9_ref_binaries`** (PROVENANCE inside): F1, the
-  predictor guard, the exact penalization factor. Body-free cases are
-  `max_abs 0` (nofma) against `~/step8_ref_binaries` too; body cases are not.
-- **Penalization.** `ibm%mu = (1 − e^{−x})/x`, x = λ dt_γ, is the factor on
-  every velocity INCREMENT (predictor, projection correction, SGS /
-  body-force / band-filter passes). The state factor `e^{−x}` is completed
-  by `add_penalization_state_correction`, a separate kernel over
+- **Reference set `~/step9b_ref_binaries`** (PROVENANCE inside): F1, the
+  predictor guard, the RATIONAL penalization factor (item 1). Body-free cases
+  are `max_abs 0` (nofma) against `~/step8_ref_binaries` and
+  `~/step9_ref_binaries` too; body cases are not (`~/step9_ref_binaries`
+  carries the exponential).
+- **Penalization.** `ibm%mu = (1 + x/2 + x²/6)/P3`, x = λ dt_γ,
+  P3 = 1 + x + x²/2 + x³/6, is the factor on every velocity INCREMENT
+  (predictor, projection correction, SGS / body-force / band-filter passes).
+  The state factor `1/P3` is completed by
+  `add_penalization_state_correction`, a separate kernel over
   `ibmm bodyBlocks`. The fused predictor is untouched; do not fold the
   correction into it (traffic on the solver's occupancy-limited kernel, and
   the body-free bit-exactness argument). Gate: `validation/penalization/`.
-  Item 1 replaces the two factor FUNCTIONS (not this structure).
 - **The predictor's `if (skew)` guard is deliberate** (register schedule,
   −1.4 to −2.0 % of the step). `skew` must stay a runtime value.
 
 ## Items
 
 **1. The penalization factor: adopt the AMPHIBIOUS rational form, for
-momentum AND the Dirichlet scalar (decided 2026-10-01).**
+momentum AND the Dirichlet scalar (decided 2026-10-01). DONE 2026-10-01.**
+
+*Result* (numbers in the review's step-9 MEASURED block and the READMEs it
+names). Implemented as specified below, with two additions: the scalar
+branch is entered where `coef_p ≠ 0` only, and the cubic coefficient is the
+constant multiply `PENAL_SIXTH`. Gates: unit test PASS; the decay gate third
+order for velocity and scalar (2.77 / 2.88 / 2.94; 1.01e-4 at dt 0.04);
+body-free 28/28 `max_abs 0` vs `~/step9_ref_binaries` (CPU + GPU); `les_ibm`
+moves 2.5e-9 in 20 steps; cylinder Re 40 `C_D` 1.69234525 (1.6923452515 /
+…19); CPU == GPU `max_abs 0` on the wavy-wall body case and on `les_ibm`
+± refine; the S3/S4 scalar body gates and both `ibmwf` budgets hold.
+Pre-registered cost, on the device the numbers below were taken on (the
+RTX 3060 — the handout did not say): `ibm_mu` 0.40 ms (≤ 0.6), step
+24.01 vs 24.01 ms for the implicit-Euler binary in the same sitting (within
+1 %); A6000 +0.9 %. **The first implementation missed both** (`ibm_mu`
+0.72 ms, step +2.5 %): `x/6.0d0` is a second fp64 divide per DOF. And the
+`momentum` bucket's +0.3 ms is NOT the `exp`: it is the separate
+state-correction pass, unchanged by the factor's form (the text below
+attributed the whole +3.6 % to the exponential).
 
 *Source.* `~/Codes/AMPHIBIOUS/src/modules/solver-timestep.cpl`, lines 4–11
 and 58: `limiter(a) = 1/[(a/6 + 1/2) a + 1]`, `new = (B u + Δ)/(B + a)`,
@@ -190,11 +207,15 @@ Chebyshev bounds on N = 512 (`lmin` 2.5e-5: 60 iterations do not touch the
 long waves), the outlet row, or the corner where two Dirichlet-p faces
 meet? Start with plain Jacobi and red-black on the same 1-t.u. leg.
 
-**4. Small, each under an hour.** (a) The banner `commit:` in `init.f90`
-is the literal `7aa1c7b`: make it a build-time define or delete it.
-(b) `validation/cylinder/forces_re40.txt` / `forces_re100.txt` are still
-the old penalization series (README says so); the Re 40 one can be
-regenerated from `run_f7_gates.sh steady`.
+**4. Small, each under an hour.** (a) DONE 2026-10-01: the banner
+`commit:` is the build's commit (`src/modules/build_info.c`; CMake defines
+`MOBY_COMMIT` from `git describe --always --dirty --exclude *` on that file
+alone, so a new commit relinks rather than rebuilds). (b) Re 40 DONE
+2026-10-01: the `steady` gate of `validation/cylinder/README.md` is
+re-measured on the control-volume series (`f7/forces_st_new.txt`, C_D 1.6924
+± 6.7e-4 over the last 20 %). The Re 100 `strouhal` gate still quotes the
+old penalization series; it needs a clean-p leg long enough for a spectrum,
+which item 3's outlet pressure mode limits.
 
 **5. The plan.** Review section 10: step 10 (implicit solid conduction for
 conjugate scalars, two to three sessions) does not depend on anything open;

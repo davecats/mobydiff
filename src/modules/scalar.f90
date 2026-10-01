@@ -42,7 +42,7 @@ module scalar
     ! producers are use-associated rather than reimplemented (strategy doc
     ! Section 8: "no new computation, only a new trigger").
     use :: rans, only: WF_KAPPA, WF_E
-    use :: ibmm, only: ibm_type
+    use :: ibmm, only: ibm_type, penal_incr_factor, penal_state_factor, penal_state_minus_incr
     use :: io, only: read_dwall_blocks
     implicit none
 
@@ -2731,12 +2731,12 @@ contains
     !
     ! Immersed body (increment S3), per scalar via [scalar.N] ibm_wall:
     !   * dirichlet -- volume penalization toward [scalar.N] ibm_value with
-    !     the implicit factor mu_s = 1/(1 + dt_gamma coef_p/Pr) formed inline
-    !     (ibm.f90's implicit form, so no dt restriction; no mu array per
-    !     scalar). The stored coefficient carries the 1/Re scaling, so
+    !     ibm.f90's integrating factors at x = dt_gamma coef_p/Pr, formed
+    !     inline (unconditionally stable, so no dt restriction; no mu array
+    !     per scalar). The stored coefficient carries the 1/Re scaling, so
     !     coef_p/Pr is exactly the scalar's own 1/(Re Pr) -- ONE cell-centred
     !     coefficient array serves every scalar, each with its own Pr. Inside
-    !     the body coef_p = SOLID/Re, so mu_s -> 0 and the cell holds
+    !     the body coef_p = SOLID/Re, so the factors -> 0 and the cell holds
     !     ibm_value. Diffusive fluxes are NOT masked: the solid cell holds
     !     the wall value and delivers the flux. First-order/staircase, like
     !     the velocity penalization.
@@ -2823,7 +2823,7 @@ contains
 
         integer :: i, j, k, b, is, nx, ny, nz, nBlocks, nScal, var, scr
         real(C_DOUBLE) :: ire, re, uw, ue, vs, vn, wb, wt, divu, divuse
-        real(C_DOUBLE) :: s0, conv, diff, rhs, srcVal, dm, fw, fe, ss, mus, ipr
+        real(C_DOUBLE) :: s0, conv, diff, rhs, srcVal, dm, fw, fe, ss, xpen
         real(C_DOUBLE) :: ntw, nte, nts, ntn, ntb, ntt
         real(C_DOUBLE) :: dxw, dxe, dys, dyn, dzb, dzt
         ! Conjugate interface (C1): the six neighbour signed distances and
@@ -2886,7 +2886,7 @@ contains
         !$omp& sc%solidDepth, sc%outerK, sc%outerC) &
         !$omp& map(tofrom: blk%qs, blk%oldrhs) &
         !$omp& private(i,j,k,b,is,var,scr,uw,ue,vs,vn,wb,wt,divu,divuse, &
-        !$omp& s0,conv,diff,rhs,srcVal,dm,fw,fe,ss,mus,ipr,adiab,conjug,solc,ks,rc,tang, &
+        !$omp& s0,conv,diff,rhs,srcVal,dm,fw,fe,ss,xpen,adiab,conjug,solc,ks,rc,tang, &
         !$omp& banded,dsh,ko,csb,ssb, &
         !$omp& gtd,gt1,gt2,gpd,gp1,gp2,crw,cre,crs,crn,crb,crt, &
         !$omp& phc,phw,phe,phs,phn,phb,pht, &
@@ -3385,15 +3385,27 @@ contains
                             rhs = -conv + diff + srcVal
                         end if
                         ss = s0 + dt_alpha*rhs + dt_beta*blk%oldrhs(i,j,k,scr,b)
-                        ! Implicit volume penalization toward the body value
-                        ! (dirichlet mode). oldrhs keeps the UNpenalized rhs,
-                        ! exactly as the momentum predictor does with mu.
-                        ! The conjugate mode does NOT penalise at all: its
-                        ! solid cells are unknowns, not boundary values.
+                        ! Volume penalization toward the body value (dirichlet
+                        ! mode), with the momentum predictor's integrating
+                        ! factors (ibm.f90 penal_*): the substage solves
+                        ! ds/dt = R - lambda (s - s_body), lambda = coef_p/Pr,
+                        ! so the start-of-substage value s0 takes the STATE
+                        ! factor, the increment the INCREMENT factor, and the
+                        ! body value the remainder 1 - state (EXACTLY 1 in a
+                        ! solid cell, which therefore holds s_body). A fluid
+                        ! cell (coef_p = 0, factors exactly 1) is skipped: the
+                        ! divides are paid in the body's cells only.
+                        ! oldrhs keeps the UNpenalized rhs, exactly as the
+                        ! momentum predictor does. The conjugate mode does NOT
+                        ! penalise at all: its solid cells are unknowns, not
+                        ! boundary values.
                         if (useIbm .and. sc%ibmMode(is) == SC_IBM_DIRICHLET) then
-                            ipr = 1.0d0/sc%pr(is)
-                            mus = 1.0d0/(1.0d0 + dt_gamma*coef(i,j,k,VAR_P,b)*ipr)
-                            ss = ss*mus + (1.0d0 - mus)*sc%ibmValue(is)
+                            xpen = dt_gamma*coef(i,j,k,VAR_P,b)
+                            if (xpen /= 0.0d0) then
+                                xpen = xpen/sc%pr(is)
+                                ss = ss*penal_incr_factor(xpen) + penal_state_minus_incr(xpen)*s0 &
+                                     + (1.0d0 - penal_state_factor(xpen))*sc%ibmValue(is)
+                            end if
                         end if
                         blk%qs(i,j,k,scr,b) = ss
                         blk%oldrhs(i,j,k,scr,b) = rhs

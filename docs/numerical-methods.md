@@ -49,8 +49,9 @@ coincide with it only where the point is the midpoint of its control volume).
 
 Time advancement uses an **explicit low-storage three-stage Runge–Kutta (RK3)** scheme. The
 convective and viscous terms are advanced explicitly; incompressibility is enforced at each
-stage by a pressure projection. The immersed-boundary penalization is treated implicitly
-(see [below](#immersed-boundary-method)), so the geometry adds no time-step restriction.
+stage by a pressure projection. The immersed-boundary penalization is integrated with an
+unconditionally stable integrating factor (see [below](#immersed-boundary-method)), so the
+geometry adds no time-step restriction.
 
 The step size adapts to stability limits set in `[time]`: it is the largest `dt` satisfying
 the convective **CFL** limit (`cflmax`) and the viscous **Péclet** limit (`pecletmax`),
@@ -127,9 +128,14 @@ residuals are in the [design notes](index.md#design-notes--internal-history).
 ## Immersed boundary method
 
 Solid geometry is imposed by **volume penalization**. A per-cell coefficient field forces the
-velocity toward zero inside the body through a source term that is treated **implicitly** in
-the momentum update (roughly $\mu = 1/(1 + \Delta t\,\text{coef})$), so an arbitrarily strong
-penalization introduces **no time-step restriction**.
+velocity toward zero inside the body through a source term $-\lambda u$ that is integrated
+over each RK substage with an **integrating factor**: with $x = \lambda\,\Delta t$ and
+$P_3 = 1 + x + x^2/2 + x^3/6$, the start-of-substage velocity is multiplied by $1/P_3$ and
+every increment by $(1 + x/2 + x^2/6)/P_3$ (the exact exponential factors with $e^x$ replaced
+by its third-order Taylor polynomial). The factors are positive and monotone for any $x$, so
+an arbitrarily strong penalization introduces **no time-step restriction**, and they are
+third-order accurate on a frozen right-hand side. A passive scalar with a Dirichlet body
+value is penalized the same way.
 
 Analytic walls (`[ibm] wall_shape`) are classified inline. STL geometry is classified by the
 MPI-parallel `moby_prepare`, which runs the solver's own grid, block and coefficient code
