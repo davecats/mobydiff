@@ -168,7 +168,7 @@ conditionals?** The present convention, as found in the code:
   faces), the final `qs → q` copy over `1..nb` regardless of pinning,
   `cfLow(idx,d,b)` per normal index against `cfHigh(d,b)` per block,
   `dnLow/dnHigh`, the `if (i == nx)` plane branches of `jacobi_apply`, the
-  `noflux_low` / `noflux_high` pair, `side == SIDE_MIN` branches in
+  `side == SIDE_MIN` branches in
   `apply_bc` (face 1 / neighbour 2 against face `nb+1` / neighbour `nb`),
   the exchange's "+axis face" divergence subset, the field file holding the
   low boundary face but not the high one, `oldrhs(1:nb)`.
