@@ -9,9 +9,11 @@
 #
 # A leg is <name>:<k>[:<T>], k the step size dt = 5e-3 / 2^k (200 << k steps
 # per time unit), T the number of time units (default 1; a snapshot is
-# written every time unit) and <name> one of the projection settings below.
+# written every time unit, every T/10 for T > 10) and <name> one of the
+# projection settings below.
 # Default: every leg at k = 0 and k = 3. outlet_mode.py reads what is there.
 #
+#   cheb12   Chebyshev-Jacobi, niter 12      (the production setting)
 #   cheb60   Chebyshev-Jacobi, niter 60      (the leg of the finding)
 #   cheb240  Chebyshev-Jacobi, niter 240
 #   jac60    plain damped Jacobi (sor 0.8), niter 60
@@ -67,6 +69,7 @@ echo "clean state: $ic"
 
 settings() {  # the [pressure] overrides of a leg name
     case $1 in
+        cheb12)  echo "niter=12 accel=chebyshev" ;;
         cheb60)  echo "niter=60 accel=chebyshev" ;;
         cheb240) echo "niter=240 accel=chebyshev" ;;
         jac60)   echo "niter=60 accel=none sor=0.8" ;;
@@ -85,7 +88,8 @@ for leg in "${legs[@]}"; do
     per=$(( 200 << k )); n=$(( per*T )); dt=$(python3 -c "print(5.0e-3/2**$k)")
     pfx=om_${name}_$k; [ "$T" != 1 ] && pfx=om_${name}T${T}_$k
     # shellcheck disable=SC2046
-    derive $pfx.ini "$ic" dt=$dt dtmax=$dt nsteps=$n t_final=0.0 field_interval=$per \
+    fint=$per; [ "$T" -gt 10 ] && fint=$(( per*T/10 ))
+    derive $pfx.ini "$ic" dt=$dt dtmax=$dt nsteps=$n t_final=0.0 field_interval=$fint \
         field_prefix=$pfx force_sample_interval=$(( 10 << k )) runtime_file=forces_$pfx.txt \
         $(settings "$name")
     rm -f ${pfx}_[0-9]*.h5

@@ -19,7 +19,7 @@ import h5py
 import numpy as np
 
 d = sys.argv[1] if len(sys.argv) > 1 else "."
-ORDER = ["cheb60", "cheb240", "jac60", "jac240", "rb60", "rb240"]
+ORDER = ["cheb12", "cheb60", "cheb240", "jac60", "jac240", "rb60", "rb240"]
 
 
 def assemble(path):

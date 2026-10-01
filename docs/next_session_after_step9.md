@@ -282,7 +282,14 @@ field file), `ibm%mu` at a face next to a body, 2:1 interfaces on an outlet
 face, then re-measure the cylinder (C_D, St, C_L amplitude: 0.40 with the
 prototype against the old 0.51), `validation/blasius`, the boundary-layer
 tutorial, `tutorials/naca/rans`, the sailplane. Cases without an outlet are
-untouched by construction.
+untouched by construction. More evidence taken the same day: the Blasius
+gate passes with it and its top-entrainment deficit disappears (dv/v_edge
+0.124 → 0.013; theta error 1.33 % → 1.65 %, gate 2 %); 100 time units of
+shedding at production settings read St 0.1670 / C_D 1.4474 / CV C_L
+amplitude 0.655 on main and 0.1744 / 1.4383 / 0.393 with the prototype — it
+is a different flow at the 4 % level in St, not only a cleaner pressure
+(this also closes item 4b's Re 100 leg: main's CV lift is inflated 28 % over
+the old penalization series by the mode).
 The clean-p protocol (zero `pn`, 300 steps) is NOT clean on main either: the
 CV lift is still ringing at ±0.8 when it ends.
 

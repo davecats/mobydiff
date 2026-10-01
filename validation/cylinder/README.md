@@ -308,6 +308,10 @@ imbalance): the outlet face needs its own pressure gradient.
 | ten time units: p rms | 0.15 … 0.99, spiking | 0.072 … 0.075 |
 | ten time units: control-volume C_L (t > 203.5) | −0.65 … +0.62, sample-to-sample rms 0.046 | −0.40 … +0.42, 0.015 |
 | mean C_D (t > 203.5) | 1.4478 | 1.4464 |
+| **100 time units at the production settings** (Chebyshev niter 12, dt 5e-3), last 50: St | 0.1670 | 0.1744 |
+| … mean C_D | 1.4474 | 1.4383 |
+| … control-volume C_L amplitude | **0.655** | **0.393** |
+| … stored p rms over the run | 0.20 … 1.13, periodic | 0.073 … 0.078 |
 | `../freestream` oblique | exact | exact |
 | `../freestream` Poiseuille: profile dev at x/lx 0.5 / 0.9 | 1.639e-3 / 1.539e-3 | 1.637e-3 / 1.521e-3 |
 | Poiseuille: last-cell p (exact: G dx/2 = 1.25e-3) | 2.41e-3 | **1.247e-3** |
@@ -328,6 +332,18 @@ field file; today it is re-copied, which with the prototype is a one-time
 kick — reconstruct it from continuity instead), the penalization factor of a
 face next to a body, 2:1 interfaces on an outlet face, and a re-measurement
 of every outlet case (this one incl. the Strouhal gate, `../blasius`, the
-boundary-layer tutorial, `tutorials/naca/rans`, the sailplane). The lift
-amplitude 0.40 of the prototype against 0.51 of the old penalization series
-(literature, unbounded: ~0.33) is 1.5 shedding periods and wants a long run.
+boundary-layer tutorial, `tutorials/naca/rans`, the sailplane).
+
+**The Re 100 `strouhal` gate on the control-volume series** (the part of
+handout item 4b that was open): `run_outlet_mode.sh cheb12:0:100` then
+`check_cylinder.py strouhal <OUT>/forces_om_cheb12T100_0.txt`.
+MAIN: St 0.1670, mean C_D 1.4474, mean C_L −1.0e-2, C_L amplitude **0.655**
+— the old penalization series read 0.168 / 1.448 / 0.51 on the same flow, so
+the control-volume lift of main is inflated by the outlet mode (its pressure
+sits on the box borders), by 28 % in amplitude. PROTOTYPE: St 0.1744, mean
+C_D 1.4383, mean C_L +1.2e-2, C_L amplitude **0.393**. The prototype's flow
+is a different one, not only a cleaner statistic: the Strouhal number moves
++4 % and the lift amplitude falls to 0.39 (literature, unbounded: St ~0.165,
+C_L' ~0.33; this domain has ~6 % blockage). Which of 0.167 and 0.174 is the
+right number for THIS confined domain is not settled here; it needs the
+lateral far field varied.
