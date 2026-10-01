@@ -27,10 +27,9 @@ fi
 
 echo "== 2. coefficient files (moby_prepare)"
 for re in 40 100; do
-    sed -e 's|^\[ibm\]|[ibm]\nstl_file = cylinder.stl|' \
-        -e 's|^nb = 8$|nb = 8\nremove_solid = false|' \
-        cyl_re${re}.ini > .prep_re${re}.ini
-    mpirun -n 1 "$PREP" .prep_re${re}.ini ibm_coeff_re${re}.h5
-    rm -f .prep_re${re}.ini
+    # The run ini IS the prepare input (it names the STL and remove_solid =
+    # false itself): a prepare ini derived by sed gave a case file whose input
+    # echo the solve ini did not match, and the solver refused it as stale.
+    mpirun -n 1 "$PREP" cyl_re${re}.ini      # writes [case] file = ibm_coeff_re${re}.h5
 done
 echo "setup done"

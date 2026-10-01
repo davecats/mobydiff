@@ -91,7 +91,7 @@ def run_case(name, a, binary):
         if not os.path.isfile(p):
             sys.exit(f"missing {p} -- run setup.sh first (needs moby_prepare + geometry venv)")
     prefix = "channel_ibm"  # field_prefix in the .ini
-    runs = os.path.join(HERE, "runs", name)
+    runs = os.path.join(HERE, a.runs, name)
     dA, dB = os.path.join(runs, "transient"), os.path.join(runs, "stats")
     os.makedirs(dA, exist_ok=True)
     os.makedirs(dB, exist_ok=True)
@@ -138,8 +138,14 @@ def main():
     ap.add_argument("--snap-interval", type=int, default=800,
                     help="dump a field (with nut) every N steps in the stats leg")
     ap.add_argument("--mpirun", default="mpirun")
+    ap.add_argument("--binary", default=None,
+                    help="solver to run (default build_<arch>/main); a reference "
+                         "binary for a paired before/after campaign")
+    ap.add_argument("--runs", default="runs",
+                    help="output directory under this one (default runs); give a "
+                         "paired campaign one directory per binary")
     a = ap.parse_args()
-    binary = os.path.join(ROOT, f"build_{a.arch}", "main")
+    binary = a.binary or os.path.join(ROOT, f"build_{a.arch}", "main")
     if not os.path.isfile(binary):
         sys.exit(f"binary {binary} not found -- ./compile.sh {a.arch}")
     order = ["a_wale", "b_none", "c_refine"]
