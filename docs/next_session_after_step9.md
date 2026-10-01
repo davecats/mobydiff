@@ -155,8 +155,17 @@ top two bits (periodic cube: x x y y z z; the 256 x 128 x 256 channel:
 x x y z z x y z). The cut sizes are the same in the cases of the table (66 k
 both ways); the rule was implemented as specified.
 HoreKa: `horeka/exchange/submit_order.sh`, `PREREGISTERED_order.md`
-(ref `5bdc5eb`, new = the order commit): job ids and results are appended at
-the end of this item when the jobs have run.
+(ref `5bdc5eb`, new `d2ac839`). SUBMITTED 2026-10-01 on `accelerated`
+(`dev_accelerated` refused with `QOSMaxSubmitJobPerUserLimit`: four other
+jobs of the user were already there): job **5174076** (2 nodes: the field
+gate + 4 and 8 ranks, run directory `order_run`) and job **5174077** (4
+nodes, 16 ranks, `order16_run`, starts after the first). Worktrees on
+HoreKa: `moby-2to1-order` (`d2ac839`) and `moby-2to1-order-ref` (`5bdc5eb`),
+transferred by `git push` into the HoreKa clone (branches `gate-order`,
+`gate-order-ref`), NOT through GitHub — `origin/main` is still at `5c53a96`,
+the three commits of this session are local. Read the results with the
+table of `PREREGISTERED_order.md` next to them and write
+`results_horeka_<date>.md`.
 
 *The defect* (`results_horeka_2026-09-30.md` section 3). The leaf order is
 the Morton key of the finest-lattice block coordinates with x in the lowest
