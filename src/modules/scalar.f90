@@ -2164,45 +2164,26 @@ contains
     !    and far less conservative than max(kappa)/min(C): at w = 1/2 and
     !    kappa_s = 1000 the true penalty is 2x, not 1000x.
     !
-    ! 2. THE CONVENTION MUST BE THE FULL DIAGONAL, AND A CUT CELL NEEDS THE
-    !    GERSHGORIN FACTOR THE UNIFORM INTERIOR NEVER PAYS.
-    !    precompute_peclet_rate reports alpha/h^2 per direction, i.e. HALF of
-    !    one direction's diagonal; at a cut cell the two faces of a direction
-    !    are not equal, so neither their max nor their mean is half the
-    !    diagonal. Summing all six face terms and dividing by 6 reproduces
-    !    alpha/h^2 exactly for a uniform isotropic cell, so pecletmax keeps
-    !    its meaning -- that is the `diag/6` below.
-    !    But the SPECTRAL RADIUS is bounded by 2*A_ii/C_i (Gershgorin, the
-    !    operator has zero row sum), not by A_ii/C_i, and the existing
-    !    convention is a factor ~1.9 short of that: uniform runs survive only
-    !    where ONE direction carries the diagonal (a fine wall-normal line) or
-    !    the Courant limit binds first -- on an isotropic grid the extreme
-    !    mode IS excited from round-off and pecletmax above 0.21 blows up
-    !    (validation/diffusion_limit/, 2026-10-02; the solver warns). A cut
-    !    cell attains its bound on any grid -- its row is strongly ASYMMETRIC
-    !    (a large k_face into a neighbour of the other material's capacity),
-    !    so the worst mode is local, and this RK3's real-axis limit is 2.5.
-    !    MEASURED on gate 1: (kappa_s, C_s) = (0.01, 0.01) at w = 0.95 blows
-    !    up at pecletmax 0.3 and is stable at 0.2; (1000, 1000) at w = 0.80
-    !    blows up at 0.4 and is stable at 0.2. Doubling the rate at cut cells
-    !    -- diag/3 instead of diag/6 -- makes the nominal 0.4 behave as the
-    !    measured-stable 0.2 in BOTH, which is exactly the factor Gershgorin
-    !    predicts. Only interface cells pay it; the bulk of a conjugate run
-    !    keeps today's step.
-    !
-    ! 3. C3 CLOSES THE MARGIN THAT LEFT. The C1 convention above grants
-    !    dt = pecletmax*3C/diag at a cut cell while Gershgorin plus this RK3's
-    !    real-axis limit of 2.5 allow dt <= 2.5 C/(2 diag) = 1.25 C/diag, so
-    !    the default pecletmax = 0.4 sat at 96 % of the bound -- and C2 found
-    !    the case that attains it: an OBLIQUE interface at kappa_s = 10^3 went
-    !    to NaN at 0.4 and was stable at 0.2. C1's gates never saw it because
-    !    their interface is grid-aligned, where the extreme mode is not
-    !    excited. `share = 2` grants 0.8 C/diag at pecletmax = 0.4, i.e. 64 %
-    !    of the bound, a 1.56x margin, and that is what ships: the alternative
-    !    -- leaving the rate and rejecting such cases in the config -- would
-    !    ask the user to know a bound the solver can compute. The cost is a
-    !    1.5x smaller dt AT CUT CELLS ONLY (the bulk of a conjugate run is
-    !    unaffected), and it is measured in validation/conjugate/README.md.
+    ! 2. THE CONVENTION IS THE GERSHGORIN ONE: HALF THE DIAGONAL OVER THE
+    !    CAPACITY. The operator has zero row sum, so its spectral radius is
+    !    bounded by 2*A_ii/C_i, and this RK3's real-axis limit of 2.51 gives
+    !    dt <= 1.256 C_i/A_ii. The rate reported is A_ii/(2 C_i): for a
+    !    regular cell that is exactly sum_d alpha/h_d^2, the number
+    !    `pecletmax` bounds everywhere (step.f90 RK3_DIFFUSION_LIMIT), so the
+    !    limit on pecletmax is the same 0.628 here as in the rest of the
+    !    solver and a cut cell needs no rule of its own.
+    !    HISTORY, because the gates carry numbers taken under it: until
+    !    2026-10-02 `pecletmax` bounded the single-direction alpha/h^2, a
+    !    regular cell reported diag/6 and a cut cell a special share --
+    !    diag/3 in C1 (measured: (kappa_s, C_s) = (0.01, 0.01) at w = 0.95
+    !    blew up at pecletmax 0.3; (1000, 1000) at w = 0.80 at 0.4), diag/2
+    !    from C3 on (an OBLIQUE interface at kappa_s = 10^3 went to NaN at 0.4
+    !    with diag/3). diag/2 is the present rule, so the cut-cell step of
+    !    every C3 result is unchanged; what changed is the BULK, which went
+    !    from diag/6 to diag/2. The old bulk convention survived only where
+    !    one direction carried the diagonal or the Courant limit bound first:
+    !    on an isotropic grid the extreme mode is excited from round-off
+    !    (validation/diffusion_limit/).
     !
     ! The capacity here is the C3 FLUID-FRACTION-WEIGHTED one, the same the
     ! transport kernel divides by -- and it moves the limit at exactly the
@@ -2218,9 +2199,9 @@ contains
         type(comm_type), intent(in) :: c
 
         integer :: i, j, k, b, is, nx, ny, nz
-        real(C_DOUBLE) :: dm, ks, rc, cc, phc, diag, share, r(1)
+        real(C_DOUBLE) :: dm, ks, rc, cc, phc, diag, r(1)
         real(C_DOUBLE) :: dsh, ko, csb
-        logical :: solc, cut, tangOn, banded
+        logical :: tangOn, banded
 
         rate = 0.0d0
         if (.not. scalar_conjugate_enabled(sc)) return
@@ -2248,36 +2229,12 @@ contains
                 do j = 1, ny
                     do i = 1, nx
                         phc = sc%phi(i,j,k,b)
-                        solc = phc < 0.0d0
                         csb = sc%solidC(is)
                         if (banded) then
                             if (band_material(phc, dsh) == 2) csb = sc%outerC(is)
                         end if
                         cc = sc%vfrac(i,j,k,b) &
                             + (1.0d0 - sc%vfrac(i,j,k,b))*csb
-                        cut = ((sc%phi(i-1,j,k,b) < 0.0d0) .neqv. solc) &
-                         .or. ((sc%phi(i+1,j,k,b) < 0.0d0) .neqv. solc) &
-                         .or. ((sc%phi(i,j-1,k,b) < 0.0d0) .neqv. solc) &
-                         .or. ((sc%phi(i,j+1,k,b) < 0.0d0) .neqv. solc) &
-                         .or. ((sc%phi(i,j,k-1,b) < 0.0d0) .neqv. solc) &
-                         .or. ((sc%phi(i,j,k+1,b) < 0.0d0) .neqv. solc)
-                        ! A material interface INSIDE the solid (F2) excites
-                        ! the same extreme Gershgorin mode a cut cell does --
-                        ! but only if it carries a contrast. An INSULATED outer
-                        ! band can only remove face coefficients, never amplify
-                        ! one, so it does not buy the cell the cut-cell share
-                        ! (and charging it anyway would cost the whole run a
-                        ! factor ~2.5 in dt for nothing).
-                        if (banded .and. ko > 0.0d0) then
-                            cut = cut .or. &
-                                band_material(sc%phi(i-1,j,k,b), dsh) /= band_material(phc, dsh) &
-                           .or. band_material(sc%phi(i+1,j,k,b), dsh) /= band_material(phc, dsh) &
-                           .or. band_material(sc%phi(i,j-1,k,b), dsh) /= band_material(phc, dsh) &
-                           .or. band_material(sc%phi(i,j+1,k,b), dsh) /= band_material(phc, dsh) &
-                           .or. band_material(sc%phi(i,j,k-1,b), dsh) /= band_material(phc, dsh) &
-                           .or. band_material(sc%phi(i,j,k+1,b), dsh) /= band_material(phc, dsh)
-                        end if
-                        share = merge(2.0d0, 6.0d0, cut)
                         if (banded) then
                             diag = (band_face_diffusivity(dm, sc%phi(i-1,j,k,b), phc, &
                                         ks, ko, dsh, rc, sc%invDx(i,b))*sc%invDx(i,b) &
@@ -2333,7 +2290,7 @@ contains
                             + (face_corr_rate(sc, is, i, j, k-1, b, 3, dm, ks, rc) &
                              + face_corr_rate(sc, is, i, j, k,   b, 3, dm, ks, rc)) &
                                 *blk%d1z(k,VAR_P,b)
-                        r(1) = max(r(1), diag/(share*cc))
+                        r(1) = max(r(1), diag/(2.0d0*cc))
                     end do
                 end do
             end do

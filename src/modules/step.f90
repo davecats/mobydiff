@@ -38,11 +38,14 @@ module step
     ! Explicit diffusion under this RK3: the stability polynomial
     ! 1 + z + z^2/2 + z^3/6 leaves the unit disc on the negative real axis at
     ! z = -2.5127, and the extreme eigenvalue of the discrete Laplacian is
-    ! -4 sum_d nu/h_d^2, so dt x sum_d nu/h_d^2 must stay below a quarter of
-    ! that. `pecletmax` bounds dt x the largest SINGLE-direction nu/h^2: 0.628
-    ! is its limit only where one direction dominates the sum; two or three
-    ! equally fine directions leave 0.314 / 0.209 (measured to the bracket in
-    ! validation/diffusion_limit/).
+    ! -4 sum_d nu/h_d^2 (Gershgorin: twice the diagonal), so the step is
+    ! stable for dt x sum_d nu/h_d^2 below a quarter of that. `pecletmax`
+    ! bounds exactly this number, the SUM over the directions of a cell, so
+    ! one value below 0.628 is safe on any grid (bracketed on three in
+    ! validation/diffusion_limit/). Until 2026-10-02 it bounded the largest
+    ! single-direction nu/h^2, whose limit is 0.628 / 0.314 / 0.209 with one
+    ! / two / three equally fine directions: the usual 0.5 was beyond the
+    ! limit wherever diffusion set the step on an isotropic grid.
     real(C_DOUBLE), parameter :: RK3_DIFFUSION_LIMIT = 2.5127453266d0/4.0d0
 
 contains
@@ -111,10 +114,10 @@ contains
         type(scalar_type), intent(in), optional :: sc
 
         integer :: i, b, nx, ny, nz
-        ! local_rate: the single-direction maximum, then the largest sum over
-        ! the directions of one cell (the cells of a block are the tensor
-        ! product of its lines, so that is the sum of its three line maxima).
-        real(C_DOUBLE) :: ire, local_rate(2), rate_d(3)
+        ! The largest sum over the directions of one cell: the cells of a
+        ! block are the tensor product of its lines, so that is the sum of
+        ! its three line maxima.
+        real(C_DOUBLE) :: ire, local_rate(1), rate_d(3)
 
         nx = int(blk%nb(1))
         ny = int(blk%nb(2))
@@ -136,14 +139,11 @@ contains
             do i = 0, nz+1
                 rate_d(3) = max(rate_d(3), ire*blk%d1z(i,VAR_P,b)**2)
             end do
-            local_rate(1) = max(local_rate(1), maxval(rate_d))
-            local_rate(2) = max(local_rate(2), sum(rate_d))
+            local_rate(1) = max(local_rate(1), sum(rate_d))
         end do
 
         call comm_allreduce_max(c, local_rate)
         dns%peclet_rate = local_rate(1)
-        dns%peclet_dir_rate = local_rate(1)
-        dns%peclet_sum_rate = local_rate(2)
     end subroutine precompute_peclet_rate
 
     subroutine momentum(blk, dns, dt_alpha, dt_beta, dt_gamma, ibm, bc, turb, turb_prof, bf)
@@ -977,9 +977,8 @@ contains
             do j = 1, ny
                 do i = 1, nx
                     nu_eff = ire + prt_scale*max(0.0d0, turb%nut(i,j,k,b))
-                    peclet_rate = max(peclet_rate, nu_eff*blk%d1x(i,VAR_P,b)**2)
-                    peclet_rate = max(peclet_rate, nu_eff*blk%d1y(j,VAR_P,b)**2)
-                    peclet_rate = max(peclet_rate, nu_eff*blk%d1z(k,VAR_P,b)**2)
+                    peclet_rate = max(peclet_rate, nu_eff*(blk%d1x(i,VAR_P,b)**2 &
+                        + blk%d1y(j,VAR_P,b)**2 + blk%d1z(k,VAR_P,b)**2))
                 end do
             end do
         end do
@@ -1069,7 +1068,7 @@ contains
         logical, save :: reported = .false.
 
         if (dns%cflmax <= 0.0d0 .and. dns%pecletmax <= 0.0d0) then
-            call warn_diffusion_limit(dns, c)   ! a fixed step can exceed it too
+            call warn_diffusion_limit(dns, c, dns%peclet_rate)   ! a fixed step can exceed it
             return
         end if
 
@@ -1099,18 +1098,9 @@ contains
                     " cflmax x ratio = ", dns%cflmax*sum_rate(1)/rates(CFL_COURANT), &
                     " is the effective sum Courant bound (initial field only)"
             end if
-            ! The same statement for the diffusion limit (see
-            ! RK3_DIFFUSION_LIMIT): what `pecletmax` amounts to on the SUM.
-            if (c%has_terminal .and. dns%pecletmax > 0.0d0 .and. dns%peclet_dir_rate > 0.0d0) then
-                print '(a,es10.3,a,es10.3,a,f5.2,a)', &
-                    " peclet: max single-direction diffusion rate ", dns%peclet_dir_rate, &
-                    " (pecletmax bounds dt x this); worst-case SUM over directions ", dns%peclet_sum_rate, &
-                    " = ", dns%peclet_sum_rate/dns%peclet_dir_rate, " x the direction max"
-                print '(a,f5.3,a,f5.2,a)', "      RK3 with explicit diffusion is stable for dt x SUM < ", &
-                    RK3_DIFFUSION_LIMIT, ": pecletmax x ratio = ", &
-                    dns%pecletmax*dns%peclet_sum_rate/dns%peclet_dir_rate, &
-                    " is the effective sum bound (molecular viscosity only)"
-            end if
+            if (c%has_terminal .and. dns%pecletmax > RK3_DIFFUSION_LIMIT) print '(a,f6.3,a,f5.3)', &
+                " WARNING: pecletmax = ", dns%pecletmax, &
+                " is above the RK3 limit of explicit diffusion, ", RK3_DIFFUSION_LIMIT
         end if
 
         next_dt = dns%dtmax
@@ -1127,33 +1117,31 @@ contains
         if (have_limit) dns%dt = next_dt
         dns%cfl(CFL_COURANT) = dns%dt*rates(CFL_COURANT)
         dns%cfl(CFL_PECLET) = dns%dt*rates(CFL_PECLET)
-        call warn_diffusion_limit(dns, c)
+        call warn_diffusion_limit(dns, c, rates(CFL_PECLET))
     end subroutine update_timestep_limits
 
     ! Say so, once, when the step about to be taken is beyond the explicit
-    ! diffusion limit of the grid (RK3_DIFFUSION_LIMIT). It is a report, not a
-    ! limiter: dt is untouched. The rate is the molecular one, so with an eddy
-    ! viscosity or a conjugate body the true limit is tighter than what is
-    ! tested here. It is the limit of the GRID: a field that is exactly
+    ! diffusion limit (RK3_DIFFUSION_LIMIT): a fixed step chosen too large, a
+    ! `pecletmax` above the limit, or the limit switched off. A report, not a
+    ! limiter. `rate` is the current sum_d nu_eff/h_d^2 (with the limits off,
+    ! the molecular one). It is the limit of the GRID: a field exactly
     ! uniform in a direction never excites the modes that vary along it, so
-    ! a 1D or 2D test problem (validation/scalar/conduction.ini) runs on
-    ! beyond it, with the warning.
-    subroutine warn_diffusion_limit(dns, c)
+    ! a 1D or 2D test problem can run on beyond it.
+    subroutine warn_diffusion_limit(dns, c, rate)
         type(dns_type), intent(in) :: dns
         type(comm_type), intent(in) :: c
+        real(C_DOUBLE), intent(in) :: rate
 
         logical, save :: warned = .false.
 
         if (warned) return
-        if (dns%dt*dns%peclet_sum_rate <= RK3_DIFFUSION_LIMIT) return
+        if (dns%dt*rate <= RK3_DIFFUSION_LIMIT) return
         warned = .true.
         if (.not. c%has_terminal) return
-        print '(a,f6.3,a,f5.3,a,i0)', " WARNING: dt x sum_d(nu/h_d^2) = ", dns%dt*dns%peclet_sum_rate, &
+        print '(a,f6.3,a,f5.3,a,i0)', " WARNING: dt x sum_d(nu/h_d^2) = ", dns%dt*rate, &
             " exceeds the RK3 limit of explicit diffusion ", RK3_DIFFUSION_LIMIT, " at step ", dns%step_current + 1
-        if (dns%peclet_dir_rate > 0.0d0) print '(a,f5.3,a)', &
-            "          unstable unless the field stays exactly uniform in enough directions:" // &
-            " a 3D field on this grid needs pecletmax <= ", &
-            RK3_DIFFUSION_LIMIT*dns%peclet_dir_rate/dns%peclet_sum_rate, " (or a smaller dt / dtmax)"
+        print '(a)', "          unstable unless the field stays exactly uniform in enough directions:" // &
+            " lower dt, or set pecletmax below the limit"
     end subroutine warn_diffusion_limit
 
 end module step

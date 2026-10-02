@@ -8,8 +8,10 @@
 #
 #     dt x sum_d nu/h_d^2 <= 0.628 .
 #
-# `pecletmax` bounds P = dt x nu/h^2 of the finest SINGLE direction, so the
-# largest stable P depends on how many directions are that fine:
+# and `pecletmax` bounds exactly that sum (since 2026-10-02; it bounded the
+# finest single direction's dt x nu/h^2 before). In terms of P = dt x nu/h^2
+# of the finest direction the limit depends on how many directions are that
+# fine:
 #
 #     grid        sum_d nu/h_d^2      limit on P
 #     16x16x16    3    nu/h^2         0.2094
@@ -22,10 +24,11 @@
 #     below: max|u| decays monotonically over the snapshots and no warning;
 #     above: the run blows up (NaN or max|u| > 1) and the solver prints its
 #            one-time "exceeds the RK3 limit of explicit diffusion" warning.
-#   adaptive step on 16^3 (cflmax 0.8, dtmax large):
-#     pecletmax = 0.5: the init line reports the effective sum bound 1.50, the
-#                      warning fires, the run blows up;
-#     pecletmax = 0.2: effective sum bound 0.60, no warning, the flow decays.
+#   adaptive step (cflmax 0.8, dtmax large), the SAME two values on all three
+#   grids -- one number is safe or not whatever the grid:
+#     pecletmax = 0.60: no warning, the flow decays;
+#     pecletmax = 0.66: the warning, and the run leaves the decaying solution
+#                       (NaN, or a state held by the Courant limiter).
 set -uo pipefail
 cd "$(dirname "$0")"
 ROOT=$(cd ../.. && pwd)
@@ -49,10 +52,10 @@ leg() {
     mpirun -n 1 "$SOLVER" .dl_$tag.ini > .dl_$tag.log 2>&1   # a blow-up may exit non-zero
 }
 
-# check <tag> <stable|unstable> [expected effective sum bound]
+# check <tag> <stable|unstable>
 check() {
     python3 - "$@" <<'PY' || status=1
-import glob, re, sys
+import sys
 import h5py, numpy as np
 tag, want = sys.argv[1], sys.argv[2]
 log = open(f".dl_{tag}.log").read()
@@ -68,11 +71,6 @@ blown = any(not np.isfinite(a) or a > 1.0 for a in amp)
 decays = all(np.isfinite(amp)) and all(b < a for a, b in zip(amp, amp[1:]))
 ok = (want == "stable" and decays and not warned) or (want == "unstable" and blown and warned)
 note = ""
-if len(sys.argv) > 3:
-    m = re.search(r"pecletmax x ratio =\s*([0-9.]+)", log)
-    got = float(m.group(1)) if m else float("nan")
-    ok = ok and abs(got - float(sys.argv[3])) < 0.006
-    note = f"  effective sum bound {got:.2f}"
 last = "nan" if not np.isfinite(amp[-1]) else f"{amp[-1]:.2e}"
 print(f"{'PASS' if ok else 'FAIL'} {tag:10s} expected {want:8s} max|u| at 100/600: {amp[0]:.2e} / {last}"
       f"  warning {'yes' if warned else 'no'}{note}")
@@ -87,8 +85,12 @@ leg  b_below 16 16  4  0.295  fixed;    check b_below stable
 leg  b_above 16 16  4  0.315  fixed;    check b_above unstable
 leg  c_below 16  4  4  0.545  fixed;    check c_below stable
 leg  c_above 16  4  4  0.570  fixed;    check c_above unstable
-leg  p_050   16 16 16  0.5    adaptive; check p_050 unstable 1.50
-leg  p_020   16 16 16  0.2    adaptive; check p_020 stable 0.60
+leg  pa_060  16 16 16  0.60   adaptive; check pa_060 stable
+leg  pa_066  16 16 16  0.66   adaptive; check pa_066 unstable
+leg  pb_060  16 16  4  0.60   adaptive; check pb_060 stable
+leg  pb_066  16 16  4  0.66   adaptive; check pb_066 unstable
+leg  pc_060  16  4  4  0.60   adaptive; check pc_060 stable
+leg  pc_066  16  4  4  0.66   adaptive; check pc_066 unstable
 
 [ $status = 0 ] && echo "diffusion-limit gate: PASS" || echo "diffusion-limit gate: FAIL"
 exit $status

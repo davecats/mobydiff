@@ -2293,22 +2293,37 @@ immersed boundary. Phased, each phase verified before the next:
     wait in `accelerated`. A global-3D restart (rank-3 datasets, no blocks
     table) is readable on any rank count; a one-block block-layout file is
     not.
-  - **`pecletmax` is per-direction: PROVEN, reported by the solver, limiter
-    unchanged.** RK3 needs `dt sum_d nu/h_d^2 <= 0.628` (2.5127/4): 0.63 /
-    0.31 / 0.21 on the single-direction number for one / two / three equally
-    fine directions, bracketed to 2.5 % on three grids by
-    `validation/diffusion_limit/run_gate.sh` (decay below, blow-up above;
-    with the adaptive step and 0.5 on an isotropic grid a BOUNDED state held
-    by the Courant limiter -- the O(0.65) disturbance first seen in a
-    refined patch). `update_timestep_limits` prints a `peclet:` line beside
-    `cfl:` (sum / direction ratio, effective sum number) and warns once at
-    the first step beyond the limit; fields are bit-identical (suites
-    `max_abs 0`). The warning is about the GRID: a field exactly uniform in
-    a direction never excites the modes along it, so
-    `validation/scalar/conduction.ini` (sum number 1.19) warns and passes.
-    The usual 0.5 stays safe where one direction dominates (every channel
-    and boundary layer) or the Courant limit binds. OPEN, the user's call:
-    bound the sum in the limiter.
+  - **`pecletmax` BOUNDS THE SUM over directions (decided by the user and
+    done 2026-10-02).** RK3 needs `dt sum_d nu/h_d^2 <= 0.628` (2.5127/4,
+    Gershgorin: the extreme eigenvalue is twice the diagonal). Until now the
+    key bounded the largest SINGLE-direction `dt nu/h^2`, whose limit is
+    0.63 / 0.31 / 0.21 for one / two / three equally fine directions --
+    bracketed to 2.5 % on three grids by `validation/diffusion_limit/` --
+    so the usual 0.5 was beyond the limit wherever diffusion set the step on
+    an isotropic grid (there the adaptive step sits in a BOUNDED state held
+    by the Courant limiter: the O(0.65) disturbance first seen in a refined
+    patch). Now `precompute_peclet_rate` and the eddy-viscosity reduction
+    of `get_timestep_rates` form the sum, and ONE value is stable or not on
+    any grid (gate: 0.60 decays, 0.66 does not, on all three). The
+    conjugate rate was already half the Gershgorin diagonal at cut cells
+    (`share = 2`); it is that everywhere now, which IS the sum for a regular
+    cell, so **the cut-cell special case is gone** and its step unchanged.
+    A `pecletmax` above 0.628 is announced at init; a step beyond the limit
+    (a fixed dt too) is warned about once -- the limit of the GRID: a field
+    exactly uniform in a direction never excites the modes along it.
+    WHAT MOVES: a run bound by `dtmax` or the Courant limit is bit-identical
+    (17 of 23 suite comparisons `max_abs 0` vs `949148f` on CPU, 11 of 14 on GPU); a diffusion-bound
+    run takes a smaller step by sum / largest direction -- a few per cent on
+    a wall-clustered grid, up to 3 on an isotropic one. The six suite cases
+    that move (turb180, lam30t, conduction, prsweep, turbsst, pois_io) are
+    `max_abs 0` with `dtmax` binding on both sides: they move through the
+    step alone. The S1 scalar gates, conjugate C1/C2/C3 (61/75/15 checks),
+    freestream and penalization gates pass unchanged. **A 20-step
+    bit-exactness comparison across this commit fails on those six by
+    design: the reference set after it is `~/limiter_ref_binaries`.**
+    The boundary-layer tutorial is `dtmax`-bound (sum number 0.42).
+    `cflmax` is still per-direction (F8: documented and printed, limit
+    sqrt(3) on the sum) -- the same question, not asked.
   - **LES at a level jump that runs into a wall** (the first case O4
     changes): the velocity-gradient tensor of the wall cell `(nb, 1)` reads
     `u(nb+1, 0)`, the x halo of the wall ghost row, which nothing wrote
@@ -2344,7 +2359,8 @@ immersed boundary. Phased, each phase verified before the next:
   starts from rest.
 - Anything touching the time-step limiter or the diffusion operator:
   `validation/diffusion_limit/run_gate.sh` (the RK3 diffusion limit,
-  bracketed). A run that prints `WARNING: dt x sum_d(nu/h_d^2) ... exceeds
-  the RK3 limit` is beyond the limit of its grid: lower `pecletmax` to the
-  value it names unless the field is exactly 1D/2D.
+  bracketed; `pecletmax` bounds the sum over directions). A run that prints
+  `WARNING: dt x sum_d(nu/h_d^2) ... exceeds the RK3 limit` is beyond the
+  limit of its grid: lower the fixed dt or `pecletmax` unless the field is
+  exactly 1D/2D.
 - Never declare a phase done with failing builds or unverified results.

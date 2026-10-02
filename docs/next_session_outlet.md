@@ -761,23 +761,34 @@ from the outlet and +1.1 % at it, stored p of the last column 8.1e-2 -> 4.1e-4.
 **2. `tutorials/naca/rans` from scratch: still not run.** Days of GPU time,
 and it belongs to the one-by-one re-validation of `validation/README.md`.
 
-**3. `pecletmax`: proven, and reported by the solver.** The attribution of
-the side finding is now a measurement, `validation/diffusion_limit/`: a
-decaying Beltrami flow at Re = 1 in a periodic box, fixed step just below and
-just above `dt sum_d nu/h_d^2 = 0.628` on grids with three, two and one fine
-direction. Decay below, blow-up above, on all three (limits on the
-single-direction number 0.209 / 0.305 / 0.558, bracketed to 2.5 %). With the
-adaptive step and `pecletmax = 0.5` on the isotropic grid the run does not
-end in NaN: it sits in a bounded state held by the Courant limiter, which is
-the O(0.65) disturbance of the refined patch above, without a patch.
-The limiter is UNCHANGED. `update_timestep_limits` prints the grid's sum /
-direction ratio and the effective sum number at init (the `peclet:` line,
-beside `cfl:`) and warns once at the first step beyond the limit, fixed or
-adaptive step. The one suite case that warns is `validation/scalar/
-conduction.ini` (sum number 1.19): its field varies in y only, exactly, and a
-field uniform in a direction does not excite the modes along it. Open, the
-user's call: bound the SUM in the limiter (every diffusion-bound run would
-take a slightly different step), or leave `pecletmax` as documented.
+**3. `pecletmax`: proven, then fixed (the user's decision, the same day).**
+The attribution of the side finding is a measurement,
+`validation/diffusion_limit/`: a decaying Beltrami flow at Re = 1 in a
+periodic box, fixed step just below and just above
+`dt sum_d nu/h_d^2 = 0.628` on grids with three, two and one fine direction.
+Decay below, blow-up above, on all three (limits on the single-direction
+number 0.209 / 0.305 / 0.558, bracketed to 2.5 %). With the adaptive step and
+the old `pecletmax = 0.5` on the isotropic grid the run does not end in NaN:
+it sits in a bounded state held by the Courant limiter, which is the O(0.65)
+disturbance of the refined patch above, without a patch.
+**`pecletmax` now bounds the sum** (`precompute_peclet_rate`, the
+eddy-viscosity reduction of `get_timestep_rates`), so one value is stable or
+not on any grid: 0.60 decays and 0.66 does not on all three (gate 12/12).
+The conjugate rate becomes half the Gershgorin diagonal at EVERY cell, which
+is the sum for a regular cell and what cut cells already used (`share = 2`):
+the cut-cell special case is deleted, its step unchanged. A `pecletmax` above
+0.628 is announced at init and a step beyond the limit warned about once
+(fixed step too).
+What moves, against `949148f` (nofma): 17 of 23 suite comparisons
+`max_abs 0` on CPU and 11 of 14 on GPU (bound by `dtmax` or the Courant
+limit); turb180, lam30t,
+conduction, prsweep, turbsst and pois_io take a smaller step, and all six
+are `max_abs 0` again with `dtmax` binding on both sides, so they move
+through the step alone. The S1 scalar gates, the conjugate gates C1 / C2 /
+C3 (61 / 75 / 15 checks), the freestream and the penalization gates pass
+unchanged. `validation/refine2d/bp_xz_{32,64}.ini` carried 0.8
+(never binding, `dtmax` does) and are set to 0.5. `cflmax` remains a
+per-direction number (F8), the same question for the Courant limit.
 
 **4. LES at a level jump on a physical face: measured, one residual.** The
 SGS kernels do not read edge ghosts of cell-centred quantities that matter
@@ -814,9 +825,17 @@ described the outlet as a zero-gradient velocity; the gate scratch of
   phase-2 run from `tbl_new_1087500.h5` (HoreKa, `outlet_tbl_run`).
 - `tutorials/naca/rans` from scratch (days of GPU time): only the restart
   pair above.
-- `pecletmax` still bounds the single-direction number (follow-up item 3).
 - The first-order ghost row of a restriction at a level jump on a physical
   face (follow-up item 4).
+- FOUND while gating the limiter, not caused by it: the CONTROL rows of the
+  C3 transient gate (`validation/conjugate/run_gates_c3.sh`, the archived C2
+  binary `~/c2_ref_binaries`, commit 7aa1c7b of 2026-08-28) no longer
+  reproduce. The gate itself passes and its C3 rows are unchanged to every
+  digit, but the control reads errors of 0.55 where the committed
+  `c3_transient.dat` records 7e-3 .. 1e-3: a binary of August run on inis
+  and case files of today (unknown keys are silently ignored). The committed
+  records were left as they are; the control needs a binary that reads the
+  present inputs, or retiring.
 - Long output runs are in `~/outlet_runs/` (cylinder far-field pair `st/`,
   Re 40 `re40/`, NACA pair `naca/`, sailplane pair `sail/`); the pinned
   reference worktree is `~/outlet_ref_src`.

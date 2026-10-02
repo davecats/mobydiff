@@ -12,9 +12,10 @@ diffusion needs
 
     dt × Σ_d ν/h_d²  ≤  0.628 .
 
-`[time] pecletmax` bounds `dt × ν/h²` of the finest SINGLE direction (the
-largest over all cells and directions). How much of the 0.628 that leaves
-depends on how many directions of a cell are that fine:
+`[time] pecletmax` bounds exactly this sum (since 2026-10-02), so one value
+below 0.628 is safe on any grid. It used to bound `dt × ν/h²` of the finest
+SINGLE direction, and how much of the 0.628 that left depended on how many
+directions of a cell are that fine:
 
 | grid | Σ_d ν/h_d² | limit on `dt ν/h²` | stable leg | unstable leg |
 |---|---|---|---|---|
@@ -23,45 +24,45 @@ depends on how many directions of a cell are that fine:
 | 16 × 4 × 4 | 1.13 ν/h² | 0.5584 | 0.545: decays to 2.3e-16 | 0.570: NaN by step 600 |
 
 (fixed step, 600 steps, Chebyshev 12; the unstable mode starts from round-off.)
-The limit is the sum, bracketed to ±2.5 % on three grids. **`pecletmax = 0.5`
-is safe only where one direction dominates the sum** — a wall-normal line much
-finer than the other two, which is every channel and boundary-layer case — or
-where the Courant limit binds first. On a grid with two or three equally fine
-directions (an isotropic refined patch, a body-fitted finest level) and a
-step set by diffusion it is beyond the limit.
-
-With the adaptive step the instability does not necessarily end in NaN: the
-16³ leg at `pecletmax = 0.5` (effective sum number 1.5) settles into a bounded
-state of amplitude ~20 where the Courant limiter, fed by the growing velocity,
-holds the step at the stability boundary. That is the "sustained O(0.65)
+The limit is the sum, bracketed to ±2.5 % on three grids. Under the old
+meaning `pecletmax = 0.5` was safe only where one direction dominates the sum
+(a wall-normal line much finer than the other two: every channel and
+boundary-layer case) or where the Courant limit binds first; on a grid with
+two or three equally fine directions and a step set by diffusion it was
+beyond the limit. There the adaptive step does not necessarily end in NaN:
+an isotropic run at a sum number of 1.5 settled into a bounded state of
+amplitude ~20 where the Courant limiter, fed by the growing velocity, holds
+the step at the stability boundary. That is the "sustained O(0.65)
 disturbance inside the patch" of `docs/next_session_outlet.md` (side
 findings), reproduced without a body, an outlet or a level jump.
 
-## What the solver says
+## What changed in the solver (2026-10-02)
 
-`pecletmax` keeps its meaning (the limiter is unchanged, fields are
-bit-identical). The solver reports, in the manner of the `cfl:` line:
+- `pecletmax` bounds `dt × max over cells of Σ_d ν_eff/h_d²` (molecular,
+  eddy viscosity and the most diffusive scalar alike).
+- The conjugate body's rate was already half the Gershgorin diagonal at cut
+  cells; it is now that everywhere, which IS the sum for a regular cell. The
+  cut-cell special case is gone (its step is unchanged).
+- A `pecletmax` above 0.628 is announced at init. A step beyond the limit,
+  fixed or adaptive, is warned about once:
 
-     peclet: max single-direction diffusion rate  6.485E+00 (pecletmax bounds dt x this); worst-case SUM over directions  1.945E+01 =  3.00 x the direction max
-          RK3 with explicit diffusion is stable for dt x SUM < 0.628: pecletmax x ratio =  1.50 is the effective sum bound (molecular viscosity only)
+      WARNING: dt x sum_d(nu/h_d^2) =  0.660 exceeds the RK3 limit of explicit diffusion 0.628 at step 1
+               unstable unless the field stays exactly uniform in enough directions: lower dt, or set pecletmax below the limit
 
-and, once, at the first step taken beyond the limit (fixed or adaptive step):
+  It is the limit of the GRID: a field exactly uniform in a direction never
+  excites the modes that vary along it, so a 1D or 2D test problem with a
+  fixed step can run on beyond it.
 
-     WARNING: dt x sum_d(nu/h_d^2) =  1.500 exceeds the RK3 limit of explicit diffusion 0.628 at step 1
-              unstable unless the field stays exactly uniform in enough directions: a 3D field on this grid needs pecletmax <= 0.209 (or a smaller dt / dtmax)
-
-The sum is the molecular one (with scalars, of the most diffusive scalar): an
-eddy viscosity or a conjugate body tightens the true limit further. It is the
-limit of the GRID. A field that is exactly uniform in a direction never
-excites the modes that vary along it, so a 1D or 2D test problem runs on
-beyond it: `validation/scalar/conduction.ini` (4 × 16 × 4, `pecletmax = 0.4`,
-sum number 1.19) warns and passes its gate, because its field varies in y
-only and the per-column arithmetic keeps it so to the last bit. That is the
-one case of the 7- and 9-case suites and the outlet suite that warns.
+**What moves.** A run whose step is set by `dtmax` or by the Courant limit
+is bit-identical. A diffusion-bound run takes a smaller step by the ratio
+sum / largest direction of the cell that binds: a few per cent on a
+wall-clustered grid, up to 3 on an isotropic one (where the old step was
+beyond the limit). The suites say which is which (recorded in
+`docs/next_session_outlet.md`, follow-up).
 
 ## Gate
 
 Six fixed-step legs (the table: decay and no warning below, blow-up and the
-warning above) and two adaptive legs on 16³ (`pecletmax` 0.5: effective sum
-bound 1.50 reported, warning, blow-up; 0.2: 0.60, no warning, decay).
-Recorded 2026-10-02: 8/8 PASS.
+warning above) and six adaptive legs, the same two values on all three grids
+(`pecletmax` 0.60: no warning, decay; 0.66: the warning, and the run leaves
+the decaying solution). Recorded 2026-10-02: 12/12 PASS.
