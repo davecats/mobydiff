@@ -58,8 +58,10 @@ def main():
         xc = f["xcoord"][...]; yc = f["ycoord"][...]
     with h5py.File(a.field, "r") as f:
         xn, yn, zn = f["x"][...], f["y"][...], f["z"][...]      # node lines, length n+1
-        lx, ly, lz = (float(f.attrs[k]) for k in ("lx", "ly", "lz"))
-        nz = int(f.attrs["nz"])
+    # The node lines ARE the domain (start at 0, end at L), so derive the extent
+    # and nz from them -- robust whether or not the file carries lx/ly/lz/nz attrs.
+    nz = len(zn) - 1
+    lx, ly, lz = float(xn[-1]), float(yn[-1]), float(zn[-1])
     assert len(xn) == nx + 1 and len(yn) == ny + 1 and len(zn) == nz + 1
     zc = 0.5 * (zn[:-1] + zn[1:])                              # span cell centres
 
