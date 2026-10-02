@@ -123,6 +123,8 @@ validation/redblack_interface/.gate_*
 validation/redblack_interface/.cmp_rank.txt
 # validation/diffusion_limit/run_gate.sh: per-leg inis and prepare logs
 .dl_*
+# validation/courant_limit/run_gate.sh: the same
+.cl_*
 
 # passive-scalar S3 gate scratch (run_bitexact_s3.sh, run_gates_s3.sh)
 .s3x_*

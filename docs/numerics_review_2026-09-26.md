@@ -536,7 +536,7 @@ order and the interface machinery caps the stencil.
 | F5 | dead work — **FIXED 2026-09-27** (section 10 step 4: one `apply_bc` per projection, both solvers; max_abs 0 at production flags; bc bucket −91.6 %) | `apply_bc` in the projection loop and pinned-face rewrites each substage | `pressure_solver.f90` projection loops |
 | F6 | configuration — **FIXED 2026-09-27** (section 10 step 5: archived run confirmed at dt 7.696e-6; ini to `natural_dyw_plus = 0.5`, dt 3.125e-4 measured) | `channel_kmm180` first cell 0.053 wall units → Péclet-capped `dt` 7.7e-6 vs the ini's 3.125e-4 | `tutorials/channel_kmm180/input.ini`, README |
 | F7 | accuracy (first order in time at cut cells) | implicit-Euler penalization factor instead of Luchini's exact B(λΔt) | `ibm.f90:1307-1350`, `step.f90:252` |
-| F8 | documentation/safety — **DONE 2026-09-27** (section 10 step 5: documented in configuration.md; init-time print of the worst-case directional sum) | `cflmax` compared against the max component, RK3 limit is on the sum (√3) | `step.f90 get_timestep_rates` |
+| F8 | documentation/safety — **DONE 2026-09-27** (section 10 step 5: documented in configuration.md; init-time print of the worst-case directional sum); **closed at the root 2026-10-02**: `cflmax` bounds the sum (`validation/courant_limit/`), and `pecletmax` the diffusive sum (`validation/diffusion_limit/`) | `cflmax` compared against the max component, RK3 limit is on the sum (√3) | `step.f90 get_timestep_rates` |
 | F9 | design | the scalar default (divergence) is the form the momentum abandoned; fine while gated, but it is why F2 bites | `scalar.f90:148` |
 
 Suggested order of work: F3 (one config experiment — DONE, retracted), F2 (one test run, then

@@ -1,5 +1,8 @@
 # Next session: the outlet face, done properly
 
+NEXT: `docs/next_session_body_at_outlet.md` (an immersed body reaching an
+outlet face is refused since this work; rough-wall boundary layers need it).
+
 STATUS: **DONE 2026-10-01, increments O0 .. O5 implemented and gated; the
 design was ratified by the user the same day** (restart: store the planes;
 the level-jump hole: fixed in this series). What was built, every gate
@@ -787,8 +790,16 @@ are `max_abs 0` again with `dtmax` binding on both sides, so they move
 through the step alone. The S1 scalar gates, the conjugate gates C1 / C2 /
 C3 (61 / 75 / 15 checks), the freestream and the penalization gates pass
 unchanged. `validation/refine2d/bp_xz_{32,64}.ini` carried 0.8
-(never binding, `dtmax` does) and are set to 0.5. `cflmax` remains a
-per-direction number (F8), the same question for the Courant limit.
+(never binding, `dtmax` does) and are set to 0.5.
+**`cflmax` followed the same evening** (the user's decision): it bounds
+`dt sum_d |u_d|/h_d`, whose RK3 limit with central convection is sqrt(3) for
+a flow in any direction (`validation/courant_limit/`, 12/12: 1.65 stable and
+1.80 NaN along one, two and three directions). Against the `pecletmax`
+commit, 22 of 23 suite comparisons `max_abs 0` on CPU and 13 of 14 on GPU;
+`beltrami_yslab` is Courant-bound and `max_abs 0` with `dtmax` binding. The
+same gates pass. The inis keep `cflmax = 0.8`, which is now 46 % of the
+limit and costs a Courant-bound run 1.2 .. 1.5 times more steps; 1.2
+restores the old step. Reference set after both: `~/cfl_ref_binaries`.
 
 **4. LES at a level jump on a physical face: measured, one residual.** The
 SGS kernels do not read edge ghosts of cell-centred quantities that matter

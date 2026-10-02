@@ -2327,8 +2327,36 @@ immersed boundary. Phased, each phase verified before the next:
     bit-exactness comparison across this commit fails on those six by
     design: the reference set after it is `~/limiter_ref_binaries`.**
     The boundary-layer tutorial is `dtmax`-bound (sum number 0.42).
-    `cflmax` is still per-direction (F8: documented and printed, limit
-    sqrt(3) on the sum) -- the same question, not asked.
+  - **`cflmax` BOUNDS THE SUM too (user's decision, done 2026-10-02).**
+    RK3 with central convection is stable for `dt sum_d |u_d|/h_d < sqrt(3)`
+    (the linearised operator's spectrum is imaginary, of modulus up to that
+    sum), bracketed for flows along one / two / three directions by
+    `validation/courant_limit/run_gate.sh` (uniform flow + a 1e-6
+    perturbation: 1.65 stable, 1.80 NaN). `get_timestep_rates` reduces the
+    sum; the F8 `cfl:` report of the init log is gone with the per-component
+    number it reported; a `cflmax` above sqrt(3) is announced. **The inis
+    were NOT changed and this costs steps**: the old 0.8 on the largest
+    component was an effective 1.0 .. 1.2 on the sum in a turbulent flow
+    (ratio 1.26 / 1.44 printed by the boundary-layer cases; 2.4 for a flow
+    along the diagonal, which is above the limit), and is 46 % of the limit
+    now, so a Courant-bound run takes 1.2 .. 1.5 times more steps at the
+    same key. `cflmax = 1.2` restores the old step with a 30 % margin; the
+    choice is per case and the user's. The two limits are bounded
+    separately and RK3's region is not a rectangle (z = -2 + 1.2 i has
+    |R| = 0.99): do not push both. Against `f39c139` (nofma): 22 of 23 suite
+    comparisons `max_abs 0` on CPU, 13 of 14 on GPU; `beltrami_yslab` is
+    Courant-bound and is `max_abs 0` with `dtmax` binding. **Reference set
+    after both limiter changes: `~/cfl_ref_binaries`.**
+  - **NEXT: `docs/next_session_body_at_outlet.md`.** Since the outlet face
+    is predicted the solver STOPS when an immersed body touches an outlet
+    face (`check_outlet_faces_fluid`), which rules out every rough-wall or
+    immersed-wall boundary layer: `rough_jacobi.ini` no longer starts
+    (measured on a cut-down; `154e48f` ran it). The handout has the proposed
+    one-statement form (the face's own penalization, the neighbour's
+    unpenalized increment recovered from `qs`; bit-identical at zero
+    coefficient), what to investigate first, the gates, and where the review
+    goes after it (section 6 simplifications, step 10, the re-measurement
+    pass).
   - **LES at a level jump that runs into a wall** (the first case O4
     changes): the velocity-gradient tensor of the wall cell `(nb, 1)` reads
     `u(nb+1, 0)`, the x halo of the wall ghost row, which nothing wrote
@@ -2362,9 +2390,10 @@ immersed boundary. Phased, each phase verified before the next:
   9-case suites contain no outlet. A uniform-flow gate started from the
   uniform field cannot see a halo that nothing writes: the `refined` group
   starts from rest.
-- Anything touching the time-step limiter or the diffusion operator:
-  `validation/diffusion_limit/run_gate.sh` (the RK3 diffusion limit,
-  bracketed; `pecletmax` bounds the sum over directions). A run that prints
+- Anything touching the time-step limiter, the convection or the diffusion
+  operator: `validation/courant_limit/run_gate.sh` and
+  `validation/diffusion_limit/run_gate.sh` (the RK3 limits, bracketed;
+  `cflmax` and `pecletmax` bound the sum over directions). A run that prints
   `WARNING: dt x sum_d(nu/h_d^2) ... exceeds the RK3 limit` is beyond the
   limit of its grid: lower the fixed dt or `pecletmax` unless the field is
   exactly 1D/2D.
