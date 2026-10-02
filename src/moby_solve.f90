@@ -26,7 +26,7 @@ program moby_solve
         comm_allreduce_sum, comm_allreduce_max
     use :: profiling, only: init_step_profilers, write_step_profilers, prof_tic, prof_toc, &
         step_prof, PROF_MOMENTUM, PROF_IBM_MU, PROF_BODYFORCE, PROF_TURBULENCE, &
-        PROF_APPLY_BC, PROF_VEL_EXCHANGE, PROF_PROJECTION, PROF_IO_STATS, PROF_SCALAR
+        PROF_VEL_EXCHANGE, PROF_PROJECTION, PROF_IO_STATS, PROF_SCALAR
     implicit none
 
     integer :: arg_status, rkStage
@@ -58,6 +58,10 @@ program moby_solve
     ! ... and its leaf-key bit order (size 0: the legacy order).
     integer(C_INT), allocatable :: fileKeyOrder(:)
     logical :: fileLayout, case_exists
+    ! Outlet-normal faces whose value the restart file supplied (per domain
+    ! face): a LOW face is an interior index and always in the file; a HIGH
+    ! one is not (see init_outlet_faces).
+    logical :: outletGiven(NFACES)
     character(len=:), allocatable :: inputs
 
     call comm_init_world(c)
@@ -141,9 +145,12 @@ program moby_solve
     call init_scalar_fields(sc, dns, blk)
     call enter_block_data(blk)
     call enter_scalar_data(sc)
+    outletGiven = .false.
     if (has_restart_file(dns)) then
         if (c%has_terminal) print *, "reading restart fields: ", trim(dns%restart_file)
         call read_field(blk, dns, dns%restart_file, c, scalar_names(sc))
+        outletGiven(1:NFACES:2) = .true.
+        call read_outlet_planes(blk, bc, dns%restart_file, c, outletGiven)
     end if
     call zero_closed_halos(blk)
 
@@ -162,6 +169,7 @@ program moby_solve
     ! HOST, and enter_ibm_data maps that copy: host and device agree from here.
     call set_ibm_geometry(ibm, dns)
     if (dns%ibm_enabled) call read_ibm_coeff_file(ibm, dns, blk, c%has_terminal)
+    if (dns%ibm_enabled) call check_outlet_faces_fluid(blk, bc, ibm%coef)
     call enter_ibm_data(ibm, dns)
     ! [ibm] band_filter: near-body band list from the device coefficients
     ! (off: nothing is built, allocated, or mapped).
@@ -177,7 +185,10 @@ program moby_solve
     ! it made wf180_y30 differ between an x-split and a z-split run). The
     ! calls repeated below are idempotent: both write only ghosts and halos,
     ! from interior data that nothing in between modifies.
-    call apply_bc(blk, bc, outflow_copy=.true.)
+    call apply_bc(blk, bc)
+    ! An outlet-normal face is state the predictor advances; one the run
+    ! was not given starts from the zero-gradient value (init_outlet_faces).
+    call init_outlet_faces(blk, bc, outletGiven)
     call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W, VAR_P])
 #ifdef USE_OPENMP_OFFLOAD
     ! ...and back to the HOST, because init_rans_transport is host code
@@ -244,7 +255,7 @@ program moby_solve
         call enter_bodyforce_data(bf)
     end if
 
-    call apply_bc(blk, bc, outflow_copy=.true.)
+    call apply_bc(blk, bc)
     call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W, VAR_P])
     ! Scalar ghosts + halos for the first substage's stencil (no-op off).
     call scalar_sync(sc, blk, bc, c)
@@ -368,14 +379,18 @@ program moby_solve
 
             prof_start = prof_tic()
             if (turbulence_is_enabled(turb)) then
-                call momentum(blk, dns, dt_alpha, dt_beta, dt_gamma, ibm, turb, turb_prof, bf=bf)
+                call momentum(blk, dns, dt_alpha, dt_beta, dt_gamma, ibm, bc, turb, turb_prof, bf=bf)
             else
-                call momentum(blk, dns, dt_alpha, dt_beta, dt_gamma, ibm, bf=bf)
+                call momentum(blk, dns, dt_alpha, dt_beta, dt_gamma, ibm, bc, bf=bf)
             end if
             call prof_toc(step_prof, PROF_MOMENTUM, prof_start)
-            prof_start = prof_tic()
-            call apply_bc(blk, bc, outflow_copy=.true.)
-            call prof_toc(step_prof, PROF_APPLY_BC, prof_start)
+            ! No boundary write here. The predictor commits exactly the faces
+            ! it predicted (pinned faces keep their value, outlet faces are
+            ! advanced by it), and the ghosts -- tangential velocity, pressure
+            ! -- are read by nothing before the projection rewrites them after
+            ! its last correction: the divergence reads face-normal velocities
+            ! at interior tangential indices only.
+            !
             ! Post-predictor exchange with the conservation SYNC: the cross-level
             ! PROLONG/RESTRICT write the shared 2:1 face so the two stored copies
             ! start the projection mean-consistent (avg(fine)=coarse). The

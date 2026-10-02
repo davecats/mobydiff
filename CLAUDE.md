@@ -66,6 +66,14 @@ mpirun -n 1 ./build_gpu/moby_solve path/to/input.ini    # main is a symlink
   argue a site is safe — TEST it: make the host-side change and check the
   GPU output MOVES. Full audit (every call site, verdict + probe) in
   `docs/next_session_verification.md` §2.
+- **A variable that appears ONLY as the bound of a mapped array section
+  (`map(to: a(1:n))`) must also be read by ordinary code** -- as a loop
+  bound, typically. nvfortran 25.9 drops the assignment of a variable it
+  sees used nowhere else, the section is then sized from an uninitialised
+  value, and the run stops with "partially present on the device", or does
+  not, at random (found 2026-10-01 in the first form of
+  `predict_outlet_faces`: two runs in three). The boundary kernels loop
+  over all `npts` points and skip for this reason.
 
 ## Active work
 
@@ -653,7 +661,10 @@ immersed boundary. Phased, each phase verified before the next:
   post-momentum and at init/restart, OFF inside the projection loop; a
   face touched only by phi corrections keeps its IC shape forever and the
   run converges drift-free to a WRONG steady state (plug outlet profile,
-  O(0.2) crossflow). A1: `[case] name = airfoil`
+  O(0.2) crossflow). (SUPERSEDED 2026-10-01: that write was a reset, the
+  defect behind the outlet pressure mode; the face is now PREDICTED, see
+  "The outlet face is predicted" below. The lesson stands in the form "the
+  face needs a momentum equation".) A1: `[case] name = airfoil`
   (`src/modules/flow/airfoil/airfoil_flow.f90`; [case.airfoil] aoa/u_inf/
   chord/force_sample_interval/runtime_file; x_min,y_min,y_max inlet at
   (U∞cosα, U∞sinα, 0) + x_max outlet via patch types, set-if-unset;
@@ -2163,9 +2174,9 @@ immersed boundary. Phased, each phase verified before the next:
     index 1, in the loop range, with `oldrhs` and in the field file; a
     high-side one is `nx+1` with none of the three), no low-side outlet has
     ever run, and the predictor's final copy overwrites pinned low faces
-    with stale `qs` that `apply_bc` repairs afterwards. Until then: any
-    stored-pressure or CV-force number of an unsteady outlet case carries
-    this mode, and the clean-p protocol is not clean.
+    with stale `qs` that `apply_bc` repairs afterwards. **DONE the same
+    day: the next bullet.** Stored-pressure and CV-force numbers of an
+    unsteady outlet case recorded BEFORE it carry this mode.
   - Smaller: `validation/blasius/` is back as the laminar stretched-line gate
     (four projections measured; Chebyshev stable to t = 2000); the suite
     drivers deleted the wrong case-file name before re-preparing (fixed); the
@@ -2175,6 +2186,89 @@ immersed boundary. Phased, each phase verified before the next:
     configure time, defined on that one file so a new commit relinks instead
     of rebuilding; `-dirty` means the tree had uncommitted changes).
     **NEXT: `docs/next_session_after_step9.md`.**
+- **The outlet face is predicted (DONE 2026-10-01, increments O0-O5,
+  `docs/next_session_outlet.md`: the handout, the investigation that came
+  first, and "Implementation" with every gate number).** The user ratified
+  the design the same day. The normal velocity on a declared outlet is an
+  UNKNOWN with its own momentum equation, `du_f/dt = R_n - (dp/dn)_f`: the
+  non-pressure right-hand side of its interior neighbour (zero normal
+  gradient) and its own pressure gradient against the held outlet pressure.
+  - **One kernel, one path for both sides**: `step.f90 predict_outlet_faces`,
+    inside `momentum()` between the last correction of `qs` and the commit,
+    `q(f) = qs(n) + ((q(f) - q(n)) + dt_gamma (dp(n) - dp(f)))` with
+    `(f, n) = (1, 2)` low / `(nb+1, nb)` high and `dp(i) = (p(i) - p(i-1))
+    d1(i)` read through the Dirichlet pressure GHOST. It needs nothing the
+    high side lacks (no `oldrhs`, no `q(nb+2)`), and the fused kernel is
+    untouched. Do NOT change the order of that sum: it is what makes the
+    scheme equal the 2026-10-01 prototype binary at `max_abs 0` (nofma), on
+    seven outlet cases, CPU 1/4 ranks and GPU, so the prototype's table is
+    this scheme's. The outlet in y or z equals the x case under coordinate
+    permutation at 0.0.
+  - GONE: `BCK_FACE_OUTFLOW`, `apply_bc`'s `outflow_copy`, the
+    post-predictor `apply_bc` altogether (it ran once per substage to repair
+    pinned low faces and to reset the outlet; `apply_bc` now runs once, at
+    the end of the projection), its profiling bucket, the outlet arguments
+    of `interface_correct`. `BC_OUTFLOW` stays as the row TYPE (restart
+    metadata) and resolves to no boundary row.
+  - **The final `qs -> q` copy honours the start masks**: a pinned low face
+    is written at init and never again (it used to be overwritten with the
+    never-predicted `qs(1) = 0` and repaired by the next `apply_bc`). Cost
+    not measurable.
+  - **RESTART: the outlet face is state.** Low side: index 1 of
+    `un/vn/wn`, now used instead of overwritten. High side: `un_xmax` /
+    `vn_ymax` / `wn_zmax`, one row per block (`io.f90
+    write_outlet_planes`), written only by cases with a high outlet.
+    Restart == continuous at `max_abs 0` (five cases, CPU and GPU). A file
+    without the plane is announced and starts that face from the
+    zero-gradient value. **LANDMINE: a solver-minted template carries the
+    plane of its own one-step run -- an IC tool that overwrites only
+    `un/vn/wn/pn` restarts the outlet face from an unrelated field.** Write
+    the plane (`make_freestream_ics.py`, `make_blasius_ic.py`) or delete it.
+  - **LEVEL JUMPS ON A PHYSICAL FACE (pre-existing, found by the
+    investigation, fixed)**: cross-level exchange entries did not extend
+    tangentially into physical halo rows, so the edge halo of the normal
+    velocity on a HIGH inlet/outlet face next to a 2:1 neighbour was never
+    written (index `nb+1`; the low face is index 1 and was covered) and kept
+    its initial value. Invisible to every uniform-flow gate, which
+    initialise that halo correctly: from rest, 2.28e-2 frozen error and a
+    linearly growing pressure. `comm.f90 candidate_boxes` now extends every
+    transfer (a refined RESTRICT dim as a separate one-row piece of the
+    entry, `N_PIECES`); no kernel changed; refined suites `max_abs 0`.
+    **A gate for a transfer must start from a field that is NOT the
+    answer** (`validation/freestream/run_gates.sh refined`).
+  - Gates: `validation/freestream/run_gates.sh` groups `low` (the outlet
+    on a LOW face had never run: mirrored pair 3.4e-15, Poiseuille and
+    vortex in -x identical to the x_max numbers), `refined`, `restart`;
+    `run_bitexact_outlet.sh` is the outlet-case bit-exactness suite the 7-
+    and 9-case suites lack. Outlet-free suites `max_abs 0` vs `154e48f`
+    (`~/outlet_ref_src`, a pinned worktree with all four builds).
+  - What moved: Poiseuille last-cell p 2.41e-3 -> 1.247e-3 (exact 1.25e-3);
+    Lamb-Oseen reflected fraction 2.2e-2 -> 9.8e-5; Blasius dv 0.124 ->
+    0.013 and **the four projections now give ONE answer** (theta 1.65 %,
+    H 0.82 %; their old spread was the reset, not convergence luck);
+    cylinder Re 100 stored p rms 0.89/1.65 -> 0.080/0.073 at dt 5e-3 /
+    6.25e-4, the two step sizes within 6e-5, St 0.167 -> 0.174, mean C_D
+    1.447 -> 1.438, CV C_L amplitude 0.655 -> 0.393; Re 40 C_D 1.6924 ->
+    1.6968. **The clean-p protocol is not needed on outlet cases any more.**
+  - **St 0.174 IS the 16 D cylinder domain's number** (settled with four
+    200-time-unit cold starts, `validation/cylinder/shedding_fit.py`): with
+    the outlet moved from 10 D to 26 D main gives 0.1739 / C_D 1.4398, the
+    new scheme 0.1737 / 1.4383 at 10 D and 0.1743 / 1.4412 at 26 D. Main's
+    0.1677 was the outlet, and so was the "3rd harmonic of the confined
+    lift" of the A2 notes: a second line in main's lift, at 3 St on the
+    16 x 16 domain and at 1.44 St (twice the shedding line, C_D 5 % high)
+    on the 16 x 32 one. No such line exists with the predicted face.
+  - Unmoved: `tutorials/naca/rans` restarted from the converged state,
+    both binaries, 0.5 t.u. (C_L 0.52008 / 0.52007, C_D 0.01275 both; the
+    outlet is 77 chords away); the sailplane smoke case.
+    NOT re-run: the turbulent boundary-layer tutorial (HoreKa size) and a
+    from-scratch NACA convergence.
+  - SIDE FINDING, open: `pecletmax` is per-direction. RK3 needs
+    `4 nu dt sum(1/h^2) <= 2.51`, i.e. 0.63 / 0.31 / 0.21 for one / two /
+    three equally fine directions; the usual 0.5 is safe only where one
+    direction dominates or another limit binds. An isotropic refined patch
+    at 0.41 sat in a bounded O(0.65) limit cycle held by the Courant
+    limiter.
 
 ## Verification
 
@@ -2189,4 +2283,10 @@ immersed boundary. Phased, each phase verified before the next:
   every surviving test case is `validation/README.md`.
 - Refinement phases: uniform-flow preservation across interfaces and global
   mass conservation to round-off (see strategy doc §11 for the full list).
+- Anything touching an inlet/outlet face or the exchange next to a physical
+  boundary: `validation/freestream/run_gates.sh` (groups `low`, `refined`,
+  `restart` since 2026-10-01) and `run_bitexact_outlet.sh` -- the 7- and
+  9-case suites contain no outlet. A uniform-flow gate started from the
+  uniform field cannot see a halo that nothing writes: the `refined` group
+  starts from rest.
 - Never declare a phase done with failing builds or unverified results.

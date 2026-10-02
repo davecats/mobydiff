@@ -1056,6 +1056,111 @@ int fdm_h5_read_scalar(const char *filename, const char *name,
 }
 
 /*
+ * One row of n doubles per block, appended to a field file that
+ * fdm_h5_write_field already produced: the (n_blocks_global, n) layout of
+ * write_block_rows. Used for the outlet-normal velocity on a HIGH domain
+ * face (io.f90 write_outlet_planes): that face is state, and index nb+1 is
+ * not part of the per-variable block datasets. Written only by cases that
+ * have such a face, so every other file is unchanged. Collective.
+ */
+int fdm_h5_append_block_rows(const char *filename, const char *name, int n,
+                             int n_blocks, int n_blocks_global, int id_start,
+                             const double *rows)
+{
+    hid_t plist, file;
+    int ierr = 0;
+
+    if (n < 1 || n_blocks < 1) return 1;
+
+    plist = H5Pcreate(H5P_FILE_ACCESS);
+    if (plist < 0) return 1;
+    if (H5Pset_fapl_mpio(plist, MPI_COMM_WORLD, MPI_INFO_NULL) < 0) {
+        H5Pclose(plist);
+        return 1;
+    }
+    file = H5Fopen(filename, H5F_ACC_RDWR, plist);
+    H5Pclose(plist);
+    if (file < 0) return 1;
+
+    ierr |= write_block_rows(file, name, n, n_blocks, n_blocks_global, id_start, rows);
+    ierr |= H5Fclose(file) < 0;
+    return ierr != 0;
+}
+
+/*
+ * Read back a per-block row dataset (fdm_h5_append_block_rows). *found = 0
+ * when the file does not carry it, which is not an error (an older
+ * snapshot, a generated initial condition): the caller falls back. Rows are
+ * matched to this rank's blocks on (origin, level), like every block-layout
+ * dataset. Collective.
+ */
+int fdm_h5_read_block_rows(const char *filename, const char *name, int n,
+                           int n_blocks, int n_blocks_global, int id_start,
+                           const int *block_origin, const int *block_level,
+                           int *found, double *rows)
+{
+    hid_t file, dset, file_space, xfer;
+    hsize_t dims[2] = {0, 0};
+    int *row_of = NULL;
+    int reordered = 0;
+    int ierr = 0;
+
+    *found = 0;
+    if (n < 1 || n_blocks < 1) return 1;
+
+    file = open_parallel_file(filename);
+    if (file < 0) return 1;
+    if (H5Lexists(file, name, H5P_DEFAULT) <= 0) {
+        H5Fclose(file);
+        return 0;
+    }
+    dset = H5Dopen2(file, name, H5P_DEFAULT);
+    if (dset < 0) {
+        H5Fclose(file);
+        return 1;
+    }
+    file_space = H5Dget_space(dset);
+    xfer = H5Pcreate(H5P_DATASET_XFER);
+    if (file_space < 0 || xfer < 0 || H5Sget_simple_extent_ndims(file_space) != 2) {
+        ierr = 1;
+    } else {
+        H5Sget_simple_extent_dims(file_space, dims, NULL);
+        if (dims[0] != (hsize_t)n_blocks_global || dims[1] != (hsize_t)n) ierr = 1;
+    }
+    if (!ierr) {
+        ierr |= block_row_map(file, n_blocks, n_blocks_global, id_start,
+                              block_origin, block_level, &row_of, &reordered) != 0;
+    }
+    if (!ierr) H5Pset_dxpl_mpio(xfer, H5FD_MPIO_INDEPENDENT);
+
+    /* Consecutive file rows as one hyperslab (read_block_dataset's rule). */
+    for (int b0 = 0; b0 < n_blocks && !ierr; ) {
+        int b1 = b0;
+        hsize_t start[2] = {(hsize_t)row_of[b0], 0};
+        hsize_t count[2] = {0, (hsize_t)n};
+        hid_t mem_space;
+
+        while (b1 + 1 < n_blocks && row_of[b1+1] == row_of[b1] + 1) ++b1;
+        count[0] = (hsize_t)(b1 - b0 + 1);
+        mem_space = H5Screate_simple(2, count, NULL);
+        if (mem_space < 0 ||
+            H5Sselect_hyperslab(file_space, H5S_SELECT_SET, start, NULL, count, NULL) < 0 ||
+            H5Dread(dset, H5T_NATIVE_DOUBLE, mem_space, file_space, xfer,
+                    rows + (size_t)b0*(size_t)n) < 0) ierr = 1;
+        if (mem_space >= 0) H5Sclose(mem_space);
+        b0 = b1 + 1;
+    }
+
+    if (row_of != NULL) free(row_of);
+    if (xfer >= 0) H5Pclose(xfer);
+    if (file_space >= 0) H5Sclose(file_space);
+    H5Dclose(dset);
+    ierr |= H5Fclose(file) < 0;
+    if (!ierr) *found = 1;
+    return ierr != 0;
+}
+
+/*
  * RANS geometry diagnostic file (rans.f90, [rans] dump_geometry): the leaf
  * block table, interior dwall/yeff/wallcell rows in the block-table layout
  * and the per-block cell-centre coordinate lines. Self-contained file --

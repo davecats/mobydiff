@@ -49,9 +49,9 @@ file (`--grid-file sailplane_case.h5`).
 ## Boundary conditions (changed 2026-09-27, numerics review F4)
 
 `x_min` is a uniform inflow (`u = 1`, Neumann p); `x_max` is a declared
-**outlet** (`x_max_patch = outlet`: zero-gradient normal velocity in the
-predictor, Dirichlet `p = 0` in the projection, Neumann tangential
-velocities); the y and z faces are free-slip (Dirichlet 0 normal, Neumann
+**outlet** (`x_max_patch = outlet`: the face-normal velocity is an unknown,
+advanced by the predictor and corrected by the projection against the held
+`p = 0` -- `docs/next_session_outlet.md`; Neumann tangential velocities); the y and z faces are free-slip (Dirichlet 0 normal, Neumann
 tangential). The ini used to spell the outlet as `x_max_{u,v,w}_type =
 neumann` + `x_max_p_type = dirichlet`. A Neumann condition on the NORMAL
 velocity component is now a config error: `apply_bc` rewrote that face from

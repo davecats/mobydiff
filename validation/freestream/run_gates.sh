@@ -3,6 +3,19 @@
 #
 #   ./run_gates.sh              # all gates, sequentially (one job at a time)
 #   ./run_gates.sh oblique      # one group: oblique | pois | vortex | ranks | config
+#                               #          | low | refined | restart
+#
+# The last three are the OUTLET-FACE gates (docs/next_session_outlet.md):
+#   low      the outlet on a LOW face: a mirrored pair with a non-parallel
+#            outflow, and the Poiseuille and vortex cases run in -x (needs the
+#            pois and vortex groups' outputs); each must reproduce its x_max
+#            image to round-off
+#   refined  uniform oblique flow recovered FROM REST through a refined patch
+#            that touches nothing / the x_max outlet / the x_min outlet (the
+#            exactness gates start from the uniform field and cannot see a
+#            halo that is never written), plus 1 == 4 ranks on the second
+#   restart  a run restarted at mid-length equals the continuous one
+#            (run_restart_outlet.sh)
 #
 # Environment:  BIN=<solver>   (default ../../build_cpu/main)
 #               BIN_GPU=<gpu>  (default ../../build_gpu/main; ranks group)
@@ -135,6 +148,107 @@ if want config; then
             rm -f .bad.ini .bad.log
         done
     fi
+fi
+
+# The x-mirror image of a freestream ini: inlet at x_max, outlet at x_min,
+# flow in -x (u values and the initial u change sign; v is unchanged).
+mirror_ini() {  # in out prefix
+    sed -e 's/^x_min_patch = inlet/@IN@/' -e 's/^x_max_patch = outlet/x_min_patch = outlet/' \
+        -e 's/^@IN@/x_max_patch = inlet/' \
+        -e 's/^x_min_u_value *= *\(.*\)/x_max_u_value = -\1/' \
+        -e 's/^x_min_u_profile/x_max_u_profile/' -e 's/^x_min_v_/x_max_v_/' \
+        -e 's/^\(y_m[a-z]*_u_value\) *= *\(.*\)/\1 = -\2/' \
+        -e 's/^initial_u *= *\(.*\)/initial_u = -\1/' \
+        -e "s/^field_prefix.*/field_prefix = $3/" "$1" > "$2"
+}
+
+# --- outlet gate: the outlet on a LOW face ---
+if want low; then
+    rm -f outlet_high_*.h5 outlet_low_*.h5
+    run "$BIN" outlet_high.ini 1 outlet_high && run "$BIN" outlet_low.ini 1 outlet_low && \
+    python3 check_freestream.py mirror "$(ls -t outlet_high_*.h5 | head -1)" \
+        "$(ls -t outlet_low_*.h5 | head -1)" || status=1
+
+    if [ -f pois_ref_final.h5 ] && ls pois_io_*.h5 > /dev/null 2>&1; then
+        rm -f pois_low_*.h5 pois_lowmid_*.h5 pois_lowtmpl_*.h5 IC_pois_low.h5
+        mirror_ini pois_io.ini .pl.ini pois_low
+        sed -i 's|^file = IC_pois.h5|file = IC_pois_low.h5|' .pl.ini
+        sed -e 's|^file = IC_pois_low.h5|file =|' -e 's/^nsteps.*/nsteps = 1/' \
+            -e 's/^field_prefix.*/field_prefix = pois_lowtmpl/' .pl.ini > .tmpl.ini
+        run "$BIN" .tmpl.ini 1 pois_lowtmpl && {
+            python3 make_freestream_ics.py pois --mirror --src pois_ref_final.h5 \
+                --template "$(ls -t pois_lowtmpl_*.h5 | head -1)" --out IC_pois_low.h5
+            sed -e 's/^nsteps.*/nsteps = 5000/' -e 's/^field_prefix.*/field_prefix = pois_lowmid/' \
+                .pl.ini > .mid.ini
+            run "$BIN" .mid.ini 1 pois_lowmid
+            run "$BIN" .pl.ini 1 pois_low
+            python3 check_freestream.py pois --mirror "$(ls -t pois_low_*.h5 | head -1)" \
+                pois_ref_final.h5 --drift "$(ls -t pois_lowmid_*.h5 | head -1)" || status=1
+            python3 check_freestream.py mirror "$(ls -t pois_io_*.h5 | head -1)" \
+                "$(ls -t pois_low_*.h5 | head -1)" --tol 1e-10 || status=1
+        }
+        rm -f .pl.ini .tmpl.ini .mid.ini
+    else
+        echo "low: Poiseuille leg SKIPPED (run the pois group first)"; status=1
+    fi
+
+    if ls lamboseen_*.h5 > /dev/null 2>&1; then
+        rm -f vortex_low_*.h5 vortex_lowtmpl_*.h5 IC_vortex_low.h5
+        mirror_ini lamboseen.ini .vl.ini vortex_low
+        sed -i 's|^file = IC_vortex.h5|file = IC_vortex_low.h5|' .vl.ini
+        sed -e 's|^file = IC_vortex_low.h5|file =|' -e 's/^nsteps.*/nsteps = 1/' \
+            -e 's/^t_final.*/t_final = 0.0/' -e 's/^field_prefix.*/field_prefix = vortex_lowtmpl/' \
+            .vl.ini > .tmpl.ini
+        run "$BIN" .tmpl.ini 1 vortex_lowtmpl && {
+            python3 make_freestream_ics.py vortex --mirror \
+                --template "$(ls -t vortex_lowtmpl_*.h5 | head -1)" --out IC_vortex_low.h5
+            run "$BIN" .vl.ini 1 vortex_low && {
+                python3 check_freestream.py vortex --mirror \
+                    $(ls vortex_low_*.h5 | sort -t_ -k3 -n) || status=1
+                python3 check_freestream.py mirror \
+                    "$(ls lamboseen_*.h5 | sort -t_ -k2 -n | tail -1)" \
+                    "$(ls vortex_low_*.h5 | sort -t_ -k3 -n | tail -1)" --tol 1e-9 || status=1
+            }
+        }
+        rm -f .vl.ini .tmpl.ini
+    else
+        echo "low: vortex leg SKIPPED (run the vortex group first)"; status=1
+    fi
+fi
+
+# --- outlet gate: uniform flow recovered from rest through a refined patch ---
+if want refined; then
+    U0=0.9396926207859084; V0=0.3420201433256687
+    zero_ini() {  # out prefix "box"
+        sed -e 's/^initial_u.*/initial_u = 0.0/' -e 's/^initial_v.*/initial_v = 0.0/' \
+            -e 's/^nsteps.*/nsteps = 2000/' -e 's/^niter.*/niter = 12\naccel = chebyshev/' \
+            -e 's/^dtmax.*/dtmax = 2.5e-3/' \
+            -e "s/^nb = 8/nb = 8\nrefine = $3\nrefine_levels = 1/" \
+            -e "s/^field_prefix.*/field_prefix = $2/" oblique.ini > "$1"
+    }
+    rm -f zr_inner_*.h5 zr_high_*.h5 zr_low_*.h5 zr_high1_*.h5 zr_high4_*.h5
+    zero_ini .zi.ini zr_inner "0.25 0.75 0.25 0.75 0.0 1.0"
+    zero_ini .zh.ini zr_high  "0.5 1.0 0.25 0.75 0.0 1.0"
+    zero_ini .zt.ini zr_low   "0.0 0.5 0.25 0.75 0.0 1.0"
+    mirror_ini .zt.ini .zl.ini zr_low
+    run "$BIN" .zi.ini 1 zr_inner && \
+        python3 check_freestream.py uniform "$(ls -t zr_inner_*.h5 | head -1)" --u0 $U0 --v0 $V0 || status=1
+    run "$BIN" .zh.ini 1 zr_high && \
+        python3 check_freestream.py uniform "$(ls -t zr_high_*.h5 | head -1)" --u0 $U0 --v0 $V0 || status=1
+    run "$BIN" .zl.ini 1 zr_low && \
+        python3 check_freestream.py uniform "$(ls -t zr_low_*.h5 | head -1)" --u0 -$U0 --v0 $V0 || status=1
+    for r in 1 4; do
+        sed -e 's/^nsteps.*/nsteps = 200/' -e "s/^field_prefix.*/field_prefix = zr_high${r}/" .zh.ini > .r.ini
+        run "$BIN" .r.ini $r zr_high$r; rm -f .r.ini
+    done
+    $CMP "$(ls -t zr_high1_*.h5 | head -1)" "$(ls -t zr_high4_*.h5 | head -1)" --tolerance 0 \
+        && echo "refined-on-outlet 1==4 ranks: EXACT" || { echo "refined-on-outlet ranks MISMATCH"; status=1; }
+    rm -f .zi.ini .zh.ini .zt.ini .zl.ini
+fi
+
+# --- outlet gate: restart == continuous ---
+if want restart; then
+    SOLVER="$(cd "$(dirname "$BIN")" && pwd)/$(basename "$BIN")" ./run_restart_outlet.sh || status=1
 fi
 
 echo

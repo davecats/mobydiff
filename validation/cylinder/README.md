@@ -347,3 +347,78 @@ is a different one, not only a cleaner statistic: the Strouhal number moves
 C_L' ~0.33; this domain has ~6 % blockage). Which of 0.167 and 0.174 is the
 right number for THIS confined domain is not settled here; it needs the
 lateral far field varied.
+
+## The outlet face is predicted (2026-10-01; `docs/next_session_outlet.md`)
+
+The prototype of the previous section is not on main, and does not need to
+be: its arithmetic is now the scheme, as one kernel inside `momentum()`
+(`step.f90 predict_outlet_faces`), without the reset row and without a call
+before the predictor. The new binary equals the prototype binary at
+`max_abs 0` (nofma) on this case, 20 steps from rest, CPU and GPU
+(`../freestream/run_bitexact_outlet.sh`). The measurements above were
+repeated with the final production GPU build (one A6000):
+
+    NEW=/abs/build_gpu/moby_solve OUT=outlet_new ./run_outlet_mode.sh cheb60:0 cheb60:3 cheb12:0:100
+
+| | main `154e48f` | now |
+|---|---|---|
+| p rms after one time unit, dt 5e-3 / 6.25e-4 | 0.89 / 1.65 | **0.080 / 0.073** |
+| max \|p\| | 3.1 / 6.0 | 0.72 / 0.73 |
+| p rms, outlet band | 2.0 / 3.7 | 0.040 / 0.011 |
+| velocity, dt 5e-3 against 6.25e-4 at T: max | 0.15 | **6.0e-5** |
+| 100 time units, production settings: St | 0.1670 | 0.1744 |
+| … mean C_D | 1.4474 | 1.4383 |
+| … control-volume C_L amplitude | 0.655 | 0.393 |
+| … stored p rms over the run | 0.20 … 1.13, periodic | 0.073 … 0.078 |
+| Re 40, C_D (`check_cylinder.py steady`) | 1.69235 ± 8e-4 | 1.69682 ± 1e-5 |
+
+Every number of the prototype column of the previous section is reproduced
+to the digits printed. The Re 40 leg is new: 12000 steps (60 time units)
+from main's clean-p converged state, C_D settling monotonically from
+1.6948 over the first ten time units to 1.696818 over the last ten. The
+steady drag moves by +0.26 %: main's steady state had the outflow forced
+parallel in the last cell column, and this one does not.
+
+### Which Strouhal number is this domain's
+
+The open question of the previous section (0.167 on main, 0.174 with the
+prototype). Four cold starts to t = 200 with the production settings, each
+with the reference binary (`154e48f`) and the new one, on a domain twice as
+long downstream (`nx = 1024, lx = 32`: the outlet 26 D behind the cylinder
+instead of 10 D) and on one twice as tall (`ny = 1024, ly = 32`,
+`stl_translate = 0 8 0`, `cv_box = 4 8 14.5 17.5`: half the blockage).
+`shedding_fit.py` on the control-volume series, last 50 time units (the 50
+before them give the same St to 1e-4 in every run but one, 7e-4):
+
+| domain lx x ly | scheme | St | lift line at St | second line in the lift | mean C_D | C_L range |
+|---|---|---|---|---|---|---|
+| 16 x 16 | main | 0.1677 | 0.271 | f = 0.503, amplitude 0.415 | 1.4474 | ±0.64 |
+| 16 x 16 | **now** | **0.1737** | 0.382 | none (0.016) | 1.4383 | ±0.38 |
+| 32 x 16 | main | **0.1739** | 0.374 | none (0.017) | 1.4398 | ±0.37 |
+| 32 x 16 | now | 0.1743 | 0.383 | none (0.019) | 1.4412 | ±0.38 |
+| 16 x 32 | main | 0.1663 | 0.393 | f = 0.240, amplitude **0.842** | 1.5007 | −1.58 … +1.65 |
+| 16 x 32 | now | 0.1723 | 0.383 | none (0.010) | 1.4277 | ±0.38 |
+
+(`check_cylinder.py strouhal` takes the centroid of an FFT peak whose bin
+is 0.02 wide on this window and reads 0.1670 / 0.1744 for the first two
+rows; the fit is the sharper estimate of the same line.)
+
+**0.174 is this domain's number.** With the outlet moved away, main gives
+0.1739 and C_D 1.4398, which is what the new scheme gives with the outlet
+at 10 D (0.1737, 1.4383) and at 26 D (0.1743, 1.4412): the new scheme is
+insensitive to where the outlet is (0.3 % in St, 0.2 % in C_D), and main's
+0.1677 was the outlet. The second line in main's lift is not a harmonic of
+the shedding either: it sits at 3 St on the 16 x 16 domain and at 1.44 St
+on the taller one, where it is twice as large as the shedding line and the
+drag reads 5 % high. That line is what the A2 note "the confined C_L
+carries a comparable-power 3rd harmonic" described; a confined cylinder has
+no such harmonic. Halving the blockage lowers St by 0.8 % (0.1737 to
+0.1723) and C_D by 0.7 %, toward the unbounded values, as it should.
+
+Cost on the A6000, 4.2 M cells: 87.8 / 87.9 ms per step before, 87.6 /
+87.7 after.
+
+**The clean-p protocol is no longer needed for this case**: the stored
+pressure of a production run (Chebyshev niter 12, dt 5e-3) stays at p rms
+0.073 … 0.078 over 100 time units and the control-volume lift is read from
+it directly.

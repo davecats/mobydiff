@@ -25,8 +25,10 @@ module boundary
 
     ! Per-variable BC types (faceBcType values). DIRICHLET/NEUMANN come from
     ! the ini (_type keys); OUTFLOW is INTERNAL-only, derived by
-    ! resolve_face_bcs for the normal velocity of an outlet face: apply_bc
-    ! skips the face write and the pressure projection owns the face.
+    ! resolve_face_bcs for the normal velocity of an outlet face. Such a face
+    ! is an UNKNOWN, not a boundary value: the momentum predictor advances
+    ! it (step.f90 predict_outlet_faces), the pressure projection corrects
+    ! it against the held outlet pressure, and it has NO boundary row.
     integer(C_INT), parameter :: BC_DIRICHLET = 0_C_INT
     integer(C_INT), parameter :: BC_NEUMANN = 1_C_INT
     integer(C_INT), parameter :: BC_OUTFLOW = 2_C_INT
@@ -69,16 +71,15 @@ module boundary
     !                Neumann    w = +1, C = dn v   (v = the normal derivative)
     !   FACE         normal velocity, Dirichlet: dst = the face dof, src =
     !                the neighbouring interior face, w = 0, C = v (the pin).
-    !   FACE_OUTFLOW normal velocity of an outlet: w = +1, C = dn v (= 0),
-    !                the zero-gradient copy; written by the PREDICTOR-stage
-    !                call only (outflow_copy), never inside the projection.
+    !   NONE         no row. The normal velocity of an OUTLET is one: it is
+    !                predicted and corrected like an interior face (see
+    !                BC_OUTFLOW; the faces are flagged in faceOutlet).
     ! The kernels then carry no geometry and no type branches, and the
     ! velocity, pressure and scalar rows are columns of the same tables
     ! (scalar.f90 fills its columns through set_scalar_bc_rows).
     integer(C_INT), parameter :: BCK_NONE = 0_C_INT
     integer(C_INT), parameter :: BCK_GHOST = 1_C_INT
     integer(C_INT), parameter :: BCK_FACE = 2_C_INT
-    integer(C_INT), parameter :: BCK_FACE_OUTFLOW = 3_C_INT
 
     type :: boundary_type
         logical(C_BOOL) :: isPeriodic(1:3)
@@ -100,6 +101,13 @@ module boundary
         integer(C_INT), allocatable :: bcKind(:,:)   ! (nVar, NFACES)
         real(C_DOUBLE), allocatable :: bcW(:,:)      ! (nVar, NFACES)
         real(C_DOUBLE), allocatable :: bcC(:,:)      ! (nVar, nTotal)
+
+        ! The declared OUTLET faces (1 = the face-normal velocity there is
+        ! predicted, step.f90 predict_outlet_faces) and how many of this
+        ! rank's boundary points lie on one. nOutlet = 0 on a rank, or in a
+        ! case, without an outlet face -- nothing is launched then.
+        integer(C_INT) :: faceOutlet(1:NFACES) = 0_C_INT
+        integer(C_INT) :: nOutlet = 0_C_INT
 
         ! Which rows the ini set explicitly (_type/_value keys). Config is
         ! authority: read_restart_metadata keeps these rows over the restart
@@ -196,11 +204,12 @@ contains
                     end do
                     call resolve_bc_row(bc, int(VAR_P), face_id, BC_NEUMANN)
                 case (PATCH_OUTLET)
-                    ! Normal velocity: the internal outflow type (apply_bc
-                    ! skips the face; the projection owns it). OUTFLOW cannot
-                    ! be written in an ini, so ANY explicit normal type key
-                    ! contradicts the declaration. Tangential Neumann 0,
-                    ! pressure Dirichlet (default 0 -- the pinned level).
+                    ! Normal velocity: the internal outflow type (no boundary
+                    ! row: the predictor and the projection own the face).
+                    ! OUTFLOW cannot be written in an ini, so ANY explicit
+                    ! normal type key contradicts the declaration. Tangential
+                    ! Neumann 0, pressure Dirichlet (default 0 -- the held
+                    ! outlet pressure).
                     do var = int(VAR_U), int(VAR_W)
                         call resolve_bc_row(bc, var, face_id, &
                             merge(BC_OUTFLOW, BC_NEUMANN, var == dir))
@@ -208,13 +217,12 @@ contains
                     call resolve_bc_row(bc, int(VAR_P), face_id, BC_DIRICHLET)
                 end select
                 ! A Neumann condition on the NORMAL velocity component is not a
-                ! boundary condition the projection can honour: apply_bc
-                ! rewrites the face from the corrected interior every
-                ! iteration, which un-does the correction the SPD operator
-                ! assumed at that row (numerics review F4, 2026-09-27). The
-                ! outflow patch is the supported way to let flow leave --
-                ! zero-gradient predictor write, then the Dirichlet-p
-                ! projection owns the face -- so point there.
+                ! boundary condition the projection can honour: a row that
+                ! rewrites the face from the corrected interior un-does the
+                ! correction the SPD operator assumed there (numerics review
+                ! F4, 2026-09-27). The outflow patch is the supported way to
+                ! let flow leave -- the face is predicted, then corrected
+                ! against the Dirichlet pressure -- so point there.
                 if (.not. bc%isPeriodic(dir)) then
                     if (bc%faceBcType(dir, face_id) == BC_NEUMANN) then
                         print '(a,i0,a,i0,a)', " error: [boundary] Neumann type on the NORMAL velocity" // &
@@ -311,6 +319,17 @@ contains
         end do
 
         call update_boundary_values(bc, blk, dns)
+
+        ! The outlet faces: those carrying the OUTFLOW type on their normal
+        ! component, and this rank's share of their points.
+        do face_id = 1, NFACES
+            bc%faceOutlet(face_id) = merge(1_C_INT, 0_C_INT, &
+                bc%faceBcType(boundary_face_dir(face_id), face_id) == BC_OUTFLOW)
+        end do
+        bc%nOutlet = 0_C_INT
+        do pos = 1, total
+            bc%nOutlet = bc%nOutlet + bc%faceOutlet(int(bc%pointFace(pos)))
+        end do
     end subroutine init_boundary_faces
 
     logical function block_face_is_physical(blk, b, dir, side)
@@ -367,6 +386,8 @@ contains
         if (allocated(bc%pointBcValue)) deallocate(bc%pointBcValue)
         if (allocated(bc%bcKind)) deallocate(bc%bcKind, bc%bcW, bc%bcC)
         bc%nTotal = 0_C_INT
+        bc%nOutlet = 0_C_INT
+        bc%faceOutlet = 0_C_INT
     end subroutine destroy_boundary_faces
 
     subroutine update_boundary_values(bc, blk, dns)
@@ -449,8 +470,9 @@ contains
                     bc%bcKind(var,f) = BCK_FACE
                     bc%bcW(var,f) = 0.0d0
                 case (BC_OUTFLOW)
-                    bc%bcKind(var,f) = BCK_FACE_OUTFLOW
-                    bc%bcW(var,f) = 1.0d0
+                    ! An unknown, not a boundary value: no row.
+                    bc%bcKind(var,f) = BCK_NONE
+                    bc%bcW(var,f) = 0.0d0
                 case default
                     ! Refused by resolve_face_bcs (numerics review F4).
                     error stop "boundary: Neumann normal velocity reached the row resolver"
@@ -769,28 +791,26 @@ contains
 
     ! Physical-face boundary writes of the q variables `vars` (default
     ! u, v, w, p; scalar_sync passes the scalar columns): every point's
-    ! resolved row, dst = w*src + C (see BCK_*). Runs post-predictor, at
-    ! init/restart and ONCE per projection after the last correction, always
+    ! resolved row, dst = w*src + C (see BCK_*). Runs at init/restart and
+    ! ONCE per substage, in the projection after its last correction (there
+    ! is no call after the predictor: it commits only what it predicted and
+    ! nothing reads a ghost before the projection ends), always
     ! BEFORE the halo exchange -- the exchange's tangential extension copies
     ! a neighbour block's ghosts into edge/corner halos, so the ghosts must
-    ! be current when it reads them (same-level copies only; 2:1 entries do
-    ! not extend into physical ghost rows, comm.f90 interface_boxes).
+    ! be current when it reads them (every transfer extends that way, 2:1
+    ! entries included: comm.f90 candidate_boxes).
     !
-    ! outflow_copy: the FACE_OUTFLOW rows (the normal velocity of a declared
-    ! outlet) are written when .true. -- the PREDICTOR-stage stance
-    ! (post-momentum and at init/restart, where the face would otherwise keep
-    ! a stale value) -- and skipped when .false. (the projection owns the
-    ! face through the Dirichlet-pressure correction and must not be stomped).
-    subroutine apply_bc(blk, bc, vars, outflow_copy)
+    ! The normal velocity of an OUTLET face has no row here (BCK_NONE): it
+    ! is an unknown of the predictor and of the projection.
+    subroutine apply_bc(blk, bc, vars)
         type(block_set_type), intent(inout) :: blk
         type(boundary_type), intent(in) :: bc
         integer(C_INT), intent(in), optional :: vars(:)
-        logical, intent(in), optional :: outflow_copy
 
         integer :: n, npts, b, face_id, dir, side, v, nv, var, kind
         integer :: ghost_idx, interior_idx, face_idx, neighbor_idx
         integer :: gi(3), ii(3)
-        integer(C_INT) :: local_n(1:3), ofc
+        integer(C_INT) :: local_n(1:3)
         integer(C_INT), allocatable :: vl(:)
 
         npts = int(bc%nTotal)
@@ -802,14 +822,10 @@ contains
             vl = [VAR_U, VAR_V, VAR_W, VAR_P]
         end if
         nv = size(vl)
-        ofc = 0_C_INT
-        if (present(outflow_copy)) then
-            if (outflow_copy) ofc = 1_C_INT
-        end if
         local_n = blk%nb(1:3)
 
         !$omp target teams distribute parallel do &
-        !$omp& map(to: npts, nv, ofc, local_n(1:3), vl, &
+        !$omp& map(to: npts, nv, local_n(1:3), vl, &
         !$omp& bc%pointFace(1:npts), bc%slot(1:npts), bc%i(1:npts), bc%j(1:npts), bc%k(1:npts), &
         !$omp& bc%bcKind, bc%bcW, bc%bcC(1:bc%nVar,1:npts)) &
         !$omp& map(tofrom: blk%q) &
@@ -843,7 +859,6 @@ contains
                 var = int(vl(v))
                 kind = int(bc%bcKind(var,face_id))
                 if (kind == BCK_NONE) cycle
-                if (kind == BCK_FACE_OUTFLOW .and. ofc == 0_C_INT) cycle
                 if (kind == BCK_GHOST) then
                     gi(dir) = ghost_idx
                     ii(dir) = interior_idx
@@ -857,6 +872,88 @@ contains
         end do
         !$omp end target teams distribute parallel do
     end subroutine apply_bc
+
+    ! The INITIAL value of an outlet-normal face the run was not given: the
+    ! zero-gradient value, face := interior neighbour. An outlet face is
+    ! state (the predictor advances it from its own previous value), so this
+    ! runs ONCE, before the first step -- on a cold start for every outlet
+    ! face, on a restart only for the faces the file did not supply
+    ! (`given(face)` true = leave the face alone: a low face is in the
+    ! velocity dataset, a high one in io.f90 read_outlet_planes). The first
+    ! projection then makes the boundary cell solenoidal.
+    subroutine init_outlet_faces(blk, bc, given)
+        type(block_set_type), intent(inout) :: blk
+        type(boundary_type), intent(in) :: bc
+        logical, intent(in) :: given(NFACES)
+
+        integer :: n, npts, b, face_id, dir, side
+        integer :: fi(3), ni(3)
+        integer(C_INT) :: local_n(1:3), todo(NFACES)
+
+        if (bc%nOutlet <= 0_C_INT) return
+        npts = int(bc%nTotal)
+        local_n = blk%nb(1:3)
+        todo = merge(0_C_INT, bc%faceOutlet, given)
+
+        ! The loop runs over ALL boundary points and skips the others, as
+        ! apply_bc does: npts is then a loop bound as well as a map bound.
+        !$omp target teams distribute parallel do &
+        !$omp& map(to: npts, local_n(1:3), todo(1:NFACES), &
+        !$omp& bc%pointFace(1:npts), bc%slot(1:npts), bc%i(1:npts), bc%j(1:npts), bc%k(1:npts)) &
+        !$omp& map(tofrom: blk%q) &
+        !$omp& private(n,b,face_id,dir,side,fi,ni)
+        do n = 1, npts
+            face_id = int(bc%pointFace(n))
+            if (todo(face_id) == 0_C_INT) cycle
+            b = int(bc%slot(n))
+            dir = (face_id + 1)/2
+            side = modulo(face_id - 1, 2)
+            fi = [int(bc%i(n)), int(bc%j(n)), int(bc%k(n))]
+            ni = fi
+            if (side == SIDE_MIN) then
+                fi(dir) = 1
+                ni(dir) = 2
+            else
+                fi(dir) = int(local_n(dir)) + 1
+                ni(dir) = int(local_n(dir))
+            end if
+            blk%q(fi(1),fi(2),fi(3),dir,b) = blk%q(ni(1),ni(2),ni(3),dir,b)
+        end do
+        !$omp end target teams distribute parallel do
+    end subroutine init_outlet_faces
+
+    ! The outlet predictor (step.f90 predict_outlet_faces) takes the
+    ! non-pressure increment of the neighbouring face as it stands, which is
+    ! the face's own only where neither is penalized. An immersed body
+    ! reaching an outlet face is not a configuration the outlet supports:
+    ! stop rather than run it wrongly. `coef` is ibm%coef on the HOST
+    ! (ghost-inclusive, velocity columns first), before it is mapped.
+    subroutine check_outlet_faces_fluid(blk, bc, coef)
+        type(block_set_type), intent(in) :: blk
+        type(boundary_type), intent(in) :: bc
+        real(C_DOUBLE), intent(in) :: coef(0:,0:,0:,1:,1:)
+
+        integer :: n, b, face_id, dir, side
+        integer :: fi(3), ni(3)
+
+        if (bc%nOutlet <= 0_C_INT) return
+        do n = 1, int(bc%nTotal)
+            face_id = int(bc%pointFace(n))
+            if (bc%faceOutlet(face_id) == 0_C_INT) cycle
+            b = int(bc%slot(n))
+            dir = boundary_face_dir(face_id)
+            side = boundary_face_side(face_id)
+            fi = [int(bc%i(n)), int(bc%j(n)), int(bc%k(n))]
+            ni = fi
+            fi(dir) = merge(1, int(blk%nb(dir)) + 1, side == SIDE_MIN)
+            ni(dir) = merge(2, int(blk%nb(dir)), side == SIDE_MIN)
+            if (coef(fi(1),fi(2),fi(3),dir,b) /= 0.0d0 .or. &
+                coef(ni(1),ni(2),ni(3),dir,b) /= 0.0d0) then
+                print '(a,i0)', " error: the immersed body reaches the outlet face ", face_id
+                error stop "[boundary] outlet: an immersed body touches the outlet face"
+            end if
+        end do
+    end subroutine check_outlet_faces_fluid
 
     ! Physical-face ghosts of a standalone cell-centred scalar array (the
     ! RANS transport scalars, the projection's phi): the same affine write

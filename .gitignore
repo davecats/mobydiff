@@ -113,6 +113,11 @@ tutorials/turbulentBoundaryLayer/overheadTest/horeka/moby-2to1-run/
 tools/h5maxdiff
 # passive-scalar bit-exactness suite scratch (validation/scalar/run_bitexact.sh)
 .bx_*
+# validation/freestream/run_bitexact_outlet.sh and run_restart_outlet.sh:
+# per-side inis, logs, forces traces (their snapshots fall under *.h5)
+.obx_*
+obx_*.forces.txt
+.rst_*
 
 # passive-scalar S3 gate scratch (run_bitexact_s3.sh, run_gates_s3.sh)
 .s3x_*

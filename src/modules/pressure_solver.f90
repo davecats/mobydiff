@@ -320,7 +320,7 @@ contains
             call prof_toc(proj_prof, PROF_PHI_EXCHANGE, t0)
             t0 = prof_tic()
             call jacobi_apply(ps, blk, dt_gamma, ibm)
-            if (hasIface) call interface_correct(blk, ibm, outLow, outHigh, refd)
+            if (hasIface) call interface_correct(blk, ibm, refd)
             call prof_toc(proj_prof, PROF_APPLY, t0)
             if (iIter == ps%nIter) then
                 ! The physical-face ghosts ONCE, after the last correction and
@@ -696,9 +696,10 @@ contains
         ! REGULAR d1f against the MIRRORED phi ghost (face_grad_corr): e.g.
         ! q(nx+1) += (phi(nx) - (-phi(nx)))*d1f*mu = 2*phi(nx)*d1f*mu -- the
         ! half-cell Dirichlet gradient whose 2*d1f sensitivity the denominator
-        ! already counts. The predictor never writes the outlet face, so this
-        ! correction (+ the initial value) is its entire evolution: the standard
-        ! do-nothing Dirichlet-pressure outlet.
+        ! already counts. The predictor advances the outlet face with that
+        ! same half-cell gradient of the stored pressure (step.f90
+        ! predict_outlet_faces), so phi is a true increment there too and
+        ! p += phi/dt_gamma keeps the boundary cell tied to the outlet value.
         ! cfLow/cfHigh hold face_grad_corr for every face this kernel owns,
         ! precomputed per (block, normal index) -- see their declaration for why
         ! that is both bit-exact and the point of the kernel's shape.
@@ -790,14 +791,18 @@ contains
     ! sweep's nb^3, and red-black needs it applied AFTER a phi exchange that
     ! cannot happen inside its sweep.
     !
+    ! An interface face is never an outlet face, so the plain face_grad is
+    ! the metric here (the outlet-aware pair lives in the tables of the
+    ! volume kernels).
+    !
     ! Interior cells only (1..nb in the tangential indices). Tangential-halo
     ! copies of an interface face are repaired by the same-level velocity
     ! exchange that follows, so the edge/corner phi ghosts (plain injection,
     ! not the ifaceRow restrict) are never read here.
-    subroutine interface_correct(blk, ibm, outLow, outHigh, refd)
+    subroutine interface_correct(blk, ibm, refd)
         type(block_set_type), intent(inout) :: blk
         type(ibm_type), intent(in) :: ibm
-        logical(C_BOOL), intent(in) :: outLow(3), outHigh(3), refd(3)
+        logical(C_BOOL), intent(in) :: refd(3)
 
         integer(C_INT) :: i, j, k, b, nBlocks, nx, ny, nz
 
@@ -807,7 +812,7 @@ contains
         ! x faces
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do collapse(3) &
-        !$omp& map(to: nx, ny, nz, outLow(1:3), outHigh(1:3), refd(1:3), &
+        !$omp& map(to: nx, ny, nz, refd(1:3), &
         !$omp& blk%physLow, blk%physHigh, blk%d1x, ibm%mu) &
         !$omp& map(tofrom: blk%q, phi) private(j,k,b)
 #endif
@@ -817,12 +822,12 @@ contains
                 if (is_interface(blk%physLow(1,b))) &
                     blk%q(1,j,k,VAR_U,b) = blk%q(1,j,k,VAR_U,b) &
                         + (phi(0,j,k,b) - phi(1,j,k,b)) &
-                          *face_grad_corr(blk%physLow(1,b), .true., blk%d1x(1,VAR_U,b), outLow(1), refd(1)) &
+                          *face_grad(blk%physLow(1,b), .true., blk%d1x(1,VAR_U,b), refd(1)) &
                           *ibm%mu(1,j,k,VAR_U,b)
                 if (is_interface(blk%physHigh(1,b))) &
                     blk%q(nx+1,j,k,VAR_U,b) = blk%q(nx+1,j,k,VAR_U,b) &
                         + (phi(nx,j,k,b) - phi(nx+1,j,k,b)) &
-                          *face_grad_corr(blk%physHigh(1,b), .true., blk%d1x(nx+1,VAR_U,b), outHigh(1), refd(1)) &
+                          *face_grad(blk%physHigh(1,b), .true., blk%d1x(nx+1,VAR_U,b), refd(1)) &
                           *ibm%mu(nx+1,j,k,VAR_U,b)
             end do
         end do
@@ -834,7 +839,7 @@ contains
         ! y faces
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do collapse(3) &
-        !$omp& map(to: nx, ny, nz, outLow(1:3), outHigh(1:3), refd(1:3), &
+        !$omp& map(to: nx, ny, nz, refd(1:3), &
         !$omp& blk%physLow, blk%physHigh, blk%d1y, ibm%mu) &
         !$omp& map(tofrom: blk%q, phi) private(i,k,b)
 #endif
@@ -844,12 +849,12 @@ contains
                 if (is_interface(blk%physLow(2,b))) &
                     blk%q(i,1,k,VAR_V,b) = blk%q(i,1,k,VAR_V,b) &
                         + (phi(i,0,k,b) - phi(i,1,k,b)) &
-                          *face_grad_corr(blk%physLow(2,b), .true., blk%d1y(1,VAR_V,b), outLow(2), refd(2)) &
+                          *face_grad(blk%physLow(2,b), .true., blk%d1y(1,VAR_V,b), refd(2)) &
                           *ibm%mu(i,1,k,VAR_V,b)
                 if (is_interface(blk%physHigh(2,b))) &
                     blk%q(i,ny+1,k,VAR_V,b) = blk%q(i,ny+1,k,VAR_V,b) &
                         + (phi(i,ny,k,b) - phi(i,ny+1,k,b)) &
-                          *face_grad_corr(blk%physHigh(2,b), .true., blk%d1y(ny+1,VAR_V,b), outHigh(2), refd(2)) &
+                          *face_grad(blk%physHigh(2,b), .true., blk%d1y(ny+1,VAR_V,b), refd(2)) &
                           *ibm%mu(i,ny+1,k,VAR_V,b)
             end do
         end do
@@ -861,7 +866,7 @@ contains
         ! z faces
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do collapse(3) &
-        !$omp& map(to: nx, ny, nz, outLow(1:3), outHigh(1:3), refd(1:3), &
+        !$omp& map(to: nx, ny, nz, refd(1:3), &
         !$omp& blk%physLow, blk%physHigh, blk%d1z, ibm%mu) &
         !$omp& map(tofrom: blk%q, phi) private(i,j,b)
 #endif
@@ -871,12 +876,12 @@ contains
                 if (is_interface(blk%physLow(3,b))) &
                     blk%q(i,j,1,VAR_W,b) = blk%q(i,j,1,VAR_W,b) &
                         + (phi(i,j,0,b) - phi(i,j,1,b)) &
-                          *face_grad_corr(blk%physLow(3,b), .true., blk%d1z(1,VAR_W,b), outLow(3), refd(3)) &
+                          *face_grad(blk%physLow(3,b), .true., blk%d1z(1,VAR_W,b), refd(3)) &
                           *ibm%mu(i,j,1,VAR_W,b)
                 if (is_interface(blk%physHigh(3,b))) &
                     blk%q(i,j,nz+1,VAR_W,b) = blk%q(i,j,nz+1,VAR_W,b) &
                         + (phi(i,j,nz,b) - phi(i,j,nz+1,b)) &
-                          *face_grad_corr(blk%physHigh(3,b), .true., blk%d1z(nz+1,VAR_W,b), outHigh(3), refd(3)) &
+                          *face_grad(blk%physHigh(3,b), .true., blk%d1z(nz+1,VAR_W,b), refd(3)) &
                           *ibm%mu(i,j,nz+1,VAR_W,b)
             end do
         end do
@@ -1025,7 +1030,7 @@ contains
                     call exchange_scalar_halos(c, phi, blk, ifaceRow=.true.)
                     call prof_toc(proj_prof, PROF_PHI_EXCHANGE, t0)
                     t0 = prof_tic()
-                    call interface_correct(blk, ibm, outLow, outHigh, refd)
+                    call interface_correct(blk, ibm, refd)
                     call prof_toc(proj_prof, PROF_APPLY, t0)
                 end if
                 if (iIter == ps%nIter .and. color == 0_C_INT) then

@@ -191,6 +191,10 @@ module comm
     public :: start_halo_exchange, finish_halo_exchange, exchange_halos, exchange_scalar_halos
     public :: sync_divergence_halos
 
+    ! Number of pieces a candidate entry may be split into: bit d-1 of the
+    ! piece index selects the halo-row plane of tangential dim d.
+    integer, parameter :: N_PIECES = 8
+
 contains
 
     subroutine comm_init_world(c)
@@ -549,9 +553,10 @@ contains
 
         integer :: off(3,26)
         integer :: nb(3)
-        integer :: b, d, p, pass, cand, ncand
+        integer :: b, d, p, pass, cand, ncand, piece
         integer :: owner(4), slot(4), opc(4), tqc(3,4)
         integer :: srcLo(3), dstLo(3), ext(3)
+        logical :: plane(3), valid
         integer :: peerBlocks, peerStart, pb, dorigin(3), dlevel
         integer :: nLocal, nSend, nRecv, pts, maxCount, ierr, e, round
         ! Per-entry face normal of the divergence subset (0 = not in it), held
@@ -586,31 +591,37 @@ contains
                         do cand = 1, ncand
                             if (owner(cand) /= c%cart_rank) cycle
                             if ((opc(cand) == OP_COPY) .neqv. (round == 1)) cycle
-                            call candidate_boxes(c, blk, dns, int(blk%level(b)), int(blk%origin(:,b)), &
-                                off(:,d), nb, opc(cand), tqc(:,cand), srcLo, dstLo, ext)
-                            nLocal = nLocal + 1
-                            pts = ext(1)*ext(2)*ext(3)
-                            if (pass == 2) then
-                                c%lSrcSlot(nLocal) = slot(cand)
-                                c%lDstSlot(nLocal) = b
-                                c%lDstLo(:,nLocal) = dstLo
-                                c%lExt(:,nLocal) = ext
-                                c%lDir(:,nLocal) = off(:,d)
-                                call entry_gather_map(opc(cand), off(:,d), tqc(:,cand), nb, &
-                                    int(blk%refMask), srcLo, dstLo, c%lGA(:,nLocal), c%lGB(:,nLocal), &
-                                    c%lGS(:,nLocal), c%lGC(:,nLocal))
-                                c%lWp(nLocal) = entry_blend(blk, dns, int(blk%level(b)), &
-                                    int(blk%origin(:,b)), off(:,d), opc(cand))
-                                c%lWpDst(nLocal) = 1.0d0 - c%lWp(nLocal)
-                                c%lNrm(nLocal) = interface_normal_dim(opc(cand), off(:,d))
-                                c%lPhiN(nLocal) = iface_restrict_normal(opc(cand), off(:,d), &
-                                    int(blk%refMask))
-                                divVarL(nLocal) = div_entry_var(opc(cand), off(:,d))
-                                c%lOff(nLocal) = c%lOff(nLocal-1) + pts
-                            end if
-                            c%nLocalPts = c%nLocalPts + pts
-                            c%localPtsOp(opc(cand)) = c%localPtsOp(opc(cand)) + pts
-                            c%localEntOp(opc(cand)) = c%localEntOp(opc(cand)) + 1
+                            ! One entry per PIECE of the candidate: the main box, and for a
+                            ! restriction the extension planes into absent-neighbour halo rows
+                            ! (candidate_boxes). Every other transfer has the single piece 0.
+                            do piece = 0, N_PIECES - 1
+                                call candidate_boxes(c, blk, dns, int(blk%level(b)), int(blk%origin(:,b)), &
+                                    off(:,d), nb, opc(cand), tqc(:,cand), piece, srcLo, dstLo, ext, plane, valid)
+                                if (.not. valid) cycle
+                                nLocal = nLocal + 1
+                                pts = ext(1)*ext(2)*ext(3)
+                                if (pass == 2) then
+                                    c%lSrcSlot(nLocal) = slot(cand)
+                                    c%lDstSlot(nLocal) = b
+                                    c%lDstLo(:,nLocal) = dstLo
+                                    c%lExt(:,nLocal) = ext
+                                    c%lDir(:,nLocal) = off(:,d)
+                                    call entry_gather_map(opc(cand), off(:,d), tqc(:,cand), nb, &
+                                        int(blk%refMask), srcLo, dstLo, plane, c%lGA(:,nLocal), c%lGB(:,nLocal), &
+                                        c%lGS(:,nLocal), c%lGC(:,nLocal))
+                                    c%lWp(nLocal) = entry_blend(blk, dns, int(blk%level(b)), &
+                                        int(blk%origin(:,b)), off(:,d), opc(cand))
+                                    c%lWpDst(nLocal) = 1.0d0 - c%lWp(nLocal)
+                                    c%lNrm(nLocal) = interface_normal_dim(opc(cand), off(:,d))
+                                    c%lPhiN(nLocal) = iface_restrict_normal(opc(cand), off(:,d), &
+                                        int(blk%refMask))
+                                    divVarL(nLocal) = div_entry_var(opc(cand), off(:,d))
+                                    c%lOff(nLocal) = c%lOff(nLocal-1) + pts
+                                end if
+                                c%nLocalPts = c%nLocalPts + pts
+                                c%localPtsOp(opc(cand)) = c%localPtsOp(opc(cand)) + pts
+                                c%localEntOp(opc(cand)) = c%localEntOp(opc(cand)) + 1
+                            end do
                         end do
                     end do
                 end do
@@ -640,24 +651,30 @@ contains
                             do cand = 1, ncand
                                 if (owner(cand) /= c%peerRank(p)) cycle
                                 if ((opc(cand) == OP_COPY) .neqv. (round == 1)) cycle
-                                call candidate_boxes(c, blk, dns, int(blk%level(b)), int(blk%origin(:,b)), &
-                                    off(:,d), nb, opc(cand), tqc(:,cand), srcLo, dstLo, ext)
-                                nRecv = nRecv + 1
-                                pts = ext(1)*ext(2)*ext(3)
-                                if (pass == 2) then
-                                    c%rSlot(nRecv) = b
-                                    c%rPeer(nRecv) = p
-                                    c%rLo(:,nRecv) = dstLo
-                                    c%rExt(:,nRecv) = ext
-                                    c%rDir(:,nRecv) = off(:,d)
-                                    c%rWp(nRecv) = entry_blend(blk, dns, int(blk%level(b)), &
-                                        int(blk%origin(:,b)), off(:,d), opc(cand))
-                                    c%rWpDst(nRecv) = 1.0d0 - c%rWp(nRecv)
-                                    c%rNrm(nRecv) = interface_normal_dim(opc(cand), off(:,d))
-                                    divVarR(nRecv) = div_entry_var(opc(cand), off(:,d))
-                                    c%rOff(nRecv) = c%rOff(nRecv-1) + pts
-                                end if
-                                c%peerRecvOff(p) = c%peerRecvOff(p) + pts
+                                ! One entry per PIECE of the candidate: the main box, and for a
+                                ! restriction the extension planes into absent-neighbour halo rows
+                                ! (candidate_boxes). Every other transfer has the single piece 0.
+                                do piece = 0, N_PIECES - 1
+                                    call candidate_boxes(c, blk, dns, int(blk%level(b)), int(blk%origin(:,b)), &
+                                        off(:,d), nb, opc(cand), tqc(:,cand), piece, srcLo, dstLo, ext, plane, valid)
+                                    if (.not. valid) cycle
+                                    nRecv = nRecv + 1
+                                    pts = ext(1)*ext(2)*ext(3)
+                                    if (pass == 2) then
+                                        c%rSlot(nRecv) = b
+                                        c%rPeer(nRecv) = p
+                                        c%rLo(:,nRecv) = dstLo
+                                        c%rExt(:,nRecv) = ext
+                                        c%rDir(:,nRecv) = off(:,d)
+                                        c%rWp(nRecv) = entry_blend(blk, dns, int(blk%level(b)), &
+                                            int(blk%origin(:,b)), off(:,d), opc(cand))
+                                        c%rWpDst(nRecv) = 1.0d0 - c%rWp(nRecv)
+                                        c%rNrm(nRecv) = interface_normal_dim(opc(cand), off(:,d))
+                                        divVarR(nRecv) = div_entry_var(opc(cand), off(:,d))
+                                        c%rOff(nRecv) = c%rOff(nRecv-1) + pts
+                                    end if
+                                    c%peerRecvOff(p) = c%peerRecvOff(p) + pts
+                                end do
                             end do
                         end do
                     end do
@@ -682,26 +699,32 @@ contains
                             do cand = 1, ncand
                                 if (owner(cand) /= c%cart_rank) cycle
                                 if ((opc(cand) == OP_COPY) .neqv. (round == 1)) cycle
-                                call candidate_boxes(c, blk, dns, dlevel, dorigin, &
-                                    off(:,d), nb, opc(cand), tqc(:,cand), srcLo, dstLo, ext)
-                                nSend = nSend + 1
-                                pts = ext(1)*ext(2)*ext(3)
-                                if (pass == 2) then
-                                    c%sSlot(nSend) = slot(cand)
-                                    c%sPeer(nSend) = p
-                                    c%sDstLo(:,nSend) = dstLo
-                                    c%sExt(:,nSend) = ext
-                                    call entry_gather_map(opc(cand), off(:,d), tqc(:,cand), nb, &
-                                        int(blk%refMask), srcLo, dstLo, c%sGA(:,nSend), c%sGB(:,nSend), &
-                                        c%sGS(:,nSend), c%sGC(:,nSend))
-                                    c%sPhiN(nSend) = iface_restrict_normal(opc(cand), off(:,d), &
-                                        int(blk%refMask))
-                                    divVarS(nSend) = div_entry_var(opc(cand), off(:,d))
-                                    c%sOff(nSend) = c%sOff(nSend-1) + pts
-                                end if
-                                c%peerSendOff(p) = c%peerSendOff(p) + pts
-                                c%sendPtsOp(opc(cand)) = c%sendPtsOp(opc(cand)) + pts
-                                c%sendEntOp(opc(cand)) = c%sendEntOp(opc(cand)) + 1
+                                ! One entry per PIECE of the candidate: the main box, and for a
+                                ! restriction the extension planes into absent-neighbour halo rows
+                                ! (candidate_boxes). Every other transfer has the single piece 0.
+                                do piece = 0, N_PIECES - 1
+                                    call candidate_boxes(c, blk, dns, dlevel, dorigin, &
+                                        off(:,d), nb, opc(cand), tqc(:,cand), piece, srcLo, dstLo, ext, plane, valid)
+                                    if (.not. valid) cycle
+                                    nSend = nSend + 1
+                                    pts = ext(1)*ext(2)*ext(3)
+                                    if (pass == 2) then
+                                        c%sSlot(nSend) = slot(cand)
+                                        c%sPeer(nSend) = p
+                                        c%sDstLo(:,nSend) = dstLo
+                                        c%sExt(:,nSend) = ext
+                                        call entry_gather_map(opc(cand), off(:,d), tqc(:,cand), nb, &
+                                            int(blk%refMask), srcLo, dstLo, plane, c%sGA(:,nSend), c%sGB(:,nSend), &
+                                            c%sGS(:,nSend), c%sGC(:,nSend))
+                                        c%sPhiN(nSend) = iface_restrict_normal(opc(cand), off(:,d), &
+                                            int(blk%refMask))
+                                        divVarS(nSend) = div_entry_var(opc(cand), off(:,d))
+                                        c%sOff(nSend) = c%sOff(nSend-1) + pts
+                                    end if
+                                    c%peerSendOff(p) = c%peerSendOff(p) + pts
+                                    c%sendPtsOp(opc(cand)) = c%sendPtsOp(opc(cand)) + pts
+                                    c%sendEntOp(opc(cand)) = c%sendEntOp(opc(cand)) + 1
+                                end do
                             end do
                         end do
                     end do
@@ -1000,27 +1023,96 @@ contains
             int(owner, C_INT))) + 1
     end subroutine id_owner_slot
 
-    subroutine candidate_boxes(c, blk, dns, level, dorigin, off, nb, op, tq, srcLo, dstLo, ext)
+    ! Boxes of piece `piece` of one candidate entry (dst block at `dorigin`,
+    ! direction off, transfer op); valid = .false. when the candidate has no
+    ! such piece. Piece 0 is the entry itself and always exists.
+    !
+    ! TANGENTIAL EXTENSION, every op. In a dim d the entry runs along
+    ! (off(d) = 0), the destination range reaches into the halo row on side
+    ! s exactly when the combined neighbour at off + s*e_d is absent -- outside
+    ! a non-periodic boundary or removed. No edge/corner entry can deliver
+    ! that row then, and the SOURCE block's own row there is an apply_bc
+    ! ghost / boundary face or a zeroed closed halo, never exchange-written,
+    ! so reading it is race-free. For same-level copies this is entry_boxes.
+    ! For a 2:1 transfer it is what puts the normal velocity of a physical
+    ! HIGH face (index nb+1, a halo index) into the edge halo the predictor
+    ! of the tangential component reads next to a level jump: without it
+    ! that value kept its initial condition for the whole run
+    ! (docs/next_session_outlet.md, the level-jump finding).
+    !   - an UNREFINED dim (copy form) and a PROLONG dim extend inside the
+    !     entry: their gather maps are affine and land on the source's row 0 /
+    !     nb+1 by themselves (the fine block at a boundary is the child on
+    !     that side, so the halving shift of entry_gather_map gives exactly
+    !     that row);
+    !   - a refined RESTRICT dim cannot: its map averages TWO fine rows, and
+    !     beyond the boundary there is one. Its halo row is a separate piece
+    !     -- bit d-1 of `piece` -- that reads the single fine row index for
+    !     index (plane(d), honoured by entry_gather_map). Only the child on
+    !     the boundary side (tq) has it.
+    subroutine candidate_boxes(c, blk, dns, level, dorigin, off, nb, op, tq, piece, &
+            srcLo, dstLo, ext, plane, valid)
         type(comm_type), intent(in) :: c
         type(block_set_type), intent(in) :: blk
         type(dns_type), intent(in) :: dns
-        integer, intent(in) :: level, dorigin(3), off(3), nb(3), op, tq(3)
+        integer, intent(in) :: level, dorigin(3), off(3), nb(3), op, tq(3), piece
         integer, intent(out) :: srcLo(3), dstLo(3), ext(3)
+        logical, intent(out) :: plane(3), valid
 
-        integer :: d
+        integer :: d, mask(3)
+        logical :: lowAbsent, highAbsent, wantPlane
 
+        plane = .false.
+        valid = .true.
         if (op == OP_COPY) then
-            call entry_boxes(c, blk, dns, level, dorigin, off, nb, srcLo, dstLo, ext)
-        else
-            call interface_boxes(op, off, nb, int(blk%refMask), srcLo, dstLo, ext)
-            if (op == OP_RESTRICT) then
-                ! Fine-quarter destination offset in refined tangential
-                ! dims (tq is masked to 0 in unrefined dims: full range).
-                do d = 1, 3
-                    if (off(d) == 0) dstLo(d) = tq(d)*nb(d)/2 + 1
-                end do
-            end if
+            valid = piece == 0
+            if (valid) call entry_boxes(c, blk, dns, level, dorigin, off, nb, srcLo, dstLo, ext)
+            return
         end if
+
+        mask = int(blk%refMask)
+        ! Only a restriction has further pieces, and only in refined dims it
+        ! runs along: reject the others before any neighbour lookup (this is
+        ! called for all N_PIECES of every candidate at init).
+        do d = 1, 3
+            if (.not. btest(piece, d - 1)) cycle
+            if (op /= OP_RESTRICT .or. off(d) /= 0 .or. mask(d) == 0) then
+                valid = .false.
+                return
+            end if
+        end do
+
+        call interface_boxes(op, off, nb, mask, srcLo, dstLo, ext)
+        do d = 1, 3
+            if (off(d) /= 0) cycle
+            wantPlane = btest(piece, d - 1)
+            ! Fine-quarter destination offset of a restriction in refined
+            ! tangential dims (tq is masked to 0 in unrefined dims: full range).
+            if (op == OP_RESTRICT) dstLo(d) = tq(d)*nb(d)/2 + 1
+            ! The main box of a refined restriction dim is never extended.
+            if (op == OP_RESTRICT .and. mask(d) == 1 .and. .not. wantPlane) cycle
+            lowAbsent = .not. combined_neighbor_exists(c, blk, dns, level, dorigin, off, nb, d, -1)
+            highAbsent = .not. combined_neighbor_exists(c, blk, dns, level, dorigin, off, nb, d, +1)
+            if (op == OP_RESTRICT .and. mask(d) == 1) then
+                if (tq(d) == 0 .and. lowAbsent) then
+                    dstLo(d) = 0
+                else if (tq(d) == 1 .and. highAbsent) then
+                    dstLo(d) = nb(d) + 1
+                else
+                    valid = .false.
+                    cycle
+                end if
+                srcLo(d) = dstLo(d)
+                ext(d) = 1
+                plane(d) = .true.
+            else
+                if (lowAbsent) then
+                    dstLo(d) = dstLo(d) - 1
+                    ext(d) = ext(d) + 1
+                end if
+                if (highAbsent) ext(d) = ext(d) + 1
+                srcLo(d) = dstLo(d)   ! read by the copy form (unrefined dim) only
+            end if
+        end do
     end subroutine candidate_boxes
 
     ! Destination box and per-dim source bases for a 2:1 interface entry.
@@ -1070,8 +1162,11 @@ contains
     ! (refine_dims mask 0) of an interface entry uses the copy form: the
     ! shared line conforms, so both its tangential rows and its adjacent
     ! normal row map index for index.
-    subroutine entry_gather_map(op, off, tq, nb, mask, srcLo, dstLo, ga, gb, gs, gc)
+    subroutine entry_gather_map(op, off, tq, nb, mask, srcLo, dstLo, plane, ga, gb, gs, gc)
         integer, intent(in) :: op, off(3), tq(3), nb(3), mask(3), srcLo(3), dstLo(3)
+        ! plane(d): the entry is the single halo row of dim d of a restriction
+        ! (candidate_boxes): one source row, srcLo(d), for every variable.
+        logical, intent(in) :: plane(3)
         integer, intent(out) :: ga(3), gb(3), gs(3), gc(3)
 
         integer :: d
@@ -1079,7 +1174,10 @@ contains
         do d = 1, 3
             gs(d) = 0
             gc(d) = 1
-            if (op == OP_COPY .or. mask(d) == 0) then
+            if (plane(d)) then
+                ga(d) = 0
+                gb(d) = srcLo(d)
+            else if (op == OP_COPY .or. mask(d) == 0) then
                 ga(d) = 1
                 gb(d) = srcLo(d) - dstLo(d)
             else if (off(d) /= 0) then

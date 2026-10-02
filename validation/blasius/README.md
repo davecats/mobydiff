@@ -23,7 +23,9 @@ The driver does, in order: derive `template.ini` from `blasius2d.ini`
 (nsteps 1, no restart, prefix `template`); prepare the ONE case file both
 inis name (`[case] file = blasius.case.h5`); mint `template_1.h5`;
 `make_blasius_ic.py` fills it with the Blasius field (`IC_blasius.h5`,
-staggered u/v rows, same virtual origin as the inlet table); run
+staggered u/v rows, same virtual origin as the inlet table, AND the two
+outlet-face planes `un_xmax` / `vn_ymax`: the outlet faces are state since
+2026-10-01 and the template's own planes are an unrelated one-step field); run
 `blasius2d.ini`; `compare_blasius.py` measures theta, H and the u/v
 profiles at x/lx = 0.15..0.7 against its own RK4 + shooting Blasius solve.
 Gates: theta and H within 2 %, u within 1 % of U_e, v within 15 % of the
@@ -38,7 +40,35 @@ variant (a Dirichlet top, say) silently transplants that variant's faces —
 the outlet-top run restarted that way diverged by t ~ 14 on every binary
 (`docs/next_session_after_step8.md`).
 
+## Recorded results (2026-10-01, the outlet face predicted, GPU build, 1 rank)
+
+`docs/next_session_outlet.md`: the outlet faces (x_max and the top) are
+advanced by the momentum predictor instead of being reset to their
+neighbour every substage. `worst` over the four stations, t = 2000:
+
+| projection | theta | H | du/Ue | dv/v_edge | gate |
+|---|---|---|---|---|---|
+| damped Jacobi, niter 12 (**the shipped ini**) | 1.65 % | 0.82 % | 1.48e-3 | 0.0129 | PASS |
+| damped Jacobi, niter 6 | 1.65 % | 0.82 % | 1.48e-3 | 0.0130 | PASS |
+| red-black SOR 1.5, niter 6 | 1.66 % | 0.82 % | 1.48e-3 | 0.0127 | PASS |
+| Chebyshev-Jacobi, niter 12 | 1.66 % | 0.82 % | 1.48e-3 | 0.0128 | PASS |
+
+**The four projections now give one answer.** Their spread in the table
+below (theta 1.33 .. 1.74 %, dv 0.096 .. 0.124) was the outlet reset, whose
+constraint force depends on how far the projection is converged; it was not
+"an under-converged projection's luck". The wall-normal velocity is ten
+times closer to Blasius (0.013 against 0.12), u is closer (1.5e-3 against
+2.4e-3), and the top entrainment `v_top` is +0.025 .. +0.033 at every
+station where it ran from +0.013 to −0.20 along the plate. Theta and H sit
+0.1 / 0.25 points further from the ODE than the converged-projection row of
+the old table: with the top no longer forcing the outflow parallel, the
+layer entrains what the p = 0 top lets in, and that is this domain's
+answer. Restart from mid-run equals the continuous run exactly
+(`../freestream/run_restart_outlet.sh`).
+
 ## Recorded results (2026-09-30, branch head after F1, GPU build, 1 rank)
+
+Superseded by the table above; kept because it is what the old scheme did.
 
 `worst` over the four stations, t = 2000:
 

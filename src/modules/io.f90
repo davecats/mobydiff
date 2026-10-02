@@ -2,8 +2,8 @@ module io
     use, intrinsic :: iso_c_binding
     use :: init, only: dns_type, grid_type, VAR_U, VAR_V, VAR_W, VAR_P, NVAR, NVEL, &
         config_seen_type
-    use :: blocks, only: block_set_type, KEY_MAX_BITS
-    use :: boundary, only: boundary_type, NFACES
+    use :: blocks, only: block_set_type, KEY_MAX_BITS, FACE_PHYS
+    use :: boundary, only: boundary_type, NFACES, boundary_face_id, BC_OUTFLOW
     use :: comm, only: comm_type, comm_allreduce_max_int
     implicit none
 
@@ -85,6 +85,30 @@ module io
             real(C_DOUBLE), intent(inout) :: s(*)
             integer(C_INT) :: ierr
         end function fdm_h5_read_scalar
+
+        ! One row of n values per block (the outlet-normal velocity planes
+        ! of the HIGH domain faces, write_outlet_planes / read_outlet_planes).
+        function fdm_h5_append_block_rows(file_name, name, n, n_blocks, &
+                n_blocks_global, id_start, rows) &
+                bind(C, name="fdm_h5_append_block_rows") result(ierr)
+            import :: C_CHAR, C_INT, C_DOUBLE
+            character(kind=C_CHAR), intent(in) :: file_name(*), name(*)
+            integer(C_INT), value :: n, n_blocks, n_blocks_global, id_start
+            real(C_DOUBLE), intent(in) :: rows(*)
+            integer(C_INT) :: ierr
+        end function fdm_h5_append_block_rows
+
+        function fdm_h5_read_block_rows(file_name, name, n, n_blocks, &
+                n_blocks_global, id_start, block_origin, block_level, found, rows) &
+                bind(C, name="fdm_h5_read_block_rows") result(ierr)
+            import :: C_CHAR, C_INT, C_DOUBLE
+            character(kind=C_CHAR), intent(in) :: file_name(*), name(*)
+            integer(C_INT), value :: n, n_blocks, n_blocks_global, id_start
+            integer(C_INT), intent(in) :: block_origin(*), block_level(*)
+            integer(C_INT), intent(out) :: found
+            real(C_DOUBLE), intent(inout) :: rows(*)
+            integer(C_INT) :: ierr
+        end function fdm_h5_read_block_rows
 
         ! [blocks] refine_dims file-variant marker (xz quadtree mode): the
         ! per-direction refinement mask attribute. Written only when the
@@ -531,9 +555,130 @@ subroutine write_field(blk, dns, g, step, c, bc, pressure_niter, pressure_sor, n
         end if
     end if
 
+    ! The outlet-normal velocity on HIGH domain faces (no-op without one).
+    call write_outlet_planes(c_file_name, blk, bc, h5_file_name, c%has_terminal)
+
     ! No XDMF for the block-table layout; reassemble with
     ! tools/compare_fields.py --export-global for visualization.
 end subroutine write_field
+
+! Dataset name and tangential extents of the outlet-normal velocity plane of
+! the HIGH domain face in direction dir: un_xmax (ny x nz), vn_ymax
+! (nx x nz), wn_zmax (nx x ny), first tangential index fastest.
+subroutine outlet_plane_shape(blk, dir, name, n1, n2)
+    type(block_set_type), intent(in) :: blk
+    integer, intent(in) :: dir
+    character(len=7), intent(out) :: name
+    integer, intent(out) :: n1, n2
+
+    select case (dir)
+    case (1)
+        name = "un_xmax"; n1 = int(blk%nb(2)); n2 = int(blk%nb(3))
+    case (2)
+        name = "vn_ymax"; n1 = int(blk%nb(1)); n2 = int(blk%nb(3))
+    case default
+        name = "wn_zmax"; n1 = int(blk%nb(1)); n2 = int(blk%nb(2))
+    end select
+end subroutine outlet_plane_shape
+
+! The normal velocity of an OUTLET face is state: the predictor advances it
+! from its own previous value (step.f90 predict_outlet_faces). On a LOW
+! face it is index 1 and part of un/vn/wn. On a HIGH face it is index
+! nb+1, which those datasets do not hold, so it is written here: one
+! dataset per direction that has a high outlet, one row of the block's
+! q(nb+1) plane per block (rows of blocks away from that face are unused).
+! A case without a high outlet writes nothing: its files are unchanged.
+subroutine write_outlet_planes(c_file_name, blk, bc, h5_file_name, has_terminal)
+    character(kind=C_CHAR,len=*), intent(in) :: c_file_name
+    type(block_set_type), intent(in) :: blk
+    type(boundary_type), intent(in) :: bc
+    character(len=*), intent(in) :: h5_file_name
+    logical, intent(in) :: has_terminal
+
+    integer :: dir, b, n1, n2
+    integer(C_INT) :: ierr
+    character(len=7) :: name
+    real(C_DOUBLE), allocatable :: rows(:,:)
+
+    do dir = 1, 3
+        if (bc%faceBcType(dir, boundary_face_id(dir, 1)) /= BC_OUTFLOW) cycle
+        call outlet_plane_shape(blk, dir, name, n1, n2)
+        allocate(rows(n1*n2, int(blk%nBlocks)))
+        do b = 1, int(blk%nBlocks)
+            select case (dir)
+            case (1)
+                rows(:,b) = reshape(blk%q(int(blk%nb(1))+1, 1:n1, 1:n2, VAR_U, b), [n1*n2])
+            case (2)
+                rows(:,b) = reshape(blk%q(1:n1, int(blk%nb(2))+1, 1:n2, VAR_V, b), [n1*n2])
+            case default
+                rows(:,b) = reshape(blk%q(1:n1, 1:n2, int(blk%nb(3))+1, VAR_W, b), [n1*n2])
+            end select
+        end do
+        ierr = fdm_h5_append_block_rows(c_file_name, to_c_string(name), int(n1*n2, C_INT), &
+            blk%nBlocks, blk%nBlocksGlobal, blk%idStart, rows)
+        deallocate(rows)
+        if (ierr /= 0_C_INT) then
+            if (has_terminal) print *, "error: could not append ", name, " to: ", trim(h5_file_name)
+            error stop
+        end if
+    end do
+end subroutine write_outlet_planes
+
+! Restart side of write_outlet_planes: put the stored plane back on every
+! block whose high face IS the outlet, and report per domain face whether
+! the file supplied it (given). A file without the dataset (an older
+! snapshot, a generated initial condition) leaves given false: the caller
+! starts that face from the zero-gradient value and the run is not an exact
+! continuation. Collective; call after read_field.
+subroutine read_outlet_planes(blk, bc, file_name, c, given)
+    type(block_set_type), intent(inout) :: blk
+    type(boundary_type), intent(in) :: bc
+    character(len=*), intent(in) :: file_name
+    type(comm_type), intent(in) :: c
+    logical, intent(inout) :: given(NFACES)
+
+    integer :: dir, b, n1, n2, face_id
+    integer(C_INT) :: ierr, found
+    character(len=7) :: name
+    real(C_DOUBLE), allocatable :: rows(:,:)
+
+    do dir = 1, 3
+        face_id = boundary_face_id(dir, 1)
+        if (bc%faceBcType(dir, face_id) /= BC_OUTFLOW) cycle
+        call outlet_plane_shape(blk, dir, name, n1, n2)
+        allocate(rows(n1*n2, int(blk%nBlocks)))
+        ierr = fdm_h5_read_block_rows(to_c_string(file_name), to_c_string(name), &
+            int(n1*n2, C_INT), blk%nBlocks, blk%nBlocksGlobal, blk%idStart, &
+            blk%origin, blk%level, found, rows)
+        if (ierr /= 0_C_INT) then
+            if (c%has_terminal) print *, "error: could not read ", name, " from: ", trim(file_name)
+            error stop
+        end if
+        if (found == 0_C_INT) then
+            if (c%has_terminal) print '(4a)', " note: restart file has no ", name, &
+                "; that outlet face starts from the zero-gradient value", &
+                " (not an exact continuation)"
+        else
+            given(face_id) = .true.
+            do b = 1, int(blk%nBlocks)
+                if (blk%physHigh(dir,b) /= FACE_PHYS) cycle
+                select case (dir)
+                case (1)
+                    blk%q(int(blk%nb(1))+1, 1:n1, 1:n2, VAR_U, b) = reshape(rows(:,b), [n1, n2])
+                case (2)
+                    blk%q(1:n1, int(blk%nb(2))+1, 1:n2, VAR_V, b) = reshape(rows(:,b), [n1, n2])
+                case default
+                    blk%q(1:n1, 1:n2, int(blk%nb(3))+1, VAR_W, b) = reshape(rows(:,b), [n1, n2])
+                end select
+            end do
+        end if
+        deallocate(rows)
+    end do
+
+#ifdef USE_OPENMP_OFFLOAD
+    !$omp target update to(blk%q)
+#endif
+end subroutine read_outlet_planes
 
 subroutine append_scalar_field(c_file_name, name, s, blk, h5_file_name, has_terminal)
     character(kind=C_CHAR,len=*), intent(in) :: c_file_name

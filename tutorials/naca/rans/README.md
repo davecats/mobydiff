@@ -56,6 +56,17 @@ the runtime value carries it, a single snapshot cannot. The offline +- is
 dominated by the BOX margin, not by time — the 1.5c and 2.5c boxes bracket
 the runtime value, which is the error bar to read.
 
+**2026-10-01, the outlet face predicted** (`docs/next_session_outlet.md`):
+the production state `c11_nose_660000.h5` was restarted for 0.5 time units
+(20000 steps, case file re-prepared) with the binary before that change and
+the one after. Runtime C_L over the last 0.2 time units: 0.52007 before,
+0.52008 after; C_D 0.01275 with both; the fields differ by at most 1.7e-5
+in velocity. The outlet is 77 chords behind the airfoil and the change
+does not disturb the converged solution. It is a restart check, not a
+re-convergence: the table above is still the 2026-08 campaign's, and the
+drag of today's code on this state (0.01275, either binary) sits one
+scatter below its 0.01294.
+
 Cp_min reads -1.7797 against OpenFOAM's -1.7797 — agreement to four
 decimals is luck (the peak sits between stations ~0.007 apart in x/c, so
 read it as "within a station"), but it is a real improvement on the

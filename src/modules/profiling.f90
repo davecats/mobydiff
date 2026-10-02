@@ -49,15 +49,14 @@ module profiling
     integer, parameter, public :: PROF_IBM_MU = 2       ! update_ibm_mu (pointwise, halo-carrying)
     integer, parameter, public :: PROF_BODYFORCE = 3
     integer, parameter, public :: PROF_TURBULENCE = 4   ! nut producers + their scalar exchange
-    integer, parameter, public :: PROF_APPLY_BC = 5     ! post-predictor apply_bc
-    integer, parameter, public :: PROF_VEL_EXCHANGE = 6 ! post-predictor exchange (syncface)
-    integer, parameter, public :: PROF_PROJECTION = 7
-    integer, parameter, public :: PROF_IO_STATS = 8     ! dt limits, snapshots, case after_step
+    integer, parameter, public :: PROF_VEL_EXCHANGE = 5 ! post-predictor exchange (syncface)
+    integer, parameter, public :: PROF_PROJECTION = 6
+    integer, parameter, public :: PROF_IO_STATS = 7     ! dt limits, snapshots, case after_step
     ! Passive-scalar transport AND its substage tail (qs -> q, ghosts, the
     ! batched scalar halo exchange) in ONE bucket: the two together are what a
     ! scalar costs, and keeping them apart once hid the fact that the tail is
     ! the larger of the two. Zero unless [scalar] sections are configured.
-    integer, parameter, public :: PROF_SCALAR = 9
+    integer, parameter, public :: PROF_SCALAR = 8
 
     ! proj_timing: the inside of PROF_PROJECTION.
     integer, parameter, public :: PROF_SWEEP = 1        ! compute-phi / red-black sweep (+cheb combine)
@@ -99,7 +98,7 @@ contains
         profEnabled = enabled
         call init_profiler(step_prof, "step_timing", &
             [character(len=24) :: "momentum", "ibm_mu", "bodyforce", "turbulence", &
-             "apply_bc", "vel_exchange", "projection", "io_stats", "scalar"])
+             "vel_exchange", "projection", "io_stats", "scalar"])
         call init_profiler(proj_prof, "proj_timing", &
             [character(len=24) :: "sweep", "apply", "phi_exchange", "vel_exchange", &
              "apply_bc", "setup"])

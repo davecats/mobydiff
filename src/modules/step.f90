@@ -23,6 +23,7 @@ module step
     use :: chron, only: profiler_type, wall_seconds, profiler_add
     use :: bodyforce, only: bodyforce_type, bodyforce_is_enabled
     use :: scalar, only: scalar_type, scalars_enabled, scalar_min_pr, scalar_min_prt
+    use :: boundary, only: boundary_type, SIDE_MIN, NFACES
     implicit none
 
     real(C_DOUBLE), parameter :: rk_alpha(3) = [64.0d0/120.0d0,  50.0d0/120.0d0,  90.0d0/120.0d0]
@@ -127,11 +128,14 @@ contains
         dns%peclet_rate = local_rate(1)
     end subroutine precompute_peclet_rate
 
-    subroutine momentum(blk, dns, dt_alpha, dt_beta, dt_gamma, ibm, turb, turb_prof, bf)
+    subroutine momentum(blk, dns, dt_alpha, dt_beta, dt_gamma, ibm, bc, turb, turb_prof, bf)
         type(block_set_type), intent(inout) :: blk
         type(dns_type),   intent(in)    :: dns
         real(C_DOUBLE),   intent(in)    :: dt_alpha, dt_beta, dt_gamma
         type(ibm_type),   intent(in)    :: ibm
+        ! The boundary point lists: the outlet faces are predicted here too
+        ! (predict_outlet_faces).
+        type(boundary_type), intent(in) :: bc
         type(turb_type),  intent(in), optional :: turb
         type(profiler_type), intent(inout), optional :: turb_prof
         ! Optional volumetric body force. When absent (or disabled) the
@@ -178,8 +182,9 @@ contains
         if (present(turb)) use_eddy_viscosity = turbulence_is_enabled(turb) .and. allocated(turb%nut)
 
         ! Predictor for all staggered velocity components. The face on a
-        ! physical lower boundary is held by apply_bc: each block skips it via
-        ! its own physLow mask.
+        ! physical lower boundary is not predicted here: each block skips it
+        ! via its own physLow mask. A Dirichlet face keeps its pinned value;
+        ! an outlet face is advanced by predict_outlet_faces below.
         !$omp target teams distribute parallel do collapse(4) &
         !$omp& map(to: dt_alpha, dt_beta, dt_gamma, &
         !$omp& ire, forcing(1:3), skew, &
@@ -405,17 +410,32 @@ contains
         if (dns%ibm_band_filter .and. ibm%nBand > 0_C_INT) &
             call apply_ibm_band_filter(blk, dns, ibm)
 
+        ! The outlet faces, low or high: the last piece of the prediction. It
+        ! needs qs of the neighbouring faces complete and q still old, hence
+        ! here, between the corrections and the commit.
+        call predict_outlet_faces(blk, bc, dt_gamma)
+
+        ! Commit the prediction, qs -> q, for exactly the faces the kernels
+        ! above predicted (the same start masks). A pinned low face keeps
+        ! the value it was given at init: copying it too would write the
+        ! never-predicted qs(1) over it and leave the repair to the next
+        ! apply_bc -- one stage undoing another (docs/next_session_outlet.md,
+        ! item 3 of the investigation). A high boundary face is index nb+1,
+        ! outside this range on any face kind.
         !$omp target teams distribute parallel do collapse(4) &
-        !$omp& map(to: blk%qs) &
+        !$omp& map(to: blk%physLow, blk%qs) &
         !$omp& map(tofrom: blk%q) &
-        !$omp& private(i,j,k,b)
+        !$omp& private(i,j,k,b,uStartX,vStartY,wStartZ)
         do b = 1, nBlocks
         do k = 1, nz
             do j = 1, ny
                 do i = 1, nx
-                    blk%q(i,j,k,VAR_U,b) = blk%qs(i,j,k,VAR_U,b)
-                    blk%q(i,j,k,VAR_V,b) = blk%qs(i,j,k,VAR_V,b)
-                    blk%q(i,j,k,VAR_W,b) = blk%qs(i,j,k,VAR_W,b)
+                    uStartX = momentum_face_start(blk%physLow(1,b))
+                    vStartY = momentum_face_start(blk%physLow(2,b))
+                    wStartZ = momentum_face_start(blk%physLow(3,b))
+                    if (i >= uStartX) blk%q(i,j,k,VAR_U,b) = blk%qs(i,j,k,VAR_U,b)
+                    if (j >= vStartY) blk%q(i,j,k,VAR_V,b) = blk%qs(i,j,k,VAR_V,b)
+                    if (k >= wStartZ) blk%q(i,j,k,VAR_W,b) = blk%qs(i,j,k,VAR_W,b)
                 end do
             end do
         end do
@@ -423,6 +443,118 @@ contains
         !$omp end target teams distribute parallel do
 
     end subroutine momentum
+
+
+    ! The momentum predictor of an OUTLET face (docs/next_session_outlet.md).
+    !
+    ! The normal velocity on a declared outlet is an unknown with its own
+    ! momentum equation,
+    !
+    !     du_f/dt = R_n - (dp/dn)_f ,
+    !
+    ! R_n being everything but the pressure gradient in the predictor of the
+    ! neighbouring interior face n (convection, diffusion, forcing, SGS, body
+    ! force: closed at zero normal gradient) and (dp/dn)_f the face's OWN
+    ! pressure gradient, against the held outlet pressure. In the predictor's
+    ! spelling, dp(i) = (p(i) - p(i-1)) d1(i):
+    !
+    !     q(f) = q(f) + [qs(n) - q(n)] + dt_gamma [dp(n) - dp(f)]
+    !
+    ! -- the neighbour's increment with its pressure gradient taken out and
+    ! the face's put in. dp(f) reads the pressure GHOST (apply_bc's Dirichlet
+    ! row, -p + 2 p_out), so it is the half-cell gradient to the outlet value
+    ! on either side. The RK memory of the face is its neighbour's: nothing
+    ! is stored for it.
+    !
+    ! ONE path for both sides: (f, n) = (1, 2) on a low face, (nb+1, nb) on
+    ! a high one, and nothing else depends on the side. It needs no value the
+    ! high side lacks (no oldrhs, no q(nb+2), no Laplacian row), which is why
+    ! the face is advanced here and not by the fused kernel.
+    !
+    ! Why the pressure terms are not optional: without the face's own
+    ! gradient nothing ties the stored pressure of the boundary cell to the
+    ! outlet value (a constant added to the whole field would be invisible),
+    ! and resetting the face to its neighbour each substage -- the scheme
+    ! this replaces -- made the projection rebuild u_f - u_n = -dx div_t(u)
+    ! every time and the incremental pressure integrate it.
+    !
+    ! It writes q(f) directly, before the commit below: the neighbour's old
+    ! value q(n) is still there, and the commit skips a pinned low face.
+    ! The sum is kept in this order on purpose (it reproduces, bit for bit
+    ! at nofma, the arithmetic of the 2026-10-01 prototype it was gated
+    ! against). No outlet points on this rank: nothing is launched.
+    subroutine predict_outlet_faces(blk, bc, dt_gamma)
+        type(block_set_type), intent(inout) :: blk
+        type(boundary_type), intent(in) :: bc
+        real(C_DOUBLE), intent(in) :: dt_gamma
+
+        integer :: n, npts, b, face_id, dir, side
+        integer :: fi(3), ni(3), fm(3), nm(3)
+        integer(C_INT) :: local_n(1:3), isOut(NFACES)
+        real(C_DOUBLE) :: d1f, d1n, dpf, dpn
+
+        if (bc%nOutlet <= 0_C_INT) return
+        npts = int(bc%nTotal)
+        local_n = blk%nb(1:3)
+        isOut = bc%faceOutlet
+
+        ! Over ALL boundary points, skipping those not on an outlet (the
+        ! apply_bc loop shape): a few compares per point of a surface list.
+        ! Deliberately NOT a compact list of outlet points: npts would then
+        ! be used only as the bound of the mapped sections, and nvfortran
+        ! 25.9 drops the assignment of a variable it sees used nowhere else
+        ! -- the sections were sized from an uninitialised value and the run
+        ! stopped, two times in three, with "partially present on the
+        ! device" (found 2026-10-01). A map bound must also be read by code.
+        !$omp target teams distribute parallel do &
+        !$omp& map(to: npts, dt_gamma, local_n(1:3), isOut(1:NFACES), &
+        !$omp& bc%pointFace(1:npts), bc%slot(1:npts), bc%i(1:npts), bc%j(1:npts), bc%k(1:npts), &
+        !$omp& blk%qs, blk%d1x, blk%d1y, blk%d1z) &
+        !$omp& map(tofrom: blk%q) &
+        !$omp& private(n,b,face_id,dir,side,fi,ni,fm,nm,d1f,d1n,dpf,dpn)
+        do n = 1, npts
+            face_id = int(bc%pointFace(n))
+            if (isOut(face_id) == 0_C_INT) cycle
+            b = int(bc%slot(n))
+            dir = (face_id + 1)/2          ! also the normal velocity component
+            side = modulo(face_id - 1, 2)
+
+            ! The face f and its interior neighbour n, and the cell below
+            ! each along the normal (the low operand of dp).
+            fi = [int(bc%i(n)), int(bc%j(n)), int(bc%k(n))]
+            ni = fi
+            if (side == SIDE_MIN) then
+                fi(dir) = 1
+                ni(dir) = 2
+            else
+                fi(dir) = int(local_n(dir)) + 1
+                ni(dir) = int(local_n(dir))
+            end if
+            fm = fi
+            fm(dir) = fi(dir) - 1
+            nm = ni
+            nm(dir) = ni(dir) - 1
+
+            if (dir == 1) then
+                d1f = blk%d1x(fi(1),VAR_U,b)
+                d1n = blk%d1x(ni(1),VAR_U,b)
+            else if (dir == 2) then
+                d1f = blk%d1y(fi(2),VAR_V,b)
+                d1n = blk%d1y(ni(2),VAR_V,b)
+            else
+                d1f = blk%d1z(fi(3),VAR_W,b)
+                d1n = blk%d1z(ni(3),VAR_W,b)
+            end if
+
+            dpf = (blk%q(fi(1),fi(2),fi(3),VAR_P,b) - blk%q(fm(1),fm(2),fm(3),VAR_P,b))*d1f
+            dpn = (blk%q(ni(1),ni(2),ni(3),VAR_P,b) - blk%q(nm(1),nm(2),nm(3),VAR_P,b))*d1n
+
+            blk%q(fi(1),fi(2),fi(3),dir,b) = blk%qs(ni(1),ni(2),ni(3),dir,b) &
+                + ((blk%q(fi(1),fi(2),fi(3),dir,b) - blk%q(ni(1),ni(2),ni(3),dir,b)) &
+                   + dt_gamma*(dpn - dpf))
+        end do
+        !$omp end target teams distribute parallel do
+    end subroutine predict_outlet_faces
 
 
     ! qs += (state - incr) q on the body blocks, x = dt_gamma*coef: with the

@@ -905,7 +905,12 @@ Two to three sessions.
 > anyway. (3) The 2:1 cross-level entries do NOT extend into physical ghost
 > rows (`interface_boxes`), so the ordering hazard of section 3 is confined
 > to same-level copies, is stated at `apply_bc`, and is what the 1 == 4
-> ranks legs gate. What WAS done (boundary.f90, scalar.f90): the BC type of
+> ranks legs gate. (UPDATE 2026-10-01: they extend now, as same-level
+> entries do -- not extending left the normal velocity of a physical HIGH
+> face unwritten next to a level jump; `comm.f90 candidate_boxes`,
+> `docs/next_session_outlet.md` O4. The ordering rule of `apply_bc` then
+> covers every transfer. `FACE_OUTFLOW` below is gone the same day: the
+> outlet face is predicted.) What WAS done (boundary.f90, scalar.f90): the BC type of
 > every q variable is resolved at init into `bcKind(var,face)` (GHOST /
 > FACE / FACE_OUTFLOW / NONE), `bcW(var,face)` and `bcC(var,point)`
 > (`resolve_affine_rows`; the scalar columns come from `init_scalar` via

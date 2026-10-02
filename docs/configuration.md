@@ -173,7 +173,7 @@ directions, for a consistent colouring.
 
 Every non-periodic face defaults to a homogeneous Dirichlet condition. The patch type is
 the one user-facing face axis: it derives the per-variable rows that are not set
-explicitly (`outlet` = zero-gradient outflow velocity + Dirichlet pressure; `inlet` =
+explicitly (`outlet` = the face-normal velocity is an unknown the predictor advances, with zero-gradient tangential velocities and a Dirichlet pressure; `inlet` =
 Dirichlet velocity, with RANS / scalar free-stream values), and tells the turbulence models
 where the walls are (wall distance, ω pinning, scalar wall ghosts). An explicit `_type` key
 that contradicts the declared patch is a hard error; explicit `_type` / `_value` keys also
