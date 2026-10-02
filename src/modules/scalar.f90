@@ -2175,10 +2175,13 @@ contains
     !    But the SPECTRAL RADIUS is bounded by 2*A_ii/C_i (Gershgorin, the
     !    operator has zero row sum), not by A_ii/C_i, and the existing
     !    convention is a factor ~1.9 short of that: uniform runs survive only
-    !    because their extreme modes are never excited. An isolated cut cell
-    !    is different -- its row is strongly ASYMMETRIC (a large k_face into a
-    !    neighbour of the other material's capacity), so the worst mode IS
-    !    local and IS attained, and this RK3's real-axis limit is 2.5.
+    !    where ONE direction carries the diagonal (a fine wall-normal line) or
+    !    the Courant limit binds first -- on an isotropic grid the extreme
+    !    mode IS excited from round-off and pecletmax above 0.21 blows up
+    !    (validation/diffusion_limit/, 2026-10-02; the solver warns). A cut
+    !    cell attains its bound on any grid -- its row is strongly ASYMMETRIC
+    !    (a large k_face into a neighbour of the other material's capacity),
+    !    so the worst mode is local, and this RK3's real-axis limit is 2.5.
     !    MEASURED on gate 1: (kappa_s, C_s) = (0.01, 0.01) at w = 0.95 blows
     !    up at pecletmax 0.3 and is stable at 0.2; (1000, 1000) at w = 0.80
     !    blows up at 0.4 and is stable at 0.2. Doubling the rate at cut cells

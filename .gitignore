@@ -118,6 +118,11 @@ tools/h5maxdiff
 .obx_*
 obx_*.forces.txt
 .rst_*
+# validation/redblack_interface/run_gates.sh: per-leg inis and the rank comparison
+validation/redblack_interface/.gate_*
+validation/redblack_interface/.cmp_rank.txt
+# validation/diffusion_limit/run_gate.sh: per-leg inis and prepare logs
+.dl_*
 
 # passive-scalar S3 gate scratch (run_bitexact_s3.sh, run_gates_s3.sh)
 .s3x_*

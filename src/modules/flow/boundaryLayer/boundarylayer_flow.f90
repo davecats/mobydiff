@@ -114,7 +114,7 @@ contains
         bc%faceBcProfile(VAR_V, inlet) = PROFILE_BLASIUS
         bc%blasiusTheta = this%theta_in
 
-        bc%facePatchType(outlet) = PATCH_OUTLET   ! zero-gradient velocity + Dirichlet p
+        bc%facePatchType(outlet) = PATCH_OUTLET   ! predicted normal velocity + Dirichlet p
         bc%facePatchType(wall)   = PATCH_WALL     ! no-slip plate
         bc%facePatchType(top)    = PATCH_OUTLET   ! displacement entrainment leaves
 

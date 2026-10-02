@@ -138,7 +138,7 @@ every other face, and samples lift and drag from a control-volume momentum budge
 | `nsteps` | int | 0 | Number of steps (one of `nsteps` / `t_final` must be > 0). |
 | `t_final` | real | 0.0 | Final time. |
 | `cflmax` | real | 0.0 | Maximum CFL for the adaptive step (≥ 0). **Per direction**: `dt` is bounded by `cflmax / max_cells,d |u_d|/Δx_d`, the largest single-component Courant number. The RK3 stability limit is on the SUM over directions (√3 with central convection), so a 3D flow with comparable components in all directions at `cflmax = 0.8` runs at a sum Courant number up to ~2.4 and can be unstable; the solver prints the initial field's worst-case sum/component ratio at init (`cfl:` line) — keep `cflmax × ratio < √3`. |
-| `pecletmax` | real | 0.0 | Maximum cell Péclet number (≥ 0). |
+| `pecletmax` | real | 0.0 | Maximum diffusion number for the adaptive step (≥ 0). **Per direction**: `dt` is bounded by `pecletmax / max_cells,d ν/Δx_d²`. The RK3 limit of explicit diffusion is on the SUM over directions, `dt × Σ_d ν/Δx_d² ≤ 0.628`, so the largest stable value is 0.63 where one direction dominates (a wall-normal line much finer than the other two), 0.31 with two equally fine directions and 0.21 with three (`validation/diffusion_limit/`). The solver prints the grid's sum/direction ratio at init (`peclet:` line) and warns once when a step exceeds the limit — keep `pecletmax × ratio < 0.628` wherever diffusion sets the step. |
 | `dtmax` | real | — | Hard cap on `dt`. **Must be > 0.** |
 
 ## `[pressure]` — pressure projection / Poisson solver

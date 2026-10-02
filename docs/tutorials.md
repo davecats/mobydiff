@@ -141,11 +141,10 @@ periodic_z = false
 ; Inlet: prescribed uniform velocity (1,0,0), pressure Neumann
 x_min_u_value = 1.0
 x_min_p_type  = neumann
-; Outlet: velocity Neumann, pressure reference (Dirichlet 0)
-x_max_u_type  = neumann
-x_max_v_type  = neumann
-x_max_w_type  = neumann
-x_max_p_type  = dirichlet
+; Outlet: the patch type sets every row (normal velocity predicted by the
+; momentum step, zero-gradient tangential velocities, pressure Dirichlet 0).
+; A Neumann row on the NORMAL velocity is a configuration error.
+x_max_patch   = outlet
 ; y = 0 symmetry: v = 0, Neumann for u, w, p  (similarly at the far y and z faces)
 y_min_v_type  = dirichlet
 y_min_v_value = 0.0

@@ -102,6 +102,8 @@ Gates:
 - `run_les.py` — campaign driver (4 cases, two legs, channel_stats + nut snapshots).
 - `les_stats.py` — analysis (channel_stats profiles + log law + nut(y) + patch band).
 - `nut_interface_slice.png` — the Phase-B mechanics `nut` cross-section.
+- `wall_jump.ini`, `check_wall_jump.py`, `run_wall_jump.sh` — the level jump that
+  touches a wall (last section).
 
 ## Results (developed run, t=5..25, GPU)
 
@@ -146,3 +148,52 @@ where pressure matters, raise niter or pin/zero-mean the pressure.
   64³ before computing reference stresses (not done here).
 - `nut` is written to a field snapshot only when LES is active (a separate
   `fdm_h5_append_nut` HDF5 call); no-LES output is byte-identical.
+
+## A level jump that touches a wall (2026-10-02)
+
+`./run_wall_jump.sh` (`wall_jump.ini`, `check_wall_jump.py`; one step, CPU,
+seconds). Every case above keeps its 2:1 interfaces away from the walls or
+parallel to them. Here one refinement box spans the whole height and span, so
+the two interfaces are x-normal planes that run INTO both walls. The field is
+the x- and z-invariant mean profile and the model is Smagorinsky (non-zero in
+plain shear), so within a level the eddy viscosity of a wall row has one value
+and the column next to the jump shows what the SGS kernel reads there.
+
+What it reads: the velocity-gradient tensor of the cell `(nb, 1)` takes
+`du/dy` from `u(nb+1, 0)`, the x halo of the wall GHOST row. A same-level
+neighbour has always delivered it (the tangential extension copies its ghost
+row). Across a level jump nothing wrote it before 2026-10-01
+(`docs/next_session_outlet.md`, increment O4) and it kept its initial value 0.
+
+Deviation of the wall-row eddy viscosity in the column next to the jump from
+the median of its level, both walls alike:
+
+| | main `154e48f` (halo never written) | now |
+|---|---|---|
+| fine side (prolongation of the coarse ghost row) | 25.8 % | 0.94 % |
+| coarse side (restriction of the fine ghost row) | 13.4 % | 6.8 % |
+| every other column, either level | ≤ 1.3 % | ≤ 1.3 % |
+
+The gate is ≤ 2 % fine, ≤ 8 % coarse. The 1.3 % is the first fine column on
+the low-x side of the band, whose halo column is the injected coarse value
+(the const-1/2 transfer); it is the same before and after.
+
+**The coarse-side 6.8 % is a known first-order residual, not fixed.** A coarse
+ghost cell covers two fine rows, of which only one exists beyond the wall, so
+that halo row is restricted from the single fine ghost row: the coarse block
+receives `-u_fine(1)` where the mirror of its own halo column is
+`-(u_fine(1) + u_fine(2))/2`, about twice as large in the viscous sublayer.
+The wall shear seen through that one face is 12.5 % low, the cell average
+6.25 % low; the measured 6.8 % is that on the stretched line. Exact for a
+uniform field (the freestream gates), first order otherwise. What it would
+take: unequal sample weights `(3/2, -1/2)` on the fine rows `(0, 1)` in the
+gather kernels (exact for a linear profile, equal weights are all they carry
+today), or the boundary row applied to the halo column after the exchange.
+Not done: with WALE the wall-cell eddy viscosity is ~1e-4 of the molecular
+one, resolved RANS multiplies the wall-row strain by a zero eddy viscosity,
+and the momentum stencil does not read that halo at a wall.
+
+A 40-step WALE run from a disturbed profile on the same layout differs
+between the two binaries by 1.3e-8 in velocity and 2.1e-10 in `nut`, all of it
+starting in those columns: the first case in the tree in which O4 changes a
+result, and the direction is the one above.

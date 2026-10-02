@@ -52,6 +52,43 @@ sublayer, log region and wake. **Two takeaways:**
 The mobydiff comparison data, in the same NetCDF format as the reference files, is
 committed at **`assets/mobydiff/xyz_4096_224_192/data.nc`**.
 
+## The outlet zone
+
+Do not use the last stretch of the plate. How long that stretch is depends on
+the outlet treatment, and it was measured (2026-10-02,
+`assets/postpro/momentum_integral.py`: the growth of the momentum thickness
+against `c_f/2 - (H+2)(θ/U_e) dU_e/dx`, and the mean wall pressure, per x
+band; 500 time units after a 250-unit settling, two binaries from the same
+field on 4 GPUs each):
+
+| x band | before 2026-10-01: dθ/dx | balance | p_wall | now: dθ/dx | balance | p_wall |
+|---|---|---|---|---|---|---|
+| 450 … 600 | 2.0 … 2.3e-3 | 2.2 … 2.3e-3 | +2e-4 | 2.0 … 2.3e-3 | 2.2 … 2.3e-3 | −1e-4 |
+| 650 … 680 | 1.8e-3 | 2.1e-3 | −4.0e-4 | 2.2e-3 | 2.1e-3 | +1.7e-4 |
+| 700 … 715 | 1.0e-3 | 2.0e-3 | −1.5e-3 | 2.1e-3 | 2.0e-3 | +1.7e-4 |
+| 730 … 740 | 4.0e-4 | 2.0e-3 | −2.2e-3 | 2.3e-3 | 2.0e-3 | +6.8e-4 |
+| 745 … 748 | 2.2e-4 | 2.0e-3 | −2.8e-3 | 2.5e-3 | 2.0e-3 | +8.8e-4 |
+| 749.5 … 750 | 6e-5 | 2.0e-3 | −3.0e-3 | 4.1e-3 | 2.2e-3 | +1.3e-4 |
+
+- **The committed data (`assets/mobydiff/.../data.nc`, the figures) were
+  produced before 2026-10-01**, when the outlet face was reset to its
+  neighbour every substage: the wall pressure falls toward the outlet and the
+  momentum thickness stops growing over the last ~100 δ*₀ (5 δ₉₉). Treat
+  x > 600 of those data as outlet zone. The comparison station (Re_θ ≈ 677,
+  x ≈ 400) is far upstream of it and is unchanged by the outlet treatment
+  (θ within 0.06 %).
+- **With the outlet face predicted** (the present code) the zero-pressure-
+  gradient balance holds to within ~20 % up to 2 δ*₀ from the outlet. The
+  last ten cells adjust to the uniform outlet pressure (the mean pressure
+  inside a turbulent layer is `−⟨v′v′⟩`, the face value 0): c_f rises 13 %
+  there, most of it in the last cell. The stored pressure of the last column
+  is 100 times quieter and the divergence residual of the 6-iteration
+  red-black projection 5 times lower.
+
+Regenerating the committed data with the present code is a phase-2 run (see
+below) from a field settled with it; it would move nothing at the comparison
+station.
+
 ## Layout
 
 ```
@@ -116,6 +153,7 @@ accumulators continue seamlessly.
 | script | purpose |
 |---|---|
 | `make_mobydiff_nc.py` | export `bl_stats.h5` → res-study NetCDF (`data.nc`) |
+| `momentum_integral.py` | dθ/dx against the von Kármán balance and the wall pressure, per x band (the outlet zone) |
 | `compare_codes.py` | mobydiff vs SIMSON / CaNS / AMPHIBIOUS (the figure above) |
 | `compare_passivewall.py` | mobydiff vs SIMSON (single-code, 4-panel) |
 | `bl_stats.py` | boundary-layer profile plots from the statistics |

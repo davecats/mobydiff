@@ -4,6 +4,9 @@ STATUS: **DONE 2026-10-01, increments O0 .. O5 implemented and gated; the
 design was ratified by the user the same day** (restart: store the planes;
 the level-jump hole: fixed in this series). What was built, every gate
 number and what is still owed are in the last section, "Implementation".
+The open items of its "Not done" list were followed up on 2026-10-02 (the
+boundary-layer restart pair, the diffusion limit behind `pecletmax`, LES at
+a level jump on a wall): "Follow-up, 2026-10-02", near the end.
 The sections before it are the handout as written, then the investigation
 that preceded the code.
 
@@ -677,18 +680,143 @@ Cost: outlet-free channel on the RTX 3060, 39.44 -> 39.32 ms per step (the
 removed `apply_bc`); cylinder 4.2 M cells on an A6000, 87.8 -> 87.6 ms;
 NACA on the RTX 5090, 0.171 -> 0.170 s.
 
+### Follow-up, 2026-10-02: the open items of "Not done"
+
+Reference for this section: `~/outlet_runs/ref_949148f` (the committed tree,
+nofma CPU/GPU and production GPU). The three source changes below are a
+report in the time-step limiter (fields untouched), two comments and the
+gates; the 7-case, 9-case and outlet suites are `max_abs 0` against the
+committed tree (nofma, CPU 1/4 ranks and GPU), and
+`validation/freestream/run_gates.sh` passes in full with the rebuilt binaries.
+
+**1. The turbulent boundary layer (`tutorials/turbulentBoundaryLayer`): two
+restart pairs, and the old outlet was stalling the layer.** The production
+case (4096 x 224 x 192, red-black 6) restarted from the developed field of
+the tutorial (step 1050000) with `154e48f` and with `949148f`. Both outlets
+of the case are high faces (x_max, and the top, where the entrainment
+enters). Lengths in inlet displacement thicknesses; delta99 at the outlet
+is 18.
+
+- (a) 100 time units on one RTX 5090 (0.58 s per step, 26 GB),
+  `~/outlet_runs/tbl/` (`compare_tbl.py`).
+- (b) 750 time units = one flow-through on HoreKa, 4 A100 per side, both
+  sides in the same allocation (0.194 / 0.198 s per step), three chained
+  one-hour jobs 5175219-21
+  (`overheadTest/horeka/exchange/submit_outlet_tbl.sh`, results in
+  `~/outlet_runs/tbl/horeka/`). The statistics below are the window
+  250 .. 750, after the first 250 in which the new run leaves the old
+  scheme's state behind.
+
+Both stable throughout. Health and stored pressure, (b), last chunk:
+
+| | `154e48f` | `949148f` |
+|---|---|---|
+| L2 divergence, mean | 1.6e-5 | 3.2e-6 |
+| net mass imbalance (runtime column), mean / max | 0.50 / 1.38 | 0.040 / 0.11 |
+| stored p, last column, rms (final field) | 6.8e-2 | 6.9e-4 |
+| stored p, column at 0.9 lx, rms | 8.0e-3 | 2.7e-3 |
+| mean p on the outlet plane, max over y | 5.4e-3 | 8.6e-5 |
+
+The momentum integral, `d theta/dx` against `c_f/2 - (H+2)(theta/U_e)
+dU_e/dx` (`assets/postpro/momentum_integral.py`), and the mean wall pressure
+(the freestream pressure stays within 7e-4 of zero in both):
+
+| x band | old: d theta/dx | balance | p_wall | new: d theta/dx | balance | p_wall |
+|---|---|---|---|---|---|---|
+| 450 .. 600 | 2.0 .. 2.3e-3 | 2.2 .. 2.3e-3 | +2e-4 | 2.0 .. 2.3e-3 | 2.2 .. 2.3e-3 | -1e-4 |
+| 650 .. 680 | 1.8e-3 | 2.1e-3 | -4.0e-4 | 2.2e-3 | 2.1e-3 | +1.7e-4 |
+| 700 .. 715 | 1.0e-3 | 2.0e-3 | -1.5e-3 | 2.1e-3 | 2.0e-3 | +1.7e-4 |
+| 730 .. 740 | 4.0e-4 | 2.0e-3 | -2.2e-3 | 2.3e-3 | 2.0e-3 | +6.8e-4 |
+| 745 .. 748 | 2.2e-4 | 2.0e-3 | -2.8e-3 | 2.5e-3 | 2.0e-3 | +8.8e-4 |
+| 749.5 .. 750 | 6e-5 | 2.0e-3 | -3.0e-3 | 4.1e-3 | 2.2e-3 | +1.3e-4 |
+
+**With the old outlet the momentum thickness stops growing over the last
+~100 units (5 delta99)**: the wall pressure falls by 3e-3 toward the outlet
+while the freestream pressure does not, a favourable pressure gradient
+inside the layer that no zero-pressure-gradient layer has (`p_wall = p_e`
+there, `<v'v'>` vanishing at the wall). It is the outlet pressure mode in its
+time-averaged form. The tutorial's own 4000-time-unit statistics, produced
+by the old code, show the same stall to the digit that matters (d theta/dx
+1.2e-3 at 700..715, 5e-5 in the last cell, p_wall -4.2e-3): it was in the
+shipped data, in a region nobody compared. **With the predicted face the
+balance holds, within ~20 %, up to 2 units from the outlet**; what remains is
+a wall pressure 9e-4 high over the last ~20 units and the adjustment of the
+last cells to the uniform face pressure (the mean pressure inside the layer,
+`-<v'v'>`, is brought to 0 over the last ~5 units: near-wall acceleration,
+c_f +13 % over the last 10 units, most of it in the last cell).
+
+New against old, statistics of the window: theta within 0.06 % up to x = 500,
++0.3 % at 600, +1.0 % at 650, +2.3 % at 700, +6.0 % at the outlet; c_f
+within the sampling scatter of two decorrelated 500-unit windows (+-2 %) up
+to x = 650, then 1.5 .. 2 % LOWER to the outlet (-3 .. -5 % against the
+tutorial's long statistics: the old favourable gradient raised it) and
++11 % in the last cell. At the comparison station of the tutorial (Re_theta
+677, x = 400) nothing moves beyond that scatter, so the tutorial's table
+stands; its fields downstream of x ~ 600 are the old outlet's.
+
+In (a), where the two runs still share the realization, the same picture at
+its start: statistics within 7e-4 for x in 100 .. 600, theta +0.3 % at 30
+from the outlet and +1.1 % at it, stored p of the last column 8.1e-2 -> 4.1e-4.
+
+**2. `tutorials/naca/rans` from scratch: still not run.** Days of GPU time,
+and it belongs to the one-by-one re-validation of `validation/README.md`.
+
+**3. `pecletmax`: proven, and reported by the solver.** The attribution of
+the side finding is now a measurement, `validation/diffusion_limit/`: a
+decaying Beltrami flow at Re = 1 in a periodic box, fixed step just below and
+just above `dt sum_d nu/h_d^2 = 0.628` on grids with three, two and one fine
+direction. Decay below, blow-up above, on all three (limits on the
+single-direction number 0.209 / 0.305 / 0.558, bracketed to 2.5 %). With the
+adaptive step and `pecletmax = 0.5` on the isotropic grid the run does not
+end in NaN: it sits in a bounded state held by the Courant limiter, which is
+the O(0.65) disturbance of the refined patch above, without a patch.
+The limiter is UNCHANGED. `update_timestep_limits` prints the grid's sum /
+direction ratio and the effective sum number at init (the `peclet:` line,
+beside `cfl:`) and warns once at the first step beyond the limit, fixed or
+adaptive step. The one suite case that warns is `validation/scalar/
+conduction.ini` (sum number 1.19): its field varies in y only, exactly, and a
+field uniform in a direction does not excite the modes along it. Open, the
+user's call: bound the SUM in the limiter (every diffusion-bound run would
+take a slightly different step), or leave `pecletmax` as documented.
+
+**4. LES at a level jump on a physical face: measured, one residual.** The
+SGS kernels do not read edge ghosts of cell-centred quantities that matter
+(the eddy viscosity's physical ghosts are never written and stay 0, before
+and after O4). What they read is the VELOCITY edge halo: the gradient tensor
+of the wall cell `(nb, 1)` takes `du/dy` from `u(nb+1, 0)`. So O4 changes an
+LES with a level jump running into a wall, the first case in the tree it
+changes: `validation/channel_interface/les/run_wall_jump.sh` (x-invariant
+profile, Smagorinsky, one step). Wall-row eddy viscosity in the column next
+to the jump against its level's median: fine side 25.8 % before, 0.94 % now;
+coarse side 13.4 % before, **6.8 % now**. The coarse-side remainder is the
+one-row restriction of O4: the coarse ghost receives the single fine ghost
+row, `-u_f(1)`, where the mirror of its own halo column is
+`-(u_f(1) + u_f(2))/2`. Exact for uniform flow, first order otherwise. Closing
+it needs unequal weights `(3/2, -1/2)` on the fine rows `(0, 1)` in the
+gather kernels, or the boundary row applied to the halo column after the
+exchange; neither is done (WALE's wall-cell eddy viscosity is ~1e-4 of the
+molecular one, resolved RANS multiplies that strain by zero, the momentum
+stencil does not read the halo at a wall). It would matter for a Smagorinsky
+run or for a tangential velocity at an inlet/outlet face next to a jump.
+
+**Also fixed here:** the sailplane excerpt of `docs/tutorials.md` still
+showed the Neumann rows that are a config error since F4; two comments
+described the outlet as a zero-gradient velocity; the gate scratch of
+`validation/redblack_interface/run_gates.sh` is ignored by git.
+
 ### Not done
 
-- `tutorials/turbulentBoundaryLayer` (4096 x 224 x 192, a HoreKa case) was
-  not re-run. Its laminar precursor is `validation/blasius`, which was.
+- `tutorials/turbulentBoundaryLayer` from scratch (cold start, 1000 t.u. of
+  re-equilibration, 4000 of statistics): not run. The restart pairs of the
+  follow-up section say what the outlet change does to it, and that the
+  committed `data.nc` downstream of x ~ 600 carries the old outlet's stall
+  (the comparison station at x = 400 does not). Regenerating it is a
+  phase-2 run from `tbl_new_1087500.h5` (HoreKa, `outlet_tbl_run`).
 - `tutorials/naca/rans` from scratch (days of GPU time): only the restart
   pair above.
-- The side finding on `pecletmax` is recorded, not acted on.
-- Edge ghosts of CELL-CENTRED quantities at a level jump on a physical
-  face are now written too (O4 extends every variable). The momentum
-  stencil does not read them and the refined suites are unchanged, the
-  RANS one included, but no LES case with a level jump on a physical face
-  exists to say what the SGS kernels make of them.
+- `pecletmax` still bounds the single-direction number (follow-up item 3).
+- The first-order ghost row of a restriction at a level jump on a physical
+  face (follow-up item 4).
 - Long output runs are in `~/outlet_runs/` (cylinder far-field pair `st/`,
   Re 40 `re40/`, NACA pair `naca/`, sailplane pair `sail/`); the pinned
   reference worktree is `~/outlet_ref_src`.

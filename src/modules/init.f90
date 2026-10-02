@@ -58,6 +58,11 @@ module init
         real(C_DOUBLE) :: cflmax = 0.0d0
         real(C_DOUBLE) :: pecletmax = 0.0d0
         real(C_DOUBLE) :: peclet_rate = 0.0d0
+        ! Molecular diffusion rates of the grid, for the stability report of
+        ! update_timestep_limits: the largest single-direction nu/h^2 and the
+        ! largest SUM over the three directions of one cell.
+        real(C_DOUBLE) :: peclet_dir_rate = 0.0d0
+        real(C_DOUBLE) :: peclet_sum_rate = 0.0d0
         real(C_DOUBLE) :: dtmax = 0.0d0
         real(C_DOUBLE) :: forcing(1:3) = 0.0d0
         ! [flow] initial_u/v/w: uniform initial velocity (generic case).

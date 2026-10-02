@@ -2261,14 +2261,67 @@ immersed boundary. Phased, each phase verified before the next:
   - Unmoved: `tutorials/naca/rans` restarted from the converged state,
     both binaries, 0.5 t.u. (C_L 0.52008 / 0.52007, C_D 0.01275 both; the
     outlet is 77 chords away); the sailplane smoke case.
-    NOT re-run: the turbulent boundary-layer tutorial (HoreKa size) and a
-    from-scratch NACA convergence.
-  - SIDE FINDING, open: `pecletmax` is per-direction. RK3 needs
-    `4 nu dt sum(1/h^2) <= 2.51`, i.e. 0.63 / 0.31 / 0.21 for one / two /
-    three equally fine directions; the usual 0.5 is safe only where one
-    direction dominates or another limit binds. An isotropic refined patch
-    at 0.41 sat in a bounded O(0.65) limit cycle held by the Courant
-    limiter.
+    NOT re-run: a from-scratch NACA convergence, and the boundary-layer
+    tutorial from scratch (its restart pair is the next bullet).
+- **Outlet follow-up (2026-10-02; `docs/next_session_outlet.md`,
+  "Follow-up, 2026-10-02"; reference `~/outlet_runs/ref_949148f`).**
+  - **The turbulent boundary-layer tutorial across the outlet change: the
+    OLD outlet was stalling the layer.** Two restart pairs from the
+    tutorial's developed field, `154e48f` against `949148f`: 100 t.u. on one
+    RTX 5090 (`~/outlet_runs/tbl/`) and one flow-through (750 t.u.) on
+    HoreKa, 4 A100 per side in one allocation, jobs 5175219-21
+    (`submit_outlet_tbl.sh`; statistics of the window 250..750 in
+    `~/outlet_runs/tbl/horeka/w23`). Both stable. von Karman balance
+    (`assets/postpro/momentum_integral.py`): with the old outlet `d theta/dx`
+    falls from the balance's 2.0e-3 to 1.0e-3 at x = 700, 2e-4 at 745 and
+    6e-5 in the last cell, under a wall pressure that drops by 3e-3 while
+    the freestream pressure stays put -- the outlet pressure mode, time
+    averaged, over the last ~100 units (5 delta99). **The tutorial's own
+    4000-t.u. statistics show the same stall: it is in the committed
+    `data.nc` for x > 600.** With the predicted face the balance holds
+    within ~20 % up to 2 units from the outlet; the last ten cells adjust to
+    the uniform face pressure (mean p of a turbulent layer is `-<v'v'>`, the
+    face value 0): c_f +13 % there, most of it in the last cell. theta at
+    the outlet +6 %, +1 % at 650, within 0.06 % up to x = 500: **the Re_theta
+    677 station (x = 400) and the tutorial's table are untouched.** Also:
+    L2 divergence 1.6e-5 -> 3.2e-6 at red-black 6, net mass imbalance 0.50 ->
+    0.04, stored p of the last column 6.8e-2 rms -> 6.9e-4. 0.194 s/step on
+    4 A100. **Do not read wall friction in the last ten cells before an
+    outlet; and do not use x > 600 of data produced before 2026-10-01.**
+    HOW IT WAS RUN: a 2-node `dev_accelerated` job runs the two sides side
+    by side, one node each, in chained resumable 40-minute chunks -- no
+    wait in `accelerated`. A global-3D restart (rank-3 datasets, no blocks
+    table) is readable on any rank count; a one-block block-layout file is
+    not.
+  - **`pecletmax` is per-direction: PROVEN, reported by the solver, limiter
+    unchanged.** RK3 needs `dt sum_d nu/h_d^2 <= 0.628` (2.5127/4): 0.63 /
+    0.31 / 0.21 on the single-direction number for one / two / three equally
+    fine directions, bracketed to 2.5 % on three grids by
+    `validation/diffusion_limit/run_gate.sh` (decay below, blow-up above;
+    with the adaptive step and 0.5 on an isotropic grid a BOUNDED state held
+    by the Courant limiter -- the O(0.65) disturbance first seen in a
+    refined patch). `update_timestep_limits` prints a `peclet:` line beside
+    `cfl:` (sum / direction ratio, effective sum number) and warns once at
+    the first step beyond the limit; fields are bit-identical (suites
+    `max_abs 0`). The warning is about the GRID: a field exactly uniform in
+    a direction never excites the modes along it, so
+    `validation/scalar/conduction.ini` (sum number 1.19) warns and passes.
+    The usual 0.5 stays safe where one direction dominates (every channel
+    and boundary layer) or the Courant limit binds. OPEN, the user's call:
+    bound the sum in the limiter.
+  - **LES at a level jump that runs into a wall** (the first case O4
+    changes): the velocity-gradient tensor of the wall cell `(nb, 1)` reads
+    `u(nb+1, 0)`, the x halo of the wall ghost row, which nothing wrote
+    across a level jump before O4. Wall-row eddy viscosity in the column
+    next to the jump (`validation/channel_interface/les/run_wall_jump.sh`,
+    Smagorinsky on an x-invariant profile): fine side 25.8 % off -> 0.94 %,
+    coarse side 13.4 % -> **6.8 %, a known first-order residual**: the
+    coarse ghost is restricted from the ONE fine ghost row (`-u_f(1)` where
+    its own mirror is `-(u_f(1)+u_f(2))/2`). Exact for uniform flow. Closing
+    it needs unequal sample weights (3/2, -1/2) in the gather kernels or the
+    boundary row applied to the halo column after the exchange; not done
+    (WALE's wall-cell nut is ~1e-4 nu, resolved RANS multiplies that strain
+    by zero, momentum does not read the halo at a wall).
 
 ## Verification
 
@@ -2289,4 +2342,9 @@ immersed boundary. Phased, each phase verified before the next:
   9-case suites contain no outlet. A uniform-flow gate started from the
   uniform field cannot see a halo that nothing writes: the `refined` group
   starts from rest.
+- Anything touching the time-step limiter or the diffusion operator:
+  `validation/diffusion_limit/run_gate.sh` (the RK3 diffusion limit,
+  bracketed). A run that prints `WARNING: dt x sum_d(nu/h_d^2) ... exceeds
+  the RK3 limit` is beyond the limit of its grid: lower `pecletmax` to the
+  value it names unless the field is exactly 1D/2D.
 - Never declare a phase done with failing builds or unverified results.
