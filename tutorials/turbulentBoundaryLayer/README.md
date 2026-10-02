@@ -86,8 +86,10 @@ field on 4 GPUs each):
   red-black projection 5 times lower.
 
 Regenerating the committed data with the present code is a phase-2 run (see
-below) from a field settled with it; it would move nothing at the comparison
-station.
+below) from a field settled with it; it moves nothing at the comparison
+station. It is under way (`overheadTest/horeka/exchange/submit_tbl_stats.sh`,
+`docs/next_session_outlet.md`); until its `data.nc` is committed the note
+above applies.
 
 ## Layout
 

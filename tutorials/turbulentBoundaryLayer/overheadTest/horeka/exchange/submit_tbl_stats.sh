@@ -68,5 +68,8 @@ if [ ! -f production_p2.case.h5 ]; then
 fi
 echo "start $restart $(date '+%F %T')" >> status.txt
 $MPIRUN "$CODE_DIR/build_gpu/moby_solve" production_stats.ini > "production_stats_from_$(basename "$restart" .h5).log" 2>&1
-echo "exit $? $restart $(date '+%F %T')" >> status.txt
-tail -3 status.txt; tail -2 production_stats_runtime.txt
+rc=$?
+echo "exit $rc $restart $(date '+%F %T')" >> status.txt
+tail -3 status.txt
+tail -2 production_stats_runtime.txt 2>/dev/null   # absent on a run shorter than runtime_interval
+exit $rc

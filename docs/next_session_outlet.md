@@ -817,12 +817,25 @@ described the outlet as a zero-gradient velocity; the gate scratch of
 
 ### Not done
 
-- `tutorials/turbulentBoundaryLayer` from scratch (cold start, 1000 t.u. of
-  re-equilibration, 4000 of statistics): not run. The restart pairs of the
-  follow-up section say what the outlet change does to it, and that the
-  committed `data.nc` downstream of x ~ 600 carries the old outlet's stall
-  (the comparison station at x = 400 does not). Regenerating it is a
-  phase-2 run from `tbl_new_1087500.h5` (HoreKa, `outlet_tbl_run`).
+- **The tutorial's data are being regenerated (decided by the user
+  2026-10-02): HoreKa job 5175523, QUEUED in `accelerated` when this was
+  written.** Phase 2 as committed (`production_stats.ini`, 500000 steps =
+  10000 t.u., ~27 h on 4 A100 at 0.19 s/step) with `f39c139`, from
+  `outlet_tbl_run/tbl_new_1087500.h5` (the tutorial's developed field after
+  750 t.u. with the predicted outlet). Run directory
+  `<workspace>/optimiseBlockRefinement/tbl_stats_run`, worktree
+  `moby-tbl-stats`, script `overheadTest/horeka/exchange/submit_tbl_stats.sh`
+  (resumable: submit it again and it continues from the latest
+  `production_p2_*.h5`; a 100-step smoke of the same script ran clean, job
+  5175518). WHEN IT ENDS: copy `production_stats.h5` and one
+  `production_p2_*.h5` (as `restart_field.h5`, for the node lines) into
+  `tutorials/turbulentBoundaryLayer/`, run `python3 reproduce.py`, check
+  `assets/postpro/momentum_integral.py production_stats.h5` (the balance must
+  hold to the outlet), commit `data.nc` and the figures, and drop the
+  "produced before 2026-10-01" paragraph of the README's "The outlet zone".
+  The committed `data.nc` downstream of x ~ 600 carries the old outlet's
+  stall until then (the comparison station at x = 400 does not). A cold
+  start from scratch is NOT part of this.
 - `tutorials/naca/rans` from scratch (days of GPU time): only the restart
   pair above.
 - The first-order ghost row of a restriction at a level jump on a physical
