@@ -1,12 +1,52 @@
 # Next session: an immersed body that reaches an outlet face
 
-STATUS: **OPEN. Written 2026-10-02 at the end of the outlet work**
-(`docs/next_session_outlet.md`, DONE, including its follow-up). Nothing below
-is implemented. The order is the one the outlet work used and the user asked
-for again: **investigate first, write down what each stage does, choose the
-simplest design that is correct on a low and on a high face, then implement
-and gate.** Section "After this" says where the code and numerics review goes
-next.
+STATUS: **OPEN -- the next session's task (user, 2026-10-05).** Written
+2026-10-02 at the end of the outlet work (`docs/next_session_outlet.md`, DONE
+including its follow-up; the boundary-layer tutorial data were regenerated
+with the predicted outlet on 2026-10-04 and the user accepted that as the
+outlet's validation). Nothing below is implemented. The order is the one the
+outlet work used and the user asked for again: **investigate first, write
+down what each stage does, choose the simplest design that is correct on a
+low and on a high face, then implement and gate.** This is the code
+improvement of the next session; section "After this" says where the review
+goes afterwards.
+
+CONTEXT FROM THE USER (2026-10-05): a NEW `turbulentBoundaryLayer` tutorial is
+planned that compares mobydiff directly with other codes run at the same
+parameters. It is not part of this session, but the rough-wall boundary layer
+is the production case behind the body-at-outlet work, and `rough_jacobi.ini`
+is the configuration to keep running.
+
+## How to start
+
+1. Read this file, then `docs/next_session_outlet.md` ("Implementation" and
+   "Follow-up, 2026-10-02": the outlet face as it is, every gate and where its
+   numbers are), then CLAUDE.md's bullets "The outlet face is predicted" and
+   "Outlet follow-up". The investigation write-up of the outlet
+   (`next_session_outlet.md`, "One substage, stage by stage") is the model
+   for the write-up this session owes.
+2. Build all four variants (`./compile.sh cpu gpu cpu_nofma gpu_nofma`,
+   nvhpc 25.9 loaded in the same shell as every `mpirun`). The reference set
+   is `~/cfl_ref_binaries` (`cb47d35`; the head differs from it only by
+   docs, data and this handout).
+3. Reproduce the refusal on the cut-down rough-wall case (recipe in
+   "Gates") before changing anything: that case is the smoke test of the
+   whole session.
+4. Increments, each gated before the next:
+   - **B0, the investigation**: the stage-by-stage table for a face with a
+     coefficient on it and on its neighbour, low and high, written into this
+     file; the nine questions below answered; the design confirmed or
+     changed. No code.
+   - **B1, the kernel**: `predict_outlet_faces` in the one-statement form,
+     `check_outlet_faces_fluid` deleted, `init_outlet_faces` reconsidered.
+     Gate: every outlet-free and outlet case `max_abs 0` against
+     `~/cfl_ref_binaries` (nofma AND production flags: the argument is
+     exactness, so measure it both ways), then the body gates.
+   - **B2, the inlet inside a body** (question 7): decide, implement, gate
+     with the rough-wall case.
+   - **B3**: docs (`docs/configuration.md` patch types, the tutorial README
+     of the sailplane if it is affected), CLAUDE.md, `validation/README.md`,
+     this file's STATUS, a reference set cut from the commit.
 
 ## Why this is the next thing
 
@@ -205,19 +245,25 @@ The cut-down case used today (it stops at init on the present head):
   run; an IC tool must write the plane or delete it.
 - Everything in `docs/next_session_outlet.md` "Landmines" holds.
 
-## State of the tree (2026-10-02, evening)
+## State of the tree (2026-10-05)
 
-- `main` is pushed. Commits of the day on top of `949148f`: the outlet
-  follow-up, `pecletmax` on the sum, `cflmax` on the sum, this handout.
-- Reference sets: `~/cfl_ref_binaries` (the head of the limiter work, all
-  four builds, PROVENANCE inside) is the current one. `~/limiter_ref_binaries`
-  is one commit earlier (`pecletmax` only), `~/outlet_runs/ref_949148f` the
-  outlet commit.
-- **HoreKa job 5175523** (`accelerated`, queued) regenerates the
-  boundary-layer tutorial statistics with the predicted outlet. What to do
-  when it ends is in `docs/next_session_outlet.md`, "Not done". It runs
-  `f39c139`, whose step on that case is set by `dtmax`: neither limiter
-  change touches it.
+- `main` is pushed through `11760d4`. On top of `949148f` (the outlet face
+  predicted): `61a6ca4` the outlet follow-up, `f39c139` `pecletmax` on the
+  sum over directions, `ced8e91` `cflmax` on the sum, `cb47d35` this handout,
+  `11760d4` the regenerated boundary-layer tutorial data.
+- Reference sets: **`~/cfl_ref_binaries`** (`cb47d35`, all four builds,
+  PROVENANCE inside) is the current one. `~/limiter_ref_binaries` is before
+  the `cflmax` change (`beltrami_yslab` differs), `~/outlet_runs/ref_949148f`
+  before both limiter changes (six diffusion-bound cases differ).
+- The boundary-layer tutorial: `data.nc` and the figures are the 10000-t.u.
+  statistics of HoreKa job 5175523; `tutorials/turbulentBoundaryLayer/`
+  holds `production_stats.h5` and `restart_field.h5` (the step-1587500
+  field, 5.6 GB, untracked). On HoreKa, `tbl_stats_run` (11 snapshots) and
+  `outlet_tbl_run` (6) under `optimiseBlockRefinement/` can be deleted;
+  the worktrees `moby-outlet-new`, `moby-outlet-ref`, `moby-tbl-stats` too.
+- `~/Codes/mobydiff.bl/.../production_stats.h5` is no longer the tutorial's
+  old statistics (overwritten by another case on 2026-10-02); the old data
+  live in git history only.
 
 ## After this: where the code and numerics review goes next
 
@@ -252,7 +298,7 @@ has these left, in the order suggested:
    reason: every recorded number of a run bound by the Courant or diffusion
    limit was taken with a larger step. Discharged so far: turb180, Blasius,
    the cylinder Re 40 drag, the `les_ibm` developed statistics, the
-   boundary-layer outlet zone.
+   boundary-layer tutorial (regenerated in full, 2026-10-04).
 4. Step 11 (line-implicit wall-normal diffusion) only if a viscous-limited
    production case appears; step 12 (second halo layer, bounded scalar
    convection) last.
