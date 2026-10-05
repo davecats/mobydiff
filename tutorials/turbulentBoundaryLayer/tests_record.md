@@ -195,7 +195,33 @@ parameters then apply directly (`trip_amp = 0.18854`, `x0 = 10`, `nmodes = 16`).
 - **smoother statistics** — the 10000 t.u. window (2.5× the earlier 4000, 2× denser
   sampling) cuts the developed-c_f point-to-point noise ~23 %.
 
-This CaNS-exact-trip run is the shipped `data.nc` / `production_stats.h5`.
+This CaNS-exact-trip run was shipped on the finer in-house grid (`xyz_4096_224_192`).
+
+## 13. Exact-grid CaNS/AMPHIBIOUS match — the elected case
+
+To remove *every* remaining difference from the reference codes (not just the trip),
+the case was rebuilt on the **exact CaNS grid**: 650×100×26, 3200×384×136 (the
+spanwise 135 → 136 for the red-black even-periodic constraint, same `Lz`; §note in
+`README.md`), the one-sided tanh wall grid `gr = 2.822` (new `GRID_TANH_WALL`),
+the CaNS-exact trip, red-black `niter = 6 sor = 1.5` (AMPHIBIOUS's projection), and
+the **conservative (CONS / divergence) convection** re-added to mirror
+CaNS/AMPHIBIOUS's momentum form (`[flow] convection = divergence`; kept for
+testing/research — the solver default stays skew-symmetric). A cold-start →
+re-equilibration → 10000 t.u. statistics campaign on HoreKa (4× A100, ~34 h):
+
+- **CONS stayed stable** — `L2_div` bounded 2.5e-5–1.2e-4 over the full statistics
+  window, no divergence-form drift at `niter = 6` (as AMPHIBIOUS's own CONS runs);
+- **mobydiff lands inside the CaNS–AMPHIBIOUS scatter on every quantity** at
+  Re_θ ≈ 677 — c_f 0.00460 (−0.7 % vs CaNS, +0.04 % vs AMPHIBIOUS), H 1.504, u_τ
+  0.0480, u′_rms peak 2.716 (between CaNS 2.706 and AMPHIBIOUS 2.723), −u′v′ 0.867;
+- the ~2 % c_f deficit vs the SIMSON spectral reference is **shared by all three
+  FD/FV codes** → it is the CaNS **grid resolution**, not a code difference (the
+  finer `xyz_4096_224_192` grid of §9/§12 closes it to −0.4 % vs SIMSON).
+
+**This exact-grid CONS run is the shipped `data.nc` (`xyz_3200_384_136`) /
+`production_stats.h5`** and the committed `code_comparison.png`. (The AMPHIBIOUS
+curve is its skew-symmetric dataset — AMPHIBIOUS's CONS data is not published on the
+LSDF share; CaNS is the direct CONS reference.)
 
 ## Bottom line
 
@@ -203,8 +229,9 @@ The original 5 % c_f gap to the spectral reference was **not** a limitation of t
 2nd-order FD solver. It decomposed into an over-aggressive trip (which also caused
 the entire H discrepancy), streamwise under-resolution, and wall-normal outer
 resolution — all fixable — leaving only the intrinsic FV/FD-vs-spectral floor. The
-shipped configuration (CaNS-exact trip, Δx⁺≈Δz⁺≈4, Δy⁺_max≈4.3, red-black niter=6)
-reproduces CaNS and AMPHIBIOUS in the transition **and** the developed layer, and
-matches the SIMSON spectral reference in c_f (−1.8 %), H, mean profile and Reynolds
-stresses to ~1–2 % — the residual ~3 % near-wall u′_rms peak is a signature shared by
-all non-spectral codes.
+**elected shipped case** reproduces CaNS and AMPHIBIOUS in the transition **and** the
+developed layer by matching their exact grid / domain / trip / numerics (§13): on
+that setup the three FD/FV codes agree to within code scatter and sit ~2 % below the
+SIMSON spectral c_f — the shared grid-resolution deficit, closed to −0.4 % on the
+finer in-house grid (§9/§12). The residual ~3 % near-wall u′_rms peak is a signature
+shared by all non-spectral codes, independent of trip or grid.
