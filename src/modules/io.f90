@@ -749,7 +749,12 @@ subroutine read_restart_metadata(dns, g, bc, pressure_niter, pressure_sor, file_
     real(C_DOUBLE) :: input_pressure_sor
     integer(C_INT) :: input_bc_type(VAR_U:VAR_P,1:NFACES)
     real(C_DOUBLE) :: input_bc_value(VAR_U:VAR_P,1:NFACES)
+    real(C_DOUBLE) :: input_re, input_forcing(1:3)
+    logical :: input_ibm_enabled
 
+    input_re = dns%re
+    input_forcing = dns%forcing
+    input_ibm_enabled = dns%ibm_enabled
     input_bc_type = bc%faceBcType
     input_bc_value = bc%faceBcDefaultValue
     file_nsteps = dns%nsteps
@@ -778,10 +783,15 @@ subroutine read_restart_metadata(dns, g, bc, pressure_niter, pressure_sor, file_
     ! value rather than the one stored in the restart file. This matters most for
     ! the pressure solver -- a restart from an old red-black run stores sor=1.5,
     ! which DIVERGES under damped Jacobi (sor>0.8).
+    ! (dt is NOT on this list: the ini's dt is the cold-start value, the
+    ! file's is the adaptive step's state, and restart == continuous needs
+    ! the latter.)
     if (seen%cflmax)         dns%cflmax     = input_cflmax
     if (seen%pecletmax)      dns%pecletmax  = input_pecletmax
     if (seen%dtmax)          dns%dtmax      = input_dtmax
     if (seen%t_final)        dns%t_final    = input_t_final
+    if (seen%re)             dns%re         = input_re
+    where (seen%forcing)     dns%forcing    = input_forcing
     if (seen%pressure_niter) pressure_niter = input_pressure_niter
     if (seen%pressure_sor)   pressure_sor   = input_pressure_sor
     ! BC rows the ini set explicitly also beat the restart file's (and the
@@ -793,7 +803,11 @@ subroutine read_restart_metadata(dns, g, bc, pressure_niter, pressure_sor, file_
     do dir = 1, 3
         bc%isPeriodic(dir) = periodic(dir) /= 0_C_INT
     end do
+    ! An explicit [ibm] enabled beats the file's flag: a rough wall restarted
+    ! from a smooth developed field (found 2026-10-05: the file's "false" won,
+    ! the body was silently absent and the two sides ran bit-identical).
     dns%ibm_enabled = ibm_enabled /= 0_C_INT
+    if (seen%ibm_enabled) dns%ibm_enabled = input_ibm_enabled
 end subroutine read_restart_metadata
 
 ! The case file's LAYOUT (step 7-2): header attributes checked against the

@@ -275,6 +275,7 @@ subroutine apply_config_value(section, key, value, dns, g, turb, les, ps, bc, sc
         select case (key_l)
         case ("enabled")
             call read_bool(value, dns%ibm_enabled, line_no)
+            seen%ibm_enabled = .true.
         case ("wall_shape")
             dns%ibm_wall_shape = clean_string(value)
         case ("amp_x")
