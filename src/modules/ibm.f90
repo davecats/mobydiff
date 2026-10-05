@@ -46,6 +46,11 @@ module ibmm
         integer :: n_wave_x, n_wave_z
         real(C_DOUBLE) :: amp_x, phase_x
         real(C_DOUBLE) :: amp_z, phase_z
+        ! Mean plane of the wall, and the egg-carton's streamwise start and
+        ! ramp length (ramped = .false.: the wall everywhere, the original
+        ! expression).
+        real(C_DOUBLE) :: wall_offset, x_start, ramp
+        logical :: ramped = .false.
 
         ! (0:nb+1,...,VAR_U:VAR_W,nBlocks), or VAR_U:VAR_P when passive
         ! scalars are on: they sit at the PRESSURE point and need their own
@@ -154,6 +159,10 @@ contains
         ibm%amp_z = 2.5d-2
         ibm%phase_x = 0.0d0
         ibm%phase_z = 0.0d0
+        ibm%wall_offset = 1.0d-2
+        ibm%x_start = 0.0d0
+        ibm%ramp = 0.0d0
+        ibm%ramped = .false.
     end subroutine set_ibm_geometry_defaults
 
     ! Override the analytic wall geometry from the config. MUST be called by
@@ -181,6 +190,20 @@ contains
         ibm%amp_z = dns%ibm_amp_z
         ibm%phase_x = dns%ibm_phase_x
         ibm%phase_z = dns%ibm_phase_z
+        ibm%wall_offset = dns%ibm_wall_offset
+        ibm%ramped = dns%ibm_wall_x_start > -huge(1.0d0)
+        if (ibm%ramped) then
+            if (ibm%wallShape /= WALL_EGGCARTON) then
+                print *, "[ibm] wall_x_start / wall_ramp apply to wall_shape = eggcarton only"
+                error stop
+            end if
+            if (dns%ibm_wall_ramp < 0.0d0) then
+                print *, "[ibm] wall_ramp must be >= 0"
+                error stop
+            end if
+            ibm%x_start = dns%ibm_wall_x_start
+            ibm%ramp = dns%ibm_wall_ramp
+        end if
     end subroutine set_ibm_geometry
 
     ! cell_centred (= "passive scalars are configured") adds the VAR_P
@@ -494,8 +517,9 @@ contains
         type(dns_type), intent(in) :: dns
 
         real(C_DOUBLE), parameter :: pi = 3.141592653589793d0
-        real(C_DOUBLE), parameter :: y_offset = 1.0d-2
+        real(C_DOUBLE) :: y_offset, t, s
 
+        y_offset = ibm%wall_offset
         if (ibm%wallShape == WALL_EGGCARTON) then
             ! h*sin(kx x + px)*sin(kz z + pz), mean height y_offset. The mean
             ! is what the flow sees as the wall plane; the amplitude is the
@@ -503,6 +527,27 @@ contains
             y_body = y_offset + ibm%amp_x &
                 * sin(2.0d0*pi*real(ibm%n_wave_x,C_DOUBLE)*x/dns%leng(1) + ibm%phase_x) &
                 * sin(2.0d0*pi*real(ibm%n_wave_z,C_DOUBLE)*z/dns%leng(3) + ibm%phase_z)
+            if (ibm%ramped) then
+                ! A smooth wall upstream of x_start, the full egg-carton --
+                ! mean plane included -- beyond x_start + ramp, a smoothstep
+                ! of the whole surface in between: with wall_offset = amp_x
+                ! the troughs are tangent to the domain wall and the surface
+                ! is MacDonald et al.'s k (1 + cos cos) above it, grown in
+                ! without a step. Upstream the surface is held one
+                ! crest-to-trough height BELOW the domain wall, not on it:
+                ! the graded coefficient reaches one neighbour cell, so a
+                ! surface at y = 0 would penalize the first fluid row of the
+                ! smooth wall (measured on the ramp test case). The surface
+                ! therefore crosses the wall part-way through the ramp
+                ! (at s = D/(D + y_mean), about 2/3 of it at the mean plane).
+                if (ibm%ramp > 0.0d0) then
+                    t = min(max((x - ibm%x_start)/ibm%ramp, 0.0d0), 1.0d0)
+                    s = t*t*(3.0d0 - 2.0d0*t)
+                else
+                    s = merge(1.0d0, 0.0d0, x >= ibm%x_start)
+                end if
+                y_body = s*y_body - (1.0d0 - s)*(ibm%wall_offset + ibm%amp_x)
+            end if
         else
             y_body = ibm%amp_x * 0.5d0 * &
                      (1.0d0 + sin(2.0d0*pi*real(ibm%n_wave_x,C_DOUBLE)*x/dns%leng(1) + ibm%phase_x)) + &

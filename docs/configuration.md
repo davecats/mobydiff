@@ -103,7 +103,7 @@ every other face, and samples lift and drag from a control-volume momentum budge
 
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
-| `distribution` | enum | `uniform` | `uniform`, `cosine`, `tanh`, `natural` (aliases `pirozzoli_orlandi` / `po`), `blayer` (natural clustering up to `outer_height`, geometric coarsening above) or `geometric`. |
+| `distribution` | enum | `uniform` | `uniform`, `cosine`, `tanh`, `natural` (aliases `pirozzoli_orlandi` / `po`), `blayer` (natural clustering up to `outer_height`, geometric coarsening above), `geometric`, or `cans` (aliases `tanh_wall`, `tanh_lower`: the one-sided tanh clustered at the LOW wall, `y = L [1 + tanh(a (s − 1))/tanh(a)]`, `a = stretch` — CaNS `gtype = 2`, `gr`). |
 | `stretch` | real | 0.0 | Stretching parameter for `cosine` / `tanh` / `natural`. |
 | `natural_dyw_plus` (aliases `dyw_plus`, `dy_wall_plus`, `dyw+`) | real | 0.05 | First off-wall spacing in wall units (natural grid). |
 | `one_sided` (alias `natural_one_sided`) | bool | false | Natural grid: cluster at the low end only (boundary layer) instead of both ends. |
@@ -124,7 +124,7 @@ every other face, and samples lift and drag from a control-volume momentum budge
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
 | `re` | real | — | Reynolds number. **Required.** |
-| `convection` | — | — | **Removed.** Skew-symmetric momentum convection is hardwired; any value is a hard error. (Passive scalars have their own `[scalar] convection`.) |
+| `convection` | enum | `skew` | Momentum convection form: `skew` (skew-symmetric, the production form, energy-neutral for any advecting field) or `divergence` (alias `conservative`, `cons`: the CaNS/AMPHIBIOUS form, re-admitted 2026-10-05 for the `turbulentBoundaryLayer` code comparison; NOT energy-neutral under the incremental projection, so watch the divergence residual on a long run). Independent of `[scalar] convection`. |
 | `forcing_x/y/z` | real | 0.0 | Constant body force / mean pressure gradient per direction. |
 | `initial_u/v/w` | real | 0.0 | Uniform initial velocity components. |
 | `initial_noise` | real | 0.0 | Initial random-noise amplitude. |
@@ -197,6 +197,8 @@ meant to cross a plane must extend beyond it (`validation/body_outlet/`).
 | `amp_x`, `amp_z` | real | 0.025 | Analytic wall amplitudes. |
 | `n_wave_x`, `n_wave_z` | int | 1 | Wavelengths per domain length. |
 | `phase_x`, `phase_z` | real | 0.0 | Phase offsets. |
+| `wall_offset` | real | 0.01 | Mean plane of the analytic wall (`wavy`: the trough height; `eggcarton`: the mid-plane, so `wall_offset = amp_x` puts the troughs on the domain wall and the surface is MacDonald et al.'s `k (1 + cos cos)`). |
+| `wall_x_start`, `wall_ramp` | real | — | `eggcarton` only: a smooth wall upstream of `x_start`, the full egg-carton beyond `x_start + ramp`, a smoothstep of the whole surface (mean plane included) in between. Upstream the surface is held one crest-to-trough height below the domain wall so that the graded coefficient band does not reach the first fluid row; it crosses the wall about 2/3 of the way through the ramp. Unset = the wall everywhere. Both are recorded in the case file's input echo only when set, so older case files stay valid. |
 | `stl_file` | string | — | **`moby_prepare` only.** STL body (binary or ASCII); repeatable, up to 8. The solver accepts it only beside a case file that carries the same geometry. |
 | `stl_scale`, `stl_translate` | real, 3 reals | 1.0, `0 0 0` | **`moby_prepare` only.** Transform `v·scale + translate`. |
 | `band_filter` | bool | false | 3-point low-pass on the predicted velocity in a thin band around the body (damps the staircase cell-Reynolds fan). |
@@ -351,6 +353,6 @@ functions.
 
 - There is no `[run]` section — run control lives in `[time]` and `[output]`.
 - `[case.*]` keys are consumed only by the matching `[case] name`; other cases ignore them.
-- Removed keys: `[flow] convection` is a hard error; `[blocks] interface_constant_half`,
+- Removed keys: `[blocks] interface_constant_half`,
   `momentum_reflux` and `interface_skew` no longer exist (and, being unknown, are silently
   ignored).

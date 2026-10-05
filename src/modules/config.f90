@@ -289,6 +289,12 @@ subroutine apply_config_value(section, key, value, dns, g, turb, les, ps, bc, sc
             call read_real(value, dns%ibm_phase_x, line_no)
         case ("phase_z")
             call read_real(value, dns%ibm_phase_z, line_no)
+        case ("wall_offset")
+            call read_real(value, dns%ibm_wall_offset, line_no)
+        case ("wall_x_start")
+            call read_real(value, dns%ibm_wall_x_start, line_no)
+        case ("wall_ramp")
+            call read_real(value, dns%ibm_wall_ramp, line_no)
         case ("stl_file")
             ! Repeatable: one STL path per occurrence (paths may contain
             ! spaces). moby_prepare input only.
@@ -540,6 +546,11 @@ function case_input_echo(dns, bc, sc) result(text)
             call add_ints("wall_n_wave", [dns%ibm_n_wave_x, dns%ibm_n_wave_z])
             call add_reals("wall_amp", [dns%ibm_amp_x, dns%ibm_amp_z])
             call add_reals("wall_phase", [dns%ibm_phase_x, dns%ibm_phase_z])
+            ! Echoed only when set: an always-present line would mark every
+            ! case file prepared before the key existed as stale.
+            if (dns%ibm_wall_offset /= 1.0d-2) call add_reals("wall_offset", [dns%ibm_wall_offset])
+            if (dns%ibm_wall_x_start > -huge(1.0d0)) &
+                call add_reals("wall_start_ramp", [dns%ibm_wall_x_start, dns%ibm_wall_ramp])
         end if
         call add_line("scalar_coef", merge("true ", "false", scalars_enabled(sc)))
     end if

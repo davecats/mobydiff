@@ -166,6 +166,12 @@ module init
         integer(C_INT) :: ibm_n_wave_x = 1_C_INT, ibm_n_wave_z = 1_C_INT
         real(C_DOUBLE) :: ibm_amp_x = 2.5d-2, ibm_amp_z = 2.5d-2
         real(C_DOUBLE) :: ibm_phase_x = 0.0d0, ibm_phase_z = 0.0d0
+        ! [ibm] wall_offset: the mean plane of the analytic wall (both
+        ! shapes). wall_x_start / wall_ramp: the egg-carton grows in from
+        ! nothing over [x_start, x_start + ramp] (a smooth-wall upstream
+        ! region); unset = the wall everywhere, as before.
+        real(C_DOUBLE) :: ibm_wall_offset = 1.0d-2
+        real(C_DOUBLE) :: ibm_wall_x_start = -huge(1.0d0), ibm_wall_ramp = 0.0d0
         ! STL geometry (moby_prepare input only; the solver rejects it
         ! without a case file). stl_file is repeatable -- one binary STL
         ! path per occurrence, so paths may contain spaces. The optional

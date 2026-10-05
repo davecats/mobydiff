@@ -1,0 +1,2 @@
+# Gate scratch: the driver writes .<prefix>.ini / .log / .prep.log per leg.
+.*.ini
