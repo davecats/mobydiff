@@ -1,7 +1,24 @@
 # Next session: an immersed body that reaches an outlet face
 
-STATUS: **DONE 2026-10-05 (B0-B3; the turbulent rough-wall balance is the
-one gate not measured, see "Implementation").** B0 is the section "B0.
+STATUS: **B0-B3 DONE 2026-10-05 -- and the gate they did not measure
+FAILED the same evening: the body on the outlet plane is UNSTABLE in a
+turbulent trough-cut geometry.** The rough-wall boundary layer on the
+ELECTED CaNS-grid case (`tutorials/turbulentBoundaryLayer/
+production_stats_rough.ini`, MacDonald et al. 2016 k+ 10 / lambda+ 113
+egg-carton, crests 0.77 = 50 cells high) blew up within 2000 steps from the
+developed field with the roughness running through the outlet, and a
+4 M-cell cut-down of it at t = 52 with skew AND divergence convection; the
+same cut-down with the roughness ramped out before the outlet runs 300
+t.u. The onset is in the last column at the troughs: outlet face fluid or
+graded, the face behind it solid (the `r ~ 1e27` limit of B1, gated only
+in laminar Poiseuille). Write-up with numbers:
+`tutorials/turbulentBoundaryLayer/tests_record.md` section 14; reproducer
+`~/outlet_runs/rough_cans/cut_skew.ini` (10 min on one A6000, field dumps
+around the onset beside it). **THE NEXT SESSION ON THIS TOPIC STARTS
+THERE: stage-by-stage, the last fluid cell whose upstream face is solid,
+with the stored pressure and the projection's dead-end diagonal in the
+picture.** The production rough case meanwhile ends its roughness at
+x = 580 (`wall_x_end`); the HoreKa pair runs in `rough_tbl_run`.** B0 is the section "B0.
 Investigation write-up" below; what was built and every gate number is in
 "Implementation (2026-10-05)". The handout as written on 2026-10-02 follows,
 unchanged. The order was the one the outlet work used and the user asked for

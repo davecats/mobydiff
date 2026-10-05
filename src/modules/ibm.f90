@@ -49,7 +49,7 @@ module ibmm
         ! Mean plane of the wall, and the egg-carton's streamwise start and
         ! ramp length (ramped = .false.: the wall everywhere, the original
         ! expression).
-        real(C_DOUBLE) :: wall_offset, x_start, ramp
+        real(C_DOUBLE) :: wall_offset, x_start, x_end, ramp
         logical :: ramped = .false.
 
         ! (0:nb+1,...,VAR_U:VAR_W,nBlocks), or VAR_U:VAR_P when passive
@@ -161,6 +161,7 @@ contains
         ibm%phase_z = 0.0d0
         ibm%wall_offset = 1.0d-2
         ibm%x_start = 0.0d0
+        ibm%x_end = huge(1.0d0)
         ibm%ramp = 0.0d0
         ibm%ramped = .false.
     end subroutine set_ibm_geometry_defaults
@@ -202,7 +203,12 @@ contains
                 error stop
             end if
             ibm%x_start = dns%ibm_wall_x_start
+            ibm%x_end = dns%ibm_wall_x_end
             ibm%ramp = dns%ibm_wall_ramp
+            if (ibm%x_end < ibm%x_start + ibm%ramp) then
+                print *, "[ibm] wall_x_end must be >= wall_x_start + wall_ramp"
+                error stop
+            end if
         end if
     end subroutine set_ibm_geometry
 
@@ -540,11 +546,15 @@ contains
                 ! smooth wall (measured on the ramp test case). The surface
                 ! therefore crosses the wall part-way through the ramp
                 ! (at s = D/(D + y_mean), about 2/3 of it at the mean plane).
+                ! wall_x_end (optional) ramps the surface OUT again the same
+                ! way, so the smooth wall is recovered before the outlet.
                 if (ibm%ramp > 0.0d0) then
                     t = min(max((x - ibm%x_start)/ibm%ramp, 0.0d0), 1.0d0)
                     s = t*t*(3.0d0 - 2.0d0*t)
+                    t = min(max((x - ibm%x_end)/ibm%ramp, 0.0d0), 1.0d0)
+                    s = s*(1.0d0 - t*t*(3.0d0 - 2.0d0*t))
                 else
-                    s = merge(1.0d0, 0.0d0, x >= ibm%x_start)
+                    s = merge(1.0d0, 0.0d0, x >= ibm%x_start .and. x < ibm%x_end)
                 end if
                 y_body = s*y_body - (1.0d0 - s)*(ibm%wall_offset + ibm%amp_x)
             end if

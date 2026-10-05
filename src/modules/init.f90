@@ -173,6 +173,9 @@ module init
         ! region); unset = the wall everywhere, as before.
         real(C_DOUBLE) :: ibm_wall_offset = 1.0d-2
         real(C_DOUBLE) :: ibm_wall_x_start = -huge(1.0d0), ibm_wall_ramp = 0.0d0
+        ! [ibm] wall_x_end: the egg-carton ramps OUT again over
+        ! [x_end, x_end + ramp] (unset = it runs to the outlet).
+        real(C_DOUBLE) :: ibm_wall_x_end = huge(1.0d0)
         ! STL geometry (moby_prepare input only; the solver rejects it
         ! without a case file). stl_file is repeatable -- one binary STL
         ! path per occurrence, so paths may contain spaces. The optional

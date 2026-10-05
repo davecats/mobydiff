@@ -267,6 +267,39 @@ copies of the statistics file so that windows are differences of raw sums).
 Plan: 100 000 steps = 2000 t.u. per side, the first flow-through (650 t.u.)
 discarded as the transient. Results go here when they are in.
 
+**FOUND ON THE FIRST ATTEMPTS (2026-10-05 evening), two things:**
+
+1. *The rough side silently had no body.* A restart file's metadata
+   overwrote the ini's `[ibm] enabled` (the smooth developed field says
+   false), so the "rough" case file carried no coefficient tiles and the
+   two sides ran bit-identical. Fixed in the solver (`2057a9b`: an explicit
+   `enabled`, `re`, `forcing_*` are config-authority on restart). The tell
+   was two residual lines agreeing to every digit.
+2. **The body on the outlet plane is UNSTABLE in this geometry.** With the
+   roughness running through the outlet, the full case blew up within 2000
+   steps from the developed field (L2 div 2e29) and a 492 x 384 x 22
+   cut-down of it (100 x 100 x 4.33, one spanwise wave, cold start) at
+   t = 52 -- with **skew AND divergence** convection alike (both at t ~ 52,
+   so the convection form is not the cause). Field dumps locate the onset
+   in the LAST column at the troughs (j = 0..2, y < 0.03), where the outlet
+   face is fluid or graded (coef 0 .. 139) while the face one cell behind
+   it is SOLID (2.2e27) or strongly graded: the solid-cell pressure of that
+   column grows 0.019 -> 0.056 -> 13 over 200 steps and the stored outlet
+   plane `un_xmax` from 1.0 to 7.4, then everything within 100 steps. The
+   `validation/body_outlet/` gates covered exactly this limit ("the body
+   ending one cell before the plane", r ~ 1e27) but in laminar Poiseuille
+   between slabs; the turbulent cut-down of 2026-10-05 morning had a
+   0.1-high roughness whose graded cells sat in the first row only. **The
+   same cut-down with the roughness ramped OUT before the outlet
+   (`wall_x_end = 60`, surface below the wall by x ~ 80) runs 300 t.u.
+   with L2 div 6e-6 and Linf 1.07-1.10** -- the one-variable A/B. So the
+   production rough case now ends its roughness at x = 580 (out by 620;
+   the usable region is x <= 550 regardless), and **the body-at-outlet
+   scheme (`predict_outlet_faces` with a solid neighbour face) has an open
+   defect to investigate in its own session**: reproducer
+   `~/outlet_runs/rough_cans/cut_skew.ini` (10 minutes on one A6000, dumps
+   `dump_2400..2700.h5` around the onset in the same directory).
+
 ## Bottom line
 
 The original 5 % c_f gap to the spectral reference was **not** a limitation of the

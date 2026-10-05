@@ -296,6 +296,8 @@ subroutine apply_config_value(section, key, value, dns, g, turb, les, ps, bc, sc
             call read_real(value, dns%ibm_wall_x_start, line_no)
         case ("wall_ramp")
             call read_real(value, dns%ibm_wall_ramp, line_no)
+        case ("wall_x_end")
+            call read_real(value, dns%ibm_wall_x_end, line_no)
         case ("stl_file")
             ! Repeatable: one STL path per occurrence (paths may contain
             ! spaces). moby_prepare input only.
@@ -552,6 +554,7 @@ function case_input_echo(dns, bc, sc) result(text)
             if (dns%ibm_wall_offset /= 1.0d-2) call add_reals("wall_offset", [dns%ibm_wall_offset])
             if (dns%ibm_wall_x_start > -huge(1.0d0)) &
                 call add_reals("wall_start_ramp", [dns%ibm_wall_x_start, dns%ibm_wall_ramp])
+            if (dns%ibm_wall_x_end < huge(1.0d0)) call add_reals("wall_end", [dns%ibm_wall_x_end])
         end if
         call add_line("scalar_coef", merge("true ", "false", scalars_enabled(sc)))
     end if

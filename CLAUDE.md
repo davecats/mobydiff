@@ -2435,6 +2435,71 @@ immersed boundary. Phased, each phase verified before the next:
     runs its own CPU leg now. (3) `config.f90` still has no `case default`:
     a `stats_start_step` key I invented was silently ignored.
 
+- **The `turbulentBoundaryLayer` branch merged; the rough-wall boundary
+  layer on the elected case (2026-10-05, `bf95993` / `b27936e`; the HoreKa
+  pair is RUNNING -- see `tests_record.md` section 14 and the memory
+  `outlet-prototype-branch`).** The branch (five commits on `c72ec69`, BEFORE
+  the outlet work) elects the exact-grid CaNS/AMPHIBIOUS case as the shipped
+  tutorial (3200 x 384 x 136 on 650 x 100 x 26, `[grid.y] distribution =
+  cans` = the one-sided tanh `y = L[1 + tanh(a(s-1))/tanh(a)]`, CaNS trip,
+  red-black 6) and RE-ADMITS `[flow] convection = divergence` for it (the
+  CaNS/AMPHIBIOUS momentum form; `skew` stays the default and the production
+  form, docs/configuration.md). The merge keeps main's predictor guard with
+  `skew = dns%conv_skew` as the runtime value -- the 128-register schedule
+  argument of 2026-09-30 holds unchanged, since a config logical is no more
+  foldable than `re > 0`. ITS SHIPPED STATISTICS CAME FROM THE OLD OUTLET
+  (branch base < `949148f`): the README says so; the rerun with the
+  predicted face replaces them. NEW `[ibm]` keys for a rough wall that
+  starts downstream of a smooth inlet: `wall_offset` (the mean plane, was a
+  hard-coded 0.01), `wall_x_start` + `wall_ramp` (smoothstep of the whole
+  egg-carton surface, mean plane included; upstream the surface is held one
+  crest height BELOW the wall -- measured: a surface ON the wall puts the
+  one-cell graded coefficient band into the first fluid row of the smooth
+  region). Echoed into the case file only when set, so older case files
+  stay valid. `production_stats_rough.ini` = the elected case + MacDonald,
+  Chan, Chung, Hutchins & Ooi 2016 (JFM 804) full-span k+ 10 / lambda+ 113
+  (k/lambda = 10/113 exactly, lambda = 650/150 = 26/6, k = 0.38348, grown in
+  over x 120-160, through the outlet; reference Delta U+ 3.72). Driver
+  `submit_rough_tbl.sh` (smooth + rough sides, one node each, self-chaining
+  12 500-step chunks, successor queued at job START with afterany); analysis
+  `assets/postpro/rough_compare.py` (balance per band, c_f from d theta/dx on
+  the roughness -- validated to ~1 % against the wall-cell c_f on smooth
+  data -- k+ along x, Delta U+ above the crests from the mean plane; that
+  origin is worth 0.5 in Delta U+ at this Re, measured by self-comparison).
+  FOUND BY THE FIRST HOREKA ATTEMPT (the two sides ran BIT-IDENTICAL for
+  1000 steps): **`read_restart_metadata` let the restart file's flag
+  overwrite an explicit `[ibm] enabled`**, so a body restarted from a
+  body-free field was silently absent (the case file's echo read
+  `ibm_enabled = false`, since moby_prepare reads the same metadata). FIXED
+  (`2057a9b`): an explicit `enabled`, `re` and `forcing_*` are
+  config-authority like cflmax/pecletmax/dtmax/t_final/niter/sor and the
+  BC rows already were (`re`/forcing were tracked by `seen` and never
+  applied); `dt` deliberately stays the file's (the ini's is the cold-start
+  value, the file's is the adaptive step's state, restart == continuous
+  needs it). LESSON: a restarted pair whose residuals agree to every digit
+  is one run, not two -- read the input echo of the case file, not the ini.
+  **AND THE BODY-AT-OUTLET GATE THAT B0-B3 LEFT UNMEASURED FAILED: an
+  immersed body on the outlet plane is UNSTABLE in a turbulent trough-cut
+  geometry.** The rough case with the roughness through the outlet blew up
+  within 2000 steps from the developed field, and a 4 M-cell cut-down at
+  t = 52 with skew AND divergence convection (not the convection form);
+  the same cut-down with the roughness ramped out before the outlet
+  (`wall_x_end`) runs 300 t.u. Onset in the last column at the troughs:
+  outlet face fluid/graded, the face behind it solid -- B1's `r ~ 1e27`
+  limit, gated only in laminar Poiseuille. Write-up and reproducer:
+  `tests_record.md` section 14, `docs/next_session_body_at_outlet.md`
+  STATUS (the next session on the outlet starts there). The production
+  rough case ends its roughness at x = 580 meanwhile.
+  Merge gated at `max_abs 0` vs `~/body_ref_binaries` (nofma, 7-case 4
+  ranks, 9-case, outlet suite, CPU AND GPU); the geometry keys gated against
+  a Python transcription at every staggered point (0 markers outside the
+  surface, 0 coefficients upstream of the start); the restart fix gated on
+  the small case (tiles written and read after a body-free restart) and by
+  the same suites. LANDMINE: `./compile.sh` takes ONE mode -- `./compile.sh
+  cpu gpu cpu_nofma gpu_nofma` builds cpu only and exits 0 (a gate batch
+  compared the reference set against itself before this was noticed; check
+  every banner).
+
 ## Verification
 
 - Pure refactors must be bit-exact vs. the pre-refactor code: compare
