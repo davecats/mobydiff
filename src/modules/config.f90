@@ -1,7 +1,7 @@
 module config
     use, intrinsic :: iso_c_binding
     use :: init, only: dns_type, grid_type, VAR_U, VAR_V, VAR_W, VAR_P, &
-        GRID_UNIFORM, GRID_COSINE, GRID_TANH, GRID_NATURAL, GRID_BLAYER, GRID_GEOMETRIC, config_seen_type
+        GRID_UNIFORM, GRID_COSINE, GRID_TANH, GRID_NATURAL, GRID_BLAYER, GRID_GEOMETRIC, GRID_TANH_WALL, config_seen_type
     use :: turbulence, only: turb_type, TURB_NONE, TURB_LES, TURB_RANS, TURB_IDDES, &
         IDDES_DELTA_CBRT, IDDES_DELTA_IDDES
     use :: les_model, only: les_type, LES_NONE, LES_SMAGORINSKY, LES_WALE
@@ -151,13 +151,21 @@ subroutine apply_config_value(section, key, value, dns, g, turb, les, ps, bc, sc
             call read_real(value, dns%re, line_no)
             seen%re = .true.
         case ("convection")
-            ! S3 lockdown (docs/next_session_skew_convection.md): the
-            ! skew-symmetric form is the ONLY momentum convection — the
-            ! validation-phase toggle is gone (divergence form
-            ! recoverable from history, commits 57bd1e3..87ecf28).
-            if (terminal_output) print *, "error: [flow] convection was removed", &
-                " (skew-symmetric is hardwired) on input line", line_no
-            error stop "[flow] convection removed -- skew is the production form"
+            ! Momentum convection form. Skew-symmetric is the DEFAULT and the
+            ! production form; divergence/conservative is kept for testing and
+            ! research only -- it is NOT energy-neutral under the incremental
+            ! projection (docs/next_session_skew_convection.md S3). This key is
+            ! INDEPENDENT of [scalar] convection, which drives a different operator.
+            select case (trim(lower(clean_string(value))))
+            case ("skew", "skew_symmetric", "skew-symmetric", "skewsym")
+                dns%conv_skew = .true._C_BOOL
+            case ("divergence", "conservative", "div", "cons")
+                dns%conv_skew = .false._C_BOOL
+            case default
+                if (terminal_output) print *, "error: [flow] convection must be", &
+                    " skew (default) or divergence on input line", line_no
+                error stop "[flow] convection"
+            end select
         case ("forcing_x")
             call read_real(value, dns%forcing(1), line_no)
             seen%forcing(1) = .true.
@@ -681,7 +689,7 @@ subroutine validate_dns_values(dns, g)
             error stop "[blocks] refine box level exceeds refine_levels"
         end if
     end if
-    if (any(g%distribution < GRID_UNIFORM) .or. any(g%distribution > GRID_GEOMETRIC)) then
+    if (any(g%distribution < GRID_UNIFORM) .or. any(g%distribution > GRID_TANH_WALL)) then
         error stop "invalid grid distribution"
     end if
     if (any(g%stretch < 0.0d0)) error stop "grid stretch values must be non-negative"
@@ -1157,6 +1165,8 @@ subroutine read_grid_distribution(value, target, line_no)
         target = GRID_BLAYER
     case ("geometric", "geom")
         target = GRID_GEOMETRIC
+    case ("tanh_wall", "cans", "tanh_lower")
+        target = GRID_TANH_WALL
     case default
         if (terminal_output) print *, "warning: unknown grid distribution on input line", line_no, ": ", trim(value_l)
     end select

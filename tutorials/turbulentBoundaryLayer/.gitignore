@@ -1,11 +1,13 @@
 # Large data kept locally — all exceed GitHub's 100 MB limit (see README).
-restart_field.h5
 production_stats.h5
+skewsym_stats.h5
+grid_nodes.h5
 assets/postpro/passivewall.hdf5
 
-# Run outputs regenerated from the .ini files (field snapshots, logs, grids).
+# Run outputs regenerated from the .ini files (field snapshots, logs).
 coldstart_*.h5
 production_*.h5
 production_p2_*.h5
+skewsym_*.h5
 *_runtime.txt
 new_y*.npy

@@ -195,18 +195,21 @@ contains
         nBlocks = int(blk%nBlocks)
         ire = 1.0d0/dns%re
         forcing = dns%forcing
-        ! Skew-symmetric convection is hardwired (S3 lockdown), so `skew` is
-        ! ALWAYS true -- it exists for the GPU register scheduler, not as a
-        ! switch. When the lockdown removed the `if (skew)` guards around the
-        ! three corrections below, the compiler used the shorter live ranges
-        ! to cut the kernel from 128 to 100 registers, which bought no
-        ! occupancy (the kernel is capped by grid/block shape) and lengthened
-        ! the dependency chains: +11 % on the kernel, 1.3-2.0 % of the step
-        ! (results_horeka_2026-09-26.md, ncu job 5163917). A guard the
-        ! compiler cannot fold restores the 128-register schedule for one
-        ! never-taken branch. It is derived from runtime data on purpose: a
-        ! literal .true. would be folded away again.
-        skew = dns%re > 0.0d0
+        ! Momentum convection form ([flow] convection): skew-symmetric (the
+        ! default and the production form, docs/next_session_skew_convection.md)
+        ! or divergence/conservative (`conv_skew = .false.`, kept for research:
+        ! it is the CaNS/AMPHIBIOUS form the turbulentBoundaryLayer tutorial
+        ! mirrors, and it is NOT energy-neutral under the incremental
+        ! projection). Skew adds the three corrections below; divergence omits
+        ! them. The [scalar] convection key is INDEPENDENT (another operator).
+        ! The guard also serves the GPU register scheduler: when the S3
+        ! lockdown removed it, the compiler used the shorter live ranges to
+        ! cut the kernel from 128 to 100 registers, which bought no occupancy
+        ! (the kernel is capped by grid/block shape) and lengthened the
+        ! dependency chains: +11 % on the kernel, 1.3-2.0 % of the step
+        ! (results_horeka_2026-09-26.md, ncu job 5163917). A runtime value
+        ! the compiler cannot fold keeps the 128-register schedule.
+        skew = logical(dns%conv_skew)
         use_eddy_viscosity = .false.
         if (present(turb)) use_eddy_viscosity = turbulence_is_enabled(turb) .and. allocated(turb%nut)
 

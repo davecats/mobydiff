@@ -26,6 +26,10 @@ module init
     integer(C_INT), parameter :: GRID_NATURAL = 4_C_INT
     integer(C_INT), parameter :: GRID_BLAYER  = 5_C_INT
     integer(C_INT), parameter :: GRID_GEOMETRIC = 6_C_INT
+    ! One-sided tanh clustered at the LOWER wall (s=0). Reproduces the CaNS
+    ! grid clustering `gtype = 2` exactly: y = L*(1 + tanh(a*(s-1))/tanh(a)),
+    ! a = stretch (CaNS `gr`). Used to match the CaNS/AMPHIBIOUS reference cases.
+    integer(C_INT), parameter :: GRID_TANH_WALL = 7_C_INT
     integer(C_INT), parameter :: CFL_COURANT = 1_C_INT
     integer(C_INT), parameter :: CFL_PECLET  = 2_C_INT
     integer(C_INT), parameter :: NCFL = 2_C_INT
@@ -69,6 +73,11 @@ module init
         real(C_DOUBLE) :: peclet_rate = 0.0d0
         real(C_DOUBLE) :: dtmax = 0.0d0
         real(C_DOUBLE) :: forcing(1:3) = 0.0d0
+        ! [flow] convection: momentum convection form. Skew-symmetric (default,
+        ! production) or divergence/conservative (kept for testing/research; not
+        ! energy-neutral under the incremental projection). INDEPENDENT of the
+        ! [scalar] convection key, which drives a different operator.
+        logical(C_BOOL) :: conv_skew = .true._C_BOOL
         ! [flow] initial_u/v/w: uniform initial velocity (generic case).
         real(C_DOUBLE) :: initial_velocity(1:3) = 0.0d0
         real(C_DOUBLE) :: initial_noise = 0.0d0
@@ -662,6 +671,10 @@ real(C_DOUBLE) function distribution_coordinate(s, length, distribution, stretch
     case (GRID_TANH)
         a = max(stretch, 1.0d-12)
         x = 0.5d0 * length * (1.0d0 + tanh(a*(2.0d0*s - 1.0d0))/tanh(a))
+    case (GRID_TANH_WALL)
+        ! One-sided tanh, fine at the lower wall (s=0). == CaNS gtype=2.
+        a = max(stretch, 1.0d-12)
+        x = length * (1.0d0 + tanh(a*(s - 1.0d0))/tanh(a))
     case (GRID_GEOMETRIC)
         ! One-sided geometric stretch: cells grow by a constant ratio from
         ! the low end (x=0), so spacing is finest at the inlet and coarsest

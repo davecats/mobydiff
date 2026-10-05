@@ -195,7 +195,77 @@ parameters then apply directly (`trip_amp = 0.18854`, `x0 = 10`, `nmodes = 16`).
 - **smoother statistics** — the 10000 t.u. window (2.5× the earlier 4000, 2× denser
   sampling) cuts the developed-c_f point-to-point noise ~23 %.
 
-This CaNS-exact-trip run is the shipped `data.nc` / `production_stats.h5`.
+This CaNS-exact-trip run was shipped on the finer in-house grid (`xyz_4096_224_192`).
+
+## 13. Exact-grid CaNS/AMPHIBIOUS match — the elected case
+
+To remove *every* remaining difference from the reference codes (not just the trip),
+the case was rebuilt on the **exact CaNS grid**: 650×100×26, 3200×384×136 (the
+spanwise 135 → 136 for the red-black even-periodic constraint, same `Lz`; §note in
+`README.md`), the one-sided tanh wall grid `gr = 2.822` (new `GRID_TANH_WALL`),
+the CaNS-exact trip, red-black `niter = 6 sor = 1.5` (AMPHIBIOUS's projection), and
+the **conservative (CONS / divergence) convection** re-added to mirror
+CaNS/AMPHIBIOUS's momentum form (`[flow] convection = divergence`; kept for
+testing/research — the solver default stays skew-symmetric). A cold-start →
+re-equilibration → 10000 t.u. statistics campaign on HoreKa (4× A100, ~34 h):
+
+- **CONS stayed stable** — `L2_div` bounded 2.5e-5–1.2e-4 over the full statistics
+  window, no divergence-form drift at `niter = 6` (as AMPHIBIOUS's own CONS runs);
+- **mobydiff lands inside the CaNS–AMPHIBIOUS scatter on every quantity** at
+  Re_θ ≈ 677 — c_f 0.00460 (−0.7 % vs CaNS, +0.04 % vs AMPHIBIOUS), H 1.504, u_τ
+  0.0480, u′_rms peak 2.716 (between CaNS 2.706 and AMPHIBIOUS 2.723), −u′v′ 0.867;
+- the ~2 % c_f deficit vs the SIMSON spectral reference is **shared by all three
+  FD/FV codes** → it is the CaNS **grid resolution**, not a code difference (the
+  finer `xyz_4096_224_192` grid of §9/§12 closes it to −0.4 % vs SIMSON).
+
+**This exact-grid CONS run is the shipped `data.nc` (`xyz_3200_384_136`) /
+`production_stats.h5`** and the committed `code_comparison.png`. (The AMPHIBIOUS
+curve is its skew-symmetric dataset — AMPHIBIOUS's CONS data is not published on the
+LSDF share; CaNS is the direct CONS reference.)
+
+## 14. The predicted outlet face, and a rough-wall variant (started 2026-10-05)
+
+The elected case (§13) was run on the branch that built it, i.e. with the OLD
+outlet treatment (the outlet face reset to its interior neighbour every
+substage). Main replaced that on 2026-10-01 by the PREDICTED face (the normal
+velocity on a declared outlet is an unknown with its own momentum equation,
+`docs/next_session_outlet.md`), and on 2026-10-05 made an immersed body on
+the outlet plane legal (`docs/next_session_body_at_outlet.md`). On the earlier
+in-house grid the old outlet stalled the layer over its last ~100 δ*₀ (dθ/dx
+→ 0 under a falling wall pressure; README, "The outlet zone") and moved
+nothing at the comparison station. Two reruns, restarted from the smooth
+developed field of §13 (`cons_p2_675000.h5`, HoreKa, the CONS campaign) with
+the merged main (`[flow] convection = divergence`, the `cans` grid line):
+
+- **smooth**: `production_stats.ini` as shipped — the same case, the predicted
+  face. Expected: the outlet zone shrinks to the last few δ*₀, the Re_θ 677
+  station unchanged within sampling.
+- **rough**: `production_stats_rough.ini` — the same plus an immersed
+  egg-carton roughness adapted from the full-span channel of MacDonald, Chan,
+  Chung, Hutchins & Ooi (JFM 804, 2016, table 1): `z_w = k cos(2πx/λ)
+  cos(2πz/λ)`, k⁺ = 10 (semi-amplitude), λ⁺ = 113, solidity Λ = (4/π) k/λ =
+  0.113, ΔU⁺ = 3.72 at Re_τ 180. Here k/λ = 10/113 EXACTLY with λ = 650/150 =
+  26/6 = 4.3333 δ*₀ (21 streamwise and 23 spanwise cells per wave; the paper's
+  Δx⁺ = 4.5 is ours), k = 0.38348 (crests at 2k = 0.767, 50 wall-normal cells);
+  k⁺ follows the local u_τ: 8.0–9.6 on the smooth-wall u_τ(x) of §13, about
+  10 on the rough-wall one (c_f up ~25 % for ΔU⁺ ≈ 4). The roughness grows in
+  over x = 120–160 (`wall_x_start = 120`, `wall_ramp = 40`: the surface is held
+  one crest height below the wall upstream, so the smooth region carries no
+  coefficient, and crosses the wall at x ≈ 144), i.e. after the transition
+  (c_f peaks at x ≈ 80 on the smooth reference), and runs THROUGH the outlet
+  plane — the production configuration the body-at-outlet work was for. The
+  solver's `wall_offset = amp_x` puts the troughs on the domain wall.
+  Measured against the smooth rerun: the von Kármán balance through the rough
+  region and to the outlet (`assets/postpro/momentum_integral.py`; c_f from
+  dθ/dx, the wall-cell velocity being meaningless on the roughness), ΔU⁺ from
+  the mean profiles above the crests at matched y⁺, and the stored pressure of
+  the last column.
+
+Driver: `overheadTest/horeka/exchange/submit_rough_tbl.sh` (two sides, one
+node each, self-chaining 12 500-step chunks on `dev_accelerated`, chunk-end
+copies of the statistics file so that windows are differences of raw sums).
+Plan: 100 000 steps = 2000 t.u. per side, the first flow-through (650 t.u.)
+discarded as the transient. Results go here when they are in.
 
 ## Bottom line
 
@@ -203,8 +273,9 @@ The original 5 % c_f gap to the spectral reference was **not** a limitation of t
 2nd-order FD solver. It decomposed into an over-aggressive trip (which also caused
 the entire H discrepancy), streamwise under-resolution, and wall-normal outer
 resolution — all fixable — leaving only the intrinsic FV/FD-vs-spectral floor. The
-shipped configuration (CaNS-exact trip, Δx⁺≈Δz⁺≈4, Δy⁺_max≈4.3, red-black niter=6)
-reproduces CaNS and AMPHIBIOUS in the transition **and** the developed layer, and
-matches the SIMSON spectral reference in c_f (−1.8 %), H, mean profile and Reynolds
-stresses to ~1–2 % — the residual ~3 % near-wall u′_rms peak is a signature shared by
-all non-spectral codes.
+**elected shipped case** reproduces CaNS and AMPHIBIOUS in the transition **and** the
+developed layer by matching their exact grid / domain / trip / numerics (§13): on
+that setup the three FD/FV codes agree to within code scatter and sit ~2 % below the
+SIMSON spectral c_f — the shared grid-resolution deficit, closed to −0.4 % on the
+finer in-house grid (§9/§12). The residual ~3 % near-wall u′_rms peak is a signature
+shared by all non-spectral codes, independent of trip or grid.
