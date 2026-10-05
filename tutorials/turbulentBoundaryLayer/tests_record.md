@@ -252,9 +252,12 @@ the merged main (`[flow] convection = divergence`, the `cans` grid line):
   over x = 120–160 (`wall_x_start = 120`, `wall_ramp = 40`: the surface is held
   one crest height below the wall upstream, so the smooth region carries no
   coefficient, and crosses the wall at x ≈ 144), i.e. after the transition
-  (c_f peaks at x ≈ 80 on the smooth reference), and runs THROUGH the outlet
-  plane — the production configuration the body-at-outlet work was for. The
-  solver's `wall_offset = amp_x` puts the troughs on the domain wall.
+  (c_f peaks at x ≈ 80 on the smooth reference), and — AS WRITTEN FIRST —
+  ran THROUGH the outlet plane, the production configuration the
+  body-at-outlet work was for; after the finding below it ramps OUT again
+  over x = 580–620 (`wall_x_end = 580`), leaving a smooth wall over the last
+  30 units. The solver's `wall_offset = amp_x` puts the troughs on the
+  domain wall.
   Measured against the smooth rerun: the von Kármán balance through the rough
   region and to the outlet (`assets/postpro/momentum_integral.py`; c_f from
   dθ/dx, the wall-cell velocity being meaningless on the roughness), ΔU⁺ from
