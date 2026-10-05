@@ -35,19 +35,24 @@ spike-then-dip (see `tests_record.md`).
 | SIMSON (spectral) | 3072·301·— | 0.00471 | 1.507 | 2.631 | 0.882 |
 | CaNS | 3200·384·135 | 0.00463 | 1.503 | 2.706 | 0.874 |
 | AMPHIBIOUS | 3200·384·135 | 0.00460 | 1.508 | 2.723 | 0.899 |
-| **mobydiff** | **4096·224·192** | **0.00462** | **1.499** | **2.707** | **0.867** |
+| **mobydiff** | **4096·224·192** | **0.00465** | **1.499** | **2.738** | **0.866** |
 
 Mean U⁺(y⁺) and the Reynolds stresses of all four codes overlay through the
 sublayer, log region and wake. **Two takeaways:**
 
-- **With the CaNS-exact trip, mobydiff reproduces CaNS almost exactly** — c_f 0.00462
-  vs CaNS 0.00463, u′_rms peak 2.707 vs 2.706 — as it must, since the same trip drives
-  the same developed layer. The three finite-volume/difference codes now cluster
-  tightly (c_f ≈ 0.0046, ~2 % below SIMSON).
-- **The near-wall u′_rms peak sits ~3 % above SIMSON for _all three_ non-spectral
-  codes** (mobydiff 2.71, CaNS 2.71, AMPHIBIOUS 2.72). This overshoot is a generic
+- **With the CaNS-exact trip, mobydiff reproduces CaNS** — c_f 0.00465 vs CaNS
+  0.00463, −u′v′ peak 0.866 vs 0.874 — as it must, since the same trip drives the
+  same developed layer. The three finite-volume/difference codes cluster tightly
+  (c_f ≈ 0.0046, 1–2 % below SIMSON).
+- **The near-wall u′_rms peak sits 3–4 % above SIMSON for _all three_ non-spectral
+  codes** (mobydiff 2.74, CaNS 2.71, AMPHIBIOUS 2.72). This overshoot is a generic
   second-order finite-volume/difference signature relative to a spectral method,
   **not** a mobydiff artifact.
+
+The table is the 10 000-time-unit statistics of 2026-10-04, produced with the
+predicted outlet face (below). The previous data set (2026-09, the outlet face
+reset every substage) read c_f 0.00462, u′_rms 2.707, −u′v′ 0.867 at the same
+station: the outlet treatment moves nothing there, the rest is sampling.
 
 The mobydiff comparison data, in the same NetCDF format as the reference files, is
 committed at **`assets/mobydiff/xyz_4096_224_192/data.nc`**.
@@ -55,41 +60,36 @@ committed at **`assets/mobydiff/xyz_4096_224_192/data.nc`**.
 ## The outlet zone
 
 Do not use the last stretch of the plate. How long that stretch is depends on
-the outlet treatment, and it was measured (2026-10-02,
+the outlet treatment, and it was measured (2026-10-02 and 2026-10-04,
 `assets/postpro/momentum_integral.py`: the growth of the momentum thickness
-against `c_f/2 - (H+2)(θ/U_e) dU_e/dx`, and the mean wall pressure, per x
-band; 500 time units after a 250-unit settling, two binaries from the same
-field on 4 GPUs each):
+against `c_f/2 − (H+2)(θ/U_e) dU_e/dx`, and the mean wall pressure, per x
+band). Two data sets: the old outlet (the face reset to its neighbour every
+substage, 500 time units after a 250-unit settling, 4 GPUs) and the shipped
+one (the face predicted, the committed 10 000 time units):
 
-| x band | before 2026-10-01: dθ/dx | balance | p_wall | now: dθ/dx | balance | p_wall |
+| x band | old outlet: dθ/dx | balance | p_wall | shipped: dθ/dx | balance | p_wall |
 |---|---|---|---|---|---|---|
-| 450 … 600 | 2.0 … 2.3e-3 | 2.2 … 2.3e-3 | +2e-4 | 2.0 … 2.3e-3 | 2.2 … 2.3e-3 | −1e-4 |
-| 650 … 680 | 1.8e-3 | 2.1e-3 | −4.0e-4 | 2.2e-3 | 2.1e-3 | +1.7e-4 |
-| 700 … 715 | 1.0e-3 | 2.0e-3 | −1.5e-3 | 2.1e-3 | 2.0e-3 | +1.7e-4 |
-| 730 … 740 | 4.0e-4 | 2.0e-3 | −2.2e-3 | 2.3e-3 | 2.0e-3 | +6.8e-4 |
-| 745 … 748 | 2.2e-4 | 2.0e-3 | −2.8e-3 | 2.5e-3 | 2.0e-3 | +8.8e-4 |
-| 749.5 … 750 | 6e-5 | 2.0e-3 | −3.0e-3 | 4.1e-3 | 2.2e-3 | +1.3e-4 |
+| 450 … 600 | 2.0 … 2.3e-3 | 2.2 … 2.3e-3 | +2e-4 | 2.2 … 2.3e-3 | 2.2 … 2.2e-3 | −1e-4 |
+| 650 … 680 | 1.8e-3 | 2.1e-3 | −4.0e-4 | 2.2e-3 | 2.1e-3 | +1.5e-4 |
+| 700 … 715 | 1.0e-3 | 2.0e-3 | −1.5e-3 | 2.4e-3 | 2.1e-3 | +4.4e-4 |
+| 730 … 740 | 4.0e-4 | 2.0e-3 | −2.2e-3 | 2.4e-3 | 2.0e-3 | +8.6e-4 |
+| 745 … 748 | 2.2e-4 | 2.0e-3 | −2.8e-3 | 2.7e-3 | 2.0e-3 | +9.5e-4 |
+| 749.5 … 750 | 6e-5 | 2.0e-3 | −3.0e-3 | 4.3e-3 | 2.2e-3 | +1.4e-4 |
 
-- **The committed data (`assets/mobydiff/.../data.nc`, the figures) were
-  produced before 2026-10-01**, when the outlet face was reset to its
-  neighbour every substage: the wall pressure falls toward the outlet and the
-  momentum thickness stops growing over the last ~100 δ*₀ (5 δ₉₉). Treat
-  x > 600 of those data as outlet zone. The comparison station (Re_θ ≈ 677,
-  x ≈ 400) is far upstream of it and is unchanged by the outlet treatment
-  (θ within 0.06 %).
-- **With the outlet face predicted** (the present code) the zero-pressure-
-  gradient balance holds to within ~20 % up to 2 δ*₀ from the outlet. The
-  last ten cells adjust to the uniform outlet pressure (the mean pressure
-  inside a turbulent layer is `−⟨v′v′⟩`, the face value 0): c_f rises 13 %
-  there, most of it in the last cell. The stored pressure of the last column
-  is 100 times quieter and the divergence residual of the 6-iteration
-  red-black projection 5 times lower.
-
-Regenerating the committed data with the present code is a phase-2 run (see
-below) from a field settled with it; it moves nothing at the comparison
-station. It is under way (`overheadTest/horeka/exchange/submit_tbl_stats.sh`,
-`docs/next_session_outlet.md`); until its `data.nc` is committed the note
-above applies.
+- **Old outlet** (data before 2026-10-04): the wall pressure falls toward the
+  outlet and the momentum thickness stops growing over the last ~100 δ*₀
+  (5 δ₉₉); the freestream pressure does not move. A zero-pressure-gradient
+  layer has `p_wall = p_e`: this was the outlet pressure mode, time averaged.
+- **Shipped** (the outlet face predicted): the balance holds within 5 % up to
+  x = 650, within 15 % to 715 and within 20 % to 740, under a wall pressure
+  that rises by 1e-3 over the last 60 units (a mild adverse gradient the
+  freestream does not see); the last 2 δ*₀ adjust to the uniform outlet
+  pressure (the mean pressure inside a turbulent layer is `−⟨v′v′⟩`, the face
+  value 0): c_f rises 14 % there, most of it in the last cell. The stored
+  pressure of the last column is 100 times quieter and the divergence
+  residual of the 6-iteration red-black projection 5 times lower (3e-6).
+- **Use x ≤ 650** for anything quantitative (Re_θ ≤ 940); the comparison
+  station Re_θ ≈ 677 is at x ≈ 376.
 
 ## Layout
 
@@ -133,7 +133,7 @@ mv coldstart_100000.h5 restart_field.h5        # the developed field
 # phase 1 — re-equilibrate on the shipped (grid, trip, solver), ~1000 t.u.
 $PREP production.ini; $MPI production.ini                            # -> production_100000.h5
 
-# phase 2 — accumulate statistics, ~4000 t.u. -> production_stats.h5
+# phase 2 — accumulate statistics, 10000 t.u. (500000 steps, ~27 h on 4 A100) -> production_stats.h5
 $PREP production_stats.ini; $MPI production_stats.ini
 ```
 

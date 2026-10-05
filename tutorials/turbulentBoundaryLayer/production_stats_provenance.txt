@@ -1,0 +1,7 @@
+job    : 5175523   2026-10-03 13:06:58 CEST   node hkn0501
+code   : f39c139532452a18595a00e24d6a38eb9972ebd7
+from   : start_field.h5, 500000 steps left of 500000
+The shipped statistics (assets/mobydiff/xyz_4096_224_192/data.nc, the figures): phase 2 as committed in
+production_stats.ini, 500000 steps = 10000 time units, dt 0.02, red-black 6, started from the tutorial's developed
+field after 750 time units with the predicted outlet face (docs/next_session_outlet.md, follow-up), HoreKa job
+5175523, 26.5 h on 4 A100. Final field production_p2_1587500.h5 = restart_field.h5 (kept locally, 5.6 GB).

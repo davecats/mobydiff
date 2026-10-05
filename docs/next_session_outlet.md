@@ -828,25 +828,17 @@ described the outlet as a zero-gradient velocity; the gate scratch of
 
 ### Not done
 
-- **The tutorial's data are being regenerated (decided by the user
-  2026-10-02): HoreKa job 5175523, QUEUED in `accelerated` when this was
-  written.** Phase 2 as committed (`production_stats.ini`, 500000 steps =
-  10000 t.u., ~27 h on 4 A100 at 0.19 s/step) with `f39c139`, from
-  `outlet_tbl_run/tbl_new_1087500.h5` (the tutorial's developed field after
-  750 t.u. with the predicted outlet). Run directory
-  `<workspace>/optimiseBlockRefinement/tbl_stats_run`, worktree
-  `moby-tbl-stats`, script `overheadTest/horeka/exchange/submit_tbl_stats.sh`
-  (resumable: submit it again and it continues from the latest
-  `production_p2_*.h5`; a 100-step smoke of the same script ran clean, job
-  5175518). WHEN IT ENDS: copy `production_stats.h5` and one
-  `production_p2_*.h5` (as `restart_field.h5`, for the node lines) into
-  `tutorials/turbulentBoundaryLayer/`, run `python3 reproduce.py`, check
-  `assets/postpro/momentum_integral.py production_stats.h5` (the balance must
-  hold to the outlet), commit `data.nc` and the figures, and drop the
-  "produced before 2026-10-01" paragraph of the README's "The outlet zone".
-  The committed `data.nc` downstream of x ~ 600 carries the old outlet's
-  stall until then (the comparison station at x = 400 does not). A cold
-  start from scratch is NOT part of this.
+- **The tutorial's data are REGENERATED (user's decision 2026-10-02; HoreKa
+  job 5175523 ran 2026-10-03/04, 26.5 h on 4 A100, `f39c139`, from
+  `outlet_tbl_run/tbl_new_1087500.h5`; data.nc and the figures recommitted
+  2026-10-05).** At Re_theta 677: c_f 0.00465 (was 0.00462), H 1.499 (same),
+  u'_rms 2.738 (2.707), -u'v' 0.866 (0.867) -- sampling, the station is
+  untouched. The outlet zone of the 10000-t.u. statistics
+  (`momentum_integral.py`): the balance within 5 % to x = 650, 15 % to 715,
+  20 % to 740, the wall pressure rising 1e-3 over the last 60 units, the last
+  2 units adjusting (c_f +14 %); README "The outlet zone". The final field is
+  the tutorial's local `restart_field.h5` now (step 1587500). The run
+  directory on HoreKa (`tbl_stats_run`, 11 snapshots of 5.6 GB) can go.
 - `tutorials/naca/rans` from scratch (days of GPU time): only the restart
   pair above.
 - The first-order ghost row of a restriction at a level jump on a physical

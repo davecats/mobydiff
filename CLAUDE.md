@@ -2288,11 +2288,12 @@ immersed boundary. Phased, each phase verified before the next:
     0.04, stored p of the last column 6.8e-2 rms -> 6.9e-4. 0.194 s/step on
     4 A100. **Do not read wall friction in the last ten cells before an
     outlet; and do not use x > 600 of data produced before 2026-10-01.**
-    THE TUTORIAL DATA ARE BEING REGENERATED (user's decision): HoreKa job
-    5175523 (`accelerated`, queued 2026-10-02), phase 2 as committed
-    (500000 steps, ~27 h) with `f39c139` from the settled field, run dir
-    `tbl_stats_run`, `submit_tbl_stats.sh` (resumable). What to do when it
-    ends is in `docs/next_session_outlet.md`, "Not done".
+    THE TUTORIAL DATA ARE REGENERATED (HoreKa job 5175523, 2026-10-03/04,
+    10000 t.u. with `f39c139`; data.nc + figures recommitted 2026-10-05):
+    at Re_theta 677 c_f 0.00465 / H 1.499 / u'_rms 2.738 / -u'v' 0.866
+    (sampling-level moves); the shipped data's outlet zone is now the
+    balance within 5 % to x = 650 and 20 % to 740 (README "The outlet
+    zone": use x <= 650).
     HOW IT WAS RUN: a 2-node `dev_accelerated` job runs the two sides side
     by side, one node each, in chained resumable 40-minute chunks -- no
     wait in `accelerated`. A global-3D restart (rank-3 datasets, no blocks
