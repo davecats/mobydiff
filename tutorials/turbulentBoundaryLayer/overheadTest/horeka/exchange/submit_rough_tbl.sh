@@ -81,11 +81,22 @@ for side in $SIDES; do
     fi
 done
 [ "$todo" = 1 ] || { echo "every side at END_STEP $END_STEP: nothing to do"; exit 0; }
-if [ -z "${NO_CHAIN:-}" ]; then
-    sbatch --dependency=afterany:$SLURM_JOB_ID --export=ALL \
-        "$CODE_DIR/tutorials/turbulentBoundaryLayer/overheadTest/horeka/exchange/submit_rough_tbl.sh" \
-        | tee -a provenance.txt
-fi
+# The per-user SUBMIT limit of dev_accelerated counts the user's other jobs
+# too (2026-10-05: three of them refused the one-shot sbatch and the chain
+# died silently), so the successor is submitted by a retry loop that runs
+# beside the solves for most of the job; a chain that still breaks says so.
+SCRIPT="$CODE_DIR/tutorials/turbulentBoundaryLayer/overheadTest/horeka/exchange/submit_rough_tbl.sh"
+submit_successor() {
+    local n=0 out
+    while [ $n -lt 25 ]; do
+        if out=$(sbatch --dependency=afterany:$SLURM_JOB_ID --export=ALL "$SCRIPT" 2>&1); then
+            echo "successor of $SLURM_JOB_ID: $out (attempt $((n + 1)))" | tee -a provenance.txt; return 0
+        fi
+        n=$((n + 1)); sleep 120
+    done
+    echo "CHAIN BROKEN after $n attempts ($out) -- resubmit by hand: cd $RUN_DIR && sbatch --export=ALL $SCRIPT" | tee -a provenance.txt
+}
+[ -n "${NO_CHAIN:-}" ] || submit_successor &
 
 n=0
 for side in $SIDES; do
