@@ -1,0 +1,170 @@
+solid slabs
+  facet normal 0 0 -1
+    outer loop
+      vertex -2 -1.7406250000000001 -2
+      vertex -2 0.25937500000000002 -2
+      vertex 2.125 0.25937500000000002 -2
+    endloop
+  endfacet
+  facet normal 0 0 -1
+    outer loop
+      vertex -2 -1.7406250000000001 -2
+      vertex 2.125 0.25937500000000002 -2
+      vertex 2.125 -1.7406250000000001 -2
+    endloop
+  endfacet
+  facet normal 0 0 1
+    outer loop
+      vertex -2 -1.7406250000000001 6
+      vertex 2.125 -1.7406250000000001 6
+      vertex 2.125 0.25937500000000002 6
+    endloop
+  endfacet
+  facet normal 0 0 1
+    outer loop
+      vertex -2 -1.7406250000000001 6
+      vertex 2.125 0.25937500000000002 6
+      vertex -2 0.25937500000000002 6
+    endloop
+  endfacet
+  facet normal 0 -1 0
+    outer loop
+      vertex -2 -1.7406250000000001 -2
+      vertex 2.125 -1.7406250000000001 -2
+      vertex 2.125 -1.7406250000000001 6
+    endloop
+  endfacet
+  facet normal 0 -1 0
+    outer loop
+      vertex -2 -1.7406250000000001 -2
+      vertex 2.125 -1.7406250000000001 6
+      vertex -2 -1.7406250000000001 6
+    endloop
+  endfacet
+  facet normal 0 1 0
+    outer loop
+      vertex -2 0.25937500000000002 -2
+      vertex -2 0.25937500000000002 6
+      vertex 2.125 0.25937500000000002 6
+    endloop
+  endfacet
+  facet normal 0 1 0
+    outer loop
+      vertex -2 0.25937500000000002 -2
+      vertex 2.125 0.25937500000000002 6
+      vertex 2.125 0.25937500000000002 -2
+    endloop
+  endfacet
+  facet normal -1 0 0
+    outer loop
+      vertex -2 -1.7406250000000001 -2
+      vertex -2 -1.7406250000000001 6
+      vertex -2 0.25937500000000002 6
+    endloop
+  endfacet
+  facet normal -1 0 0
+    outer loop
+      vertex -2 -1.7406250000000001 -2
+      vertex -2 0.25937500000000002 6
+      vertex -2 0.25937500000000002 -2
+    endloop
+  endfacet
+  facet normal 1 0 0
+    outer loop
+      vertex 2.125 -1.7406250000000001 -2
+      vertex 2.125 0.25937500000000002 -2
+      vertex 2.125 0.25937500000000002 6
+    endloop
+  endfacet
+  facet normal 1 0 0
+    outer loop
+      vertex 2.125 -1.7406250000000001 -2
+      vertex 2.125 0.25937500000000002 6
+      vertex 2.125 -1.7406250000000001 6
+    endloop
+  endfacet
+  facet normal 0 0 -1
+    outer loop
+      vertex -2 1.2593749999999999 -2
+      vertex -2 3.2593749999999999 -2
+      vertex 2.125 3.2593749999999999 -2
+    endloop
+  endfacet
+  facet normal 0 0 -1
+    outer loop
+      vertex -2 1.2593749999999999 -2
+      vertex 2.125 3.2593749999999999 -2
+      vertex 2.125 1.2593749999999999 -2
+    endloop
+  endfacet
+  facet normal 0 0 1
+    outer loop
+      vertex -2 1.2593749999999999 6
+      vertex 2.125 1.2593749999999999 6
+      vertex 2.125 3.2593749999999999 6
+    endloop
+  endfacet
+  facet normal 0 0 1
+    outer loop
+      vertex -2 1.2593749999999999 6
+      vertex 2.125 3.2593749999999999 6
+      vertex -2 3.2593749999999999 6
+    endloop
+  endfacet
+  facet normal 0 -1 0
+    outer loop
+      vertex -2 1.2593749999999999 -2
+      vertex 2.125 1.2593749999999999 -2
+      vertex 2.125 1.2593749999999999 6
+    endloop
+  endfacet
+  facet normal 0 -1 0
+    outer loop
+      vertex -2 1.2593749999999999 -2
+      vertex 2.125 1.2593749999999999 6
+      vertex -2 1.2593749999999999 6
+    endloop
+  endfacet
+  facet normal 0 1 0
+    outer loop
+      vertex -2 3.2593749999999999 -2
+      vertex -2 3.2593749999999999 6
+      vertex 2.125 3.2593749999999999 6
+    endloop
+  endfacet
+  facet normal 0 1 0
+    outer loop
+      vertex -2 3.2593749999999999 -2
+      vertex 2.125 3.2593749999999999 6
+      vertex 2.125 3.2593749999999999 -2
+    endloop
+  endfacet
+  facet normal -1 0 0
+    outer loop
+      vertex -2 1.2593749999999999 -2
+      vertex -2 1.2593749999999999 6
+      vertex -2 3.2593749999999999 6
+    endloop
+  endfacet
+  facet normal -1 0 0
+    outer loop
+      vertex -2 1.2593749999999999 -2
+      vertex -2 3.2593749999999999 6
+      vertex -2 3.2593749999999999 -2
+    endloop
+  endfacet
+  facet normal 1 0 0
+    outer loop
+      vertex 2.125 1.2593749999999999 -2
+      vertex 2.125 3.2593749999999999 -2
+      vertex 2.125 3.2593749999999999 6
+    endloop
+  endfacet
+  facet normal 1 0 0
+    outer loop
+      vertex 2.125 1.2593749999999999 -2
+      vertex 2.125 3.2593749999999999 6
+      vertex 2.125 1.2593749999999999 6
+    endloop
+  endfacet
+endsolid slabs

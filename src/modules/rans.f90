@@ -113,7 +113,7 @@
 
 module rans
     use, intrinsic :: iso_c_binding
-    use :: init, only: dns_type, grid_type, VAR_U, VAR_V, VAR_W, VAR_P
+    use :: init, only: dns_type, grid_type, VAR_U, VAR_V, VAR_W, VAR_P, SOLID_FACE_THRESHOLD
     use :: blocks, only: block_set_type, FACE_PHYS
     use :: boundary, only: boundary_type, boundary_face_id, NFACES, &
         domain_face_is_wall, apply_scalar_bc, PATCH_UNSET, &
@@ -200,9 +200,6 @@ module rans
     ! which is also the correct SST limit (the wall-blend functions go to
     ! their far-field branch).
     real(C_DOUBLE), parameter :: NO_WALL_DISTANCE = 1.0d30
-    ! Same staggered-coefficient threshold the LES ibm_aware test uses:
-    ! solid faces carry coef = 1e30/re.
-    real(C_DOUBLE), parameter :: SOLID_FACE_THRESHOLD = 1.0d20
 
     type :: sst_type
         logical(C_BOOL) :: geometry_built = .false.

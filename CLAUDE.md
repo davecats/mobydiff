@@ -2348,16 +2348,10 @@ immersed boundary. Phased, each phase verified before the next:
     comparisons `max_abs 0` on CPU, 13 of 14 on GPU; `beltrami_yslab` is
     Courant-bound and is `max_abs 0` with `dtmax` binding. **Reference set
     after both limiter changes: `~/cfl_ref_binaries`.**
-  - **NEXT: `docs/next_session_body_at_outlet.md`.** Since the outlet face
-    is predicted the solver STOPS when an immersed body touches an outlet
-    face (`check_outlet_faces_fluid`), which rules out every rough-wall or
-    immersed-wall boundary layer: `rough_jacobi.ini` no longer starts
-    (measured on a cut-down; `154e48f` ran it). The handout has the proposed
-    one-statement form (the face's own penalization, the neighbour's
-    unpenalized increment recovered from `qs`; bit-identical at zero
-    coefficient), what to investigate first, the gates, and where the review
-    goes after it (section 6 simplifications, step 10, the re-measurement
-    pass).
+  - **`docs/next_session_body_at_outlet.md` -- DONE 2026-10-05, next
+    bullet.** (Until then the solver STOPPED when an immersed body touched
+    an outlet face, which ruled out every rough-wall or immersed-wall
+    boundary layer.)
   - **LES at a level jump that runs into a wall** (the first case O4
     changes): the velocity-gradient tensor of the wall cell `(nb, 1)` reads
     `u(nb+1, 0)`, the x halo of the wall ghost row, which nothing wrote
@@ -2371,6 +2365,75 @@ immersed boundary. Phased, each phase verified before the next:
     boundary row applied to the halo column after the exchange; not done
     (WALE's wall-cell nut is ~1e-4 nu, resolved RANS multiplies that strain
     by zero, momentum does not read the halo at a wall).
+
+- **An immersed body on an inlet or an outlet plane (DONE 2026-10-05,
+  increments B0-B3, `docs/next_session_body_at_outlet.md`: the stage-by-
+  stage investigation with a body, the nine answers, "Implementation" with
+  every gate number; the gates in `validation/body_outlet/`).** The rough-
+  wall boundary layer (`overheadTest/horeka/configs/rough_jacobi.ini`) runs
+  again.
+  - **B1: the outlet face carries its own penalization**, in ONE statement
+    of `predict_outlet_faces` for the low and the high face alike:
+    `q(f) = r qs(n) + ((sf q(f) - rsn q(n)) + dtf (dp(n) - dp(f)))` with
+    `r = mu_f/mu_n`, `sf = state_f`, `rsn = r state_n`, `dtf = mu_f
+    dt_gamma` (the rational factors of ibm.f90). It rests on ONE invariant,
+    checked stage by stage: when the kernel runs, `qs(n) = state_n q(n) +
+    incr_n I_n` EXACTLY, because every correction pass (state correction,
+    SGS, body force, the band filter) scales by `incr` -- so the
+    neighbour's unpenalized increment is one division away. The neighbour's
+    pressure gradient cancels algebraically (a solid neighbour's decoupled
+    pressure never reaches a fluid face); the limits `f` solid (`r ~
+    1e-27`, the face dies like any solid DOF), `n` solid (`r ~ 1e27`
+    recovers `I_n` to round-off) and both solid are finite and gated.
+    `check_outlet_faces_fluid` is gone. Body-free: 53 nofma comparisons
+    `max_abs 0` CPU and GPU (7-case, 9-case, outlet suite 1 + 4 ranks);
+    at PRODUCTION flags CPU 30/30 and GPU 22/23 -- `blasius2d` differs by
+    ONE ulp at 2 of 384 top-outlet columns from step 37 on, the x outlet of
+    the same run exact: the GPU compiler contracts the modified statement
+    differently for rare operands (an alternative statement shape gives
+    bit-identical output), i.e. the FMA class. **The B0 expectation "exact
+    at production flags too" holds on the CPU only; an expression change is
+    gated at nofma, as this file already says.**
+  - **B2: a Dirichlet velocity datum is ZERO where its own staggered
+    location is inside the solid** (`mask_dirichlet_velocity_in_solid`, once
+    at init, the normal row at its face and a tangential row at its ghost;
+    `enter_boundary_data` moved below the coefficient read). Without it a
+    Blasius inlet through an immersed wall injects mass into solid cells,
+    which pass it on through penalized faces at O(u_in) under a pressure
+    that grows every substage. The solver prints the number of NON-ZERO data
+    zeroed (counting rows "inside the body" is useless: the y_min wall rows
+    of a wall-attached body are all inside and all zero already -- 32828 of
+    43200 on the cut-down). Graded (fluid-centred) faces keep the datum.
+    `SOLID_FACE_THRESHOLD` has one definition now (`init.f90`; five local
+    copies removed). An STL body that is meant to cross a plane must extend
+    past it: the ghost tiles are sampled from the geometry
+    (`docs/configuration.md`).
+  - Gates with a body, all PASS (`validation/body_outlet/README.md`):
+    Poiseuille between immersed slabs in an inflow/outflow channel with
+    the slabs crossing both planes and 32 of 192 blocks removed -- the
+    outlet-face profile = the periodic twin's to 1.35e-3 of 1.5, last-cell p
+    = G dx/2 to 0.08 %, the 32 solid faces ON the outlet plane at 1.6e-28,
+    flux in = out to 2e-16; the outlet on the LOW face = the image to
+    3.3e-15; stream along y = the x case at 0.0 (z: 2.4e-15); the body
+    ending one cell before the plane and starting at it stable with the
+    solid faces at round-off; 4 == 1 ranks, restart == continuous, CPU ==
+    GPU (nofma pair, same case file), zeroed-coefficient twin == body-free,
+    each `max_abs 0` incl. the `un_xmax` plane.
+  - The rough-wall boundary layer, production-shaped cut-down (the
+    production y line, 320 x 176 x 24, 300 t.u. on istmcetus) and its
+    smooth twin: dtheta/dx holds into the last half unit on the smooth twin
+    (1.20 -> 1.15e-3; the old outlet collapsed it to 5 % in the last cell)
+    and stays at its upstream level through the roughness phase on the
+    rough one. **NOT measured: the turbulent balance** -- both layers are
+    still laminar at t = 300 (the trip does not transition them in 60
+    units); the production domain on HoreKa is the open item.
+  - LANDMINES, new: (1) editing a bash driver while it runs corrupts the
+    run (bash reads the script incrementally; a gate batch died mid-group).
+    (2) A gate group that reuses another group's output compares whatever
+    binary THAT group ran: the first `gpu` leg compared a production CPU
+    run against a nofma GPU run and read 2e-15 -- every CPU == GPU group
+    runs its own CPU leg now. (3) `config.f90` still has no `case default`:
+    a `stats_start_step` key I invented was silently ignored.
 
 ## Verification
 
@@ -2390,7 +2453,8 @@ immersed boundary. Phased, each phase verified before the next:
   `restart` since 2026-10-01) and `run_bitexact_outlet.sh` -- the 7- and
   9-case suites contain no outlet. A uniform-flow gate started from the
   uniform field cannot see a halo that nothing writes: the `refined` group
-  starts from rest.
+  starts from rest. An immersed body on an inlet or outlet plane:
+  `validation/body_outlet/run_gates.sh` (since 2026-10-05).
 - Anything touching the time-step limiter, the convection or the diffusion
   operator: `validation/courant_limit/run_gate.sh` and
   `validation/diffusion_limit/run_gate.sh` (the RK3 limits, bracketed;

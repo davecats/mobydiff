@@ -29,9 +29,9 @@ program moby_solve
         PROF_VEL_EXCHANGE, PROF_PROJECTION, PROF_IO_STATS, PROF_SCALAR
     implicit none
 
-    integer :: arg_status, rkStage
+    integer :: arg_status, rkStage, nMasked, nDirRows
     integer(C_INT) :: loop_steps
-    real(C_DOUBLE) :: dt_alpha, dt_beta, dt_gamma
+    real(C_DOUBLE) :: dt_alpha, dt_beta, dt_gamma, maskCount(2)
     real(C_DOUBLE) :: turb_profile_start
     real(C_DOUBLE) :: prof_start
     character(len=256) :: input_file
@@ -134,7 +134,6 @@ program moby_solve
     call init_scalar(sc, blk, bc, dns%rans_wall_treatment == 1_C_INT, c%has_terminal)
     call init_openmp_offload(c%has_terminal)
     call enter_grid_data(g)
-    call enter_boundary_data(bc)
 
     if (c%has_terminal) print *, "initialising fields..."
     if (.not. has_restart_file(dns)) then
@@ -169,7 +168,19 @@ program moby_solve
     ! HOST, and enter_ibm_data maps that copy: host and device agree from here.
     call set_ibm_geometry(ibm, dns)
     if (dns%ibm_enabled) call read_ibm_coeff_file(ibm, dns, blk, c%has_terminal)
-    if (dns%ibm_enabled) call check_outlet_faces_fluid(blk, bc, ibm%coef)
+    ! Dirichlet velocity data where the body crosses a Dirichlet face
+    ! (an inlet through an immersed wall): the row's datum is zero at a
+    ! solid-centred location. On the HOST coefficients, before either the
+    ! rows or the coefficients are mapped; with no body nothing changes.
+    if (dns%ibm_enabled) then
+        call mask_dirichlet_velocity_in_solid(bc, blk, ibm%coef, nMasked, nDirRows)
+        maskCount = [real(nMasked, C_DOUBLE), real(nDirRows, C_DOUBLE)]
+        call comm_allreduce_sum(c, maskCount)
+        if (c%has_terminal .and. maskCount(2) > 0.0d0) print '(a,i0,a,i0,a)', &
+            " boundary: non-zero Dirichlet velocity data zeroed inside the body: ", &
+            int(maskCount(1)), " (", int(maskCount(2)), " Dirichlet velocity rows)"
+    end if
+    call enter_boundary_data(bc)
     call enter_ibm_data(ibm, dns)
     ! [ibm] band_filter: near-body band list from the device coefficients
     ! (off: nothing is built, allocated, or mapped).

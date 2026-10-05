@@ -561,6 +561,8 @@ over the boundary points of the outlet faces, `(f, n) = (1, 2)` or
 rank: no launch). Init: `init_outlet_faces` gives a face the run was not
 handed its zero-gradient value, once. An immersed body touching an outlet
 face or its neighbour is a hard error (`check_outlet_faces_fluid`).
+(SUPERSEDED 2026-10-05: the face carries its own penalization and the check
+is gone -- `docs/next_session_body_at_outlet.md`.)
 
 - Outlet-free suites `max_abs 0` against `154e48f`, CPU (4 ranks) and GPU.
 - **Equal to the prototype binary at `max_abs 0` on all seven outlet

@@ -43,7 +43,7 @@
 ! the penalization delivered into the GRADED fluid cells.
 module scalar_stats
     use, intrinsic :: iso_c_binding
-    use :: init, only: dns_type, grid_type, VAR_U, VAR_V, VAR_W, VAR_P, VAR_S0
+    use :: init, only: dns_type, grid_type, VAR_U, VAR_V, VAR_W, VAR_P, VAR_S0, SOLID_FACE_THRESHOLD
     use :: blocks, only: block_set_type, FACE_CLOSED
     use :: comm, only: comm_type, comm_allreduce_sum
     use :: io, only: to_c_string
@@ -66,9 +66,6 @@ module scalar_stats
     integer, parameter :: SSTAT_CHI = 6     ! the same two on the HIGH y face; a
     integer, parameter :: SSTAT_JHI = 7     ! wall row then carries the wall flux
     integer, parameter :: SCALAR_NSTAT = 7
-
-    ! The solid-coefficient test the transport kernel uses (SOLID/Re = 1e30/Re).
-    real(C_DOUBLE), parameter :: SOLID_FACE_THRESHOLD = 1.0d20
 
     type, public :: scalar_stats_type
         integer :: layout = SC_LAYOUT_PROFILE

@@ -14,6 +14,12 @@ module init
     ! scratch plane), so a scalar's q index is never its qs index.
     integer(C_INT), parameter :: VAR_S0 = NVAR
     integer(C_INT), parameter :: SCR_S0 = NVEL
+    ! "This staggered location (or cell centre) is INSIDE the immersed body":
+    ! set_ibm_coeff writes SOLID/Re = 1e30/Re there and grades only
+    ! fluid-centred points, so one threshold separates the two. Every
+    ! consumer (les, rans, scalar, scalar_stats, the boundary rows) uses this
+    ! ONE definition.
+    real(C_DOUBLE), parameter :: SOLID_FACE_THRESHOLD = 1.0d20
     integer(C_INT), parameter :: GRID_UNIFORM = 1_C_INT
     integer(C_INT), parameter :: GRID_COSINE  = 2_C_INT
     integer(C_INT), parameter :: GRID_TANH    = 3_C_INT

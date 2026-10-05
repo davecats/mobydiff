@@ -1,15 +1,13 @@
 # Next session: an immersed body that reaches an outlet face
 
-STATUS: **OPEN -- the next session's task (user, 2026-10-05).** Written
-2026-10-02 at the end of the outlet work (`docs/next_session_outlet.md`, DONE
-including its follow-up; the boundary-layer tutorial data were regenerated
-with the predicted outlet on 2026-10-04 and the user accepted that as the
-outlet's validation). Nothing below is implemented. The order is the one the
-outlet work used and the user asked for again: **investigate first, write
-down what each stage does, choose the simplest design that is correct on a
-low and on a high face, then implement and gate.** This is the code
-improvement of the next session; section "After this" says where the review
-goes afterwards.
+STATUS: **DONE 2026-10-05 (B0-B3; the turbulent rough-wall balance is the
+one gate not measured, see "Implementation").** B0 is the section "B0.
+Investigation write-up" below; what was built and every gate number is in
+"Implementation (2026-10-05)". The handout as written on 2026-10-02 follows,
+unchanged. The order was the one the outlet work used and the user asked for
+again: **investigate first, write down what each stage does, choose the
+simplest design that is correct on a low and on a high face, then implement
+and gate.**
 
 CONTEXT FROM THE USER (2026-10-05): a NEW `turbulentBoundaryLayer` tutorial is
 planned that compares mobydiff directly with other codes run at the same
@@ -264,6 +262,254 @@ The cut-down case used today (it stops at init on the present head):
 - `~/Codes/mobydiff.bl/.../production_stats.h5` is no longer the tutorial's
   old statistics (overwritten by another case on 2026-10-02); the old data
   live in git history only.
+
+## B0. Investigation write-up (2026-10-05, main `f54cce8`; no code changed)
+
+Read in the code and checked on the cut-down rough-wall case (prepared with
+`build_cpu`, 4 ranks: 4 leaves of 64 x 44 x 48, every block a body block).
+The refusal reproduces on the head (`error: the immersed body reaches the
+outlet face 2`). What the cut-down's geometry actually is: `dy_1 = 0.19`
+with the roughness `0.01 +- 0.05`, so on BOTH x planes only the ghost row
+`j = 0` is solid-centred (`coef = SOLID/Re = 2.2e27`) and row `j = 1` is
+graded; no interior face of the plane is inside the solid. It exercises the
+graded limit, not the solid one -- a second variant with `amp_x = 0.5`
+(crest-to-trough ~5 cells) is used below for the solid faces.
+
+### One substage, stage by stage, with a body on the plane
+
+`f` the outlet face, `n` its interior neighbour, `(f, n) = (1, 2)` low /
+`(nb+1, nb)` high; `x_i = dt_gamma coef_i`, `incr_i = ibm%mu(i)`,
+`state_i = penal_state_factor(x_i)`. Only what DIFFERS from the body-free
+table of `docs/next_session_outlet.md` is listed; everything else is as
+there.
+
+| stage | LOW outlet, `f = 1` | HIGH outlet, `f = nb+1` |
+|---|---|---|
+| `update_ibm_mu` | `mu` refreshed over the ghost-inclusive range `0..nb+1` of every BODY block (a block whose only coefficient sits on the `nb+1` plane IS a body block: `ibm_body_blocks` scans the ghost-inclusive range). Non-body blocks keep `mu = 1` from allocation and `coef = 0`. So `incr_f`, `incr_n`, `coef_f`, `coef_n` are all available at the face on both sides | same |
+| fused predictor | face 2: `qs(2) = (q(2) + I_2) incr_2`, reading `q(1)` (old outlet value) in its stencil | face `nb`: the same with `q(nb+1)` |
+| `add_penalization_state_correction` | body blocks, under the start masks: face 2 gets `(state_2 - incr_2) q(2)`; face 1 is outside the mask | face `nb` the same; `nb+1` out of range |
+| SGS, body force | `qs += dt_alpha term * incr` at the predicted faces | same |
+| band filter | `qs += theta/4 del * incr` over the band list, which is interior-only (`1..nb`); face 1 can be in it (harmless: the commit skips it and the outlet kernel reads `qs(2)`, not `qs(1)`) | `nb+1` never in the list |
+| **so, when the outlet kernel runs** | **`qs(n) = state_n q(n) + incr_n I_n` EXACTLY, with `I_n` the complete non-pressure increment minus `dt_gamma dp(n)`: every correction pass scales by `incr` (the band filter too -- the handout's worry is moot)** | same |
+| `predict_outlet_faces` today | `q(1) = qs(2) + ((q(1) - q(2)) + dt_gamma (dp(2) - dp(1)))`: borrows `qs(2) - q(2)`, which is `(state_2 - 1) q(2) + incr_2 I_2`, NOT the increment, once `coef_2 /= 0`; and `q(1)` is never penalized | same with `(nb+1, nb)` |
+| commit `qs -> q` | face 1 skipped (pinned mask) | `nb+1` out of range |
+| exchange | unchanged | unchanged |
+| projection: diagonal | `(dnLow(1) mu(1) + dnHigh(1) mu(2)) d1P`, `dnLow(1) = 2 d1f` on an outlet: the face's OWN `mu(1)` | `dnHigh(nb) mu(nb+1)`: the face's own `mu(nb+1)` (read at `ip = nb+1`, ghost-inclusive) |
+| projection: correction | `q(1) += (phi(0) - phi(1)) cfLow(1) mu(1)` | `q(nb+1) += (phi(nb) - phi(nb+1)) cfHigh mu(nb+1)` (the `i == nx` plane branch) |
+| red-black sweep | `gLo1 = face_grad_denom(.., d1x(1), outLow)`, `cLo1` with `mu_u_i`: the same pair in place | `gHi1 = face_grad_denom(.., d1x(ip), outHigh)` with `mu_u_ip` |
+| final `apply_bc` | pressure ghost `p(0) = 2 p_out - p(1)` also in a solid cell; tangential ghosts copy the (penalized, ~0) interior | same |
+| init | `init_outlet_faces`: `q(f) = q(n)`; a cold start has `u_inf` INSIDE the body too, and the first substage's `state` factor removes it from every solid DOF, the outlet face included once it is penalized | same |
+| restart | low face in `un`; high in `un_xmax` | same |
+
+### Answers to the nine questions
+
+1. **The table above.** The predictor's stage is the only one that assumes
+   a fluid face; every correction pass preserves `qs(n) = state_n q(n) +
+   incr_n I_n`, so the neighbour's unpenalized increment IS recoverable from
+   `qs` by one division, and the band filter is inside `I_n` like the SGS
+   term (it is applied `x mu`). Nothing else on the list reads the outlet
+   face differently with a body.
+2. **The zero-normal-gradient closure with a body that differs between `n`
+   and `f`.** The face inherits `N_n` (convection + diffusion of its
+   neighbour, built from the neighbour's stencil) -- the neighbour's
+   PRESSURE gradient cancels algebraically (`I_n` carries `-dt_gamma dp(n)`,
+   the face adds `+dt_gamma dp(n)`), so a solid neighbour's decoupled
+   pressure never reaches a fluid face. What is left when `n` is solid and
+   `f` fluid: `N_n` has `q(n) ~ 0` in its diffusion stencil, i.e. the face
+   sees `nu (q(f) - 0)/dx^2`, a wall-like sink -- the cost of a body that
+   ends one cell before the plane, O(1) in that one face column. When `f`
+   is solid, `N_n` is multiplied by `incr_f ~ 1/x_f` and is irrelevant.
+   Roughness varying along x: the face's `N` is the neighbour's, an O(dx)
+   error on the plane -- exactly the outlet's existing closure. Kept; not
+   replaced.
+3. **The projection uses the face's own `mu` on both sides in all three
+   paths** -- read in `compute_rdenom` (`mu_u_ip` at `ip = nb+1`),
+   `jacobi_apply` (`ibm%mu(ip,..)` under the `i == nx` plane branch,
+   `ibm%mu(i,..)` with `cfLow(1)`), `redblack_sweep` (`mu_u_ip` with `gHi1`
+   / `cHi1`), and `interface_correct` carries no outlet branch since O5.
+   Tested below, not only read: the Poiseuille-between-immersed-walls gate
+   (solid faces on the plane at round-off after the projection, fluid
+   divergence at the projection residual) and the mirrored pair.
+4. **The pressure ghost in a solid cell on the plane.** Harmless: every
+   face of a solid cell has `mu ~ 1/x ~ 1e-27`; the diagonal is `~1e-27 d^2`
+   and the divergence source scales the same way (the solid face velocities
+   are `incr * I ~ 1e-27`), so `phi` stays O(dt dx) and the correction
+   `cf mu dphi ~ 1e-27`. The outlet ghost enters only through
+   `dnHigh mu(f)`, i.e. not at all. The solid-cell pressure on the plane is
+   the same decoupled Brinkman pressure as anywhere in the body. Measured
+   below (max |p| in solid cells bounded).
+5. **Removed blocks next to an outlet.** A removed block has no boundary
+   points, no exchange entries toward it, and its neighbours' faces toward
+   it are `FACE_CLOSED`. The outlet face of a SURVIVING block is `nb+1` in
+   the NORMAL direction, which has nothing to do with a tangential
+   neighbour's absence; the tangential edge halos of the outlet row come
+   from the same-level extension that keys on "combined neighbour absent"
+   (Phase 2) and is unchanged. Nothing needed.
+6. **Geometry beyond the plane.** The normal face sits ON the plane
+   (`slice_grid_direction`): no geometry outside the domain. Tangential
+   velocity, pressure and `dwall` ghosts sit half a cell outside; the
+   analytic indicator is defined there (the egg-carton is a function of
+   `(x, z)`); an STL must extend past the plane -- `moby_prepare` samples
+   the ghost tiles from the mesh, so a mesh that ends at the plane gives a
+   fluid ghost and the body appears to end half a cell before the boundary
+   (a tangential ghost mirrored against a fluid value; the normal face
+   itself is unaffected). Required of the user, stated in the docs
+   (`docs/configuration.md`); not checkable by the solver (a ghost tile
+   with `coef = 0` is a legal fluid ghost).
+7. **The inlet inside a body.** A Dirichlet face is pinned to its datum
+   whatever the coefficient says: no stage penalizes it (not in any
+   predicted range; `cfLow = dnLow = 0` on a non-outlet physical face). So
+   today a Blasius inlet face in the solid injects `u_in(y) dy` into a
+   solid cell whose other faces have `mu ~ 1e-27`; the projection absorbs
+   it with `phi ~ rdenom div ~ 1e27 div` and a correction `mu cf dphi =
+   O(div dx)`, i.e. the solid passes the flux on through penalized faces at
+   O(u_in), with a stored pressure that grows by `phi/dt_gamma` -- a conduit
+   through the body. (The cut-down case has no such face: its inlet faces
+   in row 1 are graded, fluid-centred; the production grid, `dyw_plus`
+   0.15 on 176 cells, very likely has one or two.) DECISION: the datum of a
+   Dirichlet VELOCITY row is ZERO where the row's own staggered location is
+   solid-centred (`coef >= 1e20`, the marker threshold rans/scalar already
+   use): the normal row at the face itself, a tangential row at its ghost
+   position (the mirror `2v - q` with `v = 0` makes the plane no-slip
+   there). Graded faces keep the datum (fluid-centred; the same staircase
+   every cut cell has). Owner: the boundary row's constant `bcC`, masked
+   ONCE at init from the host coefficients, in the slot
+   `check_outlet_faces_fluid` leaves (between `read_ibm_coeff_file` and
+   `enter_ibm_data`), with `enter_boundary_data` moved below it -- nothing
+   between its present position and the first `apply_bc` touches `bc` on
+   the device. Low and high alike (the row loop already resolves `gi` per
+   side); every Dirichlet velocity face, not only declared inlets (a wall's
+   datum is 0 already, a moving wall's would be wrong inside a body).
+   Restart: the rows are rebuilt from the ini each run. Not: a time-
+   dependent relaxation of the datum (invents a scale), a solver check that
+   refuses it (it is a legitimate configuration -- the rough wall).
+8. **Scalars, RANS, statistics.** The scalar outlet row is a Neumann copy:
+   in a solid cell it copies the penalized body value (Dirichlet mode) or
+   the conjugate solid temperature (zero-gradient = adiabatic at the domain
+   boundary), nothing to add; `apply_scalar_bc_q` no longer exists (step 6:
+   one `apply_bc` with scalar columns). RANS `wallcell`/`dwall` at the last
+   cell come from the ghost-inclusive tiles that prepare writes from
+   geometry: unchanged by the outlet. The momentum-integral statistics of
+   the boundary-layer case are a post-processing matter (`momentum_integral.py`
+   measures the balance to the outlet; the roughness is a form-drag term it
+   does not contain, so for the rough case only the TREND to the outlet is
+   comparable with the smooth result).
+9. **A level jump on the outlet next to the body.** Not measured in this
+   session: the production case is single-level, and the first-order
+   restriction ghost row (6.8 % in an LES wall cell) is a known, documented
+   residual of the exchange, not of the outlet. The `refined` freestream
+   group (level jump on the outlet, from rest) stays the gate for the
+   exchange side. Left as it was.
+
+### Design, confirmed
+
+The proposed one-statement form stands. With `r = incr_f/incr_n`, written
+in the kernel as four locals so that every FMA contraction the compiler can
+choose reproduces today's arithmetic when the factors are exactly 1:
+
+    r   = mu_f/mu_n                      (ibm%mu: refreshed this substage)
+    sf  = penal_state_factor(x_f)
+    rsn = r*penal_state_factor(x_n)
+    dtf = mu_f*dt_gamma
+    q(f) = r*qs(n) + ((sf*q(f) - rsn*q(n)) + dtf*(dp(n) - dp(f)))
+
+Body-free: `r = sf = rsn = 1`, `dtf = dt_gamma`, each product by 1.0 exact,
+and every contraction candidate (`fma(r, qs(n), T)`, `fma(sf, q(f), -rsn
+q(n))`, `fma(dtf, dpn - dpf, S)`) rounds exactly as today's
+`fma(dt_gamma, dpn - dpf, S)` / `qs(n) + T` -- hence `max_abs 0` at
+PRODUCTION flags is expected, not only at nofma. Limits: `f` solid, `n`
+fluid: `r ~ 1e-27`, `q(f) -> state_f q(f) + 1e-27 (..)`, the face dies like
+any solid DOF; `n` solid, `f` fluid: `r ~ 1e27`, `r qs(n) = I_n` to round-
+off, `rsn q(n) ~ 6e-54 q(n)`; both solid: `r ~ 1`, `sf ~ 1e-81`. `incr > 0`
+for `x >= 0` (P3 positive), `x^3 ~ 1e81` far from overflow. The kernel
+gains `ibm` (maps `ibm%coef`, `ibm%mu`, both resident).
+`init_outlet_faces` stays as it is (the face is state; in a solid it is
+penalized away in the first substage like every other solid DOF);
+`check_outlet_faces_fluid` is deleted.
+
+## Implementation (2026-10-05, on top of main `f54cce8`)
+
+Reference binaries: `~/cfl_ref_binaries` (`cb47d35`). Gate drivers: the 7-
+and 9-case suites, `validation/freestream/run_bitexact_outlet.sh` (1 and 4
+ranks), and the new `validation/body_outlet/run_gates.sh` (README there has
+every number).
+
+### B1. The outlet face carries its own penalization
+
+`step.f90 predict_outlet_faces(blk, bc, ibm, dt_gamma)`, the one-statement
+form of the design (`r = mu_f/mu_n`, `sf`, `rsn = r state_n`, `dtf = mu_f
+dt_gamma`, all exactly 1 / dt_gamma without a body); `boundary.f90
+check_outlet_faces_fluid` deleted with its call; `init_outlet_faces`
+unchanged (the face is state; a solid one is penalized away in the first
+substage). The kernel maps `ibm%coef` and `ibm%mu` (resident).
+
+- Body-free, nofma: the 7-case suite (4 ranks), the 9-case suite, the
+  outlet suite (1 and 4 ranks) `max_abs 0` against the reference, CPU AND
+  GPU (30 + 23 comparisons).
+- Body-free, PRODUCTION flags: CPU 30/30 `max_abs 0`; GPU 22/23 -- the 7-
+  and 9-case suites and six outlet cases at 0, `blasius2d` at 1.4e-15.
+  Run down: the first difference is ONE ulp (8.7e-19 on 4.8e-3) at 2 of
+  384 columns of the TOP outlet (the stretched y line) at step 37, the x
+  outlet of the same run exact through step 50; a form with the scaled
+  operands in statements of their own gives bit-identical output. So the
+  GPU compiler contracts the modified statement differently for rare
+  operands -- the FMA class, and the reason CLAUDE.md gates an expression
+  change at nofma. The B0 claim "exact at production flags too" holds on
+  the CPU and not on the GPU; the kernel's header says so.
+- The cut-down rough-wall case runs (4 ranks CPU, 400 steps, L2 divergence
+  6e-8); a tall-roughness variant (`amp_x = 0.5`, phase pi/2, so rows 1..2
+  are solid on both planes) runs 200 steps stable.
+
+### B2. Dirichlet velocity data inside the body
+
+`boundary.f90 mask_dirichlet_velocity_in_solid`: every Dirichlet velocity
+row (the normal row at its face, a tangential row at its ghost) whose
+location is solid-centred (`abs(coef) > SOLID_FACE_THRESHOLD`) gets `bcC =
+0`, once at init on the host coefficients, between `read_ibm_coeff_file` and
+the maps; `enter_boundary_data` moved below it (nothing in between touches
+`bc` on the device). The solver prints the number of NON-ZERO data it zeroed
+(a wall row inside the body is 0 already and would swamp the count: the
+flat cut-down read 32828 of 43200 rows "inside" before the count was
+restricted). `SOLID_FACE_THRESHOLD` now has ONE definition (`init.f90`),
+replacing five identical local copies (les, rans, scalar x2, scalar_stats).
+Body-free and bodies without a Dirichlet face: nothing changes (the B2
+binaries reproduce every B1 gate above).
+
+### Gates with a body (`validation/body_outlet/`, all PASS)
+
+Poiseuille between two immersed slabs (0.3 dy off a face, gap 1.0) in an
+inflow/outflow channel, uniform inlet through the slabs, `nb = 4` with 32 of
+192 blocks removed (some at the outlet): outlet-face profile = the periodic
+twin's to **1.35e-3** of 1.5 (0.09 %, the bulk ratio 0.9991), last-cell p =
+G dx/2 to **0.08 %**, gradient 1.19987 vs 1.2, the 32 solid faces ON the
+outlet plane **1.6e-28**, interior solid DOFs <= 9.4e-28, flux in = out to
+2e-16; mirrored (outlet on the LOW face) = the image to **3.3e-15**;
+stream along y = the x case at **0.0**, along z to 2.4e-15; the body
+ENDING one cell before the plane (`r ~ 1e27`) and STARTING at it
+(`r ~ 1e-27`) both stable 20000 steps with the solid faces at 3.4e-28 /
+9.8e-28 and the flux closed; 4 == 1 ranks, restart == continuous, CPU ==
+GPU (nofma pair, same case file), zeroed-coefficient twin == body-free,
+each at **max_abs 0** including the `un_xmax` plane.
+
+### The rough-wall boundary layer
+
+A production-shaped cut-down (the production y line; 320 x 176 x 24 on 60 x
+100 x 8) and its smooth twin, 300 t.u. each on istmcetus: both run, dtheta/dx
+holds to the last half unit on the smooth twin (1.20 -> 1.15e-3; the old
+outlet collapsed it to 5 %) and on the rough one stays at its upstream level
+through the roughness phase (last unit +17..26 % over the same phase one and
+two wavelengths upstream, against the smooth twin's +4..12 % in the same
+band -- the layer's own modulation), theta growing uniformly through the
+last six cells. **NOT measured: the turbulent balance** -- both layers are
+still laminar at t = 300 (H 2.6; the trip does not transition them in 60
+units). That needs the production domain on HoreKa, with
+`rough_jacobi.ini` itself; it is the one open item of this handout.
+
+### Not done, by decision
+
+Question 9 (a level jump on the outlet next to the body): not measured; the
+production case is single-level and the first-order restriction ghost is a
+documented exchange residual (`validation/channel_interface/les/README.md`).
 
 ## After this: where the code and numerics review goes next
 

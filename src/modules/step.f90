@@ -17,7 +17,7 @@ module step
         CFL_COURANT, CFL_PECLET, NCFL
     use :: blocks, only: block_set_type, FACE_PHYS, FACE_CLOSED, FACE_COARSE, FACE_FINE, &
         LAP_M, LAP_0, LAP_P
-    use :: ibmm, only: ibm_type, bodyBlocks, nBodyBlocks, penal_state_minus_incr
+    use :: ibmm, only: ibm_type, bodyBlocks, nBodyBlocks, penal_state_minus_incr, penal_state_factor
     use :: comm, only: comm_type, comm_allreduce_max
     use :: turbulence, only: turb_type, turbulence_is_enabled, TURB_PROF_SGS
     use :: chron, only: profiler_type, wall_seconds, profiler_add
@@ -442,7 +442,7 @@ contains
         ! The outlet faces, low or high: the last piece of the prediction. It
         ! needs qs of the neighbouring faces complete and q still old, hence
         ! here, between the corrections and the commit.
-        call predict_outlet_faces(blk, bc, dt_gamma)
+        call predict_outlet_faces(blk, bc, ibm, dt_gamma)
 
         ! Commit the prediction, qs -> q, for exactly the faces the kernels
         ! above predicted (the same start masks). A pinned low face keeps
@@ -495,6 +495,27 @@ contains
     ! on either side. The RK memory of the face is its neighbour's: nothing
     ! is stored for it.
     !
+    ! With an immersed body on the plane (docs/next_session_body_at_outlet.md)
+    ! the face has its own penalization, du_f/dt = R_n - (dp/dn)_f - lambda_f
+    ! u_f, in the two-factor form of ibm.f90 (x = lambda dt_gamma, state =
+    ! penal_state_factor, incr = ibm%mu): q(f) := state_f q(f) + incr_f (I_n
+    ! + dt_gamma [dp(n) - dp(f)]), where I_n is the neighbour's UNPENALIZED
+    ! increment. Every pass before this one leaves qs(n) = state_n q(n) +
+    ! incr_n I_n exactly (the fused kernel, the state correction, SGS, body
+    ! force and the band filter all scale by incr), so I_n = (qs(n) -
+    ! state_n q(n))/incr_n and, with r = incr_f/incr_n, the update is the ONE
+    ! statement below. Body-free, r = sf = rsn = 1 and dtf = dt_gamma: each
+    ! product by 1.0 is exact, so the arithmetic IS the unpenalized
+    ! statement's -- bit-identical at nofma on every suite (CPU and GPU),
+    ! and at production flags on the CPU; the GPU compiler contracts the new
+    ! statement differently for rare operands (one ulp at 2 of 384 columns
+    ! of a stretched-line top outlet after 37 steps, blasius2d; the x outlet
+    ! of the same run stays exact), so an expression change is gated at
+    ! nofma, as CLAUDE.md says. Limits: f solid /
+    ! n fluid, r ~ 1e-27 and the face dies like any solid DOF; n solid /
+    ! f fluid, r ~ 1e27 recovers I_n to round-off (rsn q(n) ~ 1e-54 q(n));
+    ! incr > 0 for x >= 0, so the division is safe.
+    !
     ! ONE path for both sides: (f, n) = (1, 2) on a low face, (nb+1, nb) on
     ! a high one, and nothing else depends on the side. It needs no value the
     ! high side lacks (no oldrhs, no q(nb+2), no Laplacian row), which is why
@@ -512,15 +533,16 @@ contains
     ! The sum is kept in this order on purpose (it reproduces, bit for bit
     ! at nofma, the arithmetic of the 2026-10-01 prototype it was gated
     ! against). No outlet points on this rank: nothing is launched.
-    subroutine predict_outlet_faces(blk, bc, dt_gamma)
+    subroutine predict_outlet_faces(blk, bc, ibm, dt_gamma)
         type(block_set_type), intent(inout) :: blk
         type(boundary_type), intent(in) :: bc
+        type(ibm_type), intent(in) :: ibm
         real(C_DOUBLE), intent(in) :: dt_gamma
 
         integer :: n, npts, b, face_id, dir, side
         integer :: fi(3), ni(3), fm(3), nm(3)
         integer(C_INT) :: local_n(1:3), isOut(NFACES)
-        real(C_DOUBLE) :: d1f, d1n, dpf, dpn
+        real(C_DOUBLE) :: d1f, d1n, dpf, dpn, r, sf, rsn, dtf
 
         if (bc%nOutlet <= 0_C_INT) return
         npts = int(bc%nTotal)
@@ -538,9 +560,9 @@ contains
         !$omp target teams distribute parallel do &
         !$omp& map(to: npts, dt_gamma, local_n(1:3), isOut(1:NFACES), &
         !$omp& bc%pointFace(1:npts), bc%slot(1:npts), bc%i(1:npts), bc%j(1:npts), bc%k(1:npts), &
-        !$omp& blk%qs, blk%d1x, blk%d1y, blk%d1z) &
+        !$omp& blk%qs, blk%d1x, blk%d1y, blk%d1z, ibm%coef, ibm%mu) &
         !$omp& map(tofrom: blk%q) &
-        !$omp& private(n,b,face_id,dir,side,fi,ni,fm,nm,d1f,d1n,dpf,dpn)
+        !$omp& private(n,b,face_id,dir,side,fi,ni,fm,nm,d1f,d1n,dpf,dpn,r,sf,rsn,dtf)
         do n = 1, npts
             face_id = int(bc%pointFace(n))
             if (isOut(face_id) == 0_C_INT) cycle
@@ -578,9 +600,18 @@ contains
             dpf = (blk%q(fi(1),fi(2),fi(3),VAR_P,b) - blk%q(fm(1),fm(2),fm(3),VAR_P,b))*d1f
             dpn = (blk%q(ni(1),ni(2),ni(3),VAR_P,b) - blk%q(nm(1),nm(2),nm(3),VAR_P,b))*d1n
 
-            blk%q(fi(1),fi(2),fi(3),dir,b) = blk%qs(ni(1),ni(2),ni(3),dir,b) &
-                + ((blk%q(fi(1),fi(2),fi(3),dir,b) - blk%q(ni(1),ni(2),ni(3),dir,b)) &
-                   + dt_gamma*(dpn - dpf))
+            ! The penalization factors of the face and of its neighbour (all
+            ! exactly 1 without a body); ibm%mu is incr, refreshed this
+            ! substage over the ghost-inclusive range, so mu(nb+1) is the
+            ! high face's own.
+            r   = ibm%mu(fi(1),fi(2),fi(3),dir,b)/ibm%mu(ni(1),ni(2),ni(3),dir,b)
+            sf  = penal_state_factor(dt_gamma*ibm%coef(fi(1),fi(2),fi(3),dir,b))
+            rsn = r*penal_state_factor(dt_gamma*ibm%coef(ni(1),ni(2),ni(3),dir,b))
+            dtf = ibm%mu(fi(1),fi(2),fi(3),dir,b)*dt_gamma
+
+            blk%q(fi(1),fi(2),fi(3),dir,b) = r*blk%qs(ni(1),ni(2),ni(3),dir,b) &
+                + ((sf*blk%q(fi(1),fi(2),fi(3),dir,b) - rsn*blk%q(ni(1),ni(2),ni(3),dir,b)) &
+                   + dtf*(dpn - dpf))
         end do
         !$omp end target teams distribute parallel do
     end subroutine predict_outlet_faces

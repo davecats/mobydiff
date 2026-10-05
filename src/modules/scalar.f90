@@ -28,7 +28,7 @@
 module scalar
     use, intrinsic :: iso_c_binding
     use :: init, only: dns_type, VAR_U, VAR_V, VAR_W, VAR_P, &
-        VAR_S0, SCR_S0, NVAR
+        VAR_S0, SCR_S0, NVAR, SOLID_FACE_THRESHOLD
     use :: blocks, only: block_set_type, FACE_CLOSED, FACE_COARSE, FACE_FINE
     use :: boundary, only: boundary_type, NFACES, boundary_face_id, &
         apply_bc, set_scalar_bc_rows, BC_DIRICHLET, BC_NEUMANN, &
@@ -1799,7 +1799,6 @@ contains
         type(ibm_type), intent(in) :: ibm
         type(comm_type), intent(in) :: c
 
-        real(C_DOUBLE), parameter :: SOLID_FACE_THRESHOLD = 1.0d20
         real(C_DOUBLE), allocatable :: dwall(:,:,:,:)
         integer :: i, j, k, b, nx, ny, nz
         logical :: found
@@ -2776,10 +2775,6 @@ contains
         real(C_DOUBLE), intent(in) :: nut(0:,0:,0:,1:)
         logical, intent(in) :: useNut
         real(C_DOUBLE), intent(in) :: coef(0:,0:,0:,1:,1:)
-
-        ! The solid-coefficient test the SGS and RANS kernels use (les.f90,
-        ! rans.f90's SOLID_FACE_THRESHOLD): SOLID/Re is 1e30/Re.
-        real(C_DOUBLE), parameter :: SOLID_FACE_THRESHOLD = 1.0d20
 
         integer :: i, j, k, b, is, nx, ny, nz, nBlocks, nScal, var, scr
         real(C_DOUBLE) :: ire, re, uw, ue, vs, vn, wb, wt, divu, divuse

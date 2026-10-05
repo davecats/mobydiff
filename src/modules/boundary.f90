@@ -1,6 +1,6 @@
 module boundary
     use, intrinsic :: iso_c_binding
-    use :: init, only: dns_type, VAR_U, VAR_V, VAR_W, VAR_P, VAR_S0
+    use :: init, only: dns_type, VAR_U, VAR_V, VAR_W, VAR_P, VAR_S0, SOLID_FACE_THRESHOLD
     use :: blocks, only: block_set_type, FACE_PHYS
     implicit none
 
@@ -922,38 +922,58 @@ contains
         !$omp end target teams distribute parallel do
     end subroutine init_outlet_faces
 
-    ! The outlet predictor (step.f90 predict_outlet_faces) takes the
-    ! non-pressure increment of the neighbouring face as it stands, which is
-    ! the face's own only where neither is penalized. An immersed body
-    ! reaching an outlet face is not a configuration the outlet supports:
-    ! stop rather than run it wrongly. `coef` is ibm%coef on the HOST
-    ! (ghost-inclusive, velocity columns first), before it is mapped.
-    subroutine check_outlet_faces_fluid(blk, bc, coef)
+    ! Dirichlet VELOCITY data inside an immersed body
+    ! (docs/next_session_body_at_outlet.md, B2). A Dirichlet face is pinned
+    ! to its datum by apply_bc and no stage penalizes it (it is in no
+    ! predicted range, and the projection does not correct it), so an inlet
+    ! profile that is non-zero where the body crosses the inlet plane injects
+    ! mass into solid cells, which pass it on through their penalized faces
+    ! at O(u_in) under a pressure that grows every substage: a conduit
+    ! through the body. The datum is therefore ZERO wherever the row's own
+    ! staggered location is solid-centred -- the normal row at the face
+    ! itself, a tangential row at its ghost position, where the mirror
+    ! 2v - q with v = 0 makes the plane no-slip. Graded (fluid-centred)
+    ! locations keep the datum: the same staircase every cut cell carries.
+    ! Every Dirichlet velocity row, on every face, low and high alike (a wall
+    ! datum is 0 already; a moving wall's would be wrong inside the body).
+    ! Host code on the host coefficients, ONCE at init, before the rows are
+    ! mapped: with no body it touches nothing. `nMasked` counts the NON-ZERO
+    ! data this zeroed on this rank (a wall row inside the body is 0 already
+    ! and would swamp the count), `nRows` the Dirichlet velocity rows examined.
+    subroutine mask_dirichlet_velocity_in_solid(bc, blk, coef, nMasked, nRows)
+        type(boundary_type), intent(inout) :: bc
         type(block_set_type), intent(in) :: blk
-        type(boundary_type), intent(in) :: bc
         real(C_DOUBLE), intent(in) :: coef(0:,0:,0:,1:,1:)
+        integer, intent(out) :: nMasked, nRows
 
-        integer :: n, b, face_id, dir, side
-        integer :: fi(3), ni(3)
+        integer :: n, b, f, dir, side, var, ndir
+        integer :: gi(3)
 
-        if (bc%nOutlet <= 0_C_INT) return
+        nMasked = 0
+        nRows = 0
         do n = 1, int(bc%nTotal)
-            face_id = int(bc%pointFace(n))
-            if (bc%faceOutlet(face_id) == 0_C_INT) cycle
+            f = int(bc%pointFace(n))
+            dir = boundary_face_dir(f)
+            side = boundary_face_side(f)
             b = int(bc%slot(n))
-            dir = boundary_face_dir(face_id)
-            side = boundary_face_side(face_id)
-            fi = [int(bc%i(n)), int(bc%j(n)), int(bc%k(n))]
-            ni = fi
-            fi(dir) = merge(1, int(blk%nb(dir)) + 1, side == SIDE_MIN)
-            ni(dir) = merge(2, int(blk%nb(dir)), side == SIDE_MIN)
-            if (coef(fi(1),fi(2),fi(3),dir,b) /= 0.0d0 .or. &
-                coef(ni(1),ni(2),ni(3),dir,b) /= 0.0d0) then
-                print '(a,i0)', " error: the immersed body reaches the outlet face ", face_id
-                error stop "[boundary] outlet: an immersed body touches the outlet face"
-            end if
+            ndir = int(blk%nb(dir))
+            do var = VAR_U, VAR_W
+                if (bc%bcKind(var,f) == BCK_NONE) cycle
+                if (bc%bcKind(var,f) == BCK_GHOST .and. bc%bcW(var,f) /= -1.0d0) cycle   ! Neumann row
+                gi = [int(bc%i(n)), int(bc%j(n)), int(bc%k(n))]
+                if (bc%bcKind(var,f) == BCK_GHOST) then
+                    gi(dir) = merge(0, ndir + 1, side == SIDE_MIN)
+                else
+                    gi(dir) = merge(1, ndir + 1, side == SIDE_MIN)
+                end if
+                nRows = nRows + 1
+                if (abs(coef(gi(1),gi(2),gi(3),var,b)) > SOLID_FACE_THRESHOLD) then
+                    if (bc%bcC(var,n) /= 0.0d0) nMasked = nMasked + 1
+                    bc%bcC(var,n) = 0.0d0
+                end if
+            end do
         end do
-    end subroutine check_outlet_faces_fluid
+    end subroutine mask_dirichlet_velocity_in_solid
 
     ! Physical-face ghosts of a standalone cell-centred scalar array (the
     ! RANS transport scalars, the projection's phi): the same affine write

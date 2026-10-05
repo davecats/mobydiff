@@ -179,6 +179,15 @@ where the walls are (wall distance, ω pinning, scalar wall ghosts). An explicit
 that contradicts the declared patch is a hard error; explicit `_type` / `_value` keys also
 override those stored in a restart file.
 
+An immersed body may cross an inlet or an outlet plane (a rough or immersed wall
+in a boundary layer, a plate leaving through the outlet). On an outlet the
+face carries its own penalization (`step.f90 predict_outlet_faces`); on a
+Dirichlet face the velocity datum is zero wherever the face's own staggered
+location is inside the solid (the inlet does not blow through the body; the
+solver reports how many non-zero data it zeroed). The ghost rows half a cell
+OUTSIDE the domain are sampled from the geometry too, so an STL body that is
+meant to cross a plane must extend beyond it (`validation/body_outlet/`).
+
 ## `[ibm]` — immersed boundary method
 
 | Key | Type | Default | Meaning |

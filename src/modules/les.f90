@@ -1,6 +1,6 @@
 module les_model
     use, intrinsic :: iso_c_binding
-    use :: init, only: dns_type, VAR_U, VAR_V, VAR_W, VAR_P
+    use :: init, only: dns_type, VAR_U, VAR_V, VAR_W, VAR_P, SOLID_FACE_THRESHOLD
     use :: blocks, only: block_set_type
     use :: ibmm, only: ibm_type
     use :: turbulence, only: turb_type, velocity_gradient_tensor
@@ -79,7 +79,7 @@ contains
         delta_scale = les%delta_scale
         ibm_aware = les%ibm_aware
         ibm_enabled = dns%ibm_enabled
-        solid_threshold = 1.0d20
+        solid_threshold = SOLID_FACE_THRESHOLD
 
         if (model == LES_NONE) return
 
