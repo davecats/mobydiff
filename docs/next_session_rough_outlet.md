@@ -132,31 +132,24 @@ the chain after two consecutive failures of a side and prints the hand
 command; `attempt1_no_body/` and `attempt2_body_on_outlet/` hold the two
 failed attempts of this session.
 
-## 3. Decisions for the user
+## 3. Decisions (taken by the user, 2026-10-05)
 
-1. **The defect.** Fix it in its own session (section 1) before any other
-   outlet work, or accept "no immersed body on an outlet plane in turbulent
-   flow" and document it as a restriction (then `check_outlet_faces_fluid`
-   should come back in a weaker form: warn, do not stop, when a plane face
-   has a solid face behind it).
-2. **What the rough case is for.** As launched it measures the roughness
-   function of the MacDonald egg-carton on a boundary layer against the
-   smooth rerun (ΔU+ ≈ 3.7 expected) and the balance to the outlet with the
-   roughness ending at 580. If the aim is the MacDonald & Hutchins
-   forced-convection benchmark (CLAUDE.md, 2026-09-25 correction), the next
-   step is a `[scalar]` section on the same ini, not a new flow case.
-3. **Sampling length.** 2000 t.u. per side (1250 in the window) is enough
-   for c_f, θ and the balance; the 10 000-t.u. reference statistics were
-   not re-done. Extend END_STEP (same driver, higher `END_STEP`, one
-   sbatch) if the shipped `data.nc` must keep its sampling length.
-4. **A smooth SKEW reference.** The pair shares CONS convection, as the
-   branch's case does. The production form is skew; if the rough-wall
-   physics is to be quoted under the production numerics, a third side
-   (`production_stats_skew.ini` restarted from the same field) is one more
-   chain of eight chunks.
-5. **cflmax.** Still 0.8 in every ini (46 % of the RK3 limit since the sum
-   change); the pair runs `dtmax`-bound (CFL 0.34 on the sum), so it does
-   not matter here, but the inis were not revisited.
-6. **HoreKa housekeeping.** `attempt1_no_body/`, `attempt2_body_on_outlet/`
-   (4 GB case file) and the earlier `tbl_stats_run` / `outlet_tbl_run` run
-   directories can go when the pair is analysed.
+1. **The defect is FIXED, not documented away.** "There is no reason why this
+   should not work." Section 1 is the next session's whole first part.
+2. **Order: 1 then 2.** The rough case exists to have a rough boundary layer
+   AND to validate the body on the outlet. So: fix the defect, gate it on
+   the cut-down A/B and the suites, THEN rerun the rough case with the
+   roughness THROUGH the outlet (`wall_x_end` removed from
+   `production_stats_rough.ini`). The pair running now (roughness ending at
+   580) is kept as the smooth rerun plus a rough fallback; its rough side is
+   not the final one.
+3. Sampling length 2000 t.u. per side: ok as is.
+4. **Both sides stay CONS** for the CaNS comparison — recorded as the
+   EXCEPTION to the production form (skew); no skew side.
+5. **`cflmax = 1.0` whenever a case is rerun** (it was 0.8 = 46 % of the
+   RK3 limit since cflmax became the sum over directions). Apply it to the
+   rough rerun of item 2 and to any other ini touched from now on; do not
+   sweep the inis for its own sake.
+6. HoreKa housekeeping: done 2026-10-05 (the two failed-attempt directories,
+   `tbl_stats_run`, `outlet_tbl_run`, the worktrees `moby-outlet-new`,
+   `moby-outlet-ref`, `moby-tbl-stats`).
