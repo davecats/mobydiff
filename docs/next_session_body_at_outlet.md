@@ -1,6 +1,8 @@
 # Next session: an immersed body that reaches an outlet face
 
 STATUS: **B0-B3 DONE 2026-10-05 -- and the gate they did not measure
+(NEXT: `docs/next_session_rough_outlet.md`, the handout for the defect and
+for the HoreKa pair)
 FAILED the same evening: the body on the outlet plane is UNSTABLE in a
 turbulent trough-cut geometry.** The rough-wall boundary layer on the
 ELECTED CaNS-grid case (`tutorials/turbulentBoundaryLayer/

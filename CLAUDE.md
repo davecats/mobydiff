@@ -2489,7 +2489,9 @@ immersed boundary. Phased, each phase verified before the next:
   limit, gated only in laminar Poiseuille. Write-up and reproducer:
   `tests_record.md` section 14, `docs/next_session_body_at_outlet.md`
   STATUS (the next session on the outlet starts there). The production
-  rough case ends its roughness at x = 580 meanwhile.
+  rough case ends its roughness at x = 580 meanwhile. **NEXT:
+  `docs/next_session_rough_outlet.md`** (the defect, the pair's analysis,
+  the decisions the user has to make).
   Merge gated at `max_abs 0` vs `~/body_ref_binaries` (nofma, 7-case 4
   ranks, 9-case, outlet suite, CPU AND GPU); the geometry keys gated against
   a Python transcription at every staggered point (0 markers outside the
