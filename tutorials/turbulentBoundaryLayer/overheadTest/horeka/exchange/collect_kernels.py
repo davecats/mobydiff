@@ -6,10 +6,11 @@
 For every `nsys_*` run: one table, every kernel, launches per step, device
 microseconds per step, share of the device-busy time, mean microseconds per
 launch -- measured in the steady window (40-95 % of the trace) and normalised
-by the step count read from `jacobi_compute_phi`'s launches (18 per step for
-Chebyshev-Jacobi) or, on a red-black run, from `redblack_sweep`'s (36 per
-step: 2 colours x 6 iterations x 3 substages). The run.log's `timing:` line
-gives the wall step for the share of the step that is device time.
+by the step count read from `jacobi_compute_phi`'s launches (3 substages x
+niter per step) or, on a red-black run, from `redblack_sweep`'s (2 colours x
+niter x 3 substages); niter comes from the run's config.ini. The run.log's
+`timing:` line gives the wall step for the share of the step that is device
+time.
 """
 import csv
 import re
@@ -17,7 +18,7 @@ import sys
 from pathlib import Path
 
 KERNEL_RE = re.compile(r"nvkernel_(.+?)__F1L(\d+)_")
-PER_STEP = (("jacobi_compute_phi", 18.0), ("redblack_sweep", 36.0))
+PER_STEP = (("jacobi_compute_phi", 3.0), ("redblack_sweep", 6.0))   # x niter
 
 
 def short(name):
@@ -60,11 +61,17 @@ def main():
         t0, t1 = ev[0][0], ev[-1][0]
         lo, hi = t0 + 0.40*(t1 - t0), t0 + 0.95*(t1 - t0)
         win = [e for e in ev if lo <= e[0] <= hi and not e[2].startswith("[CUDA")]
+        niter = 6
+        cfg = run / "config.ini"
+        if cfg.is_file():
+            m = re.search(r"^\s*niter\s*=\s*(\d+)", cfg.read_text(), re.M)
+            if m:
+                niter = int(m.group(1))
         steps = 0.0
         for key, per in PER_STEP:
             n = sum(1 for e in win if key in e[2])
             if n:
-                steps = n/per
+                steps = n/(per*niter)
                 break
         if steps <= 0:
             print(f"_{run.name}: no step marker kernel in the window_\n")

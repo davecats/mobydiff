@@ -527,11 +527,152 @@ the handouts moved in 6.3 sit beside it.
 
 ## 7. The profile of the current head
 
+HoreKa job 5184720 (`horeka/exchange/submit_profile2.sh`, head `b1f41be`,
+2 nodes, 8 x A100-40, nvhpc 25.3, 36 min): the six campaign configs at
+1/2/4/8 ranks + `tutorials/min_channel` at 1 and 4, 200 steps each with
+`[output] profile = true`; the nsys per-kernel timeline at 1 rank on five
+configs (30 steps, `collect_kernels.py`); ncu on every kernel of one step
+of `refined_yp82_rect_jacobi` (the `rough_jacobi` ncu leg profiled nothing:
+its 3 steps hold fewer than the 450 launches the driver skips -- rerun with
+`LAUNCH_SKIP=260`). Raw tables: `horeka/results_job5184720/{phases,kernels,
+ncu}.md`. ONE column, no comparison: this is the baseline the pass works
+from. The configs run Chebyshev niter 6 (red-black 3), the benchmark
+settings, not the 2026-09-26 production 12.
+
+### 7.1 Step and ratios (200 steps)
+
+| config | cells | 1 rank | 2 | 4 | 8 | strong scaling 1->8 |
+|---|---|---|---|---|---|---|
+| `base_jacobi` | 138.4 M | 548.2 ms | 272.7 | 140.9 | 75.8 | 90 % |
+| `rect_jacobi` | 138.4 M | 551.6 | 280.4 | 144.1 | 75.4 | 92 % |
+| `rough_jacobi` | 138.4 M | 571.7 | 290.4 | 149.4 | 78.0 | 92 % |
+| `refined_yp82_rect_jacobi` | 60.6 M | 246.2 | 127.9 | 68.2 | 38.0 | 81 % |
+| `refined_yp82_rect_redblack` | 60.6 M | 216.7 | 113.7 | 61.3 | 35.5 | 76 % |
+| `refined_big_rect_jacobi` | 242.2 M | -- | -- | 252.5 | 130.9 | 96 % (4->8) |
+| `min_channel` | 0.82 M | 17.1 | -- | 15.1 | -- | 28 % (1->4) |
+
+Block tax `rect/base` 1.006 / 1.028 / 1.023 / 0.994 at 1/2/4/8; the 2:1
+machinery (`big/rect` per cell) 1.001 at 4 ranks, 0.992 at 8; red-black
+0.880-0.935 of Jacobi at niter 3 vs 6 (not a like-for-like quality); the
+roughness costs +3.6 % at 1 rank, +3.5 % at 8 over `rect`. All within the
+2026-10-01 numbers after the predictor guard (`base` 75.93 ms at 8 ranks
+then, 75.83 now).
+
+### 7.2 Where the step goes (phase buckets)
+
+| phase | base 1 rank | base 8 | rect 8 | refined 8 | red-black 8 | rough 8 | min_channel 1 |
+|---|---|---|---|---|---|---|---|
+| projection | 67.1 % | 68.7 | 70.8 | 73.0 | 71.2 | 69.2 | 91.7 |
+| -- `apply` | 47.0 | 41.1 | 42.4 | 41.2 | 3.8 | 40.8 | 44.7 |
+| -- `sweep` | 18.7 | 16.4 | 16.7 | 15.0 | 43.5 | 16.0 | 21.3 |
+| -- `phi_exchange` | 0.4 | 5.3 | 6.3 | 9.8 | 10.5 | 6.2 | 14.0 |
+| -- `vel_exchange` | 0.2 | 5.0 | 4.4 | 6.0 | 12.5 | 4.3 | 10.6 |
+| momentum (incl. body force, copy) | 29.9 | 26.7 | 25.8 | 22.5 | 24.0 | 25.8 | 5.1 |
+| exchange, all buckets | 0.4 | 11.3 | 11.4 | 16.5 | 25.2 | 11.1 | 27.1 |
+| `mpi_wait` | -- | 4.6 | 2.9 | 3.7 | 6.1 | 2.9 | -- |
+
+### 7.3 Device time per kernel (nsys, 1 rank, A100; share of device-busy time)
+
+`base_jacobi`, 138 M cells, device busy 95.2 % of the 574 ms traced step:
+
+| kernel | launches/step | ms/step | share | ms/launch |
+|---|---|---|---|---|
+| `jacobi_apply` k2 (`@707`, the face correction) | 18 | 204.1 | **37.3 %** | 11.34 |
+| `jacobi_compute_phi` | 18 | 104.3 | 19.1 % | 5.79 |
+| `step_momentum` (fused predictor) | 3 | 101.2 | 18.5 % | 33.7 |
+| `jacobi_apply` k1 (`@671`, `p += phi`) | 18 | 54.8 | 10.0 % | 3.05 |
+| **`step_add_bodyforce_correction`** | 3 | **46.3** | **8.5 %** | 15.4 |
+| `step_momentum` qs -> q copy (`@457`) | 3 | 15.8 | 2.9 % | 5.26 |
+| `bodyforce_fill_trip_kernel` | 3 | 11.0 | 2.0 % | 3.66 |
+| `step_get_timestep_rates` | 1 | 5.3 | 1.0 % | 5.33 |
+| everything else (BCs, outlet faces, copies, stats) | ~65 | 3.4 | 0.6 % | 0.03-0.2 |
+
+`rough_jacobi` is the same table plus `update_ibm_mu` 9.7 ms (1.7 %),
+`add_penalization_state_correction` 6.5 ms (1.1 %), `compute_rdenom` 5.6 ms
+(1.0 %), and the local copies 2x longer per launch (15 M vs 6 M points).
+`refined_yp82_rect_jacobi` (60.6 M): apply k2 35.6 %, phi 18.0, momentum
+15.9, k1 9.8, body-force correction 8.5, copy 3.1, the same-level local copy
+2.2, `interface_correct` (3 kernels x 18) 0.7 % in total -- at 1 rank the
+2:1 interface's kernels are 3 % of the device time. `refined_yp82_rect_redblack`
+(niter 3): `redblack_sweep` 97.7 ms = **45.7 %**, `zero_phi` **19.8 ms =
+9.3 %** (36 full-array launches per step, zeroing what the sweep overwrites),
+`copy_local_same_level` 7.9 %. `min_channel` (0.82 M cells, niter 12): the
+device is busy **54.6 %** of the 21 ms step -- the rest is launch latency and
+host time, ~200 launches per step at 20-100 us each; the exchange copies
+alone are 27 % of the device time.
+
+### 7.4 ncu, every kernel of one refined step (registers / occupancy / DRAM % of peak)
+
+| kernel | regs | occupancy % | DRAM % | SM % | doubles/cell vs min |
+|---|---|---|---|---|---|
+| `jacobi_apply` k2 | 64 | 46.0 | 60.5 | 40.5 | 10.31 / 10 (1.03x) |
+| `jacobi_apply` k1 | 59 | 45.5 | 62.5 | 66.2 | 3.08 / 3 |
+| `jacobi_compute_phi` | 80 | 35.0 | 60.4 | 52.4 | 5.30 / 5 |
+| `step_momentum` predictor | 128 | 23.8 | 34.5 | 40.4 | 16.84 / 16 |
+| `step_add_bodyforce_correction` | 56 | 53.9 | **81.6** | 34.4 | 18.20 |
+| `step_momentum` copy | 48 | 58.7 | 75.4 | 62.7 | 6.43 / 6 |
+| `step_get_timestep_rates` | 74 | 35.5 | 35.0 | 62.9 | 3.38 |
+| `copy_local_same_level` | 72 | 42.1 | 51.3 | 12.0 | -- |
+| `copy_local_cross_level` | 124 | 23.8 | 9.7 | 37.2 | -- |
+| `copy_local_scalar_entries` (cross-level) | 126 | 23.0 | 11.7 | 37.5 | -- |
+| `predict_outlet_faces` | 130 | 16.6 | 31.9 | 18.1 | -- (surface) |
+| `interface_correct` x3 | 54 | 48-51 | 0.1-43 | 46-59 | -- (surface) |
+| `apply_bc` | 78 | 34.7 | 61.5 | 26.8 | -- |
+
+Unchanged from 2026-09-14 where measured then (apply k2 64 regs / 46 %,
+phi 80 / 35 %, momentum 128 / 24 %): the register work holds. New: the
+body-force correction is a well-behaved streaming kernel (81.6 % of peak
+DRAM) doing work that does not exist -- see 7.5.
+
+### 7.5 What the profile says (ranking for section 8)
+
+1. **The trip's body-force correction is 8.5 % of the step on every
+   boundary-layer case, and almost all of it is zeros.**
+   `add_bodyforce_correction` streams `f`, `qs`, `oldrhs` and `mu` for all
+   three components over the whole domain every substage (18 doubles/cell,
+   at 82 % of peak -- it is efficient at doing nothing), while the trip
+   force is `v` only and non-zero in the active block list `fill_trip`
+   already uses (40 of 256 blocks on `rect`; 4 of 16 on the tutorial). The
+   2026-09-14 optimisation covered the FILL (now 2 %) and not the
+   CORRECTION. Restricting the correction to the force's component and
+   block list is bit-exact by construction (the skipped cells add exactly
+   0.0) and removes ~7-8 % of the step on `base/rect/rough` and the
+   production boundary layer. The general `[force] type = profile|file|
+   custom` keeps the full kernel. **The cheapest, largest item of this
+   pass.**
+2. `jacobi_apply` k2 is 36-37 % of the device time at 1.03x its minimum
+   traffic and 46 % occupancy: the remaining lever is fusing k1 into k2
+   (one pass over `phi`, ~10 % of apply) and the Chebyshev `cheb_combine`
+   into `compute_phi` (section 3, review §6 items 7-8). Nothing else about
+   it is wasteful.
+3. Red-black: `zero_phi` at 9.3 % of the device time is pure waste (zero
+   only the halo planes the sweep does not write, or let the sweep write
+   them); `redblack_sweep` at 46 % has never had the table/reciprocal
+   hoists and runs six branchy `face_grad_denom` and a divide per cell
+   (section 3 item 17): the two together are the red-black lever, worth
+   measuring before the "red-black vs Jacobi" ratio is quoted again.
+4. The 2:1 interface's own kernels are 3 % of the device time at 1 rank
+   and `interface_correct`'s three launches 0.7 %: the "~1 ms/step at 16
+   ranks" item is real but small; the per-launch floor matters on
+   `min_channel`-sized cases, where the device idles 45 % of the step.
+5. `get_timestep_rates` at 1 % with the ghost planes included (section 4
+   item 1): ~20 % of that kernel for nothing.
+6. `step_momentum` at 128 registers / 24 % occupancy is the known limit;
+   the per-component split remains the untested idea.
+7. Not yet profiled: the scalar and RANS kernels (no campaign config runs
+   them; `min_channel` has none). The split of section 3 item 13 needs its
+   own ncu on a scalar case before and after -- the LES/scalar suite cases
+   on the workstation GPU suffice for registers and occupancy.
+
 ## 8. Performance items, re-ranked
 
-Hypotheses from the read, to be ranked by the profile of section 7 (ncu
-reads `launch__registers_per_thread` and `sm__warps_active`, never a step
-time alone). Grouped by what they cost.
+Hypotheses from the read, ranked by the profile of section 7 (ncu reads
+`launch__registers_per_thread` and `sm__warps_active`, never a step time
+alone). THE PROFILE'S OWN TOP ITEM COMES FIRST: **the trip's body-force
+correction kernel runs over the whole domain and all three components every
+substage -- 8.5 % of the step on every boundary-layer config -- when the
+force is `v` only on the trip's block list** (section 7.5 item 1; bit-exact
+by construction). Then, grouped by what they cost.
 
 **Launches that need not happen**
 
@@ -627,6 +768,9 @@ the read found; the profile of section 7 may reorder the performance items):
    gate case, then the face-diffusivity helper (item 14): the two largest
    readability wins in the solver, and the lever for whatever the profile
    says about `scalar_transport_kernel`'s occupancy.
-5. The performance items of section 8 in the order the profile ranks them.
+5. The performance items in the profile's order (section 7.5): the
+   body-force correction on the trip's block list first (8.5 % of the
+   boundary-layer step for an afternoon), red-black's `zero_phi` and sweep
+   hoists next, then apply k1+k2 / `cheb_combine` fusion.
 6. CLAUDE.md's log to `docs/history/worklog_2026.md` (section 6.5) -- the
    user's call.

@@ -1,0 +1,8 @@
+job    : 5184720
+date   : 2026-10-06 12:56:56 CEST
+nodes  : 2  (hkn[0401,0403])
+head   : b1f41bec27f41eeaef7aedf5eefc3584edad6c7f
+gpu    : NVIDIA A100-SXM4-40GB
+nsteps : 200 (matrix), 30 (nsys), 3 (ncu)
+layout : --map-by numa --bind-to core (as every matrix)
+passes : matrix nsys ncu
