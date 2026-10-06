@@ -298,7 +298,7 @@ the cylinder wake at 10 D included.) Physics gates, all PASS:
 
 - `validation/freestream/run_gates.sh`, all groups (oblique exact 0.0;
   Poiseuille 1.637e-3 / 1.521e-3, last-cell p 1.247e-3, drift 5.6e-16;
-  Lamb-Oseen reflected fraction 9.84e-5; ranks exact; config; the mirrored
+  Lamb-Oseen reflected fraction 9.80e-5; ranks exact; config; the mirrored
   low-face pair 2.0e-15; the −x Poiseuille and vortex to every digit;
   refined-from-rest 1.5–2.7e-13, 1 == 4 ranks exact; restart == continuous
   on five cases) — the numbers of 2026-10-01 reproduced.
