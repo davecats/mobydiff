@@ -2543,7 +2543,12 @@ immersed boundary. Phased, each phase verified before the next:
   pinned to 1 rank (RANKS=4 stops with "rank owns no blocks"); and a
   divergence bound taken from a settled field (7.9e-8 at t = 150) fails
   the same case in its cold-start transient (1.0e-4 at t = 50) -- bound
-  against the state the gate reads.
+  against the state the gate reads. **NEXT: `docs/next_session_cleanup_pass2.md`**
+  -- read the two HoreKa chains (the pair in `rough_tbl_run`, the final
+  rough case through the outlet in `rough_io_run`), then a SECOND cleaning
+  and profiling pass, then the review's section-6 simplifications, the
+  performance items and the `config.f90` `case default`; the review's
+  feature tail (steps 10-12) stays for the future.
 
 ## Verification
 
