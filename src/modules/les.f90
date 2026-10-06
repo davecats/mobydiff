@@ -164,7 +164,7 @@ contains
         delta_scale = les%delta_scale
         ibm_aware = les%ibm_aware
         ibm_enabled = dns%ibm_enabled
-        solid_threshold = 1.0d20
+        solid_threshold = SOLID_FACE_THRESHOLD
 
         !$omp target teams distribute parallel do collapse(4) &
         !$omp& map(to: cw2, delta_scale, ibm_aware, ibm_enabled, solid_threshold, &

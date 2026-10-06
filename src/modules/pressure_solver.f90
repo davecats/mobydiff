@@ -62,10 +62,11 @@ module pressure_solver
     !
     ! The diagonal is a function of the face kinds, the grid metrics and ibm%mu
     ! ONLY -- and update_ibm_mu runs once per RK substage, before the projection
-    ! -- so it is identical across all niter iterations and is formed once per
-    ! substage instead of once per iteration. That alone removed six branchy
-    ! face_grad_denom calls, six mu loads and ~11 fp64 operations from the
-    ! per-iteration kernel (measured: -26 % on the sweep).
+    ! -- so it is identical across all niter iterations and is formed at most
+    ! once per substage instead of once per iteration (and, since 2026-09-17,
+    ! only on the blocks whose mu changes: see below). That alone removed six
+    ! branchy face_grad_denom calls, six mu loads and ~11 fp64 operations from
+    ! the per-iteration kernel (measured: -26 % on the sweep).
     !
     ! It is stored INVERTED so the iteration kernel multiplies instead of
     ! divides. That is a deliberate NUMERICS change, not a refactor: a*(1/b)
@@ -166,7 +167,6 @@ contains
         type(boundary_type), intent(in) :: bc
         logical, intent(in), optional :: has_terminal
 
-        character(len=32) :: env
         real(C_DOUBLE) :: pi
         integer(C_INT) :: nMax
         integer :: dir
@@ -211,10 +211,9 @@ contains
         end if
     end subroutine init_pressure_solver
 
-    subroutine pressure_projection(ps, blk, dns, dt_gamma, ibm, bc, c)
+    subroutine pressure_projection(ps, blk, dt_gamma, ibm, bc, c)
         type(pressure_solver_type), intent(in) :: ps
         type(block_set_type), intent(inout) :: blk
-        type(dns_type), intent(in) :: dns
         real(C_DOUBLE), intent(in) :: dt_gamma
         type(ibm_type), intent(in) :: ibm
         type(boundary_type), intent(in) :: bc
@@ -311,7 +310,7 @@ contains
             end if
             call prof_toc(proj_prof, PROF_SWEEP, t0)
             t0 = prof_tic()
-            call exchange_scalar_halos(c, phi, blk, ifaceRow=.true.)
+            call exchange_scalar_halos(c, phi, ifaceRow=.true.)
 
             ! Re-mirror the outlet phi ghosts EVERY iteration: the exchange's
             ! tangential extension can write physical halos, so do not rely on
@@ -319,7 +318,7 @@ contains
             if (anyOutlet) call apply_scalar_bc(blk, bc, phi, phiMode)
             call prof_toc(proj_prof, PROF_PHI_EXCHANGE, t0)
             t0 = prof_tic()
-            call jacobi_apply(ps, blk, dt_gamma, ibm)
+            call jacobi_apply(blk, dt_gamma, ibm)
             if (hasIface) call interface_correct(blk, ibm, refd)
             call prof_toc(proj_prof, PROF_APPLY, t0)
             if (iIter == ps%nIter) then
@@ -547,8 +546,10 @@ contains
     ! the matching correction in jacobi_apply uses the regular d1f against the
     ! mirrored ghost. Keep the pair consistent: SPD lives there.
     !
-    ! Called ONCE per substage (see the rdenom declaration), and stored inverted
-    ! so the iteration kernel multiplies rather than divides.
+    ! Called once per substage on the blocks listed in rdenomBlocks (every
+    ! block on the first call, the body blocks afterwards -- see the rdenom
+    ! declaration), and stored inverted so the iteration kernel multiplies
+    ! rather than divides.
 
     subroutine compute_rdenom(blk, ibm)
         type(block_set_type), intent(in) :: blk
@@ -650,11 +651,12 @@ contains
     !   q_face += (phi_below - phi_above) * d1(face) * mu(face),
     ! the exact sum of the two adjacent red-black corrections, but read from the
     ! frozen phi (with the halo layer filled by the scalar exchange) so there is
-    ! no in-place race and no colouring. Only the cell's own LOW faces (1..nb)
-    ! are written here; each block's high halo face is the neighbour's low face,
-    ! filled by the velocity exchange. Pinned faces are left untouched.
-    subroutine jacobi_apply(ps, blk, dt_gamma, ibm)
-        type(pressure_solver_type), intent(in) :: ps
+    ! no in-place race and no colouring. Each cell corrects its own LOW faces
+    ! (1..nb) and, on a declared outlet, the high face nb+1 against the
+    ! mirrored phi ghost (cfHigh); every other high halo face is the
+    ! neighbour's low face, filled by the velocity exchange. Pinned faces have
+    ! cfLow = 0 and are left untouched.
+    subroutine jacobi_apply(blk, dt_gamma, ibm)
         type(block_set_type), intent(inout) :: blk
         real(C_DOUBLE), intent(in) :: dt_gamma
         type(ibm_type), intent(in) :: ibm
@@ -781,8 +783,8 @@ contains
     !
     !   q_face += (phi_neighbour - phi_self) * face_grad * mu
     !
-    ! for the interface faces only -- the low face at index 1 and the high face
-    ! at index nb. The formula and its operand order are exactly the ones
+    ! for the interface faces only -- the low face at index 1 and the high halo
+    ! face at index nb+1. The formula and its operand order are exactly the ones
     ! jacobi_apply used to carry inline, which is what makes the Jacobi path
     ! bit-exact across the extraction.
     !
@@ -1027,7 +1029,7 @@ contains
                 call prof_toc(proj_prof, PROF_SWEEP, t0)
                 if (hasIface) then
                     t0 = prof_tic()
-                    call exchange_scalar_halos(c, phi, blk, ifaceRow=.true.)
+                    call exchange_scalar_halos(c, phi, ifaceRow=.true.)
                     call prof_toc(proj_prof, PROF_PHI_EXCHANGE, t0)
                     t0 = prof_tic()
                     call interface_correct(blk, ibm, refd)
@@ -1043,7 +1045,7 @@ contains
                 if (iIter == ps%nIter .and. color == 0_C_INT) then
                     call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W, VAR_P])
                 else
-                    call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W], interp=.false.)
+                    call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W], cross_level=.false.)
                 end if
                 call prof_toc(proj_prof, PROF_PROJ_VEL_EXCHANGE, t0)
             end do

@@ -1,5 +1,5 @@
 ! Unit test for the T4 gamma-Re_thetat transition correlations (IDDES
-! phase T4, docs/next_session_iddes.md): the pure functions in rans.f90,
+! phase T4, docs/history/next_session_iddes.md): the pure functions in rans.f90,
 ! transcribed from OpenFOAM kOmegaSSTLM.C / Langtry & Menter (2009), are
 ! checked HOST-SIDE against tabulated values from an independent Python
 ! transcription of the same source (scratch lm_ref.py) before they ever

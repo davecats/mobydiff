@@ -13,9 +13,9 @@
 
 module step
     use, intrinsic :: iso_c_binding
-    use :: init, only: dns_type, VAR_U, VAR_V, VAR_W, VAR_P, NVEL, &
+    use :: init, only: dns_type, VAR_U, VAR_V, VAR_W, VAR_P, &
         CFL_COURANT, CFL_PECLET, NCFL
-    use :: blocks, only: block_set_type, FACE_PHYS, FACE_CLOSED, FACE_COARSE, FACE_FINE, &
+    use :: blocks, only: block_set_type, FACE_PHYS, FACE_CLOSED, &
         LAP_M, LAP_0, LAP_P
     use :: ibmm, only: ibm_type, bodyBlocks, nBodyBlocks, penal_state_minus_incr, penal_state_factor
     use :: comm, only: comm_type, comm_allreduce_max
@@ -196,7 +196,7 @@ contains
         ire = 1.0d0/dns%re
         forcing = dns%forcing
         ! Momentum convection form ([flow] convection): skew-symmetric (the
-        ! default and the production form, docs/next_session_skew_convection.md)
+        ! default and the production form, docs/history/next_session_skew_convection.md)
         ! or divergence/conservative (`conv_skew = .false.`, kept for research:
         ! it is the CaNS/AMPHIBIOUS form the turbulentBoundaryLayer tutorial
         ! mirrors, and it is NOT energy-neutral under the incremental
@@ -278,7 +278,7 @@ contains
                             + forcing(VAR_U) &
                             + ire*(diff_ux + diff_uy + diff_uz) )
                         ! Skew-symmetric convection (the PRODUCTION form,
-                        ! docs/next_session_skew_convection.md S3): conv_skew =
+                        ! docs/history/next_session_skew_convection.md S3): conv_skew =
                         ! conv_div - 1/2 u (div u_adv)|stencil, the stencil
                         ! divergence built from the SAME advecting pair-sums
                         ! as the fluxes above (rhs carries -conv, hence
@@ -986,7 +986,7 @@ contains
         type(turb_type), intent(in), optional :: turb
         ! Passive scalars: their effective diffusivity, not the momentum
         ! viscosity, sets the explicit limit -- nu_eff = ire/Pr_min +
-        ! nu_t/Pr_t,min (docs/next_session_scalar.md Section 8; the molecular
+        ! nu_t/Pr_t,min (docs/history/next_session_scalar.md Section 8; the molecular
         ! half is already folded into dns%peclet_rate by
         ! precompute_peclet_rate). Absent / no scalars leaves both scale
         ! factors at exactly 1.

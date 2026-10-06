@@ -8,7 +8,6 @@ module boundary
     integer(C_INT), parameter :: DIR_Y = 2_C_INT
     integer(C_INT), parameter :: DIR_Z = 3_C_INT
     integer(C_INT), parameter :: SIDE_MIN = 0_C_INT
-    integer(C_INT), parameter :: SIDE_MAX = 1_C_INT
     integer, parameter :: NFACES = 6
 
     ! Domain-face patch types ([boundary] <dir>_<side>_patch = wall | patch |
@@ -159,7 +158,6 @@ contains
         integer, intent(in) :: dir, side
 
         integer :: face_id, var
-        integer, parameter :: DIRICHLET = 0
 
         is_wall = .false.
         if (bc%isPeriodic(dir)) return
@@ -174,7 +172,7 @@ contains
             is_wall = .true.
             do var = int(VAR_U), int(VAR_W)
                 if (var == dir) cycle   ! the normal component does not decide no-slip
-                if (bc%faceBcType(var, face_id) /= DIRICHLET) is_wall = .false.
+                if (bc%faceBcType(var, face_id) /= BC_DIRICHLET) is_wall = .false.
             end do
         end select
     end function domain_face_is_wall
@@ -482,10 +480,10 @@ contains
                 case (BC_DIRICHLET)
                     bc%bcKind(var,f) = BCK_GHOST
                     bc%bcW(var,f) = -1.0d0
-                case (BC_NEUMANN, BC_OUTFLOW)
-                    ! OUTFLOW never reaches a tangential/cell-centred row
-                    ! (resolve_face_bcs gives those Neumann); kept as a
-                    ! zero-gradient ghost should a caller pass it.
+                case (BC_NEUMANN)
+                    ! (OUTFLOW never reaches a tangential/cell-centred row:
+                    ! resolve_face_bcs gives those Neumann; the default
+                    ! branch below catches it if that ever changes.)
                     bc%bcKind(var,f) = BCK_GHOST
                     bc%bcW(var,f) = 1.0d0
                 case default
@@ -510,19 +508,20 @@ contains
                 gi(dir) = merge(1, ndir + 1, side == SIDE_MIN)
                 ii(dir) = merge(2, ndir, side == SIDE_MIN)
             end select
-            select case (dir)
-            case (DIR_X)
-                dn = blk%x(gi(1),var,b) - blk%x(ii(1),var,b)
-            case (DIR_Y)
-                dn = blk%y(gi(2),var,b) - blk%y(ii(2),var,b)
-            case default
-                dn = blk%z(gi(3),var,b) - blk%z(ii(3),var,b)
-            end select
             if (bctype(f) == BC_DIRICHLET) then
                 ! Ghost mirror 2v - q, or the pinned face value v itself.
                 bc%bcC(var,n) = merge(2.0d0, 1.0d0, bc%bcKind(var,f) == BCK_GHOST)*pointValue(n)
             else
-                ! Neumann data are stored as the normal derivative.
+                ! Neumann data are stored as the normal derivative times the
+                ! ghost-to-interior distance.
+                select case (dir)
+                case (DIR_X)
+                    dn = blk%x(gi(1),var,b) - blk%x(ii(1),var,b)
+                case (DIR_Y)
+                    dn = blk%y(gi(2),var,b) - blk%y(ii(2),var,b)
+                case default
+                    dn = blk%z(gi(3),var,b) - blk%z(ii(3),var,b)
+                end select
                 bc%bcC(var,n) = dn*pointValue(n)
             end if
         end do
@@ -559,7 +558,7 @@ contains
         real(C_DOUBLE), parameter :: ETA_MAX = 12.0d0
         integer, parameter :: NTAB = 12000
         real(C_DOUBLE) :: fpp0, fpp0_prev, err, err_prev, fpp0_next
-        integer :: it, ntop
+        integer :: it
 
         bc%blasH = ETA_MAX/real(NTAB, C_DOUBLE)
         allocate(bc%blasF(0:NTAB), bc%blasFp(0:NTAB))
@@ -576,9 +575,8 @@ contains
             fpp0 = fpp0_next
         end do
 
-        ntop = NTAB
         bc%blasBeta = 2.0d0*fpp0
-        bc%blasDisp = ETA_MAX - bc%blasF(ntop)
+        bc%blasDisp = ETA_MAX - bc%blasF(NTAB)
     end subroutine build_blasius_table
 
     ! One RK4 integration of the Blasius system from eta = 0 with f''(0) =

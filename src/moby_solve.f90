@@ -133,7 +133,6 @@ program moby_solve
     ! the diffusion metric tables. A no-op when no scalar is configured.
     call init_scalar(sc, blk, bc, dns%rans_wall_treatment == 1_C_INT, c%has_terminal)
     call init_openmp_offload(c%has_terminal)
-    call enter_grid_data(g)
 
     if (c%has_terminal) print *, "initialising fields..."
     if (.not. has_restart_file(dns)) then
@@ -163,9 +162,9 @@ program moby_solve
     call init_ibm(ibm, blk, scalars_enabled(sc))
     ! Analytic wall geometry from the config -- the case builder is where it
     ! acts (the indicator drives coefficients, classification and wall
-    ! distance); the solver keeps the parameters for the diagnostics that
-    ! print them. The coefficients themselves come from the case file, on the
-    ! HOST, and enter_ibm_data maps that copy: host and device agree from here.
+    ! distance); the solver applies it only to VALIDATE the keys the same way.
+    ! The coefficients themselves come from the case file, on the HOST, and
+    ! enter_ibm_data maps that copy: host and device agree from here.
     call set_ibm_geometry(ibm, dns)
     if (dns%ibm_enabled) call read_ibm_coeff_file(ibm, dns, blk, c%has_terminal)
     ! Dirichlet velocity data where the body crosses a Dirichlet face
@@ -212,7 +211,7 @@ program moby_solve
 #endif
 
     ! Conjugate heat transfer at the immersed interface (increment C1,
-    ! docs/next_session_conjugate.md): the signed distance phi = +-dwall,
+    ! docs/history/next_session_conjugate.md): the signed distance phi = +-dwall,
     ! signed by the cell-centred IBM marker, and the solid's own initial
     ! temperature. It must run HERE -- after the IBM coefficients exist (the
     ! marker IS the cell-centred coefficient) and after blk%q's host copy has
@@ -295,7 +294,7 @@ program moby_solve
         case default
             call update_sgs_viscosity(les, turb, blk, dns, ibm, turb%nut)
         end select
-        call exchange_scalar_halos(c, turb%nut, blk)
+        call exchange_scalar_halos(c, turb%nut)
         ! S5a: the wall-cell y+ of the initial k, so the scalar's wall
         ! diffusivity (and any statistics sample) is defined before the
         ! first substage fills it. No-op unless wall functions + scalars.
@@ -358,7 +357,7 @@ program moby_solve
                 end select
                 call profiler_add(turb_prof, TURB_PROF_NUT, wall_seconds() - turb_profile_start)
                 turb_profile_start = wall_seconds()
-                call exchange_scalar_halos(c, turb%nut, blk)
+                call exchange_scalar_halos(c, turb%nut)
                 call profiler_add(turb_prof, TURB_PROF_EXCHANGE, wall_seconds() - turb_profile_start)
                 call prof_toc(step_prof, PROF_TURBULENCE, prof_start)
             end if
@@ -380,7 +379,7 @@ program moby_solve
             ! velocity halos are only refreshed by the exchange AFTER it, so
             ! calling this after momentum would advect the scalar with the
             ! non-solenoidal predicted velocity AND stale halo values. See
-            ! docs/next_session_scalar.md, STATUS/S1.) It sits after the
+            ! docs/history/next_session_scalar.md, STATUS/S1.) It sits after the
             ! turbulence block so the eddy diffusivity is THIS substage's
             ! nut, halos included -- the same nut the momentum predictor
             ! below uses. Nothing between here and momentum() touches q.
@@ -413,7 +412,7 @@ program moby_solve
 
             ! Projection: solve for pressure correction and project tentative velocities.
             prof_start = prof_tic()
-            call pressure_projection(ps, blk, dns, dt_gamma, ibm, bc, c)
+            call pressure_projection(ps, blk, dt_gamma, ibm, bc, c)
             call prof_toc(step_prof, PROF_PROJECTION, prof_start)
 
             ! Scalar substage tail: qs -> q, physical ghosts, one batched
@@ -484,7 +483,6 @@ program moby_solve
     call exit_ibm_data(ibm, dns)
     call exit_block_data(blk)
     call exit_boundary_data(bc)
-    call exit_grid_data(g)
     call destroy_block_set(blk)
     call destroy_grid(g)
     call destroy_boundary_faces(bc)

@@ -10,11 +10,11 @@
 ! Jansson et al. (IJHPCA 33(4), 2019). Design notes and the phased plan
 ! live in docs/block_refinement_strategy.md.
 !
-! Phase 0 (this file): a block_set_type holding ONE block per MPI rank
-! whose metric content is bit-identical to the existing grid_type, plus
-! field storage shaped like field_type with a trailing block index.
-! Later phases add many blocks per rank, 2:1 level interfaces, and the
-! removal of blocks buried inside the immersed boundary.
+! A block_set_type holds this rank's leaf blocks of a multi-level lattice
+! (equal-size blocks, 2:1 level interfaces, blocks buried inside the
+! immersed boundary removed), their per-block metric tables sliced from
+! the node lines, and the solver's field storage with a trailing block
+! index.
 !
 ! GPU layout rationale: every per-block quantity is one flat contiguous
 ! array with the block slot as the LAST index. Kernels then add a single
@@ -155,7 +155,7 @@ module blocks
 
         ! Flow state with one halo cell per side (second-order stencils).
         ! The variable extent is u,v,w,p plus dns%nScalar passive scalars
-        ! (docs/next_session_scalar.md): q holds NVAR + nScalar variables,
+        ! (docs/history/next_session_scalar.md): q holds NVAR + nScalar variables,
         ! the substage scratch NVEL + nScalar (p has no scratch plane), so
         ! scalar `is` is q slot VAR_S0+is and qs/oldrhs slot SCR_S0+is.
         real(C_DOUBLE), allocatable :: q(:,:,:,:,:)      ! (0:nb+1,...,NVAR+nScalar,nBlocks)
@@ -180,7 +180,7 @@ contains
         integer(C_INT), intent(in) :: nranks, myrank
         ! Optional per-lattice-cell keep flags (x-fastest raster order, 1 =
         ! keep). Blocks buried inside the immersed boundary are dropped from
-        ! the global table; only meaningful with [blocks] nb.
+        ! the global table.
         integer(C_INT), intent(in), optional :: active(:)
         ! Optional per-level geometry masks (raster, level) for
         ! geometry-driven refinement: touch = dilated block straddles the
@@ -233,7 +233,7 @@ contains
         call allocate_flow_state(blk, dns)
     end subroutine init_block_set
 
-    ! The [blocks] nb RULE (docs/next_session_prepare_everything.md, decided
+    ! The [blocks] nb RULE (docs/history/next_session_prepare_everything.md, decided
     ! 2026-09-29). The block size is a property of the CASE FILE, never of
     ! the run -- the one thing the old rank-box layout (block =
     ! globalSize/dims, changing with the rank count) could not satisfy.
@@ -558,8 +558,8 @@ contains
         blk%keyPos = 0_C_INT
     end subroutine destroy_block_set
 
-    ! Device mapping, mirroring enter_grid_data/enter_field_data in
-    ! gpu_runtime: map the container once, then its flat member arrays.
+    ! Device mapping, the convention of every enter_*_data in the solver:
+    ! map the container once, then its flat member arrays.
     subroutine enter_block_data(blk)
         type(block_set_type), intent(inout) :: blk
 
@@ -1304,7 +1304,7 @@ contains
     ! order run down each (x,z) column, so the SAME closed-form linear split
     ! becomes column-wise and keeps cross-level pairs on one rank: total peer
     ! area falls 14.5x/10.2x/5.0x at 4/8/16 ranks with load imbalance unchanged
-    ! at 1.000 (tools/partition_analysis.py, docs/next_session_2to1_penalty.md).
+    ! at 1.000 (tools/partition_analysis.py, docs/history/next_session_2to1_penalty.md).
     ! The xyz key already has that locality whatever its bit order (cross-level
     ! cut 1.4 % at 4 ranks on the 5-level NACA case with the legacy interleave).
     !

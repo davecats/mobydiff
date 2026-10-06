@@ -1,6 +1,5 @@
 module gpu_runtime
     use, intrinsic :: iso_c_binding
-    use :: init, only: grid_type
 #ifdef USE_OPENMP_OFFLOAD
     use omp_lib
 #endif
@@ -25,23 +24,5 @@ contains
         end if
 #endif
     end subroutine init_openmp_offload
-
-    subroutine enter_grid_data(g)
-        type(grid_type), intent(inout) :: g
-
-#ifdef USE_OPENMP_OFFLOAD
-        !$omp target enter data map(to: g)
-        !$omp target enter data map(to: g%xNode, g%yNode, g%zNode)
-#endif
-    end subroutine enter_grid_data
-
-    subroutine exit_grid_data(g)
-        type(grid_type), intent(inout) :: g
-
-#ifdef USE_OPENMP_OFFLOAD
-        !$omp target exit data map(delete: g%xNode, g%yNode, g%zNode)
-        !$omp target exit data map(delete: g)
-#endif
-    end subroutine exit_grid_data
 
 end module gpu_runtime

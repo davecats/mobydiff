@@ -8,7 +8,7 @@ module init
     integer(C_INT), parameter :: VAR_P = 4_C_INT
     integer(C_INT), parameter :: NVEL = 3_C_INT
     integer(C_INT), parameter :: NVAR = 4_C_INT
-    ! Passive scalars are extra variables of blk%q (docs/next_session_scalar.md):
+    ! Passive scalars are extra variables of blk%q (docs/history/next_session_scalar.md):
     ! scalar `is` lives at VAR_S0 + is in q and at SCR_S0 + is in the substage
     ! scratch qs / oldrhs. LANDMINE: the two offsets DIFFER (pressure has no
     ! scratch plane), so a scalar's q index is never its qs index.
@@ -91,14 +91,14 @@ module init
         ! NS solution; it is a manufactured momentum-operator test field.
         ! uniform/beltrami/tgv are exact incompressible-NS solutions used as gates.
         character(len=32) :: initial = "uniform"
-        ! [blocks] nb: cubic block edge in cells; 0 = one block per rank box.
-        ! Block edge in cells, PER DIRECTION (0 = auto, one block per rank box).
+        ! [blocks] nb: block edge in cells, PER DIRECTION (0 = auto, one block
+        ! per rank of the Cartesian layout the case is prepared on).
         ! Scalar `[blocks] nb = 16` broadcasts; `nb = 64 44 48` sets each. The
         ! halo tax is (1+2/nb_x)(1+2/nb_y)(1+2/nb_z), so a direction that buys no
         ! refinement (y under refine_dims = xz) wants the largest nb the
         ! interface placement tolerates.
         integer(C_INT) :: block_nb(3) = 0_C_INT
-        ! The nb RULE (docs/next_session_prepare_everything.md, step 7-1): when
+        ! The nb RULE (docs/history/next_session_prepare_everything.md, step 7-1): when
         ! nb is unset the case BUILDER derives it -- one block per rank of the
         ! Cartesian decomposition it was built on, i.e. the old rank box, but
         ! as a property of the case file. block_nb_auto marks a derived value
@@ -139,7 +139,7 @@ module init
         ! refine in x and z only; y keeps the single global node line at all
         ! levels). Stored as a per-direction mask (1 = the direction halves
         ! per level, 0 = fixed) so level scalings stay per-direction
-        ! expressions; docs/next_session_refine2d.md.
+        ! expressions; docs/history/next_session_refine2d.md.
         integer(C_INT) :: block_refine_mask(1:3) = 1_C_INT
         ! [blocks] refine_body: refine blocks whose dilated region meets the
         ! immersed surface to the finest level (+1 block buffer), and remove

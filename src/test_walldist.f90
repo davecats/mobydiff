@@ -1,5 +1,5 @@
 ! Gate driver for the geometry-agnostic wall distance (IDDES phase T1b,
-! gate b — docs/next_session_iddes.md): drives the PRODUCTION walldist
+! gate b — docs/history/next_session_iddes.md): drives the PRODUCTION walldist
 ! machinery with a second indicator, a sphere, whose exact distance is the
 ! closed form |dist(x, centre) - R|. The sphere straddles the periodic x
 ! boundary so the minimum-image / periodic-image query path is exercised

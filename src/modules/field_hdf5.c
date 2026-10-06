@@ -11,7 +11,7 @@
 /* Field-variable name table (fdm_h5_write_field / fdm_h5_read_field): the
  * Fortran side packs n_var NUL-terminated names of this fixed stride, so the
  * variable count is a runtime value (u,v,w,p plus the passive scalars,
- * docs/next_session_scalar.md) instead of the hardcoded 4. */
+ * docs/history/next_session_scalar.md) instead of the hardcoded 4. */
 #define FDM_VAR_NAME_LEN 32
 
 static size_t linear_fortran(size_t i, size_t j, size_t k, size_t ni, size_t nj)
@@ -1364,7 +1364,7 @@ int fdm_h5_check_block_table(const char *filename, int n_blocks, int n_blocks_gl
 }
 
 /*
- * Case-file layout header (step 7-2, docs/next_session_prepare_everything.md):
+ * Case-file layout header (step 7-2, docs/history/next_session_prepare_everything.md):
  * the attributes fdm_h5_case_create wrote plus the row count of the blocks
  * table. This is what lets the solver take its block set FROM the file
  * instead of rebuilding it from the ini. block_nb_xyz is the per-direction

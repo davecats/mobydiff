@@ -62,6 +62,20 @@ run_case wavy 1 1
 run_case wavy_refine 1 1
 run_case wavysolid 5 0
 
+# Gate 4 (2026-10-06): the classification sees the CONFIGURED analytic wall.
+# eggclass.ini (egg-carton, refine_body) and its default-wall twin, prepared
+# by the same binary: the egg carton's level-0 touch raster must equal
+# check_eggclass.py's independent transcription and must differ from the
+# twin's (the pre-fix builder produced the twin's masks for every wall).
+rm -f eggc.case.h5 eggc_twin.case.h5 eggclass_twin.ini
+sed -e '/^\[ibm\]/,$d' eggclass.ini > eggclass_twin.ini
+printf '[ibm]\nenabled = true\nwall_shape = wavy\n' >> eggclass_twin.ini
+sed -i 's/^field_prefix = eggc$/field_prefix = eggc_twin/' eggclass_twin.ini
+check "eggclass: prepare (egg carton)" mpirun -n 1 "$BUILD/moby_prepare" eggclass.ini
+check "eggclass: prepare (default-wall twin)" mpirun -n 1 "$BUILD/moby_prepare" eggclass_twin.ini
+check "eggclass: touch mask == independent classification, != twin" \
+    $PY check_eggclass.py eggc.case.h5 eggc_twin.case.h5
+
 # Optional GPU cross-check (GPU_BUILD=../../build_gpu_nofma ./run_gates.sh):
 # the GPU solve from the CPU-prepared case file vs the CPU solve from the
 # same file must match at tolerance 0.

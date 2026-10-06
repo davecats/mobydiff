@@ -25,9 +25,10 @@
 !   custom   the user fills bf%f inside the RK loop by editing the clearly
 !            marked hook update_bodyforce below (time-dependent forcing,
 !            controllers, actuators).
-!   trip     the Schlatter & Orlu (2012) random wall-normal trip forcing
-!            that triggers laminar->turbulent transition in a boundary
-!            layer (fill_trip below; refreshed each substage from the loop).
+!   trip     the CaNS/SIMSON random wall-normal trip forcing (the exact
+!            port, 2026-09-25) that triggers laminar->turbulent transition
+!            in a boundary layer (fill_trip below; the random walk is
+!            redrawn once per trip_ts, the envelope applied each substage).
 
 module bodyforce
     use, intrinsic :: iso_c_binding

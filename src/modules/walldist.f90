@@ -5,7 +5,7 @@
 !                          !
 !--------------------------!
 !
-! IDDES phase T1b (docs/next_session_iddes.md): unsigned Euclidean distance
+! IDDES phase T1b (docs/history/next_session_iddes.md): unsigned Euclidean distance
 ! to the surface of ANY analytic immersed body, computed from its
 ! inside/outside indicator alone (isInBody in production, passed as a
 ! procedure argument so gates can drive the same machinery with a second

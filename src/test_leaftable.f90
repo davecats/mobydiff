@@ -1,5 +1,5 @@
 ! Gate driver for the leaf-table builder (2D refinement phase R2D-0,
-! gate b — docs/next_session_refine2d.md): builds the PRODUCTION leaf
+! gate b — docs/history/next_session_refine2d.md): builds the PRODUCTION leaf
 ! table (blocks.f90 build_leaf_table) for a box-refined case and prints
 ! it row-by-row in the mobygeom blocks-dataset convention (origin in
 ! level-l cells for refined directions, global cells for fixed ones;

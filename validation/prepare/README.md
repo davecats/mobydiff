@@ -21,6 +21,7 @@ analytic run to the last bit.
 | `wavy.ini` | single-level blocks (nb 8), coef_blocks + block_active + dwall_blocks (`[rans]` geometry + ransgeom dump) |
 | `wavy_refine.ini` | refine_body, 2 levels: per-level touch/buried masks + multi-level coef/dwall tiles |
 | `wavysolid.ini` | solid-block removal at scale (200^3, nb 4): the Phase-2 analytic wavy-wall geometry, 1150/125000 blocks buried -> compacted blocks table |
+| `eggclass.ini` | gate 4 (2026-10-06): refine_body on an EGG-CARTON wall. The classification must see the CONFIGURED wall: `check_eggclass.py` is an independent transcription of the level-0 touch rule (one-cell-dilated block straddles the surface), and the default-wall twin the driver generates must give DIFFERENT masks. Found by the second cleaning pass: `moby_prepare` ran `classify_*` before `set_ibm_geometry`, and `classify_*` reset the geometry to the wavy defaults themselves, so every analytic classification used the default wall (the pre-fix builder refines 256 leaves on this case, the twin's count; fixed: 464; the touch raster equals the transcription, 48 of 128 blocks). No shipped case was affected (the egg-carton cases bury no block and use no refine_body) |
 
 ## Run
 
@@ -34,6 +35,11 @@ split makes the file rank-count independent), inline analytic solve vs
 solve-from-file (`tools/compare_fields.py --tolerance 0`), and for the
 `[rans]` cases the `*_ransgeom.h5` dumps (dwall/yeff/wallcell) compared
 exactly (`h5same.py`; h5diff is not installed everywhere).
+
+## Status 2026-10-06 (P0 + gate 4, nofma build)
+
+29/29 PASS with the classification fix (`e0015ac`+): the three P0 cases
+unchanged (the default wall is the default wall), gate 4 as recorded above.
 
 ## Status 2026-07-16 (P0, nofma builds)
 
@@ -133,28 +139,21 @@ Notes:
   (tools/README_mobygeom.md) and survive as the reference implementation
   these gates compare against.
 
-## Step 7 — prepare does ALL preprocessing (`run_gates_step7.sh`)
+## Step 7 — prepare does ALL preprocessing (driver RETIRED 2026-10-06)
 
-Numerics review step 7 (`docs/next_session_prepare_everything.md`): a case
+Numerics review step 7 (`docs/history/next_session_prepare_everything.md`): a case
 PREPARED by `moby_prepare` and SOLVED from the case file must reproduce the
-reference binary's inline solve at `max_abs 0`, at PRODUCTION flags (the file
-path copies values, nothing is recomputed). The driver covers body-free
-cases with an explicit `[blocks] nb` (prepare on 1 == 4 ranks writes
-identical files), body-free cases with NO `nb` (the nb rule: prepare on P
-ranks stores `nb = grid/dims(P)` — different `blocks` tables, same fields;
-the 1-rank file is one block and stops on 4 ranks with "rank owns no
-blocks", rule 5) and an analytic-body case.
-
-```bash
-REF=~/step7_ref_binaries/moby_solve_cpu NEW=../../build_cpu ./run_gates_step7.sh
-REF=~/step7_ref_binaries/moby_solve_gpu NEW=../../build_gpu PREP=../../build_cpu/moby_prepare \
-    MODE=gpu SOLVE_RANKS=1 ./run_gates_step7.sh
-```
-
-Status 2026-09-29 (7-1/7-2, ref `d2249b1`): CPU 20/20 + wavy 3/3, GPU 16/16,
-all `max_abs 0`. Derived sizes: wf180_y30 (8×6×8) → `8 6 8` on 1 rank,
+reference binary's inline solve. `run_gates_step7.sh` did that against the
+step 7-0 binary, the last one that built inline; that binary predates F1
+(step 8) and the penalization factors (step 9), so the driver read 18 pass /
+26 fail with every later tree (control run 2026-10-01) and was removed from
+the tree on 2026-10-06 (`git log -- validation/prepare/run_gates_step7.sh`).
+Its record: 2026-09-29 (7-1/7-2, ref `d2249b1`) CPU 20/20 + wavy 3/3, GPU
+16/16, all `max_abs 0`; derived sizes wf180_y30 (8×6×8) → `8 6 8` on 1 rank,
 `4 3 8` on 4 (an odd nb is accepted — parity only matters for refinement);
-conduction (4×16×4) → `4 16 4` / `2 8 4`.
+conduction (4×16×4) → `4 16 4` / `2 8 4`. What it gated — a prepared case
+file solving like the inline build — is covered since by the suites'
+prepare-per-side legs and by `run_gates_order.sh`.
 
 ## The block order (`run_gates_order.sh`, 2026-10-01)
 
@@ -203,14 +202,6 @@ one), and the nofma 7-case + 9-case suites against `~/step9b_ref_binaries`
 at `max_abs 0`, CPU (4 ranks / 1 rank) and GPU — the new side re-prepares
 its case files in the new order and restarts the suites' legacy-order ICs
 through the row map.
-
-**`run_gates_step7.sh` is no longer a `max_abs 0` gate, with or without this
-change.** Its reference is the step 7-0 binary, the only one that still
-builds inline, and that binary predates F1 (step 8) and the penalization
-factors (step 9): 18 checks pass and 26 fail with this tree AND, identically
-check for check, with `~/step9b_ref_binaries` (control run 2026-10-01). What
-it gated — a prepared case file solving like the inline build — is covered
-since by the suites' prepare-per-side legs and by `run_gates_order.sh`.
 
 The cross-NODE number of the `partition:` line cannot be exercised on one
 workstation; it is unit-tested with a given node map and measured on HoreKa

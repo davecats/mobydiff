@@ -46,7 +46,6 @@ module comm
         logical :: exchangeBarrier = .false.
 
         integer :: dims(3) = [0, 0, 0]
-        integer :: coords(3) = [0, 0, 0]
         logical :: periodic(3) = [.false., .false., .false.]
 
         ! Block-pair halo exchange entries, built once by
@@ -229,7 +228,6 @@ contains
         call MPI_Cart_create(MPI_COMM_WORLD, 3, c%dims, c%periodic, .true., c%cart_comm, ierr)
         call MPI_Comm_rank(c%cart_comm, c%cart_rank, ierr)
         call MPI_Comm_size(c%cart_comm, c%cart_size, ierr)
-        call MPI_Cart_coords(c%cart_comm, c%cart_rank, 3, c%coords, ierr)
         if (c%has_terminal) then
             write(*,'(A,1X,I0,1X,I0,1X,I0)') "MPI Cartesian dimensions:", c%dims
         end if
@@ -450,7 +448,7 @@ contains
                 " exchange sizes: peers/rank(max) ", peerMax, &
                 "  send pts/rank min ", sendMin, " max ", sendMax, &
                 "  total send pts ", sendSum, "  local copy pts ", localSum
-            ! The DIVERGENCE prefix is what the 15 mid-iteration velocity
+            ! The DIVERGENCE subset is what the 15 mid-iteration velocity
             ! refreshes per step actually send (one component per entry, hence
             ! nv=1); copy-only nv=3 is what they used to send; the full count is
             ! what the 3 end-of-substage shells send.
@@ -1619,11 +1617,11 @@ contains
         end if
 
         ! Same-rank block-pair copies overlap with the messages in flight. Two
-        ! passes for a full exchange: same-level copies first fill the coarse-block
-        ! halos, THEN the cross-level prolong/restrict run so the prolong tangential
-        ! interpolation can read the (now valid) coarse tangential neighbour. A
-        ! copy-only exchange (the projection's per-colour sweep) is same-level only.
-        ! Each phase times itself (local_copy / copy_cross).
+        ! passes for a full exchange: same-level copies first, then the
+        ! cross-level prolong/restrict (the order no longer matters for the
+        ! values -- see copy_local_entries -- but the two phases time
+        ! themselves apart: local_copy / copy_cross). A copy-only exchange
+        ! (the red-black per-colour sweep) is same-level only.
         if (c%copyOnly) then
             call copy_local_entries(c, blk, 1)
         else
@@ -1670,14 +1668,16 @@ contains
         c%exchangeActive = .false.
     end subroutine finish_halo_exchange
 
-    subroutine exchange_halos(c, blk, vars, interp, syncface)
+    ! cross_level = .false. restricts the exchange to the same-level copy
+    ! entries (the red-black per-colour sweep); default: everything.
+    subroutine exchange_halos(c, blk, vars, cross_level, syncface)
         type(comm_type), intent(inout) :: c
         type(block_set_type), intent(inout) :: blk
         integer(C_INT), intent(in) :: vars(:)
-        logical, intent(in), optional :: interp, syncface
+        logical, intent(in), optional :: cross_level, syncface
 
         c%copyOnly = .false.
-        if (present(interp)) c%copyOnly = .not. interp
+        if (present(cross_level)) c%copyOnly = .not. cross_level
         c%syncFace = .false.
         if (present(syncface)) c%syncFace = syncface
         call start_halo_exchange(c, blk, vars)
@@ -1691,10 +1691,9 @@ contains
     ! cell-centred 2-row average) into the coarse interface-correction ghost --
     ! used for phi so the interface corrections are conservative; off for
     ! cell-centred scalars like les%nut.
-    subroutine exchange_scalar_halos(c, scalar, blk, ifaceRow)
+    subroutine exchange_scalar_halos(c, scalar, ifaceRow)
         type(comm_type), intent(inout) :: c
         real(C_DOUBLE), intent(inout) :: scalar(0:,0:,0:,1:)
-        type(block_set_type), intent(in) :: blk
         logical, intent(in), optional :: ifaceRow
 
         integer :: ierr, p, nRequest
@@ -1731,7 +1730,7 @@ contains
         end if
 
         ! Times itself: same-level into local_copy, cross-level into copy_cross.
-        call copy_local_scalar_entries(c, scalar, blk)
+        call copy_local_scalar_entries(c, scalar)
 
         if (c%nPeers > 0) then
             nRequest = 2*c%nPeers
@@ -2195,10 +2194,9 @@ contains
     ! covering fine cells per dim), coarse->fine PROLONG by INJECTION of the
     ! covering coarse cell. The phi interface-row restrict (phiIfaceRow) collapses
     ! the normal dim to the single fine row touching the face.
-    subroutine copy_local_scalar_entries(c, scalar, blk)
+    subroutine copy_local_scalar_entries(c, scalar)
         type(comm_type), intent(inout) :: c
         real(C_DOUBLE), intent(inout) :: scalar(0:,0:,0:,1:)
-        type(block_set_type), intent(in) :: blk
 
         integer :: p, e, pt, ni, nj, pLo, pHi
         integer :: di, dj, dk, sfr, pn, ss, ds
@@ -2223,7 +2221,7 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
         !$omp& map(to: pLo, pHi, sfr, c%nLocal, c%lOff, c%lPointEntry, c%lSrcSlot, c%lDstSlot, &
-        !$omp& c%lDstLo, c%lExt, c%lGA, c%lGB, c%lGS, c%lGC, c%lPhiN, blk%x, blk%y, blk%z) &
+        !$omp& c%lDstLo, c%lExt, c%lGA, c%lGB, c%lGS, c%lGC, c%lPhiN) &
         !$omp& map(tofrom: scalar) &
         !$omp& private(p,e,pt,ni,nj,di,dj,dk,b1,b2,b3,og1,og2,og3,np1,np2,np3,s1,s2,s3, &
         !$omp& val,wa1,wb1,wa2,wb2,wa3,wb3,pn,ss,ds)

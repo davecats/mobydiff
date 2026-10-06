@@ -4,7 +4,7 @@
 !                                !
 !--------------------------------!
 !
-! Increment S4 of docs/next_session_scalar.md: the in-solver form of the
+! Increment S4 of docs/history/next_session_scalar.md: the in-solver form of the
 ! statistics validation/scalar/check_scalar_turb.py computes in post
 ! (mean profile, rms, turbulent flux, wall flux -> Nusselt), plus the
 ! immersed body's heat release.
@@ -37,7 +37,7 @@
 ! BODY HEAT (`heat_interval`): a Dirichlet body's heat release CANNOT be
 ! measured as int coef_p (s_body - s) dV -- a solid cell holds the body value
 ! to the LAST BIT, so the product is 1e28 x 0 = 0 and ~37 % of the heat is
-! invisible (the S3 FINDING, docs/next_session_scalar.md). What is written is
+! invisible (the S3 FINDING, docs/history/next_session_scalar.md). What is written is
 ! the cancellation-free pair check_scalar_ibm.py `surface` uses: the flux
 ! across every staircase face separating a solid cell from a fluid one, plus
 ! the penalization delivered into the GRADED fluid cells.

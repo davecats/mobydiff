@@ -145,6 +145,9 @@ contains
         ! with a DERIVED nb, where buried-block removal is not applied (rule
         ! 4: the old nb-less solver path removed nothing, and a file must
         ! reproduce it).
+        ! The analytic wall geometry, BEFORE anything evaluates the indicator:
+        ! classification, coefficients and wall distance all read it.
+        call set_ibm_geometry(ibm, dns)
         if (dns%ibm_enabled .and. c%has_terminal) print *, "classifying geometry..."
         if (dns%block_refine_body) then
             call classify_refinement_masks(blockTouch, blockBuried, blockMaskLo, &
@@ -169,9 +172,6 @@ contains
         if (dns%ibm_enabled) then
             if (c%has_terminal) print *, "computing IBM coefficients..."
             call init_ibm(ibm, blk, cell_centred)
-            ! Analytic wall geometry from the config. Both binaries apply it --
-            ! see set_ibm_geometry for why that is not optional.
-            call set_ibm_geometry(ibm, dns)
             nCoefComp = int(ubound(ibm%coef,4) - lbound(ibm%coef,4) + 1, C_INT)
             call set_ibm_coeff(dns, blk, ibm, VAR_U, inside)
             call set_ibm_coeff(dns, blk, ibm, VAR_V, inside)
@@ -181,15 +181,15 @@ contains
 
         ! RANS wall distance: the raw body distance (the domain-wall min and
         ! half-cell floor stay solve-time, applied after the file read).
-        ! Analytic = the indicator-driven walldist machinery, exactly what
-        ! init_rans_geometry computed inline; STL = the exact BVH
+        ! Analytic = the indicator-driven walldist machinery (walldist.f90);
+        ! STL = the exact BVH
         ! point-triangle distance (the same query mobygeom's dwall_blocks
         ! uses -- indicator bisections would cost millions of parity casts).
         ! Conjugate heat transfer (increment C1) reads the very same tiles: the
         ! signed distance whose sign the IBM marker supplies IS this field, so
         ! `ibm_wall = conjugate` triggers the build exactly as a [rans] section
         ! does. A TRIGGER only -- no new dataset, and a file prepared either way
-        ! is identical (docs/next_session_conjugate.md Section 8, arrangement 1).
+        ! is identical (docs/history/next_session_conjugate.md Section 8, arrangement 1).
         if (dns%ibm_enabled .and. (dns%rans_configured .or. scalar_conjugate_enabled(sc))) then
             if (c%has_terminal) print *, "computing wall distance..."
             allocate(dwall(0:int(blk%nb(1))+1, 0:int(blk%nb(2))+1, &

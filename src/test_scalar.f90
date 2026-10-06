@@ -1,5 +1,5 @@
 ! Unit test for the passive-scalar turbulent-Prandtl correlation (increment
-! S2, docs/next_session_scalar.md Section 3): the pure declare-target
+! S2, docs/history/next_session_scalar.md Section 3): the pure declare-target
 ! function prt_kays in scalar.f90 is checked HOST-SIDE against tabulated
 ! values from an independent mpmath transcription of Kays-Crawford
 ! (scratch kc_ref.py, 50-1000 digits so the large-Pe_t cancellation is

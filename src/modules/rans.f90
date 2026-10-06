@@ -6,7 +6,7 @@
 !--------------------------!
 !
 ! k-omega SST (Menter 2003 constants), resolved-wall mode (IDDES phase T2,
-! docs/next_session_iddes.md), the T4 gamma-Re_thetat transition variant
+! docs/history/next_session_iddes.md), the T4 gamma-Re_thetat transition variant
 ! ([rans] transition = true; Langtry & Menter 2009 = OpenFOAM kOmegaSSTLM,
 ! resolved walls only): two extra transported scalars, the intermittency
 ! gamma and the transition-onset Reynolds number Re_thetat~, riding the
@@ -14,9 +14,9 @@
 ! transcribed VERBATIM from OpenFOAM kOmegaSSTLM.C (unit-tested by
 ! src/test_transition.f90); coupling into SST is P_k -> gamma_eff P_k and
 ! the k destruction scaled by min(max(gamma_eff, 0.1), 1), plus the LM F1
-! modification max(F1, F3). gamma_eff = gamma — the separation-induced
-! gamma_sep branch (Langtry-Menter Eq. 18) is a SEPARATE, not yet
-! implemented increment. Every transition path is branch-gated on the
+! modification max(F1, F3), with gamma_eff = max(gamma, gamma_sep) (the
+! separation-induced intermittency of Langtry-Menter Eq. 18,
+! lm_gamma_sep). Every transition path is branch-gated on the
 ! flag, so transition = false stays bit-exact vs T3. Also the T3
 ! wall-function mode
 ! ([rans] wall_treatment = wall_function; Weber thesis Eqs. 4.39-4.42):
@@ -1510,7 +1510,7 @@ contains
 
         mode = merge(SCALAR_BC_COPY, SCALAR_BC_NONE, sst%facewall == 1_C_INT)
         call apply_scalar_bc(blk, bc, yplus, mode)
-        call exchange_scalar_halos(c, yplus, blk)
+        call exchange_scalar_halos(c, yplus)
     end subroutine rans_wall_yplus
 
     ! Pre-loop preparation: constrained cells, scalar ghosts/halos, and the
@@ -1525,11 +1525,11 @@ contains
 
         call rans_set_constrained_cells(sst, dns, blk)
         call rans_apply_scalar_bcs(sst, dns, blk, bc)
-        call exchange_scalar_halos(c, sst%k, blk)
-        call exchange_scalar_halos(c, sst%omg, blk)
+        call exchange_scalar_halos(c, sst%k)
+        call exchange_scalar_halos(c, sst%omg)
         if (dns%rans_transition) then
-            call exchange_scalar_halos(c, sst%gam, blk)
-            call exchange_scalar_halos(c, sst%ret, blk)
+            call exchange_scalar_halos(c, sst%gam)
+            call exchange_scalar_halos(c, sst%ret)
         end if
         call rans_assemble_nut(sst, turb, blk, dns, turb%nut)
         if (dns%rans_wall_treatment == 1_C_INT) &
@@ -1551,11 +1551,11 @@ contains
 
         call rans_set_constrained_cells(sst, dns, blk)
         call rans_apply_scalar_bcs(sst, dns, blk, bc)
-        call exchange_scalar_halos(c, sst%k, blk)
-        call exchange_scalar_halos(c, sst%omg, blk)
+        call exchange_scalar_halos(c, sst%k)
+        call exchange_scalar_halos(c, sst%omg)
         if (dns%rans_transition) then
-            call exchange_scalar_halos(c, sst%gam, blk)
-            call exchange_scalar_halos(c, sst%ret, blk)
+            call exchange_scalar_halos(c, sst%gam)
+            call exchange_scalar_halos(c, sst%ret)
         end if
         call rans_transport_kernel(sst, turb, blk, dns, ibm, dt_alpha, dt_beta)
         call rans_copyback(sst, dns, blk)
@@ -1614,7 +1614,7 @@ contains
         integer :: i, j, k, b, nx, ny, nz, nBlocks
         integer(C_SIGNED_CHAR) :: marker
         logical :: pinned_omega, ibm_wall, wallfn, transition
-        real(C_DOUBLE) :: nu, dtsub, y, kv, wv, nutc
+        real(C_DOUBLE) :: nu, dtsub, y, kv, wv
         real(C_DOUBLE) :: g11, g12, g13, g21, g22, g23, g31, g32, g33
         real(C_DOUBLE) :: s2, smag, gkx, gky, gkz, gwx, gwy, gwz, gkgw
         real(C_DOUBLE) :: cdkw, arg1, f1, arg2, f2, nutloc, cross
@@ -1662,7 +1662,7 @@ contains
         !$omp& turb%p_from_u_x, turb%p_from_v_y, turb%p_from_w_z) &
         !$omp& map(tofrom: sst%ks, sst%omgs, sst%koldrhs, sst%omgoldrhs, &
         !$omp& sst%gams, sst%rets, sst%gamoldrhs, sst%retoldrhs) &
-        !$omp& private(i,j,k,b,marker,pinned_omega,ibm_wall,y,kv,wv,nutc, &
+        !$omp& private(i,j,k,b,marker,pinned_omega,ibm_wall,y,kv,wv, &
         !$omp& g11,g12,g13,g21,g22,g23,g31,g32,g33,s2,smag, &
         !$omp& gkx,gky,gkz,gwx,gwy,gwz,gkgw,cdkw,arg1,f1,arg2,f2,nutloc,cross, &
         !$omp& sigk,sigw,beta_b,alpha_b,pk,uw,ue,vs,vn,wb,wt, &
@@ -1870,8 +1870,7 @@ contains
                     ! read START-of-substage values (the explicit-RK stance;
                     ! OpenFOAM's segregated sweep uses the freshly solved
                     ! Re_thetat~ in the gamma equation — same fixed point).
-                    ! gamma_eff = gamma; the separation-induced gamma_sep
-                    ! branch (LM Eq. 18) is a SEPARATE later increment.
+                    ! gamma_eff = max(gamma, gamma_sep) below (LM Eq. 18).
                     dkfac = 1.0d0
                     if (transition) then
                         gv = sst%gam(i,j,k,b)

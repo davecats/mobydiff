@@ -147,30 +147,13 @@ contains
 !========================
 ! INITIALIZE IBM
 !========================
-    ! The analytic wavy-wall geometry parameters, needed both by the
-    ! coefficient kernels and by the block classification that runs before
-    ! the block set exists.
-    subroutine set_ibm_geometry_defaults(ibm)
-        type(ibm_type), intent(inout) :: ibm
-
-        ibm%n_wave_x = 1
-        ibm%n_wave_z = 1
-        ibm%amp_x = 2.5d-2
-        ibm%amp_z = 2.5d-2
-        ibm%phase_x = 0.0d0
-        ibm%phase_z = 0.0d0
-        ibm%wall_offset = 1.0d-2
-        ibm%x_start = 0.0d0
-        ibm%x_end = huge(1.0d0)
-        ibm%ramp = 0.0d0
-        ibm%ramped = .false.
-    end subroutine set_ibm_geometry_defaults
-
-    ! Override the analytic wall geometry from the config. MUST be called by
-    ! moby_solve AND moby_prepare right after init_ibm: the indicator drives
-    ! the coefficients, the block classification and the wall distance, so if
-    ! only one of them applied the config a prepared case file would describe a
-    ! different wall from an inline analytic run of the same ini.
+    ! The analytic wall geometry from the config. The ONLY writer of these
+    ! fields: the indicator isInBody reads them, and it drives the block
+    ! classification, the coefficients and the wall distance alike, so
+    ! moby_prepare calls this BEFORE classify_* (a classification against a
+    ! default wall while the coefficients describe the configured one was the
+    ! defect found 2026-10-06), and moby_solve calls it to validate the keys
+    ! the same way.
     subroutine set_ibm_geometry(ibm, dns)
         type(ibm_type), intent(inout) :: ibm
         type(dns_type), intent(in) :: dns
@@ -225,8 +208,6 @@ contains
         ny = int(blk%nb(2))
         nz = int(blk%nb(3))
 
-        call set_ibm_geometry_defaults(ibm)
-
         varHi = VAR_W
         if (present(cell_centred)) then
             if (cell_centred) varHi = VAR_P
@@ -271,8 +252,9 @@ contains
     ! one cell, with a halo exchange after every pass so the dilation
     ! reaches across block boundaries exactly (the halo layer is one cell
     ! deep). Runs on the DEVICE against the mapped coefficients (the
-    ! analytic path fills coef only there); the list itself is built on the
-    ! host and mapped once. Called only when the filter is on — off maps
+    ! device copy is what the kernels read; the host copy is the file's);
+    ! the list itself is built on the host and mapped once. Called only when
+    ! the filter is on — off maps
     ! and allocates nothing.
     subroutine init_ibm_band(ibm, dns, blk, c, has_terminal)
         type(ibm_type), intent(inout) :: ibm
@@ -353,7 +335,7 @@ contains
                 end do
                 end do
                 !$omp end target teams distribute parallel do
-                call exchange_scalar_halos(c, mark, blk)
+                call exchange_scalar_halos(c, mark)
             end do
             !$omp target update from(mark)
             markh = mark
@@ -446,7 +428,6 @@ contains
 
         integer(C_INT) :: found
 
-        if (len_trim(dns%case_file) == 0) return
         if (has_terminal) print *, "reading IBM coefficients: ", trim(dns%case_file)
 
         n_comp = int(ubound(ibm%coef,4) - lbound(ibm%coef,4) + 1, C_INT)
@@ -608,7 +589,6 @@ contains
         real(C_DOUBLE) :: xA(3)
         logical :: buried
 
-        call set_ibm_geometry_defaults(ibm)
 
         nb = int(dns%block_nb)
         do d = 1, 3
@@ -768,7 +748,6 @@ contains
         real(C_DOUBLE), allocatable :: lineX(:,:), lineY(:,:), lineZ(:,:)
         logical :: anySolid, anyFluid, isSolid
 
-        call set_ibm_geometry_defaults(ibm)
         nb = int(dns%block_nb)
 
         ! Per-level lines follow [blocks] refine_dims: refined directions
@@ -1307,8 +1286,9 @@ contains
     ! saves) and is invisible on CPU, where there are no launches. So the test
     ! is a plain store into a per-block flag: every thread that writes writes
     ! the same 1, which makes the race benign and needs no atomic or array
-    ! reduction. It must read the DEVICE copy of coef: the analytic path fills
-    ! it there and leaves the host copy stale.
+    ! reduction. It reads the DEVICE copy of coef, the one every kernel reads
+    ! (identical to the host copy since the coefficients come from the case
+    ! file: enter_ibm_data maps that copy).
     subroutine ibm_body_blocks(ibm, blocks, nBody)
         type(ibm_type), intent(in) :: ibm
         integer, allocatable, intent(out) :: blocks(:)

@@ -1107,8 +1107,8 @@ subroutine write_rans_geometry_file(file_name, blk, dwall, yeff, wallcell, &
 end subroutine write_rans_geometry_file
 
 ! moby_prepare output (docs/prepare_solve_strategy.md P0): one case file in
-! the block-table coefficient-file format the solver reads via [ibm]
-! case file -- header attributes + blocks leaf table + coef_blocks, plus
+! the block-table case-file format the solver reads via [case] file --
+! header attributes + blocks leaf table + coef_blocks, plus
 ! the per-level refinement masks (refine_body), block_active (remove_solid)
 ! and dwall_blocks ([rans]). Parallel HDF5: all ranks enter together; each
 ! rank writes its own contiguous leaf-row range, rank 0 the lattice-global

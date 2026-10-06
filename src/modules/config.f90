@@ -65,7 +65,7 @@ subroutine read_runtime_config(dns, g, turb, les, ps, bc, sc, c, input_file, has
 
         if (line(1:1) == "[") then
             call parse_section(line, section)
-            ! T1 hook (docs/next_session_iddes.md): the [rans] section's mere
+            ! T1 hook (docs/history/next_session_iddes.md): the [rans] section's mere
             ! presence builds the SST geometry state at init, even with no
             ! keys, so the wall distance can be validated before the RANS
             ! transport phases land.
@@ -154,7 +154,7 @@ subroutine apply_config_value(section, key, value, dns, g, turb, les, ps, bc, sc
             ! Momentum convection form. Skew-symmetric is the DEFAULT and the
             ! production form; divergence/conservative is kept for testing and
             ! research only -- it is NOT energy-neutral under the incremental
-            ! projection (docs/next_session_skew_convection.md S3). This key is
+            ! projection (docs/history/next_session_skew_convection.md S3). This key is
             ! INDEPENDENT of [scalar] convection, which drives a different operator.
             select case (trim(lower(clean_string(value))))
             case ("skew", "skew_symmetric", "skew-symmetric", "skewsym")
@@ -629,7 +629,7 @@ subroutine validate_turbulence_values(turb, les, dns)
     end if
 
     if (turb%model == TURB_RANS .or. turb%model == TURB_IDDES) then
-        ! T2/T3/T4 (docs/next_session_iddes.md): SST transport with resolved
+        ! T2/T3/T4 (docs/history/next_session_iddes.md): SST transport with resolved
         ! walls or wall functions, plus the gamma-Re_thetat transition
         ! variant on resolved walls. IDDES rides the same SST transport.
         if (.not. dns%rans_configured .or. dns%rans_model == 0_C_INT) then
@@ -775,7 +775,7 @@ subroutine read_iddes_delta(value, target, line_no)
     end select
 end subroutine read_iddes_delta
 
-! [rans] — the k-omega SST sub-model section (docs/next_session_iddes.md).
+! [rans] — the k-omega SST sub-model section (docs/history/next_session_iddes.md).
 ! T2: model = sst enables the transport equations under
 ! [turbulence] model = rans; T3: wall_treatment = wall_function;
 ! T4: transition = true adds the gamma-Re_thetat scalars (resolved walls
@@ -1187,7 +1187,7 @@ subroutine read_grid_distribution(value, target, line_no)
     end select
 end subroutine read_grid_distribution
 
-! Turbulence model FAMILY (docs/next_session_iddes.md); the SGS kernel
+! Turbulence model FAMILY (docs/history/next_session_iddes.md); the SGS kernel
 ! choice lives in [les], the SST sub-model in [rans]; iddes needs both.
 subroutine read_turbulence_model(value, target, line_no)
     character(len=*), intent(in) :: value

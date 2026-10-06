@@ -7,7 +7,7 @@ module turbulence
 
     private
 
-    ! Turbulence model families (docs/next_session_iddes.md). TURB_IDDES is
+    ! Turbulence model families (docs/history/next_session_iddes.md). TURB_IDDES is
     ! the SST-based hybrid: RANS transport everywhere, the DDES shielding
     ! function f_d switching the k-destruction length and the nut assembly
     ! between the RANS and the SGS producer.

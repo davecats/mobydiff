@@ -1,6 +1,6 @@
 module airfoil_flow
     ! Quasi-2D immersed-boundary airfoil/cylinder case ([case] name = airfoil,
-    ! docs/next_session_airfoil.md, phases A1/A2). The angle of attack turns
+    ! docs/history/next_session_airfoil.md, phases A1/A2). The angle of attack turns
     ! into a Dirichlet freestream on the inlet faces (x_min, y_min, y_max) and
     ! a Dirichlet-pressure outlet at x_max, composed purely of PATCH TYPES
     ! (resolve_face_bcs derives the per-variable rows); geometry comes from
@@ -39,7 +39,7 @@ module airfoil_flow
         real(C_DOUBLE) :: chord = 1.0d0
         ! [case.airfoil] span = z (default) | y: the periodic (extrusion)
         ! direction. span = y is the xz-quadtree orientation
-        ! (docs/next_session_refine2d.md): chord along x, LIFT along z,
+        ! (docs/history/next_session_refine2d.md): chord along x, LIFT along z,
         ! freestream (U cos a, 0, U sin a), inlets x_min/z_min/z_max,
         ! outlet x_max — [blocks] refine_dims = xz then never refines the
         ! span. liftDim/spanDim are derived at config read.

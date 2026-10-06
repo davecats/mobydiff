@@ -4,7 +4,7 @@
 !                          !
 !--------------------------!
 !
-! Advected/diffused cell-centred scalars s_1..s_N (docs/next_session_scalar.md).
+! Advected/diffused cell-centred scalars s_1..s_N (docs/history/next_session_scalar.md).
 !
 ! DESIGN (increment S0/S1): a scalar is an EXTRA VARIABLE of blk%q, stored at
 ! the PRESSURE point, so
@@ -69,7 +69,7 @@ module scalar
     ! The homogeneous direction is [scalar.N] source_dir, DEFAULT x -- the
     ! channels' streamwise direction, so an ini that does not name one keeps
     ! the original arithmetic operand for operand. A pipe along z needs
-    ! source_dir = z (the pipe campaign, docs/next_session_pipe_cht.md F1):
+    ! source_dir = z (the pipe campaign, docs/history/next_session_pipe_cht.md F1):
     ! stats_layout = plane averages over z and returns the (x,y) plane, i.e.
     ! the cross-section, which pins the axis to z from the other side.
     integer(C_INT), parameter, public :: SC_SRC_UNIFORM  = 0_C_INT
@@ -80,7 +80,7 @@ module scalar
     integer(C_INT), parameter, public :: SC_IBM_DIRICHLET = 0_C_INT
     integer(C_INT), parameter, public :: SC_IBM_ADIABATIC = 1_C_INT
     ! CONJUGATE heat transfer at the immersed interface (increment C1,
-    ! docs/next_session_conjugate.md). The solid stops being a boundary
+    ! docs/history/next_session_conjugate.md). The solid stops being a boundary
     ! condition and becomes a REAL unknown carrying its own conductivity
     ! ratio kappa_s = k_s/k_f and capacity ratio C_s = (rho c)_s/(rho c)_f
     ! (both 1 in the fluid by definition), and a face whose two cell centres
@@ -144,7 +144,7 @@ module scalar
         ! lives here under its own name.
         ! NOT MEASURED: every gate in validation/scalar runs the DEFAULT
         ! divergence form, so which form is best for a scalar is open -- see
-        ! docs/next_session_port_finish.md.
+        ! docs/history/next_session_port_finish.md.
         integer(C_INT) :: convMode = SC_CONV_DIV
         ! Was [scalar] convection written in the ini? A conjugate scalar
         ! resolves an UNSET key to advective (review finding F2, 2026-09-27):
@@ -416,7 +416,7 @@ contains
     !--------------------------------------------------------------------
     !
     ! A conjugate body of FINITE WALL THICKNESS on a Cartesian grid: the pipe
-    ! of validation/conjugate (docs/next_session_pipe_cht.md). Its body is
+    ! of validation/conjugate (docs/history/next_session_pipe_cht.md). Its body is
     ! everything outside r = R -- the fluid is the hole -- so the solid runs
     ! out to the box faces, and a solid whose thickness varies from d at the
     ! face mid-points to d*sqrt(2)-ish at the corners is not the reference
@@ -1353,7 +1353,7 @@ contains
     end subroutine validate_scalar_config
 
     ! Conjugate body mode (increment C1): the per-scalar solid properties and
-    ! the case-level preconditions of docs/next_session_conjugate.md Section
+    ! the case-level preconditions of docs/history/next_session_conjugate.md Section
     ! 12. Every one of these is a HARD ERROR rather than a warning: each
     ! silently produces a physically wrong answer that no gate in the passive
     ! set would flag.
@@ -1597,7 +1597,7 @@ contains
                     ! isothermal / fixed-concentration (Dirichlet) are equally
                     ! valid, so an explicit _type key is HONOURED here rather
                     ! than treated as a contradiction (Section 5 of
-                    ! docs/next_session_scalar.md: "unless the ini gives a
+                    ! docs/history/next_session_scalar.md: "unless the ini gives a
                     ! type/value"). Inlet and outlet stay strict: an inlet must
                     ! impose a value, an outlet must be zero-gradient.
                     do is = 1, int(sc%n)
@@ -2564,7 +2564,7 @@ contains
         !$omp target enter data map(to: sc)
         !$omp target enter data map(to: sc%pr, sc%prt, sc%prtModel, sc%source, &
         !$omp& sc%srcType, sc%srcDir, &
-        !$omp& sc%initValue, sc%ibmValue, sc%inlet, sc%ibmMode, sc%initProfile, &
+        !$omp& sc%ibmValue, sc%ibmMode, &
         !$omp& sc%invDx, sc%invDy, sc%invDz, sc%nutNone, &
         !$omp& sc%cdx, sc%cdy, sc%cdz, &
         !$omp& sc%wfP, sc%wfYpt, sc%wfYplus, sc%phi, sc%vfrac, sc%solidK, sc%solidC, &
@@ -2581,7 +2581,7 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target exit data map(delete: sc%pr, sc%prt, sc%prtModel, sc%source, &
         !$omp& sc%srcType, sc%srcDir, &
-        !$omp& sc%initValue, sc%ibmValue, sc%inlet, sc%ibmMode, sc%initProfile, &
+        !$omp& sc%ibmValue, sc%ibmMode, &
         !$omp& sc%invDx, sc%invDy, sc%invDz, sc%nutNone, &
         !$omp& sc%cdx, sc%cdy, sc%cdz, &
         !$omp& sc%wfP, sc%wfYpt, sc%wfYplus, sc%phi, sc%vfrac, sc%solidK, sc%solidC, &
@@ -2663,7 +2663,7 @@ contains
     !
     ! [scalar] convection subtracts f*s*(div u)|stencil built from the SAME
     ! face velocities, f = 0 / 1/2 / 1 for divergence / skew / advective
-    ! (docs/next_session_scalar.md Section 2). NOTE what each buys; the
+    ! (docs/history/next_session_scalar.md Section 2). NOTE what each buys; the
     ! scalar and the momentum kernel used to share one key, which was
     ! misleading, because f differs between them: the FULL
     ! subtraction is the ADVECTIVE form u.grad s, which preserves a UNIFORM
@@ -2675,7 +2675,7 @@ contains
     ! way; the trade is uniform-preservation vs. sum s^2 neutrality.
     !
     ! There is deliberately NO upwind option (module header of rans.f90 and
-    ! docs/next_session_scalar.md Section 2): central/skew only until the
+    ! docs/history/next_session_scalar.md Section 2): central/skew only until the
     ! shared TVD increment lands.
     !
     ! Diffusion: face-flux form on the module's own inverse centre-to-centre
@@ -2705,7 +2705,7 @@ contains
     !     rans.f90 uses for k). The mask is symmetric across a face, so the
     !     flux form still telescopes and the fluid conserves sum(s dV)
     !     exactly.
-    !   * conjugate (increment C1, docs/next_session_conjugate.md) -- the
+    !   * conjugate (increment C1, docs/history/next_session_conjugate.md) -- the
     !     solid is a REAL unknown. No penalization either; instead
     !       - the face diffusivity becomes conjugate_face_diffusivity, which
     !         is kappa*dm within one material and the distance-weighted
