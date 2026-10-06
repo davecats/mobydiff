@@ -10,7 +10,11 @@ Steps:
   2. Code comparison figure vs SIMSON / CaNS / AMPHIBIOUS -> code_comparison.png.
 
 Inputs kept LOCALLY (too large for git -- see README):
-  production_stats.h5           the converged (x,y) statistics,
+  production_stats.h5           the converged (x,y) statistics (cumulative),
+  production_stats_t0.h5        optional: an EARLIER copy of the same statistics;
+                                when present the exported means are those of the
+                                window between the two files (the restart
+                                transient dropped),
   a field snapshot of the run   for the grid node lines (grid_nodes.h5, or any
                                 production_p2_*.h5 / coldstart_100000.h5),
   assets/postpro/passivewall.hdf5   the SIMSON spectral reference.
@@ -28,6 +32,7 @@ PP = os.path.join(HERE, "assets", "postpro")
 FIG = os.path.join(HERE, "assets", "figures")
 NC = os.path.join(HERE, "assets", "mobydiff", "xyz_3200_384_136", "data.nc")
 STATS = os.path.join(HERE, "production_stats.h5")
+STATS_T0 = os.path.join(HERE, "production_stats_t0.h5")
 PW = os.path.join(PP, "passivewall.hdf5")
 # CaNS / AMPHIBIOUS reference data on the group LSDF share (read-only). AMPHIBIOUS's
 # conservative-convection datasets are not published, so the closest available curve
@@ -64,8 +69,9 @@ def field_with_nodes():
 # 1. export mobydiff data in the res-study NetCDF format
 FIELD = field_with_nodes()
 if need(STATS, FIELD):
+    since = ["--since", STATS_T0] if os.path.exists(STATS_T0) else []
     run("make_mobydiff_nc.py", STATS, FIELD, NC,
-        "--ini", os.path.join(HERE, "production_stats.ini"), "--repo", os.path.join(HERE, "..", ".."))
+        "--ini", os.path.join(HERE, "production_stats.ini"), "--repo", os.path.join(HERE, "..", ".."), *since)
 
 # 2. code comparison (SIMSON / CaNS / AMPHIBIOUS); compare_codes skips any
 #    reference whose file is absent (e.g. the LSDF share not mounted).

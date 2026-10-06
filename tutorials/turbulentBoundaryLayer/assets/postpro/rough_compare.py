@@ -4,7 +4,7 @@ Reynolds number along the plate and the Hama roughness function.
 
     rough_compare.py --smooth <stats.h5> [<earlier stats.h5>] --rough <stats.h5> [<earlier>]
                      [--re 450] [--ymax 60] [--k 0.38348] [--crest 0.767]
-                     [--stations 300 385 450 550 600]
+                     [--stations 300 385 450 550 600] [--half 10]
 
 A statistics file is the solver's cumulative one (raw sums + counts); giving
 an EARLIER copy of the same file makes the window the difference of the two
@@ -104,18 +104,18 @@ def bands(runs, edges):
         print(line)
 
 
-def delta_u_plus(rs, rr, k, crest, re, xs):
-    """Hama roughness function at station xs."""
+def delta_u_plus(rs, rr, k, crest, re, xs, origin):
+    """Hama roughness function at station xs; the rough y is measured from `origin`."""
     i = int(np.argmin(abs(rs["x"] - xs)))
     out = {}
-    for name, r, y0 in (("smooth", rs, 0.0), ("rough", rr, k)):
+    for name, r, y0 in (("smooth", rs, 0.0), ("rough", rr, origin)):
         ut = np.sqrt(r["cf"][i]/2)*r["ue"][i]
         yp = (r["y"] - y0)*ut*re
         up = r["prof"][i, :, U]/ut
         out[name] = (ut, yp, up, r["d99"][i]*ut*re)
     uts, yps, ups, d99p = out["smooth"]
     utr, ypr, upr, _ = out["rough"]
-    lo = max(30.0, (crest - k)*utr*re*1.2)        # above the crests, in the log region
+    lo = max(30.0, (crest - origin)*utr*re*1.2)   # above the crests, in the log region
     hi = 0.2*d99p
     yy = np.geomspace(lo, hi, 40)
     du = np.interp(yy, yps, ups) - np.interp(yy, ypr, upr)
@@ -132,6 +132,7 @@ def main():
     ap.add_argument("--k", type=float, default=0.38348082595870, help="semi-amplitude = mean-plane height")
     ap.add_argument("--crest", type=float, default=2*0.38348082595870)
     ap.add_argument("--stations", type=float, nargs="+", default=[300, 385, 450, 500, 550, 600])
+    ap.add_argument("--half", type=int, default=10, help="running-mean half-width (cells) of the balance c_f")
     ap.add_argument("--bands", type=float, nargs="+",
                     default=[100, 120, 160, 200, 250, 300, 385, 450, 500, 550, 600, 630, 640, 645, 648, 649.5, 650])
     a = ap.parse_args()
@@ -142,7 +143,7 @@ def main():
             continue
         x, y, prof, (t0, t1) = window(files)
         r = integral(x, y, prof, a.re, a.ymax)
-        r["cf"] = r["cf_wall"] if name == "smooth" else cf_balance(r)
+        r["cf"] = r["cf_wall"] if name == "smooth" else cf_balance(r, a.half)
         r["window"] = (t0, t1)
         runs.append((name, r))
         print(f"{name}: window t = {t0:.1f} .. {t1:.1f}" if np.isfinite(t0) else f"{name}: cumulative to t = {t1:.1f}")
@@ -162,12 +163,14 @@ def main():
 
     if len(runs) == 2:
         rs, rr = runs[0][1], runs[1][1]
-        print("\n== Hama roughness function above the crests (each side its own u_tau; rough y from the mean plane) ==")
-        print("x        k+     u_tau s/r        c_f s/r            dU+ (mean +- sd over y+ in [lo, hi])")
+        print(f"\n== Hama roughness function above the crests (each side its own u_tau; balance c_f over +-{a.half} cells) ==")
+        print("x        k+     u_tau s/r        c_f s/r            dU+ mean-plane origin        dU+ crest origin")
         for xs in a.stations:
-            d = delta_u_plus(rs, rr, a.k, a.crest, a.re, xs)
+            d = delta_u_plus(rs, rr, a.k, a.crest, a.re, xs, a.k)
+            e = delta_u_plus(rs, rr, a.k, a.crest, a.re, xs, a.crest)
             print(f"{d['x']:7.2f} {d['kplus']:5.1f}  {d['ut_s']:.4f}/{d['ut_r']:.4f}  {d['cf_s']:.5f}/{d['cf_r']:.5f}"
-                  f"  {d['dU']:+.2f} +- {d['dU_sd']:.2f}  [{d['lo']:.0f}, {d['hi']:.0f}]")
+                  f"  {d['dU']:+.2f} +- {d['dU_sd']:.2f} [{d['lo']:.0f}, {d['hi']:.0f}]"
+                  f"   {e['dU']:+.2f} +- {e['dU_sd']:.2f} [{e['lo']:.0f}, {e['hi']:.0f}]")
         print("reference: MacDonald, Chan, Chung, Hutchins & Ooi 2016, full-span channel k+ 10 / lambda+ 113: dU+ = 3.72")
 
 

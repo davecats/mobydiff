@@ -4,13 +4,17 @@ used by the CaNS / AMPHIBIOUS comparison data
 (~/.../tbl-dns/res_study/data_processed/<code>/xyz_<nx>_<ny>_<nz>/data.nc).
 
     make_mobydiff_nc.py <bl_stats.h5> <field_with_nodes.h5> <out.nc> [--ini production_stats.ini]
+                        [--since <earlier bl_stats.h5>]
 
 The stats file (fdm_h5_write_bl_stats) stores span+time-averaged profiles on the
 (x, y) plane, flattened y-fastest, with the 10 accumulators
 U V W UU VV WW UV UW VW P (all velocities interpolated to the cell centre, so the
 means are collocated -- like the reference codes). The `profile` dataset is already
 sum/count (the mean of each accumulator); Reynolds stresses are the mean-subtracted
-covariances, e.g. uu_stress = <uu> - <u><u>.
+covariances, e.g. uu_stress = <uu> - <u><u>. With --since, the means are those of
+the WINDOW between the earlier cumulative file and this one (raw_sum and count
+differenced), which drops the transient after a restart; the window is recorded
+in the attributes time_window_start / time_window_end.
 
 The grid NODE lines (x,y,z of length n+1, starting at 0) come from any field
 snapshot of the same run; cell centres are 0.5*(node[i]+node[i+1]) (== the stats
@@ -49,6 +53,7 @@ def main():
     ap.add_argument("out")
     ap.add_argument("--ini", default=None, help="run ini, stored verbatim as raw_input_nml")
     ap.add_argument("--repo", default=".", help="repo path for git metadata")
+    ap.add_argument("--since", default=None, help="earlier cumulative stats file: export the window between the two")
     a = ap.parse_args()
 
     with h5py.File(a.stats, "r") as f:
@@ -56,6 +61,15 @@ def main():
         re = float(f.attrs["re"]); step = int(f.attrs["step"]); t = float(f.attrs["t_current"])
         prof = f["profile"][...].reshape(nx, ny, -1)
         xc = f["xcoord"][...]; yc = f["ycoord"][...]
+        raw = f["raw_sum"][...]; cnt = f["count"][...]
+    t0 = np.nan
+    if a.since:
+        with h5py.File(a.since, "r") as f:
+            assert int(f.attrs["nx"]) == nx and int(f.attrs["ny"]) == ny
+            raw = raw - f["raw_sum"][...]; cnt = cnt - f["count"][...]
+            t0 = float(f.attrs["t_current"])
+        assert np.all(cnt > 0), "the --since file is not an earlier copy of the same statistics"
+        prof = (raw / cnt[:, None]).reshape(nx, ny, -1)
     with h5py.File(a.field, "r") as f:
         xn, yn, zn = f["x"][...], f["y"][...], f["z"][...]      # node lines, length n+1
     # The node lines ARE the domain (start at 0, end at L), so derive the extent
@@ -89,6 +103,9 @@ def main():
     ds.l = np.array([lx, ly, lz], dtype=np.float64)
     ds.time = t
     ds.step = step
+    if a.since:
+        ds.time_window_start = t0
+        ds.time_window_end = t
     ds.data_dim = "2d"
     ds.git_repo = "mobydiff"
     ds.git_commit = commit
@@ -126,7 +143,8 @@ def main():
     st = ds.createVariable("snapshot_times", "f8", ("snapshot_indices",), fill_value=np.nan)
     st[:] = [t]
     ds.close()
-    print(f"wrote {a.out}: n={[nx, ny, nz]} l={[lx, ly, lz]} step={step} t={t:.0f}")
+    window = f" window t = {t0:.0f} .. {t:.0f}" if a.since else ""
+    print(f"wrote {a.out}: n={[nx, ny, nz]} l={[lx, ly, lz]} step={step} t={t:.0f}{window}")
 
 
 if __name__ == "__main__":

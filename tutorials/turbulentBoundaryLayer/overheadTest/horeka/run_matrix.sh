@@ -48,6 +48,8 @@ MPIRUN_EXTRA="${MPIRUN_EXTRA:-}"
 # ignores unknown keys SILENTLY, so an older binary runs it as the default 2D
 # wavy wall instead of failing. Gate it with CONFIGS when a column's binary
 # predates 7b2bc2a.
+# MATRIX_EXTRA appends "config:ranks" entries (configs staged into CFG_DIR by
+# the caller), e.g. MATRIX_EXTRA="min_channel:1,4" for the tutorial channel.
 MATRIX="
 base_jacobi:$RANKS_SMALL
 rect_jacobi:$RANKS_SMALL
@@ -55,6 +57,7 @@ rough_jacobi:$RANKS_SMALL
 refined_yp82_rect_jacobi:$RANKS_SMALL
 refined_yp82_rect_redblack:$RANKS_SMALL
 refined_big_rect_jacobi:$RANKS_BIG
+${MATRIX_EXTRA:-}
 "
 
 command -v mpirun >/dev/null || {

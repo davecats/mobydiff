@@ -1,5 +1,8 @@
 # Large data kept locally — all exceed GitHub's 100 MB limit (see README).
 production_stats.h5
+production_stats_t0.h5
+production_stats_rough.h5
+production_stats_rough_t0.h5
 skewsym_stats.h5
 grid_nodes.h5
 assets/postpro/passivewall.hdf5
