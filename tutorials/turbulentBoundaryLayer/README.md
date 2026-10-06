@@ -61,11 +61,11 @@ old weak-trip spike-then-dip (see `tests_record.md`).
 | SIMSON (spectral) | 3072·301·— | 0.00471 | 1.507 | 0.0485 | 2.631 | 0.882 |
 | CaNS | 3200·384·135 | 0.00463 | 1.503 | 0.0481 | 2.706 | 0.874 |
 | AMPHIBIOUS | 3200·384·135 | 0.00460 | 1.508 | 0.0479 | 2.723 | 0.899 |
-| **mobydiff** | **3200·384·136** | **0.00460** | **1.504** | **0.0480** | **2.716** | **0.867** |
+| **mobydiff** | **3200·384·136** | **0.00458** | **1.508** | **0.0479** | **2.724** | **0.848** |
 
 On the identical grid / domain / trip / numerics, **mobydiff lands inside the
-CaNS–AMPHIBIOUS scatter on every quantity** — c_f 0.00460 (−0.7 % vs CaNS, +0.04 %
-vs AMPHIBIOUS), and u′_rms peak 2.716 between CaNS 2.706 and AMPHIBIOUS 2.723. The
+CaNS–AMPHIBIOUS scatter on every quantity** — c_f 0.00458 (−1.1 % vs CaNS, −0.4 %
+vs AMPHIBIOUS), and u′_rms peak 2.724 at AMPHIBIOUS's 2.723. The
 mean U⁺(y⁺) and the Reynolds stresses of all four codes overlay through the
 sublayer, log region and wake. **Two takeaways:**
 
@@ -83,16 +83,21 @@ sublayer, log region and wake. **Two takeaways:**
 > AMPHIBIOUS curve above is `TRIP_SKEWSYM_CENTERED` (same centered differencing and
 > numerics, skew instead of CONS convection). CaNS is the direct CONS reference.
 
-The table is the 10 000-time-unit statistics of 2026-10-02 (HoreKa,
-`cons_stats.h5`), produced on the branch that built this case, i.e. with the
-OLD outlet treatment (the outlet face reset to its neighbour every substage,
-replaced on main on 2026-10-01 by the predicted face, see "The outlet zone").
-The comparison station x ≈ 385 (Re_θ ≈ 677) is 265 δ*₀ from the outlet and
-the outlet treatment moved nothing there on the earlier in-house grid (c_f
-0.00462 → 0.00465 between the two outlets, within the sampling scatter). A
-rerun of this case with the predicted face, and a rough-wall variant of it,
-was started on 2026-10-05 (`tests_record.md`, section 14); its statistics
-replace the committed data when they are in.
+The table is the **1250-time-unit window** (steps 712 500–775 000) of the
+2026-10-05/06 rerun of this case on main with the PREDICTED outlet face
+(`docs/next_session_outlet.md`; HoreKa, 4 A100, `tests_record.md` section 14),
+restarted from the developed field of the 10 000-unit old-outlet campaign of
+the branch that built the case and run for 2000 units, the first flow-through
+(750 units) discarded as the transient of the outlet change
+(`production_stats_provenance.txt`). Against the superseded 10 000-unit
+old-outlet statistics the station values move by sampling: c_f within ±1.4 %
+at every station up to x = 550, the −u′v′⁺ peak's band mean over x = 350–420
+0.875 against 0.872 (its station-to-station scatter in a 1250-unit window is
+0.024, in the 10 000-unit data 0.004); the comparison station x ≈ 385
+(Re_θ ≈ 677) is 265 δ*₀ from the outlet. Only x > 600 differs
+systematically, where the old outlet stalled the layer (next section).
+A rough-wall variant of the case was run alongside (`tests_record.md`
+section 14).
 
 The mobydiff comparison data, in the same NetCDF format as the reference files, is
 committed at **`assets/mobydiff/xyz_3200_384_136/data.nc`**.
@@ -131,8 +136,30 @@ after a 250-unit settling, 4 GPUs) and the predicted face (10 000 time units):
   pressure of the last column is 100 times quieter and the divergence
   residual of the 6-iteration red-black projection 5 times lower (3e-6).
 - **Use x ≤ L_x − 100** for anything quantitative (on the elected 650-long
-  domain, x ≤ 550, Re_θ ≤ 840; the comparison station Re_θ ≈ 677 is at x ≈ 385). The
-  stretch is measured again on the elected grid by the 2026-10-05 rerun.
+  domain, x ≤ 550, Re_θ ≤ 840; the comparison station Re_θ ≈ 677 is at x ≈ 385).
+
+**Measured on the elected grid** (the shipped 1250-unit window,
+`assets/postpro/rough_compare.py --smooth production_stats.h5
+production_stats_t0.h5`, same conventions, dθ/dx against the balance per
+band): within 3–4 % from x = 300 to 600 (the sampling scatter of a 1250-unit
+window on a 50-unit band), then
+
+| x band | dθ/dx | balance | p_wall | p_e |
+|---|---|---|---|---|
+| 550 … 600 | 2.24e-3 | 2.16e-3 | +4e-5 | +6e-5 |
+| 600 … 630 | 2.56e-3 | 2.11e-3 | +3.3e-4 | +7e-5 |
+| 630 … 640 | 2.50e-3 | 2.09e-3 | +9.3e-4 | +5e-5 |
+| 640 … 648 | 2.5e-3 | 2.1e-3 | +1.1e-3 | +2e-5 |
+| 648 … 649.5 | 3.3e-3 | 2.2e-3 | +6.4e-4 | +4e-6 |
+| 649.5 … 650 | 4.3e-3 | 2.3e-3 | +1.4e-4 | +7e-7 |
+
+The adjustment zone is the last ~2 δ₉₉ (δ₉₉ ≈ 20–24 there): +20 % on the
+growth from x = 600 under a wall pressure that rises by 1e-3 (the freestream
+pressure stays below 1e-4), +50 % over the last two cells. The same shape as
+on the 750-long in-house grid. The stored pressure of the last column is
+6x quieter than an interior column's (final field: rms over the plane 4.8e-4
+against 2.7–3.1e-3 at x = 325 and 640; the face holds the datum), and no face
+of the plane carries inflow in it.
 
 ## Layout
 

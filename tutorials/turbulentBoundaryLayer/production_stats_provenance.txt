@@ -1,7 +1,8 @@
-job    : 5175523   2026-10-03 13:06:58 CEST   node hkn0501
-code   : f39c139532452a18595a00e24d6a38eb9972ebd7
-from   : start_field.h5, 500000 steps left of 500000
-The shipped statistics (assets/mobydiff/xyz_4096_224_192/data.nc, the figures): phase 2 as committed in
-production_stats.ini, 500000 steps = 10000 time units, dt 0.02, red-black 6, started from the tutorial's developed
-field after 750 time units with the predicted outlet face (docs/next_session_outlet.md, follow-up), HoreKa job
-5175523, 26.5 h on 4 A100. Final field production_p2_1587500.h5 = restart_field.h5 (kept locally, 5.6 GB).
+The shipped statistics (assets/mobydiff/xyz_3200_384_136/data.nc, code_comparison.png): the smooth side of the
+2026-10-05/06 HoreKa pair (run dir rough_tbl_run, worktree moby-tbl-rough at 80fb90b, jobs 5183680 .. 5184140,
+chained 12 500-step chunks on 4 A100, hkn0401), production_stats.ini with the PREDICTED outlet face, restarted at
+step 675000 from the branch's developed CONS field (cons_p2_675000.h5, OLD outlet) and run to step 775000
+(2000 time units, dt 0.02, red-black 6). Statistics window = steps 712500 .. 775000 = 1250 time units
+(production_stats.h5 minus production_stats_t0.h5; the first 750 units, one flow-through, are the transient of
+the outlet change). Runtime log: production_stats_runtime.txt. The final field smooth_775000.h5 (5.4 GB) is on
+HoreKa. Earlier shipped statistics: the 10 000-unit old-outlet run of the branch (data.nc before 2026-10-06).
