@@ -1,12 +1,39 @@
 # Next session: read the HoreKa pair, then a second cleaning and profiling pass
 
-STATUS: handout written 2026-10-06 (head `b4861e1` + this file), after the
-session that fixed the body-on-outlet blow-up (`docs/next_session_rough_outlet.md`
-section 4) and queued the final rough case on HoreKa. Nothing below is started.
-The user's order (2026-10-06): **(1) read the HoreKa results; (2) a SECOND
-cleaning and profiling pass; (3) THEN the section-6 simplifications, the
-performance items and the `config.f90` `case default`; (4) the review's
-feature tail stays for the future.**
+STATUS (2026-10-06, evening, head `e5057a9` + the TBL results below):
+**section 1 half done, section 2 done but for the profile's write-up, section
+3 not started.** The user's order (2026-10-06): **(1) read the HoreKa results;
+(2) a SECOND cleaning and profiling pass; (3) THEN the section-6
+simplifications, the performance items and the `config.f90` `case default`;
+(4) the review's feature tail stays for the future.**
+
+- (1) The pair chain is complete (both sides at 775000, every chunk exit 0);
+  the smooth statistics are SHIPPED (`e0015ac`: data.nc, code_comparison.png,
+  README, provenance; 1250-unit window; the elected grid's outlet zone
+  measured). The through-outlet rough chain (`rough_io_run`, the fixed
+  binary) is healthy (L2 div ~6e-6, Linf 1.1-1.25) and runs to 837500; its
+  analysis (the deliverables of section 1 below) is owed when it ends --
+  preliminary numbers on the 775000-800000 window: k+ 8.4-10.0, Delta U+
+  2.8-3.8 (mean-plane origin) / 2.2-3.2 (crest) against 3.72, the outlet
+  plane bounded (0.3 % of the fluid faces carry inflow at -0.014, the dimple
+  rows -0.003), the last column's stored p 5x quieter than the interior.
+  `rough_compare.py` gained `--half` and the crest origin;
+  `make_mobydiff_nc.py --since` exports a window; `production_stats_t0.h5`
+  is the window start. The FALLBACK rough case (roughness out at x = 580)
+  shows the ramp-out perturbing the balance 100 units upstream -- the
+  through-outlet configuration is the one to report.
+- (2) The review is `docs/cleanup_review_2026-10-06.md` (sections 1-6, 8, 9
+  written; section 7 = the profile, HoreKa job 5184720 `profile2_run`,
+  `submit_profile2.sh`). Its cleaning half is DONE and committed (`61991db`
+  code, `e5057a9` docs/drivers), gated max_abs 0 vs `~/backflow_ref_binaries`
+  on every suite CPU+GPU. FOUND AND FIXED: `moby_prepare` classified analytic
+  geometry against the DEFAULT wavy wall (review section 4a; gate 4 of
+  `validation/prepare/run_gates.sh`). 31 closed handouts are in
+  `docs/history/` (its README indexes them; 214 citations redirected).
+- (3) Not started; the review's section 9 gives the order (`case default`
+  first, taking the dead `[ibm] amp_z` with it).
+
+Original handout text follows.
 
 ## 1. Reading the HoreKa results
 
