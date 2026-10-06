@@ -36,7 +36,10 @@
 # without a successor. NO_CHAIN=1 runs one chunk. Keep NSTEPS x
 # seconds-per-step under ~45 minutes (0.18 s/step on 4 A100 -> 12500 steps).
 # RUN_DIR holds start_field.h5 (or a symlink); the inis are generated here
-# from the tutorial's.
+# from the tutorial's. A single side runs on ONE node: `sbatch --nodes=1
+# --job-name=<name> ...` on the first job, and every successor inherits the
+# node count and the name (2026-10-06, the rough case through the outlet in
+# rough_io_run beside the pair's chain).
 set -uo pipefail
 CODE_DIR="${CODE_DIR:?}"; RUN_DIR="${RUN_DIR:?}"
 NSTEPS="${NSTEPS:-12500}"; END_STEP="${END_STEP:-775000}"; SIDES="${SIDES:-smooth rough}"
@@ -89,7 +92,8 @@ SCRIPT="$CODE_DIR/tutorials/turbulentBoundaryLayer/overheadTest/horeka/exchange/
 submit_successor() {
     local n=0 out
     while [ $n -lt 25 ]; do
-        if out=$(sbatch --dependency=afterany:$SLURM_JOB_ID --export=ALL "$SCRIPT" 2>&1); then
+        if out=$(sbatch --dependency=afterany:$SLURM_JOB_ID --nodes="$SLURM_JOB_NUM_NODES" \
+                     --job-name="$SLURM_JOB_NAME" --export=ALL "$SCRIPT" 2>&1); then
             echo "successor of $SLURM_JOB_ID: $out (attempt $((n + 1)))" | tee -a provenance.txt; return 0
         fi
         n=$((n + 1)); sleep 120
