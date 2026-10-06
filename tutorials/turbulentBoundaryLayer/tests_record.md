@@ -303,6 +303,34 @@ discarded as the transient. Results go here when they are in.
    `~/outlet_runs/rough_cans/cut_skew.ini` (10 minutes on one A6000, dumps
    `dump_2400..2700.h5` around the onset in the same directory).
 
+**RESOLVED 2026-10-06 (`docs/next_session_rough_outlet.md`, section 4).** The
+dumps put the mode at the row-3 outlet face of the trough column: its
+neighbour is held near zero by its coefficient (13.7) and the face behind
+that is solid, so the trough is a dimple open to the plane. The face read
++0.29 at t = 6 (physical ~0.02), followed the pocket pressure into inflow by
+t = 33, then grew at an accelerating rate and blew up at t = 52. A laminar
+450k-cell reproducer (`validation/body_outlet/pocket.ini`, 5 minutes on 4 CPU
+ranks) does the same at t = 34: neither turbulence nor the trip is involved.
+MECHANISM: the neighbour's borrowed convection `−(q_n + q_f)²/(4 dx)` is a
+drag for outflow and a SOURCE for inflow — momentum entering through a
+fixed-pressure plane into a dead end has no sink, since the pocket pressure
+is set by continuity (the escape velocity through a ceiling 19x the face)
+and not by momentum; the face's energy gains `|q_f|³/(4 dx)`. The classic
+open-boundary backflow problem. FIX (three lines in `predict_outlet_faces`):
+where fluid ENTERS through an outlet the held datum is the TOTAL pressure
+`p_out − q_f²/2` (Heywood, Rannacher & Turek 1996; Bruneau & Fabrie 1996),
+the static one where it leaves. The reproducer is stable (dimple face at a
+few 1e-2 of inflow) and the 4 M-cell cut-down runs 300 t.u. with the
+roughness THROUGH the outlet (L2 div 4.6e-6 at t = 300 against 6e-6 for the
+`wall_x_end = 60` twin; the dimple face within ±0.1 once the layer is
+turbulent). Dormant without backflow: the outlet suite is bit-exact.
+Candidates that failed, measured: the face's own normal fluxes with a
+zero-gradient ghost (blow-up at t = 31), no convective term at the face (the
+outflow ran away at t = 10). `production_stats_rough.ini` runs its roughness
+through the outlet again (`wall_x_end` removed, `cflmax = 1.0`); the
+2026-10-05 pair (roughness out at x = 580) is the smooth rerun plus the rough
+fallback.
+
 ## Bottom line
 
 The original 5 % c_f gap to the spectral reference was **not** a limitation of the

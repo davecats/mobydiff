@@ -2501,6 +2501,49 @@ immersed boundary. Phased, each phase verified before the next:
   cpu gpu cpu_nofma gpu_nofma` builds cpu only and exits 0 (a gate batch
   compared the reference set against itself before this was noticed; check
   every banner).
+- **Backflow at an outlet holds the TOTAL pressure (DONE 2026-10-06,
+  `docs/next_session_rough_outlet.md` section 4; the body-on-outlet defect
+  of 2026-10-05 is CLOSED).** The dumps put the mode at ONE face: the row-3
+  outlet face of the trough column, whose neighbour is held near zero by
+  its coefficient (13.7) with a solid face behind it -- the trough of the
+  roughness on the plane is a dimple open to the outlet. The face read 10x
+  the physical velocity from the first dump, followed the pocket pressure
+  into INFLOW, grew at an accelerating rate and blew up in finite time. A
+  laminar 450k-cell reproducer (`validation/body_outlet/pocket.ini`, 4 CPU
+  ranks, 5 minutes) does the same at t = 34: neither turbulence nor the
+  trip nor the convection form. MECHANISM: the neighbour's borrowed
+  convection `-(q_n + q_f)^2/(4 dx)` is a drag for outflow and a SOURCE for
+  inflow -- momentum entering through a fixed-pressure plane into a dead
+  end has no sink, the pocket pressure that would balance it is set by
+  continuity alone (an escape velocity through a ceiling 19x the face),
+  and the face's energy gains `|q_f|^3/(4 dx)`: the open-boundary backflow
+  problem of the literature, made steady by the geometry. FIX, three lines
+  in `predict_outlet_faces`: where fluid ENTERS through an outlet
+  (`s q_f < 0`, `s` the outward sign) the held datum is the TOTAL pressure
+  `p_out - q_f^2/2` (Heywood, Rannacher & Turek 1996; Bruneau & Fabrie
+  1996), the static one where it leaves. The closure of R (zero normal
+  gradient of the neighbour's non-pressure right-hand side, 2026-10-01)
+  stays. MEASURED AND DROPPED: the face's own normal fluxes with a
+  zero-gradient ghost (blow-up at t = 31 -- the quadratic is the driver,
+  not the anti-diffusion), zero gradient AT the face (no convective term:
+  the OUTFLOW ran away under a pocket pressure below p_out at t = 10 --
+  the borrowed quadratic is load-bearing as a drag), and the face's own
+  viscous flux on top of the datum (stable, but it moves every outlet case
+  with any normal variation for no measured gain: Lamb-Oseen 9.80e-5 ->
+  9.84e-5, pocket -0.094 -> -0.083). Gates: 7-case / 9-case / outlet (1 AND
+  4 ranks) suites `max_abs 0` CPU and GPU vs `~/rough_ref_binaries`
+  (`0c9c8ba`; the datum is dormant without backflow, the cylinder wake
+  included), the freestream groups and Blasius reproduce their records to
+  every digit, `validation/body_outlet` all groups + the new `pocket`
+  group (dimple face -0.077 at t = 50; CPU == GPU `max_abs 0` with the
+  datum live), the 4 M-cell turbulent cut-down 300 t.u. with the
+  roughness THROUGH the outlet (divergence 5.7e-6 = the ramped-out twin's).
+  `production_stats_rough.ini` runs through the outlet again (`wall_x_end`
+  removed, `cflmax = 1.0`). LANDMINE: the Blasius gate's case file is
+  pinned to 1 rank (RANKS=4 stops with "rank owns no blocks"); and a
+  divergence bound taken from a settled field (7.9e-8 at t = 150) fails
+  the same case in its cold-start transient (1.0e-4 at t = 50) -- bound
+  against the state the gate reads.
 
 ## Verification
 

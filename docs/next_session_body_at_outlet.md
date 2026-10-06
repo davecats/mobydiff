@@ -1,10 +1,14 @@
 # Next session: an immersed body that reaches an outlet face
 
 STATUS: **B0-B3 DONE 2026-10-05 -- and the gate they did not measure
-(NEXT: `docs/next_session_rough_outlet.md`, the handout for the defect and
-for the HoreKa pair)
 FAILED the same evening: the body on the outlet plane is UNSTABLE in a
-turbulent trough-cut geometry.** The rough-wall boundary layer on the
+turbulent trough-cut geometry. RESOLVED 2026-10-06
+(`docs/next_session_rough_outlet.md`, section 4): the trough on the plane is
+a dimple open to the outlet, its face took INFLOW through a fixed-pressure
+plane into a dead end -- the open-boundary backflow problem, not a body
+matter as such -- and the outlet datum is now the TOTAL pressure where fluid
+enters (`predict_outlet_faces`, three lines); gate
+`validation/body_outlet/run_gates.sh pocket`.** The rough-wall boundary layer on the
 ELECTED CaNS-grid case (`tutorials/turbulentBoundaryLayer/
 production_stats_rough.ini`, MacDonald et al. 2016 k+ 10 / lambda+ 113
 egg-carton, crests 0.77 = 50 cells high) blew up within 2000 steps from the

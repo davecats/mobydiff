@@ -519,6 +519,31 @@ contains
     ! f fluid, r ~ 1e27 recovers I_n to round-off (rsn q(n) ~ 1e-54 q(n));
     ! incr > 0 for x >= 0, so the division is safe.
     !
+    ! THE DATUM ON BACKFLOW (2026-10-06, docs/next_session_rough_outlet.md
+    ! section 4). Where fluid ENTERS through the plane (s q_f < 0, s the
+    ! outward sign) the held value is the TOTAL pressure, p_face = p_out -
+    ! q_f^2/2, not the static one: fluid arriving from a reservoir at p_out
+    ! pays its kinetic energy in pressure (Heywood, Rannacher & Turek 1996;
+    ! Bruneau & Fabrie 1996; the exact form of the "backflow stabilization"
+    ! of Bazilevs et al. 2009). Found by an immersed rough wall whose trough
+    ! sits ON the plane -- a dimple open to the outlet, where n is held at
+    ! ~0 by its coefficient and the face behind it is solid. R_n's normal
+    ! convection -(q_n + q_f)^2/(4 h) is then a drag for outflow and a
+    ! SOURCE for inflow: the momentum entering at the plane is dumped at the
+    ! wall half a cell behind the face's centre, and the pocket pressure
+    ! that would balance it is set by continuity alone -- by the tiny
+    ! escape velocity through a ceiling 19x the face. The face's energy
+    ! gained |q_f|^3/(4 h) and blew up in finite time: laminar, at t = 34 on
+    ! validation/body_outlet/pocket.ini, independent of the convection form.
+    ! With the datum the inflow sees a restoring +3 q_f^2/(4 h) and the
+    ! outflow keeps its drag; the pocket face settles at a few 1e-2.
+    ! What did NOT work: the face's own normal fluxes with a zero-gradient
+    ! ghost (blow-up at t = 31, the quadratic is the driver), zero gradient
+    ! AT the face (no convective term at all: the OUTFLOW ran away under a
+    ! pocket pressure below p_out, t = 10). The closure of R stays as above.
+    ! Three lines, dormant on every outlet without backflow: the body-free
+    ! suites and every outlet case without inflow are bit-exact.
+    !
     ! ONE path for both sides: (f, n) = (1, 2) on a low face, (nb+1, nb) on
     ! a high one, and nothing else depends on the side. It needs no value the
     ! high side lacks (no oldrhs, no q(nb+2), no Laplacian row), which is why
@@ -545,7 +570,7 @@ contains
         integer :: n, npts, b, face_id, dir, side
         integer :: fi(3), ni(3), fm(3), nm(3)
         integer(C_INT) :: local_n(1:3), isOut(NFACES)
-        real(C_DOUBLE) :: d1f, d1n, dpf, dpn, r, sf, rsn, dtf
+        real(C_DOUBLE) :: d1f, d1n, dpf, dpn, r, sf, rsn, dtf, s, qf
 
         if (bc%nOutlet <= 0_C_INT) return
         npts = int(bc%nTotal)
@@ -565,7 +590,7 @@ contains
         !$omp& bc%pointFace(1:npts), bc%slot(1:npts), bc%i(1:npts), bc%j(1:npts), bc%k(1:npts), &
         !$omp& blk%qs, blk%d1x, blk%d1y, blk%d1z, ibm%coef, ibm%mu) &
         !$omp& map(tofrom: blk%q) &
-        !$omp& private(n,b,face_id,dir,side,fi,ni,fm,nm,d1f,d1n,dpf,dpn,r,sf,rsn,dtf)
+        !$omp& private(n,b,face_id,dir,side,fi,ni,fm,nm,d1f,d1n,dpf,dpn,r,sf,rsn,dtf,s,qf)
         do n = 1, npts
             face_id = int(bc%pointFace(n))
             if (isOut(face_id) == 0_C_INT) cycle
@@ -602,6 +627,13 @@ contains
 
             dpf = (blk%q(fi(1),fi(2),fi(3),VAR_P,b) - blk%q(fm(1),fm(2),fm(3),VAR_P,b))*d1f
             dpn = (blk%q(ni(1),ni(2),ni(3),VAR_P,b) - blk%q(nm(1),nm(2),nm(3),VAR_P,b))*d1n
+            ! Backflow (the face velocity against the outward sign s): the
+            ! datum is the total pressure, p_face = p_out - q_f^2/2, so the
+            ! ghost moves by -q_f^2 and the half-cell gradient by -s q_f^2
+            ! d1f. Untouched where the fluid leaves.
+            s = merge(-1.0d0, 1.0d0, side == SIDE_MIN)
+            qf = blk%q(fi(1),fi(2),fi(3),dir,b)
+            if (s*qf < 0.0d0) dpf = dpf - s*qf*qf*d1f
 
             ! The penalization factors of the face and of its neighbour (all
             ! exactly 1 without a body); ibm%mu is incr, refreshed this

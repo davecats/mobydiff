@@ -828,6 +828,15 @@ showed the Neumann rows that are a config error since F4; two comments
 described the outlet as a zero-gradient velocity; the gate scratch of
 `validation/redblack_interface/run_gates.sh` is ignored by git.
 
+### Backflow (2026-10-06)
+
+The face equation above assumed the fluid leaves. Where it ENTERS (a rough
+wall's trough on the plane, `docs/next_session_rough_outlet.md` section 4)
+the borrowed convection is an energy source and the face blew up; the held
+datum is now the TOTAL pressure `p_out - q_f^2/2` on inflow, the static one
+on outflow (three lines in `predict_outlet_faces`). Nothing else here
+changed; every number above stands (bit-exact without backflow).
+
 ### Not done
 
 - **The tutorial's data are REGENERATED (user's decision 2026-10-02; HoreKa

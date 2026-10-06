@@ -4,7 +4,7 @@
 # immersed slabs (make_slabs.py) in an inflow/outflow channel.
 #
 #   SOLVER=/abs/build_cpu/moby_solve [RANKS=1] ./run_gates.sh [group]
-#   groups: profile | mirror | permute | limits | ranks | restart | gpu | twin | all
+#   groups: profile | mirror | permute | limits | ranks | restart | gpu | twin | pocket | all
 #
 #   profile  pois_body (inlet u = 1 through the slabs, outlet at x_max) and its
 #            periodic twin, 20000 steps (t = 40): the outlet-face profile equals
@@ -19,6 +19,10 @@
 #            (give SOLVER the cpu_nofma build for this group; same case file)
 #   twin     a case file whose coefficients are ZEROED (the body crossing
 #            the outlet with coef = 0) == the body-free run, max_abs 0
+#   pocket   the trough of a rough wall ON the outlet plane (pocket.ini, the
+#            laminar form of the production rough case's blow-up): 2500
+#            steps on RANKS ranks, finite, divergence small, the dimple
+#            face bounded (check_pocket.py; README)
 #
 # Every solve is preceded by tools/prepare_if_missing.sh with the moby_prepare
 # beside SOLVER. SHORT=1 cuts every run to 2000 steps (the exactness groups
@@ -123,6 +127,13 @@ with h5py.File("pb_twin.case.h5", "r+") as f:
 PY
     mpirun -n 1 "$SOLVER" .pb_twin.ini > .pb_twin.log 2>&1 \
         && python3 check_body_outlet.py same "$(last pb_free)" "$(last pb_twin)" || { echo "   twin leg failed"; status=1; }
+fi
+
+if want pocket; then
+    echo "== pocket (a rough wall's trough on the outlet plane, 2500 steps = 50 t.u., $RANKS ranks)"
+    rm -f pocket_*.h5 pocket.case.h5
+    run pocket.ini pocket "$RANKS" 2500 \
+        && python3 check_pocket.py "$(last pocket)" --case pocket.case.h5 || { echo "   pocket leg failed"; status=1; }
 fi
 
 echo

@@ -153,3 +153,171 @@ failed attempts of this session.
 6. HoreKa housekeeping: done 2026-10-05 (the two failed-attempt directories,
    `tbl_stats_run`, `outlet_tbl_run`, the worktrees `moby-outlet-new`,
    `moby-outlet-ref`, `moby-tbl-stats`).
+
+## 4. Investigation write-up (2026-10-06, main `0c9c8ba`; reference set `~/rough_ref_binaries`)
+
+Reference set cut first (four builds, banners `0c9c8ba`, provenance inside).
+Everything below is measured on the CPU with `build_cpu` variants; the
+turbulent cut-down A/B is on the local RTX 3060.
+
+### The history of the mode, from the dumps
+
+`~/outlet_runs/rough_cans/analysis/{onset,history}.py` read the dumps of the
+cut-down (`dump_100 .. dump_2700`, block 34 = the last column, rows 1..6,
+k = 11/12 = the two cells straddling the spanwise trough). Coefficients at
+that column (the saddle of the surface sits ON the plane: in x the surface
+descends from 0.065 two cells upstream to 0 at the plane, in z it rises on
+both sides, so the last column is a dimple open to the outlet):
+
+| face | row 1 | row 2 | row 3 | row 4 | row 5 |
+|---|---|---|---|---|---|
+| u, outlet plane (`nb+1`) | 139 | 0.074 | 0.013 | 0 | 0 |
+| u, one cell behind (`nb`) | solid | solid | 13.7 | 0.094 | 0.029 |
+| u, two cells behind (`nb-1`) | solid | solid | solid | solid | solid |
+
+The row-3 outlet face is the one that goes: its neighbour `q(nb)` is held
+near zero by its coefficient (13.7: `u(nb)` reads 4e-8 .. 8e-4 through the
+run) and the face behind that is solid.
+
+| t | 2 | 6 | 12 | 20 | 26 | 33 | 38 | 44 | 48 | 50 | 52 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| `u_out` row 3 | +0.07 | **+0.29** | +0.25 | +0.15 | +0.07 | 0 | −0.04 | −0.11 | −0.22 | −0.42 | −7.4 |
+| `p(nb)` row 3 | −2.0e-3 | −2.7e-3 | −2.5e-3 | −1.7e-3 | −1.0e-3 | 0 | +2.7e-4 | +1.2e-3 | +2.7e-3 | +5.8e-3 | 0.43 |
+
+The physical velocity at that face (y ≈ 0.03 in a laminar layer at
+x = 100) is ~0.02: the face is 10x off from the first dump, an OUTFLOW that
+follows the pocket pressure (`u_out ∝ −p(nb)`: outflow while the pocket is
+below the outlet pressure, inflow once above it), crosses zero at t ≈ 33,
+then grows as INFLOW at an accelerating rate (per 2 t.u.: x1.5 at t = 40,
+x1.9 at t = 50) and blows up in finite time. The rows above (4..6) read the
+physical 0.01–0.03 throughout. The fluid entering at the plane leaves
+through the ceiling of the cell: `v(nb, 4) dx = −u_out dy` to three digits
+— the ceiling is 19x the plane face, so the escape velocity, and the
+pressure that drives it, stay small.
+
+### A reproducer small enough for the CPU
+
+`~/outlet_runs/pocket/pocket.ini`: the same wall line (`cans`, dy_1 0.0105),
+the same dx (0.205), one spanwise wave, FIVE streamwise waves on
+lx = 21.74, roughness in over x = 5..10 and through the outlet, NO trip,
+Blasius cold start, red-black 6, `cflmax 1.0`. 450k cells, 4 CPU ranks,
+0.13 s/step, 2500 steps = 50 t.u. in 5 minutes. It reproduces the whole
+history with the same coefficient table (row 3: 0.012 on the plane, 12.8
+behind, solid behind that): `u_out` row 3 +0.35 at t = 6, through zero at
+t ≈ 25, exponential inflow, blow-up at **t = 34** (`pocket_history.py`).
+Laminar: the instability needs neither turbulence nor the trip.
+
+### Stage by stage: what the row-3 face is given
+
+The face obeys `q_f(new) = sf q_f + mu_f (dt_a rhs_n + dt_b oldrhs_n)
+− mu_f dt_g dp_f` with `rhs_n` the NEIGHBOUR'S non-pressure right-hand side
+(the zero-normal-gradient-of-R closure of 2026-10-01). With `q_n ≈ 0`,
+`q_nn = 0` (solid) and the tangential velocities at the column ≈ 0, the
+neighbour's stencil reduces to
+
+    rhs_n = −(q_n + q_f)²/(4 dx) + nu (q_f − 2 q_n + q_nn)/dx² + ...
+          ≈ −q_f²/(4 dx)        + nu q_f/dx²
+
+Two things handed to the face with the wrong sign, because they are the
+neighbour's interaction WITH the face: (a) `+nu q_f/dx²` is anti-diffusion
+on the face (rate 0.054/t.u. at this dx and Re); (b) `−q_f²/(4 dx)` is a
+sign-definite quadratic — a drag for outflow, a SOURCE for inflow: the
+momentum entering through the plane is dumped at the wall half a cell
+behind the face's own centre (`u_c(nb) = q_f/2`) and nothing in the face's
+equation balances it, because the pressure that would (a stagnation
+pressure in the pocket) is set by the projection from continuity alone, and
+continuity is satisfied by the tiny escape velocity through the 19x larger
+ceiling. The energy of the face gains `|q_f|³/(4 dx)` on inflow: finite-time
+blow-up, as measured. This is the open-boundary backflow problem of the
+literature (a fixed-pressure plane with inflow has no energy bound;
+Heywood, Rannacher & Turek 1996; Bruneau & Fabrie 1996; Bazilevs et al.
+2009), reached here through a geometry — a dimple on the plane — that
+makes inflow at an outlet face the steady state rather than a transient.
+
+### Closures tried on the reproducer (all in `predict_outlet_faces`, 4 CPU ranks)
+
+| closure | result |
+|---|---|
+| as on main: `R_f = R_n` | blow-up at t = 34 |
+| C1: the face's own normal fluxes with zero gradient BEYOND the plane (ghost `q_g = q_f`): convection `−(4 q_f² − (q_n+q_f)²)/(4 dx)`, diffusion `−nu (q_f − q_n)/dx²`; tangential terms and forces still the neighbour's; own RK memory | blow-up at **t = 31**: fixes the viscous sign, triples the quadratic (`−3 q_f²/(4 dx)`); the ram term is the driver, not the anti-diffusion |
+| Z: symmetric ghost `q_g = q_n` (zero gradient AT the face): normal convective flux difference ≡ 0, diffusion `2 nu (q_n − q_f)/dx²` | blow-up at **t = 10**, the other way: with no ram drag the OUTFLOW runs away under a pocket pressure below the outlet value (1.06 on the plane at t = 8) — the old pressure mode's shape. The borrowed quadratic is load-bearing for outflow |
+| BV: the neighbour's convection kept; the face's own viscous flux (zero viscous flux through the plane, `−nu (q_f − q_n)/dx²`); and on INFLOW (`s q_f < 0`) the outlet datum is the TOTAL pressure `p_face = p_out − q_f²/2` | **stable** to t = 150 (`bvlong`): the pocket inflow saturates at −0.083 (t = 38), −0.066 at t = 50, −0.032 at t = 150; the early +0.3 outflow is unchanged |
+| **B: the datum alone (the shipped scheme)** | **stable**: −0.094 at t = 38, −0.077 at t = 50, the same history otherwise; the turbulent cut-down 300 t.u. (below) |
+
+The total-pressure datum is the Bernoulli statement for fluid entering from
+a reservoir at `p_out`: the kinetic energy it brings is paid by the
+pressure at the plane, not fed into the face; the boundary energy flux
+becomes `p_out |u_n|` and the cubic source is gone. In the face equation it
+is `dp_f −= s q_f² d1f` on inflow only (the half-cell gradient of a datum
+lowered by `q_f²/2`): with the borrowed `−q_f²/(4 dx)` the inflow sees a
+net RESTORING `+3 q_f²/(4 dx)`, outflow keeps its drag. Low and high faces
+are one statement through the outward sign `s`.
+
+### The scheme, as shipped
+
+ONE amendment to the 2026-10-01 face equation, in `predict_outlet_faces`
+(step.f90), symmetric in the side through the outward sign `s`:
+
+    s  = -1 on a low face, +1 on a high one
+    if (s q_f < 0) dp_f -= s q_f^2 d1f
+
+i.e. the held datum is the STATIC pressure `p_out` where fluid leaves and
+the TOTAL pressure `p_out − q_f²/2` where it enters (the ghost moves by
+`−q_f²`, the half-cell gradient by `−s q_f² d1f`). The closure of R
+(zero normal gradient of the neighbour's non-pressure right-hand side)
+stays as ratified. Three lines; dormant on every outlet without backflow,
+so the body-free suites and every outlet case without inflow are
+bit-exact against `~/rough_ref_binaries` (see the gates below).
+
+Tried and dropped: a second piece that replaced the borrowed normal
+viscous term by the face's own `−nu (q_f − q_n)/h²` (zero viscous flux
+through the plane) with its own RK memory. It removes the anti-diffusion
+(a), but (a) is bounded by the datum anyway (pocket inflow −0.094 without
+it, −0.083 with it), in smooth outflow the borrowed second difference is
+the better approximation of `nu u_xx` (the do-nothing flux is a spurious
+`nu u_x/h`; Lamb-Oseen moved 9.80e-5 → 9.84e-5), and it moves every outlet
+case whose flow varies along the normal at all (the Poiseuille restart
+field, 1e-6 after 50 steps), i.e. it costs bit-exactness on the whole
+outlet suite for no measured gain. The clean statement is: the closure is
+one thing, the boundary condition is another, and only the latter was
+wrong.
+
+### Gates (2026-10-06, the datum-only tree; reference `~/rough_ref_binaries`, `0c9c8ba`)
+
+Bit-exactness at nofma, `max_abs 0` on every dataset incl. the RANS
+scalars and the `un_xmax` plane:
+
+| suite | CPU | GPU |
+|---|---|---|
+| 7-case (`validation/scalar/run_bitexact.sh`) | 7/7, 4 ranks | 7/7 |
+| 9-case (`run_bitexact_s3.sh`) | 9/9 | 9/9 |
+| outlet (`validation/freestream/run_bitexact_outlet.sh`: oblique, pois_io, lamboseen, outlet_high, outlet_low, blasius2d, cyl_re100) | 7/7 at 1 rank AND at 4 ranks | 7/7 |
+
+(The datum is dormant on every one of them: no outlet face sees backflow,
+the cylinder wake at 10 D included.) Physics gates, all PASS:
+
+- `validation/freestream/run_gates.sh`, all groups (oblique exact 0.0;
+  Poiseuille 1.637e-3 / 1.521e-3, last-cell p 1.247e-3, drift 5.6e-16;
+  Lamb-Oseen reflected fraction 9.84e-5; ranks exact; config; the mirrored
+  low-face pair 2.0e-15; the −x Poiseuille and vortex to every digit;
+  refined-from-rest 1.5–2.7e-13, 1 == 4 ranks exact; restart == continuous
+  on five cases) — the numbers of 2026-10-01 reproduced.
+- `validation/body_outlet/run_gates.sh` profile, mirror, permute, limits,
+  ranks, restart, twin (CPU, 4 ranks, SHORT) and gpu (nofma pair): ALL
+  PASS; the new **pocket** group PASS (dimple face −0.077 at t = 50, rms
+  divergence 1.0e-4; the reference binary blows up at t = 34).
+- The pocket reproducer CPU == GPU `max_abs 0` (nofma pair, same case
+  file, 1500 steps = 30 t.u., the datum live from t ≈ 25): the one gate on
+  which the new line is NOT dormant.
+- `validation/blasius/run_blasius.sh` (CPU): theta 1.65 %, H 0.82 %,
+  du/Ue 1.48e-3, dv 1.29e-2 — the record to every digit.
+- The 4 M-cell turbulent cut-down (`~/outlet_runs/rough_cans/bv/
+  cut_fin300.ini`, RTX 3060, 0.089 s/step) with the roughness THROUGH the
+  outlet: 300 t.u., L2 divergence 1.9e-4 → 5.7e-6 (the `wall_x_end = 60`
+  twin: 6.0e-6), Linf 1.10, the dimple face between −0.08 and +0.13 once
+  the layer is turbulent (max|p| 0.16–0.18 at the plane from t ≈ 200
+  against 0.04 before; the reference blew up at t = 52).
+
+Reference set for anything on top of this: cut one from the commit
+(`~/rough_ref_binaries` is the pre-fix set; the pocket case and any outlet
+with backflow differ from it by design).

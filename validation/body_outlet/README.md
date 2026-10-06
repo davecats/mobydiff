@@ -10,7 +10,7 @@ inflow/outflow channel 4 x 1.5 x 0.125 on 64 x 48 x 4 cells, `nb = 4` with
 the outlet), `re = 10`, uniform inlet `u = 1` at `x_min`, Dirichlet-pressure
 outlet at `x_max`.
 
-    SOLVER=/abs/build_cpu/moby_solve [RANKS=4] ./run_gates.sh [profile|mirror|permute|limits|ranks|restart|twin|all]
+    SOLVER=/abs/build_cpu/moby_solve [RANKS=4] ./run_gates.sh [profile|mirror|permute|limits|ranks|restart|twin|pocket|all]
 
 Every solve is prepared beside the solver by `tools/prepare_if_missing.sh`.
 `SHORT=1` cuts the runs to 2000 steps (the exactness groups do not need the
@@ -47,6 +47,29 @@ numbers to be found in the section below):
   the body-free run at `max_abs 0`: the one-statement form of
   `predict_outlet_faces` is the unpenalized statement when the factors are
   exactly 1, measured rather than argued.
+
+- **pocket** -- `pocket.ini` + `check_pocket.py`: the trough of a rough
+  wall ON the outlet plane (`docs/next_session_rough_outlet.md`, section
+  4). A laminar boundary layer (Blasius inlet, no trip) over the MacDonald
+  egg-carton of the production rough case on its own wall line and dx
+  (`cans`, dy_1 0.0105, dx 0.205; 106 x 192 x 22 on 21.7 x 50 x 4.33, one
+  spanwise wave, five streamwise), the roughness grown in over x = 5..10
+  and running through the outlet, 2500 steps = 50 t.u., `cflmax 1.0`,
+  red-black 6. The last column at the spanwise trough is a dimple open to
+  the outlet: on the plane the coefficients read 134 / 0.072 / 0.012 in
+  rows 1..3, one cell behind solid / solid / 12.8, two cells behind solid.
+  With the 2026-10-01 face equation alone the row-3 face read +0.35 at
+  t = 6 (physical: 0.02), drifted into inflow, grew at an accelerating rate
+  and blew up at **t = 34** -- the laminar form of what killed the
+  production rough case and its 4 M-cell cut-down (t = 52). The gate: every
+  field finite at t = 50, `max|u|` on the plane in the dimple rows below
+  0.5, interior rms divergence below 1e-3. 4 CPU ranks, ~5 minutes.
+  MEASURED 2026-10-06 with the total-pressure datum: the dimple face
+  −0.077 at t = 50 (rows 1..6: −1e-5, −0.013, **−0.077**, −0.001, −0.001,
+  −0.003; the inflow saturates at −0.094 around t = 38 and decays, −0.032
+  by t = 150), rms divergence 1.0e-4 at t = 50 (the cold-start transient
+  at red-black 6; 7.9e-8 by t = 150), CPU == GPU `max_abs 0` at 1500
+  steps (nofma pair, same case file, the datum live from t ≈ 25).
 
 The uniform inlet meets the cut row of each slab at the inlet plane, where
 the flux it injects into a half-solid cell is deflected: `max|v| = 0.41` at
