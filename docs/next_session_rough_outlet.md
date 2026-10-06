@@ -15,7 +15,7 @@ is still owed** when both are in: the pair gives the smooth rerun and the
 rough fallback; the `rough_io_run` side is the rough result. Its window:
 `rough_compare.py --smooth stats_smooth_775000.h5 stats_smooth_712500.h5
 --rough stats_rough_837500.h5 stats_rough_775000.h5` (one flow-through
-after the restart). Commits `a33cdac c7b2773 da46a99` are on main, NOT
+after the restart). Commits `a33cdac c7b2773 da46a99` (+ this STATUS) are on main, NOT
 pushed to GitHub.
 Handout as written 2026-10-05 evening, after the session that merged the
 `turbulentBoundaryLayer` branch (`bf95993`) and launched the smooth/rough
