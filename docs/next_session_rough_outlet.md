@@ -1,8 +1,25 @@
 # Next session: the body on the outlet plane (open defect) and the rough-wall pair
 
-STATUS: handout written 2026-10-05 evening, after the session that merged the
+STATUS (2026-10-06): **section 1 is DONE** -- the defect is understood and
+fixed (section 4 below: the investigation, the failed candidates, the
+three-line fix `a33cdac`, every gate), the reproducer is the gate
+`validation/body_outlet/run_gates.sh pocket`, the reference set after the
+fix is `~/backflow_ref_binaries` (`c7b2773`). **Decision 2 is in motion**:
+the final rough case with the roughness THROUGH the outlet (`cflmax 1.0`,
+`production_stats_rough.ini` as committed) runs on HoreKa as its own
+one-node chain, `optimiseBlockRefinement/rough_io_run` (job 5184061 and its
+successors; worktree `moby-tbl-rough-io`, branch `rough-outlet`), from
+`rough_tbl_run/smooth_737500.h5` to step 837500 (2000 t.u.), alternating
+with the pair's chain in `rough_tbl_run` (one dev job per user). **Section 2
+is still owed** when both are in: the pair gives the smooth rerun and the
+rough fallback; the `rough_io_run` side is the rough result. Its window:
+`rough_compare.py --smooth stats_smooth_775000.h5 stats_smooth_712500.h5
+--rough stats_rough_837500.h5 stats_rough_775000.h5` (one flow-through
+after the restart). Commits `a33cdac c7b2773 da46a99` are on main, NOT
+pushed to GitHub.
+Handout as written 2026-10-05 evening, after the session that merged the
 `turbulentBoundaryLayer` branch (`bf95993`) and launched the smooth/rough
-pair on HoreKa. Nothing here is started.
+pair on HoreKa:
 
 ## Where things stand
 
