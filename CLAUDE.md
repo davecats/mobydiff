@@ -65,7 +65,7 @@ mpirun -n 1 ./build_gpu/moby_solve path/to/input.ini    # main is a symlink
   correct on CPU and a pure no-op on GPU for exactly this reason. Never
   argue a site is safe — TEST it: make the host-side change and check the
   GPU output MOVES. Full audit (every call site, verdict + probe) in
-  `docs/next_session_verification.md` §2.
+  `docs/history/next_session_verification.md` §2.
 - **A variable that appears ONLY as the bound of a mapped array section
   (`map(to: a(1:n))`) must also be read by ordinary code** -- as a loop
   bound, typically. nvfortran 25.9 drops the assignment of a variable it
@@ -96,9 +96,10 @@ airfoil, then passive scalars, then the performance campaign.
 
 The block refactor (Phases 0–3) is complete (the projection was rebuilt on a
 damped-Jacobi / Chebyshev smoother, which is why `claude/jacobi-interface` was
-forked from `claude/blocks`). The CURRENT state and next steps are in
-`docs/next_session_edges_les.md` (read it first); the master design is
-`docs/block_refinement_strategy.md`. Goal:
+forked from `claude/blocks`). The CURRENT handout is the one the LAST bullet
+of this log names as NEXT (`docs/next_session_cleanup_pass2.md` as of
+2026-10-06); the closed handouts live in `docs/history/` (its README is the
+index); the master design is `docs/block_refinement_strategy.md`. Goal:
 BCM-style equal-size blocks (Nakahashi & Kim 2004; Jansson et al. 2019) to
 enable 2:1 local refinement and removal of blocks buried inside the
 immersed boundary. Phased, each phase verified before the next:
@@ -290,7 +291,7 @@ immersed boundary. Phased, each phase verified before the next:
   fluctuation energy into the coarse core — the const-1/2 restriction is mildly
   dissipative (a loss, not a band; the mean transport is exact). Validation in
   `validation/channel_interface/` (developed/, interface_benchmark/, reference.ini
-  / uniform128.ini); see `docs/next_session_edges_les.md` for the open items
+  / uniform128.ini); see `docs/history/next_session_edges_les.md` for the open items
   (edge/corner + LES validation; less-dissipative interface transfer).
 - 2:1 interface — edge/corner + LES validation (DONE 2026-06-30, branch
   `claude/jacobi-interface`). EDGE/CORNER (no-LES): embedded core patch, all 6
@@ -309,7 +310,7 @@ immersed boundary. Phased, each phase verified before the next:
   (the Phase-3c low-block-owns-face orientation asymmetry; the fine cells get their
   interface-NORMAL velocity by prolong-injection of the under-resolved coarse face
   value). Reflux-off shrinks it to ~17% localized v' excess; fine-owns faces are
-  clean. See `docs/next_session_interface_normal.md`.
+  clean. See `docs/history/next_session_interface_normal.md`.
 - 2:1 interface — interface-NORMAL velocity asymmetry (RESOLVED 2026-06-30,
   ACCEPTED as the const-1/2 price; no code change). The coarse-owns y-face's ~9%
   v' excess (no LES, `vface_asym.py`: lower/upper v'_rms 0.85/0.78) is a **~2.7x
@@ -325,7 +326,7 @@ immersed boundary. Phased, each phase verified before the next:
   high-halo face `q(ny+1)`, which needs `q(ny+2)`; a 2-layer halo would be needed
   and even then no fine data exists across the fine-owns face). So const-1/2's
   stability and this residual are the same trade. Full writeup +
-  ruled-out levers: `docs/next_session_interface_normal.md` (RESOLVED header).
+  ruled-out levers: `docs/history/next_session_interface_normal.md` (RESOLVED header).
 - LES<->IBM coupling — VALIDATED (2026-06-30, branch `claude/jacobi-interface`).
   The `ibm_aware` solid-cell nut masking (`les.f90`) exercised on an off-grid IBM
   plane-wall channel (file-based IBM from two wall-slab STLs via mobygeom, uniform
@@ -396,10 +397,10 @@ immersed boundary. Phased, each phase verified before the next:
   IBM+WALE) and refine_body, Beltrami y-slab — CPU AND GPU; enabled: a constant `f`
   reproduces the `forcing_x` trajectory to round-off (~5e-15 u), sine profile +
   file source both have the expected effect and are CPU==GPU bit-exact. Design in
-  `docs/next_session_bodyforce.md`.
+  `docs/history/next_session_bodyforce.md`.
 - IDDES phase T0 — turbulence-module hoist (DONE 2026-07-05, branch
   `claude/jacobi-interface`). Pure refactor opening the k-ω SST / IDDES plan
-  (`docs/next_session_iddes.md`): new `src/modules/turbulence.f90` with
+  (`docs/history/next_session_iddes.md`): new `src/modules/turbulence.f90` with
   `turb_type` (model enum TURB_NONE/TURB_LES live, TURB_RANS/TURB_IDDES
   reserved; the `nut` array; the grid-metric tables hoisted from `les_type`).
   `les.f90` keeps only the algebraic SGS kernels — `update_sgs_viscosity(les,
@@ -698,10 +699,10 @@ immersed boundary. Phased, each phase verified before the next:
   sloppy-projection compensation — and whole-case niter=60 is ~15x cost).
   NEXT: A3 (RANS scalar inlet values keyed on PATCH_INLET + SD7003 Re 6e4
   transition benchmark; TVD upwind revisit only if the measured γ-front
-  smearing demands it) — `docs/next_session_airfoil.md`.
+  smearing demands it) — `docs/history/next_session_airfoil.md`.
 - Airfoil phase A3 (DONE 2026-07-14, increments 0-3 all gated, branch
   `claude/jacobi-interface`; results + findings in
-  `docs/next_session_airfoil.md` STATUS and the per-case READMEs).
+  `docs/history/next_session_airfoil.md` STATUS and the per-case READMEs).
   INCREMENT 0 (081f387): 3-level refine_body gates
   (`validation/multilevel_body/`, cylinder, 224/192/496 leaves) — uniform
   oblique u,v,w flow EXACT (0.0 incl. pn) across every interface level on
@@ -754,7 +755,7 @@ immersed boundary. Phased, each phase verified before the next:
   run" (istmcetus/istmcorax; memory: remote-hosts).
 - 2D block refinement R2D-0..3 (DONE 2026-07-15, commits becbda3/6384aac/
   f0ce7a7/9dd33c2 + follow-up, branch `claude/jacobi-interface`;
-  docs/next_session_refine2d.md STATUS header, gates in
+  docs/history/next_session_refine2d.md STATUS header, gates in
   validation/refine2d/ + naca0012/sd7003 READMEs). `[blocks] refine_dims =
   xyz (default octree) | xz` (quadtree: blocks refine in x,z only; y keeps
   ONE global — possibly stretched — node line at all levels). Mechanics: a
@@ -763,7 +764,7 @@ immersed boundary. Phased, each phase verified before the next:
   ids in xz mode (2D x,z Morton key in the high bits over the y tile in the
   low 21 — y sat in the HIGH bits until 2026-08-28, which made the order
   y-major and so put the whole 2:1 interface on a rank boundary at EVERY rank
-  count; peer traffic 20.5x lower after the swap, `docs/next_session_2to1_penalty.md`;
+  count; peer traffic 20.5x lower after the swap, `docs/history/next_session_2to1_penalty.md`;
   mobygeom/make_channel_restart mirror it); `refine_dims` file attribute
   (xz only, xyz files byte-identical; restart cross-checks BLOCK-layout
   files only); exchange entries generated per-direction (x/z faces 2 fine
@@ -896,7 +897,7 @@ immersed boundary. Phased, each phase verified before the next:
   one case-file contract, mobygeom/mobygrid retired to validation
   references.
 - Boundary layer B0 — laminar Blasius precursor (DONE 2026-07-19, branch
-  `boundaryLayer` off claude/jacobi-interface; docs/next_session_boundary_layer.md).
+  `boundaryLayer` off claude/jacobi-interface; docs/history/next_session_boundary_layer.md).
   `[boundary] <x-face>_<u|v>_profile = blasius` (+`blasius_theta`; value key =
   U_inf, shooting-solved table in boundary.f90, outer asymptote beyond eta=12)
   and the `[grid.<d>] one_sided` key for the natural distribution (flag existed,
@@ -920,7 +921,7 @@ immersed boundary. Phased, each phase verified before the next:
   horizons were too short to show it).
 - Passive scalars S0-S5a (DONE 2026-08-03/04, branch `scalar` off
   `boundaryLayer`; plan + every deviation, finding and gate number in
-  `docs/next_session_scalar.md` STATUS header, gate machinery in
+  `docs/history/next_session_scalar.md` STATUS header, gate machinery in
   `validation/scalar/README.md`). N user-selectable transported scalars, each
   with its own Pr/Sc. THE ONE DESIGN DECISION: **scalars are extra variables of
   `blk%q`** (`dns%nVar = NVAR + dns%nScalar`, scalar `is` at `VAR_S0+is`;
@@ -985,7 +986,7 @@ immersed boundary. Phased, each phase verified before the next:
     a constant Pr_t); gate (x2) measures what that costs.
   - **THE PASSIVE-SCALAR PLAN IS CONCLUDED (decided 2026-08-07).** S0–S5a are
     the shipped feature set, and the verification debt behind them is closed
-    (`docs/next_session_verification.md`: every gate group re-measured, plus
+    (`docs/history/next_session_verification.md`: every gate group re-measured, plus
     a host/device staleness audit that came back clean). The two remaining
     plan items are reclassified and are BOTH LOW PRIORITY:
     **S5b** (TVD/van-Leer convection) moves to the comm/halo track — it is a
@@ -998,7 +999,7 @@ immersed boundary. Phased, each phase verified before the next:
     code away. WHAT CONCLUDING RATIFIES: scalar convection stays 2nd-order
     CENTRAL with no upwind option, so sharp fronts over/undershoot — the
     documented stance, now the shipped behaviour. The live scalar work is
-    conjugate heat transfer, `docs/next_session_conjugate.md` C1, which gets
+    conjugate heat transfer, `docs/history/next_session_conjugate.md` C1, which gets
     its own session (it is a third `ibm_wall` mode on the same cut cells the
     penalization pins).
   - IBM THERMAL WALL FUNCTION — case built + PARTIALLY gated 2026-08-05
@@ -1071,7 +1072,7 @@ immersed boundary. Phased, each phase verified before the next:
     `target update from(ibm%coef)` a few lines below is the same pattern.
     Only the GPU bit-exactness suite could catch it; the CPU one looked
     complete. **Exactly one instance of this class has been found; the audit
-    for the others is `docs/next_session_verification.md`**, which also
+    for the others is `docs/history/next_session_verification.md`**, which also
     carries the gate groups not re-run after these two fixes. Only the k/omega INITIAL CONDITION of a cold start
     changes; the converged answer does not (`wf180_y30`/`wf180_y45`
     reproduce the T3 gate to every printed digit), but cold-started RANS
@@ -1119,7 +1120,7 @@ immersed boundary. Phased, each phase verified before the next:
 - Conjugate heat transfer at the immersed interface — increments **C1, C2 and
   C3 DONE** (C1 2026-08-27/28, C2 and C3 2026-08-28, branch `scalar`; plan +
   every deviation and gate number in the STATUS header of
-  `docs/next_session_conjugate.md`, commands and measurements in
+  `docs/history/next_session_conjugate.md`, commands and measurements in
   `validation/conjugate/README.md`).
   **C2 — the tangential term the C1 baseline drops: measured, and SHIPPED
   DISABLED.** `[scalar] indicator_interval` reduces `e_face = h_d s_t/(T_R −
@@ -1243,7 +1244,7 @@ immersed boundary. Phased, each phase verified before the next:
   = true` key drives; chron.f90 keeps only the generic `profiler_type` both
   used. `docs/next_session_profiling.md` was marked SUPERSEDED (removed 2026-09-26; git history).
 - Verification debt + host/device staleness audit (DONE 2026-08-07, branch
-  `scalar`, `docs/next_session_verification.md`). Every gate group left
+  `scalar`, `docs/history/next_session_verification.md`). Every gate group left
   un-measured by the 2026-08-05 fixes was re-run and reproduces; the audit of
   host-side consumers of device-mapped arrays came back CLEAN (verdict table
   + the GPU probe behind each row in §A; the class is now a coding convention
@@ -1740,7 +1741,7 @@ immersed boundary. Phased, each phase verified before the next:
   red-black; Jacobi got faster and it did not.
 
 - **Branch consolidation (DONE 2026-09-25, job 5163314,
-  `docs/next_session_merge_to_main.md` STATUS header).** `boundaryLayer` and
+  `docs/history/next_session_merge_to_main.md` STATUS header).** `boundaryLayer` and
   `scalar` are merged into this branch; `multiGPU` and `claude/blocks` hold
   nothing it needs; `claude/jacobi-interface` still does (six RANS/airfoil
   features, verified absent here key by key) and must NOT be deleted.
@@ -1824,7 +1825,7 @@ immersed boundary. Phased, each phase verified before the next:
     must -- the naca/rans prepare inis, `validation/scalar/cylheat.ini` (an S3
     SCALAR gate) and the two `aoa4.ini` templates that
     `validation/prepare/run_gates_big.sh` builds its P1b cases from. The table
-    is in `docs/next_session_port_finish.md` section 3. **Deciding the rest is
+    is in `docs/history/next_session_port_finish.md` section 3. **Deciding the rest is
     the top follow-up.**
   **GPU GATE (2026-09-26, job 5163859, `submit_port_gate.sh`, nofma both sides,
   ref = `68e8f16`): 12 equivalence legs all `max_abs 0`** -- min_channel 1+4
@@ -1851,7 +1852,7 @@ immersed boundary. Phased, each phase verified before the next:
   Three things were salvaged into main first: `tutorials/naca/LES/STRATEGY.md` +
   `atzori.pdf` (a plan nothing supersedes) and
   `validation/channel_interface/developed/gate6_skew_stats.png`, which
-  `docs/next_session_skew_convection.md` cites BY NAME -- that reference was
+  `docs/history/next_session_skew_convection.md` cites BY NAME -- that reference was
   dangling from the moment the doc came over until the figure followed it.
 - **Campaign re-measured on the consolidated head (2026-09-26, job 5163909,
   `results_horeka_2026-09-26.md`), and it found a REGRESSION the bit-exactness
@@ -1953,7 +1954,7 @@ immersed boundary. Phased, each phase verified before the next:
   (unchanged to the printed digit) and KMM180 developed statistics (within
   the 20-t.u. sampling scatter, `tutorials/channel_kmm180/asset/f1_2026-09-30/`).
   **Section 10 of that review is the execution sequence; steps 0–6 are DONE
-  (2026-09-27, `docs/next_session_numerics_steps.md` STATUS):** reference
+  (2026-09-27, `docs/history/next_session_numerics_steps.md` STATUS):** reference
   binaries `~/numrev_ref_binaries` (commit `6db60ef`); F3 RETRACTED (the B0
   Chebyshev instability reproduces on the B0 binary and `cheb_lmax = 2.2`
   grows FASTER; `main` is stable); F2 conjugate scalars default to
@@ -1971,7 +1972,7 @@ immersed boundary. Phased, each phase verified before the next:
   physical ghosts and pack runs first (reason in the review). Every step
   gated `max_abs 0` (step 6: 61 comparisons, nofma + production).
 - **Step 7 — prepare does ALL preprocessing (DONE 2026-09-29, increments
-  7-0 … 7-4, handout `docs/next_session_prepare_everything.md`, numbers in
+  7-0 … 7-4, handout `docs/history/next_session_prepare_everything.md`, numbers in
   the review section 10 step 7 MEASURED).** THE CONTRACT NOW: every run
   reads a CASE FILE — `[case] file` (default `<field_prefix>.case.h5`;
   the `[ibm] coeff_file` alias was RETIRED 2026-09-30, every ini and driver
@@ -2023,18 +2024,18 @@ immersed boundary. Phased, each phase verified before the next:
   (7-0), `5d95937 -> 91f01cc` (7-1/7-2), `18b95c1 -> fc7f05e` (7-3),
   `3461610 -> 0d2d18f` (7-4), `da64b37 -> 13fb213` (the separation). 7-5 (a per-leaf weight
   column + weighted Morton split) is the plan entry, not started. **NEXT:
-  `docs/next_session_after_step7.md`** — its loose ends 1, 2, 4, 5 and step 8
+  `docs/history/next_session_after_step7.md`** — its loose ends 1, 2, 4, 5 and step 8
   (F1) are DONE 2026-09-30 (STATUS block there: drivers prepare the case
   file beside the binary's own checkout, NOT yet verified on the cluster;
   `[ibm] coeff_file` RETIRED, `tools/set_case_file.sh` for drivers; the
   turb180 T2 gate re-measured at niter 12; the B0 Blasius case reproduces
   on main once its template is minted from ITS OWN ini -- a restart file
   carries boundary rows the ini does not override; KMM180 F1 statistics
-  within scatter). **NEXT: `docs/next_session_after_step8.md`** -- cut
+  within scatter). **NEXT (then): `docs/history/next_session_after_step8.md`** -- cut
   `~/step8_ref_binaries` AFTER F1 (step7b reads ulps now), verify the HoreKa
   drivers on the cluster, then step 9 (F7, the exact penalization factor).
 - **After step 8 — reference set, cluster check, predictor guard, step 9
-  (DONE 2026-09-30 / 10-01, `docs/next_session_after_step8.md` STATUS).**
+  (DONE 2026-09-30 / 10-01, `docs/history/next_session_after_step8.md` STATUS).**
   `~/step8_ref_binaries` (`0811811`) is the post-F1 set. The HoreKa drivers
   prepare the case file as designed (jobs 5172140/5172166/5173620,
   `overheadTest/results_horeka_2026-09-30.md`): case file + prepare log
@@ -2185,7 +2186,7 @@ immersed boundary. Phased, each phase verified before the next:
     BUILD's commit (`build_info.c`, `git describe --always --dirty` at
     configure time, defined on that one file so a new commit relinks instead
     of rebuilding; `-dirty` means the tree had uncommitted changes).
-    **NEXT: `docs/next_session_after_step9.md`.**
+    **NEXT (then): `docs/next_session_after_step9.md`.**
 - **The outlet face is predicted (DONE 2026-10-01, increments O0-O5,
   `docs/next_session_outlet.md`: the handout, the investigation that came
   first, and "Implementation" with every gate number).** The user ratified

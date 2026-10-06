@@ -122,7 +122,7 @@ the shared LES kernel, keep the grid-aligned LES channel validation
 
 ## NEXT-SESSION PROMPT
 
-> Read `docs/next_session_les_ibm.md` and the `interface-normal-treatment`,
+> Read `docs/history/next_session_les_ibm.md` and the `interface-normal-treatment`,
 > `les-validation-plan` memories. Branch `claude/jacobi-interface`. LES (WALE) is
 > validated for grid-aligned channel walls across block refinement + the 2:1
 > interface, but the LES↔IBM coupling (`ibm_aware` solid-cell nut masking,

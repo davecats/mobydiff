@@ -11,8 +11,8 @@
 Branch **`claude/jacobi-interface`**, tag **`jacobi-momentum-interface`** (HEAD
 `e261df2`; the code milestone is `a5fc325`, inc 3). Read this first, then the
 memory `momentum-interface-todo`, then
-`docs/jacobi_interface_handout.md` (the projection work this builds on) and
-`docs/interface_review.md` §iii (the uniform-B / reflux analysis).
+`docs/history/jacobi_interface_handout.md` (the projection work this builds on) and
+`docs/history/interface_review.md` §iii (the uniform-B / reflux analysis).
 
 ## Where we are
 
@@ -165,7 +165,7 @@ channel-interface run).
    (conservation-neutral, vanishes for uniform flow), NOT a flux register.
    RESULT: slab coarse-band v order 0.98 → 2.98 (`adv_y` 0.99→3.00, `dif_y`
    0→2.00 per-term); patch coarse band 1.47 → 2.04. All regressions pass
-   (see README inc 5). See `docs/interface_review.md` §v (Berger & Colella 1989).
+   (see README inc 5). See `docs/history/interface_review.md` §v (Berger & Colella 1989).
 
 ## Gotchas (carried over)
 - CPU `build_cpu` (`-Mnofma`) is the reference; GPU `build_gpu`

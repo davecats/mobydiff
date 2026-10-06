@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Offline analysis of how a block-to-rank partitioning cuts the 2:1 interface.
 
-P1 of docs/next_session_2to1_penalty.md. The measured defect: cross-level peer
+P1 of docs/history/next_session_2to1_penalty.md. The measured defect: cross-level peer
 points are IDENTICAL at 2 and 4 ranks (923700 / 923692), because `refine_dims =
 xz` puts the y tile in the high Morton bits, so every fine block precedes every
 coarse one and a linear split of the leaf list always cuts the level change.

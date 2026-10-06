@@ -6,7 +6,7 @@ suite — one allocation) and 5145806 (Pass G re-run). A100-SXM4-40GB, HoreKa,
 `horeka/results_job5145805/`. Readings written down first, in
 `horeka/exchange/PREREGISTERED_divhalo.md`.
 
-Task 1 of `docs/next_session_divergence_halos.md`.
+Task 1 of `docs/history/next_session_divergence_halos.md`.
 
 > **CORRECTED 2026-09-17 by `results_horeka_2026-09-17.md` §4.** Two ranks
 > counts were not enough to see the shape of this change. The campaign matrix
@@ -198,7 +198,7 @@ tree happens to carry.
 
 ## 8 — What is left
 
-`docs/next_session_divergence_halos.md` §5 (`compute_rdenom`'s fp64 divide,
+`docs/history/next_session_divergence_halos.md` §5 (`compute_rdenom`'s fp64 divide,
 ~4 % of the step, needs ncu first) and §6 (splitting `step_momentum`, its own
 session). Plus, new from this job: the `phi_exchange` locality effect above — if
 the 4-rank sign is real and reproducible, the scalar exchange's entry order is

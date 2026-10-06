@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Passive-scalar S2 gates (docs/next_session_scalar.md, increment S2 --
+# Passive-scalar S2 gates (docs/history/next_session_scalar.md, increment S2 --
 # the turbulent closure D_face = 1/(Re Pr) + nut/Pr_t).
 #
 #   ./run_gates_s2.sh [group]   groups: kays wferr sst les band det
@@ -22,7 +22,7 @@
 # second-half comparison of theta_tau.
 #
 # The `det` group's CPU == GPU / 1 == 4 rank comparisons MUST use the nofma
-# builds (compile_nofma.sh): default FMA contraction differs between host and
+# builds (`./compile.sh cpu_nofma` / `gpu_nofma`): default FMA contraction differs between host and
 # device and between vectorisation widths.
 set -uo pipefail
 cd "$(dirname "$0")"
@@ -106,7 +106,7 @@ fi
 # VELOCITY identical to 8.5e-6. Restarting the statistics leg from it NaNs
 # the run in 54 steps (dt -> 0, cfl NaN). Retarget from the last PERIODIC
 # snapshot instead -- physically the same field, one step earlier.
-# (docs/next_session_verification.md B1; NOT the niter = 6 pn-drift mode,
+# (docs/history/next_session_verification.md B1; NOT the niter = 6 pn-drift mode,
 # which is what this was blamed on before the mechanism was measured.)
 last_periodic() {  # prefix interval
     ls "$1"_*.h5 2>/dev/null | sed -E 's/.*_([0-9]+)\.h5$/\1 &/' | sort -n -k1,1 \

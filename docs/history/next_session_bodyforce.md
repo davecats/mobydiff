@@ -143,7 +143,7 @@ Let the user write the force each step without editing the solver core:
 
 ## NEXT-SESSION PROMPT
 
-> Read `docs/next_session_bodyforce.md` and CLAUDE.md. Branch
+> Read `docs/history/next_session_bodyforce.md` and CLAUDE.md. Branch
 > `claude/jacobi-interface`. Add a **config-gated, spatially-varying volumetric
 > body force** `f(x)` to the momentum predictor, KEEPING the existing constant
 > `[flow] forcing_x/y/z`. New module `src/modules/bodyforce.f90` owning a

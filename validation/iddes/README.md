@@ -1,6 +1,6 @@
 # IDDES T5 gates — full IDDES hybrid (SST + WALE)
 
-Physics gates for IDDES phase T5 (docs/next_session_iddes.md).
+Physics gates for IDDES phase T5 (docs/history/next_session_iddes.md).
 Increment 1 was the DDES shielding; increment 2 (current) is the full
 IDDES elevating/WMLES branch (Gritskevich et al. 2012 SST-IDDES). The
 blend lives in turbulence.f90, in the RANS-retention convention:

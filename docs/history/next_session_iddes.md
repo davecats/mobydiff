@@ -703,7 +703,7 @@ dwall source → error; etc.).
 ## transition/wall_function under iddes, augmented-q scalar batching
 ## (docs/next_session_profiling.md (removed 2026-09-26; git history)), and the GPU profiling task.)
 
-> Read `docs/next_session_iddes.md` and CLAUDE.md. Branch
+> Read `docs/history/next_session_iddes.md` and CLAUDE.md. Branch
 > `claude/jacobi-interface`. Implement the full IDDES elevating/WMLES
 > branch (Gritskevich et al. 2012 SST-IDDES) on top of the validated
 > DDES shielding. CONVENTION FIRST (this is where the DDES increment ate
@@ -756,7 +756,7 @@ dwall source → error; etc.).
 
 ## PREVIOUS PROMPT (T5, executed 2026-07-10 — kept for the record)
 
-> Read `docs/next_session_iddes.md` and CLAUDE.md. Branch
+> Read `docs/history/next_session_iddes.md` and CLAUDE.md. Branch
 > `claude/jacobi-interface`. Execute phase T5: STEP 0 first, then the
 > IDDES blend in its DDES-shielding form (the full f_B/f_e/f_dt
 > elevating branch is a clearly separate SECOND increment, gated on

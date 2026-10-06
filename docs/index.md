@@ -36,11 +36,17 @@ historical than the user documentation above, but they are the authoritative rec
   BCM-style equal-size blocks and 2:1 refinement.
 - [`interface_projection_derivation.md`](interface_projection_derivation.md) — derivation
   of the SPD 2:1-interface pressure projection.
-- [`interface_review.md`](interface_review.md) — review of the interface treatment.
-- [`corner_reconstruction_strategy.md`](corner_reconstruction_strategy.md) — edge/corner
-  halo reconstruction across refinement interfaces.
 - [`prepare_solve_strategy.md`](prepare_solve_strategy.md) — the `moby_prepare` /
   `moby_solve` split and the case-file contract.
 - [`conjugate/`](conjugate/) — derivation of the conjugate heat-transfer scheme.
-- The `momentum_interface_handout.md`, `jacobi_interface_handout.md` and the
-  `next_session_*.md` files are working handouts for individual development sessions.
+- [`numerics_review_2026-09-26.md`](numerics_review_2026-09-26.md) and
+  [`cleanup_review_2026-10-06.md`](cleanup_review_2026-10-06.md) — the two
+  code reviews (findings ranked, execution sequence, measurements).
+- The `next_session_*.md` files directly under `docs/` are the LIVE handouts
+  (open work: `next_session_cleanup_pass2.md`, `next_session_rough_outlet.md`,
+  `next_session_redblack_interface.md`, `next_session_tangential.md`,
+  `next_session_after_step9.md`) and the design records of the current outlet
+  (`next_session_outlet.md`, `next_session_body_at_outlet.md`).
+- [`history/`](history/README.md) — the CLOSED handouts and superseded design
+  notes (2026-06 to 2026-10), kept because source comments, gate drivers and
+  the reviews cite them by name; its README is the index.

@@ -1,6 +1,6 @@
 # RANS T2+T3+T4 gates — k-omega SST transport (resolved walls, wall functions, gamma-Re_thetat transition)
 
-Physics gates for IDDES phases T2, T3 and T4 (docs/next_session_iddes.md).
+Physics gates for IDDES phases T2, T3 and T4 (docs/history/next_session_iddes.md).
 These are the LONG runs, packaged to run on a remote machine (the T3
 wall-function sweep is tiny and also runs fine on a laptop; ibm180wf ran
 on the local GPU):

@@ -54,7 +54,7 @@ real trace, since the reported C_L/C_D already have -dmdt folded in.
 > converged state was destroyed, so `restart` is not available and the staged
 > L10 -> L11 -> nose protocol has to run in full; it is a multi-day GPU job, so
 > plan it as a detached, monitored pipeline rather than a foreground run.
-> Read `docs/next_session_naca_rerun.md` first — it lists what survives on
+> Read `docs/history/next_session_naca_rerun.md` first — it lists what survives on
 > disk, where to put the tolerance, how to size it, and what to verify at the
 > end. Deliverables: the regenerated converged state, and the tutorial's
 > published C_L/C_D/Cp/Cf table refreshed with the CURRENT tooling (the

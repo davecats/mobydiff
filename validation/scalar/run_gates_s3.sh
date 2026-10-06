@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # S3 gates: the passive scalars' IMMERSED-BODY coefficients
-# (docs/next_session_scalar.md Section 4).
+# (docs/history/next_session_scalar.md Section 4).
 #
 #   ./run_gates_s3.sh [solid|conserve|balance|prep|refine|det|missing|cyl|all]
 #

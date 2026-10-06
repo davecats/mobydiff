@@ -2,7 +2,7 @@
 
 **STATUS: VALIDATED (2026-06-30)** — the LES (`[les] model = wale`) path works
 across the block decomposition and the 2:1 refinement interface (channel flow);
-see "Results" below. Open item 2 of `docs/next_session_edges_les.md` (item 1,
+see "Results" below. Open item 2 of `docs/history/next_session_edges_les.md` (item 1,
 edge/corner no-LES, is DONE in `../core_patch/`). Settings throughout: **WALE**,
 `momentum_reflux = false`, `interface_constant_half = true` (both keys removed
 2026-07-01; that configuration is now hardwired, so current inis omit them).

@@ -1,6 +1,6 @@
 # Next session: numerics review step 7 — `moby_prepare` does ALL preprocessing
 
-NEXT: `docs/next_session_after_step7.md` (2026-09-30).
+NEXT: `docs/history/next_session_after_step7.md` (2026-09-30).
 
 STATUS (2026-09-29): **7-0 … 7-4 DONE and gated in one session** (review
 section 10, step 7 MEASURED: every number, and the control that explains the
@@ -25,7 +25,7 @@ below was settled the same day — `nb` stays optional, the rank-box LAYOUT
 goes. Steps 0–6 of the
 review's execution sequence (`docs/numerics_review_2026-09-26.md` section
 10) are DONE and gated on `main`, and step 2d (the pipe re-run) is closed —
-see `docs/next_session_numerics_steps.md` STATUS. This is the next item.
+see `docs/history/next_session_numerics_steps.md` STATUS. This is the next item.
 Read `CLAUDE.md`, the review's section 1 (the design), section 10 step 7
 (the sequence) and `docs/prepare_solve_strategy.md` (what P0–P3 already
 built) before touching anything. Then execute the increments below, in
@@ -105,7 +105,7 @@ calls it; `moby_solve` calls it IN-PROCESS when the case file named by the
 ini is absent (`moby_solve --prepare` forces it), so every tutorial stays
 one command. The case-file key becomes the ONE user-facing name — proposal
 `[case] file = x.h5`, with `[ibm] coeff_file` accepted as an alias for one
-(RETIRED 2026-09-30, `docs/next_session_after_step7.md` item 2)
+(RETIRED 2026-09-30, `docs/history/next_session_after_step7.md` item 2)
 release and a deprecation line printed. STALENESS is attribute-by-attribute,
 not a hash: the readers already take `leng`, `re`, `nb`; add the refine
 keys, `periodic_*`, `refine_dims`, `remove_solid`, `keep_buried`, the STL

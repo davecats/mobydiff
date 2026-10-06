@@ -5,7 +5,7 @@
 # REFERENCE binary and the NEW binary and compares every field dataset with
 # tools/compare_fields.py at tolerance 0.
 #
-# BOTH binaries must be nofma builds (validation/scalar/compile_nofma.sh):
+# BOTH binaries must be nofma builds (`./compile.sh cpu_nofma` / `gpu_nofma`):
 # default FMA contraction introduces 1-2 ulp differences for arithmetically
 # identical source.
 #

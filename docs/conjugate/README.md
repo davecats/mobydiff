@@ -1,6 +1,6 @@
 # Conjugate heat transfer at an immersed interface
 
-> STATUS (2026-09-26): C1-C3 DONE and shipped (`[scalar.N] ibm_wall = conjugate`); C4 (conducting corners) not started. Current state: `docs/next_session_conjugate.md` STATUS header and `validation/conjugate/README.md`.
+> STATUS (2026-09-26): C1-C3 DONE and shipped (`[scalar.N] ibm_wall = conjugate`); C4 (conducting corners) not started. Current state: `docs/history/next_session_conjugate.md` STATUS header and `validation/conjugate/README.md`.
 
 **Two documents, and they answer different questions.**
 

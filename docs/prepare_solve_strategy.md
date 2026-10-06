@@ -1,6 +1,6 @@
 # Strategy: splitting mobydiff into `moby_prepare` + `moby_solve`
 
-Status 2026-09-29 (numerics review step 7, `docs/next_session_prepare_everything.md`):
+Status 2026-09-29 (numerics review step 7, `docs/history/next_session_prepare_everything.md`):
 **the solver no longer has an inline path.** Two of the "key decisions" in
 section 4 were REVERSED on purpose: the solver reads the leaf table from the
 case file and never rebuilds it (the row-by-row cross-check went with the

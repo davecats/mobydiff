@@ -1,7 +1,7 @@
 # 2D block refinement (refine_dims = xz) — R2D gates
 
 Gates for the anisotropic 2:1 refinement phases R2D-0..3
-(docs/next_session_refine2d.md): blocks refine in x and z only, the y
+(docs/history/next_session_refine2d.md): blocks refine in x and z only, the y
 direction keeps ONE global (possibly stretched) node line at all levels.
 `[blocks] refine_dims = xyz` (default octree) | `xz` (quadtree).
 

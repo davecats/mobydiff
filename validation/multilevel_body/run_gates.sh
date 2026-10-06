@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # A3 INCREMENT 0 gates — multi-level (3-level) refine_body prerequisite
-# (docs/next_session_airfoil.md, A3): the leaf table, exchange entries and
+# (docs/history/next_session_airfoil.md, A3): the leaf table, exchange entries and
 # dwall tiles at levels > 1 before any airfoil physics.
 #
 #   ./run_gates.sh              # all gates, sequentially (one job at a time)

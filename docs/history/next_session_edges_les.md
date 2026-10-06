@@ -4,11 +4,11 @@
 
 Branch `claude/jacobi-interface`. This is the CURRENT authoritative handoff for the
 2:1 refinement work; it supersedes the deleted `next_session_*` / `interface_band`
-handouts. Lineage (still valid background): `docs/jacobi_interface_handout.md`
-(why the branch exists, the damped-Jacobi restart), `docs/interface_review.md`
+handouts. Lineage (still valid background): `docs/history/jacobi_interface_handout.md`
+(why the branch exists, the damped-Jacobi restart), `docs/history/interface_review.md`
 (the decisive "collocated papers, staggered code" observation),
 `docs/interface_projection_derivation.md` (SPD projection),
-`docs/momentum_interface_handout.md` (the reflux), `docs/corner_reconstruction_strategy.md`
+`docs/history/momentum_interface_handout.md` (the reflux), `docs/history/corner_reconstruction_strategy.md`
 (edge/corner reconstruction), `docs/block_refinement_strategy.md` (master plan).
 Memory: `interface-validation-suite`.
 
@@ -75,7 +75,7 @@ in the coarse interior exercises all 6 faces + 12 edges + 8 corners.
 
 - Uniform-flow / Beltrami exactness on edges+corners already passes (Phase 3b/3c
   gates; `validation/beltrami/refined_fast.ini` is the 3D patch). The corner
-  reconstruction is the slope-limited cubic (`docs/corner_reconstruction_strategy.md`,
+  reconstruction is the slope-limited cubic (`docs/history/corner_reconstruction_strategy.md`,
   `lim_extrap`, corner-gated) — but note that is part of the cubic deep-halo
   reconstruction which is SKIPPED under const-1/2. Check what const-1/2 actually
   does at edges/corners (the velocity prolong there keeps plain injection — see
@@ -92,7 +92,7 @@ in the coarse interior exercises all 6 faces + 12 edges + 8 corners.
 
 ## Open item 2 — VALIDATE LES across the 2:1 interface
 
-> HANDOUT 2026-06-30: full plan + next-session prompt in `docs/next_session_les.md`
+> HANDOUT 2026-06-30: full plan + next-session prompt in `docs/history/next_session_les.md`
 > (LES path mechanics, Phase A decomposition compat, Phase B interface mechanics,
 > Phase C three turbulence cases — uniform / slab-refined / block-refined). The
 > notes below are the seed for that handout.

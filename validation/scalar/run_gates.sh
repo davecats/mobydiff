@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Passive-scalar S1 gates (docs/next_session_scalar.md, increment S1).
+# Passive-scalar S1 gates (docs/history/next_session_scalar.md, increment S1).
 #
 #   ./run_gates.sh [group]      groups: uniform conserve conduction wave pr det
 #

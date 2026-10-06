@@ -1,16 +1,20 @@
 #!/usr/bin/env bash
 # C3 gates: the FLUID-FRACTION-WEIGHTED CAPACITY, the conjugate NUSSELT
 # diagnostic and the TIME-STEP decision
-# (docs/next_session_conjugate.md Section 10, increment C3).
+# (docs/history/next_session_conjugate.md Section 10, increment C3).
 #
 #   ./run_gates_c3.sh [fraction|transient|nusselt|budget|channel|guard|all]
 #
 # Environment: BIN   (default ../../build_cpu/moby_solve)
 #              PREP  (the moby_prepare next to BIN)
 #              NBIN/NPREP/GBIN (the nofma triple, determinism)
-#              CBIN/CPREP (the archived C2 pair, ~/c2_ref_binaries -- the
-#                          POINTWISE-capacity control of the transient gate)
 #              RANKS (default 1)
+#
+# The transient gate's POINTWISE-capacity CONTROL leg (the archived C2 binary
+# on the same inis) was RETIRED 2026-10-06: that binary predates [case] file
+# and would silently run the analytic wavy indicator on today's template, and
+# the current solver has no pointwise switch. Its numbers stand in the README
+# (orders 1.09 / 0.54 against C3's 2.00 / 2.00).
 #
 # The three items share one cost: the capacity and the time-step convention
 # both move dt at cut cells, so C1's and C2's suites are re-run after them
@@ -24,8 +28,6 @@ PREP=${PREP:-$(dirname "$BIN")/moby_prepare}
 NBIN=${NBIN:-$ROOT/build_cpu_nofma/moby_solve}
 NPREP=${NPREP:-$ROOT/build_cpu_nofma/moby_prepare}
 GBIN=${GBIN:-$ROOT/build_gpu_nofma/moby_solve}
-CBIN=${CBIN:-$HOME/c2_ref_binaries/moby_solve_cpu}
-CPREP=${CPREP:-$HOME/c2_ref_binaries/moby_prepare_cpu}
 RANKS=${RANKS:-1}
 PY=${PY:-python3}
 CMP="$PY $ROOT/tools/compare_fields.py --tolerance 0"
@@ -114,14 +116,12 @@ if want transient; then
     $PY ./check_transient.py mode --y-wall 0.31 --kappa $ka --cap $cap
     : > c3_transient.dat
     for ny in 16 32 64; do
-        for leg in c3 c2; do
+        for leg in c3; do
             bin=$BIN; prep=$PREP
-            [ "$leg" = c2 ] && { bin=$CBIN; prep=$CPREP; }
-            [ -x "$bin" ] || { echo "   (skipping the $leg leg: no binary $bin)"; continue; }
             tag="tr_${leg}_$ny"
             transient_case "$ny" "$ka" "$cap" "$tag" "$bin" "$prep" || { report 1; continue; }
             ns=$($PY -c "print(int(round(0.05/(0.01/$ny**2))))")
-            echo "   -- ny = $ny, $leg ($( [ $leg = c3 ] && echo 'fraction-weighted' || echo 'pointwise' ) capacity)"
+            echo "   -- ny = $ny, $leg (fraction-weighted capacity)"
             run $PY ./check_transient.py check "${tag}_r_$((ns + 1)).h5" \
                 --y-wall 0.31 --kappa $ka --cap $cap --heat "$tag.heat.txt" \
                 --emit c3_transient.dat --tag "$leg $ny"

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""RANS T2 channel gate checker (docs/next_session_iddes.md, phase T2).
+"""RANS T2 channel gate checker (docs/history/next_session_iddes.md, phase T2).
 
 Reads a solver field file (block-table layout), builds x/z-averaged
 profiles of u, k, omega, nut on the y line and checks:

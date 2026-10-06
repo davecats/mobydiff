@@ -16,9 +16,9 @@
 # reproduces the S2 binary's fields at TOLERANCE 0 on those very inis, no
 # statistic derived from them can have moved.
 #
-# BOTH binaries must be nofma builds (compile_nofma.sh).
+# BOTH binaries must be nofma builds (`./compile.sh cpu_nofma` / `gpu_nofma`).
 #
-#   REF=~/s2_ref/moby_solve_cpu_nofma NEW=../../build_cpu_nofma/moby_solve ./run_bitexact_s3.sh
+#   REF=~/backflow_ref_binaries/build_cpu_nofma/moby_solve NEW=../../build_cpu_nofma/moby_solve ./run_bitexact_s3.sh
 #
 # The output prefix is keyed on MODE: two suites with the same MODE running
 # at once in this tree delete each other's snapshots (measured 2026-09-27,

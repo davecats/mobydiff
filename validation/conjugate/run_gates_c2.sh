@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # C2 gates: THE TANGENTIAL TERM the C1 baseline drops -- its indicator
 # e_face, and the correction behind [scalar.N] tangential_correction
-# (docs/next_session_conjugate.md Section 10, increment C2).
+# (docs/history/next_session_conjugate.md Section 10, increment C2).
 #
 #   ./run_gates_c2.sh [flux|indicator|bvp|cylinder|stzero|residual|converge|coco|dt|c1|all]
 #

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# IDDES T5 (DDES-shielding) gate runner — docs/next_session_iddes.md, phase T5.
+# IDDES T5 (DDES-shielding) gate runner — docs/history/next_session_iddes.md, phase T5.
 # Local-friendly (the channel legs run in minutes-hours on a GPU; CPU works).
 #
 #   ./run_gates.sh              # all gates, sequentially (one job at a time)

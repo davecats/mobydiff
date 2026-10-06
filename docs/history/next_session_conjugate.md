@@ -536,12 +536,12 @@ volume-fraction tiles — an entire preprocessing increment — are all gone. Th
 earlier, heavier formulation survives as the *escalation path* (§3), one
 arithmetic term away. Read §0–§3 and you have the whole method.
 
-Prerequisite: **S3** of `docs/next_session_scalar.md` (cell-centred IBM
+Prerequisite: **S3** of `docs/history/next_session_scalar.md` (cell-centred IBM
 coefficients, `[scalar.N] ibm_wall = dirichlet | adiabatic`). Conjugate is the
 third mode of the same machinery — see §5. **The prerequisite is MET: S0–S5a
 are all landed and gated** (S0–S2 2026-08-03; S3, S4 and S5a 2026-08-04, branch
 `scalar`, HEAD `5756aa9`). Read the STATUS header of
-`docs/next_session_scalar.md` before starting — S3 landed with two deviations
+`docs/history/next_session_scalar.md` before starting — S3 landed with two deviations
 that matter here:
 
 - **`ibm%mu` was NOT given the `VAR_P` extent** (only `ibm%coef` was); the

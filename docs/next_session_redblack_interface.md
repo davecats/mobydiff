@@ -175,7 +175,7 @@ substantially faster per iteration than damped Jacobi (`omega <= 0.8`), and the
 projection dominates the step. (ii) The boundary-layer campaign found
 `chebyshev + niter=6 + Dirichlet-p outlet` to be **unstable on long steady runs**
 (2-dx pressure mode, e-fold ~36 t.u.; see memory `boundary-layer-case` and
-`docs/next_session_boundary_layer.md`), leaving plain Jacobi — stable but slow —
+`docs/history/next_session_boundary_layer.md`), leaving plain Jacobi — stable but slow —
 as the only option for that class of case. Red-black is the third option, and it
 should not be restricted to single-level grids.
 
@@ -500,8 +500,8 @@ overhead in the opposite direction.
 - `docs/block_refinement_strategy.md` §6 — ownership, symmetric relaxation,
   stage-frozen ghosts, conservative reconciliation, red-black parity across a
   jump.
-- `docs/jacobi_interface_handout.md` — the diagnosis method (residual divergence,
+- `docs/history/jacobi_interface_handout.md` — the diagnosis method (residual divergence,
   banded).
 - `docs/next_session_profiling.md` (removed 2026-09-26; git history) — why the exchange count matters (R0).
-- `docs/next_session_boundary_layer.md` + memory `boundary-layer-case` — the
+- `docs/history/next_session_boundary_layer.md` + memory `boundary-layer-case` — the
   chebyshev/outlet instability that motivates a third smoother.

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# RANS T2+T3+T4 gate runner (docs/next_session_iddes.md, phases T2/T3/T4)
+# RANS T2+T3+T4 gate runner (docs/history/next_session_iddes.md, phases T2/T3/T4)
 # — the LONG physics runs, meant for a big machine (the T4 channels are
 # small and also run fine locally):
 #
@@ -102,7 +102,7 @@ fi
 
 # T4 gates (a)/(b): the gamma-Re_thetat transition model on channels (the
 # bc machinery has no inflow/outflow, so the canonical flat plate is
-# deferred; see the T4 bullet in docs/next_session_iddes.md). lam30 is the
+# deferred; see the T4 bullet in docs/history/next_session_iddes.md). lam30 is the
 # transition-OFF control at the same Re_tau 30 / tu 5% conditions where
 # plain SST self-sustains on its weakly-turbulent branch; lam30t must
 # laminarize them; laminart guards the subcritical Re_tau 10 case; turb180t

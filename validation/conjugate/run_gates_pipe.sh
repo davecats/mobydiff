@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pipe-campaign prerequisites F1 and F5 (docs/next_session_pipe_cht.md).
+# Pipe-campaign prerequisites F1 and F5 (docs/history/next_session_pipe_cht.md).
 #
 #   F1  [scalar.N] source_dir -- the Kasagi source on a chosen direction.
 #   F2  [scalar.N] solid_thickness -- the solid's second material band, i.e.

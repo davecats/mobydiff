@@ -45,7 +45,7 @@ finding (10400 steps not 10401, `max|pn|` 9.09 not 1.5e6, and the last real
 step bit-identical), and not over-triggering on a genuine final partial
 step.
 
-Prerequisite reading: the STATUS header of `docs/next_session_scalar.md`
+Prerequisite reading: the STATUS header of `docs/history/next_session_scalar.md`
 (what the two 2026-08-05 fixes were), `validation/rans_sst/README.md` (the
 cold-start IC write-up, which is where the landmine is documented in full),
 and the "Active work" passive-scalar block of CLAUDE.md.
@@ -315,7 +315,7 @@ solve+prepare, commit-pinned to `8f60944`, PROVENANCE inside).
 GPU binary of `~/s5b_ref_binaries/` — see B3. Build both paths with the module loaded; always
 `mpirun`. The re-run landmines (RANKS pinning, cetus' missing h5py, `pgrep`
 self-matching, the `det` tolerance-0 nofma requirement) are listed in §12 of
-`docs/next_session_scalar.md` — read them, they cost the last session real
+`docs/history/next_session_scalar.md` — read them, they cost the last session real
 time.
 
 **Recording.** Numbers that reproduce need one line each in
@@ -390,8 +390,8 @@ code reading a device-mapped array after `enter_*_data` sees a stale copy.*
 ## 3. Next-session prompt
 
 > Two jobs on branch `scalar`, in this order — read
-> `docs/next_session_verification.md` in full first, then the STATUS header
-> of `docs/next_session_scalar.md` and the "Active work" passive-scalar block
+> `docs/history/next_session_verification.md` in full first, then the STATUS header
+> of `docs/history/next_session_scalar.md` and the "Active work" passive-scalar block
 > of CLAUDE.md.
 >
 > **(a) The host/device staleness audit (§2) — do this FIRST, it is the half
@@ -426,7 +426,7 @@ code reading a device-mapped array after `enter_*_data` sees a stale copy.*
 > legs there via `validation/scalar/env_cetus.sh`, compare locally);
 > `ps -C moby_solve` does not match the archived reference binaries and
 > `pgrep -f`/`pkill -f` match the shell running them, so kill by PID — are in
-> §12 of `docs/next_session_scalar.md`. Never declare a group done with a
+> §12 of `docs/history/next_session_scalar.md`. Never declare a group done with a
 > failing build or an unrecorded number.
 >
 > Record reproduced numbers in `validation/scalar/README.md`'s re-gate table

@@ -212,6 +212,6 @@ and HoreKa has no h5py. Unchanged from previous campaigns.
 4. `mpi_wait`, still ~10–12 % of the step and untouchable by partitioning or
    overlap (2026-09-10 §3, and the A0 probe).
 
-The handout `docs/next_session_apply_registers.md` is **closed**: its question
+The handout `docs/history/next_session_apply_registers.md` is **closed**: its question
 was "can 88 become 64", the answer is yes by L2 alone, and the time followed as
 its §6 predicted.

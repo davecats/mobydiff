@@ -66,7 +66,7 @@ outlet had the predictor NEVER write the outlet face (the comment at
 `pressure_solver.f90` ~line 699 still says so). That is consistent with the
 incremental pressure, but the face then has no convection and no diffusion,
 and the Poiseuille gate converged to a plug profile
-(`docs/next_session_airfoil.md`, "AMENDMENT to §THE-gap item 5"). The
+(`docs/history/next_session_airfoil.md`, "AMENDMENT to §THE-gap item 5"). The
 amendment added the zero-gradient copy. Neither state gives the face a
 momentum equation; the copy merely borrows the neighbour's VALUE.
 

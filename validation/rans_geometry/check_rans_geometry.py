@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate checker for the RANS T1 geometry state (docs/next_session_iddes.md).
+"""Gate checker for the RANS T1 geometry state (docs/history/next_session_iddes.md).
 
 Reads a <prefix>_ransgeom.h5 dump (rans.f90: blocks table, interior
 dwall/yeff/wallcell in the block-table layout, per-block cell-centre

@@ -2,7 +2,7 @@
 
 Validates the 2:1 refinement at **edges** (two interface faces meeting) and
 **corners** (three) in turbulence — the flat-face (y-band) case validated on
-2026-06-29 has only y-face interfaces. See `docs/next_session_edges_les.md`
+2026-06-29 has only y-face interfaces. See `docs/history/next_session_edges_les.md`
 open item 1. Production interface settings: const-1/2 transfer, no momentum
 reflux (run 2026-06-29 with `interface_constant_half = true`, `momentum_reflux =
 false`; both keys were removed 2026-07-01 and that configuration is now hardwired).
@@ -139,7 +139,7 @@ flat band.
   inflates the band-ratio denominator → p shows as ~0).
 
 Conclusion: const-1/2 + `momentum_reflux=false` is clean at edges and corners,
-matching the flat-face result. Open item 1 of `docs/next_session_edges_les.md`
+matching the flat-face result. Open item 1 of `docs/history/next_session_edges_les.md`
 (edge/corner validation) is DONE; open item 2 (LES across the interface) remains.
 
 ### Cross-section figures

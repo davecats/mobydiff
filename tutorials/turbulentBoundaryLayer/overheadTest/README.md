@@ -1,7 +1,7 @@
 # Block-overhead timing baseline
 
 The measurement case that the block/2:1-interface optimisation work hangs on
-(`docs/next_session_block_overhead.md`). It answers two questions on the
+(`docs/history/next_session_block_overhead.md`). It answers two questions on the
 production boundary-layer grid:
 
 1. **what does the equal-size block lattice cost** when it buys nothing
@@ -135,7 +135,7 @@ Results in `results_refined_rect_2026-08-28.md`, which also records that the
 previous refined profile was stale by 20.9 % and what that had overstated.
 
 **But the mechanism is exchange traffic, not footprint** (Phase 0,
-`docs/next_session_block_overhead.md` STATUS): 86 % of the tax is
+`docs/history/next_session_block_overhead.md` STATUS): 86 % of the tax is
 `exch/local_copy`, the volume kernels are untouched (`momentum` 1.012), and the
 volume law predicts the total only because halo cells are what gets *copied*.
 `(nb+2)³/nb³ − 1` is exactly the halo-to-interior cell ratio.
@@ -184,7 +184,7 @@ cell counts (60.6 M vs 62.9 M) and must be compared **per cell**.
 
 Rebuilt 2026-08-07. The original directory was written on 2026-08-06 but never
 committed and did not survive; the measurements above are the ones it recorded
-(`docs/next_session_block_overhead.md`). The configs were reconstructed from
+(`docs/history/next_session_block_overhead.md`). The configs were reconstructed from
 `production.ini` and pinned by three invariants the original reported, all of
 which the rebuild reproduces exactly:
 

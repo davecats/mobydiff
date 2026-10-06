@@ -1,7 +1,7 @@
 # Pre-registered readings — rdenom is static on a body-free rank
 
 Written **before** the job ran, at `fc816e1`. This is task 2 of
-`docs/next_session_divergence_halos.md`, but **not the change that handout
+`docs/history/next_session_divergence_halos.md`, but **not the change that handout
 proposes**, and the difference is the point.
 
 ## The handout's premise is stale

@@ -70,7 +70,7 @@ Three independent reasons, any one sufficient:
 **What the exchange has become is a device-local copy problem**, not a
 communication one: `local_copy` + `pack` + `unpack` = 10.9 % of the step. That
 is kernel-efficiency work on the halo gather, which
-`docs/next_session_block_overhead.md` already measured at its ~51 %-of-peak
+`docs/history/next_session_block_overhead.md` already measured at its ~51 %-of-peak
 coalescing floor — so it is not free either, but it is where the remaining
 exchange time actually is.
 

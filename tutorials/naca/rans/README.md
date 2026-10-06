@@ -440,7 +440,7 @@ both live on disk only — a fresh clone regenerates them with
 
 Full investigation trail (fan/staircase analysis, the skew-convection
 migration, resolution and ambient studies):
-docs/next_session_naca_re4e5.md, docs/next_session_skew_convection.md.
+docs/history/next_session_naca_re4e5.md, docs/history/next_session_skew_convection.md.
 
 > **BoostConv is NOT in this solver.** The steady-state residual-recombination
 > accelerator that the investigation trail mentions was left behind on

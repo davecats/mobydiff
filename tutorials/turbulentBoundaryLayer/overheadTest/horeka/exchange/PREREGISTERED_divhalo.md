@@ -1,7 +1,7 @@
 # Pre-registered readings — the between-iteration divergence halo, with peers
 
 Written **before** the job ran, at `3c2903a`. Task 1 of
-`docs/next_session_divergence_halos.md`.
+`docs/history/next_session_divergence_halos.md`.
 
 ## What is being changed
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # S4 gates: the passive scalars' STATISTICS AND TOOLING
-# (docs/next_session_scalar.md Section 9, scalar_stats.f90).
+# (docs/history/next_session_scalar.md Section 9, scalar_stats.f90).
 #
 #   ./run_gates_s4.sh [stats|accum|plane|levels|restart|det|noeffect|heat|adia|cyl|tools|all]
 #

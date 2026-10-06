@@ -2,7 +2,7 @@
 # Regenerate the prerequisite data files for the LES<->IBM coupling validation.
 # Needed only if you don't have the committed files / want to rebuild from scratch.
 # Requires: the CPU build (moby_prepare), a solver build for the cold start, and
-# the geometry venv with trimesh + h5py (here: /home/davide/ibmc/bin/python) for
+# the geometry venv with trimesh + h5py (here: $HOME/ibmc/bin/python) for
 # the STL and IC generators. On another host, point PY/PREP/SOLVE/MPIRUN at the
 # local equivalents, or just rsync this whole directory (the .h5 files travel
 # with it) and skip setup entirely.
@@ -28,7 +28,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-PY="${PY:-/home/davide/ibmc/bin/python}"
+PY="${PY:-$HOME/ibmc/bin/python}"
 ROOT=../../..
 PREP="${PREP:-$ROOT/build_cpu/moby_prepare}"
 SOLVE="${SOLVE:-${MAIN:-$ROOT/build_gpu/moby_solve}}"

@@ -171,7 +171,7 @@ in that memory. Plus:
 
 ## NEXT-SESSION PROMPT
 
-> Read `docs/next_session_interface_normal.md` and the `momentum-interface-todo`,
+> Read `docs/history/next_session_interface_normal.md` and the `momentum-interface-todo`,
 > `interface-validation-suite`, `jacobi-interface-restart`,
 > `beltrami-interface-regression` memories. Branch `claude/jacobi-interface`. The
 > 2:1 interface + LES are validated; the one remaining blemish is an orientation

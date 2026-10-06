@@ -8,7 +8,7 @@
 
 Written 2026-09-25 on branch `port/jacobi-interface-features` (off `main` at
 `68e8f16`). The previous session consolidated every branch into `main`
-(`docs/next_session_merge_to_main.md`); this one ported four features out of
+(`docs/history/next_session_merge_to_main.md`); this one ported four features out of
 `claude/jacobi-interface` and dropped two. **Everything below is measured.**
 
 ## 0 — Where this stands
@@ -147,7 +147,7 @@ family as the A2 velocity-neutral `pn` drift already in CLAUDE.md.
 * `tutorials/naca/LES/STRATEGY.md` + `atzori.pdf` — SALVAGED into `main`. A plan
   for work never started, superseded by nothing.
 * `validation/channel_interface/developed/gate6_skew_stats.png` — SALVAGED, and
-  it had to be: `docs/next_session_skew_convection.md`, which came over with the
+  it had to be: `docs/history/next_session_skew_convection.md`, which came over with the
   port, cites it by name, so the reference was dangling until it did.
 * `validation/multilevel_body/make_uniform_twin.py` and
   `validation/naca0012/xz_aoa{0,4,8}.ini` — deliberately removed from `main`

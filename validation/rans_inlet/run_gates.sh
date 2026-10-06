@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# A3 INCREMENT 1 gate (b): RANS scalar inlet values (docs/next_session_airfoil.md).
+# A3 INCREMENT 1 gate (b): RANS scalar inlet values (docs/history/next_session_airfoil.md).
 #
 # Environment:  BIN=<solver>   (default ../../build_cpu/main)
 set -o pipefail

@@ -510,7 +510,7 @@ remains:
 
 ## What this changes
 
-`docs/next_session_2to1_penalty.md` P1 (repartition the Morton chain) and the
+`docs/history/next_session_2to1_penalty.md` P1 (repartition the Morton chain) and the
 transport-tuning options are both aimed at a transport cost that **does not
 exist**: the blocked exchange moves its bytes in ~1 us once the ranks are
 together, against 64 us for the unblocked decomposition it was losing to. The

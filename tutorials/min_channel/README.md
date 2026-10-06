@@ -11,7 +11,7 @@
 > bit-exactness; the blow-up study below is the record of how it got there.
 
 This is the **Step-1 confirmation gate** for the 2:1 interface projection
-instability (`docs/interface_review.md` §vi). It
+instability (`docs/history/interface_review.md` §vi). It
 reproduces the `validation/channel_interface` turbulent blow-up at ~1/200th the
 cost by keeping the *exact* Reynolds number, wall-normal/streamwise grid and
 velocity scale of the Re_tau=180 channel but shrinking the spanwise extent to a

@@ -3,7 +3,7 @@
 Run a developed turbulent channel (Re_tau = 180) with 2:1-refined wall bands and
 collect **time-averaged** statistics, to quantify the interface signatures cleanly
 (the single-snapshot probe at t≈0.08 is not converged — see
-`docs/next_session_edges_les.md`). The energy-conserving
+`docs/history/next_session_edges_les.md`). The energy-conserving
 **constant-1/2 interface** keeps the refined channel stable; it is hardwired
 (the `[blocks] interface_constant_half` toggle was removed 2026-07-01).
 
@@ -103,7 +103,7 @@ walls + coarse in the core, with the 2:1 interface marked.
 
 The u'/v' interface BANDS are a momentum-reflux artifact (the reflux injects the
 fine-side resolved Reynolds-stress flux into the under-resolved coarse interface
-cell; see `docs/next_session_edges_les.md`). The study (driver
+cell; see `docs/history/next_session_edges_les.md`). The study (driver
 `run_reflux_study.sh`, removed 2026-09-26 with the key; in git history) ran the
 developed two-leg stats for reflux ON and OFF to test the trade: reflux OFF
 removes the band but the reflux existed to conserve the MEAN interface flux

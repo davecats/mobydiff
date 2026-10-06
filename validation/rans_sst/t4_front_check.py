@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""T4 STEP-0 evidence (docs/next_session_iddes.md; the first-order-upwind
+"""T4 STEP-0 evidence (docs/history/next_session_iddes.md; the first-order-upwind
 deviation comment in rans.f90): on the channel gates — the only transition
 cases the solver can host, since the bc machinery has no inflow/outflow —
 the gamma front is WALL-NORMAL and the mean wall-normal velocity is ~0, so

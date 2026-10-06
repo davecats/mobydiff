@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Conjugate pipe flow vs Neuhauser (NekRS body-fitted DNS) -- the campaign
-# driver. docs/next_session_pipe_cht.md Sections 0.1-0.4.
+# driver. docs/history/next_session_pipe_cht.md Sections 0.1-0.4.
 #
 #   ./run_pipe.sh [geom|prepare|check|dev|vel|therm|settle|settle2|stats]
 #

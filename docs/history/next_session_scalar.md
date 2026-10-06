@@ -11,7 +11,7 @@ STATUS: **CONCLUDED 2026-08-07.** S0 + S1 + S2 + S3 + S4 + S5a LANDED AND
 GATED (S0–S2 2026-08-03, S3 / S4 / S5a 2026-08-04, branch `scalar`), the
 2026-08-05/06 follow-up closed S5a's two open items, and the 2026-08-07
 session closed the verification debt they left
-(`docs/next_session_verification.md`: every outstanding gate group
+(`docs/history/next_session_verification.md`: every outstanding gate group
 re-measured and reproducing, plus a host/device staleness audit that came
 back clean). **S0–S5a is the shipped passive-scalar feature set.**
 
@@ -40,7 +40,7 @@ already the project stance; it is now the shipped behaviour rather than a
 pending increment.
 
 **The live scalar work is conjugate heat transfer**,
-`docs/next_session_conjugate.md` increment **C1** — deliberately its own
+`docs/history/next_session_conjugate.md` increment **C1** — deliberately its own
 session, because it is a third `ibm_wall` mode acting on the same cut cells
 the Dirichlet penalization pins, and it has to respect the two S3 deviations
 its own doc lists (`ibm%mu` has no `VAR_P` extent; the heat diagnostic must
@@ -75,7 +75,7 @@ and stand:
   `run_gates_s5.sh det`. Each is expected to be safe for a stated reason
   (turbulence-free, body-free, restart-based, or `ibm_value = 1` where the
   heat fix is a measured no-op) — but those are arguments, not
-  measurements. **`docs/next_session_verification.md` is the session that
+  measurements. **`docs/history/next_session_verification.md` is the session that
   converts them**, together with the audit of the host/device staleness
   class that the GPU half of the IC fix exposed. `run_bitexact.sh` (CPU
   AND GPU) and `run_bitexact_s3.sh` WERE re-run in full.
@@ -697,7 +697,7 @@ conv = ( q(i+1,j,k,VAR_U,b)·½(s_i + s_{i+1}) − q(i,j,k,VAR_U,b)·½(s_{i−1
 
 `[flow] convection = skew` must apply to the scalar too: `conv_skew = conv_div
 − s·(div u)|stencil`, the divergence built from the SAME face velocities. The
-momentum lesson (docs/next_session_skew_convection.md, the C11 interface
+momentum lesson (docs/history/next_session_skew_convection.md, the C11 interface
 instability) is that the divergence form is only neutral for exactly
 divergence-free advection, which the incremental projection and the 2:1
 interface halos never grant.
@@ -706,7 +706,7 @@ interface halos never grant.
 rans.f90's k/ω/γ/R̃e_θt transport (lines 1641-1665, 1768-1783) — as a documented
 deviation awaiting the TVD/van-Leer increment, and the project stance is that
 global upwinding is off-limits in an energy-conserving code
-(docs/next_session_airfoil.md:104). Passive scalars therefore get central /
+(docs/history/next_session_airfoil.md:104). Passive scalars therefore get central /
 skew only; when the deferred TVD increment lands (it needs a second upwind halo
 cell, the blocker shared with the RANS scalars) it serves both from the same
 machinery. Until then, sharp-front over/undershoot is a KNOWN limitation, not a
@@ -1070,14 +1070,14 @@ in `moby_solve.f90`, the lifted `config.f90` rejection, the correlations in
 passive-scalar plan is concluded, S5b is booked on the comm/halo track and
 S5c is parked. The prompt below is kept intact for whoever picks either up;
 nothing in it is stale, only its priority changed. **The live work on this
-branch is `docs/next_session_conjugate.md` increment C1** — conjugate heat
+branch is `docs/history/next_session_conjugate.md` increment C1** — conjugate heat
 transfer as the third `ibm_wall` mode, whose prerequisite (S3) is met and
 whose own next-session prompt is up to date. (S5a, the thermal wall
 function, was consumed 2026-08-04, and the two items it left open were
 consumed by the 2026-08-05/06 follow-up — their prompts are kept below as
 history.)
 
-> Implement increment **S5b/S5c** of `docs/next_session_scalar.md` (pick
+> Implement increment **S5b/S5c** of `docs/history/next_session_scalar.md` (pick
 > one) on branch `scalar` — read the doc in full first: its STATUS header
 > records exactly what S0–S5a landed, every deviation, every finding and every
 > gate number; also read the "Active work" section of CLAUDE.md for the
@@ -1185,7 +1185,7 @@ history.)
 
 ### Historical: the S5a prompt (consumed 2026-08-04)
 
-> Implement increment **S5a** of `docs/next_session_scalar.md` — the thermal
+> Implement increment **S5a** of `docs/history/next_session_scalar.md` — the thermal
 > wall function — on branch `scalar`. `[rans] wall_treatment = wall_function`
 > together with `[scalar]` is currently a HARD CONFIG ERROR
 > (`validate_turbulence_values`, gate (k)); lift it by adding the
@@ -1207,7 +1207,7 @@ history.)
 
 ### Historical: the S4 prompt (consumed 2026-08-04)
 
-> Implement increment **S4** of `docs/next_session_scalar.md` — passive-scalar
+> Implement increment **S4** of `docs/history/next_session_scalar.md` — passive-scalar
 > STATISTICS AND TOOLING — on branch `scalar` (read the doc in full first: its
 > STATUS header records exactly what S0/S1/S2/S3 landed, every deviation, every
 > finding and every gate number; also read the "Active work" section of
@@ -1262,7 +1262,7 @@ history.)
 
 ### Historical: the S3 prompt (consumed 2026-08-04)
 
-> Implement increment **S3** of `docs/next_session_scalar.md` — the
+> Implement increment **S3** of `docs/history/next_session_scalar.md` — the
 > cell-centred immersed-boundary coefficients for the passive scalars — on
 > branch `scalar` (read the doc in full first: its STATUS header records
 > exactly what S0/S1/S2 landed, every deviation and every gate number; also
@@ -1388,7 +1388,7 @@ history.)
 
 ### Historical: the S2 prompt (consumed 2026-08-03)
 
-> Implement increment **S2** of `docs/next_session_scalar.md` — the turbulent
+> Implement increment **S2** of `docs/history/next_session_scalar.md` — the turbulent
 > closure of the passive scalars — on branch `scalar` (read the doc in full
 > first: its STATUS header records exactly what S0/S1 landed, the three
 > flagged deviations, and every gate number; also read the "Active work"
@@ -1449,7 +1449,7 @@ history.)
 ### Historical: the S0 + S1 prompt (consumed 2026-08-03)
 
 > Implement passive scalars in mobydiff, increments **S0** and **S1** of
-> `docs/next_session_scalar.md` (read it first, in full — it is the design and
+> `docs/history/next_session_scalar.md` (read it first, in full — it is the design and
 > it was written from a complete read of the affected code; also read the
 > "Active work" section of CLAUDE.md for the project conventions). Branch
 > `scalar`, already checked out and identical to `boundaryLayer` in `src/`.

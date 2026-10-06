@@ -1,6 +1,6 @@
 # Next session(s) — airfoil flow case: freestream in/outflow, lift/drag, quasi-2D RANS+transition
 
-> STATUS (2026-09-26): DONE -- A0-A3 complete (CLAUDE.md "Active work"). Historical record. Since then: `validation/naca0012/` and `validation/sd7003/` were removed (2026-09-26; git history) -- the live airfoil case is `tutorials/naca/rans/`; the penalization-integral C_L/C_D was REPLACED by the control-volume budget (`[case.airfoil] cv_box`, `docs/next_session_cv_forces.md`), so the "penalization integral stays the runtime statistic" decision below no longer holds; `tools/mobygeom.py` geometry subcommands are retired (use `moby_prepare`).
+> STATUS (2026-09-26): DONE -- A0-A3 complete (CLAUDE.md "Active work"). Historical record. Since then: `validation/naca0012/` and `validation/sd7003/` were removed (2026-09-26; git history) -- the live airfoil case is `tutorials/naca/rans/`; the penalization-integral C_L/C_D was REPLACED by the control-volume budget (`[case.airfoil] cv_box`, `docs/history/next_session_cv_forces.md`), so the "penalization integral stays the runtime statistic" decision below no longer holds; `tools/mobygeom.py` geometry subcommands are retired (use `moby_prepare`).
 
 ## STATUS 2026-07-14 — A3 increments 0-2 DONE (all gates PASS), increment 3 finishing
 
@@ -234,7 +234,7 @@ everything after is case-level composition.
   the staircase solid/fluid face flux + graded near-body cells
   (`validation/scalar/check_scalar_ibm.py surface`, validated by a discrete
   energy budget to 3.9e-4 and by the Gauss/CV cross-check to 0.90 %).
-- **The T4/T5 inlet gaps, already itemized** (docs/next_session_iddes.md
+- **The T4/T5 inlet gaps, already itemized** (docs/history/next_session_iddes.md
   T4 entry): patch classification exists; the RANS scalars lack inlet
   ghost VALUES; first-order upwind was kept with channel-front evidence
   and the TVD revisit was explicitly deferred to "the flat-plate/inlet
@@ -551,7 +551,7 @@ quadrature on the body.
 
 ## NEXT-SESSION PROMPT — A3 (RANS scalar inlets + SD7003 transition)
 
-> Read `docs/next_session_airfoil.md` (A3 section + STATUS) and CLAUDE.md.
+> Read `docs/history/next_session_airfoil.md` (A3 section + STATUS) and CLAUDE.md.
 > Branch `claude/jacobi-interface`; A0–A2 are DONE and committed (12a048f) —
 > build fresh nofma reference binaries (main_ref) at HEAD before touching
 > code. Implement phase A3 in gated increments, one solver job at a time.

@@ -6,7 +6,7 @@ Branch **`claude/jacobi-interface`** (forked from `cbd07d0`). This is a clean
 restart of the 2:1 coarse–fine interface treatment on a deliberately simple
 pressure solver, after every red-black scheme failed the local mass-conservation
 gate. Read this first; then `docs/interface_projection_derivation.md` and
-`docs/interface_review.md` for the literature analysis carried over from the
+`docs/history/interface_review.md` for the literature analysis carried over from the
 prior work.
 
 ## Why we restarted

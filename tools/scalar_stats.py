@@ -157,7 +157,7 @@ def cmd_heat(a) -> int:
     """The body heat release [scalar] heat_interval writes, as a Nusselt
     number. The columns are the cancellation-free pair (staircase interface
     flux, graded-cell penalization) -- see scalar_stats.f90 and the S3 FINDING
-    in docs/next_session_scalar.md for why the penalization integral ALONE is
+    in docs/history/next_session_scalar.md for why the penalization integral ALONE is
     structurally incomplete for a Dirichlet body."""
     data = np.loadtxt(a.file, ndmin=2)
     if data.size == 0:

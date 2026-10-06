@@ -254,7 +254,7 @@ length-periodic in y.
 
 ## NEXT-SESSION PROMPT
 
-> Read docs/next_session_refine2d.md (the whole file) and CLAUDE.md.
+> Read docs/history/next_session_refine2d.md (the whole file) and CLAUDE.md.
 > Branch claude/jacobi-interface; HEAD has the A3 phases + LE-fan
 > resolution (refinement = reference answer, [ibm] band_filter =
 > production option) committed. Build fresh nofma reference binaries

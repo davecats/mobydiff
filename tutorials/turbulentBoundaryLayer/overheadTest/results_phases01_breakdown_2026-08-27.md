@@ -15,7 +15,7 @@ Where the step goes at rect_jacobi_p3 (total 1.2596 s/step):
 | exch/local_copy (inside all exchanges) | 0.0976 | 7.8 % |
 
 This is why Phase 3a (R0) was not pursued: its entire target is the 1.8 %.
-See docs/next_session_block_overhead.md STATUS 2026-08-27 (Phase 3a).
+See docs/history/next_session_block_overhead.md STATUS 2026-08-27 (Phase 3a).
 
 ```
 | phase                  |  base_redblack |  nb16_redblack |    base_jacobi |     nb8_jacobi |    nb16_jacobi | nb16_jacobi_p3 | rect_jacobi_p3 | refined_jacobi |     nb16_redblack/base |        nb8_jacobi/base |       nb16_jacobi/base |    refined_jacobi/base |

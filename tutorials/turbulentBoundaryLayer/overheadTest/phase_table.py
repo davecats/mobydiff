@@ -3,7 +3,7 @@
 
 The Phase-0 deliverable: for each timing category, seconds per step in each run
 and the nb16/base ratio. The point of the ratio column is the decision rule in
-docs/next_session_block_overhead.md --
+docs/history/next_session_block_overhead.md --
 
   the block tax lands on exchange pack/unpack/local_copy  -> traffic-bound
   it is spread over the volume kernels in proportion to

@@ -13,6 +13,13 @@ global-3D layout of old files).
 
 ---
 
+## Case files (the prepare/solve split)
+
+| Tool | Purpose |
+|---|---|
+| `prepare_if_missing.sh` | The gate drivers' prepare step: `tools/prepare_if_missing.sh <ranks> <solver> <ini> [log]` resolves the case file the solver will read (`[case] file`, default `<field_prefix>.case.h5`) and runs the `moby_prepare` beside that solver on the SAME rank count only when the file does not exist. Preparing and solving stay separate. |
+| `set_case_file.sh` | Points an ini at a case file in place: `tools/set_case_file.sh <ini> <case.h5>` writes `file =` into `[case]` (adding the section when absent) -- for drivers that derive a solve ini from a case ini. |
+
 ## Geometry
 
 | Tool | Purpose |

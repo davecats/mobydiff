@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # C1 gates: CONJUGATE HEAT TRANSFER at the immersed interface
-# (docs/next_session_conjugate.md Section 10, increment C1).
+# (docs/history/next_session_conjugate.md Section 10, increment C1).
 #
 #   ./run_gates_c1.sh [slab|converge|weight|capacity|contact|peclet|limits|conserve|guard|refine|stats|det|all]
 #

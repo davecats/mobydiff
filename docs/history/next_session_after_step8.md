@@ -26,7 +26,7 @@ item (numbers in the files named):
 The text below is the handout as written, kept for the landmines.
 
 STATUS (original): NOT STARTED (handout written 2026-09-30, HEAD `35864a3`).
-The previous handout (`docs/next_session_after_step7.md`) is closed: its loose
+The previous handout (`docs/history/next_session_after_step7.md`) is closed: its loose
 ends 1, 2, 4, 5 and step 8 (F1) are DONE and gated, 3, 6, 7 are notes.
 Read `CLAUDE.md` (the step-7 bullet states the case-file CONTRACT; the
 "F1 IS DONE" paragraph states what step 8 changed), then work the items

@@ -12,7 +12,7 @@
 # overrides only the rows it sets, so a template minted from a sibling
 # variant silently transplants that variant's faces (the outlet-top case
 # restarted with a Dirichlet top from another ini diverged by t ~ 14;
-# docs/next_session_after_step8.md). Prepare, mint and run share one case
+# docs/history/next_session_after_step8.md). Prepare, mint and run share one case
 # file and one rank count.
 set -uo pipefail
 cd "$(dirname "$0")"

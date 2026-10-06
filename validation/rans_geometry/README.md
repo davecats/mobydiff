@@ -1,6 +1,6 @@
 # RANS T1/T1b geometry gates — wall distance (dwall/y_eff) + IBM wall cells
 
-Gates for IDDES phase T1 (docs/next_session_iddes.md): the `[rans]` section
+Gates for IDDES phase T1 (docs/history/next_session_iddes.md): the `[rans]` section
 builds the SST geometry state at init (rans.f90) and `dump_geometry = true`
 writes `<prefix>_ransgeom.h5` (blocks table, interior dwall / yeff / wallcell,
 per-block cell-centre coordinates). Nothing consumes the state yet, so these

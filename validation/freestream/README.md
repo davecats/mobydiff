@@ -1,6 +1,6 @@
 # A0 freestream gates — inlet/outlet patch types + Dirichlet-pressure outlet
 
-Validation for phase A0 of the airfoil plan (`docs/next_session_airfoil.md`):
+Validation for phase A0 of the airfoil plan (`docs/history/next_session_airfoil.md`):
 the `[boundary] <dir>_<side>_patch = wall | patch | inlet | outlet` face
 concept (`resolve_face_bcs` derives the per-variable BC rows) and the
 Dirichlet-pressure outlet in the projection (outlet face counted `2*d1f*mu`

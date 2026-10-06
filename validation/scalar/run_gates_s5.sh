@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Passive-scalar S5a gates (docs/next_session_scalar.md, increment S5a --
+# Passive-scalar S5a gates (docs/history/next_session_scalar.md, increment S5a --
 # the THERMAL WALL FUNCTION: Kader/Jayatilleke under [rans] wall_treatment =
 # wall_function, which S2 rejected as a hard config error).
 #

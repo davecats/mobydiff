@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Uniform-fine REFERENCE run (256x128x256, single level) for the 2:1-interface
-# study: the ground truth the refined reflux_on / reflux_off runs are compared
-# against. Two-leg, matching those runs (transient t=0..5 discarded, then stats
+# study: the ground truth the refined runs are compared against (the
+# reflux_on / reflux_off pair of 2026-06-29 is history: reflux is removed).
+# Two-leg, matching those runs (transient t=0..5 discarded, then stats
 # t=5..25), same dtmax / niter / sor / Chebyshev (all already in reference.ini).
 #
 # The refined fine level shares this uniform grid bitwise (reference.ini grids are
@@ -73,7 +74,6 @@ STATS="$RUN/stats/channel_stats.h5"
 echo
 echo "== DONE. reference stats: $STATS =="
 echo "   overlay against the refined runs:"
-echo "   $PY $ROOT/tools/plot_channel_stats.py reflux_study.png \\"
-echo "       $HERE/runs/reflux_on/stats/channel_stats.h5:reflux-on \\"
-echo "       $HERE/runs/reflux_off/stats/channel_stats.h5:reflux-off \\"
+echo "   $PY $ROOT/tools/plot_channel_stats.py interface_study.png \\"
+echo "       $HERE/runs/<refined case>/stats/channel_stats.h5:refined \\"
 echo "       $STATS:uniform"

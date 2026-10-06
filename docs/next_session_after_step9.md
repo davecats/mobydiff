@@ -369,4 +369,4 @@ Re 40 steady drag and the `les_ibm` developed statistics (case a_wale).
 - `nvhpc 25.9` (workstation) folds the unguarded predictor to 78 registers,
   `25.3` (HoreKa) to 100: register counts are per compiler, read them from
   the machine that runs.
-- Everything in `docs/next_session_after_step8.md` "Landmines" still holds.
+- Everything in `docs/history/next_session_after_step8.md` "Landmines" still holds.

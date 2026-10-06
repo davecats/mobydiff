@@ -19,8 +19,8 @@ Layout: the block-table format (un/vn/wn/pn = (n_blocks, NB, NB, NB)).
     Attrs/x/y/z copied from cs_1.h5.  ->  IC_refine.h5
 
 Run with the geometry venv (h5py + numpy):
-    /home/davide/ibmc/bin/python make_ibm_ic.py                          # IC.h5
-    /home/davide/ibmc/bin/python make_ibm_ic.py --leaves ibm_coeff_blocks.h5 --out IC_refine.h5
+    ~/ibmc/bin/python make_ibm_ic.py                          # IC.h5
+    ~/ibmc/bin/python make_ibm_ic.py --leaves ibm_coeff_blocks.h5 --out IC_refine.h5
 """
 import argparse
 import os

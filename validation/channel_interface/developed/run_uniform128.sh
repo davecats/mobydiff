@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Uniform BASE-resolution reference (128x64x128, no refinement), two-leg,
-# matching the reflux / reference runs (transient t=0..5 discarded, stats
+# matching the refined / reference runs (transient t=0..5 discarded, stats
 # t=5..25). Its grid lines ARE the refined case's level-0 (coarse core) lines
 # bitwise, so refined-core vs this isolates the 2:1-interface effect from the
 # coarse-resolution deficit. Cheap (~1M cells) -- runs fast even on one laptop GPU.

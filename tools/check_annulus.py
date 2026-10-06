@@ -13,7 +13,7 @@ against the analytic geometry, using no solver output at all:
           one number the conjugate scheme reads: its sign picks the material
           and its magnitude sets the cut-face level-set weight w.
   near    inside the domain the PIPE WALL is the nearest surface everywhere,
-          i.e. the padding never wins. docs/next_session_pipe_cht.md F2 says
+          i.e. the padding never wins. docs/history/next_session_pipe_cht.md F2 says
           to verify this rather than assume it, because phi in a shell is the
           distance to the nearest of the two surfaces -- were the padding
           nearer anywhere, phi there would describe a fictitious wall.

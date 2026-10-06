@@ -13,7 +13,7 @@ overlay). Start there.
 > were REMOVED: `rans/` replaces them, and their C_L/C_D came from the
 > penalization integral, which the solver no longer computes — the runtime
 > force is the control-volume momentum budget over `[case.airfoil] cv_box`
-> (`docs/next_session_cv_forces.md`). The live versions of the Cp/Cf and
+> (`docs/history/next_session_cv_forces.md`). The live versions of the Cp/Cf and
 > force scripts are in `rans/postProcess/`. Recover the sweep from git
 > history if it is wanted again; it will need a `cv_box` and a re-measured
 > reference.

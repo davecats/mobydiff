@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# A0 freestream physics gates (docs/next_session_airfoil.md, phase A0).
+# A0 freestream physics gates (docs/history/next_session_airfoil.md, phase A0).
 #
 #   ./run_gates.sh              # all gates, sequentially (one job at a time)
 #   ./run_gates.sh oblique      # one group: oblique | pois | vortex | ranks | config

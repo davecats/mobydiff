@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""A1/A2 cylinder gate metrics (docs/next_session_airfoil.md).
+"""A1/A2 cylinder gate metrics (docs/history/next_session_airfoil.md).
 
   steady   forces_re40.txt          mean C_D over the converged tail vs 1.5-1.6, C_L -> 0
   strouhal forces_re100.txt         St from C_L zero crossings, mean C_D, symmetry
   empty    forces_empty.txt         C_L = C_D = 0.0 exactly
   cv       <cyl_re40_*.h5> --re 40 --cd-pen <val>
                                     Gauss/CV outer-box flux drag vs the
-                                    penalization C_D (steady snapshot)
+                                    run's own C_D (steady snapshot; the
+                                    penalization integral before 2026-09-25,
+                                    the runtime control-volume force since)
 """
 import argparse
 import os
@@ -102,7 +104,7 @@ def cmd_cv(a):
     print(f"CV box x=[{i0*h:.2f},{i1*h:.2f}] y=[{j0*h:.2f},{j1*h:.2f}]: C_D = {cd_cv:.4f}")
     if a.cd_pen is not None:
         rel = abs(cd_cv - a.cd_pen)/abs(a.cd_pen)
-        print(f"penalization C_D = {a.cd_pen:.4f}   relative difference = {rel:.3f}")
+        print(f"run's C_D = {a.cd_pen:.4f}   relative difference = {rel:.3f}")
         ok = rel < 0.08
         print("cv gate:", "PASS" if ok else "FAIL", "(<= 8% = discretization error)")
         return 0 if ok else 1

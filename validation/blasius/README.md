@@ -38,7 +38,7 @@ restart file carries its boundary rows (`bc_type`/`bc_value`) and the ini
 overrides only the rows it sets explicitly. A template minted from a sibling
 variant (a Dirichlet top, say) silently transplants that variant's faces —
 the outlet-top run restarted that way diverged by t ~ 14 on every binary
-(`docs/next_session_after_step8.md`).
+(`docs/history/next_session_after_step8.md`).
 
 ## Recorded results (2026-10-01, the outlet face predicted, GPU build, 1 rank)
 

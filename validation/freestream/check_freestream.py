@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Metrics for the A0 freestream gates (docs/next_session_airfoil.md).
+"""Metrics for the A0 freestream gates (docs/history/next_session_airfoil.md).
 
   oblique <h5> --u0 U --v0 V   gate (b): max |u-u0|, |v-v0|, |w|, interior div
   pois <io_h5> <ref_h5> [--drift <earlier_io_h5>]

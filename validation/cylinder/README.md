@@ -1,9 +1,9 @@
 # A1/A2 cylinder gates — airfoil flow case + control-volume forces
 
 Validation for phase A1 (the `[case] name = airfoil` module) of
-`docs/next_session_airfoil.md` and for the runtime C_L/C_D statistic, which
+`docs/history/next_session_airfoil.md` and for the runtime C_L/C_D statistic, which
 is the CONTROL-VOLUME momentum budget over `[case.airfoil] cv_box`
-(`docs/configuration.md`, `docs/next_session_cv_forces.md`).
+(`docs/configuration.md`, `docs/history/next_session_cv_forces.md`).
 
 Quasi-2D cylinder, D = 1 at (6.0, 8.02) in a 16 x 16 x 0.25 box, uniform
 h = 1/32 (D/h = 32), z periodic (nz = nb = 8). The 0.02 D vertical offset

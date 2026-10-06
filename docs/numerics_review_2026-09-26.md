@@ -9,7 +9,7 @@ transport half of `scalar.f90`, the metric builders in `init.f90` /
 `blocks.f90`, the exchange API of `comm.f90`, `update_ibm_mu` /
 `set_ibm_coeff` in `ibm.f90`, `docs/numerical-methods.md`,
 `docs/prepare_solve_strategy.md`, `docs/conjugate/conjugate_ibm.tex` and the
-STATUS header of `docs/next_session_conjugate.md`. Nothing was run except two
+STATUS header of `docs/history/next_session_conjugate.md`. Nothing was run except two
 small Python checks (appendix). Every "should" below is a recommendation, not
 a change; nothing in the tree was modified.
 
@@ -958,7 +958,7 @@ suite run FROM prepared files bit-exact vs the inline reference of step 0
 GPU `set_ibm_coeff` kernel is retired with the CPU prepare canonical. Two to
 three sessions.
 
-> **HANDOUT (2026-09-29): `docs/next_session_prepare_everything.md`** —
+> **HANDOUT (2026-09-29): `docs/history/next_session_prepare_everything.md`** —
 > increments 7-0 … 7-4 with their gates, the `nb` rule (settled 2026-09-29:
 > the key stays optional — unset means one block per rank, chosen by the
 > builder from its rank count and STORED in the case file, i.e. today's
@@ -1113,7 +1113,7 @@ three sessions.
 in section 9. Gates as stated there; run it in the same session as the
 stretched-case re-validation so the RANS channel and Blasius numbers are
 re-measured once, not twice. One session plus remote GPU reruns.
-**MEASURED (DONE 2026-09-30, `docs/next_session_after_step7.md` STEP 8).**
+**MEASURED (DONE 2026-09-30, `docs/history/next_session_after_step7.md` STEP 8).**
 `slice_grid_direction` builds the flux form on the variable's own control
 volume: `lapM = 1/(hm·width)`, `lapP = 1/(hp·width)` in a cell-centred
 direction (`width` = the cell, computed once beside `d1`), the Taylor
@@ -1157,7 +1157,7 @@ bit-exact by construction. Body cases: cylinder Re 40 `C_D` and the `les_ibm`
 law of the wall re-measured; a `dt` halving study on the cylinder drag should
 show the cut-cell time error drop faster than before. One session.
 
-**MEASURED (DONE 2026-10-01, `docs/next_session_after_step8.md` item 3).**
+**MEASURED (DONE 2026-10-01, `docs/history/next_session_after_step8.md` item 3).**
 Implemented in the equivalent closed form `x = λΔt`: `ibm%mu` =
 `(1 − e^{−x})/x` (= `muB`, series below x = 0.1) and the state factor
 `e^{−x}` (= `muA`), `ibm.f90 penal_incr_factor` / `penal_state_factor`.

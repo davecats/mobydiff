@@ -8,10 +8,10 @@ coefficients, both wall modes, `coef_p_blocks`), **S4** (in-solver
 statistics + tooling: `scalar_stats.f90`, `tools/scalar_stats.py`,
 `compare_fields.py` dataset discovery) and **S5a** (the THERMAL WALL
 FUNCTION: Kader/Jayatilleke under `[rans] wall_treatment = wall_function`,
-which S2 rejected as a hard config error) of `docs/next_session_scalar.md`.
+which S2 rejected as a hard config error) of `docs/history/next_session_scalar.md`.
 
 ```bash
-./compile_nofma.sh cpu && ./compile_nofma.sh gpu   # bit-exactness builds
+(cd ../.. && ./compile.sh cpu_nofma && ./compile.sh gpu_nofma)   # bit-exactness builds (ONE mode per call)
 ./run_gates.sh    [uniform|conserve|conduction|wave|pr|det|restart]   # S1
 ./run_gates_s2.sh [kays|wferr|sst|les|band|det]                       # S2
 ./run_gates_s3.sh [solid|conserve|prep|missing|refine|det|cyl]        # S3
@@ -60,7 +60,7 @@ holds the three analyses (`channel`, `band`, `rans`).
 
 The THIRD `ibm_wall` mode, `conjugate` (the solid as a real unknown with its
 own conductivity and capacity), is increment **C1** of
-`docs/next_session_conjugate.md` and has its own gate set in
+`docs/history/next_session_conjugate.md` and has its own gate set in
 [`../conjugate/`](../conjugate/README.md). It is a separate branch by design —
 re-expressing `dirichlet`/`adiabatic` through the conjugate cut-face
 arithmetic could not be bit-exact — so every case below is untouched by it,
@@ -252,7 +252,7 @@ CPU, 4 ranks (les_ibm cases pin [mpi] dims = 1 1 1, so those run on 1):
 GPU, 1 rank: same 7 cases -> ALL PASS, max_abs = 0
 ```
 
-Both sides are nofma builds (`compile_nofma.sh`); the reference binaries were
+Both sides are nofma builds (`./compile.sh cpu_nofma` / `gpu_nofma`); the reference binaries were
 built from the pre-change tree. The gate covers S0 **and** S1 together:
 `count = 0` never allocates a scalar plane, never calls a scalar kernel and
 never issues the extra exchange, so the argument is by construction, not by
@@ -1185,7 +1185,7 @@ diffusivity, and the resulting wall heat flux is the exact closed-form one.
 ## Notes and limitations
 
 - **Order of the substage calls.** `scalar_transport` runs immediately BEFORE
-  `momentum(...)`, a deliberate deviation from `docs/next_session_scalar.md`
+  `momentum(...)`, a deliberate deviation from `docs/history/next_session_scalar.md`
   §2 (which says "right after"): `momentum` ends by copying `qs → q` and the
   velocity halos are only refreshed by the exchange that follows it, so
   "after" would advect the scalar with the non-solenoidal predicted velocity
@@ -1271,7 +1271,7 @@ diffusivity, and the resulting wall heat flux is the exact closed-form one.
 
 ## Re-gate 2026-08-07 — the verification debt + the host/device audit
 
-`docs/next_session_verification.md` §1 listed the gate groups that were NOT
+`docs/history/next_session_verification.md` §1 listed the gate groups that were NOT
 re-run after the two 2026-08-05 fixes, each with the argument for why it was
 expected to be safe. This session converted those arguments into
 measurements: **every group was run, and every number reproduces.** Runs on
@@ -1309,7 +1309,7 @@ second A6000 (`env_cetus.sh`) with the analysis local.
 
 **The one thing that moved, and it is not the fixes.** `run_gates_s2.sh les`
 first NaN'd 54 steps into its statistics leg. Cause (measured, full write-up
-in `docs/next_session_verification.md` §B1): the relax leg's LAST snapshot is
+in `docs/history/next_session_verification.md` §B1): the relax leg's LAST snapshot is
 the post-loop `write_field` of a step whose `dt` was trimmed to the
 accumulated round-off in `t_current` — 10401 steps instead of 10400,
 `t_current = 29.999999999975433` against `t_final = 30.0` and a stopping
@@ -1328,7 +1328,7 @@ final `*_50001.h5` carries the niter = 6 pn-drift mode".
 
 **The host/device staleness audit** (the other half of the session) found no
 unprotected site in the solver; the verdict table, with the GPU probe that
-established each row, is in `docs/next_session_verification.md` §A. Of
+established each row, is in `docs/history/next_session_verification.md` §A. Of
 interest here: the probes confirmed that `read_field`'s and
 `zero_closed_halos`' `target update to(blk%q)`, `moby_solve.f90`'s
 `target update from(blk%q)` and `from(ibm%coef)`, and `moby_prepare.f90`'s

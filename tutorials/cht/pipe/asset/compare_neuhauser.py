@@ -4,7 +4,7 @@
     ./compare_neuhauser.py velocity p_coarse_vel.npz
     ./compare_neuhauser.py thermal  p_coarse_stats.npz --scalar c0
 
-THEIR DEFINITIONS, NOT OURS (docs/next_session_pipe_cht.md Section 2). The
+THEIR DEFINITIONS, NOT OURS (docs/history/next_session_pipe_cht.md Section 2). The
 dataset is polar and already z-averaged, with `time` a BATCH axis kept for
 uncertainty estimation, so every reference number here is a batch mean and
 carries the batch scatter as an error bar. u_tau is taken the way

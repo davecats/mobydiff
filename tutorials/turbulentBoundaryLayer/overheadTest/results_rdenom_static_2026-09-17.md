@@ -6,7 +6,7 @@ one allocation at 1, 4 and 8 ranks with red-black as a control. `ref` =
 `horeka/results_job5150041/`. Readings pre-registered in
 `horeka/exchange/PREREGISTERED_rdenom_static.md`.
 
-This is task 2 of `docs/next_session_divergence_halos.md` — but **not the change
+This is task 2 of `docs/history/next_session_divergence_halos.md` — but **not the change
 that handout proposes**, and that is the finding.
 
 ## 1 — The handout's premise had expired

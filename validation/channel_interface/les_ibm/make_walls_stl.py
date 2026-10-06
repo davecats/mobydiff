@@ -9,7 +9,7 @@ so the solid fully covers the one-cell ghost layer (no winding ambiguity there).
 Walls are placed mid-cell (off grid node AND off cell centre): y_lo = 8.3*dy,
 y_hi = 72.3*dy with dy = ly/ny -- so neither the y-face nodes nor the cell centres
 land on the wall. Run with the geometry venv:
-    /home/davide/ibmc/bin/python make_walls_stl.py
+    ~/ibmc/bin/python make_walls_stl.py
 """
 import trimesh
 

@@ -7,7 +7,7 @@
 # molecular value exactly; the eddy term sits behind `if (useNut)`), not a
 # cancellation.
 #
-# BOTH binaries must be nofma builds (compile_nofma.sh).
+# BOTH binaries must be nofma builds (`./compile.sh cpu_nofma` / `gpu_nofma`).
 #
 #   REF=/path/to/s1_cpu_nofma NEW=../../build_cpu_nofma/moby_solve ./run_bitexact_s1.sh
 #

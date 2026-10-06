@@ -1,5 +1,5 @@
 #!/bin/bash
-# The jacobi-interface PORT gate (docs/next_session_port_finish.md).
+# The jacobi-interface PORT gate (docs/history/next_session_port_finish.md).
 #
 #   run_portgate.sh <new_exe> <ref_exe> <results_dir>
 #

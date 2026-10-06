@@ -136,7 +136,7 @@ two jobs, two node sets and two mapping policies. `base` at the same placement
 A dated results file `overheadTest/results_horeka_<date>.md` in the repo
 convention: the tables, the mechanism each number supports, and — explicitly —
 what the numbers do **not** support. Then update the STATUS header of
-`docs/next_session_2to1_penalty.md`. Commit the raw run directories too
+`docs/history/next_session_2to1_penalty.md`. Commit the raw run directories too
 (`git add -f`, they are under a `*.log` ignore) and push the branch.
 
 If Phase 2 identifies the mechanism, **stop there and write it up**. Do not also

@@ -11,7 +11,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-PY="${PY:-/home/davide/ibmc/bin/python}"
+PY="${PY:-$HOME/ibmc/bin/python}"
 ROOT=../..
 LES_IBM=$ROOT/validation/channel_interface/les_ibm
 

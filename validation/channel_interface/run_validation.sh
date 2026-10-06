@@ -10,10 +10,9 @@
 #
 #   ./run_validation.sh [gpu|cpu] [nranks]
 #
-# Solver config (set in the inis): damped-Jacobi projection at omega (sor) = 0.8
-# -- near-optimal, jacobi NEEDS omega<1 (the old red-black sor=1.5 diverges) --
-# with niter = 6 (= 3 old red-black iterations x 2 colours; under-converged, a
-# multi-level Schwarz is the planned fix). The 2:1 interface is the hardwired
+# Solver config (set in the inis): Chebyshev-Jacobi projection, niter = 12
+# since 2026-09-26 (the recorded numbers of the READMEs are niter-6 values
+# until the long-tier re-measurement). The 2:1 interface is the hardwired
 # const-1/2, reflux-off treatment (the former NOREFLUX=1 mode set the removed
 # [blocks] momentum_reflux key and was dropped 2026-09-26).
 #

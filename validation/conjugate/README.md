@@ -1,7 +1,7 @@
 # Conjugate heat transfer at an immersed interface — C1, C2 and C3 gates
 
 Gates for increments **C1**, **C2** and **C3** of
-`docs/next_session_conjugate.md`.
+`docs/history/next_session_conjugate.md`.
 
 **C1** is the baseline conjugate scheme, in which the solid stops being a
 boundary condition and becomes a real unknown, and a face whose two cell
@@ -229,7 +229,7 @@ invariant S4 exists for: a row's `J` must be the flux the kernel *applied*.
 C1 checks only that the branch executes on CPU **and** GPU and that every row
 is finite (it does; 4 datasets, 0 non-finite on both). The **quantitative**
 gate on the conjugate flux columns is C3's Nusselt increment, which is where
-`docs/next_session_conjugate.md` §10 puts it. Do not read this row as more
+`docs/history/next_session_conjugate.md` §10 puts it. Do not read this row as more
 than it says.
 
 ### (4) determinism — **PASS**
@@ -1263,9 +1263,10 @@ once.
 ./run_gates_c3.sh [fraction|transient|nusselt|budget|channel|all]
 ```
 
-Same environment as the C1/C2 drivers, plus `CBIN`/`CPREP` — the archived C2
-binaries (`~/c2_ref_binaries`, commit `c243e56`), which are the POINTWISE-
-capacity control of the transient gate. New helpers:
+Same environment as the C1/C2 drivers. (Until 2026-10-06 the transient gate
+also ran a POINTWISE-capacity CONTROL leg with the archived C2 binaries,
+`CBIN`/`CPREP` = `~/c2_ref_binaries`, commit `c243e56`; RETIRED, see the
+transient gate below.) New helpers:
 
 | file | role |
 |---|---|
@@ -1393,9 +1394,17 @@ be mistaken for the spatial one, and so that the control leg runs the same
 rather than the argument asserting it.** The mechanism is the one the plan
 predicted: `mu` is a global functional of the capacity distribution, so a cut
 cell carrying one material's whole heat capacity is an O(1) error on an O(h)
-band. The control leg is the archived C2 binary (`~/c2_ref_binaries`, commit
+band. The control leg WAS the archived C2 binary (`~/c2_ref_binaries`, commit
 `c243e56`) on the SAME generated inis — same geometry, same `dt`, same
-everything but the line this increment changed.
+everything but the line this increment changed. **The control rows above are
+the 2026-08-28 record and are no longer regenerable: RETIRED from
+`run_gates_c3.sh` on 2026-10-06** (second cleaning pass). That binary
+predates `[case] file` -- with no `case default` in its config it would
+silently run the analytic wavy indicator on today's template instead of the
+slab -- and the current solver has no pointwise-capacity switch (`vfrac` is
+unconditional); even with one, F2 (advective default), the sum limiter, F1
+and F7 have moved since, so the control would no longer differ by one line.
+The finding stands as measured; the `c3` rows are the live gate.
 
 **DEVIATION from Section 10's wording.** It asks for "second order in the
 time-resolved interface flux". The flux's TIME DEPENDENCE — its decay rate,
@@ -1661,7 +1670,7 @@ in its `PROVENANCE.txt`, the `~/s5b_ref_binaries` lesson).
 ## The Neuhauser pipe dataset: the (K, λ_sf) pin-down (2026-09-15)
 
 `neuhauser_pin_down.py` (needs `~/ibmc/bin/python`, zarr ≥ 3) settles the one
-unresolved item of `docs/next_session_pipe_cht.md` §1 — how the dataset's
+unresolved item of `docs/history/next_session_pipe_cht.md` §1 — how the dataset's
 `(K, λ_sf)` labels map onto our `solid_k` / `solid_rhocp`. It reads straight
 out of the distributed tars, extracting only the arrays it needs (~1 s, ~1 GB
 of scratch, not the full 7.2 GB):
@@ -1729,7 +1738,7 @@ conductivity-contrast case"; it has none.
 `./run_gates_pipe.sh [source_dir|guard|annulus|ranks|band|insulate|bandguard|bandannulus|banddet|all]`
 — **ALL PASS** (`PY=~/ibmc/bin/python`; the `source_dir` group reproduces its
 numbers exactly with the GPU binary). Every feature gap of
-`docs/next_session_pipe_cht.md` §3 is now closed.
+`docs/history/next_session_pipe_cht.md` §3 is now closed.
 
 **F1 — `[scalar.N] source_dir = x | y | z`** picks the velocity component the
 Kasagi (`source_type = velocity`) source rides. Default x, and the x branch is
