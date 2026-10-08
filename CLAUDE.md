@@ -2597,7 +2597,12 @@ immersed boundary. Phased, each phase verified before the next:
   predictor 19 %, k1 10 %, body-force correction 8.5 %; `min_channel`'s
   device is busy 55 % of its step (launch-bound). Every change gated max_abs
   0 (nofma) vs `~/backflow_ref_binaries` on the 7-case (CPU 4 ranks + GPU),
-  9-case, outlet (1 + 4 ranks), pocket, bodyforce and P0 gates. OPEN: the
+  9-case, outlet (1 + 4 ranks), pocket, bodyforce and P0 gates; the boundary
+  face-index helpers (`boundary_face_indices`), the shared projection tail
+  (`projection_finish`) and `WF_KAPPA`/`WF_E` in `init.f90` followed the same
+  way. **Reference set after the pass: `~/pass2_ref_binaries` (`d821341`);
+  gate at NOFMA against it** -- the fused projection statements may contract
+  differently at production flags. OPEN: the
   rough through-outlet chain's read-out (HoreKa access lapsed 2026-10-08),
   the review's section 9 order (index helpers, projection tail, F13/F14,
   the scalar kernel split), and the proposal to move this log to
