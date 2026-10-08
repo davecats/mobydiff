@@ -295,7 +295,6 @@ contains
 
         do iIter = 1_C_INT, ps%nIter
             t0 = prof_tic()
-            call jacobi_compute_phi(blk, omega)
             if (ps%cheb) then
                 if (iIter == 1_C_INT) then
                     alpha = 1.0d0/dd
@@ -306,8 +305,11 @@ contains
                     alpha = 1.0d0/(dd - beta/alphaPrev)
                     gamma = alpha*beta/alphaPrev
                 end if
-                call cheb_combine(blk, alpha, gamma)
             end if
+            ! The Chebyshev combine rides the same kernel (one pass over phi
+            ! and delta instead of two, one launch instead of two per
+            ! iteration; 2026-10-08).
+            call jacobi_compute_phi(blk, omega, ps%cheb, alpha, gamma)
             call prof_toc(proj_prof, PROF_SWEEP, t0)
             t0 = prof_tic()
             call exchange_scalar_halos(c, phi, ifaceRow=.true.)
@@ -416,36 +418,6 @@ contains
 #endif
         end if
     end subroutine allocate_delta
-
-    ! Chebyshev combine: phi := alpha*phi + gamma*delta (phi currently holds the
-    ! preconditioned residual z), then delta := phi (the new increment delta_k),
-    ! over interior cells. After this phi == delta_k and jacobi_apply adds it
-    ! exactly as it would the Jacobi increment.
-    subroutine cheb_combine(blk, alpha, gamma)
-        type(block_set_type), intent(in) :: blk
-        real(C_DOUBLE), intent(in) :: alpha, gamma
-        integer(C_INT) :: i, j, k, b, nx, ny, nz
-        real(C_DOUBLE) :: s
-        nx = blk%nb(1); ny = blk%nb(2); nz = blk%nb(3)
-#ifdef USE_OPENMP_OFFLOAD
-        !$omp target teams distribute parallel do collapse(4) &
-        !$omp& map(to: alpha, gamma, nx, ny, nz) map(tofrom: phi, delta) private(i,j,k,b,s)
-#endif
-        do b = 1_C_INT, blk%nBlocks
-        do k = 1_C_INT, nz
-            do j = 1_C_INT, ny
-                do i = 1_C_INT, nx
-                    s = alpha*phi(i,j,k,b) + gamma*delta(i,j,k,b)
-                    phi(i,j,k,b) = s
-                    delta(i,j,k,b) = s
-                end do
-            end do
-        end do
-        end do
-#ifdef USE_OPENMP_OFFLOAD
-        !$omp end target teams distribute parallel do
-#endif
-    end subroutine cheb_combine
 
     ! Reciprocal-diagonal buffer, same bounds as phi so the two index identically.
     subroutine allocate_rdenom(blk)
@@ -605,11 +577,17 @@ contains
     ! phi = -omega*div/denom); Chebyshev passes 1.0 so phi holds the pure
     ! diagonal-preconditioned residual z = -div/denom (the damping then comes
     ! from the Chebyshev coefficients).
-    subroutine jacobi_compute_phi(blk, omega)
+    ! Chebyshev (cheb = .true.): the preconditioned residual z computed here is
+    ! combined in place, phi := alpha*z + gamma*delta, and delta := phi (the
+    ! new increment delta_k), so jacobi_apply adds phi exactly as it would the
+    ! Jacobi increment. One pass over phi and delta; the combine was its own
+    ! kernel (cheb_combine) until 2026-10-08.
+    subroutine jacobi_compute_phi(blk, omega, cheb, alpha, gamma)
         type(block_set_type), intent(inout) :: blk
-        real(C_DOUBLE), intent(in) :: omega
+        real(C_DOUBLE), intent(in) :: omega, alpha, gamma
+        logical, intent(in) :: cheb
 
-        real(C_DOUBLE) :: div
+        real(C_DOUBLE) :: div, z, s
         integer(C_INT) :: i, ip, j, jp, k, kp, b, nBlocks, nx, ny, nz
 
         nx = blk%nb(1); ny = blk%nb(2); nz = blk%nb(3)
@@ -617,6 +595,36 @@ contains
 
         ! d1P is the same divergence metric d1?(idx,VAR_P,b), gathered into one
         ! table by init_face_metrics -- one array base here instead of three.
+        ! Two loops, one per mode, because delta exists only under Chebyshev
+        ! (an unallocated array cannot sit in a map clause); the divergence and
+        ! z lines are the same text in both.
+        if (cheb) then
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target teams distribute parallel do collapse(4) &
+        !$omp& map(to: omega, alpha, gamma, nx, ny, nz, d1P) &
+        !$omp& map(tofrom: phi, delta, blk%q, rdenom) &
+        !$omp& private(i,ip,j,jp,k,kp,b,div,z,s)
+#endif
+        do b = 1_C_INT, nBlocks
+        do k = 1_C_INT, nz
+            do j = 1_C_INT, ny
+                do i = 1_C_INT, nx
+                    ip = i + 1; jp = j + 1; kp = k + 1
+                    div = (blk%q(ip,j,k,VAR_U,b)-blk%q(i,j,k,VAR_U,b))*d1P(i,1,b) &
+                        + (blk%q(i,jp,k,VAR_V,b)-blk%q(i,j,k,VAR_V,b))*d1P(j,2,b) &
+                        + (blk%q(i,j,kp,VAR_W,b)-blk%q(i,j,k,VAR_W,b))*d1P(k,3,b)
+                    z = -omega*div*rdenom(i,j,k,b)
+                    s = alpha*z + gamma*delta(i,j,k,b)
+                    phi(i,j,k,b) = s
+                    delta(i,j,k,b) = s
+                end do
+            end do
+        end do
+        end do
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp end target teams distribute parallel do
+#endif
+        else
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do collapse(4) &
         !$omp& map(to: omega, nx, ny, nz, d1P) &
@@ -644,6 +652,7 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
 #endif
+        end if
     end subroutine jacobi_compute_phi
 
     ! Jacobi step 3: apply the frozen increment. Pressure gets p += phi/dt_gamma;
@@ -668,24 +677,13 @@ contains
         nBlocks = blk%nBlocks
         idt = 1.0_C_DOUBLE/dt_gamma
 
-        ! Pressure update (interior cells).
-#ifdef USE_OPENMP_OFFLOAD
-        !$omp target teams distribute parallel do collapse(4) &
-        !$omp& map(to: idt, nx, ny, nz) map(tofrom: blk%q, phi) private(i,j,k,b)
-#endif
-        do b = 1_C_INT, nBlocks
-        do k = 1_C_INT, nz
-            do j = 1_C_INT, ny
-                do i = 1_C_INT, nx
-                    blk%q(i,j,k,VAR_P,b) = blk%q(i,j,k,VAR_P,b) + phi(i,j,k,b)*idt
-                end do
-            end do
-        end do
-        end do
-#ifdef USE_OPENMP_OFFLOAD
-        !$omp end target teams distribute parallel do
-#endif
-
+        ! ONE kernel for the pressure update AND the velocity-face corrections
+        ! (two until 2026-10-08: the pressure update streamed phi and p on its
+        ! own, 10 % of the device time of a Jacobi step for one extra read of
+        ! phi and 18 launches per step; the cell's own phi is loaded here
+        ! anyway). The two write disjoint fields and read phi only, so the
+        ! fusion changes no operand and no order -- bit-exact by construction.
+        !
         ! Velocity-face corrections. Each cell corrects its LOW faces (1..nb):
         ! q_face += (phi_below - phi_self) * grad(face) * mu, with grad(face) from
         ! face_grad (0 if pinned, ifGrad if a 2:1 interface, 1/h otherwise). The
@@ -707,13 +705,14 @@ contains
         ! that is both bit-exact and the point of the kernel's shape.
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do collapse(4) &
-        !$omp& map(to: nx, ny, nz, cfLow, cfHigh, ibm%mu) &
+        !$omp& map(to: idt, nx, ny, nz, cfLow, cfHigh, ibm%mu) &
         !$omp& map(tofrom: blk%q, phi) private(i,ip,j,jp,k,kp,b,cf)
 #endif
         do b = 1_C_INT, nBlocks
         do k = 1_C_INT, nz
             do j = 1_C_INT, ny
                 do i = 1_C_INT, nx
+                    blk%q(i,j,k,VAR_P,b) = blk%q(i,j,k,VAR_P,b) + phi(i,j,k,b)*idt
                     cf = cfLow(i,1,b)
                     if (cf /= 0.0d0) blk%q(i,j,k,VAR_U,b) = blk%q(i,j,k,VAR_U,b) &
                         + (phi(i-1,j,k,b) - phi(i,j,k,b))*cf*ibm%mu(i,j,k,VAR_U,b)

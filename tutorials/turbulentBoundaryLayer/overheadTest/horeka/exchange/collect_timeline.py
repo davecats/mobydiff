@@ -30,7 +30,7 @@ BUCKETS = {
     "copy_cross": [("comm_copy_local_cross_level", 6),
                    ("comm_copy_local_scalar_entries", 18)],
     "sweep":      [("pressure_solver_jacobi_compute_phi", 18)],
-    "apply":      [("pressure_solver_jacobi_apply", 36),
+    "apply":      [("pressure_solver_jacobi_apply", 18),   # 36 until 2026-10-08 (two kernels)
                    ("pressure_solver_interface_correct", 18)],
 }
 KERNEL_RE = re.compile(r"nvkernel_(.+?)__F1L(\d+)_")
