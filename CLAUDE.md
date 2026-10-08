@@ -2441,11 +2441,15 @@ immersed boundary. Phased, each phase verified before the next:
   pair FINISHED 2026-10-06 at step 775000 on both sides -- the smooth
   statistics are the shipped tutorial data since `e0015ac` (1250-unit
   window; c_f 0.00458 / H 1.508 at Re_theta 677, the elected grid's outlet
-  zone measured) and the rough side was the FALLBACK; the final rough case
-  through the outlet (`rough_io_run`, the backflow-datum binary) ran healthy
-  to step 800000 and beyond (L2 div 6e-6, Linf 1.1-1.25) and its read-out is
-  owed -- `tests_record.md` section 14, `docs/next_session_cleanup_pass2.md`
-  section 1).** The branch (five commits on `c72ec69`, BEFORE
+  zone measured) and the rough side was the FALLBACK; **the final rough case
+  THROUGH the outlet (`rough_io_run`, the backflow-datum binary) ran 2000
+  time units to step 837500 (L2 div 6e-6, Linf 1.1-1.25 throughout) -- the
+  body-on-outlet gate B0-B3 left unmeasured, PASSED.** Its 1250-unit window:
+  k+ 8.9-10.1, Delta U+ 3.41 +- 0.25 (mean-plane origin; 2.83 from the
+  crests) against MacDonald et al.'s 3.72 at k+ 10, dtheta/dx holding
+  through the rough region to the outlet, the plane bounded (0.28 % inflow
+  faces, pocket rows +0.016 mean, last-column p 4.5x quieter than the
+  interior) -- `tests_record.md` section 14.** The branch (five commits on `c72ec69`, BEFORE
   the outlet work) elects the exact-grid CaNS/AMPHIBIOUS case as the shipped
   tutorial (3200 x 384 x 136 on 650 x 100 x 26, `[grid.y] distribution =
   cans` = the one-sided tanh `y = L[1 + tanh(a(s-1))/tanh(a)]`, CaNS trip,
@@ -2602,9 +2606,8 @@ immersed boundary. Phased, each phase verified before the next:
   (`projection_finish`) and `WF_KAPPA`/`WF_E` in `init.f90` followed the same
   way. **Reference set after the pass: `~/pass2_ref_binaries` (`d821341`);
   gate at NOFMA against it** -- the fused projection statements may contract
-  differently at production flags. OPEN: the
-  rough through-outlet chain's read-out (HoreKa access lapsed 2026-10-08),
-  the review's section 9 order (index helpers, projection tail, F13/F14,
+  differently at production flags. The rough through-outlet chain's read-out
+  is DONE (the 2026-10-05 bullet). OPEN: the review's section 9 order (index helpers, projection tail, F13/F14,
   the scalar kernel split), and the proposal to move this log to
   `docs/history/worklog_2026.md` (review 6.5).
 

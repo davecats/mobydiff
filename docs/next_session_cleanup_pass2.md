@@ -47,9 +47,12 @@ simplifications, the performance items and the `config.f90` `case default`;
   profile's remaining items (`interface_correct` table + one launch, the
   per-iteration phi mirror on outlet cases, the red-black diagonal hoist;
   `zero_phi` only matters for red-black WITH a 2:1 interface).
-- HoreKa access LAPSED on 2026-10-08 (`Permission denied (publickey)`): the
-  final rough chain (`rough_io_run`, to 837500) could not be read; its
-  analysis is still owed (section 1 below, files and command).
+- (1) COMPLETED 2026-10-08 once HoreKa was reachable again: the rough
+  through-outlet chain ended at 837500 (every chunk exit 0); the 1250-unit
+  window gives k+ 9.4, Delta U+ 3.41 +- 0.25 (mean-plane) / 2.83 (crests)
+  vs 3.72, the balance held through the rough region to the outlet, the
+  plane bounded -- `tests_record.md` section 14 has every number; CLAUDE.md's
+  2026-10-05 bullet is updated. **Section 1 of this handout is DONE.**
 
 Original handout text follows.
 
