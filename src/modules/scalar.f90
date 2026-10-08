@@ -1006,8 +1006,9 @@ contains
             case ("heat_file")
                 sc%heatFile = trim(value)
             case default
-                if (terminal) print *, "warning: unknown [scalar] key on input line", &
+                if (terminal) print *, "error: unknown [scalar] key on input line", &
                     line_no, ": ", trim(key)
+                error stop
             end select
             return
         end if
@@ -1147,9 +1148,9 @@ contains
         p2 = 0
         if (p1 > 1) p2 = index(key(p1+1:), "_")
         if (p1 <= 1 .or. p2 <= 1) then
-            if (terminal) print *, "warning: unknown [scalar.N] key on input line", &
+            if (terminal) print *, "error: unknown [scalar.N] key on input line", &
                 line_no, ": ", trim(key)
-            return
+            error stop
         end if
         p2 = p1 + p2
 
@@ -1165,9 +1166,9 @@ contains
         case default; side = -1
         end select
         if (dir == 0 .or. side < 0) then
-            if (terminal) print *, "warning: unknown [scalar.N] key on input line", &
+            if (terminal) print *, "error: unknown [scalar.N] key on input line", &
                 line_no, ": ", trim(key)
-            return
+            error stop
         end if
         face_id = boundary_face_id(dir, side)
 
@@ -1188,8 +1189,9 @@ contains
             sc%bcValue(is,face_id) = read_real_value(value, key, line_no)
             sc%bcValueSet(is,face_id) = .true.
         case default
-            if (terminal) print *, "warning: [scalar.N] boundary key must end in _type or", &
+            if (terminal) print *, "error: [scalar.N] boundary key must end in _type or", &
                 " _value, input line", line_no
+            error stop
         end select
     end subroutine apply_scalar_face_key
 

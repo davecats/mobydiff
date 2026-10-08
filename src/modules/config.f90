@@ -101,6 +101,22 @@ subroutine read_runtime_config(dns, g, turb, les, ps, bc, sc, c, input_file, has
     call validate_turbulence_values(turb, les, dns)
 end subroutine read_runtime_config
 
+! An unknown key in a known section STOPS the run (2026-10-06). Until then it
+! was silently ignored, which produced a wrong-but-successful run at least
+! three times (a retired key kept in a campaign config, a misspelt key, a
+! key that only ever existed on a branch): the solver ran the default and
+! reported success. The scalar sections (scalar.f90) and the flow cases'
+! own sections (flow/*) stop the same way.
+subroutine unknown_key(section, key, line_no)
+    character(len=*), intent(in) :: section, key
+    integer, intent(in) :: line_no
+
+    if (terminal_output) write(*, '(A,A,A,A,A,I0,A)') "error: unknown key `", trim(key), &
+        "` in section [", trim(section), "] on input line ", line_no, &
+        " (docs/configuration.md lists the keys)"
+    error stop
+end subroutine unknown_key
+
 subroutine apply_config_value(section, key, value, dns, g, turb, les, ps, bc, sc, c, seen, line_no)
     character(len=*), intent(in) :: section, key, value
     type(dns_type), intent(inout) :: dns
@@ -142,6 +158,8 @@ subroutine apply_config_value(section, key, value, dns, g, turb, les, ps, bc, sc
         case ("lz")
             call read_real(value, dns%leng(3), line_no)
             seen%length(3) = .true.
+        case default
+            call unknown_key(section_l, key_l, line_no)
         end select
     case ("grid.x", "grid.y", "grid.z")
         call apply_grid_axis_value(section_l, key_l, value, dns, g, seen, line_no)
@@ -185,6 +203,8 @@ subroutine apply_config_value(section, key, value, dns, g, turb, les, ps, bc, sc
             call read_real(value, dns%initial_noise, line_no)
         case ("initial")
             dns%initial = clean_string(value)
+        case default
+            call unknown_key(section_l, key_l, line_no)
         end select
     case ("time")
         select case (key_l)
@@ -206,6 +226,8 @@ subroutine apply_config_value(section, key, value, dns, g, turb, les, ps, bc, sc
         case ("dtmax")
             call read_real(value, dns%dtmax, line_no)
             seen%dtmax = .true.
+        case default
+            call unknown_key(section_l, key_l, line_no)
         end select
     case ("output")
         select case (key_l)
@@ -223,11 +245,15 @@ subroutine apply_config_value(section, key, value, dns, g, turb, les, ps, bc, sc
             ! `profile` to be on to report anything, and serialises the
             ! exchange, so never quote a step time from a barrier run.
             call read_bool(value, dns%exchange_barrier, line_no)
+        case default
+            call unknown_key(section_l, key_l, line_no)
         end select
     case ("restart")
         select case (key_l)
         case ("file")
             dns%restart_file = clean_string(value)
+        case default
+            call unknown_key(section_l, key_l, line_no)
         end select
     case ("pressure")
         select case (key_l)
@@ -238,7 +264,8 @@ subroutine apply_config_value(section, key, value, dns, g, turb, les, ps, bc, sc
                 ps%nIter = niter_value
                 seen%pressure_niter = .true.
             else
-                if (terminal_output) print *, "warning: pressure nIter must be non-negative on input line", line_no
+                if (terminal_output) print *, "error: [pressure] niter must be non-negative (input line", line_no, ")"
+                error stop
             end if
         case ("sor")
             call read_real(value, ps%omega, line_no)
@@ -252,8 +279,9 @@ subroutine apply_config_value(section, key, value, dns, g, turb, les, ps, bc, sc
             case ("redblack", "red-black", "red_black", "sor")
                 ps%method = PRESSURE_REDBLACK
             case default
-                if (terminal_output) print *, &
-                    "warning: unknown pressure solver on input line", line_no, ": ", trim(value)
+                if (terminal_output) print *, "error: [pressure] solver must be jacobi or redblack, got: ", &
+                    trim(value), " (input line", line_no, ")"
+                error stop
             end select
         case ("accel")
             ! none | jacobi (default) or chebyshev (Chebyshev-Jacobi).
@@ -263,13 +291,16 @@ subroutine apply_config_value(section, key, value, dns, g, turb, les, ps, bc, sc
             case ("none", "jacobi", "")
                 ps%cheb = .false.
             case default
-                if (terminal_output) print *, &
-                    "warning: unknown pressure accel on input line", line_no, ": ", trim(value)
+                if (terminal_output) print *, "error: [pressure] accel must be none or chebyshev, got: ", &
+                    trim(value), " (input line", line_no, ")"
+                error stop
             end select
         case ("cheb_lmin")
             call read_real(value, ps%chebLmin, line_no)
         case ("cheb_lmax")
             call read_real(value, ps%chebLmax, line_no)
+        case default
+            call unknown_key(section_l, key_l, line_no)
         end select
     case ("ibm")
         select case (key_l)
@@ -279,9 +310,10 @@ subroutine apply_config_value(section, key, value, dns, g, turb, les, ps, bc, sc
         case ("wall_shape")
             dns%ibm_wall_shape = clean_string(value)
         case ("amp_x")
+            ! The ONE amplitude: the egg carton is amp_x sin(kx x) sin(kz z),
+            ! the semi-height of its crests. ([ibm] amp_z existed as a key
+            ! until 2026-10-06 and was read by nothing.)
             call read_real(value, dns%ibm_amp_x, line_no)
-        case ("amp_z")
-            call read_real(value, dns%ibm_amp_z, line_no)
         case ("n_wave_x")
             call read_int(value, dns%ibm_n_wave_x, line_no)
         case ("n_wave_z")
@@ -333,6 +365,8 @@ subroutine apply_config_value(section, key, value, dns, g, turb, les, ps, bc, sc
                     " stability bound 2/3) at line", line_no
                 error stop
             end if
+        case default
+            call unknown_key(section_l, key_l, line_no)
         end select
     case ("blocks")
         select case (key_l)
@@ -382,6 +416,8 @@ subroutine apply_config_value(section, key, value, dns, g, turb, les, ps, bc, sc
             call read_bool(value, dns%block_refine_body, line_no)
         case ("keep_buried")
             call read_bool(value, dns%block_keep_buried, line_no)
+        case default
+            call unknown_key(section_l, key_l, line_no)
         end select
     case ("force")
         select case (key_l)
@@ -423,12 +459,21 @@ subroutine apply_config_value(section, key, value, dns, g, turb, les, ps, bc, sc
             call read_int(value, dns%trip_nmodes, line_no)
         case ("trip_seed")
             call read_int(value, dns%trip_seed, line_no)
+        case default
+            call unknown_key(section_l, key_l, line_no)
         end select
     case ("case")
         ! [case] name and the [case.<name>] sections are read by the flow
         ! case itself (flow_case.f90); the solver-wide key here is the case
         ! FILE (step 7-3). Everything else in the section is the case's.
-        if (key_l == "file") dns%case_file = clean_string(value)
+        select case (key_l)
+        case ("file")
+            dns%case_file = clean_string(value)
+        case ("name")
+            ! read by create_flow_case (flow_case.f90)
+        case default
+            call unknown_key(section_l, key_l, line_no)
+        end select
     case ("turbulence")
         call apply_turbulence_value(key_l, value, turb, seen, line_no)
     case ("les")
@@ -450,6 +495,14 @@ subroutine apply_config_value(section, key, value, dns, g, turb, les, ps, bc, sc
         end if
     case default
         scalar_index = scalar_section_index(section_l)
+        if (scalar_index <= 0 .and. .not. (len(section_l) > 5 .and. section_l(1:5) == "case.")) then
+            ! An unknown SECTION was dropped silently until 2026-10-06 (the
+            ! same class as an unknown key: a misspelt [blcoks] ran the
+            ! default). [case.<name>] sections are the flow case's own and
+            ! are read by flow_case.f90, which validates their keys.
+            if (terminal_output) print *, "error: unknown section [", section_l, "] on input line", line_no
+            error stop
+        end if
         if (scalar_index > 0) then
             ! The name key keeps its case; every other value is a lowercase
             ! token or a number.
@@ -547,7 +600,7 @@ function case_input_echo(dns, bc, sc) result(text)
         else
             call add_line("wall_shape", trim(dns%ibm_wall_shape))
             call add_ints("wall_n_wave", [dns%ibm_n_wave_x, dns%ibm_n_wave_z])
-            call add_reals("wall_amp", [dns%ibm_amp_x, dns%ibm_amp_z])
+            call add_reals("wall_amp", [dns%ibm_amp_x])
             call add_reals("wall_phase", [dns%ibm_phase_x, dns%ibm_phase_z])
             ! Echoed only when set: an always-present line would mark every
             ! case file prepared before the key existed as stale.
@@ -719,6 +772,8 @@ subroutine apply_mpi_value(key, value, c, line_no)
     select case (trim(key))
     case ("dims")
         call read_integer3(value, c%dims, line_no)
+    case default
+        call unknown_key("mpi", key, line_no)
     end select
 end subroutine apply_mpi_value
 
@@ -752,6 +807,8 @@ subroutine apply_turbulence_value(key, value, turb, seen, line_no)
         ! min/max formula) or cbrt ((dx dy dz)^{1/3}, the DDES-increment
         ! width kept for comparison).
         call read_iddes_delta(value, turb%iddes_delta_mode, line_no)
+    case default
+        call unknown_key("turbulence", key, line_no)
     end select
 end subroutine apply_turbulence_value
 
@@ -862,8 +919,7 @@ subroutine apply_rans_value(key, value, dns, line_no)
             error stop
         end if
     case default
-        if (terminal_output) print *, "warning: unknown [rans] key on input line", &
-            line_no, ": ", trim(key)
+        call unknown_key("rans", key, line_no)
     end select
 end subroutine apply_rans_value
 
@@ -883,6 +939,8 @@ subroutine apply_les_value(key, value, les, line_no)
         call read_real(value, les%delta_scale, line_no)
     case ("ibm_aware")
         call read_bool(value, les%ibm_aware, line_no)
+    case default
+        call unknown_key("les", key, line_no)
     end select
 end subroutine apply_les_value
 
@@ -927,6 +985,8 @@ subroutine apply_grid_axis_value(section, key, value, dns, g, seen, line_no)
     case ("length")
         call read_real(value, dns%leng(dir), line_no)
         seen%length(dir) = .true.
+    case default
+        call unknown_key(section, key, line_no)
     end select
 end subroutine apply_grid_axis_value
 
@@ -974,10 +1034,7 @@ subroutine apply_boundary_value(key, value, bc, line_no)
         call read_real(value, bc%blasiusTheta, line_no)
     case default
         call parse_boundary_key(key, dir, side, var, field)
-        if (dir == 0 .or. side < 0 .or. var < 0) then
-            if (terminal_output) print *, "warning: unknown boundary key on input line", line_no, ": ", trim(key)
-            return
-        end if
+        if (dir == 0 .or. side < 0 .or. var < 0) call unknown_key("boundary", key, line_no)
         face_id = boundary_face_id(dir, side)
 
         select case (trim(field))
@@ -990,7 +1047,9 @@ subroutine apply_boundary_value(key, value, bc, line_no)
         case ("profile")
             call read_bc_profile(value, bc%faceBcProfile(var,face_id), line_no)
         case default
-            if (terminal_output) print *, "warning: boundary key must end in _type, _value or _profile on input line", line_no
+            if (terminal_output) print *, "error: [boundary] key must end in _type, _value or _profile: ", &
+                trim(key), " (input line", line_no, ")"
+            error stop
         end select
     end select
 end subroutine apply_boundary_value
@@ -1083,7 +1142,8 @@ subroutine read_bool(value, target, line_no)
     case ("false", ".false.", "0", "no")
         target = .false.
     case default
-        if (terminal_output) print *, "warning: could not parse logical value on input line", line_no
+        if (terminal_output) print *, "error: could not parse a logical value on input line", line_no, ": ", trim(value)
+        error stop
     end select
 end subroutine read_bool
 
@@ -1152,9 +1212,8 @@ subroutine read_bc_type(value, target, line_no)
         if (stat == 0 .and. (parsed == 0 .or. parsed == 1)) then
             target = int(parsed, C_INT)
         else
-            if (terminal_output) then
-                print *, "warning: boundary type must be dirichlet/0 or neumann/1 on input line", line_no
-            end if
+            if (terminal_output) print *, "error: boundary type must be dirichlet/0 or neumann/1 on input line", line_no
+            error stop
         end if
     end select
 end subroutine read_bc_type
@@ -1183,7 +1242,8 @@ subroutine read_grid_distribution(value, target, line_no)
     case ("tanh_wall", "cans", "tanh_lower")
         target = GRID_TANH_WALL
     case default
-        if (terminal_output) print *, "warning: unknown grid distribution on input line", line_no, ": ", trim(value_l)
+        if (terminal_output) print *, "error: unknown grid distribution on input line", line_no, ": ", trim(value_l)
+        error stop
     end select
 end subroutine read_grid_distribution
 
@@ -1215,8 +1275,9 @@ subroutine read_turbulence_model(value, target, line_no)
             " use model = les here and set the SGS model in [les] (input line", line_no, ")"
         error stop "SGS model belongs in the [les] section"
     case default
-        if (terminal_output) print *, "warning: unknown turbulence model on input line", &
+        if (terminal_output) print *, "error: unknown turbulence model on input line", &
             line_no, ": ", trim(value_l)
+        error stop
     end select
 end subroutine read_turbulence_model
 
@@ -1241,7 +1302,8 @@ subroutine read_les_model(value, target, line_no)
         if (stat == 0 .and. parsed >= LES_NONE .and. parsed <= LES_WALE) then
             target = int(parsed, C_INT)
         else
-            if (terminal_output) print *, "warning: unknown LES model on input line", line_no, ": ", trim(value_l)
+            if (terminal_output) print *, "error: unknown LES model on input line", line_no, ": ", trim(value_l)
+            error stop
         end if
     end select
 end subroutine read_les_model
@@ -1349,7 +1411,8 @@ subroutine read_int(value, target, line_no)
     if (stat == 0) then
         target = parsed
     else
-        if (terminal_output) print *, "warning: could not parse integer on input line", line_no
+        if (terminal_output) print *, "error: could not parse an integer on input line", line_no, ": ", trim(value)
+        error stop
     end if
 end subroutine read_int
 
@@ -1364,7 +1427,8 @@ subroutine read_real6(value, target, line_no)
     if (stat == 0) then
         target = parsed
     else
-        if (terminal_output) print *, "warning: could not parse six real values on input line", line_no
+        if (terminal_output) print *, "error: could not parse six real values on input line", line_no, ": ", trim(value)
+        error stop
     end if
 end subroutine read_real6
 
@@ -1403,7 +1467,8 @@ subroutine read_integer3(value, target, line_no)
     if (stat == 0) then
         target = parsed
     else
-        if (terminal_output) print *, "warning: could not parse three integer values on input line", line_no
+        if (terminal_output) print *, "error: could not parse three integer values on input line", line_no, ": ", trim(value)
+        error stop
     end if
 end subroutine read_integer3
 
@@ -1418,7 +1483,8 @@ subroutine read_real(value, target, line_no)
     if (stat == 0) then
         target = parsed
     else
-        if (terminal_output) print *, "warning: could not parse real value on input line", line_no
+        if (terminal_output) print *, "error: could not parse a real value on input line", line_no, ": ", trim(value)
+        error stop
     end if
 end subroutine read_real
 

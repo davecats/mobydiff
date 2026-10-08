@@ -980,6 +980,12 @@ subroutine compare_case_inputs(fileEcho, iniEcho, file_name, has_terminal)
         if (j == 0) then
             call stale(trim(fkey(i)) // " = " // trim(fval(i)), "(absent)")
         else if (fval(i) /= ival(j)) then
+            ! wall_amp recorded TWO values until 2026-10-06 (amp_x and the
+            ! never-used amp_z, removed with its key); a file written before
+            ! that is current when its first value is the ini's one value.
+            if (trim(fkey(i)) == "wall_amp" .and. index(trim(fval(i)), " ") > 0) then
+                if (fval(i)(1:index(trim(fval(i)), " ") - 1) == trim(ival(j))) cycle
+            end if
             call stale(trim(fkey(i)) // " = " // trim(fval(i)), trim(ikey(j)) // " = " // trim(ival(j)))
         end if
     end do

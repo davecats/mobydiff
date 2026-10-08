@@ -50,9 +50,15 @@ contains
     ! (case_file_name: [case] file, else <field_prefix>.case.h5). c is an
     ! initialised world communicator; its [mpi] dims (read from the ini
     ! here too) describe the SOLVE's rank layout for the nb rule.
-    subroutine prepare_case(input_file, case_file, c)
+    ! check_only (moby_prepare --check-config): read and validate the ini
+    ! through exactly the solver's path -- the case section, every key, the
+    ! grid, the nb rule -- and stop before any geometry work. The sweep that
+    ! catches a key the parser does not know (an unknown key stops the run
+    ! since 2026-10-06).
+    subroutine prepare_case(input_file, case_file, c, check_only)
         character(len=*), intent(in) :: input_file, case_file
         type(comm_type), intent(inout) :: c
+        logical, intent(in), optional :: check_only
 
         class(case_type), allocatable :: flow
         type(dns_type) :: dns
@@ -121,6 +127,12 @@ contains
         call derive_block_nb(dns, c%dims, product(c%dims), c%has_terminal)
         if (dns%block_nb_auto .and. (dns%block_refine_body .or. dns%block_refine_nboxes > 0_C_INT)) &
             error stop "[blocks] refine / refine_body need an explicit [blocks] nb"
+        if (present(check_only)) then
+            if (check_only) then
+                if (c%has_terminal) print *, "config OK: ", trim(input_file), " -> ", out_file
+                return
+            end if
+        end if
         ! What this file is a function of, echoed into it for the staleness
         ! check on read (case_input_echo).
         inputs = case_input_echo(dns, bc, sc)

@@ -210,7 +210,8 @@ contains
             read(value, *, iostat=stat) real_value
             if (stat == 0) this%small_noise_amplitude = real_value
         case default
-            if (terminal) print *, "warning: unknown channel case key on input line", line_no, ": ", trim(key)
+            if (terminal) print *, "error: unknown [case.channel] key on input line", line_no, ": ", trim(key)
+            error stop
         end select
     end subroutine apply_channel_case_value
 

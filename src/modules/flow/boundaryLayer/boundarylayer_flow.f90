@@ -282,7 +282,8 @@ contains
         case ("runtime_file")
             this%stats%runtime_file = clean_config_string(value)
         case default
-            if (terminal) print *, "warning: unknown boundaryLayer case key on input line", line_no, ": ", trim(key)
+            if (terminal) print *, "error: unknown [case.boundaryLayer] key on input line", line_no, ": ", trim(key)
+            error stop
         end select
     end subroutine apply_bl_case_value
 

@@ -816,7 +816,8 @@ contains
                 error stop "invalid [case.airfoil] span"
             end select
         case default
-            if (terminal) print *, "warning: unknown airfoil case key on input line", line_no, ": ", trim(key)
+            if (terminal) print *, "error: unknown [case.airfoil] key on input line", line_no, ": ", trim(key)
+            error stop
         end select
     end subroutine apply_airfoil_case_value
 

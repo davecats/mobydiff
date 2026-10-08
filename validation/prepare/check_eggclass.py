@@ -35,7 +35,6 @@ def main():
         nb = nb*3 if len(nb) == 1 else nb
     with h5py.File(twin, "r") as f:
         touch_twin = f["block_touch_l0"][...].reshape(-1)
-    # wall_amp echoes amp_x amp_z, but the surface uses amp_x for both factors
     amp = echo_values(echo, "wall_amp")[0]; off = echo_values(echo, "wall_offset")[0]
     nwx, nwz = echo_values(echo, "wall_n_wave"); px, pz = echo_values(echo, "wall_phase")
 

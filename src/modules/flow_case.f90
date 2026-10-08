@@ -34,9 +34,10 @@ contains
             call create_generic_case(flow)
         case default
             if (present(has_terminal)) then
-                if (has_terminal) print *, "warning: unknown case name, using generic case: ", trim(case_name)
+                if (has_terminal) print *, "error: unknown [case] name: ", trim(case_name), &
+                    " (channel, airfoil, boundaryLayer or generic)"
             end if
-            call create_generic_case(flow)
+            error stop
         end select
 
         call flow%read_config(input_file, has_terminal)
@@ -65,7 +66,28 @@ contains
             if (trim(section) /= "case") cycle
             if (trim(to_lower(key)) == "name") case_name = to_lower(clean_config_string(value))
         end do
+        close(unit)
 
+        ! A [case.<other>] section is a configuration error, not a no-op: an
+        ! ini carrying [case.boundaryLayer] without `[case] name = boundaryLayer`
+        ! ran the GENERIC case with every trip/BC key silently dropped
+        ! (2026-10-06, the gate that found it was itself the victim).
+        open(newunit=unit, file=trim(input_file), status="old", action="read", iostat=stat)
+        if (stat /= 0) return
+        section = ""
+        line_no = 0
+        do
+            call next_config_entry(unit, section, key, value, line_no, ok)
+            if (.not. ok) exit
+            if (len_trim(section) > 5 .and. to_lower(section(1:5)) == "case.") then
+                if (to_lower(trim(section(6:))) /= trim(case_name)) then
+                    write(*, '(A,A,A,A,A,I0,A)') "error: section [", trim(section), &
+                        "] belongs to another case; [case] name = ", trim(case_name), &
+                        " (input line ", line_no, ")"
+                    error stop
+                end if
+            end if
+        end do
         close(unit)
     end subroutine read_case_name
 

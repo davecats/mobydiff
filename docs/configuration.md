@@ -9,9 +9,13 @@ page documents every section and key.
 - Sections are written `[name]`; keys are `key = value`.
 - Section and key names are **case-insensitive** (lowercased on read).
 - Comments start with `;` or `#` and run to end of line.
-- Blank lines are ignored. **Unknown sections, and unknown keys in most sections, are
-  silently ignored** — check spelling carefully (`[boundary]`, `[rans]`, `[scalar]` and the
-  `[case.*]` sections print a warning for an unknown key).
+- Blank lines are ignored. **An unknown section, an unknown key, or a value that does
+  not parse STOPS the run** with the section, key and line named (since 2026-10-06;
+  until then they were silently ignored, which produced wrong-but-successful runs).
+  `mpirun -n 1 moby_prepare --check-config input.ini` parses and validates an ini
+  through the solver's own path without building anything. A `[case.<x>]` section for a
+  case other than `[case] name` stops the run too (an ini carrying `[case.boundaryLayer]`
+  without the name line used to run the generic case with every trip key dropped).
 - String values may be single- or double-quoted; the quotes are stripped.
 - Booleans accept `true` / `.true.` / `1` / `yes` and `false` / `.false.` / `0` / `no`.
 
@@ -194,7 +198,7 @@ meant to cross a plane must extend beyond it (`validation/body_outlet/`).
 |-----|------|---------|---------|
 | `enabled` | bool | true | Enable the volume-penalization IBM. |
 | `wall_shape` | enum | `wavy` | Analytic wall: `wavy` or `eggcarton` (alias `rough`; 3D sinusoidal roughness). |
-| `amp_x`, `amp_z` | real | 0.025 | Analytic wall amplitudes. |
+| `amp_x` | real | 0.025 | Analytic wall amplitude (the semi-height of the egg-carton crests; `amp_z` was removed 2026-10-06, it was read by nothing). |
 | `n_wave_x`, `n_wave_z` | int | 1 | Wavelengths per domain length. |
 | `phase_x`, `phase_z` | real | 0.0 | Phase offsets. |
 | `wall_offset` | real | 0.01 | Mean plane of the analytic wall (`wavy`: the trough height; `eggcarton`: the mid-plane, so `wall_offset = amp_x` puts the troughs on the domain wall and the surface is MacDonald et al.'s `k (1 + cos cos)`). |
@@ -354,5 +358,5 @@ functions.
 - There is no `[run]` section — run control lives in `[time]` and `[output]`.
 - `[case.*]` keys are consumed only by the matching `[case] name`; other cases ignore them.
 - Removed keys: `[blocks] interface_constant_half`,
-  `momentum_reflux` and `interface_skew` no longer exist (and, being unknown, are silently
-  ignored).
+  `momentum_reflux` and `interface_skew`, `[ibm] coeff_file` and `amp_z` no longer exist
+  (and, being unknown, stop the run).

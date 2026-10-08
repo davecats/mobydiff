@@ -59,13 +59,14 @@ in `[blocks]`. The full key list is in the [configuration reference](configurati
 
 ## Preprocessing immersed bodies (`moby_prepare`)
 
-Analytic immersed walls (`[ibm] wall_shape`) can be set up inline by the solver. STL
-geometry — and, optionally, analytic geometry too — goes through the MPI-parallel
-preprocessor, which reuses the solver's own grid, block and classification code:
+Every run reads a case file written by the MPI-parallel preprocessor, which reuses the
+solver's own grid, block and classification code (analytic walls, `[ibm] wall_shape`, and
+STL geometry alike; the solver never builds one):
 
 ```bash
 mpirun -n 4 ./build_cpu/moby_prepare input.ini          # writes [case] file, else <field_prefix>.case.h5
 mpirun -n 4 ./build_cpu/moby_solve   input.ini          # reads it; stops if missing or stale
+mpirun -n 1 ./build_cpu/moby_prepare --check-config input.ini   # parse + validate the ini only
 ```
 
 `input.ini` is the run's `.ini` plus, for an STL body, the geometry declaration

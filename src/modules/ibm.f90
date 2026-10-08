@@ -44,8 +44,7 @@ module ibmm
         ! WALL_EGGCARTON (3D sinusoidal, the MacDonald & Hutchins roughness).
         integer :: wallShape = WALL_WAVY
         integer :: n_wave_x, n_wave_z
-        real(C_DOUBLE) :: amp_x, phase_x
-        real(C_DOUBLE) :: amp_z, phase_z
+        real(C_DOUBLE) :: amp_x, phase_x, phase_z
         ! Mean plane of the wall, and the egg-carton's streamwise start and
         ! ramp length (ramped = .false.: the wall everywhere, the original
         ! expression).
@@ -171,7 +170,6 @@ contains
         ibm%n_wave_x = int(dns%ibm_n_wave_x)
         ibm%n_wave_z = int(dns%ibm_n_wave_z)
         ibm%amp_x = dns%ibm_amp_x
-        ibm%amp_z = dns%ibm_amp_z
         ibm%phase_x = dns%ibm_phase_x
         ibm%phase_z = dns%ibm_phase_z
         ibm%wall_offset = dns%ibm_wall_offset
