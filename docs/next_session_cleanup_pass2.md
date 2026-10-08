@@ -30,8 +30,22 @@ simplifications, the performance items and the `config.f90` `case default`;
   geometry against the DEFAULT wavy wall (review section 4a; gate 4 of
   `validation/prepare/run_gates.sh`). 31 closed handouts are in
   `docs/history/` (its README indexes them; 214 citations redirected).
-- (3) Not started; the review's section 9 gives the order (`case default`
-  first, taking the dead `[ibm] amp_z` with it).
+- (3) STARTED 2026-10-08 and the first items are in: `config.f90` `case
+  default` (an unknown section/key/value, an unknown case name and a
+  foreign `[case.<x>]` section all stop the run; `moby_prepare
+  --check-config`; sweep of 158 inis: 147 OK, 11 templates) -- `4a585b7`;
+  `[ibm] amp_z` removed with an echo-compatibility rule so no case file went
+  stale -- same commit; the body-force correction visits the force's SUPPORT
+  only (8.5 % of the boundary-layer step on the A100 profile; RTX 3060 step
+  -7.3 %) with the new `validation/bodyforce/` gate -- `0dd8d24`; apply k1
+  fused into k2 and `cheb_combine` into `compute_phi` (RTX 3060 apply bucket
+  -7 %; the Chebyshev channel max_abs 0 at nofma) -- gate round 4 in flight,
+  commit follows. Next in the review's order: the index helpers and the two
+  projections' shared tail (section 3 items 2-4), F13/F14, the scalar kernel
+  split.
+- HoreKa access LAPSED on 2026-10-08 (`Permission denied (publickey)`): the
+  final rough chain (`rough_io_run`, to 837500) could not be read; its
+  analysis is still owed (section 1 below, files and command).
 
 Original handout text follows.
 

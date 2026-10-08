@@ -2438,8 +2438,14 @@ immersed boundary. Phased, each phase verified before the next:
 
 - **The `turbulentBoundaryLayer` branch merged; the rough-wall boundary
   layer on the elected case (2026-10-05, `bf95993` / `b27936e`; the HoreKa
-  pair is RUNNING -- see `tests_record.md` section 14 and the memory
-  `outlet-prototype-branch`).** The branch (five commits on `c72ec69`, BEFORE
+  pair FINISHED 2026-10-06 at step 775000 on both sides -- the smooth
+  statistics are the shipped tutorial data since `e0015ac` (1250-unit
+  window; c_f 0.00458 / H 1.508 at Re_theta 677, the elected grid's outlet
+  zone measured) and the rough side was the FALLBACK; the final rough case
+  through the outlet (`rough_io_run`, the backflow-datum binary) ran healthy
+  to step 800000 and beyond (L2 div 6e-6, Linf 1.1-1.25) and its read-out is
+  owed -- `tests_record.md` section 14, `docs/next_session_cleanup_pass2.md`
+  section 1).** The branch (five commits on `c72ec69`, BEFORE
   the outlet work) elects the exact-grid CaNS/AMPHIBIOUS case as the shipped
   tutorial (3200 x 384 x 136 on 650 x 100 x 26, `[grid.y] distribution =
   cans` = the one-sided tanh `y = L[1 + tanh(a(s-1))/tanh(a)]`, CaNS trip,
@@ -2550,6 +2556,52 @@ immersed boundary. Phased, each phase verified before the next:
   and profiling pass, then the review's section-6 simplifications, the
   performance items and the `config.f90` `case default`; the review's
   feature tail (steps 10-12) stays for the future.
+
+- **Second cleaning and profiling pass (2026-10-06 .. 10-08,
+  `docs/cleanup_review_2026-10-06.md`; handout STATUS in
+  `docs/next_session_cleanup_pass2.md`).** Five read-only reviews of the
+  whole source, the drivers and the docs, then a fresh A100 profile (job
+  5184720, `overheadTest/results_horeka_2026-10-06.md`, review section 7),
+  then the cleaning and the first of the section-3 items. FOUND AND FIXED:
+  (1) **`moby_prepare` classified analytic geometry against the DEFAULT
+  wavy wall** -- `classify_*` reset the geometry themselves and ran before
+  `set_ibm_geometry`; no shipped case was affected (the egg-carton cases
+  bury no block); gate 4 of `validation/prepare/run_gates.sh` (`eggclass`:
+  pre-fix 256 leaves = the default wall's, fixed 464 = an independent
+  transcription). (2) **`config.f90` had no `case default`**: an unknown
+  section, key or unparsable value, an unknown `[case] name` and a
+  `[case.<x>]` section of another case now STOP the run (the last one found
+  by a gate that had lost its name line and silently ran the generic case);
+  `moby_prepare --check-config input.ini` parses and validates an ini
+  through the solver's path; sweep of the 158 tracked inis: 147 OK, 11
+  `@KEY@` templates, no accidental key. `[ibm] amp_z` (read by nothing) is
+  gone; the echo compatibility rule in `io.f90` keeps every existing case
+  file current. (3) **The trip's body-force correction streamed the whole
+  domain for three components every substage -- 8.5 % of the boundary-layer
+  step at 82 % of peak DRAM, adding zeros** (the fill had been restricted on
+  2026-09-14, the correction not): `bodyforce_type` support list + component
+  range, `validation/bodyforce/` gate (trip ON on 7 of 32 blocks; a generic
+  `[force]`), RTX 3060 step -7.3 %. (4) Apply k1 (`p += phi/dt`) fused into
+  k2 and `cheb_combine` into `compute_phi`: 18 + 18 launches per step fewer,
+  RTX 3060 apply bucket -7 %. CLEANED: dead symbols and device maps (the
+  node-line map `enter_grid_data`, `blk%x/y/z` in the scalar cross-level
+  copy, `c%coords`, unused arguments), six misleading comments,
+  `exchange_halos(interp=)` -> `cross_level`; `run_gates_step7.sh` and
+  `compile_nofma.sh` retired, the C3 pointwise-capacity control leg retired
+  (its rows stay as the 2026-08-28 record), stale venv/reference/header
+  fixes, 1425 generated dot-inis deleted; **31 closed handouts moved to
+  `docs/history/`** (README index; 214 citations redirected), `index.md`,
+  `tutorials.md`, `tools.md` fixed. PROFILE (one column, head `b1f41be`):
+  block tax 1.006/1.028/1.023/0.994 at 1/2/4/8 ranks, 2:1 machinery 1.001x
+  at 4 ranks; device time at 1 rank on 138 M cells: apply k2 37 %, phi 19 %,
+  predictor 19 %, k1 10 %, body-force correction 8.5 %; `min_channel`'s
+  device is busy 55 % of its step (launch-bound). Every change gated max_abs
+  0 (nofma) vs `~/backflow_ref_binaries` on the 7-case (CPU 4 ranks + GPU),
+  9-case, outlet (1 + 4 ranks), pocket, bodyforce and P0 gates. OPEN: the
+  rough through-outlet chain's read-out (HoreKa access lapsed 2026-10-08),
+  the review's section 9 order (index helpers, projection tail, F13/F14,
+  the scalar kernel split), and the proposal to move this log to
+  `docs/history/worklog_2026.md` (review 6.5).
 
 ## Verification
 

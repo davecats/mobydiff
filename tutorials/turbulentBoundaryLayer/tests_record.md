@@ -331,6 +331,53 @@ through the outlet again (`wall_x_end` removed, `cflmax = 1.0`); the
 2026-10-05 pair (roughness out at x = 580) is the smooth rerun plus the rough
 fallback.
 
+**RESULTS SO FAR (2026-10-06/08; the final rough read-out is owed).**
+The pair chain ended on 2026-10-06 at step 775000 on both sides (every
+chunk exit 0; `~/outlet_runs/rough_horeka/pair/`). The final rough case with
+the roughness THROUGH the outlet (`rough_io_run`, the backflow-datum binary
+`c7b2773`, restarted from `smooth_737500.h5`) ran healthy past step 800000
+(L2 div 5.8-6.3e-6, Linf 1.11-1.25, `partition:` and `boundary:` lines
+identical in every chunk) and was still running to 837500 when HoreKa
+access lapsed on 2026-10-08.
+
+- **Smooth** (window 712500..775000 = 1250 t.u., `production_stats.h5` minus
+  `production_stats_t0.h5`): SHIPPED as the tutorial's statistics (`e0015ac`,
+  README table c_f 0.00458 / H 1.508 / u_tau 0.0479 / u'_rms 2.724 / -u'v'
+  0.848 at Re_theta 677; against the superseded old-outlet 10 000-unit data
+  c_f within +-1.4 % to x = 550 and the -u'v' peak's band mean 0.875 vs
+  0.872 -- sampling, the station scatter of a 1250-unit window being 0.024).
+  The elected grid's outlet zone: dtheta/dx within 3-4 % of the balance from
+  x = 300 to 600, +20 % over the last ~2 delta99 under a wall pressure that
+  rises by 1e-3, +50 % over the last two cells (README, "The outlet zone");
+  the last column's stored p is 6x quieter than the interior (rms 4.8e-4 vs
+  2.7-3.1e-3) and no face of the plane carried inflow in the final field.
+- **Rough, PRELIMINARY** (through-outlet run, window 775000..800000 = 500
+  t.u., `rough_compare.py --half 50`): the balance closes by construction on
+  the rough side (c_f is the balance's own); dtheta/dx 3.1e-3 at x = 300-385
+  falling to 2.5e-3 at 550-600 against the smooth 2.3e-3 (c_f ratio ~1.3);
+  k+ on the rough u_tau 10.0 / 9.0 / 9.6 / 9.4 / 9.1 / 8.4 at x = 300 / 385 /
+  450 / 500 / 550 / 600; Delta U+ above the crests, mean-plane origin +3.60 /
+  +2.78 / +3.76 / +3.55 / +3.06 / +2.23 and crest origin +2.94 / +2.16 / +3.18
+  / +3.02 / +2.54 / +1.72 against MacDonald et al.'s 3.72 at k+ 10 (the
+  origin is worth ~0.55; the station scatter follows the balance-derived c_f
+  noise of a 500-unit window, +-0.4). The outlet plane at step 800000: 0.33 %
+  of the fluid faces carry inflow (mean -0.014), the pocket faces (fluid on
+  the plane, solid within half a wavelength upstream, 2152 of 52224) mean
+  +0.088 with the lowest row at +0.005 (min -0.135, 31 of 60 one-cell dimple
+  faces inflowing), the last column's stored p rms 7.7e-4 against 3.5-5.1e-3
+  interior: bounded, the cut-down's +-0.1 instantaneous. THE FALLBACK (the
+  roughness ramped out at x = 580) shows why the through-outlet
+  configuration is the one to report: the ramp-out perturbs the balance 100
+  units UPSTREAM (dtheta/dx 1.84e-3 at 500-550 and 1.12e-3 at 550-580 under
+  p_wall -2.4e-3, then 1.25e-2 over the ramp itself as the superficial theta
+  recovers the displaced volume) -- the ramp regions, in and out, are where
+  the integral balance does not apply (`~/outlet_runs/rough_horeka/pair/
+  compare_fallback.txt`).
+- Owed when HoreKa is reachable again: `stats_rough_837500.h5`, the 1250-unit
+  rough window (`--rough stats_rough_837500.h5 stats_rough_775000.h5`), the
+  final field's plane statistics (`~/outlet_runs/rough_horeka/last_column.py`),
+  and the numbers above replaced by the final ones.
+
 ## Bottom line
 
 The original 5 % c_f gap to the spectral reference was **not** a limitation of the
