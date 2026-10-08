@@ -775,17 +775,41 @@ contains
         face_id = 2*(dir - 1) + side + 1
     end function boundary_face_id
 
-    integer function boundary_face_dir(face_id) result(dir)
+    ! Face id -> direction (1..3, also the normal velocity component) and
+    ! side (SIDE_MIN = 0 low, 1 high). Device-callable: the boundary kernels
+    ! decode every point with these (they were spelt out in each kernel
+    ! until 2026-10-08).
+    pure integer function boundary_face_dir(face_id) result(dir)
+        !$omp declare target
         integer, intent(in) :: face_id
 
         dir = (face_id + 1)/2
     end function boundary_face_dir
 
-    integer function boundary_face_side(face_id) result(side)
+    pure integer function boundary_face_side(face_id) result(side)
+        !$omp declare target
         integer, intent(in) :: face_id
 
         side = modulo(face_id - 1, 2)
     end function boundary_face_side
+
+    ! The normal-direction indices of a physical face on a block of n cells:
+    ! the ghost cell and its interior neighbour (cell-centred rows and the
+    ! tangential velocities), and the face DOF and ITS interior neighbour
+    ! (the normal velocity, which lives on the face in the staggered
+    ! layout): (0, 1) / (1, 2) on a low face, (n+1, n) / (n+1, n) on a high
+    ! one. One definition for the five kernels that used to spell it.
+    pure subroutine boundary_face_indices(side, n, ghost, interior, face, neighbour)
+        !$omp declare target
+        integer, intent(in) :: side, n
+        integer, intent(out) :: ghost, interior, face, neighbour
+
+        if (side == SIDE_MIN) then
+            ghost = 0; interior = 1; face = 1; neighbour = 2
+        else
+            ghost = n + 1; interior = n; face = n + 1; neighbour = n
+        end if
+    end subroutine boundary_face_indices
 
     ! Physical-face boundary writes of the q variables `vars` (default
     ! u, v, w, p; scalar_sync passes the scalar columns): every point's
@@ -833,25 +857,12 @@ contains
             ! Each entry is one active physical boundary point of one block.
             face_id = int(bc%pointFace(n))
             b = int(bc%slot(n))
-            dir = (face_id + 1)/2
-            side = modulo(face_id - 1, 2)
+            dir = boundary_face_dir(face_id)
+            side = boundary_face_side(face_id)
             gi = [int(bc%i(n)), int(bc%j(n)), int(bc%k(n))]
             ii = gi
-
-            ! The ghost/interior pair (cell-centred rows and tangential
-            ! velocities) and the face/neighbour pair (the normal velocity,
-            ! which lives on the boundary face in the staggered layout).
-            if (side == SIDE_MIN) then
-                ghost_idx = 0
-                interior_idx = 1
-                face_idx = 1
-                neighbor_idx = 2
-            else
-                ghost_idx = int(local_n(dir)) + 1
-                interior_idx = int(local_n(dir))
-                face_idx = int(local_n(dir)) + 1
-                neighbor_idx = int(local_n(dir))
-            end if
+            call boundary_face_indices(side, int(local_n(dir)), ghost_idx, interior_idx, &
+                face_idx, neighbor_idx)
 
             do v = 1, nv
                 var = int(vl(v))
@@ -884,7 +895,7 @@ contains
         type(boundary_type), intent(in) :: bc
         logical, intent(in) :: given(NFACES)
 
-        integer :: n, npts, b, face_id, dir, side
+        integer :: n, npts, b, face_id, dir, side, gi, ii
         integer :: fi(3), ni(3)
         integer(C_INT) :: local_n(1:3), todo(NFACES)
 
@@ -899,22 +910,16 @@ contains
         !$omp& map(to: npts, local_n(1:3), todo(1:NFACES), &
         !$omp& bc%pointFace(1:npts), bc%slot(1:npts), bc%i(1:npts), bc%j(1:npts), bc%k(1:npts)) &
         !$omp& map(tofrom: blk%q) &
-        !$omp& private(n,b,face_id,dir,side,fi,ni)
+        !$omp& private(n,b,face_id,dir,side,fi,ni,gi,ii)
         do n = 1, npts
             face_id = int(bc%pointFace(n))
             if (todo(face_id) == 0_C_INT) cycle
             b = int(bc%slot(n))
-            dir = (face_id + 1)/2
-            side = modulo(face_id - 1, 2)
+            dir = boundary_face_dir(face_id)
+            side = boundary_face_side(face_id)
             fi = [int(bc%i(n)), int(bc%j(n)), int(bc%k(n))]
             ni = fi
-            if (side == SIDE_MIN) then
-                fi(dir) = 1
-                ni(dir) = 2
-            else
-                fi(dir) = int(local_n(dir)) + 1
-                ni(dir) = int(local_n(dir))
-            end if
+            call boundary_face_indices(side, int(local_n(dir)), gi, ii, fi(dir), ni(dir))
             blk%q(fi(1),fi(2),fi(3),dir,b) = blk%q(ni(1),ni(2),ni(3),dir,b)
         end do
         !$omp end target teams distribute parallel do
@@ -987,7 +992,7 @@ contains
         integer(C_INT), intent(in) :: mode(NFACES)
         real(C_DOUBLE), intent(in), optional :: value(NFACES)
 
-        integer :: n, npts, b, face_id, dir, side, f
+        integer :: n, npts, b, face_id, dir, side, f, fi, ni
         integer :: gi(3), ii(3)
         integer(C_INT) :: local_n(1:3), on_l(NFACES)
         real(C_DOUBLE) :: w_l(NFACES), c_l(NFACES)
@@ -1008,22 +1013,16 @@ contains
         !$omp& map(to: npts, local_n(1:3), on_l(1:NFACES), w_l(1:NFACES), c_l(1:NFACES), &
         !$omp& bc%pointFace(1:npts), bc%slot(1:npts), bc%i(1:npts), bc%j(1:npts), bc%k(1:npts)) &
         !$omp& map(tofrom: s) &
-        !$omp& private(n,b,face_id,dir,side,gi,ii)
+        !$omp& private(n,b,face_id,dir,side,gi,ii,fi,ni)
         do n = 1, npts
             face_id = int(bc%pointFace(n))
             if (on_l(face_id) == 0_C_INT) cycle
             b = int(bc%slot(n))
-            dir = (face_id + 1)/2
-            side = modulo(face_id - 1, 2)
+            dir = boundary_face_dir(face_id)
+            side = boundary_face_side(face_id)
             gi = [int(bc%i(n)), int(bc%j(n)), int(bc%k(n))]
             ii = gi
-            if (side == SIDE_MIN) then
-                gi(dir) = 0
-                ii(dir) = 1
-            else
-                gi(dir) = int(local_n(dir)) + 1
-                ii(dir) = int(local_n(dir))
-            end if
+            call boundary_face_indices(side, int(local_n(dir)), gi(dir), ii(dir), fi, ni)
             s(gi(1),gi(2),gi(3),b) = w_l(face_id)*s(ii(1),ii(2),ii(3),b) + c_l(face_id)
         end do
         !$omp end target teams distribute parallel do

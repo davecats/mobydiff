@@ -742,8 +742,8 @@ locality shift; plan entry 7-5 only if a case is load-imbalanced.
 | # | severity | what | where | status |
 |---|---|---|---|---|
 | F10 | correctness (latent; no shipped case affected) | `moby_prepare` classified analytic geometry against the DEFAULT wavy wall (`classify_*` reset the geometry, and ran before `set_ibm_geometry`) | `prepare.f90:150-174`, `ibm.f90` `set_ibm_geometry_defaults` | **FIXED 2026-10-06** (section 4a; gate 4 of `validation/prepare/run_gates.sh`, `check_eggclass.py`: pre-fix 256 leaves = the default wall's, fixed 464, touch raster == the independent transcription; P0 29/29; every nofma suite `max_abs 0`) |
-| F11 | configuration | 14 key blocks without `case default`, 3 that warn, 7 value parsers that keep the old value, unknown sections dropped | `config.f90` (section 5) | the handout's section 3 item 1: split `apply_config_value` per section, error-stop once, run every ini through `moby_prepare` |
-| F12 | configuration | `[ibm] amp_z` parsed, documented, echoed, never used | `ibm.f90:546-549` | remove the key (one amplitude) |
+| F11 | configuration | 14 key blocks without `case default`, 3 that warn, 7 value parsers that keep the old value, unknown sections dropped | `config.f90` (section 5) | **DONE 2026-10-06/08**: `unknown_key` error stop in every key block (config, scalar and the three flow cases), unknown sections and unparsable values stop too, an unknown `[case] name` stops, a `[case.<x>]` section of another case stops (the gate that found the body-force win was itself running the generic case with its `[case.boundaryLayer]` dropped); `moby_prepare --check-config`; sweep of all 158 tracked inis: 147 OK, 11 templates (`@KEY@`), no accidental key found |
+| F12 | configuration | `[ibm] amp_z` parsed, documented, echoed, never used | `ibm.f90:546-549` | **DONE**: key removed (stops as unknown); the echo records one `wall_amp` value and a file written with two is current when its first value matches (`io.f90`), so no existing case file -- the committed `ibm_coeff_case.h5` included -- went stale |
 | F13 | configuration | restart precedence undocumented and half config-authority (grid size, lengths, periodicity, distribution params from the FILE) | `io.f90:728-812` | decide: the ini must AGREE on what the case file owns; document in `configuration.md` |
 | F14 | consistency | Courant reduction over ghosts, Péclet over the interior | `step.f90:1012, 1043` | interior only; not bit-exact where a ghost binds -- gate with `dtmax`-bound cases |
 | F15 | robustness (latent) | `MPI_Cart_create(reorder=.true.)` + world-rank/cart-rank mix; unchecked xz key width; int32 window product | `comm.f90:225, 235, 538`; `blocks.f90:1333, 383` | `MPI_Comm_dup`; `key_covers` for xz; a guard on the product |
@@ -754,13 +754,16 @@ locality shift; plan entry 7-5 only if a case is load-imbalanced.
 **Order of work after this pass** (the handout's section 3, re-ranked by what
 the read found; the profile of section 7 may reorder the performance items):
 
-1. F11, the `case default` (one hour, the top item of the handout as well),
-   taking F12 with it.
+1. ~~F11, the `case default`, taking F12 with it.~~ DONE.
 2. The bit-exact simplifications of section 3 that remove duplication the
    next edit would trip over: items 2-4, 7, 12 (index helpers, the two
    projections' shared tail, `comm.f90`'s one enumeration, constants in one
    place). Gate: production flags (nothing moves) + the nofma suites once at
-   the end.
+   the end. **Item 2 DONE 2026-10-08**: `boundary_face_dir/side` are pure
+   `declare target` and `boundary_face_indices(side, n, ghost, interior,
+   face, neighbour)` is the one definition of the (0,1)/(1,2) vs (n+1,n)
+   pairs, used by `apply_bc`, `init_outlet_faces`, `apply_scalar_bc` and
+   `predict_outlet_faces`.
 3. F13 and F14 together (both are "which value wins" questions with a
    measurable effect on `dt` or on a restart) -- one session, gated on the
    dtmax-bound cases and a restart pair.
@@ -768,9 +771,23 @@ the read found; the profile of section 7 may reorder the performance items):
    gate case, then the face-diffusivity helper (item 14): the two largest
    readability wins in the solver, and the lever for whatever the profile
    says about `scalar_transport_kernel`'s occupancy.
-5. The performance items in the profile's order (section 7.5): the
-   body-force correction on the trip's block list first (8.5 % of the
-   boundary-layer step for an afternoon), red-black's `zero_phi` and sweep
-   hoists next, then apply k1+k2 / `cheb_combine` fusion.
+5. The performance items in the profile's order (section 7.5): ~~the
+   body-force correction on the trip's block list first~~ DONE 2026-10-08
+   (`bodyforce_type` support list + component range, `add_bodyforce_correction`
+   visits it only; bit-exact at max_abs 0 on the new `validation/bodyforce/`
+   gate (trip ON, 7 of 32 blocks; the generic sine `[force]`), CPU and GPU;
+   RTX 3060, 4.3 M cells: step 72.9 -> 67.5 ms (-7.4 %), momentum bucket
+   -19 %; the A100 number is the next matrix's). **Apply k1 fused into k2
+   DONE 2026-10-08** (the pressure update inside the face-correction kernel:
+   no operand or order moves; RTX 3060 apply bucket 26.6 -> 24.8 ms (-7 %),
+   step 67.5 -> 65.7 ms; 18 launches per step fewer; gated nofma) **and
+   `cheb_combine` into `compute_phi`** (`min_channel`, Chebyshev niter 12,
+   0.8 M cells, RTX 3060: step 41.0 -> 36.8 ms (-10 %), sweep bucket -24 %,
+   apply -11 %; `3e691e1`). Red-black's
+   `zero_phi` is NOT next after all: it runs only with a 2:1 interface, which
+   the production red-black case (the single-level boundary-layer tutorial)
+   never has -- the campaign's refined red-black config is the only payer.
+   Next: `cheb_combine` into `compute_phi` (every Chebyshev case; 7 % of
+   `min_channel`'s device time), then the red-black sweep hoists.
 6. CLAUDE.md's log to `docs/history/worklog_2026.md` (section 6.5) -- the
    user's call.

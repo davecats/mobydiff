@@ -23,7 +23,8 @@ module step
     use :: chron, only: profiler_type, wall_seconds, profiler_add
     use :: bodyforce, only: bodyforce_type, bodyforce_is_enabled
     use :: scalar, only: scalar_type, scalars_enabled, scalar_min_pr, scalar_min_prt
-    use :: boundary, only: boundary_type, SIDE_MIN, NFACES
+    use :: boundary, only: boundary_type, SIDE_MIN, NFACES, boundary_face_dir, boundary_face_side, &
+        boundary_face_indices
     implicit none
 
     real(C_DOUBLE), parameter :: rk_alpha(3) = [64.0d0/120.0d0,  50.0d0/120.0d0,  90.0d0/120.0d0]
@@ -567,7 +568,7 @@ contains
         type(ibm_type), intent(in) :: ibm
         real(C_DOUBLE), intent(in) :: dt_gamma
 
-        integer :: n, npts, b, face_id, dir, side
+        integer :: n, npts, b, face_id, dir, side, gi, ii
         integer :: fi(3), ni(3), fm(3), nm(3)
         integer(C_INT) :: local_n(1:3), isOut(NFACES)
         real(C_DOUBLE) :: d1f, d1n, dpf, dpn, r, sf, rsn, dtf, s, qf
@@ -590,25 +591,19 @@ contains
         !$omp& bc%pointFace(1:npts), bc%slot(1:npts), bc%i(1:npts), bc%j(1:npts), bc%k(1:npts), &
         !$omp& blk%qs, blk%d1x, blk%d1y, blk%d1z, ibm%coef, ibm%mu) &
         !$omp& map(tofrom: blk%q) &
-        !$omp& private(n,b,face_id,dir,side,fi,ni,fm,nm,d1f,d1n,dpf,dpn,r,sf,rsn,dtf,s,qf)
+        !$omp& private(n,b,face_id,dir,side,gi,ii,fi,ni,fm,nm,d1f,d1n,dpf,dpn,r,sf,rsn,dtf,s,qf)
         do n = 1, npts
             face_id = int(bc%pointFace(n))
             if (isOut(face_id) == 0_C_INT) cycle
             b = int(bc%slot(n))
-            dir = (face_id + 1)/2          ! also the normal velocity component
-            side = modulo(face_id - 1, 2)
+            dir = boundary_face_dir(face_id)          ! also the normal velocity component
+            side = boundary_face_side(face_id)
 
             ! The face f and its interior neighbour n, and the cell below
             ! each along the normal (the low operand of dp).
             fi = [int(bc%i(n)), int(bc%j(n)), int(bc%k(n))]
             ni = fi
-            if (side == SIDE_MIN) then
-                fi(dir) = 1
-                ni(dir) = 2
-            else
-                fi(dir) = int(local_n(dir)) + 1
-                ni(dir) = int(local_n(dir))
-            end if
+            call boundary_face_indices(side, int(local_n(dir)), gi, ii, fi(dir), ni(dir))
             fm = fi
             fm(dir) = fi(dir) - 1
             nm = ni
