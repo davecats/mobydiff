@@ -112,6 +112,18 @@ module bodyforce
         ! does change every substage.
         real(C_DOUBLE), allocatable :: trip_gs(:,:), trip_g(:,:), trip_gp1(:,:)  ! (nz, n_trip_blocks)
         logical(C_BOOL) :: trip_span_valid = .false.
+        ! The SUPPORT of the force, which is all the correction kernel visits:
+        ! a block list and a component range. The trip is the v component on
+        ! trip_blocks; every other source is every component on every block.
+        ! Found by the 2026-10-06 profile: the correction streamed f, qs,
+        ! oldrhs and mu for three components over the whole domain every
+        ! substage -- 8.5 % of the boundary-layer step at 82 % of peak DRAM,
+        ! adding zeros (the fill had been restricted on 2026-09-14, the
+        ! correction not). Skipped cells add exactly 0.0, so the restriction
+        ! is bit-exact by construction.
+        integer(C_INT), allocatable :: sup_blocks(:)
+        integer(C_INT) :: n_sup_blocks = 0_C_INT
+        integer(C_INT) :: sup_var_lo = VAR_U, sup_var_hi = VAR_W
     end type bodyforce_type
 
 contains
@@ -132,7 +144,7 @@ contains
         type(grid_type), intent(in) :: g
         logical, intent(in) :: c_has_terminal
 
-        integer :: nx, ny, nz
+        integer :: nx, ny, nz, i
 
         call destroy_bodyforce(bf)
 
@@ -165,6 +177,19 @@ contains
         case (SRC_TRIP)
             call init_trip(bf, dns, blk, c_has_terminal)
         end select
+
+        if (bf%source == SRC_TRIP) then
+            bf%n_sup_blocks = bf%n_trip_blocks
+            allocate(bf%sup_blocks(max(1_C_INT, bf%n_sup_blocks)))
+            bf%sup_blocks = 0_C_INT
+            if (bf%n_sup_blocks > 0_C_INT) bf%sup_blocks(1:bf%n_sup_blocks) = bf%trip_blocks(1:bf%n_trip_blocks)
+            bf%sup_var_lo = VAR_V; bf%sup_var_hi = VAR_V
+        else
+            bf%n_sup_blocks = blk%nBlocks
+            allocate(bf%sup_blocks(max(1_C_INT, blk%nBlocks)))
+            bf%sup_blocks = [(int(i, C_INT), i = 1, max(1, int(blk%nBlocks)))]
+            bf%sup_var_lo = VAR_U; bf%sup_var_hi = VAR_W
+        end if
     end subroutine init_bodyforce
 
     ! Copy the parsed [force] trip_* parameters and prime the random spanwise
@@ -276,6 +301,8 @@ contains
             bf%trip_phase_old, bf%trip_phase_new)
         if (allocated(bf%trip_blocks)) deallocate(bf%trip_blocks)
         if (allocated(bf%trip_gs)) deallocate(bf%trip_gs, bf%trip_g, bf%trip_gp1)
+        if (allocated(bf%sup_blocks)) deallocate(bf%sup_blocks)
+        bf%n_sup_blocks = 0_C_INT
         bf%n_trip_blocks = 0_C_INT
         bf%trip_span_valid = .false.
         bf%trip_kindex = -1_C_INT
@@ -287,7 +314,7 @@ contains
         if (.not. allocated(bf%f)) return
 
         !$omp target enter data map(to: bf)
-        !$omp target enter data map(to: bf%f)
+        !$omp target enter data map(to: bf%f, bf%sup_blocks)
         if (allocated(bf%trip_blocks)) then
             !$omp target enter data map(to: bf%trip_blocks)
         end if
@@ -307,7 +334,7 @@ contains
         if (allocated(bf%trip_blocks)) then
             !$omp target exit data map(delete: bf%trip_blocks)
         end if
-        !$omp target exit data map(delete: bf%f)
+        !$omp target exit data map(delete: bf%f, bf%sup_blocks)
         !$omp target exit data map(delete: bf)
     end subroutine exit_bodyforce_data
 

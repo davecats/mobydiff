@@ -713,46 +713,46 @@ contains
     ! matching how the predictor stores its RHS). Only the same interior faces
     ! the predictor advanced are touched (the physLow start masks); the
     ! shared 2:1 face is predicted on both sides, so it is not pinned here.
+    ! Visits the force's SUPPORT only (bf%sup_blocks x sup_var_lo:sup_var_hi;
+    ! the trip: v on its block list, under 1 % of a boundary-layer domain):
+    ! a cell outside it holds f = 0 exactly and the update is the identity.
     subroutine add_bodyforce_correction(blk, bf, dt_alpha, ibm)
         type(block_set_type), intent(inout) :: blk
         type(bodyforce_type), intent(in) :: bf
         real(C_DOUBLE), intent(in) :: dt_alpha
         type(ibm_type), intent(in) :: ibm
 
-        integer :: i, j, k, b, nx, ny, nz, nBlocks, uStartX, vStartY, wStartZ
+        integer :: i, j, k, b, bb, var, idx, nx, ny, nz, nSup, varLo, varHi, start
 
         nx = int(blk%nb(1))
         ny = int(blk%nb(2))
         nz = int(blk%nb(3))
-        nBlocks = int(blk%nBlocks)
+        nSup = int(bf%n_sup_blocks)
+        varLo = int(bf%sup_var_lo); varHi = int(bf%sup_var_hi)
+        if (nSup == 0) return
 
         !$omp target teams distribute parallel do collapse(4) &
-        !$omp& map(to: dt_alpha, blk%physLow, bf%f, ibm%mu) &
+        !$omp& map(to: dt_alpha, varLo, varHi, blk%physLow, bf%f, bf%sup_blocks, ibm%mu) &
         !$omp& map(tofrom: blk%qs, blk%oldrhs) &
-        !$omp& private(i,j,k,b,uStartX,vStartY,wStartZ)
-        do b = 1, nBlocks
+        !$omp& private(i,j,k,b,bb,var,idx,start)
+        do bb = 1, nSup
         do k = 1, nz
             do j = 1, ny
                 do i = 1, nx
-                    uStartX = momentum_face_start(blk%physLow(1,b))
-                    vStartY = momentum_face_start(blk%physLow(2,b))
-                    wStartZ = momentum_face_start(blk%physLow(3,b))
-
-                    if (i >= uStartX) then
-                        blk%qs(i,j,k,VAR_U,b) = blk%qs(i,j,k,VAR_U,b) &
-                            + dt_alpha*bf%f(i,j,k,VAR_U,b)*ibm%mu(i,j,k,VAR_U,b)
-                        blk%oldrhs(i,j,k,VAR_U,b) = blk%oldrhs(i,j,k,VAR_U,b) + bf%f(i,j,k,VAR_U,b)
-                    end if
-                    if (j >= vStartY) then
-                        blk%qs(i,j,k,VAR_V,b) = blk%qs(i,j,k,VAR_V,b) &
-                            + dt_alpha*bf%f(i,j,k,VAR_V,b)*ibm%mu(i,j,k,VAR_V,b)
-                        blk%oldrhs(i,j,k,VAR_V,b) = blk%oldrhs(i,j,k,VAR_V,b) + bf%f(i,j,k,VAR_V,b)
-                    end if
-                    if (k >= wStartZ) then
-                        blk%qs(i,j,k,VAR_W,b) = blk%qs(i,j,k,VAR_W,b) &
-                            + dt_alpha*bf%f(i,j,k,VAR_W,b)*ibm%mu(i,j,k,VAR_W,b)
-                        blk%oldrhs(i,j,k,VAR_W,b) = blk%oldrhs(i,j,k,VAR_W,b) + bf%f(i,j,k,VAR_W,b)
-                    end if
+                    b = int(bf%sup_blocks(bb))
+                    do var = varLo, varHi
+                        ! The face-normal index of this component against its
+                        ! start mask (i for u, j for v, k for w).
+                        start = momentum_face_start(blk%physLow(var,b))
+                        idx = i
+                        if (var == VAR_V) idx = j
+                        if (var == VAR_W) idx = k
+                        if (idx >= start) then
+                            blk%qs(i,j,k,var,b) = blk%qs(i,j,k,var,b) &
+                                + dt_alpha*bf%f(i,j,k,var,b)*ibm%mu(i,j,k,var,b)
+                            blk%oldrhs(i,j,k,var,b) = blk%oldrhs(i,j,k,var,b) + bf%f(i,j,k,var,b)
+                        end if
+                    end do
                 end do
             end do
         end do
