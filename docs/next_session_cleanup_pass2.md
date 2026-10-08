@@ -30,19 +30,23 @@ simplifications, the performance items and the `config.f90` `case default`;
   geometry against the DEFAULT wavy wall (review section 4a; gate 4 of
   `validation/prepare/run_gates.sh`). 31 closed handouts are in
   `docs/history/` (its README indexes them; 214 citations redirected).
-- (3) STARTED 2026-10-08 and the first items are in: `config.f90` `case
-  default` (an unknown section/key/value, an unknown case name and a
-  foreign `[case.<x>]` section all stop the run; `moby_prepare
-  --check-config`; sweep of 158 inis: 147 OK, 11 templates) -- `4a585b7`;
-  `[ibm] amp_z` removed with an echo-compatibility rule so no case file went
-  stale -- same commit; the body-force correction visits the force's SUPPORT
-  only (8.5 % of the boundary-layer step on the A100 profile; RTX 3060 step
-  -7.3 %) with the new `validation/bodyforce/` gate -- `0dd8d24`; apply k1
-  fused into k2 and `cheb_combine` into `compute_phi` (RTX 3060 apply bucket
-  -7 %; the Chebyshev channel max_abs 0 at nofma) -- gate round 4 in flight,
-  commit follows. Next in the review's order: the index helpers and the two
-  projections' shared tail (section 3 items 2-4), F13/F14, the scalar kernel
-  split.
+- (3) STARTED 2026-10-08, five commits in (`4a585b7` config hardening +
+  `--check-config` + `amp_z`; `0dd8d24` body-force support restriction +
+  `validation/bodyforce/`; `3e691e1` apply k1+k2 and cheb_combine fusions;
+  `9d4ec47` boundary index helpers; `d821341` shared projection setup/tail,
+  log-law constants in init.f90, intent(in) on read-only kernels), every one
+  gated max_abs 0 (nofma) vs `~/backflow_ref_binaries` on the 7-case (CPU 4
+  ranks + GPU), 9-case (CPU + GPU), outlet (CPU 1+4 ranks, GPU), pocket,
+  bodyforce and P0 gates, the last also on `validation/redblack_interface`.
+  RTX 3060: trip boundary layer (4.3 M cells) step 72.8 -> 65.7 ms, Chebyshev
+  min_channel 41.0 -> 36.8 ms. **Reference set after this pass:
+  `~/pass2_ref_binaries` (d821341).** Next in the review's order (section 9):
+  F13/F14 (restart precedence, the Courant reduction over ghosts -- both
+  "which value wins" decisions for the user), the scalar kernel split (its
+  own session, needs a mixed plain+conjugate gate case first), then the
+  profile's remaining items (`interface_correct` table + one launch, the
+  per-iteration phi mirror on outlet cases, the red-black diagonal hoist;
+  `zero_phi` only matters for red-black WITH a 2:1 interface).
 - HoreKa access LAPSED on 2026-10-08 (`Permission denied (publickey)`): the
   final rough chain (`rough_io_run`, to 837500) could not be read; its
   analysis is still owed (section 1 below, files and command).
