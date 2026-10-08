@@ -113,7 +113,8 @@
 
 module rans
     use, intrinsic :: iso_c_binding
-    use :: init, only: dns_type, grid_type, VAR_U, VAR_V, VAR_W, VAR_P, SOLID_FACE_THRESHOLD
+    use :: init, only: dns_type, grid_type, VAR_U, VAR_V, VAR_W, VAR_P, SOLID_FACE_THRESHOLD, &
+        WF_KAPPA, WF_E
     use :: blocks, only: block_set_type, FACE_PHYS
     use :: boundary, only: boundary_type, boundary_face_id, NFACES, &
         domain_face_is_wall, apply_scalar_bc, PATCH_UNSET, &
@@ -165,8 +166,7 @@ module rans
     ! viscous/log switch y+_lam = the fixed point of y+ = ln(E y+)/kappa
     ! (OpenFOAM iterates the same fixed point; kappa 0.41, E 9.8 -> 11.53).
     ! y+ is built from the wall-cell k: y+ = C_mu^(1/4) sqrt(k) y_eff / nu.
-    real(C_DOUBLE), parameter :: WF_KAPPA = 0.41d0
-    real(C_DOUBLE), parameter :: WF_E = 9.8d0
+    ! WF_KAPPA, WF_E live in init.f90 (one definition for every consumer).
     real(C_DOUBLE), parameter :: WF_CMU25 = 0.5477225575051661d0   ! 0.09**0.25
     real(C_DOUBLE), parameter :: WF_YPLUS_LAM = 11.530107402304532d0
 
@@ -1353,7 +1353,7 @@ contains
     subroutine rans_assemble_nut(sst, turb, blk, dns, nut)
         type(sst_type), intent(inout) :: sst
         type(turb_type), intent(in) :: turb
-        type(block_set_type), intent(inout) :: blk
+        type(block_set_type), intent(in) :: blk
         type(dns_type), intent(in) :: dns
         real(C_DOUBLE), intent(inout) :: nut(0:,0:,0:,1:)
 

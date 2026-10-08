@@ -250,9 +250,8 @@ contains
         ! exchange (phi_face = 0: the increment of a HELD outlet pressure), so
         ! the projection owns and corrects the outlet face flux -- this is what
         ! keeps the Poisson problem solvable under net prescribed inflow.
+        call outlet_flags(bc, outLow, outHigh)
         do dir = 1, 3
-            outLow(dir) = bc%facePatchType(boundary_face_id(int(dir), 0)) == PATCH_OUTLET
-            outHigh(dir) = bc%facePatchType(boundary_face_id(int(dir), 1)) == PATCH_OUTLET
             phiMode(boundary_face_id(int(dir), 0)) = &
                 merge(SCALAR_BC_MIRROR, SCALAR_BC_NONE, outLow(dir))
             phiMode(boundary_face_id(int(dir), 1)) = &
@@ -324,24 +323,7 @@ contains
             if (hasIface) call interface_correct(blk, ibm, refd)
             call prof_toc(proj_prof, PROF_APPLY, t0)
             if (iIter == ps%nIter) then
-                ! The physical-face ghosts ONCE, after the last correction and
-                ! before the full exchange whose tangential extension copies
-                ! them into neighbouring blocks' corner halos (numerics review
-                ! F5, 2026-09-27). Nothing between iterations reads them: the
-                ! divergence stencil reads only the face-normal velocity at
-                ! q(nb+1), pinned Dirichlet faces are masked out of the
-                ! correction, phi has its own ghosts, and a Neumann NORMAL
-                ! velocity -- the one write that was NOT idempotent -- is a
-                ! config error since F4. Gated bit-exact at production flags.
-                t0 = prof_tic()
-                call apply_bc(blk, bc)
-                call prof_toc(proj_prof, PROF_PROJ_BC, t0)
-            end if
-            t0 = prof_tic()
-            if (iIter == ps%nIter) then
-                ! Last iteration: the full shell, all four variables, with the
-                ! cross-level transfers -- this is what the next substage reads.
-                call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W, VAR_P])
+                call projection_finish(blk, bc, c)
             else
                 ! Between iterations only the divergence stencil reads the
                 ! velocity halo, so refresh just q(nb+1) per dim, normal
@@ -349,11 +331,49 @@ contains
                 ! prefix as one kernel, the off-rank prefix as one message per
                 ! peer, a sixth of the copy-only round's bytes at the same
                 ! three kernel launches.
+                t0 = prof_tic()
                 call sync_divergence_halos(c, blk)
+                call prof_toc(proj_prof, PROF_PROJ_VEL_EXCHANGE, t0)
             end if
-            call prof_toc(proj_prof, PROF_PROJ_VEL_EXCHANGE, t0)
         end do
     end subroutine pressure_projection
+
+    ! The Dirichlet-pressure outlet faces (declared [boundary] _patch = outlet),
+    ! per DOMAIN face and direction; inside the kernels they act only where
+    ! the block's own face is FACE_PHYS. Both projections start from these.
+    subroutine outlet_flags(bc, outLow, outHigh)
+        type(boundary_type), intent(in) :: bc
+        logical(C_BOOL), intent(out) :: outLow(3), outHigh(3)
+        integer :: dir
+
+        do dir = 1, 3
+            outLow(dir)  = bc%facePatchType(boundary_face_id(dir, 0)) == PATCH_OUTLET
+            outHigh(dir) = bc%facePatchType(boundary_face_id(dir, 1)) == PATCH_OUTLET
+        end do
+    end subroutine outlet_flags
+
+    ! The end of EITHER projection: the physical-face ghosts ONCE, after the
+    ! last correction and before the full exchange whose tangential extension
+    ! copies them into neighbouring blocks' corner halos (numerics review F5,
+    ! 2026-09-27) -- nothing between iterations reads them (the divergence
+    ! stencil reads only the face-normal velocity at q(nb+1), pinned Dirichlet
+    ! faces are masked out of the correction, phi has its own ghosts, and a
+    ! Neumann NORMAL velocity, the one write that was not idempotent, is a
+    ! config error since F4) -- then the full shell, all four variables with
+    ! the cross-level transfers: what the next substage reads.
+    subroutine projection_finish(blk, bc, c)
+        type(block_set_type), intent(inout) :: blk
+        type(boundary_type), intent(in) :: bc
+        type(comm_type), intent(inout) :: c
+        real(C_DOUBLE) :: t0
+
+        t0 = prof_tic()
+        call apply_bc(blk, bc)
+        call prof_toc(proj_prof, PROF_PROJ_BC, t0)
+        t0 = prof_tic()
+        call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W, VAR_P])
+        call prof_toc(proj_prof, PROF_PROJ_VEL_EXCHANGE, t0)
+    end subroutine projection_finish
 
     ! Allocate the device-resident phi buffer once (same 0:nb+1 spatial bounds
     ! as blk%q so the scalar halo exchange and the face corrections line up).
@@ -1005,10 +1025,7 @@ contains
         ! phi exists on this path ONLY to cross a level jump; a single-level
         ! red-black run allocates and maps nothing.
         if (hasIface) call allocate_phi(blk)
-        do dir = 1, 3
-            outLow(dir)  = bc%facePatchType(boundary_face_id(int(dir), 0)) == PATCH_OUTLET
-            outHigh(dir) = bc%facePatchType(boundary_face_id(int(dir), 1)) == PATCH_OUTLET
-        end do
+        call outlet_flags(bc, outLow, outHigh)
         call prof_toc(proj_prof, PROF_PROJ_SETUP, t0)
 
         ! The coupled sweep updates pressure AND velocity in one kernel, so on a
@@ -1035,18 +1052,12 @@ contains
                     call prof_toc(proj_prof, PROF_APPLY, t0)
                 end if
                 if (iIter == ps%nIter .and. color == 0_C_INT) then
-                    ! Ghosts once, after the last colour (see the Jacobi loop).
-                    t0 = prof_tic()
-                    call apply_bc(blk, bc)
-                    call prof_toc(proj_prof, PROF_PROJ_BC, t0)
-                end if
-                t0 = prof_tic()
-                if (iIter == ps%nIter .and. color == 0_C_INT) then
-                    call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W, VAR_P])
+                    call projection_finish(blk, bc, c)
                 else
+                    t0 = prof_tic()
                     call exchange_halos(c, blk, [VAR_U, VAR_V, VAR_W], cross_level=.false.)
+                    call prof_toc(proj_prof, PROF_PROJ_VEL_EXCHANGE, t0)
                 end if
-                call prof_toc(proj_prof, PROF_PROJ_VEL_EXCHANGE, t0)
             end do
         end do
     end subroutine redblack_projection

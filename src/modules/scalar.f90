@@ -27,21 +27,19 @@
 ! pattern. There is deliberately NO fixed bound on the scalar count.
 module scalar
     use, intrinsic :: iso_c_binding
+    ! S5a: the log law of the wall is one definition (init.f90 WF_KAPPA,
+    ! WF_E) for the thermal wall function below and the momentum one in
+    ! rans.f90 (nut_wall_value / omega_wall_blend), so they cannot drift apart.
     use :: init, only: dns_type, VAR_U, VAR_V, VAR_W, VAR_P, &
-        VAR_S0, SCR_S0, NVAR, SOLID_FACE_THRESHOLD
+        VAR_S0, SCR_S0, NVAR, SOLID_FACE_THRESHOLD, WF_KAPPA, WF_E
     use :: blocks, only: block_set_type, FACE_CLOSED, FACE_COARSE, FACE_FINE
     use :: boundary, only: boundary_type, NFACES, boundary_face_id, &
         apply_bc, set_scalar_bc_rows, BC_DIRICHLET, BC_NEUMANN, &
         PATCH_GENERIC, PATCH_WALL, PATCH_INLET, PATCH_OUTLET
     use :: comm, only: comm_type, exchange_halos, comm_allreduce_sum, comm_allreduce_max
     use :: turbulence, only: turb_type, turbulence_is_enabled
-    ! S5a: the log law of the wall is rans.f90's -- kappa and E are
-    ! use-associated so the thermal wall function below and the momentum one
-    ! (nut_wall_value / omega_wall_blend) can never drift apart.
-    ! C1: the conjugate signed distance IS the RANS wall distance, so its two
-    ! producers are use-associated rather than reimplemented (strategy doc
-    ! Section 8: "no new computation, only a new trigger").
-    use :: rans, only: WF_KAPPA, WF_E
+    ! C1: the conjugate signed distance IS the RANS wall distance (the same
+    ! dwall tiles of the case file, read_dwall_blocks), not a reimplementation.
     use :: ibmm, only: ibm_type, penal_incr_factor, penal_state_factor, penal_state_minus_incr
     use :: io, only: read_dwall_blocks
     implicit none

@@ -1,7 +1,7 @@
 module turbulence
     use, intrinsic :: iso_c_binding
     use :: chron, only: profiler_type, init_profiler
-    use :: init, only: dns_type, VAR_U, VAR_V, VAR_W, VAR_P
+    use :: init, only: dns_type, VAR_U, VAR_V, VAR_W, VAR_P, WF_KAPPA
     use :: blocks, only: block_set_type
     implicit none
 
@@ -30,7 +30,6 @@ module turbulence
     ! WALE already gives nut -> 0 in laminar shear, so no correction applies.
     real(C_DOUBLE), parameter, public :: IDDES_CDES1 = 0.78d0
     real(C_DOUBLE), parameter, public :: IDDES_CDES2 = 0.61d0
-    real(C_DOUBLE), parameter :: IDDES_KAPPA = 0.41d0
     real(C_DOUBLE), parameter :: IDDES_CT = 1.87d0
     real(C_DOUBLE), parameter :: IDDES_CL = 5.0d0
     ! [turbulence] iddes_delta: the mesh length in l_LES = C_DES Delta.
@@ -317,7 +316,7 @@ contains
     ! limits: 0 = SGS; 1 = RANS with l_hyb = l_RANS exactly).
     subroutine compute_iddes_fd(turb, blk, dns, yeff)
         type(turb_type), intent(inout) :: turb
-        type(block_set_type), intent(inout) :: blk
+        type(block_set_type), intent(in) :: blk
         type(dns_type), intent(in) :: dns
         real(C_DOUBLE), intent(in) :: yeff(0:,0:,0:,1:)
 
@@ -360,7 +359,7 @@ contains
                     ! huge r_dt/r_dl -> fd = 1 (RANS retention) and fe = 0;
                     ! both nut factors are zero there, so the blend is
                     ! unaffected. The caps keep the tanh arguments finite.
-                    denom = max(IDDES_KAPPA*IDDES_KAPPA*y*y*gg, 1.0d-30)
+                    denom = max(WF_KAPPA*WF_KAPPA*y*y*gg, 1.0d-30)
                     rdt = min(turb%nut(i,j,k,b)/denom, 1.0d10)
                     rdl = min(nu/denom, 1.0d10)
                     turb%fd(i,j,k,b) = max(tanh((cdt1*rdt)**3), turb%fb(i,j,k,b))

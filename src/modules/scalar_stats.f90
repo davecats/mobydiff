@@ -313,7 +313,7 @@ contains
     subroutine scalar_sample_kernel(this, sc, blk, dns, nut, useNut, coef, sample_sum, sample_count)
         type(scalar_stats_type), intent(in) :: this
         type(scalar_type), intent(in) :: sc
-        type(block_set_type), intent(inout) :: blk
+        type(block_set_type), intent(in) :: blk
         type(dns_type), intent(in) :: dns
         real(C_DOUBLE), intent(in) :: nut(0:,0:,0:,1:)
         logical, intent(in) :: useNut
@@ -752,7 +752,7 @@ contains
     ! graded = 0, total = the interface heat.
     subroutine body_heat_kernel(sc, blk, dns, nut, useNut, coef, heat)
         type(scalar_type), intent(in) :: sc
-        type(block_set_type), intent(inout) :: blk
+        type(block_set_type), intent(in) :: blk
         type(dns_type), intent(in) :: dns
         real(C_DOUBLE), intent(in) :: nut(0:,0:,0:,1:)
         logical, intent(in) :: useNut

@@ -54,7 +54,7 @@ contains
     subroutine update_generic_les_viscosity(les, turb, blk, dns, ibm, nut)
         type(les_type), intent(in) :: les
         type(turb_type), intent(in) :: turb
-        type(block_set_type), intent(inout) :: blk
+        type(block_set_type), intent(in) :: blk
         type(dns_type), intent(in) :: dns
         type(ibm_type), intent(in) :: ibm
         real(C_DOUBLE), intent(inout) :: nut(0:,0:,0:,1:)
@@ -141,7 +141,7 @@ contains
     subroutine update_wale_viscosity(les, turb, blk, dns, ibm, nut)
         type(les_type), intent(in) :: les
         type(turb_type), intent(in) :: turb
-        type(block_set_type), intent(inout) :: blk
+        type(block_set_type), intent(in) :: blk
         type(dns_type), intent(in) :: dns
         type(ibm_type), intent(in) :: ibm
         real(C_DOUBLE), intent(inout) :: nut(0:,0:,0:,1:)

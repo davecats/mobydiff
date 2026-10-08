@@ -763,7 +763,13 @@ the read found; the profile of section 7 may reorder the performance items):
    `declare target` and `boundary_face_indices(side, n, ghost, interior,
    face, neighbour)` is the one definition of the (0,1)/(1,2) vs (n+1,n)
    pairs, used by `apply_bc`, `init_outlet_faces`, `apply_scalar_bc` and
-   `predict_outlet_faces`.
+   `predict_outlet_faces` (`9d4ec47`). **Items 4, 8 and 12 DONE 2026-10-08**:
+   `outlet_flags` + `projection_finish` shared by both projections;
+   `WF_KAPPA`/`WF_E` live in `init.f90` (the `IDDES_KAPPA` copy and scalar.f90's
+   dependency on rans.f90 gone); `blk` is `intent(in)` in the six read-only
+   kernels. Still open here: item 3 (the per-block face-start table, unmeasured),
+   item 7 (`comm.f90`'s one enumeration), items 5/16/17 (interface_correct
+   table, the phi-mirror launch, the red-black diagonal).
 3. F13 and F14 together (both are "which value wins" questions with a
    measurable effect on `dt` or on a restart) -- one session, gated on the
    dtmax-bound cases and a restart pair.

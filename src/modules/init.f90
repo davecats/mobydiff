@@ -20,6 +20,12 @@ module init
     ! consumer (les, rans, scalar, scalar_stats, the boundary rows) uses this
     ! ONE definition.
     real(C_DOUBLE), parameter :: SOLID_FACE_THRESHOLD = 1.0d20
+    ! The log law's von Karman constant and roughness constant (OpenFOAM's
+    ! kappa 0.41, E 9.8): the ONE definition for the RANS wall functions, the
+    ! thermal wall function (scalar.f90) and the IDDES shielding
+    ! (turbulence.f90, which sits below rans and cannot use-associate it).
+    real(C_DOUBLE), parameter :: WF_KAPPA = 0.41d0
+    real(C_DOUBLE), parameter :: WF_E = 9.8d0
     integer(C_INT), parameter :: GRID_UNIFORM = 1_C_INT
     integer(C_INT), parameter :: GRID_COSINE  = 2_C_INT
     integer(C_INT), parameter :: GRID_TANH    = 3_C_INT
