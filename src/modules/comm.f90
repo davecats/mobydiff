@@ -4,6 +4,7 @@ module comm
     use :: mpi_f08
     use :: init, only: dns_type
     use :: blocks, only: block_set_type, zorder_owner, zorder_start, zorder_count, &
+        lattice_candidates, MAX_CANDIDATES, OP_COPY, OP_RESTRICT, OP_PROLONG, &
         leaf_at, level_cells, level_cell_width, occupied_any_level, parent_coord, child_origin, &
         partition_surface
     use :: boundary, only: boundary_type
@@ -19,14 +20,8 @@ module comm
 
     integer, parameter :: HALO_TAG = 1000
 
-    ! Exchange entry operations. RESTRICT averages the fine samples
-    ! covering each coarse destination point (8 cell-centred, 4 with one
-    ! face-staggered dimension, ...); PROLONG injects the covering coarse
-    ! value. Sampling happens on the SOURCE side (pack/local copy), so the
-    ! wire always carries destination-point values.
-    integer, parameter :: OP_COPY = 0
-    integer, parameter :: OP_RESTRICT = 1
-    integer, parameter :: OP_PROLONG = 2
+    ! The exchange entry operations OP_COPY / OP_RESTRICT / OP_PROLONG are
+    ! blocks.f90's: what the lattice probe finds IS the operation.
 
     type, public :: comm_type
         logical :: initialized = .false.
@@ -1027,8 +1022,11 @@ contains
     ! `dorigin` across direction off: one same-level or coarser leaf
     ! (COPY/PROLONG), or up to 2^(tangential dims) finer leaves
     ! (RESTRICT), in fixed child order so the enumeration is canonical on
-    ! both ends. tq holds the fine quarter (RESTRICT: child parity;
-    ! PROLONG: the destination block's own parity).
+    ! both ends -- blocks.f90's lattice probe, with the owner and slot of
+    ! each leaf. tq holds the fine quarter (RESTRICT: child parity;
+    ! PROLONG: the destination block's own parity, meaningful in refined
+    ! directions only -- an unrefined direction shares the parent's tile,
+    ! parity masked to 0).
     subroutine resolve_neighbors(c, blk, dns, level, dorigin, off, n, owner, slot, op, tq)
         type(comm_type), intent(in) :: c
         type(block_set_type), intent(in) :: blk
@@ -1036,61 +1034,23 @@ contains
         integer, intent(in) :: level, dorigin(3), off(3)
         integer, intent(out) :: n, owner(4), slot(4), op(4), tq(3,4)
 
-        integer :: to(3), cl(3), cc(3), sub(3), id, d
-        integer :: sx, sy, sz
+        integer :: to(3), k
+        integer :: ids(MAX_CANDIDATES), ops(MAX_CANDIDATES), subs(3,MAX_CANDIDATES)
         logical :: haveNeighbor
 
         n = 0
         call neighbor_origin(c, dns, level, dorigin, off, int(blk%nb), haveNeighbor, to)
         if (.not. haveNeighbor) return
 
-        cl = to/int(blk%nb)
-        id = int(leaf_at(blk, level, cl))
-        if (id >= 0) then
-            n = 1
-            op(1) = OP_COPY
-            tq(:,1) = 0
-            call id_owner_slot(c, blk, id, owner(1), slot(1))
-            return
-        end if
-
-        ! Coarser occupant: this block is the fine side of a 2:1 interface.
-        ! The parity tq is meaningful only in refined directions; an
-        ! unrefined direction shares the parent's tile (parity masked to 0).
-        id = int(leaf_at(blk, level - 1, parent_coord(blk, cl)))
-        if (id >= 0) then
-            n = 1
-            op(1) = OP_PROLONG
-            tq(:,1) = modulo(dorigin/int(blk%nb), 2)*int(blk%refMask)
-            call id_owner_slot(c, blk, id, owner(1), slot(1))
-            return
-        end if
-
-        ! Finer occupants: the children adjacent to this block across off,
-        ! in fixed child order. The adjacency parity filter applies only to
-        ! refined directions: an unrefined direction has a single child on
-        ! the parent's tile, adjacent from both sides — an xz-quadtree
-        ! y-face is fed by up to 4 (2x2 in-plane) fine sub-entries.
-        do sz = 0, int(blk%refMask(3))
-            do sy = 0, int(blk%refMask(2))
-                do sx = 0, int(blk%refMask(1))
-                    sub = [sx, sy, sz]
-                    do d = 1, 3
-                        if (blk%refMask(d) == 1_C_INT) then
-                            if (off(d) == 1 .and. sub(d) /= 0) sub(d) = -9
-                            if (off(d) == -1 .and. sub(d) /= 1) sub(d) = -9
-                        end if
-                    end do
-                    if (any(sub == -9)) cycle
-                    cc = child_origin(blk, cl) + sub
-                    id = int(leaf_at(blk, level + 1, cc))
-                    if (id < 0) cycle
-                    n = n + 1
-                    op(n) = OP_RESTRICT
-                    tq(:,n) = sub
-                    call id_owner_slot(c, blk, id, owner(n), slot(n))
-                end do
-            end do
+        ! Across a face (off /= 0) the probe returns at most the 4 adjacent
+        ! children, which is what the exchange's candidate arrays hold.
+        call lattice_candidates(blk, level, to/int(blk%nb), off, n, ids, ops, subs)
+        if (n > size(op)) error stop "resolve_neighbors: more candidates than the entry arrays hold"
+        do k = 1, n
+            op(k) = ops(k)
+            tq(:,k) = subs(:,k)
+            if (op(k) == OP_PROLONG) tq(:,k) = modulo(dorigin/int(blk%nb), 2)*int(blk%refMask)
+            call id_owner_slot(c, blk, ids(k), owner(k), slot(k))
         end do
     end subroutine resolve_neighbors
 

@@ -17,7 +17,7 @@ module ibmm
     use, intrinsic :: iso_fortran_env, only: int64
     use :: init, only: dns_type, grid_type, VAR_U, VAR_V, VAR_W, VAR_P, &
         is_face_staggered, face_at, cell_center_at
-    use :: blocks, only: block_set_type, subdivide_node_line, FACE_PHYS, FACE_CLOSED
+    use :: blocks, only: block_set_type, subdivide_level_line, FACE_PHYS, FACE_CLOSED
     use :: io, only: to_c_string
     use :: comm, only: comm_type, exchange_scalar_halos, comm_allreduce_max_int
     implicit none
@@ -757,24 +757,9 @@ contains
         lineY(0:int(dns%globalSize(2)),1) = g%yNode
         lineZ(0:int(dns%globalSize(3)),1) = g%zNode
         do l = 2, nLevels
-            if (dns%block_refine_mask(1) == 1_C_INT) then
-                call subdivide_node_line(lineX(0:int(dns%globalSize(1))*2**(l-2), l-1), &
-                                         lineX(0:int(dns%globalSize(1))*2**(l-1), l))
-            else
-                lineX(0:int(dns%globalSize(1)), l) = lineX(0:int(dns%globalSize(1)), 1)
-            end if
-            if (dns%block_refine_mask(2) == 1_C_INT) then
-                call subdivide_node_line(lineY(0:int(dns%globalSize(2))*2**(l-2), l-1), &
-                                         lineY(0:int(dns%globalSize(2))*2**(l-1), l))
-            else
-                lineY(0:int(dns%globalSize(2)), l) = lineY(0:int(dns%globalSize(2)), 1)
-            end if
-            if (dns%block_refine_mask(3) == 1_C_INT) then
-                call subdivide_node_line(lineZ(0:int(dns%globalSize(3))*2**(l-2), l-1), &
-                                         lineZ(0:int(dns%globalSize(3))*2**(l-1), l))
-            else
-                lineZ(0:int(dns%globalSize(3)), l) = lineZ(0:int(dns%globalSize(3)), 1)
-            end if
+            call subdivide_level_line(lineX, int(dns%globalSize(1)), int(dns%block_refine_mask(1)), l)
+            call subdivide_level_line(lineY, int(dns%globalSize(2)), int(dns%block_refine_mask(2)), l)
+            call subdivide_level_line(lineZ, int(dns%globalSize(3)), int(dns%block_refine_mask(3)), l)
         end do
 
         do l = 1, nLevels

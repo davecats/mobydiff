@@ -25,14 +25,33 @@
 module blocks
     use, intrinsic :: iso_c_binding
     use, intrinsic :: iso_fortran_env, only: int64
-    use :: init, only: dns_type, grid_type, NVAR, NVEL, VAR_U, VAR_V, VAR_W, slice_grid_direction
+    use :: init, only: dns_type, grid_type, NVAR, NVEL, VAR_U, VAR_V, VAR_W, slice_grid_direction, &
+        subdivide_node_line
     implicit none
 
     private
     public :: block_set_type
     public :: init_block_set, init_block_set_from_table, derive_block_nb, destroy_block_set
     public :: enter_block_data, exit_block_data
-    public :: subdivide_node_line
+    public :: subdivide_level_line, lattice_candidates, MAX_CANDIDATES
+    public :: OP_COPY, OP_RESTRICT, OP_PROLONG
+
+    ! What a leaf found across a lattice cell is to the block that looks
+    ! (lattice_candidates), and so the exchange entry's operation
+    ! (comm.f90): a same-level leaf is COPIED; a coarser one PROLONGED
+    ! (the covering coarse value injected); finer ones RESTRICTED (the fine
+    ! samples covering each coarse destination point averaged: 8
+    ! cell-centred, 4 with one face-staggered dimension, ...). Sampling
+    ! happens on the SOURCE side, so the wire always carries
+    ! destination-point values.
+    integer, parameter :: OP_COPY = 0
+    integer, parameter :: OP_RESTRICT = 1
+    integer, parameter :: OP_PROLONG = 2
+    ! lattice_candidates' "every child" direction, and the most leaves it
+    ! can return: the 2^3 children of a cell (off = 0; across a face at most
+    ! 4 are adjacent).
+    integer, parameter :: ANY_CHILD(3) = [0, 0, 0]
+    integer, parameter :: MAX_CANDIDATES = 8
     public :: zorder_owner, zorder_start, zorder_count
     public :: KEY_MAX_BITS, min_surface_key_order, partition_surface
     public :: zero_closed_halos, face_kind, leaf_at, level_cells
@@ -1171,7 +1190,7 @@ contains
         integer(C_INT), intent(in) :: origin(3), level
         integer, intent(in) :: d, side
 
-        integer :: to(3), cl(3), cc(3), l, sx, sy, sz
+        integer :: to(3), cl(3), l, n, ids(MAX_CANDIDATES), ops(MAX_CANDIDATES), subs(3,MAX_CANDIDATES)
 
         l = int(level)
         to = int(origin)
@@ -1185,27 +1204,78 @@ contains
         end if
 
         cl = to/int(blk%nb)
-        if (leaf_at(blk, l, cl) >= 0_C_INT) then
-            fk = FACE_OPEN
+        ! ANY finer leaf in the cell makes the face FINE (off = 0: no
+        ! adjacency filter -- the exchange's candidates are the adjacent
+        ! children, a face kind is about the cell).
+        call lattice_candidates(blk, l, cl, ANY_CHILD, n, ids, ops, subs)
+        fk = FACE_CLOSED
+        if (n == 0) return
+        select case (ops(1))
+        case (OP_COPY);    fk = FACE_OPEN
+        case (OP_PROLONG); fk = FACE_COARSE
+        case default;      fk = FACE_FINE
+        end select
+    end function face_kind
+
+    ! THE 2:1-AWARE LATTICE PROBE: the leaves occupying the level-`level`
+    ! lattice cell cl as seen across direction off -- the same-level leaf
+    ! (OP_COPY), else the coarser leaf covering the cell (OP_PROLONG), else
+    ! the finer leaves inside it that are ADJACENT across off (OP_RESTRICT,
+    ! in fixed child order, subs their parity): in a refined dim with
+    ! off(d) = +-1 the children on the near side; off = 0 keeps every child.
+    ! n = 0 is a cell nothing occupies: outside a non-periodic boundary (the
+    ! caller's concern) or a removed block. One body behind face_kind,
+    ! occupied_any_level, partition_surface and comm.f90's resolve_neighbors
+    ! (four copies until 2026-10-20).
+    subroutine lattice_candidates(blk, level, cl, off, n, ids, ops, subs)
+        type(block_set_type), intent(in) :: blk
+        integer, intent(in) :: level, cl(3), off(3)
+        integer, intent(out) :: n, ids(MAX_CANDIDATES), ops(MAX_CANDIDATES), subs(3,MAX_CANDIDATES)
+
+        integer :: id, d, sx, sy, sz, sub(3)
+
+        n = 0
+        id = int(leaf_at(blk, level, cl))
+        if (id >= 0) then
+            n = 1
+            ids(1) = id
+            ops(1) = OP_COPY
+            subs(:,1) = 0
             return
         end if
-        if (leaf_at(blk, l - 1, parent_coord(blk, cl)) >= 0_C_INT) then
-            fk = FACE_COARSE
+        id = int(leaf_at(blk, level - 1, parent_coord(blk, cl)))
+        if (id >= 0) then
+            n = 1
+            ids(1) = id
+            ops(1) = OP_PROLONG
+            subs(:,1) = 0
             return
         end if
+        ! The adjacency filter applies to refined dims only: an unrefined
+        ! dim has a single child on the parent's tile, adjacent from both
+        ! sides -- an xz-quadtree y-face is fed by up to 4 (2x2 in-plane)
+        ! fine sub-entries.
         do sz = 0, int(blk%refMask(3))
             do sy = 0, int(blk%refMask(2))
                 do sx = 0, int(blk%refMask(1))
-                    cc = child_origin(blk, cl) + [sx, sy, sz]
-                    if (leaf_at(blk, l + 1, cc) >= 0_C_INT) then
-                        fk = FACE_FINE
-                        return
-                    end if
+                    sub = [sx, sy, sz]
+                    do d = 1, 3
+                        if (blk%refMask(d) == 1_C_INT) then
+                            if (off(d) == 1 .and. sub(d) /= 0) sub(d) = -9
+                            if (off(d) == -1 .and. sub(d) /= 1) sub(d) = -9
+                        end if
+                    end do
+                    if (any(sub == -9)) cycle
+                    id = int(leaf_at(blk, level + 1, child_origin(blk, cl) + sub))
+                    if (id < 0) cycle
+                    n = n + 1
+                    ids(n) = id
+                    ops(n) = OP_RESTRICT
+                    subs(:,n) = sub
                 end do
             end do
         end do
-        fk = FACE_CLOSED
-    end function face_kind
+    end subroutine lattice_candidates
 
     ! True if the level-l lattice cell cl is occupied by a leaf at the same,
     ! the coarser (cl/2), or any of the finer (2*cl+child) levels -- i.e. a
@@ -1214,22 +1284,10 @@ contains
         type(block_set_type), intent(in) :: blk
         integer, intent(in) :: level, cl(3)
 
-        integer :: sx, sy, sz
+        integer :: n, ids(MAX_CANDIDATES), ops(MAX_CANDIDATES), subs(3,MAX_CANDIDATES)
 
-        occ = leaf_at(blk, level, cl) >= 0_C_INT
-        if (occ) return
-        occ = leaf_at(blk, level - 1, parent_coord(blk, cl)) >= 0_C_INT
-        if (occ) return
-        do sz = 0, int(blk%refMask(3))
-            do sy = 0, int(blk%refMask(2))
-                do sx = 0, int(blk%refMask(1))
-                    if (leaf_at(blk, level + 1, child_origin(blk, cl) + [sx, sy, sz]) >= 0_C_INT) then
-                        occ = .true.
-                        return
-                    end if
-                end do
-            end do
-        end do
+        call lattice_candidates(blk, level, cl, ANY_CHILD, n, ids, ops, subs)
+        occ = n > 0
     end function occupied_any_level
 
     ! FACE_CLOSED faces are exact zero-flux faces: the halo layer and the
@@ -1529,8 +1587,8 @@ contains
         integer, intent(in) :: nodeOf(0:)
         integer(int64), intent(out) :: cellsRank, cellsNode
 
-        integer :: i, d, l, c(3), cn(3), cc(3), nl(3), sx, sy, sz, s(3)
-        integer(C_INT) :: other
+        integer :: i, d, l, k, c(3), cn(3), nl(3), e(3), n
+        integer :: ids(MAX_CANDIDATES), ops(MAX_CANDIDATES), subs(3,MAX_CANDIDATES)
         integer(int64) :: area
 
         cellsRank = 0_int64
@@ -1549,24 +1607,14 @@ contains
                 ! One block face, in cells of its own level.
                 area = int(blk%nb(1 + mod(d, 3)), int64)*int(blk%nb(1 + mod(d + 1, 3)), int64)
 
-                other = leaf_at(blk, l, cn)
-                if (other < 0_C_INT) other = leaf_at(blk, l - 1, parent_coord(blk, cn))
-                if (other >= 0_C_INT) then
-                    ! Same level, or a coarser leaf: this (finer) face, once.
-                    call add_pair(i - 1, int(other), area)
-                    cycle
-                end if
-                ! Finer leaves: the children of cn on its low side in d.
-                do sz = 0, int(blk%refMask(3))
-                    do sy = 0, int(blk%refMask(2))
-                        do sx = 0, int(blk%refMask(1))
-                            s = [sx, sy, sz]
-                            if (s(d) /= 0) cycle
-                            cc = child_origin(blk, cn) + s
-                            other = leaf_at(blk, l + 1, cc)
-                            if (other >= 0_C_INT) call add_pair(i - 1, int(other), area)
-                        end do
-                    end do
+                ! The leaves across the +d face: the same-level or coarser
+                ! one (this, the finer face, once), or the children of cn
+                ! on its low side in d.
+                e = 0
+                e(d) = 1
+                call lattice_candidates(blk, l, cn, e, n, ids, ops, subs)
+                do k = 1, n
+                    call add_pair(i - 1, ids(k), area)
                 end do
             end do
         end do
@@ -1616,24 +1664,5 @@ contains
         end if
     end function zorder_owner
 
-    ! Midpoint subdivision of a node line: each coarse cell is split into two
-    ! halves, so a level-l cell is exactly the union of its children. This is
-    ! what makes fine-to-coarse face averaging conservative on stretched base
-    ! grids (used from Phase 3 on).
-    subroutine subdivide_node_line(coarse, fine)
-        real(C_DOUBLE), intent(in) :: coarse(0:)
-        real(C_DOUBLE), intent(out) :: fine(0:)
-
-        integer :: i, nc
-
-        nc = ubound(coarse, 1)
-        if (ubound(fine, 1) /= 2*nc) error stop "subdivide_node_line: fine line must have 2*n cells"
-
-        do i = 0, nc - 1
-            fine(2*i) = coarse(i)
-            fine(2*i+1) = 0.5d0*(coarse(i) + coarse(i+1))
-        end do
-        fine(2*nc) = coarse(nc)
-    end subroutine subdivide_node_line
 
 end module blocks

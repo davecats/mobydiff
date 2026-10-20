@@ -405,11 +405,7 @@ recursive subroutine build_node_line(node, nGlobal, length, distribution, stretc
             allocate(coarse(0:n/2))
             call build_node_line(coarse, int(n/2, C_INT), length, distribution, stretch, &
                 natural_one_sided, natural_dyw_plus, natural_outer_height)
-            do i = 0, n/2 - 1
-                node(2*i) = coarse(i)
-                node(2*i+1) = 0.5d0*(coarse(i) + coarse(i+1))
-            end do
-            node(n) = coarse(n/2)
+            call subdivide_node_line(coarse, node(0:n))
             return
         end if
     end if
@@ -795,5 +791,27 @@ real(C_DOUBLE) function cell_center_at(node, n, length, idx, periodic) result(x)
     x = 0.5d0 * (face_at(node, n, length, idx - 1, periodic) + &
                  face_at(node, n, length, idx, periodic))
 end function cell_center_at
+
+    ! Midpoint subdivision of a node line: each coarse cell is split into two
+    ! halves, so a level-l cell is exactly the union of its children. This is
+    ! what makes fine-to-coarse face averaging conservative on stretched base
+    ! grids, and it is the ONE definition behind [grid.<d>] subdivided, the
+    ! refinement-level lines of blocks.f90 and moby_prepare's analytic
+    ! classification (ibm.f90) -- three copies until 2026-10-20.
+    subroutine subdivide_node_line(coarse, fine)
+        real(C_DOUBLE), intent(in) :: coarse(0:)
+        real(C_DOUBLE), intent(out) :: fine(0:)
+
+        integer :: i, nc
+
+        nc = ubound(coarse, 1)
+        if (ubound(fine, 1) /= 2*nc) error stop "subdivide_node_line: fine line must have 2*n cells"
+
+        do i = 0, nc - 1
+            fine(2*i) = coarse(i)
+            fine(2*i+1) = 0.5d0*(coarse(i) + coarse(i+1))
+        end do
+        fine(2*nc) = coarse(nc)
+    end subroutine subdivide_node_line
 
 end module init
