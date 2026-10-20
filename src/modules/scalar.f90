@@ -299,6 +299,9 @@ module scalar
     ! (its wall flux must be the flux the transport kernel applied), and the
     ! two correlations, public for the host-side unit test.
     public :: wall_face_diffusivity, jayatilleke_p, thermal_yplus, wall_diffusivity
+    ! The two families' face diffusivities (2026-10-20): the ONE definition
+    ! the transport kernels and scalar_stats.f90 share.
+    public :: plain_face_diffusivity, conjugate_face_total, band_face_total
 
 contains
 
@@ -934,6 +937,72 @@ contains
         d = 0.5d0*(cell_diffusivity(nutL, ypL, pr, prt, prtModel, re, p, ypt) &
                  + cell_diffusivity(nutR, ypR, pr, prt, prtModel, re, p, ypt))
     end function wall_face_diffusivity
+
+    ! THE PLAIN FAMILY'S FACE DIFFUSIVITY (dirichlet / adiabatic scalars, and
+    ! every scalar of a body-free run): the molecular dm plus, under a
+    ! turbulence model, the eddy part -- the thermal wall function's (S5a)
+    ! or nu_t,face/Pr_t on the 1/2 (L + R) face eddy viscosity. ONE
+    ! definition for the transport kernel and the two statistics kernels of
+    ! scalar_stats.f90, so the S4 design statement "the statistics report
+    ! the flux the kernel APPLIED" holds by construction, not by copy (it
+    ! was three copies until 2026-10-20). The two cells' values come in
+    ! LOW -> HIGH index order and the face average is formed here in that
+    ! order, which is the order the kernels used. With useNut off the face
+    ! keeps dm exactly (the S1 arithmetic).
+    real(C_DOUBLE) function plain_face_diffusivity(dm, useNut, wallfn, nutL, nutR, &
+            ypL, ypR, pr, prt, prtModel, re, p, ypt) result(d)
+        !$omp declare target
+        real(C_DOUBLE), intent(in) :: dm, nutL, nutR, ypL, ypR, pr, prt, re, p, ypt
+        logical, intent(in) :: useNut, wallfn
+        integer(C_INT), intent(in) :: prtModel
+
+        if (useNut .and. wallfn) then
+            ! Thermal wall function: the face value is built from the two
+            ! CELL diffusivities, because a wall cell's is not a function
+            ! of its nu_t at all.
+            d = dm + wall_face_diffusivity(nutL, nutR, ypL, ypR, pr, prt, prtModel, re, p, ypt)
+        else if (useNut) then
+            d = dm + eddy_diffusivity(0.5d0*(nutL + nutR), pr, prt, prtModel, re)
+        else
+            d = dm
+        end if
+    end function plain_face_diffusivity
+
+    ! THE CONJUGATE FAMILY'S FACE DIFFUSIVITY: the C1 coefficient plus, where
+    ! the caller says so (addNut: a FLUID cell's UNCUT face under a
+    ! turbulence model), the eddy part on nutFace, the 1/2 (L + R) face eddy
+    ! viscosity the caller formed (this family has no wall function, so it
+    ! never needs the pair) -- nu_t enters neither the solid nor a cut face
+    ! (strategy doc Section 12: at DNS resolution nu_t -> 0 at the wall
+    ! anyway, and ibm_aware already zeroes it in solid cells, but the
+    ! interface coefficient is molecular by construction and must not be
+    ! polluted). One definition for the transport kernel and the statistics
+    ! kernels, for the same reason as plain_face_diffusivity. The banded
+    ! solid (F2) has its own twin, band_face_total, and the CALLER
+    ! dispatches on the scalar once around its faces: a per-face dispatch
+    ! inside one helper cost the conjugate kernel 5 % (measured 2026-10-20),
+    ! the per-scalar branch nothing.
+    real(C_DOUBLE) function conjugate_face_total(dm, phL, phR, ks, rc, invd, &
+            addNut, nutFace, pr, prt, prtModel, re) result(d)
+        !$omp declare target
+        real(C_DOUBLE), intent(in) :: dm, phL, phR, ks, rc, invd, nutFace, pr, prt, re
+        logical, intent(in) :: addNut
+        integer(C_INT), intent(in) :: prtModel
+
+        d = conjugate_face_diffusivity(dm, phL, phR, ks, rc, invd)
+        if (addNut) d = d + eddy_diffusivity(nutFace, pr, prt, prtModel, re)
+    end function conjugate_face_total
+
+    real(C_DOUBLE) function band_face_total(dm, phL, phR, ks, ko, dsh, rc, invd, &
+            addNut, nutFace, pr, prt, prtModel, re) result(d)
+        !$omp declare target
+        real(C_DOUBLE), intent(in) :: dm, phL, phR, ks, ko, dsh, rc, invd, nutFace, pr, prt, re
+        logical, intent(in) :: addNut
+        integer(C_INT), intent(in) :: prtModel
+
+        d = band_face_diffusivity(dm, phL, phR, ks, ko, dsh, rc, invd)
+        if (addNut) d = d + eddy_diffusivity(nutFace, pr, prt, prtModel, re)
+    end function band_face_total
 
     !--------------------------------------------------------------------
     ! Configuration
@@ -2354,8 +2423,8 @@ contains
         phr = sc%phi(i+o1,j+o2,k+o3,b)
         if ((phl < 0.0d0) .eqv. (phr < 0.0d0)) return
 
-        t1 = mod(d, 3) + 1
-        t2 = mod(d + 1, 3) + 1
+        t1 = merge(2, 1, d == 1)     ! increasing order, as in the kernel
+        t2 = merge(2, 3, d == 3)
         p1 = merge(1, 0, t1 == 1); q1 = merge(1, 0, t1 == 2); r1 = merge(1, 0, t1 == 3)
         p2 = merge(1, 0, t2 == 1); q2 = merge(1, 0, t2 == 2); r2 = merge(1, 0, t2 == 3)
         select case (d)
@@ -2498,8 +2567,12 @@ contains
                         il = i - o1; jl = j - o2; kl = k - o3
                         if ((sc%phi(il,jl,kl,b) < 0.0d0) .eqv. &
                             (sc%phi(i,j,k,b) < 0.0d0)) cycle
-                        t1 = mod(d, 3) + 1
-                        t2 = mod(d + 1, 3) + 1
+                        ! The two tangential directions in INCREASING order,
+                        ! the transport kernel's convention (2026-10-20: a y
+                        ! face used (z, x) here, which changes the round-off
+                        ! of conjugate_tangential's dot products).
+                        t1 = merge(2, 1, d == 1)
+                        t2 = merge(2, 3, d == 3)
                         p1 = merge(1, 0, t1 == 1)
                         q1 = merge(1, 0, t1 == 2)
                         r1 = merge(1, 0, t1 == 3)
@@ -2827,7 +2900,11 @@ contains
         integer :: i, j, k, b, il, is, nx, ny, nz, nBlocks, nList, var, scr
         real(C_DOUBLE) :: ire, re, uw, ue, vs, vn, wb, wt, divu
         real(C_DOUBLE) :: s0, conv, diff, rhs, srcVal, dm, fw, fe, ss, xpen
-        real(C_DOUBLE) :: ntw, nte, nts, ntn, ntb, ntt
+        ! The 7-point nu_t and wall-function y+ stencils, loaded once per
+        ! cell (guarded: each array is a 1-cell dummy when its model is
+        ! off) and handed to plain_face_diffusivity pairwise.
+        real(C_DOUBLE) :: nutc, nutw, nute, nuts, nutn, nutb, nutt
+        real(C_DOUBLE) :: ypc, ypw, ype, yps, ypn, ypb, ypt
         real(C_DOUBLE) :: dxw, dxe, dys, dyn, dzb, dzt
         real(C_DOUBLE) :: convFac
         logical :: nondiv, useIbm, adiab, wallfn
@@ -2868,7 +2945,8 @@ contains
         !$omp& s0,conv,diff,rhs,srcVal,dm,fw,fe,ss,xpen,adiab, &
         !$omp& clw,cle,cls,cln,clb,clt,solw,sole,sols,soln,solb,solt, &
         !$omp& mw,me,ms,mn,mb,mt, &
-        !$omp& ntw,nte,nts,ntn,ntb,ntt,dxw,dxe,dys,dyn,dzb,dzt)
+        !$omp& nutc,nutw,nute,nuts,nutn,nutb,nutt,ypc,ypw,ype,yps,ypn,ypb,ypt, &
+        !$omp& dxw,dxe,dys,dyn,dzb,dzt)
         do b = 1, nBlocks
         do k = 1, nz
             do j = 1, ny
@@ -2912,19 +2990,27 @@ contains
                         solt = abs(coef(i,  j,  k+1,VAR_W,b)) > SOLID_FACE_THRESHOLD
                     end if
 
-                    ! Face eddy viscosities: the same 1/2 (L + R) average the
-                    ! momentum SGS correction uses for its face-normal terms.
-                    ! Scalar-independent, so they are hoisted out of the
-                    ! scalar loop; Pr_t is not (it may be per-scalar).
-                    ntw = 0.0d0; nte = 0.0d0; nts = 0.0d0
-                    ntn = 0.0d0; ntb = 0.0d0; ntt = 0.0d0
+                    ! The nu_t stencil (and under wall functions the y+ one):
+                    ! scalar-independent, loaded once per cell and guarded,
+                    ! since each array is a 1-cell dummy when its model is
+                    ! off. plain_face_diffusivity forms the 1/2 (L + R) face
+                    ! average the momentum SGS correction uses, from the pairs
+                    ! (Pr_t may be per-scalar, so the face value cannot be).
+                    nutc = 0.0d0; nutw = 0.0d0; nute = 0.0d0; nuts = 0.0d0
+                    nutn = 0.0d0; nutb = 0.0d0; nutt = 0.0d0
+                    ypc = 0.0d0; ypw = 0.0d0; ype = 0.0d0; yps = 0.0d0
+                    ypn = 0.0d0; ypb = 0.0d0; ypt = 0.0d0
                     if (useNut) then
-                        ntw = 0.5d0*(nut(i-1,j,k,b) + nut(i,j,k,b))
-                        nte = 0.5d0*(nut(i,j,k,b) + nut(i+1,j,k,b))
-                        nts = 0.5d0*(nut(i,j-1,k,b) + nut(i,j,k,b))
-                        ntn = 0.5d0*(nut(i,j,k,b) + nut(i,j+1,k,b))
-                        ntb = 0.5d0*(nut(i,j,k-1,b) + nut(i,j,k,b))
-                        ntt = 0.5d0*(nut(i,j,k,b) + nut(i,j,k+1,b))
+                        nutc = nut(i,j,k,b)
+                        nutw = nut(i-1,j,k,b); nute = nut(i+1,j,k,b)
+                        nuts = nut(i,j-1,k,b); nutn = nut(i,j+1,k,b)
+                        nutb = nut(i,j,k-1,b); nutt = nut(i,j,k+1,b)
+                        if (wallfn) then
+                            ypc = sc%wfYplus(i,j,k,b)
+                            ypw = sc%wfYplus(i-1,j,k,b); ype = sc%wfYplus(i+1,j,k,b)
+                            yps = sc%wfYplus(i,j-1,k,b); ypn = sc%wfYplus(i,j+1,k,b)
+                            ypb = sc%wfYplus(i,j,k-1,b); ypt = sc%wfYplus(i,j,k+1,b)
+                        end if
                     end if
 
                     do il = 1, nList
@@ -2970,54 +3056,24 @@ contains
                         ! the one that builds it from the masked velocities).
                         if (nondiv) conv = conv - convFac*s0*divu
 
-                        ! Molecular diffusivity + the eddy part on each face.
-                        ! With useNut off every face keeps dm exactly, so the
-                        ! S1 arithmetic is reproduced bit-for-bit.
+                        ! Molecular + eddy diffusivity on each face, ONE
+                        ! definition (plain_face_diffusivity, shared with the
+                        ! statistics kernels). With useNut off every face
+                        ! keeps dm exactly, so the S1 arithmetic is reproduced
+                        ! bit-for-bit.
                         dm = ire/sc%pr(is)
-                        dxw = dm; dxe = dm; dys = dm
-                        dyn = dm; dzb = dm; dzt = dm
-                        if (useNut .and. wallfn) then
-                            ! Thermal wall function: the face value is built
-                            ! from the two CELL diffusivities, because a wall
-                            ! cell's is not a function of its nu_t at all.
-                            dxw = dm + wall_face_diffusivity(nut(i-1,j,k,b), nut(i,j,k,b), &
-                                sc%wfYplus(i-1,j,k,b), sc%wfYplus(i,j,k,b), &
-                                sc%pr(is), sc%prt(is), sc%prtModel(is), re, &
-                                sc%wfP(is), sc%wfYpt(is))
-                            dxe = dm + wall_face_diffusivity(nut(i,j,k,b), nut(i+1,j,k,b), &
-                                sc%wfYplus(i,j,k,b), sc%wfYplus(i+1,j,k,b), &
-                                sc%pr(is), sc%prt(is), sc%prtModel(is), re, &
-                                sc%wfP(is), sc%wfYpt(is))
-                            dys = dm + wall_face_diffusivity(nut(i,j-1,k,b), nut(i,j,k,b), &
-                                sc%wfYplus(i,j-1,k,b), sc%wfYplus(i,j,k,b), &
-                                sc%pr(is), sc%prt(is), sc%prtModel(is), re, &
-                                sc%wfP(is), sc%wfYpt(is))
-                            dyn = dm + wall_face_diffusivity(nut(i,j,k,b), nut(i,j+1,k,b), &
-                                sc%wfYplus(i,j,k,b), sc%wfYplus(i,j+1,k,b), &
-                                sc%pr(is), sc%prt(is), sc%prtModel(is), re, &
-                                sc%wfP(is), sc%wfYpt(is))
-                            dzb = dm + wall_face_diffusivity(nut(i,j,k-1,b), nut(i,j,k,b), &
-                                sc%wfYplus(i,j,k-1,b), sc%wfYplus(i,j,k,b), &
-                                sc%pr(is), sc%prt(is), sc%prtModel(is), re, &
-                                sc%wfP(is), sc%wfYpt(is))
-                            dzt = dm + wall_face_diffusivity(nut(i,j,k,b), nut(i,j,k+1,b), &
-                                sc%wfYplus(i,j,k,b), sc%wfYplus(i,j,k+1,b), &
-                                sc%pr(is), sc%prt(is), sc%prtModel(is), re, &
-                                sc%wfP(is), sc%wfYpt(is))
-                        else if (useNut) then
-                            dxw = dm + eddy_diffusivity(ntw, sc%pr(is), sc%prt(is), &
-                                sc%prtModel(is), re)
-                            dxe = dm + eddy_diffusivity(nte, sc%pr(is), sc%prt(is), &
-                                sc%prtModel(is), re)
-                            dys = dm + eddy_diffusivity(nts, sc%pr(is), sc%prt(is), &
-                                sc%prtModel(is), re)
-                            dyn = dm + eddy_diffusivity(ntn, sc%pr(is), sc%prt(is), &
-                                sc%prtModel(is), re)
-                            dzb = dm + eddy_diffusivity(ntb, sc%pr(is), sc%prt(is), &
-                                sc%prtModel(is), re)
-                            dzt = dm + eddy_diffusivity(ntt, sc%pr(is), sc%prt(is), &
-                                sc%prtModel(is), re)
-                        end if
+                        dxw = plain_face_diffusivity(dm, useNut, wallfn, nutw, nutc, ypw, ypc, &
+                            sc%pr(is), sc%prt(is), sc%prtModel(is), re, sc%wfP(is), sc%wfYpt(is))
+                        dxe = plain_face_diffusivity(dm, useNut, wallfn, nutc, nute, ypc, ype, &
+                            sc%pr(is), sc%prt(is), sc%prtModel(is), re, sc%wfP(is), sc%wfYpt(is))
+                        dys = plain_face_diffusivity(dm, useNut, wallfn, nuts, nutc, yps, ypc, &
+                            sc%pr(is), sc%prt(is), sc%prtModel(is), re, sc%wfP(is), sc%wfYpt(is))
+                        dyn = plain_face_diffusivity(dm, useNut, wallfn, nutc, nutn, ypc, ypn, &
+                            sc%pr(is), sc%prt(is), sc%prtModel(is), re, sc%wfP(is), sc%wfYpt(is))
+                        dzb = plain_face_diffusivity(dm, useNut, wallfn, nutb, nutc, ypb, ypc, &
+                            sc%pr(is), sc%prt(is), sc%prtModel(is), re, sc%wfP(is), sc%wfYpt(is))
+                        dzt = plain_face_diffusivity(dm, useNut, wallfn, nutc, nutt, ypc, ypt, &
+                            sc%pr(is), sc%prt(is), sc%prtModel(is), re, sc%wfP(is), sc%wfYpt(is))
 
                         fw = merge(0.0d0, dxw*(s0 - blk%q(i-1,j,k,var,b)) &
                             *sc%invDx(i,b), mw)
@@ -3111,7 +3167,6 @@ contains
         integer :: i, j, k, b, il, is, nx, ny, nz, nBlocks, nList, var, scr
         real(C_DOUBLE) :: ire, re, uw, ue, vs, vn, wb, wt, divu, divuse
         real(C_DOUBLE) :: s0, conv, diff, rhs, srcVal, dm, fw, fe, ss
-        real(C_DOUBLE) :: ntw, nte, nts, ntn, ntb, ntt
         real(C_DOUBLE) :: dxw, dxe, dys, dyn, dzb, dzt
         ! Conjugate interface (C1): the six neighbour signed distances and
         ! this cell's, plus the per-scalar solid properties.
@@ -3128,8 +3183,9 @@ contains
         ! elsewhere.
         real(C_DOUBLE) :: gtd, gt1, gt2, gpd, gp1, gp2
         real(C_DOUBLE) :: crw, cre, crs, crn, crb, crt
+        real(C_DOUBLE) :: ntw, nte, nts, ntn, ntb, ntt
         real(C_DOUBLE) :: convFac
-        logical :: solc, tang, banded
+        logical :: solc, tang, banded, nutOn
         logical :: cutw, cute, cuts, cutn, cutb, cutt
         logical :: clw, cle, cls, cln, clb, clt
         logical :: solw, sole, sols, soln, solb, solt
@@ -3160,7 +3216,7 @@ contains
         !$omp& map(tofrom: blk%qs, blk%oldrhs) &
         !$omp& private(i,j,k,b,il,is,var,scr,uw,ue,vs,vn,wb,wt,divu,divuse, &
         !$omp& s0,conv,diff,rhs,srcVal,dm,fw,fe,ss,solc,ks,rc,tang, &
-        !$omp& banded,dsh,ko,csb,ssb, &
+        !$omp& banded,dsh,ko,csb,ssb,nutOn, &
         !$omp& gtd,gt1,gt2,gpd,gp1,gp2,crw,cre,crs,crn,crb,crt, &
         !$omp& phc,phw,phe,phs,phn,phb,pht, &
         !$omp& cutw,cute,cuts,cutn,cutb,cutt, &
@@ -3279,77 +3335,67 @@ contains
                                     *blk%d1z(k,VAR_P,b)
                         conv = conv - convFac*s0*divuse
 
-                        ! THE conjugate scheme: one face coefficient. Within
-                        ! one material this is kappa*dm (kappa = 1 in the
-                        ! fluid, so a fluid-fluid face is the plain kernel's
-                        ! line unchanged); across a cut face it is the
-                        ! distance-weighted harmonic mean built on the
-                        ! level-set fraction of the arm.
+                        ! THE conjugate scheme: one face coefficient, ONE
+                        ! definition (conjugate_face_total, shared with the
+                        ! statistics kernels): kappa*dm within one material
+                        ! (kappa = 1 in the fluid, so a fluid-fluid face is
+                        ! the plain kernel's line unchanged), across a cut
+                        ! face the distance-weighted harmonic mean built on
+                        ! the level-set fraction of the arm, the band's
+                        ! coefficient (F2) for a banded scalar; and the eddy
+                        ! part on a FLUID cell's UNCUT faces only.
                         dm = ire/sc%pr(is)
-                        dxw = dm; dxe = dm; dys = dm
-                        dyn = dm; dzb = dm; dzt = dm
-                        crw = 0.0d0; cre = 0.0d0; crs = 0.0d0
-                        crn = 0.0d0; crb = 0.0d0; crt = 0.0d0
                         ks = sc%solidK(is)
                         rc = sc%contactR(is)
+                        nutOn = useNut .and. .not. solc
                         ! The band branch (F2) is entered only by a scalar
-                        ! that asked for one, so the single-material lines
-                        ! below stay byte for byte what they were.
-                        csb = sc%solidC(is)
-                        ssb = sc%solidSource(is)
+                        ! that asked for one, so the single-material calls
+                        ! stay byte for byte what they were.
                         if (banded) then
                             dsh = sc%solidDepth(is)
                             ko = sc%outerK(is)
-                            dxw = band_face_diffusivity(dm, phw, phc, ks, ko, dsh, &
-                                rc, sc%invDx(i,b))
-                            dxe = band_face_diffusivity(dm, phc, phe, ks, ko, dsh, &
-                                rc, sc%invDx(i+1,b))
-                            dys = band_face_diffusivity(dm, phs, phc, ks, ko, dsh, &
-                                rc, sc%invDy(j,b))
-                            dyn = band_face_diffusivity(dm, phc, phn, ks, ko, dsh, &
-                                rc, sc%invDy(j+1,b))
-                            dzb = band_face_diffusivity(dm, phb, phc, ks, ko, dsh, &
-                                rc, sc%invDz(k,b))
-                            dzt = band_face_diffusivity(dm, phc, pht, ks, ko, dsh, &
-                                rc, sc%invDz(k+1,b))
-                            ! The outer band carries its own capacity and
-                            ! NO source: it stands in for whatever is
-                            ! beyond the wall, and a solid_source that
-                            ! fired there would have nowhere to send its
-                            ! heat (an insulated band would simply run
-                            ! away). The shell keeps the solid's own pair.
+                            dxw = band_face_total(dm, phw, phc, ks, ko, dsh, rc, sc%invDx(i,b), &
+                                nutOn .and. .not. cutw, ntw, sc%pr(is), sc%prt(is), sc%prtModel(is), re)
+                            dxe = band_face_total(dm, phc, phe, ks, ko, dsh, rc, sc%invDx(i+1,b), &
+                                nutOn .and. .not. cute, nte, sc%pr(is), sc%prt(is), sc%prtModel(is), re)
+                            dys = band_face_total(dm, phs, phc, ks, ko, dsh, rc, sc%invDy(j,b), &
+                                nutOn .and. .not. cuts, nts, sc%pr(is), sc%prt(is), sc%prtModel(is), re)
+                            dyn = band_face_total(dm, phc, phn, ks, ko, dsh, rc, sc%invDy(j+1,b), &
+                                nutOn .and. .not. cutn, ntn, sc%pr(is), sc%prt(is), sc%prtModel(is), re)
+                            dzb = band_face_total(dm, phb, phc, ks, ko, dsh, rc, sc%invDz(k,b), &
+                                nutOn .and. .not. cutb, ntb, sc%pr(is), sc%prt(is), sc%prtModel(is), re)
+                            dzt = band_face_total(dm, phc, pht, ks, ko, dsh, rc, sc%invDz(k+1,b), &
+                                nutOn .and. .not. cutt, ntt, sc%pr(is), sc%prt(is), sc%prtModel(is), re)
+                        else
+                            dxw = conjugate_face_total(dm, phw, phc, ks, rc, sc%invDx(i,b), &
+                                nutOn .and. .not. cutw, ntw, sc%pr(is), sc%prt(is), sc%prtModel(is), re)
+                            dxe = conjugate_face_total(dm, phc, phe, ks, rc, sc%invDx(i+1,b), &
+                                nutOn .and. .not. cute, nte, sc%pr(is), sc%prt(is), sc%prtModel(is), re)
+                            dys = conjugate_face_total(dm, phs, phc, ks, rc, sc%invDy(j,b), &
+                                nutOn .and. .not. cuts, nts, sc%pr(is), sc%prt(is), sc%prtModel(is), re)
+                            dyn = conjugate_face_total(dm, phc, phn, ks, rc, sc%invDy(j+1,b), &
+                                nutOn .and. .not. cutn, ntn, sc%pr(is), sc%prt(is), sc%prtModel(is), re)
+                            dzb = conjugate_face_total(dm, phb, phc, ks, rc, sc%invDz(k,b), &
+                                nutOn .and. .not. cutb, ntb, sc%pr(is), sc%prt(is), sc%prtModel(is), re)
+                            dzt = conjugate_face_total(dm, phc, pht, ks, rc, sc%invDz(k+1,b), &
+                                nutOn .and. .not. cutt, ntt, sc%pr(is), sc%prt(is), sc%prtModel(is), re)
+                        end if
+                        ! The cell's capacity and source: the solid's own pair,
+                        ! except that the OUTER band (F2) carries its own
+                        ! capacity and NO source -- it stands in for whatever
+                        ! is beyond the wall, and a solid_source that fired
+                        ! there would have nowhere to send its heat (an
+                        ! insulated band would simply run away).
+                        csb = sc%solidC(is)
+                        ssb = sc%solidSource(is)
+                        if (banded) then
                             if (band_material(phc, dsh) == 2) then
                                 csb = sc%outerC(is)
                                 ssb = 0.0d0
                             end if
-                        else
-                            dxw = conjugate_face_diffusivity(dm, phw, phc, ks, rc, sc%invDx(i,b))
-                            dxe = conjugate_face_diffusivity(dm, phc, phe, ks, rc, sc%invDx(i+1,b))
-                            dys = conjugate_face_diffusivity(dm, phs, phc, ks, rc, sc%invDy(j,b))
-                            dyn = conjugate_face_diffusivity(dm, phc, phn, ks, rc, sc%invDy(j+1,b))
-                            dzb = conjugate_face_diffusivity(dm, phb, phc, ks, rc, sc%invDz(k,b))
-                            dzt = conjugate_face_diffusivity(dm, phc, pht, ks, rc, sc%invDz(k+1,b))
                         end if
-                        ! nu_t enters NEITHER the solid NOR a cut face
-                        ! (strategy doc Section 12): at DNS resolution
-                        ! nu_t -> 0 at the wall anyway, and ibm_aware
-                        ! already zeroes it in solid cells, but the
-                        ! interface coefficient is molecular by
-                        ! construction and must not be polluted.
-                        if (useNut .and. .not. solc) then
-                            if (.not. cutw) dxw = dxw + eddy_diffusivity(ntw, sc%pr(is), &
-                                sc%prt(is), sc%prtModel(is), re)
-                            if (.not. cute) dxe = dxe + eddy_diffusivity(nte, sc%pr(is), &
-                                sc%prt(is), sc%prtModel(is), re)
-                            if (.not. cuts) dys = dys + eddy_diffusivity(nts, sc%pr(is), &
-                                sc%prt(is), sc%prtModel(is), re)
-                            if (.not. cutn) dyn = dyn + eddy_diffusivity(ntn, sc%pr(is), &
-                                sc%prt(is), sc%prtModel(is), re)
-                            if (.not. cutb) dzb = dzb + eddy_diffusivity(ntb, sc%pr(is), &
-                                sc%prt(is), sc%prtModel(is), re)
-                            if (.not. cutt) dzt = dzt + eddy_diffusivity(ntt, sc%pr(is), &
-                                sc%prt(is), sc%prtModel(is), re)
-                        end if
+                        crw = 0.0d0; cre = 0.0d0; crs = 0.0d0
+                        crn = 0.0d0; crb = 0.0d0; crt = 0.0d0
                         ! THE C2 TANGENTIAL CORRECTION (off by default;
                         ! [scalar.N] tangential_correction). The exact
                         ! cut-face flux is

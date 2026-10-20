@@ -257,7 +257,11 @@ chan_case() {   # <tag> <refine-lines> <case.h5> <restart|->
     local tag=$1 ref=$2 case=$3 rst=$4
     sed -e "s|@CASE@|$case|" -e "s|@PREFIX@|$tag|" -e "s|@NSTEPS@|1|" \
         -e "s|@WRITE@|1|" -e "s|@HEAT@|-1|" -e "s|@HEATFILE@|$tag.heat.txt|" \
-        -e "s|@REFINE@|$ref|" -e "s|@RESTART@|$rst|" chan_conj.ini > ".$tag.full.ini"
+        -e "s|^@REFINE@|$ref|" -e "s|@RESTART@|$rst|" chan_conj.ini > ".$tag.full.ini"
+    # ^@REFINE@: the two-line refinement text must land on the placeholder's
+    # own line only -- substituted inside chan_conj.ini's comment that lists
+    # the placeholders, its second line became a live `refine_levels` key in
+    # [case], which the 2026-10-08 config hardening rejects (found 2026-10-20).
     sed -e '/^\[restart\]/,$d' \
         -e "s|^\\[ibm\\]|[ibm]\\nstl_file = $LES/wall_lo.stl\\nstl_file = $LES/wall_hi.stl|" \
         ".$tag.full.ini" > ".$tag.prep.ini"

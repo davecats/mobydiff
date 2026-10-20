@@ -73,6 +73,7 @@ and `run_bitexact_s3.sh` gates exactly that.
 | `ibmwavy.ini` | (n) + (o) the analytic wavy bottom wall with ONE SCALAR IN EACH WALL MODE. `theta` is `dirichlet` with `ibm_value = 1`: inside the body the penalization coefficient is `SOLID/Re`, so `mu_s` underflows and every solid cell must read **exactly** 1 — an equality, not a tolerance. `phi` is `adiabatic`, seeded through the restart path with a manufactured `2 + sin(k·x)` (a NON-ZERO mean, so `∫φ dV` is a real quantity): with x,z periodic, Neumann-0 y walls and every solid face masked there is no sink at all, so the integral must be conserved to round-off. Conservation alone would also hold if the mask never fired, so the checker adds the POSITIVE half — a cell whose six staggered faces are all inside the body is sealed on every side and must be **frozen exactly**. |
 | `ibmwavy.ini` (prepared) | (p) `moby_prepare` on the SAME ini writes `coef_p_blocks` **and changes nothing else**: `h5same.py --ignore coef_p_blocks` against the case file prepared from the `[scalar]`-stripped twin. The tiles are then checked against an independent Python transcription of the graded sharp-interface formula `Σ((d0−d)/d)/d0²/Re` (including the ibm.f90 bisection), the prepare is repeated on 4 ranks, and the solve FROM the file is compared with the inline analytic solve at tolerance 0 — `theta`/`phi` included, which is what makes the file round-trip a bit-exactness statement rather than a plausibility one. (p2) the same case file WITHOUT `coef_p_blocks` must be a hard error naming the fix. |
 | `ibmwavyr.ini` | (q) the same body under `refine_body` (2 levels): the cell-centred coefficients must be evaluated at EACH LEAF'S OWN LEVEL. Checked level by level against the same independent transcription, plus solve-from-file == inline analytic at tolerance 0. Conservation is deliberately NOT gated here — across a 2:1 interface the flux form telescopes only approximately (see the S1 note at the end). |
+| `mixed.ini`, `mixedles.ini` | (2026-10-20) the wavy wall with ONE SCALAR IN EACH OF THE THREE WALL MODES in one run -- `theta` dirichlet (Kays Pr_t), `phi` adiabatic (Kasagi velocity source), `chi` conjugate (kappa_s 5, C_s 2) -- without and with WALE. Written for the split of the transport kernel by mode: the plain and the conjugate kernel each run their own scalar LIST, and no earlier case had both lists non-empty. In `run_bitexact_s3.sh`; bit-exact (nofma, max_abs 0) against the fused kernel's reference set on CPU 1 and 4 ranks and GPU. |
 | `ibmwavy.ini` (nofma) | (r) determinism on a scalar + IBM case: 1 rank == 4 ranks and CPU == GPU at tolerance 0, through the ANALYTIC path and again through the FILE path (`coef_p_blocks` read on both sides). |
 | `cylheat.ini` | (s) **heated cylinder, Re 40, Pr 0.71** — the quantitative body gate. Geometry, grid and far field are `../cylinder/cyl_re40.ini` verbatim (D = 1 at (6.0, 8.02) in a 16 × 16 × 0.25 box, uniform h = 1/32), restarted from that campaign's converged steady field, so only the thermal problem is new: an isothermal body (`theta = 1`) in a `theta = 0` freestream. The Nusselt number is measured TWICE from the same snapshot — from the penalization integral `Q = ∫coef_p (1 − θ)/Pr dV`, and from the Gauss/CV border flux of `(u θ − D_th ∇θ)·n` through a box in the fluid (the A2 cross-check method). The two share nothing but the `theta` field. Unlike the momentum cross-check this one never touches the pressure, so the `niter = 6` pn-drift caveat of `../cylinder/README.md` does not apply. |
 
@@ -1183,6 +1184,14 @@ correctly on the same cut cell in the log branch: the penalization holds
 diffusivity, and the resulting wall heat flux is the exact closed-form one.
 
 ## Notes and limitations
+
+- **The GPU statistics file and heat file are not bit-reproducible run to
+  run with one binary** (measured 2026-10-20: 4.4e-16 on `profile`/`raw_sum`,
+  one ulp in the heat columns, from the `atomic update` accumulation order),
+  while the field snapshots of the same two runs are `max_abs 0`. A
+  statistics-identity gate (the transport kernel's face diffusivity == the
+  statistics kernels') is therefore a CPU statement; on the GPU compare at
+  round-off.
 
 - **Order of the substage calls.** `scalar_transport` runs immediately BEFORE
   `momentum(...)`, a deliberate deviation from `docs/history/next_session_scalar.md`

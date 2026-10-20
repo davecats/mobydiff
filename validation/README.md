@@ -51,6 +51,7 @@ or `tools/compare_fields.py --tolerance 0`). Driver:
 | `validation/rans_sst/lam30t.ini` | gamma-Re_theta transition |
 | `validation/scalar/{conduction,prsweep,wave}.ini` | passive scalar transport (name `s1` explicitly: h5maxdiff's default list skips scalars) |
 | `validation/scalar/{ibmwavy,ibmwavyr}.ini` | scalar + analytic IBM (dirichlet/adiabatic), ± refine_body |
+| `validation/scalar/{mixed,mixedles}.ini` | scalar + analytic IBM, one scalar in EACH wall mode (dirichlet/adiabatic/conjugate), ± WALE: both transport kernels in one run (2026-10-20) |
 
 ## validation/
 

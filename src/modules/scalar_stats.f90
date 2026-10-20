@@ -49,9 +49,11 @@ module scalar_stats
     use :: io, only: to_c_string
     use :: turbulence, only: turb_type, turbulence_is_enabled
     use :: ibmm, only: ibm_type
-    use :: scalar, only: scalar_type, scalars_enabled, eddy_diffusivity, &
-        wall_face_diffusivity, scalar_conjugate_enabled, conjugate_face_diffusivity, &
-        band_face_diffusivity, &
+    ! The face diffusivities are the transport kernels' OWN helpers
+    ! (plain_face_diffusivity / conjugate_face_total): every flux reported
+    ! here is the flux the kernel applied, by construction.
+    use :: scalar, only: scalar_type, scalars_enabled, scalar_conjugate_enabled, &
+        plain_face_diffusivity, conjugate_face_total, band_face_total, &
         SC_IBM_ADIABATIC, SC_IBM_CONJUGATE, SC_LAYOUT_PROFILE, SC_LAYOUT_PLANE
     implicit none
 
@@ -324,7 +326,7 @@ contains
         integer :: nStat, plane, ny_g
         integer :: lvlOff(0:this%nLevels)
         real(C_DOUBLE) :: weight, ire, re, dm, uc, s0, sS, sN, vs, vn, dys, dyn
-        real(C_DOUBLE) :: nts, ntn, clo, jlo, chi, jhi
+        real(C_DOUBLE) :: nutc, nuts, nutn, ypc, yps, ypn, clo, jlo, chi, jhi
         real(C_DOUBLE) :: phc, phs, phn
         logical :: useIbm, adiab, cls, cln, sols, soln, ms, mn, wallfn
         logical :: anyConj, conjug, solc, cuts, cutn, cms, cmn
@@ -364,7 +366,7 @@ contains
         !$omp& sc%solidDepth, sc%outerK) &
         !$omp& map(tofrom: sample_sum, sample_count) &
         !$omp& private(i,j,k,b,is,s,var,row,base,gx,gy,weight,dm,uc,s0,sS,sN,vs,vn, &
-        !$omp& dys,dyn,nts,ntn,clo,jlo,chi,jhi,adiab,cls,cln,sols,soln,ms,mn, &
+        !$omp& dys,dyn,nutc,nuts,nutn,ypc,yps,ypn,clo,jlo,chi,jhi,adiab,cls,cln,sols,soln,ms,mn, &
         !$omp& phc,phs,phn,conjug,solc,cuts,cutn,cms,cmn)
         do b = 1, nBlocks
         do k = 1, nz
@@ -395,11 +397,16 @@ contains
                         sols = abs(coef(i,j,  k,VAR_V,b)) > SOLID_FACE_THRESHOLD
                         soln = abs(coef(i,j+1,k,VAR_V,b)) > SOLID_FACE_THRESHOLD
                     end if
-                    nts = 0.0d0
-                    ntn = 0.0d0
+                    ! The y stencil of nu_t (and of y+ under wall functions),
+                    ! guarded: 1-cell dummies when the model is off.
+                    nutc = 0.0d0; nuts = 0.0d0; nutn = 0.0d0
+                    ypc = 0.0d0; yps = 0.0d0; ypn = 0.0d0
                     if (useNut) then
-                        nts = 0.5d0*(nut(i,j-1,k,b) + nut(i,j,k,b))
-                        ntn = 0.5d0*(nut(i,j,k,b) + nut(i,j+1,k,b))
+                        nutc = nut(i,j,k,b); nuts = nut(i,j-1,k,b); nutn = nut(i,j+1,k,b)
+                        if (wallfn) then
+                            ypc = sc%wfYplus(i,j,k,b)
+                            yps = sc%wfYplus(i,j-1,k,b); ypn = sc%wfYplus(i,j+1,k,b)
+                        end if
                     end if
                     ! The conjugate interface's y-face geometry (C1).
                     phc = 0.0d0; phs = 0.0d0; phn = 0.0d0
@@ -432,47 +439,32 @@ contains
                         cms = ms .or. (conjug .and. (sols .or. cuts))
                         cmn = mn .or. (conjug .and. (soln .or. cutn))
 
+                        ! The face diffusivities the transport kernel APPLIED
+                        ! (its own two helpers; a banded solid, the eddy part
+                        ! and the wall function included), which is the whole
+                        ! invariant these accumulators exist for.
                         dm = ire/sc%pr(is)
-                        dys = dm
-                        dyn = dm
-                        if (conjug) then
-                            ! F2: a banded solid must be reported with the
-                            ! coefficient the transport kernel APPLIED, which
-                            ! is the whole invariant these accumulators exist
-                            ! for -- so the same branch, on the same numbers.
-                            if (sc%solidDepth(is) > 0.0d0) then
-                                dys = band_face_diffusivity(dm, phs, phc, sc%solidK(is), &
-                                    sc%outerK(is), sc%solidDepth(is), &
-                                    sc%contactR(is), sc%invDy(j,b))
-                                dyn = band_face_diffusivity(dm, phc, phn, sc%solidK(is), &
-                                    sc%outerK(is), sc%solidDepth(is), &
-                                    sc%contactR(is), sc%invDy(j+1,b))
-                            else
-                                dys = conjugate_face_diffusivity(dm, phs, phc, &
-                                    sc%solidK(is), sc%contactR(is), sc%invDy(j,b))
-                                dyn = conjugate_face_diffusivity(dm, phc, phn, &
-                                    sc%solidK(is), sc%contactR(is), sc%invDy(j+1,b))
-                            end if
-                            if (useNut .and. .not. solc) then
-                                if (.not. cuts) dys = dys + eddy_diffusivity(nts, sc%pr(is), &
-                                    sc%prt(is), sc%prtModel(is), re)
-                                if (.not. cutn) dyn = dyn + eddy_diffusivity(ntn, sc%pr(is), &
-                                    sc%prt(is), sc%prtModel(is), re)
-                            end if
-                        else if (useNut .and. wallfn) then
-                            dys = dm + wall_face_diffusivity(nut(i,j-1,k,b), nut(i,j,k,b), &
-                                sc%wfYplus(i,j-1,k,b), sc%wfYplus(i,j,k,b), &
-                                sc%pr(is), sc%prt(is), sc%prtModel(is), re, &
-                                sc%wfP(is), sc%wfYpt(is))
-                            dyn = dm + wall_face_diffusivity(nut(i,j,k,b), nut(i,j+1,k,b), &
-                                sc%wfYplus(i,j,k,b), sc%wfYplus(i,j+1,k,b), &
-                                sc%pr(is), sc%prt(is), sc%prtModel(is), re, &
-                                sc%wfP(is), sc%wfYpt(is))
-                        else if (useNut) then
-                            dys = dm + eddy_diffusivity(nts, sc%pr(is), sc%prt(is), &
-                                sc%prtModel(is), re)
-                            dyn = dm + eddy_diffusivity(ntn, sc%pr(is), sc%prt(is), &
-                                sc%prtModel(is), re)
+                        if (conjug .and. sc%solidDepth(is) > 0.0d0) then
+                            dys = band_face_total(dm, phs, phc, sc%solidK(is), sc%outerK(is), &
+                                sc%solidDepth(is), sc%contactR(is), sc%invDy(j,b), &
+                                useNut .and. .not. solc .and. .not. cuts, 0.5d0*(nuts + nutc), &
+                                sc%pr(is), sc%prt(is), sc%prtModel(is), re)
+                            dyn = band_face_total(dm, phc, phn, sc%solidK(is), sc%outerK(is), &
+                                sc%solidDepth(is), sc%contactR(is), sc%invDy(j+1,b), &
+                                useNut .and. .not. solc .and. .not. cutn, 0.5d0*(nutc + nutn), &
+                                sc%pr(is), sc%prt(is), sc%prtModel(is), re)
+                        else if (conjug) then
+                            dys = conjugate_face_total(dm, phs, phc, sc%solidK(is), sc%contactR(is), &
+                                sc%invDy(j,b), useNut .and. .not. solc .and. .not. cuts, 0.5d0*(nuts + nutc), &
+                                sc%pr(is), sc%prt(is), sc%prtModel(is), re)
+                            dyn = conjugate_face_total(dm, phc, phn, sc%solidK(is), sc%contactR(is), &
+                                sc%invDy(j+1,b), useNut .and. .not. solc .and. .not. cutn, 0.5d0*(nutc + nutn), &
+                                sc%pr(is), sc%prt(is), sc%prtModel(is), re)
+                        else
+                            dys = plain_face_diffusivity(dm, useNut, wallfn, nuts, nutc, yps, ypc, &
+                                sc%pr(is), sc%prt(is), sc%prtModel(is), re, sc%wfP(is), sc%wfYpt(is))
+                            dyn = plain_face_diffusivity(dm, useNut, wallfn, nutc, nutn, ypc, ypn, &
+                                sc%pr(is), sc%prt(is), sc%prtModel(is), re, sc%wfP(is), sc%wfYpt(is))
                         end if
 
                         ! Fluxes in the +y sense: convection minus D ds/dy.
@@ -761,10 +753,10 @@ contains
 
         integer :: i, j, k, b, is, nx, ny, nz, nBlocks, nScal, var
         real(C_DOUBLE) :: ire, re, dm, dx, dy, dz, s0, sW, sS, sB, flux, sgn
-        real(C_DOUBLE) :: ntw, nts, ntb, dxw, dys, dzb, cp
+        real(C_DOUBLE) :: nutc, nutw, nuts, nutb, ypc, ypw, yps, ypb, dxw, dys, dzb, cp
         real(C_DOUBLE) :: phc, phw, phs, phb
         logical :: solc, solw, sols, solb, clw, cls, clb, wallfn
-        logical :: anyConj, conjug
+        logical :: anyConj, conjug, solcj, cutw, cuts, cutb
 
         nx = int(blk%nb(1))
         ny = int(blk%nb(2))
@@ -786,8 +778,8 @@ contains
         !$omp& sc%solidDepth, sc%outerK) &
         !$omp& map(tofrom: heat) &
         !$omp& private(i,j,k,b,is,var,dm,dx,dy,dz,s0,sW,sS,sB,flux,sgn,cp, &
-        !$omp& ntw,nts,ntb,dxw,dys,dzb,solc,solw,sols,solb,clw,cls,clb, &
-        !$omp& phc,phw,phs,phb,conjug)
+        !$omp& nutc,nutw,nuts,nutb,ypc,ypw,yps,ypb,dxw,dys,dzb,solc,solw,sols,solb,clw,cls,clb, &
+        !$omp& phc,phw,phs,phb,conjug,solcj,cutw,cuts,cutb)
         do b = 1, nBlocks
         do k = 1, nz
             do j = 1, ny
@@ -805,23 +797,35 @@ contains
                     cls = j == 1 .and. blk%physLow(2,b) == FACE_CLOSED
                     clb = k == 1 .and. blk%physLow(3,b) == FACE_CLOSED
 
-                    ntw = 0.0d0
-                    nts = 0.0d0
-                    ntb = 0.0d0
+                    ! The low-arm stencils of nu_t (and of y+ under wall
+                    ! functions), guarded: 1-cell dummies when the model is off.
+                    nutc = 0.0d0; nutw = 0.0d0; nuts = 0.0d0; nutb = 0.0d0
+                    ypc = 0.0d0; ypw = 0.0d0; yps = 0.0d0; ypb = 0.0d0
                     if (useNut) then
-                        ntw = 0.5d0*(nut(i-1,j,k,b) + nut(i,j,k,b))
-                        nts = 0.5d0*(nut(i,j-1,k,b) + nut(i,j,k,b))
-                        ntb = 0.5d0*(nut(i,j,k-1,b) + nut(i,j,k,b))
+                        nutc = nut(i,j,k,b)
+                        nutw = nut(i-1,j,k,b); nuts = nut(i,j-1,k,b); nutb = nut(i,j,k-1,b)
+                        if (wallfn) then
+                            ypc = sc%wfYplus(i,j,k,b)
+                            ypw = sc%wfYplus(i-1,j,k,b); yps = sc%wfYplus(i,j-1,k,b)
+                            ypb = sc%wfYplus(i,j,k-1,b)
+                        end if
                     end if
 
-                    ! The conjugate interface's three LOW arms (C3). Off,
-                    ! sc%phi is a 1-cell dummy and none of this is read.
+                    ! The conjugate interface's three LOW arms (C3) and their
+                    ! cut flags (the kernel's: the material is the sign of
+                    ! phi). Off, sc%phi is a 1-cell dummy and none of this
+                    ! is read.
                     phc = 0.0d0; phw = 0.0d0; phs = 0.0d0; phb = 0.0d0
+                    solcj = .false.; cutw = .false.; cuts = .false.; cutb = .false.
                     if (anyConj) then
                         phc = sc%phi(i,  j,  k,  b)
                         phw = sc%phi(i-1,j,  k,  b)
                         phs = sc%phi(i,  j-1,k,  b)
                         phb = sc%phi(i,  j,  k-1,b)
+                        solcj = phc < 0.0d0
+                        cutw = (phw < 0.0d0) .neqv. solcj
+                        cuts = (phs < 0.0d0) .neqv. solcj
+                        cutb = (phb < 0.0d0) .neqv. solcj
                     end if
 
                     do is = 1, nScal
@@ -834,47 +838,40 @@ contains
                         var = VAR_S0 + is
                         conjug = sc%ibmMode(is) == SC_IBM_CONJUGATE
                         s0 = blk%q(i,j,k,var,b)
+                        ! The face diffusivities the transport kernel APPLIED
+                        ! (its own two helpers). A counted face below is a cut
+                        ! face, where the conjugate helper adds no eddy part.
                         dm = ire/sc%pr(is)
-                        dxw = dm
-                        dys = dm
-                        dzb = dm
-                        if (conjug) then
-                            ! The scheme's own cut-face coefficient. nu_t does
-                            ! not enter a cut face (nor the solid), so the
-                            ! molecular branch is the whole story here.
-                            if (sc%solidDepth(is) > 0.0d0) then
-                                ! F2, as above: the applied coefficient.
-                                dxw = band_face_diffusivity(dm, phw, phc, sc%solidK(is), &
-                                    sc%outerK(is), sc%solidDepth(is), &
-                                    sc%contactR(is), sc%invDx(i,b))
-                                dys = band_face_diffusivity(dm, phs, phc, sc%solidK(is), &
-                                    sc%outerK(is), sc%solidDepth(is), &
-                                    sc%contactR(is), sc%invDy(j,b))
-                                dzb = band_face_diffusivity(dm, phb, phc, sc%solidK(is), &
-                                    sc%outerK(is), sc%solidDepth(is), &
-                                    sc%contactR(is), sc%invDz(k,b))
-                            else
-                                dxw = conjugate_face_diffusivity(dm, phw, phc, &
-                                    sc%solidK(is), sc%contactR(is), sc%invDx(i,b))
-                                dys = conjugate_face_diffusivity(dm, phs, phc, &
-                                    sc%solidK(is), sc%contactR(is), sc%invDy(j,b))
-                                dzb = conjugate_face_diffusivity(dm, phb, phc, &
-                                    sc%solidK(is), sc%contactR(is), sc%invDz(k,b))
-                            end if
-                        else if (useNut .and. wallfn) then
-                            dxw = dm + wall_face_diffusivity(nut(i-1,j,k,b), nut(i,j,k,b), &
-                                sc%wfYplus(i-1,j,k,b), sc%wfYplus(i,j,k,b), &
+                        if (conjug .and. sc%solidDepth(is) > 0.0d0) then
+                            dxw = band_face_total(dm, phw, phc, sc%solidK(is), sc%outerK(is), &
+                                sc%solidDepth(is), sc%contactR(is), sc%invDx(i,b), &
+                                useNut .and. .not. solcj .and. .not. cutw, 0.5d0*(nutw + nutc), &
+                                sc%pr(is), sc%prt(is), sc%prtModel(is), re)
+                            dys = band_face_total(dm, phs, phc, sc%solidK(is), sc%outerK(is), &
+                                sc%solidDepth(is), sc%contactR(is), sc%invDy(j,b), &
+                                useNut .and. .not. solcj .and. .not. cuts, 0.5d0*(nuts + nutc), &
+                                sc%pr(is), sc%prt(is), sc%prtModel(is), re)
+                            dzb = band_face_total(dm, phb, phc, sc%solidK(is), sc%outerK(is), &
+                                sc%solidDepth(is), sc%contactR(is), sc%invDz(k,b), &
+                                useNut .and. .not. solcj .and. .not. cutb, 0.5d0*(nutb + nutc), &
+                                sc%pr(is), sc%prt(is), sc%prtModel(is), re)
+                        else if (conjug) then
+                            dxw = conjugate_face_total(dm, phw, phc, sc%solidK(is), sc%contactR(is), &
+                                sc%invDx(i,b), useNut .and. .not. solcj .and. .not. cutw, 0.5d0*(nutw + nutc), &
+                                sc%pr(is), sc%prt(is), sc%prtModel(is), re)
+                            dys = conjugate_face_total(dm, phs, phc, sc%solidK(is), sc%contactR(is), &
+                                sc%invDy(j,b), useNut .and. .not. solcj .and. .not. cuts, 0.5d0*(nuts + nutc), &
+                                sc%pr(is), sc%prt(is), sc%prtModel(is), re)
+                            dzb = conjugate_face_total(dm, phb, phc, sc%solidK(is), sc%contactR(is), &
+                                sc%invDz(k,b), useNut .and. .not. solcj .and. .not. cutb, 0.5d0*(nutb + nutc), &
+                                sc%pr(is), sc%prt(is), sc%prtModel(is), re)
+                        else
+                            dxw = plain_face_diffusivity(dm, useNut, wallfn, nutw, nutc, ypw, ypc, &
                                 sc%pr(is), sc%prt(is), sc%prtModel(is), re, sc%wfP(is), sc%wfYpt(is))
-                            dys = dm + wall_face_diffusivity(nut(i,j-1,k,b), nut(i,j,k,b), &
-                                sc%wfYplus(i,j-1,k,b), sc%wfYplus(i,j,k,b), &
+                            dys = plain_face_diffusivity(dm, useNut, wallfn, nuts, nutc, yps, ypc, &
                                 sc%pr(is), sc%prt(is), sc%prtModel(is), re, sc%wfP(is), sc%wfYpt(is))
-                            dzb = dm + wall_face_diffusivity(nut(i,j,k-1,b), nut(i,j,k,b), &
-                                sc%wfYplus(i,j,k-1,b), sc%wfYplus(i,j,k,b), &
+                            dzb = plain_face_diffusivity(dm, useNut, wallfn, nutb, nutc, ypb, ypc, &
                                 sc%pr(is), sc%prt(is), sc%prtModel(is), re, sc%wfP(is), sc%wfYpt(is))
-                        else if (useNut) then
-                            dxw = dm + eddy_diffusivity(ntw, sc%pr(is), sc%prt(is), sc%prtModel(is), re)
-                            dys = dm + eddy_diffusivity(nts, sc%pr(is), sc%prt(is), sc%prtModel(is), re)
-                            dzb = dm + eddy_diffusivity(ntb, sc%pr(is), sc%prt(is), sc%prtModel(is), re)
                         end if
 
                         ! The penalization delivered into this cell. SOLID
