@@ -47,6 +47,8 @@ simplifications, the performance items and the `config.f90` `case default`;
   profile's remaining items (`interface_correct` table + one launch, the
   per-iteration phi mirror on outlet cases, the red-black diagonal hoist;
   `zero_phi` only matters for red-black WITH a 2:1 interface).
+  **THE CONTINUATION IS `docs/next_session_code_simplification.md`
+  (2026-10-20): this handout is closed.**
 - (1) COMPLETED 2026-10-08 once HoreKa was reachable again: the rough
   through-outlet chain ended at 837500 (every chunk exit 0); the 1250-unit
   window gives k+ 9.4, Delta U+ 3.41 +- 0.25 (mean-plane) / 2.83 (crests)

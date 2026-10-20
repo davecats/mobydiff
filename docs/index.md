@@ -43,7 +43,8 @@ historical than the user documentation above, but they are the authoritative rec
   [`cleanup_review_2026-10-06.md`](cleanup_review_2026-10-06.md) — the two
   code reviews (findings ranked, execution sequence, measurements).
 - The `next_session_*.md` files directly under `docs/` are the LIVE handouts
-  (open work: `next_session_cleanup_pass2.md`, `next_session_rough_outlet.md`,
+  (open work: `next_session_code_simplification.md` (the live one),
+  `next_session_cleanup_pass2.md`, `next_session_rough_outlet.md`,
   `next_session_redblack_interface.md`, `next_session_tangential.md`,
   `next_session_after_step9.md`) and the design records of the current outlet
   (`next_session_outlet.md`, `next_session_body_at_outlet.md`).

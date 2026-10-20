@@ -98,7 +98,8 @@ The block refactor (Phases 0–3) is complete (the projection was rebuilt on a
 damped-Jacobi / Chebyshev smoother, which is why `claude/jacobi-interface` was
 forked from `claude/blocks`). The CURRENT handout is the one the LAST bullet
 of this log names as NEXT (`docs/next_session_cleanup_pass2.md` as of
-2026-10-06); the closed handouts live in `docs/history/` (its README is the
+2026-10-06, `docs/next_session_code_simplification.md` since 2026-10-20);
+the closed handouts live in `docs/history/` (its README is the
 index); the master design is `docs/block_refinement_strategy.md`. Goal:
 BCM-style equal-size blocks (Nakahashi & Kim 2004; Jansson et al. 2019) to
 enable 2:1 local refinement and removal of blocks buried inside the
@@ -2607,9 +2608,13 @@ immersed boundary. Phased, each phase verified before the next:
   way. **Reference set after the pass: `~/pass2_ref_binaries` (`d821341`);
   gate at NOFMA against it** -- the fused projection statements may contract
   differently at production flags. The rough through-outlet chain's read-out
-  is DONE (the 2026-10-05 bullet). OPEN: the review's section 9 order (index helpers, projection tail, F13/F14,
-  the scalar kernel split), and the proposal to move this log to
-  `docs/history/worklog_2026.md` (review 6.5).
+  is DONE (the 2026-10-05 bullet). **NEXT:
+  `docs/next_session_code_simplification.md`** -- the review's section 9
+  continued (the scalar kernel split, comm.f90's one enumeration, the
+  lattice probe once, the projection's launch items, F13/F14 for the user,
+  the latent robustness items, the module/document moves incl. this log to
+  `docs/history/worklog_2026.md`); then the one-by-one numerics
+  re-validation of `validation/README.md`.
 
 ## Verification
 
