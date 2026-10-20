@@ -3,8 +3,10 @@
 STATUS: handout written 2026-10-20 on head `68c6360`. **Items 1 (the scalar
 kernel split), 2 (one face-diffusivity helper), 3 (comm.f90's one
 enumeration) and 4 (the lattice probe and the node-line subdivision, once
-each) are DONE 2026-10-20** -- see "Item N, done" at the end of this file
-for the measurements and what each one cost; items 5-11 are not started.
+each) are DONE 2026-10-20, item 5 (`interface_correct` as one launch over
+a static face list) DONE 2026-10-21** -- see "Item N, done" at the end of
+this file for the measurements and what each one cost; items 6-11 are not
+started.
 It continues `docs/cleanup_review_2026-10-06.md` section 9 (the
 ranked findings) after the items DONE on 2026-10-08: the config hardening
 (F11/F12), the body-force support restriction, the apply k1+k2 and
@@ -508,3 +510,58 @@ that passes on one build is not a gate; and gdb on a deterministic
 segfault (callee-saved registers holding small integers = a stack
 overflow in the callee) beats reasoning about the source.
 
+
+## Item 5, done (2026-10-21)
+
+`interface_correct` is ONE kernel over a face list built once
+(`init_interface_faces`, called from both projections beside the
+`hasIface` test): per 2:1 interface face of the rank its block, normal
+direction, face index (1 or nb+1) and `ifCoef = face_grad(kind, .true.,
+d1f, refd(d))` -- the cfLow argument: the same expression on the same
+inputs, evaluated once on the host instead of per point on the device.
+The collapsed loop runs (face, t2, t1) over the largest tangential extents
+of the three orientations and skips a face's excess (nothing on cubic
+blocks); low and high faces are one statement, `phi(f-1) - phi(f)` with f
+the face index. `refd` left the kernel's signature; a rank without an
+interface face (nIfaces = 0) does not launch at all, where it used to
+launch three kernels over every block. 52 registers, no stack (was 3 x 54).
+MEASURED on the RTX 3060, before = `0882695`, production GPU builds, 100
+steps, two repetitions each (spread < 0.7 %):
+
+| case | step before -> new | `proj_timing apply` | kernel device time |
+|---|---|---|---|
+| `min_channel` GPU (refined bands, 1600 leaves, Chebyshev 12) | 36.90 -> 35.63 ms (**-3.4 %**) | 14.36 -> 13.00 ms/step (-9.5 %) | 0.829 -> 0.304 ms/step (-63 %) |
+| `redblack_interface/refined_channel` (red-black 3) | 14.37 -> 13.80 ms (**-4.0 %**) | 1.001 -> 0.419 ms/step (-58 %; the bucket IS this kernel there) | 0.254 -> 0.108 ms/step |
+| `block_nb/beltrami_rect` (nb 8 4 8, 3D patch, 1600 leaves) | 16.01 -> 14.75 ms (**-7.8 %**) | 6.37 -> 5.16 ms/step (-19 %) | 0.657 -> 0.339 ms/step (-48 %) |
+
+The step moves by MORE than the device time removed (min_channel: 1.3
+ms/step off the step, 0.5 off the device): these steps are launch-bound
+(the review's 55 % device busy), so the two launches per call saved on the
+host are the larger half -- red-black's per-call `apply` wall time 55.6 ->
+23.3 us says the same, one launch's host cost instead of three. The
+rectangular case pays the skip (its one kernel 9.4 us against the three
+at 4.4/6.9/7.0) and still halves the device time. ncu on
+`refined_yp82_rect_jacobi` was NOT run (HoreKa): the per-launch floor is
+the mechanism and the workstation has no counter permission; the handout's
+"~1 ms/step at 16 ranks" stands as an estimate, this one measured at 1 rank
+with no MPI. NEW GATE CASE, because none existed: `validation/block_nb/
+beltrami_rect.ini` -- a real flow (phi /= 0) through a 3D patch on
+NON-CUBIC blocks, i.e. the only case whose interface faces have unequal
+tangential extents; the uniform-flow cases of that directory are blind to
+the correction (phi = 0). It is the 8th case of
+`validation/scalar/run_bitexact.sh` (the "7-case suite" of the records).
+GATES (nofma vs `~/pass2_ref_binaries`): the 8-case suite CPU
+4 ranks AND GPU 8/8 `max_abs 0` each; the 11-case suite CPU AND GPU 11/11;
+`min_channel` and `beltrami_rect` at 1 and 2 CPU ranks `max_abs 0` (with the
+suite's 4 and the GPU's 1: four rank counts, the face list is per rank);
+`validation/redblack_interface` CPU (incl. 1 == 4 ranks EXACT) and GPU ALL
+PASS; `validation/block_nb` CPU and GPU ALL PASS. ALSO at PRODUCTION flags:
+`min_channel`, `beltrami_rect`, `les_ibm_refine` on the GPU and the first two
+on the CPU `max_abs 0` -- the coefficient is the same value from the same
+expression, nothing contracts differently -- so **the reference set is
+UNCHANGED (`~/pass2_ref_binaries`)**. Landmine met, not caused:
+`validation/block_nb/gate_unset.case.h5` was a ONE-rank file from
+2026-09-29 and stopped the `nb unset` leg at `RANKS=4` with "rank owns no
+blocks" (the prepare log beside it says `rank layout 1 1 1`); deleted and
+rerun, PASS. An nb-less case file is pinned to the rank count that prepared
+it -- a gate directory keeps the last run's.

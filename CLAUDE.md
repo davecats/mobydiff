@@ -2692,6 +2692,29 @@ immersed boundary. Phased, each phase verified before the next:
   did not (segfault after the call, saved registers clobbered). **A gate
   that passes on one build is not a gate.**
 
+- **Code simplification, item 5 -- `interface_correct` as one launch over a
+  static face list (DONE 2026-10-21, handout "Item 5, done").** The three
+  per-direction kernels that tested the face kind and evaluated `face_grad`
+  at every point are one kernel over `init_interface_faces`' list (block,
+  direction, face index 1 or nb+1, `ifCoef = face_grad(...)` formed once on
+  the host -- the cfLow argument; low and high faces one statement,
+  `phi(f-1) - phi(f)`); a rank without an interface face does not launch.
+  MEASURED (RTX 3060, production GPU, 100 steps): step **-3.4 %**
+  (`min_channel` refined, Chebyshev 12), **-4.0 %** (`redblack_interface`,
+  where the `apply` bucket IS this kernel: 1.00 -> 0.42 ms/step), **-7.8 %**
+  on a rectangular-block 3D patch; the kernel's device time -48 to -63 %,
+  and the step moves by more than that because these steps are
+  launch-bound (two launches per call saved on the host). NEW SUITE CASE:
+  `validation/block_nb/beltrami_rect.ini` (Beltrami flow through a 3D patch
+  on `nb = 8 4 8`, the only case with phi /= 0 at interface faces of
+  unequal tangential extents; the directory's uniform-flow cases are blind
+  to the correction) is the 8th case of `validation/scalar/run_bitexact.sh`.
+  GATES (nofma vs `~/pass2_ref_binaries`): 8-case suite CPU 4 ranks + GPU,
+  11-case suite CPU + GPU, `min_channel`/`beltrami_rect` at 1 and 2 ranks,
+  `redblack_interface` and `block_nb` CPU + GPU -- all `max_abs 0` / PASS;
+  the interface cases are `max_abs 0` at PRODUCTION flags too, so the
+  reference set is unchanged. ncu on HoreKa's `refined_yp82` NOT run.
+
 ## Verification
 
 - Pure refactors must be bit-exact vs. the pre-refactor code: compare

@@ -151,6 +151,21 @@ module pressure_solver
     real(C_DOUBLE), allocatable :: dnHigh(:,:,:)  ! (1:maxval(nb), 3, nBlocks)
     real(C_DOUBLE), allocatable :: d1P(:,:,:)     ! (1:maxval(nb), 3, nBlocks)
 
+    ! The 2:1 interface faces of THIS rank, listed once (init_interface_faces):
+    ! per face its block, the direction of its normal, its index along that
+    ! direction (1 = the block's low face, nb+1 = its high halo face) and the
+    ! correction metric face_grad(kind, .true., d1f, refd(d)) -- a function of
+    ! (block, direction, side) alone, the cfLow argument once more. The list
+    ! is static like the tables (face kinds from the leaf table, metrics from
+    ! the node lines) and is what makes interface_correct ONE launch over the
+    ! faces that exist, instead of three launches over every block testing the
+    ! face kind at every point (2026-10-21). nIfaces = 0 on a rank that holds no
+    ! interface face, and the kernel does not launch there.
+    integer(C_INT), allocatable :: ifBlock(:), ifDir(:), ifIdx(:)
+    real(C_DOUBLE), allocatable :: ifCoef(:)
+    integer(C_INT) :: nIfaces = 0_C_INT
+    logical, save :: ifaceListBuilt = .false.
+
     ! Does this case have any 2:1 interface face? Face kinds come from the leaf
     ! table and never change during a run, so the answer is computed once and
     ! cached. It must be a GLOBAL answer: the red-black path drives a collective
@@ -242,6 +257,7 @@ contains
         ! (face_grad), all true in xyz mode.
         refd = blk%refMask == 1_C_INT
         hasIface = interfaces_present(blk, c)
+        if (hasIface) call init_interface_faces(blk, refd)
 
         ! Dirichlet-pressure outlet faces (declared [boundary] _patch = outlet).
         ! The flags are per DOMAIN face; inside the kernels they act only where
@@ -320,7 +336,7 @@ contains
             call prof_toc(proj_prof, PROF_PHI_EXCHANGE, t0)
             t0 = prof_tic()
             call jacobi_apply(blk, dt_gamma, ibm)
-            if (hasIface) call interface_correct(blk, ibm, refd)
+            if (hasIface) call interface_correct(blk, ibm)
             call prof_toc(proj_prof, PROF_APPLY, t0)
             if (iIter == ps%nIter) then
                 call projection_finish(blk, bc, c)
@@ -499,6 +515,56 @@ contains
         !$omp target enter data map(to: cfLow, cfHigh, dnLow, dnHigh, d1P)
 #endif
     end subroutine init_face_metrics
+
+    ! Fill the 2:1 interface face list (see its declaration) and map it. Like
+    ! init_face_metrics it runs once: nothing it reads changes during a run.
+    ! The order is (block, direction, low face, high face); it does not matter,
+    ! every entry writes its own face and reads phi only.
+    subroutine init_interface_faces(blk, refd)
+        type(block_set_type), intent(in) :: blk
+        logical(C_BOOL), intent(in) :: refd(3)
+
+        integer(C_INT) :: b, d, n, e
+
+        if (ifaceListBuilt) return
+        ifaceListBuilt = .true.
+
+        n = 0_C_INT
+        do b = 1_C_INT, blk%nBlocks
+            do d = 1_C_INT, 3_C_INT
+                if (is_interface(blk%physLow(d,b)))  n = n + 1_C_INT
+                if (is_interface(blk%physHigh(d,b))) n = n + 1_C_INT
+            end do
+        end do
+        nIfaces = n
+        ! At least one element so the device map is well-formed on a rank
+        ! without interface faces (the kernel never reads it there).
+        allocate(ifBlock(max(1_C_INT, n)), ifDir(max(1_C_INT, n)), &
+                 ifIdx(max(1_C_INT, n)), ifCoef(max(1_C_INT, n)))
+        ifBlock = 0_C_INT; ifDir = 0_C_INT; ifIdx = 0_C_INT; ifCoef = 0.0d0
+
+        e = 0_C_INT
+        do b = 1_C_INT, blk%nBlocks
+            do d = 1_C_INT, 3_C_INT
+                if (is_interface(blk%physLow(d,b))) then
+                    e = e + 1_C_INT
+                    ifBlock(e) = b; ifDir(e) = d; ifIdx(e) = 1_C_INT
+                    ifCoef(e) = face_grad(blk%physLow(d,b), .true., &
+                        d1_normal(blk, d, 1_C_INT, b), refd(d))
+                end if
+                if (is_interface(blk%physHigh(d,b))) then
+                    e = e + 1_C_INT
+                    ifBlock(e) = b; ifDir(e) = d; ifIdx(e) = blk%nb(d) + 1_C_INT
+                    ifCoef(e) = face_grad(blk%physHigh(d,b), .true., &
+                        d1_normal(blk, d, blk%nb(d) + 1_C_INT, b), refd(d))
+                end if
+            end do
+        end do
+
+#ifdef USE_OPENMP_OFFLOAD
+        !$omp target enter data map(to: ifBlock, ifDir, ifIdx, ifCoef)
+#endif
+    end subroutine init_interface_faces
 
     ! The face metric d1f of direction d at face index idx of block b, for the
     ! velocity component NORMAL to that face, and the cell's own divergence
@@ -805,12 +871,23 @@ contains
     ! for the interface faces only -- the low face at index 1 and the high halo
     ! face at index nb+1. The formula and its operand order are exactly the ones
     ! jacobi_apply used to carry inline, which is what makes the Jacobi path
-    ! bit-exact across the extraction.
+    ! bit-exact across the extraction; face_grad comes from the ifCoef table,
+    ! formed once on the host from the same arguments (the cfLow argument: the
+    ! same expression on the same inputs, evaluated once instead of per point).
     !
     ! Why it is a separate pass rather than part of a volume kernel: the faces
-    ! it touches are three planes per block, so this is nb^2 work against the
-    ! sweep's nb^3, and red-black needs it applied AFTER a phi exchange that
-    ! cannot happen inside its sweep.
+    ! it touches are planes, so this is nb^2 work against the sweep's nb^3, and
+    ! red-black needs it applied AFTER a phi exchange that cannot happen inside
+    ! its sweep.
+    !
+    ! ONE launch over the face list (three per call until 2026-10-21, one per
+    ! direction, each over every block with the face kind tested per point):
+    ! the collapsed loop runs over (face, t2, t1) with t1/t2 spanning the
+    ! largest tangential extents of the three orientations, and a face whose
+    ! own extents are smaller skips the excess -- nothing on cubic blocks.
+    ! Low and high faces are one statement: with f the face index, the
+    ! difference is phi(f-1) - phi(f) on either side (phi(0) - phi(1) at the
+    ! low face, phi(nb) - phi(nb+1) at the high one).
     !
     ! An interface face is never an outlet face, so the plain face_grad is
     ! the metric here (the outlet-aware pair lives in the tables of the
@@ -820,90 +897,47 @@ contains
     ! copies of an interface face are repaired by the same-level velocity
     ! exchange that follows, so the edge/corner phi ghosts (plain injection,
     ! not the ifaceRow restrict) are never read here.
-    subroutine interface_correct(blk, ibm, refd)
+    subroutine interface_correct(blk, ibm)
         type(block_set_type), intent(inout) :: blk
         type(ibm_type), intent(in) :: ibm
-        logical(C_BOOL), intent(in) :: refd(3)
 
-        integer(C_INT) :: i, j, k, b, nBlocks, nx, ny, nz
+        integer(C_INT) :: e, t1, t2, n1, n2, nF, nx, ny, nz
+        integer(C_INT) :: i, j, k, io, jo, ko, b, d, f, var
+        real(C_DOUBLE) :: cf
+        logical :: inFace
 
+        nF = nIfaces
+        if (nF <= 0_C_INT) return
         nx = blk%nb(1); ny = blk%nb(2); nz = blk%nb(3)
-        nBlocks = blk%nBlocks
+        ! Tangential extents: x faces (ny, nz), y faces (nx, nz), z faces
+        ! (nx, ny); t1 and t2 run over the largest of each.
+        n1 = max(nx, ny); n2 = max(ny, nz)
 
-        ! x faces
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do collapse(3) &
-        !$omp& map(to: nx, ny, nz, refd(1:3), &
-        !$omp& blk%physLow, blk%physHigh, blk%d1x, ibm%mu) &
-        !$omp& map(tofrom: blk%q, phi) private(j,k,b)
+        !$omp& map(to: nF, n1, n2, nx, ny, nz, ifBlock, ifDir, ifIdx, ifCoef, ibm%mu) &
+        !$omp& map(tofrom: blk%q, phi) private(t1,t2,i,j,k,io,jo,ko,b,d,f,var,cf,inFace)
 #endif
-        do b = 1_C_INT, nBlocks
-        do k = 1_C_INT, nz
-            do j = 1_C_INT, ny
-                if (is_interface(blk%physLow(1,b))) &
-                    blk%q(1,j,k,VAR_U,b) = blk%q(1,j,k,VAR_U,b) &
-                        + (phi(0,j,k,b) - phi(1,j,k,b)) &
-                          *face_grad(blk%physLow(1,b), .true., blk%d1x(1,VAR_U,b), refd(1)) &
-                          *ibm%mu(1,j,k,VAR_U,b)
-                if (is_interface(blk%physHigh(1,b))) &
-                    blk%q(nx+1,j,k,VAR_U,b) = blk%q(nx+1,j,k,VAR_U,b) &
-                        + (phi(nx,j,k,b) - phi(nx+1,j,k,b)) &
-                          *face_grad(blk%physHigh(1,b), .true., blk%d1x(nx+1,VAR_U,b), refd(1)) &
-                          *ibm%mu(nx+1,j,k,VAR_U,b)
-            end do
-        end do
-        end do
-#ifdef USE_OPENMP_OFFLOAD
-        !$omp end target teams distribute parallel do
-#endif
-
-        ! y faces
-#ifdef USE_OPENMP_OFFLOAD
-        !$omp target teams distribute parallel do collapse(3) &
-        !$omp& map(to: nx, ny, nz, refd(1:3), &
-        !$omp& blk%physLow, blk%physHigh, blk%d1y, ibm%mu) &
-        !$omp& map(tofrom: blk%q, phi) private(i,k,b)
-#endif
-        do b = 1_C_INT, nBlocks
-        do k = 1_C_INT, nz
-            do i = 1_C_INT, nx
-                if (is_interface(blk%physLow(2,b))) &
-                    blk%q(i,1,k,VAR_V,b) = blk%q(i,1,k,VAR_V,b) &
-                        + (phi(i,0,k,b) - phi(i,1,k,b)) &
-                          *face_grad(blk%physLow(2,b), .true., blk%d1y(1,VAR_V,b), refd(2)) &
-                          *ibm%mu(i,1,k,VAR_V,b)
-                if (is_interface(blk%physHigh(2,b))) &
-                    blk%q(i,ny+1,k,VAR_V,b) = blk%q(i,ny+1,k,VAR_V,b) &
-                        + (phi(i,ny,k,b) - phi(i,ny+1,k,b)) &
-                          *face_grad(blk%physHigh(2,b), .true., blk%d1y(ny+1,VAR_V,b), refd(2)) &
-                          *ibm%mu(i,ny+1,k,VAR_V,b)
-            end do
-        end do
-        end do
-#ifdef USE_OPENMP_OFFLOAD
-        !$omp end target teams distribute parallel do
-#endif
-
-        ! z faces
-#ifdef USE_OPENMP_OFFLOAD
-        !$omp target teams distribute parallel do collapse(3) &
-        !$omp& map(to: nx, ny, nz, refd(1:3), &
-        !$omp& blk%physLow, blk%physHigh, blk%d1z, ibm%mu) &
-        !$omp& map(tofrom: blk%q, phi) private(i,j,b)
-#endif
-        do b = 1_C_INT, nBlocks
-        do j = 1_C_INT, ny
-            do i = 1_C_INT, nx
-                if (is_interface(blk%physLow(3,b))) &
-                    blk%q(i,j,1,VAR_W,b) = blk%q(i,j,1,VAR_W,b) &
-                        + (phi(i,j,0,b) - phi(i,j,1,b)) &
-                          *face_grad(blk%physLow(3,b), .true., blk%d1z(1,VAR_W,b), refd(3)) &
-                          *ibm%mu(i,j,1,VAR_W,b)
-                if (is_interface(blk%physHigh(3,b))) &
-                    blk%q(i,j,nz+1,VAR_W,b) = blk%q(i,j,nz+1,VAR_W,b) &
-                        + (phi(i,j,nz,b) - phi(i,j,nz+1,b)) &
-                          *face_grad(blk%physHigh(3,b), .true., blk%d1z(nz+1,VAR_W,b), refd(3)) &
-                          *ibm%mu(i,j,nz+1,VAR_W,b)
+        do e = 1_C_INT, nF
+        do t2 = 1_C_INT, n2
+            do t1 = 1_C_INT, n1
+                b = ifBlock(e); d = ifDir(e); f = ifIdx(e); cf = ifCoef(e)
+                ! (i,j,k) the face point, (io,jo,ko) the cell below it along d.
+                if (d == 1_C_INT) then
+                    inFace = t1 <= ny .and. t2 <= nz
+                    i = f; j = t1; k = t2; io = f - 1_C_INT; jo = t1; ko = t2
+                    var = VAR_U
+                else if (d == 2_C_INT) then
+                    inFace = t1 <= nx .and. t2 <= nz
+                    i = t1; j = f; k = t2; io = t1; jo = f - 1_C_INT; ko = t2
+                    var = VAR_V
+                else
+                    inFace = t1 <= nx .and. t2 <= ny
+                    i = t1; j = t2; k = f; io = t1; jo = t2; ko = f - 1_C_INT
+                    var = VAR_W
+                end if
+                if (inFace) blk%q(i,j,k,var,b) = blk%q(i,j,k,var,b) &
+                    + (phi(io,jo,ko,b) - phi(i,j,k,b))*cf*ibm%mu(i,j,k,var,b)
             end do
         end do
         end do
@@ -1024,7 +1058,10 @@ contains
         hasIface = interfaces_present(blk, c)
         ! phi exists on this path ONLY to cross a level jump; a single-level
         ! red-black run allocates and maps nothing.
-        if (hasIface) call allocate_phi(blk)
+        if (hasIface) then
+            call allocate_phi(blk)
+            call init_interface_faces(blk, refd)
+        end if
         call outlet_flags(bc, outLow, outHigh)
         call prof_toc(proj_prof, PROF_PROJ_SETUP, t0)
 
@@ -1048,7 +1085,7 @@ contains
                     call exchange_scalar_halos(c, phi, ifaceRow=.true.)
                     call prof_toc(proj_prof, PROF_PHI_EXCHANGE, t0)
                     t0 = prof_tic()
-                    call interface_correct(blk, ibm, refd)
+                    call interface_correct(blk, ibm)
                     call prof_toc(proj_prof, PROF_APPLY, t0)
                 end if
                 if (iIter == ps%nIter .and. color == 0_C_INT) then

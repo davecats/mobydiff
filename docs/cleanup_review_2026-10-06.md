@@ -204,7 +204,10 @@ control-flow only, gateable at production flags; "moves" = the nofma gate.
 5. `interface_correct`: `face_grad(...)` depends on `(d, side, b)` only yet is
    evaluated per face point (`pressure_solver.f90:825, 830, ...`); a static
    table like `cfLow` (the 2026-09-14 hoist's own argument). Pairs with the
-   open "three kernels -> one launch over a face list".
+   open "three kernels -> one launch over a face list". **DONE 2026-10-21**
+   (one launch over a static face list; step -3.4 to -7.8 % on the
+   workstation's refined cases -- `docs/next_session_code_simplification.md`
+   "Item 5, done").
 6. `apply_bc` writes the BCK_FACE rows (`w = 0`, `boundary.f90:470-471`) on
    every call; `0*q + C` is `C` exactly and nothing modifies a pinned face
    between calls -- the 2026-09-26 §6 item 2 is still alive in this form.

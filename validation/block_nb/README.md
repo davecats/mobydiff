@@ -42,6 +42,19 @@ through a 3-level patch at `nb = 8 4 8`, 50 steps:
 *Re-run 2026-09-26 at `niter = 12` (was 6), CPU 1 rank: both PASS, 0.0 / 0.0,
 same level histograms.* (The FINDING table below was not re-measured.)
 
+**2:1 interfaces with a real flow: `beltrami_rect.ini`** (added 2026-10-21).
+The uniform-flow cases are blind to the interface CORRECTION itself: with
+`phi = 0` everywhere `interface_correct` adds nothing, whatever its index
+mapping or coefficient. `beltrami_rect.ini` is the Beltrami flow of
+`validation/beltrami/refined.ini` on a `64 x 32 x 64` grid with `nb = 8 4 8`
+and the same 3D patch (all six orientations, edges and corners), so its x and
+z interface faces are `8 x 4` and its y faces `8 x 8`, with `phi /= 0` at
+every one of them. It is not self-gating (a refined layout is not
+nb-independent, see below); it runs as the 8th case of
+`validation/scalar/run_bitexact.sh`, new binary against the reference set,
+which is where any per-orientation indexing mistake in a face-list kernel
+shows up as a nonzero.
+
 The tiling is deliberately fine enough that levels 0, 1 **and** 2 all survive,
 so both l0–l1 and l1–l2 interfaces are exercised. A coarser `nb` lets the 2:1
 smoothing swallow level 0 entirely (at `nb = 16 8 16`: 280 leaves, all refined)
