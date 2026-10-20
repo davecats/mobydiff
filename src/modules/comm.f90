@@ -194,6 +194,19 @@ module comm
     ! piece index selects the halo-row plane of tangential dim d.
     integer, parameter :: N_PIECES = 8
 
+    ! One transfer PIECE as the enumeration produces it -- what the three
+    ! entry families (local, send, recv) share before each stores its part.
+    ! The destination block is (dstLevel, dstOrigin), slot dstSlot on its
+    ! owner; the source block is slot srcSlot on rank owner; peer is the
+    ! source's (recv) or the destination's (send) index in c%peerRank, 0 for
+    ! my own rank.
+    type :: piece_type
+        integer :: owner = 0, peer = 0, srcSlot = 0, dstSlot = 0, dstLevel = 0
+        integer :: dstOrigin(3) = 0, op = 0, off(3) = 0, tq(3) = 0
+        integer :: srcLo(3) = 0, dstLo(3) = 0, ext(3) = 0, pts = 0
+        logical :: plane(3) = .false.
+    end type piece_type
+
 contains
 
     subroutine comm_init_world(c)
@@ -551,12 +564,12 @@ contains
 
         integer :: off(3,26)
         integer :: nb(3)
-        integer :: b, d, p, pass, cand, ncand, piece
-        integer :: owner(4), slot(4), opc(4), tqc(3,4)
-        integer :: srcLo(3), dstLo(3), ext(3)
-        logical :: plane(3), valid
-        integer :: peerBlocks, peerStart, pb, dorigin(3), dlevel
-        integer :: nLocal, nSend, nRecv, pts, maxCount, ierr, e, round
+        integer :: b, p, pb, round, k, e, n, peerBlocks, peerStart, dorigin(3), dlevel
+        integer :: nMine, nLocal, nSend, nRecv, maxCount
+        ! The pieces into MY blocks (every source owner) and into the PEERS'
+        ! blocks (my blocks the source); the three entry families are read
+        ! off these two lists below.
+        type(piece_type), allocatable :: mine(:), toPeer(:)
         ! Per-entry face normal of the divergence subset (0 = not in it), held
         ! only long enough to compact the index lists out of it -- see lDivEnt.
         integer, allocatable :: divVarL(:), divVarS(:), divVarR(:)
@@ -567,219 +580,97 @@ contains
         call free_block_exchange(c)
         call collect_peers(c, blk, dns, off)
 
-        ! Pass 1 counts, pass 2 fills; identical loop structure keeps the
-        ! enumeration canonical.
-        do pass = 1, 2
-            nLocal = 0
-            c%nLocalPts = 0
-            c%localPtsOp = 0
-            c%localEntOp = 0
-            c%sendPtsOp = 0
-            c%sendEntOp = 0
-
-            ! Local entries: my blocks' halos served by my own blocks
-            ! (including the periodic wrap inside a single rank). Round 1
-            ! emits the same-level copies, round 2 the cross-level
-            ! entries, so the copy-only view is a prefix.
-            do round = 1, 2
-                do b = 1, int(blk%nBlocks)
-                    do d = 1, 26
-                        call resolve_neighbors(c, blk, dns, int(blk%level(b)), int(blk%origin(:,b)), &
-                            off(:,d), ncand, owner, slot, opc, tqc)
-                        do cand = 1, ncand
-                            if (owner(cand) /= c%cart_rank) cycle
-                            if ((opc(cand) == OP_COPY) .neqv. (round == 1)) cycle
-                            ! One entry per PIECE of the candidate: the main box, and for a
-                            ! restriction the extension planes into absent-neighbour halo rows
-                            ! (candidate_boxes). Every other transfer has the single piece 0.
-                            do piece = 0, N_PIECES - 1
-                                call candidate_boxes(c, blk, dns, int(blk%level(b)), int(blk%origin(:,b)), &
-                                    off(:,d), nb, opc(cand), tqc(:,cand), piece, srcLo, dstLo, ext, plane, valid)
-                                if (.not. valid) cycle
-                                nLocal = nLocal + 1
-                                pts = ext(1)*ext(2)*ext(3)
-                                if (pass == 2) then
-                                    c%lSrcSlot(nLocal) = slot(cand)
-                                    c%lDstSlot(nLocal) = b
-                                    c%lDstLo(:,nLocal) = dstLo
-                                    c%lExt(:,nLocal) = ext
-                                    c%lDir(:,nLocal) = off(:,d)
-                                    call entry_gather_map(opc(cand), off(:,d), tqc(:,cand), nb, &
-                                        int(blk%refMask), srcLo, dstLo, plane, c%lGA(:,nLocal), c%lGB(:,nLocal), &
-                                        c%lGS(:,nLocal), c%lGC(:,nLocal))
-                                    c%lWp(nLocal) = entry_blend(blk, dns, int(blk%level(b)), &
-                                        int(blk%origin(:,b)), off(:,d), opc(cand))
-                                    c%lWpDst(nLocal) = 1.0d0 - c%lWp(nLocal)
-                                    c%lNrm(nLocal) = interface_normal_dim(opc(cand), off(:,d))
-                                    c%lPhiN(nLocal) = iface_restrict_normal(opc(cand), off(:,d), &
-                                        int(blk%refMask))
-                                    divVarL(nLocal) = div_entry_var(opc(cand), off(:,d))
-                                    c%lOff(nLocal) = c%lOff(nLocal-1) + pts
-                                end if
-                                c%nLocalPts = c%nLocalPts + pts
-                                c%localPtsOp(opc(cand)) = c%localPtsOp(opc(cand)) + pts
-                                c%localEntOp(opc(cand)) = c%localEntOp(opc(cand)) + 1
-                            end do
-                        end do
-                    end do
-                end do
-                if (round == 1) c%nLocalCopyPts = c%nLocalPts
+        ! ONE enumeration serves the three entry families (it was written
+        ! three times until 2026-10-20). (1) The pieces into my blocks,
+        ! whoever owns the source, in (round, block, direction, candidate,
+        ! piece) order -- round 1 the same-level copies, round 2 the
+        ! cross-level transfers, so that the copy-only view of every list
+        ! is a prefix. My LOCAL entries are the pieces my own rank serves
+        ! and the RECV entries of peer p the pieces p serves: one list,
+        ! filtered, which is what keeps every order canonical.
+        allocate(mine(64))
+        nMine = 0
+        do round = 1, 2
+            do b = 1, int(blk%nBlocks)
+                call collect_pieces(c, blk, dns, off, nb, int(blk%level(b)), &
+                    int(blk%origin(:,b)), b, -1, round, mine, nMine)
             end do
-            c%nLocal = nLocal
-
-            ! Recv entries: my blocks in slot order, fixed direction order,
-            ! grouped peer-major. Send entries mirror this by enumerating the
-            ! PEER's blocks in the peer's slot order, so both ends of each
-            ! message agree on the entry sequence without communication.
-            nRecv = 0
-            nSend = 0
-            c%peerSendOff(0) = 0
-            c%peerRecvOff(0) = 0
-            c%peerSendCopyOff(0) = 0
-            c%peerRecvCopyOff(0) = 0
-            c%peerSendDivOff(0) = 0
-            c%peerRecvDivOff(0) = 0
-            do p = 1, c%nPeers
-                c%peerRecvOff(p) = c%peerRecvOff(p-1)
-                do round = 1, 2
-                    do b = 1, int(blk%nBlocks)
-                        do d = 1, 26
-                            call resolve_neighbors(c, blk, dns, int(blk%level(b)), int(blk%origin(:,b)), &
-                                off(:,d), ncand, owner, slot, opc, tqc)
-                            do cand = 1, ncand
-                                if (owner(cand) /= c%peerRank(p)) cycle
-                                if ((opc(cand) == OP_COPY) .neqv. (round == 1)) cycle
-                                ! One entry per PIECE of the candidate: the main box, and for a
-                                ! restriction the extension planes into absent-neighbour halo rows
-                                ! (candidate_boxes). Every other transfer has the single piece 0.
-                                do piece = 0, N_PIECES - 1
-                                    call candidate_boxes(c, blk, dns, int(blk%level(b)), int(blk%origin(:,b)), &
-                                        off(:,d), nb, opc(cand), tqc(:,cand), piece, srcLo, dstLo, ext, plane, valid)
-                                    if (.not. valid) cycle
-                                    nRecv = nRecv + 1
-                                    pts = ext(1)*ext(2)*ext(3)
-                                    if (pass == 2) then
-                                        c%rSlot(nRecv) = b
-                                        c%rPeer(nRecv) = p
-                                        c%rLo(:,nRecv) = dstLo
-                                        c%rExt(:,nRecv) = ext
-                                        c%rDir(:,nRecv) = off(:,d)
-                                        c%rWp(nRecv) = entry_blend(blk, dns, int(blk%level(b)), &
-                                            int(blk%origin(:,b)), off(:,d), opc(cand))
-                                        c%rWpDst(nRecv) = 1.0d0 - c%rWp(nRecv)
-                                        c%rNrm(nRecv) = interface_normal_dim(opc(cand), off(:,d))
-                                        divVarR(nRecv) = div_entry_var(opc(cand), off(:,d))
-                                        c%rOff(nRecv) = c%rOff(nRecv-1) + pts
-                                    end if
-                                    c%peerRecvOff(p) = c%peerRecvOff(p) + pts
-                                end do
-                            end do
-                        end do
-                    end do
-                    if (round == 1) c%peerRecvCopyOff(p) = c%peerRecvCopyOff(p-1) &
-                        + (c%peerRecvOff(p) - c%peerRecvOff(p-1))
-                end do
-
-                ! Send side of the message me -> peer p: walk the peer's
-                ! blocks exactly as the peer walks its own slot order above.
-                peerStart = int(zorder_start(blk%nBlocksGlobal, int(c%cart_size, C_INT), &
-                    int(c%peerRank(p), C_INT)))
-                peerBlocks = int(zorder_count(blk%nBlocksGlobal, int(c%cart_size, C_INT), &
-                    int(c%peerRank(p), C_INT)))
-                c%peerSendOff(p) = c%peerSendOff(p-1)
-                do round = 1, 2
-                    do pb = 1, peerBlocks
-                        dorigin = int(blk%leafCoord(:,peerStart + pb))*nb
-                        dlevel = int(blk%leafLevel(peerStart + pb))
-                        do d = 1, 26
-                            call resolve_neighbors(c, blk, dns, dlevel, dorigin, &
-                                off(:,d), ncand, owner, slot, opc, tqc)
-                            do cand = 1, ncand
-                                if (owner(cand) /= c%cart_rank) cycle
-                                if ((opc(cand) == OP_COPY) .neqv. (round == 1)) cycle
-                                ! One entry per PIECE of the candidate: the main box, and for a
-                                ! restriction the extension planes into absent-neighbour halo rows
-                                ! (candidate_boxes). Every other transfer has the single piece 0.
-                                do piece = 0, N_PIECES - 1
-                                    call candidate_boxes(c, blk, dns, dlevel, dorigin, &
-                                        off(:,d), nb, opc(cand), tqc(:,cand), piece, srcLo, dstLo, ext, plane, valid)
-                                    if (.not. valid) cycle
-                                    nSend = nSend + 1
-                                    pts = ext(1)*ext(2)*ext(3)
-                                    if (pass == 2) then
-                                        c%sSlot(nSend) = slot(cand)
-                                        c%sPeer(nSend) = p
-                                        c%sDstLo(:,nSend) = dstLo
-                                        c%sExt(:,nSend) = ext
-                                        call entry_gather_map(opc(cand), off(:,d), tqc(:,cand), nb, &
-                                            int(blk%refMask), srcLo, dstLo, plane, c%sGA(:,nSend), c%sGB(:,nSend), &
-                                            c%sGS(:,nSend), c%sGC(:,nSend))
-                                        c%sPhiN(nSend) = iface_restrict_normal(opc(cand), off(:,d), &
-                                            int(blk%refMask))
-                                        divVarS(nSend) = div_entry_var(opc(cand), off(:,d))
-                                        c%sOff(nSend) = c%sOff(nSend-1) + pts
-                                    end if
-                                    c%peerSendOff(p) = c%peerSendOff(p) + pts
-                                    c%sendPtsOp(opc(cand)) = c%sendPtsOp(opc(cand)) + pts
-                                    c%sendEntOp(opc(cand)) = c%sendEntOp(opc(cand)) + 1
-                                end do
-                            end do
-                        end do
-                    end do
-                    if (round == 1) c%peerSendCopyOff(p) = c%peerSendCopyOff(p-1) &
-                        + (c%peerSendOff(p) - c%peerSendOff(p-1))
-                end do
-            end do
-            c%nRecv = nRecv
-            c%nSend = nSend
-
-            if (pass == 1) then
-                allocate(c%lSrcSlot(max(1,nLocal)), c%lDstSlot(max(1,nLocal)))
-                allocate(c%lDstLo(3,max(1,nLocal)), c%lExt(3,max(1,nLocal)))
-                allocate(c%lGA(3,max(1,nLocal)), c%lGB(3,max(1,nLocal)))
-                allocate(c%lGS(3,max(1,nLocal)), c%lGC(3,max(1,nLocal)))
-                allocate(c%lDir(3,max(1,nLocal)))
-                allocate(c%lWp(max(1,nLocal)), c%lWpDst(max(1,nLocal)))
-                allocate(c%lNrm(max(1,nLocal)))
-                allocate(c%lPhiN(max(1,nLocal)))
-                allocate(c%lOff(0:max(1,nLocal)))
-                allocate(c%sSlot(max(1,nSend)), c%sPeer(max(1,nSend)))
-                allocate(c%sExt(3,max(1,nSend)))
-                allocate(c%sGA(3,max(1,nSend)), c%sGB(3,max(1,nSend)))
-                allocate(c%sGS(3,max(1,nSend)), c%sGC(3,max(1,nSend)))
-                allocate(c%sDstLo(3,max(1,nSend)))
-                allocate(c%sPhiN(max(1,nSend)))
-                allocate(c%sOff(0:max(1,nSend)))
-                allocate(c%rSlot(max(1,nRecv)), c%rPeer(max(1,nRecv)))
-                allocate(c%rLo(3,max(1,nRecv)), c%rExt(3,max(1,nRecv)))
-                allocate(c%rDir(3,max(1,nRecv)))
-                allocate(c%rWp(max(1,nRecv)), c%rWpDst(max(1,nRecv)))
-                allocate(c%rNrm(max(1,nRecv)))
-                allocate(c%rOff(0:max(1,nRecv)))
-                c%lWp = 1.0d0
-                c%lWpDst = 0.0d0
-                c%rWp = 1.0d0
-                c%rWpDst = 0.0d0
-                c%lNrm = 0
-                c%rNrm = 0
-                c%lPhiN = 0
-                c%sPhiN = 0
-                if (allocated(divVarL)) deallocate(divVarL, divVarS, divVarR)
-                allocate(divVarL(max(1,nLocal)), divVarS(max(1,nSend)), divVarR(max(1,nRecv)))
-                divVarL = 0
-                divVarS = 0
-                divVarR = 0
-                c%lOff = 0
-                c%sOff = 0
-                c%rOff = 0
-                c%peerSendOff = 0
-                c%peerRecvOff = 0
-                c%peerSendCopyOff = 0
-                c%peerRecvCopyOff = 0
-                c%peerSendDivOff = 0
-                c%peerRecvDivOff = 0
-            end if
         end do
+        do k = 1, nMine
+            mine(k)%peer = peer_index(c, mine(k)%owner)
+        end do
+        ! (2) The SEND entries of the message me -> p: the pieces into p's
+        ! blocks that my blocks serve, enumerated exactly as p enumerates
+        ! its own recv list above (its slot order, the same rounds), so both
+        ! ends agree on the entry sequence without communication.
+        allocate(toPeer(64))
+        nSend = 0
+        do p = 1, c%nPeers
+            peerStart = int(zorder_start(blk%nBlocksGlobal, int(c%cart_size, C_INT), &
+                int(c%peerRank(p), C_INT)))
+            peerBlocks = int(zorder_count(blk%nBlocksGlobal, int(c%cart_size, C_INT), &
+                int(c%peerRank(p), C_INT)))
+            do round = 1, 2
+                do pb = 1, peerBlocks
+                    dorigin = int(blk%leafCoord(:,peerStart + pb))*nb
+                    dlevel = int(blk%leafLevel(peerStart + pb))
+                    n = nSend
+                    call collect_pieces(c, blk, dns, off, nb, dlevel, dorigin, pb, &
+                        c%cart_rank, round, toPeer, nSend)
+                    toPeer(n+1:nSend)%peer = p
+                end do
+            end do
+        end do
+        nLocal = count(mine(1:nMine)%peer == 0)
+        nRecv = nMine - nLocal
+        call allocate_entries(c, nLocal, nSend, nRecv)
+        allocate(divVarL(max(1,nLocal)), divVarS(max(1,nSend)), divVarR(max(1,nRecv)))
+        divVarL = 0
+        divVarS = 0
+        divVarR = 0
+
+        ! Local entries, in list order.
+        e = 0
+        do k = 1, nMine
+            if (mine(k)%peer /= 0) cycle
+            e = e + 1
+            call fill_local(c, blk, dns, nb, e, mine(k), divVarL(e))
+            if (mine(k)%op == OP_COPY) c%nLocalCopyPts = c%nLocalCopyPts + mine(k)%pts
+        end do
+        c%nLocal = nLocal
+        c%nLocalPts = c%lOff(nLocal)
+        ! Recv entries, peer-major: each peer's points are one contiguous
+        ! range, its round-1 part the copy prefix.
+        e = 0
+        do p = 1, c%nPeers
+            c%peerRecvOff(p) = c%peerRecvOff(p-1)
+            c%peerRecvCopyOff(p) = c%peerRecvCopyOff(p-1)
+            do k = 1, nMine
+                if (mine(k)%peer /= p) cycle
+                e = e + 1
+                call fill_recv(c, blk, dns, e, mine(k), divVarR(e))
+                c%peerRecvOff(p) = c%peerRecvOff(p) + mine(k)%pts
+                if (mine(k)%op == OP_COPY) &
+                    c%peerRecvCopyOff(p) = c%peerRecvCopyOff(p) + mine(k)%pts
+            end do
+        end do
+        c%nRecv = nRecv
+        ! Send entries: the list is peer-major already.
+        e = 0
+        do p = 1, c%nPeers
+            c%peerSendOff(p) = c%peerSendOff(p-1)
+            c%peerSendCopyOff(p) = c%peerSendCopyOff(p-1)
+            do k = 1, nSend
+                if (toPeer(k)%peer /= p) cycle
+                e = e + 1
+                call fill_send(c, blk, nb, e, toPeer(k), divVarS(e))
+                c%peerSendOff(p) = c%peerSendOff(p) + toPeer(k)%pts
+                if (toPeer(k)%op == OP_COPY) &
+                    c%peerSendCopyOff(p) = c%peerSendCopyOff(p) + toPeer(k)%pts
+            end do
+        end do
+        c%nSend = nSend
+        deallocate(mine, toPeer)
 
         ! Precompute the per-point -> entry maps (one-time; replaces the per-point
         ! find_entry binary search inside the exchange kernels).
@@ -921,6 +812,199 @@ contains
         c%nRecv = 0
         c%maxBufferCount = 0
     end subroutine free_block_exchange
+
+    ! Every transfer piece INTO the block (level, dorigin) -- slot dstSlot on
+    ! its owner -- whose SOURCE block is owned by rank wantOwner (any rank
+    ! when wantOwner < 0), appended to pc in the canonical (direction,
+    ! candidate, piece) order; the round is the caller's: 1 = the same-level
+    ! copies, 2 = the cross-level transfers. A candidate (resolve_neighbors)
+    ! is a same-level or coarser leaf, or up to four finer ones; a piece
+    ! (candidate_boxes) is its main box or, for a restriction, a halo-row
+    ! plane of it. This ONE body is the enumeration of all three entry
+    ! families; what differs between them is the destination set, the owner
+    ! filter and what each fill_* stores.
+    subroutine collect_pieces(c, blk, dns, off, nb, level, dorigin, dstSlot, wantOwner, &
+            round, pc, n)
+        type(comm_type), intent(in) :: c
+        type(block_set_type), intent(in) :: blk
+        type(dns_type), intent(in) :: dns
+        integer, intent(in) :: off(3,26), nb(3), level, dorigin(3), dstSlot, wantOwner, round
+        type(piece_type), allocatable, intent(inout) :: pc(:)
+        integer, intent(inout) :: n
+
+        type(piece_type), allocatable :: grown(:)
+        type(piece_type) :: rec
+        integer :: d, cand, ncand, piece
+        integer :: owner(4), slot(4), opc(4), tqc(3,4)
+        logical :: valid
+
+        do d = 1, 26
+            call resolve_neighbors(c, blk, dns, level, dorigin, off(:,d), ncand, owner, slot, opc, tqc)
+            do cand = 1, ncand
+                if (wantOwner >= 0 .and. owner(cand) /= wantOwner) cycle
+                if ((opc(cand) == OP_COPY) .neqv. (round == 1)) cycle
+                do piece = 0, N_PIECES - 1
+                    call candidate_boxes(c, blk, dns, level, dorigin, off(:,d), nb, opc(cand), &
+                        tqc(:,cand), piece, rec%srcLo, rec%dstLo, rec%ext, rec%plane, valid)
+                    if (.not. valid) cycle
+                    rec%owner = owner(cand)
+                    rec%srcSlot = slot(cand)
+                    rec%dstSlot = dstSlot
+                    rec%dstLevel = level
+                    rec%dstOrigin = dorigin
+                    rec%op = opc(cand)
+                    rec%off = off(:,d)
+                    rec%tq = tqc(:,cand)
+                    rec%pts = rec%ext(1)*rec%ext(2)*rec%ext(3)
+                    if (n == size(pc)) then
+                        allocate(grown(2*size(pc)))
+                        grown(1:n) = pc(1:n)
+                        call move_alloc(grown, pc)
+                    end if
+                    n = n + 1
+                    pc(n) = rec
+                end do
+            end do
+        end do
+    end subroutine collect_pieces
+
+    ! Index of `rank` in c%peerRank, 0 for my own rank. Every owner of a
+    ! neighbour block is one or the other (collect_peers).
+    integer function peer_index(c, rank) result(p)
+        type(comm_type), intent(in) :: c
+        integer, intent(in) :: rank
+
+        if (rank == c%cart_rank) then
+            p = 0
+            return
+        end if
+        do p = 1, c%nPeers
+            if (c%peerRank(p) == rank) return
+        end do
+        error stop "init_block_exchange: a neighbour block's owner is not a peer"
+    end function peer_index
+
+    ! The entry arrays of the three families, sized and zeroed.
+    subroutine allocate_entries(c, nLocal, nSend, nRecv)
+        type(comm_type), intent(inout) :: c
+        integer, intent(in) :: nLocal, nSend, nRecv
+
+        allocate(c%lSrcSlot(max(1,nLocal)), c%lDstSlot(max(1,nLocal)))
+        allocate(c%lDstLo(3,max(1,nLocal)), c%lExt(3,max(1,nLocal)))
+        allocate(c%lGA(3,max(1,nLocal)), c%lGB(3,max(1,nLocal)))
+        allocate(c%lGS(3,max(1,nLocal)), c%lGC(3,max(1,nLocal)))
+        allocate(c%lDir(3,max(1,nLocal)))
+        allocate(c%lWp(max(1,nLocal)), c%lWpDst(max(1,nLocal)))
+        allocate(c%lNrm(max(1,nLocal)))
+        allocate(c%lPhiN(max(1,nLocal)))
+        allocate(c%lOff(0:max(1,nLocal)))
+        allocate(c%sSlot(max(1,nSend)), c%sPeer(max(1,nSend)))
+        allocate(c%sExt(3,max(1,nSend)))
+        allocate(c%sGA(3,max(1,nSend)), c%sGB(3,max(1,nSend)))
+        allocate(c%sGS(3,max(1,nSend)), c%sGC(3,max(1,nSend)))
+        allocate(c%sDstLo(3,max(1,nSend)))
+        allocate(c%sPhiN(max(1,nSend)))
+        allocate(c%sOff(0:max(1,nSend)))
+        allocate(c%rSlot(max(1,nRecv)), c%rPeer(max(1,nRecv)))
+        allocate(c%rLo(3,max(1,nRecv)), c%rExt(3,max(1,nRecv)))
+        allocate(c%rDir(3,max(1,nRecv)))
+        allocate(c%rWp(max(1,nRecv)), c%rWpDst(max(1,nRecv)))
+        allocate(c%rNrm(max(1,nRecv)))
+        allocate(c%rOff(0:max(1,nRecv)))
+        c%lWp = 1.0d0
+        c%lWpDst = 0.0d0
+        c%rWp = 1.0d0
+        c%rWpDst = 0.0d0
+        c%lNrm = 0
+        c%rNrm = 0
+        c%lPhiN = 0
+        c%sPhiN = 0
+        c%lOff = 0
+        c%sOff = 0
+        c%rOff = 0
+        c%peerSendOff = 0
+        c%peerRecvOff = 0
+        c%peerSendCopyOff = 0
+        c%peerRecvCopyOff = 0
+        c%peerSendDivOff = 0
+        c%peerRecvDivOff = 0
+        c%nLocalPts = 0
+        c%nLocalCopyPts = 0
+        c%localPtsOp = 0
+        c%localEntOp = 0
+        c%sendPtsOp = 0
+        c%sendEntOp = 0
+    end subroutine allocate_entries
+
+    ! What each family stores of a piece. Local: both slots, the gather
+    ! map, the ghost blend, the interface normal and the phi row; recv:
+    ! the destination slot and box, the blend and the normal (the gather
+    ! happened on the sender); send: the source slot, the destination box
+    ! and the gather map.
+    subroutine fill_local(c, blk, dns, nb, e, pc, divVar)
+        type(comm_type), intent(inout) :: c
+        type(block_set_type), intent(in) :: blk
+        type(dns_type), intent(in) :: dns
+        integer, intent(in) :: nb(3), e
+        type(piece_type), intent(in) :: pc
+        integer, intent(out) :: divVar
+
+        c%lSrcSlot(e) = pc%srcSlot
+        c%lDstSlot(e) = pc%dstSlot
+        c%lDstLo(:,e) = pc%dstLo
+        c%lExt(:,e) = pc%ext
+        c%lDir(:,e) = pc%off
+        call entry_gather_map(pc%op, pc%off, pc%tq, nb, int(blk%refMask), pc%srcLo, pc%dstLo, &
+            pc%plane, c%lGA(:,e), c%lGB(:,e), c%lGS(:,e), c%lGC(:,e))
+        c%lWp(e) = entry_blend(blk, dns, pc%dstLevel, pc%dstOrigin, pc%off, pc%op)
+        c%lWpDst(e) = 1.0d0 - c%lWp(e)
+        c%lNrm(e) = interface_normal_dim(pc%op, pc%off)
+        c%lPhiN(e) = iface_restrict_normal(pc%op, pc%off, int(blk%refMask))
+        divVar = div_entry_var(pc%op, pc%off)
+        c%lOff(e) = c%lOff(e-1) + pc%pts
+        c%localPtsOp(pc%op) = c%localPtsOp(pc%op) + pc%pts
+        c%localEntOp(pc%op) = c%localEntOp(pc%op) + 1
+    end subroutine fill_local
+
+    subroutine fill_recv(c, blk, dns, e, pc, divVar)
+        type(comm_type), intent(inout) :: c
+        type(block_set_type), intent(in) :: blk
+        type(dns_type), intent(in) :: dns
+        integer, intent(in) :: e
+        type(piece_type), intent(in) :: pc
+        integer, intent(out) :: divVar
+
+        c%rSlot(e) = pc%dstSlot
+        c%rPeer(e) = pc%peer
+        c%rLo(:,e) = pc%dstLo
+        c%rExt(:,e) = pc%ext
+        c%rDir(:,e) = pc%off
+        c%rWp(e) = entry_blend(blk, dns, pc%dstLevel, pc%dstOrigin, pc%off, pc%op)
+        c%rWpDst(e) = 1.0d0 - c%rWp(e)
+        c%rNrm(e) = interface_normal_dim(pc%op, pc%off)
+        divVar = div_entry_var(pc%op, pc%off)
+        c%rOff(e) = c%rOff(e-1) + pc%pts
+    end subroutine fill_recv
+
+    subroutine fill_send(c, blk, nb, e, pc, divVar)
+        type(comm_type), intent(inout) :: c
+        type(block_set_type), intent(in) :: blk
+        integer, intent(in) :: nb(3), e
+        type(piece_type), intent(in) :: pc
+        integer, intent(out) :: divVar
+
+        c%sSlot(e) = pc%srcSlot
+        c%sPeer(e) = pc%peer
+        c%sDstLo(:,e) = pc%dstLo
+        c%sExt(:,e) = pc%ext
+        call entry_gather_map(pc%op, pc%off, pc%tq, nb, int(blk%refMask), pc%srcLo, pc%dstLo, &
+            pc%plane, c%sGA(:,e), c%sGB(:,e), c%sGS(:,e), c%sGC(:,e))
+        c%sPhiN(e) = iface_restrict_normal(pc%op, pc%off, int(blk%refMask))
+        divVar = div_entry_var(pc%op, pc%off)
+        c%sOff(e) = c%sOff(e-1) + pc%pts
+        c%sendPtsOp(pc%op) = c%sendPtsOp(pc%op) + pc%pts
+        c%sendEntOp(pc%op) = c%sendEntOp(pc%op) + 1
+    end subroutine fill_send
 
     subroutine build_direction_table(off)
         integer, intent(out) :: off(3,26)
@@ -1225,14 +1309,22 @@ contains
     ! interface face q(1), a genuine momentum halo, so they are kept.
     pure integer function interface_normal_dim(op, off) result(dnorm)
         integer, intent(in) :: op, off(3)
-        integer :: d
         dnorm = 0
-        if (op /= OP_PROLONG .and. op /= OP_RESTRICT) return
+        if (op == OP_PROLONG .or. op == OP_RESTRICT) dnorm = max(axis_dim(off), 0)
+    end function interface_normal_dim
+
+    ! The signed axis of a pure axis direction: +-d for off = +-e_d, 0 for
+    ! an edge or corner direction. The three face classifications here are
+    ! this one function with an op test each.
+    pure integer function axis_dim(off) result(a)
+        integer, intent(in) :: off(3)
+        integer :: d
+        a = 0
         if (sum(abs(off)) /= 1) return
         do d = 1, 3
-            if (off(d) == 1) dnorm = d
+            if (off(d) /= 0) a = off(d)*d
         end do
-    end function interface_normal_dim
+    end function axis_dim
 
     ! Face normal (VAR_U/V/W = the dimension) of an entry that belongs to the
     ! DIVERGENCE subset -- a pure +axis same-level FACE copy -- else 0. It is a
@@ -1240,13 +1332,8 @@ contains
     ! and recv ends of one entry select it identically without negotiating.
     pure integer function div_entry_var(op, off) result(v)
         integer, intent(in) :: op, off(3)
-        integer :: d
         v = 0
-        if (op /= OP_COPY) return
-        if (sum(abs(off)) /= 1) return
-        do d = 1, 3
-            if (off(d) == 1) v = d
-        end do
+        if (op == OP_COPY) v = max(axis_dim(off), 0)
     end function div_entry_var
 
     ! Compact the entries with divVar /= 0 into (ent, var, off, pt) lists:
@@ -1313,13 +1400,12 @@ contains
     ! reads the single conforming face-adjacent row, no collapse applies.
     pure integer function iface_restrict_normal(op, off, mask) result(sd)
         integer, intent(in) :: op, off(3), mask(3)
-        integer :: d
         sd = 0
         if (op /= OP_RESTRICT) return
-        if (sum(abs(off)) /= 1) return
-        do d = 1, 3
-            if (off(d) /= 0 .and. mask(d) == 1) sd = off(d)*d
-        end do
+        sd = axis_dim(off)
+        if (sd /= 0) then
+            if (mask(abs(sd)) == 0) sd = 0
+        end if
     end function iface_restrict_normal
 
     ! Ghost-interpolation weight for the pressure on a PROLONG face entry.
