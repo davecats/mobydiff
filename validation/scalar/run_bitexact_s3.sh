@@ -37,8 +37,14 @@ status=0
 tag="s3x_${MODE}"
 
 # ini | steps | ranks (0 = $RANKS) | datasets
-# The first five are the S1 gate cases (no turbulence model), the last four
-# the S2 ones (LES / SST / the 2:1 band / the determinism twin).
+# The first five are the S1 gate cases (no turbulence model), the next four
+# the S2 ones (LES / SST / the 2:1 band / the determinism twin). The last two
+# (2026-10-20) HAVE a body -- the analytic wavy wall -- and carry one scalar
+# in each immersed-body mode (dirichlet / adiabatic / conjugate), so both
+# transport kernels run in one step with their own scalar lists; without
+# them no case exercised the two lists together. They are not body-free,
+# so the header's statement does not apply to them; they are here because
+# this is the scalar suite every change runs.
 CASES=(
   "uniform3.ini|20|0|un vn wn pn theta phi"
   "det.ini|20|0|un vn wn pn s1"
@@ -49,6 +55,8 @@ CASES=(
   "turbslab.ini|20|0|un vn wn pn nut theta"
   "turbsst.ini|20|0|un vn wn pn nut k omega theta theta_kc"
   "detles.ini|20|0|un vn wn pn nut theta"
+  "mixed.ini|20|0|un vn wn pn theta phi chi"
+  "mixedles.ini|20|0|un vn wn pn nut theta phi chi"
 )
 
 for entry in "${CASES[@]}"; do

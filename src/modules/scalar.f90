@@ -205,6 +205,14 @@ module scalar
         ! Same shape and same 1-cell-dummy idiom as phi.
         real(C_DOUBLE), allocatable :: vfrac(:,:,:,:)
         integer(C_INT) :: nConjugate = 0_C_INT
+        ! The two transport kernels' scalar lists (1-based scalar indices),
+        ! built once in validate_conjugate_config: plainList the dirichlet /
+        ! adiabatic scalars (every scalar of a body-free run), conjList the
+        ! conjugate ones. Sized max(1, count) -- the 1-cell dummy idiom, so
+        ! the device maps stay uniform -- and a kernel launches only for a
+        ! non-empty list.
+        integer(C_INT), allocatable :: plainList(:), conjList(:)
+        integer(C_INT) :: nPlain = 0_C_INT
         integer(C_INT) :: nTangential = 0_C_INT
         integer(C_INT) :: nBanded = 0_C_INT
         ! Per-face boundary rows (n, NFACES): BC_DIRICHLET / BC_NEUMANN with
@@ -1362,7 +1370,7 @@ contains
         type(dns_type), intent(in) :: dns
         logical, intent(in) :: terminal
 
-        integer :: is, nConj, nTang, nBand
+        integer :: is, nConj, nTang, nBand, nPlain
 
         nConj = 0
         nTang = 0
@@ -1421,6 +1429,25 @@ contains
         sc%nConjugate = int(nConj, C_INT)
         sc%nTangential = int(nTang, C_INT)
         sc%nBanded = int(nBand, C_INT)
+        ! The kernel lists, in scalar order (the order is immaterial to the
+        ! result: each scalar writes only its own slots).
+        sc%nPlain = sc%n - sc%nConjugate
+        if (allocated(sc%plainList)) deallocate(sc%plainList)
+        if (allocated(sc%conjList)) deallocate(sc%conjList)
+        allocate(sc%plainList(max(1, int(sc%nPlain))), sc%conjList(max(1, nConj)))
+        sc%plainList = 0_C_INT
+        sc%conjList = 0_C_INT
+        nConj = 0
+        nPlain = 0
+        do is = 1, int(sc%n)
+            if (sc%ibmMode(is) == SC_IBM_CONJUGATE) then
+                nConj = nConj + 1
+                sc%conjList(nConj) = int(is, C_INT)
+            else
+                nPlain = nPlain + 1
+                sc%plainList(nPlain) = int(is, C_INT)
+            end if
+        end do
         if (nConj == 0) return
 
         ! The convective form (review finding F2, 2026-09-27). In conjugate
@@ -2563,7 +2590,7 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target enter data map(to: sc)
         !$omp target enter data map(to: sc%pr, sc%prt, sc%prtModel, sc%source, &
-        !$omp& sc%srcType, sc%srcDir, &
+        !$omp& sc%srcType, sc%srcDir, sc%plainList, sc%conjList, &
         !$omp& sc%ibmValue, sc%ibmMode, &
         !$omp& sc%invDx, sc%invDy, sc%invDz, sc%nutNone, &
         !$omp& sc%cdx, sc%cdy, sc%cdz, &
@@ -2580,7 +2607,7 @@ contains
 
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target exit data map(delete: sc%pr, sc%prt, sc%prtModel, sc%source, &
-        !$omp& sc%srcType, sc%srcDir, &
+        !$omp& sc%srcType, sc%srcDir, sc%plainList, sc%conjList, &
         !$omp& sc%ibmValue, sc%ibmMode, &
         !$omp& sc%invDx, sc%invDy, sc%invDz, sc%nutNone, &
         !$omp& sc%cdx, sc%cdy, sc%cdz, &
@@ -2612,6 +2639,8 @@ contains
         if (allocated(sc%solidSource)) deallocate(sc%solidSource)
         if (allocated(sc%contactR)) deallocate(sc%contactR)
         if (allocated(sc%tangCorr)) deallocate(sc%tangCorr)
+        if (allocated(sc%plainList)) deallocate(sc%plainList)
+        if (allocated(sc%conjList)) deallocate(sc%conjList)
         if (allocated(sc%solidDepth)) deallocate(sc%solidDepth)
         if (allocated(sc%outerK)) deallocate(sc%outerK)
         if (allocated(sc%outerC)) deallocate(sc%outerC)
@@ -2645,16 +2674,28 @@ contains
         if (allocated(sc%vfrac)) deallocate(sc%vfrac)
         sc%n = 0_C_INT
         sc%nConjugate = 0_C_INT
+        sc%nPlain = 0_C_INT
     end subroutine destroy_scalar
 
     !--------------------------------------------------------------------
     ! Transport
     !--------------------------------------------------------------------
 
-    ! One RK3 substage of every scalar, in ONE fused kernel (collapse(4) over
-    ! b,k,j,i with an inner scalar loop, so the GPU sees a single launch
-    ! regardless of the scalar count). Reads the START-of-substage q and
-    ! writes only the qs/oldrhs scalar slots.
+    ! One RK3 substage of every scalar: TWO fused kernels, one per
+    ! immersed-body family (collapse(4) over b,k,j,i with an inner loop over
+    ! that family's scalar LIST, so the GPU sees one launch per family that
+    ! is present, whatever the scalar count). scalar_transport_plain serves
+    ! the dirichlet and adiabatic modes -- and every scalar of a body-free
+    ! run -- scalar_transport_conjugate the conjugate mode. They were ONE
+    ! kernel until 2026-10-20 (docs/next_session_code_simplification.md item
+    ! 1): the per-scalar mode flags were re-evaluated per cell and the ~100
+    ! private variables of the dormant branches cost occupancy on both
+    ! families. Every per-cell expression moved VERBATIM, so each kernel is
+    ! bit-exact with the fused one on its own scalars (gated at nofma: the
+    ! 9-case suite, conjugate C1-C3 and validation/scalar/mixed{,les}.ini,
+    ! which carry one scalar of every mode). Both read the START-of-substage
+    ! q and write only their own qs/oldrhs scalar slots, so their order is
+    ! immaterial.
     !
     ! Convection: 2nd-order central in DIVERGENCE form on the p cell's own six
     ! face velocities -- no velocity interpolation is needed on the staggered
@@ -2754,19 +2795,26 @@ contains
 
         if (.not. scalars_enabled(sc)) return
 
-        ! With no turbulence model turb%nut does not exist; hand the kernel
+        ! With no turbulence model turb%nut does not exist; hand the kernels
         ! the 1-cell dummy and switch the eddy term off, which makes the
         ! arithmetic byte-identical to the molecular-only (S1) kernel.
         if (turbulence_is_enabled(turb) .and. allocated(turb%nut)) then
-            call scalar_transport_kernel(sc, blk, dns, dt_alpha, dt_beta, dt_gamma, &
-                turb%nut, .true., coef)
+            if (sc%nPlain > 0_C_INT) call scalar_transport_plain(sc, blk, dns, &
+                dt_alpha, dt_beta, dt_gamma, turb%nut, .true., coef)
+            if (sc%nConjugate > 0_C_INT) call scalar_transport_conjugate(sc, blk, dns, &
+                dt_alpha, dt_beta, dt_gamma, turb%nut, .true., coef)
         else
-            call scalar_transport_kernel(sc, blk, dns, dt_alpha, dt_beta, dt_gamma, &
-                sc%nutNone, .false., coef)
+            if (sc%nPlain > 0_C_INT) call scalar_transport_plain(sc, blk, dns, &
+                dt_alpha, dt_beta, dt_gamma, sc%nutNone, .false., coef)
+            if (sc%nConjugate > 0_C_INT) call scalar_transport_conjugate(sc, blk, dns, &
+                dt_alpha, dt_beta, dt_gamma, sc%nutNone, .false., coef)
         end if
     end subroutine scalar_transport
 
-    subroutine scalar_transport_kernel(sc, blk, dns, dt_alpha, dt_beta, dt_gamma, &
+    ! The dirichlet / adiabatic family: every scalar of sc%plainList. With no
+    ! immersed body (useIbm off) neither branch is taken and the arithmetic
+    ! is the S2 kernel's, byte for byte.
+    subroutine scalar_transport_plain(sc, blk, dns, dt_alpha, dt_beta, dt_gamma, &
             nut, useNut, coef)
         type(scalar_type), intent(in) :: sc
         type(block_set_type), intent(inout) :: blk
@@ -2776,40 +2824,22 @@ contains
         logical, intent(in) :: useNut
         real(C_DOUBLE), intent(in) :: coef(0:,0:,0:,1:,1:)
 
-        integer :: i, j, k, b, is, nx, ny, nz, nBlocks, nScal, var, scr
-        real(C_DOUBLE) :: ire, re, uw, ue, vs, vn, wb, wt, divu, divuse
+        integer :: i, j, k, b, il, is, nx, ny, nz, nBlocks, nList, var, scr
+        real(C_DOUBLE) :: ire, re, uw, ue, vs, vn, wb, wt, divu
         real(C_DOUBLE) :: s0, conv, diff, rhs, srcVal, dm, fw, fe, ss, xpen
         real(C_DOUBLE) :: ntw, nte, nts, ntn, ntb, ntt
         real(C_DOUBLE) :: dxw, dxe, dys, dyn, dzb, dzt
-        ! Conjugate interface (C1): the six neighbour signed distances and
-        ! this cell's, plus the per-scalar solid properties.
-        real(C_DOUBLE) :: phc, phw, phe, phs, phn, phb, pht, ks, rc
-        ! The solid's second material band (F2): its depth and outer kappa,
-        ! and this cell's band capacity and band source. Without a band the
-        ! last two are the scalar's solid_rhocp / solid_source, so the rhs
-        ! expression below is unchanged operand for operand.
-        real(C_DOUBLE) :: dsh, ko, csb, ssb
-        ! Tangential correction (C2): the face-centred gradients of T and phi
-        ! in (face-normal, tangential 1, tangential 2) form, and the six face
-        ! corrections themselves. Zero unless the face is CUT and the scalar
-        ! asked for the correction, so the C1 flux line is untouched
-        ! elsewhere.
-        real(C_DOUBLE) :: gtd, gt1, gt2, gpd, gp1, gp2
         real(C_DOUBLE) :: convFac
-        real(C_DOUBLE) :: crw, cre, crs, crn, crb, crt
-        logical :: nondiv, useIbm, adiab, wallfn, anyConj, conjug, solc, tang
-        logical :: banded
-        logical :: cutw, cute, cuts, cutn, cutb, cutt
+        logical :: nondiv, useIbm, adiab, wallfn
         logical :: clw, cle, cls, cln, clb, clt
         logical :: solw, sole, sols, soln, solb, solt
         logical :: mw, me, ms, mn, mb, mt
-        logical :: cmw, cme, cms, cmn, cmb, cmt
 
         nx = int(blk%nb(1))
         ny = int(blk%nb(2))
         nz = int(blk%nb(3))
         nBlocks = int(blk%nBlocks)
-        nScal = int(sc%n)
+        nList = int(sc%nPlain)
         re = dns%re
         ire = 1.0d0/re
         ! f = 0 (divergence) skips the subtraction entirely, so the default
@@ -2825,29 +2855,19 @@ contains
         ! branch is not entered and the S2/S3 arithmetic is reproduced byte
         ! for byte -- sc%wfYplus is then a 1-cell dummy, mapped but unread.
         wallfn = dns%rans_wall_treatment == 1_C_INT
-        ! Conjugate branch (C1): off, sc%phi is a 1-cell dummy and nothing
-        ! below reads it -- the S3 arithmetic is reproduced byte for byte.
-        anyConj = sc%nConjugate > 0_C_INT
 
         !$omp target teams distribute parallel do collapse(4) &
         !$omp& map(to: ire, re, dt_alpha, dt_beta, dt_gamma, nondiv, convFac, useNut, useIbm, &
-        !$omp& nScal, nx, ny, nz, anyConj, &
-        !$omp& sc%cdx, sc%cdy, sc%cdz, sc%tangCorr, &
+        !$omp& nList, nx, ny, nz, sc%plainList, &
         !$omp& blk%q, blk%d1x, blk%d1y, blk%d1z, blk%physLow, blk%physHigh, nut, coef, &
         !$omp& sc%pr, sc%prt, sc%prtModel, sc%source, sc%srcType, sc%srcDir, &
         !$omp& sc%invDx, sc%invDy, sc%invDz, &
-        !$omp& sc%ibmMode, sc%ibmValue, sc%wfP, sc%wfYpt, sc%wfYplus, wallfn, &
-        !$omp& sc%phi, sc%vfrac, sc%solidK, sc%solidC, sc%solidSource, sc%contactR, &
-        !$omp& sc%solidDepth, sc%outerK, sc%outerC) &
+        !$omp& sc%ibmMode, sc%ibmValue, sc%wfP, sc%wfYpt, sc%wfYplus, wallfn) &
         !$omp& map(tofrom: blk%qs, blk%oldrhs) &
-        !$omp& private(i,j,k,b,is,var,scr,uw,ue,vs,vn,wb,wt,divu,divuse, &
-        !$omp& s0,conv,diff,rhs,srcVal,dm,fw,fe,ss,xpen,adiab,conjug,solc,ks,rc,tang, &
-        !$omp& banded,dsh,ko,csb,ssb, &
-        !$omp& gtd,gt1,gt2,gpd,gp1,gp2,crw,cre,crs,crn,crb,crt, &
-        !$omp& phc,phw,phe,phs,phn,phb,pht, &
-        !$omp& cutw,cute,cuts,cutn,cutb,cutt, &
+        !$omp& private(i,j,k,b,il,is,var,scr,uw,ue,vs,vn,wb,wt,divu, &
+        !$omp& s0,conv,diff,rhs,srcVal,dm,fw,fe,ss,xpen,adiab, &
         !$omp& clw,cle,cls,cln,clb,clt,solw,sole,sols,soln,solb,solt, &
-        !$omp& mw,me,ms,mn,mb,mt,cmw,cme,cms,cmn,cmb,cmt, &
+        !$omp& mw,me,ms,mn,mb,mt, &
         !$omp& ntw,nte,nts,ntn,ntb,ntt,dxw,dxe,dys,dyn,dzb,dzt)
         do b = 1, nBlocks
         do k = 1, nz
@@ -2892,33 +2912,6 @@ contains
                         solt = abs(coef(i,  j,  k+1,VAR_W,b)) > SOLID_FACE_THRESHOLD
                     end if
 
-                    ! Conjugate interface geometry (C1): the six neighbour
-                    ! signed distances and the cut flags. Pure geometry --
-                    ! scalar-independent, so hoisted out of the scalar loop
-                    ! (the level-set weight itself needs no normal at all,
-                    ! the obliquity lemma; see conjugate_face_diffusivity).
-                    phc = 0.0d0; phw = 0.0d0; phe = 0.0d0
-                    phs = 0.0d0; phn = 0.0d0; phb = 0.0d0; pht = 0.0d0
-                    solc = .false.
-                    cutw = .false.; cute = .false.; cuts = .false.
-                    cutn = .false.; cutb = .false.; cutt = .false.
-                    if (anyConj) then
-                        phc = sc%phi(i,  j,  k,  b)
-                        phw = sc%phi(i-1,j,  k,  b)
-                        phe = sc%phi(i+1,j,  k,  b)
-                        phs = sc%phi(i,  j-1,k,  b)
-                        phn = sc%phi(i,  j+1,k,  b)
-                        phb = sc%phi(i,  j,  k-1,b)
-                        pht = sc%phi(i,  j,  k+1,b)
-                        solc = phc < 0.0d0
-                        cutw = (phw < 0.0d0) .neqv. solc
-                        cute = (phe < 0.0d0) .neqv. solc
-                        cuts = (phs < 0.0d0) .neqv. solc
-                        cutn = (phn < 0.0d0) .neqv. solc
-                        cutb = (phb < 0.0d0) .neqv. solc
-                        cutt = (pht < 0.0d0) .neqv. solc
-                    end if
-
                     ! Face eddy viscosities: the same 1/2 (L + R) average the
                     ! momentum SGS correction uses for its face-normal terms.
                     ! Scalar-independent, so they are hoisted out of the
@@ -2934,7 +2927,8 @@ contains
                         ntt = 0.5d0*(nut(i,j,k,b) + nut(i,j,k+1,b))
                     end if
 
-                    do is = 1, nScal
+                    do il = 1, nList
+                        is = int(sc%plainList(il))
                         var = VAR_S0 + is
                         scr = SCR_S0 + is
                         s0 = blk%q(i,j,k,var,b)
@@ -2945,36 +2939,22 @@ contains
                         ! masks below collapse to the FACE_CLOSED flags and
                         ! the S2 expressions are reproduced exactly.
                         adiab = useIbm .and. sc%ibmMode(is) == SC_IBM_ADIABATIC
-                        conjug = useIbm .and. sc%ibmMode(is) == SC_IBM_CONJUGATE
-                        tang = conjug .and. sc%tangCorr(is) /= 0_C_INT
-                        banded = conjug .and. sc%solidDepth(is) > 0.0d0
                         mw = clw .or. (adiab .and. solw)
                         me = cle .or. (adiab .and. sole)
                         ms = cls .or. (adiab .and. sols)
                         mn = cln .or. (adiab .and. soln)
                         mb = clb .or. (adiab .and. solb)
                         mt = clt .or. (adiab .and. solt)
-                        ! The CONVECTIVE masks. They coincide with the
-                        ! diffusive ones in every mode but conjugate, where
-                        ! the solid conducts (diffusion is NOT masked) while
-                        ! nothing at all is advected across a solid or cut
-                        ! face.
-                        cmw = mw .or. (conjug .and. (solw .or. cutw))
-                        cme = me .or. (conjug .and. (sole .or. cute))
-                        cms = ms .or. (conjug .and. (sols .or. cuts))
-                        cmn = mn .or. (conjug .and. (soln .or. cutn))
-                        cmb = mb .or. (conjug .and. (solb .or. cutb))
-                        cmt = mt .or. (conjug .and. (solt .or. cutt))
 
-                        if (adiab .or. conjug) then
-                            conv = (merge(0.0d0, ue*0.5d0*(s0 + blk%q(i+1,j,k,var,b)), cme) &
-                                  - merge(0.0d0, uw*0.5d0*(blk%q(i-1,j,k,var,b) + s0), cmw)) &
+                        if (adiab) then
+                            conv = (merge(0.0d0, ue*0.5d0*(s0 + blk%q(i+1,j,k,var,b)), me) &
+                                  - merge(0.0d0, uw*0.5d0*(blk%q(i-1,j,k,var,b) + s0), mw)) &
                                     *blk%d1x(i,VAR_P,b) &
-                                 + (merge(0.0d0, vn*0.5d0*(s0 + blk%q(i,j+1,k,var,b)), cmn) &
-                                  - merge(0.0d0, vs*0.5d0*(blk%q(i,j-1,k,var,b) + s0), cms)) &
+                                 + (merge(0.0d0, vn*0.5d0*(s0 + blk%q(i,j+1,k,var,b)), mn) &
+                                  - merge(0.0d0, vs*0.5d0*(blk%q(i,j-1,k,var,b) + s0), ms)) &
                                     *blk%d1y(j,VAR_P,b) &
-                                 + (merge(0.0d0, wt*0.5d0*(s0 + blk%q(i,j,k+1,var,b)), cmt) &
-                                  - merge(0.0d0, wb*0.5d0*(blk%q(i,j,k-1,var,b) + s0), cmb)) &
+                                 + (merge(0.0d0, wt*0.5d0*(s0 + blk%q(i,j,k+1,var,b)), mt) &
+                                  - merge(0.0d0, wb*0.5d0*(blk%q(i,j,k-1,var,b) + s0), mb)) &
                                     *blk%d1z(k,VAR_P,b)
                         else
                             conv = (ue*0.5d0*(s0 + blk%q(i+1,j,k,var,b)) &
@@ -2984,22 +2964,11 @@ contains
                                  + (wt*0.5d0*(s0 + blk%q(i,j,k+1,var,b)) &
                                   - wb*0.5d0*(blk%q(i,j,k-1,var,b) + s0))*blk%d1z(k,VAR_P,b)
                         end if
-                        ! The skew term must subtract the divergence of the
-                        ! SAME face velocities the convective flux used, or a
-                        ! sealed solid cell would be "advected" by the
-                        ! penalised velocity's residual divergence. With the
-                        ! masked form a uniform scalar stays uniform exactly,
-                        ! in the solid as in the fluid. (The adiabatic mode
-                        ! keeps its shipped, gated arithmetic: divuse = divu.)
-                        divuse = divu
-                        if (nondiv .and. conjug) &
-                            divuse = (merge(0.0d0, ue, cme) - merge(0.0d0, uw, cmw)) &
-                                        *blk%d1x(i,VAR_P,b) &
-                                   + (merge(0.0d0, vn, cmn) - merge(0.0d0, vs, cms)) &
-                                        *blk%d1y(j,VAR_P,b) &
-                                   + (merge(0.0d0, wt, cmt) - merge(0.0d0, wb, cmb)) &
-                                        *blk%d1z(k,VAR_P,b)
-                        if (nondiv) conv = conv - convFac*s0*divuse
+                        ! The skew/advective term subtracts the UNMASKED
+                        ! divergence here, the adiabatic mode included (its
+                        ! shipped, gated arithmetic; the conjugate kernel is
+                        ! the one that builds it from the masked velocities).
+                        if (nondiv) conv = conv - convFac*s0*divu
 
                         ! Molecular diffusivity + the eddy part on each face.
                         ! With useNut off every face keeps dm exactly, so the
@@ -3007,220 +2976,7 @@ contains
                         dm = ire/sc%pr(is)
                         dxw = dm; dxe = dm; dys = dm
                         dyn = dm; dzb = dm; dzt = dm
-                        crw = 0.0d0; cre = 0.0d0; crs = 0.0d0
-                        crn = 0.0d0; crb = 0.0d0; crt = 0.0d0
-                        if (conjug) then
-                            ! THE conjugate scheme: one face coefficient.
-                            ! Within one material this is kappa*dm (kappa = 1
-                            ! in the fluid, so a fluid-fluid face is today's
-                            ! line unchanged); across a cut face it is the
-                            ! distance-weighted harmonic mean built on the
-                            ! level-set fraction of the arm.
-                            ks = sc%solidK(is)
-                            rc = sc%contactR(is)
-                            ! The band branch (F2) is entered only by a scalar
-                            ! that asked for one, so the single-material lines
-                            ! below stay byte for byte what they were.
-                            csb = sc%solidC(is)
-                            ssb = sc%solidSource(is)
-                            if (banded) then
-                                dsh = sc%solidDepth(is)
-                                ko = sc%outerK(is)
-                                dxw = band_face_diffusivity(dm, phw, phc, ks, ko, dsh, &
-                                    rc, sc%invDx(i,b))
-                                dxe = band_face_diffusivity(dm, phc, phe, ks, ko, dsh, &
-                                    rc, sc%invDx(i+1,b))
-                                dys = band_face_diffusivity(dm, phs, phc, ks, ko, dsh, &
-                                    rc, sc%invDy(j,b))
-                                dyn = band_face_diffusivity(dm, phc, phn, ks, ko, dsh, &
-                                    rc, sc%invDy(j+1,b))
-                                dzb = band_face_diffusivity(dm, phb, phc, ks, ko, dsh, &
-                                    rc, sc%invDz(k,b))
-                                dzt = band_face_diffusivity(dm, phc, pht, ks, ko, dsh, &
-                                    rc, sc%invDz(k+1,b))
-                                ! The outer band carries its own capacity and
-                                ! NO source: it stands in for whatever is
-                                ! beyond the wall, and a solid_source that
-                                ! fired there would have nowhere to send its
-                                ! heat (an insulated band would simply run
-                                ! away). The shell keeps the solid's own pair.
-                                if (band_material(phc, dsh) == 2) then
-                                    csb = sc%outerC(is)
-                                    ssb = 0.0d0
-                                end if
-                            else
-                                dxw = conjugate_face_diffusivity(dm, phw, phc, ks, rc, sc%invDx(i,b))
-                                dxe = conjugate_face_diffusivity(dm, phc, phe, ks, rc, sc%invDx(i+1,b))
-                                dys = conjugate_face_diffusivity(dm, phs, phc, ks, rc, sc%invDy(j,b))
-                                dyn = conjugate_face_diffusivity(dm, phc, phn, ks, rc, sc%invDy(j+1,b))
-                                dzb = conjugate_face_diffusivity(dm, phb, phc, ks, rc, sc%invDz(k,b))
-                                dzt = conjugate_face_diffusivity(dm, phc, pht, ks, rc, sc%invDz(k+1,b))
-                            end if
-                            ! nu_t enters NEITHER the solid NOR a cut face
-                            ! (strategy doc Section 12): at DNS resolution
-                            ! nu_t -> 0 at the wall anyway, and ibm_aware
-                            ! already zeroes it in solid cells, but the
-                            ! interface coefficient is molecular by
-                            ! construction and must not be polluted.
-                            if (useNut .and. .not. solc) then
-                                if (.not. cutw) dxw = dxw + eddy_diffusivity(ntw, sc%pr(is), &
-                                    sc%prt(is), sc%prtModel(is), re)
-                                if (.not. cute) dxe = dxe + eddy_diffusivity(nte, sc%pr(is), &
-                                    sc%prt(is), sc%prtModel(is), re)
-                                if (.not. cuts) dys = dys + eddy_diffusivity(nts, sc%pr(is), &
-                                    sc%prt(is), sc%prtModel(is), re)
-                                if (.not. cutn) dyn = dyn + eddy_diffusivity(ntn, sc%pr(is), &
-                                    sc%prt(is), sc%prtModel(is), re)
-                                if (.not. cutb) dzb = dzb + eddy_diffusivity(ntb, sc%pr(is), &
-                                    sc%prt(is), sc%prtModel(is), re)
-                                if (.not. cutt) dzt = dzt + eddy_diffusivity(ntt, sc%pr(is), &
-                                    sc%prt(is), sc%prtModel(is), re)
-                            end if
-                            ! THE C2 TANGENTIAL CORRECTION (off by default;
-                            ! [scalar.N] tangential_correction). The exact
-                            ! cut-face flux is
-                            !   F = k_face (T_R - T_L)/h_d + s_t (k_loc - k_face)
-                            ! and C1 keeps only the first term. The second is
-                            ! IDENTICALLY ZERO away from the interface --
-                            ! k_loc == k_face there -- so it is evaluated at
-                            ! CUT FACES ONLY, and the flux line below stays
-                            ! byte-for-byte C1's everywhere else.
-                            !
-                            ! Both gradients come from the central differences
-                            ! the stencil already reaches: the face-normal
-                            ! component is the arm difference, each tangential
-                            ! component the mean of the two cells' own central
-                            ! differences. Written in the fixed low -> high
-                            ! cell order, so the two cells sharing a face
-                            ! compute the SAME number to the last bit and the
-                            ! correction stays a conservative face flux.
-                            !
-                            ! The tangential terms reach the EDGE ghosts of
-                            ! the 3^3 neighbourhood, which the 26-neighbour
-                            ! exchange fills -- 1 == 4 ranks is exact, gated.
-                            ! A cut face may not sit on a 2:1 block face
-                            ! (check_conjugate_refinement), but a cut face one
-                            ! cell inside a refined block can still read a
-                            ! halo value that came from a level transfer;
-                            ! refine_body's one-block buffer is what keeps
-                            ! that away from the surface in practice.
-                            if (tang) then
-                                if (cutw .and. .not. mw) then
-                                    gtd = (s0 - blk%q(i-1,j,k,var,b))*sc%invDx(i,b)
-                                    gt1 = 0.5d0*((blk%q(i-1,j+1,k,var,b) - blk%q(i-1,j-1,k,var,b)) &
-                                               + (blk%q(i,  j+1,k,var,b) - blk%q(i,  j-1,k,var,b))) &
-                                            *sc%cdy(j,b)
-                                    gt2 = 0.5d0*((blk%q(i-1,j,k+1,var,b) - blk%q(i-1,j,k-1,var,b)) &
-                                               + (blk%q(i,  j,k+1,var,b) - blk%q(i,  j,k-1,var,b))) &
-                                            *sc%cdz(k,b)
-                                    gpd = (phc - phw)*sc%invDx(i,b)
-                                    gp1 = 0.5d0*((sc%phi(i-1,j+1,k,b) - sc%phi(i-1,j-1,k,b)) &
-                                               + (sc%phi(i,  j+1,k,b) - sc%phi(i,  j-1,k,b))) &
-                                            *sc%cdy(j,b)
-                                    gp2 = 0.5d0*((sc%phi(i-1,j,k+1,b) - sc%phi(i-1,j,k-1,b)) &
-                                               + (sc%phi(i,  j,k+1,b) - sc%phi(i,  j,k-1,b))) &
-                                            *sc%cdz(k,b)
-                                    crw = conjugate_tangential(gtd, gt1, gt2, gpd, gp1, gp2, &
-                                            dxw/dm, phw, phc, ks, sc%invDx(i,b)) &
-                                        *(conjugate_face_local_k(dm, phw, phc, ks) - dxw)
-                                end if
-                                if (cute .and. .not. me) then
-                                    gtd = (blk%q(i+1,j,k,var,b) - s0)*sc%invDx(i+1,b)
-                                    gt1 = 0.5d0*((blk%q(i,  j+1,k,var,b) - blk%q(i,  j-1,k,var,b)) &
-                                               + (blk%q(i+1,j+1,k,var,b) - blk%q(i+1,j-1,k,var,b))) &
-                                            *sc%cdy(j,b)
-                                    gt2 = 0.5d0*((blk%q(i,  j,k+1,var,b) - blk%q(i,  j,k-1,var,b)) &
-                                               + (blk%q(i+1,j,k+1,var,b) - blk%q(i+1,j,k-1,var,b))) &
-                                            *sc%cdz(k,b)
-                                    gpd = (phe - phc)*sc%invDx(i+1,b)
-                                    gp1 = 0.5d0*((sc%phi(i,  j+1,k,b) - sc%phi(i,  j-1,k,b)) &
-                                               + (sc%phi(i+1,j+1,k,b) - sc%phi(i+1,j-1,k,b))) &
-                                            *sc%cdy(j,b)
-                                    gp2 = 0.5d0*((sc%phi(i,  j,k+1,b) - sc%phi(i,  j,k-1,b)) &
-                                               + (sc%phi(i+1,j,k+1,b) - sc%phi(i+1,j,k-1,b))) &
-                                            *sc%cdz(k,b)
-                                    cre = conjugate_tangential(gtd, gt1, gt2, gpd, gp1, gp2, &
-                                            dxe/dm, phc, phe, ks, sc%invDx(i+1,b)) &
-                                        *(conjugate_face_local_k(dm, phc, phe, ks) - dxe)
-                                end if
-                                if (cuts .and. .not. ms) then
-                                    gtd = (s0 - blk%q(i,j-1,k,var,b))*sc%invDy(j,b)
-                                    gt1 = 0.5d0*((blk%q(i+1,j-1,k,var,b) - blk%q(i-1,j-1,k,var,b)) &
-                                               + (blk%q(i+1,j,  k,var,b) - blk%q(i-1,j,  k,var,b))) &
-                                            *sc%cdx(i,b)
-                                    gt2 = 0.5d0*((blk%q(i,j-1,k+1,var,b) - blk%q(i,j-1,k-1,var,b)) &
-                                               + (blk%q(i,j,  k+1,var,b) - blk%q(i,j,  k-1,var,b))) &
-                                            *sc%cdz(k,b)
-                                    gpd = (phc - phs)*sc%invDy(j,b)
-                                    gp1 = 0.5d0*((sc%phi(i+1,j-1,k,b) - sc%phi(i-1,j-1,k,b)) &
-                                               + (sc%phi(i+1,j,  k,b) - sc%phi(i-1,j,  k,b))) &
-                                            *sc%cdx(i,b)
-                                    gp2 = 0.5d0*((sc%phi(i,j-1,k+1,b) - sc%phi(i,j-1,k-1,b)) &
-                                               + (sc%phi(i,j,  k+1,b) - sc%phi(i,j,  k-1,b))) &
-                                            *sc%cdz(k,b)
-                                    crs = conjugate_tangential(gtd, gt1, gt2, gpd, gp1, gp2, &
-                                            dys/dm, phs, phc, ks, sc%invDy(j,b)) &
-                                        *(conjugate_face_local_k(dm, phs, phc, ks) - dys)
-                                end if
-                                if (cutn .and. .not. mn) then
-                                    gtd = (blk%q(i,j+1,k,var,b) - s0)*sc%invDy(j+1,b)
-                                    gt1 = 0.5d0*((blk%q(i+1,j,  k,var,b) - blk%q(i-1,j,  k,var,b)) &
-                                               + (blk%q(i+1,j+1,k,var,b) - blk%q(i-1,j+1,k,var,b))) &
-                                            *sc%cdx(i,b)
-                                    gt2 = 0.5d0*((blk%q(i,j,  k+1,var,b) - blk%q(i,j,  k-1,var,b)) &
-                                               + (blk%q(i,j+1,k+1,var,b) - blk%q(i,j+1,k-1,var,b))) &
-                                            *sc%cdz(k,b)
-                                    gpd = (phn - phc)*sc%invDy(j+1,b)
-                                    gp1 = 0.5d0*((sc%phi(i+1,j,  k,b) - sc%phi(i-1,j,  k,b)) &
-                                               + (sc%phi(i+1,j+1,k,b) - sc%phi(i-1,j+1,k,b))) &
-                                            *sc%cdx(i,b)
-                                    gp2 = 0.5d0*((sc%phi(i,j,  k+1,b) - sc%phi(i,j,  k-1,b)) &
-                                               + (sc%phi(i,j+1,k+1,b) - sc%phi(i,j+1,k-1,b))) &
-                                            *sc%cdz(k,b)
-                                    crn = conjugate_tangential(gtd, gt1, gt2, gpd, gp1, gp2, &
-                                            dyn/dm, phc, phn, ks, sc%invDy(j+1,b)) &
-                                        *(conjugate_face_local_k(dm, phc, phn, ks) - dyn)
-                                end if
-                                if (cutb .and. .not. mb) then
-                                    gtd = (s0 - blk%q(i,j,k-1,var,b))*sc%invDz(k,b)
-                                    gt1 = 0.5d0*((blk%q(i+1,j,k-1,var,b) - blk%q(i-1,j,k-1,var,b)) &
-                                               + (blk%q(i+1,j,k,  var,b) - blk%q(i-1,j,k,  var,b))) &
-                                            *sc%cdx(i,b)
-                                    gt2 = 0.5d0*((blk%q(i,j+1,k-1,var,b) - blk%q(i,j-1,k-1,var,b)) &
-                                               + (blk%q(i,j+1,k,  var,b) - blk%q(i,j-1,k,  var,b))) &
-                                            *sc%cdy(j,b)
-                                    gpd = (phc - phb)*sc%invDz(k,b)
-                                    gp1 = 0.5d0*((sc%phi(i+1,j,k-1,b) - sc%phi(i-1,j,k-1,b)) &
-                                               + (sc%phi(i+1,j,k,  b) - sc%phi(i-1,j,k,  b))) &
-                                            *sc%cdx(i,b)
-                                    gp2 = 0.5d0*((sc%phi(i,j+1,k-1,b) - sc%phi(i,j-1,k-1,b)) &
-                                               + (sc%phi(i,j+1,k,  b) - sc%phi(i,j-1,k,  b))) &
-                                            *sc%cdy(j,b)
-                                    crb = conjugate_tangential(gtd, gt1, gt2, gpd, gp1, gp2, &
-                                            dzb/dm, phb, phc, ks, sc%invDz(k,b)) &
-                                        *(conjugate_face_local_k(dm, phb, phc, ks) - dzb)
-                                end if
-                                if (cutt .and. .not. mt) then
-                                    gtd = (blk%q(i,j,k+1,var,b) - s0)*sc%invDz(k+1,b)
-                                    gt1 = 0.5d0*((blk%q(i+1,j,k,  var,b) - blk%q(i-1,j,k,  var,b)) &
-                                               + (blk%q(i+1,j,k+1,var,b) - blk%q(i-1,j,k+1,var,b))) &
-                                            *sc%cdx(i,b)
-                                    gt2 = 0.5d0*((blk%q(i,j+1,k,  var,b) - blk%q(i,j-1,k,  var,b)) &
-                                               + (blk%q(i,j+1,k+1,var,b) - blk%q(i,j-1,k+1,var,b))) &
-                                            *sc%cdy(j,b)
-                                    gpd = (pht - phc)*sc%invDz(k+1,b)
-                                    gp1 = 0.5d0*((sc%phi(i+1,j,k,  b) - sc%phi(i-1,j,k,  b)) &
-                                               + (sc%phi(i+1,j,k+1,b) - sc%phi(i-1,j,k+1,b))) &
-                                            *sc%cdx(i,b)
-                                    gp2 = 0.5d0*((sc%phi(i,j+1,k,  b) - sc%phi(i,j-1,k,  b)) &
-                                               + (sc%phi(i,j+1,k+1,b) - sc%phi(i,j-1,k+1,b))) &
-                                            *sc%cdy(j,b)
-                                    crt = conjugate_tangential(gtd, gt1, gt2, gpd, gp1, gp2, &
-                                            dzt/dm, phc, pht, ks, sc%invDz(k+1,b)) &
-                                        *(conjugate_face_local_k(dm, phc, pht, ks) - dzt)
-                                end if
-                            end if
-                        else if (useNut .and. wallfn) then
+                        if (useNut .and. wallfn) then
                             ! Thermal wall function: the face value is built
                             ! from the two CELL diffusivities, because a wall
                             ! cell's is not a function of its nu_t at all.
@@ -3278,17 +3034,6 @@ contains
                         fe = merge(0.0d0, dzt*(blk%q(i,j,k+1,var,b) - s0) &
                             *sc%invDz(k+1,b), mt)
                         diff = diff + (fe - fw)*blk%d1z(k,VAR_P,b)
-                        ! The C2 correction enters as its own flux divergence,
-                        ! ADDED to the finished C1 term rather than folded into
-                        ! it: the fused expression above then stays byte for
-                        ! byte what it was, so the correction is inert by
-                        ! CONSTRUCTION when off (the bodyforce lesson -- not a
-                        ! "+ 0.0" argument). It is still a face flux, so
-                        ! conservation is untouched: the neighbour subtracts
-                        ! the same number.
-                        if (tang) diff = diff + (cre - crw)*blk%d1x(i,VAR_P,b) &
-                                              + (crn - crs)*blk%d1y(j,VAR_P,b) &
-                                              + (crt - crb)*blk%d1z(k,VAR_P,b)
 
                         ! The volumetric source. UNIFORM is the S0 constant
                         ! and reproduces the old arithmetic operand for
@@ -3313,32 +3058,7 @@ contains
                             end if
                         end if
 
-                        if (conjug) then
-                            ! Divide the flux divergence by the cell's own
-                            ! volumetric capacity, and let the solid carry its
-                            ! own volumetric source (Joule heating, ...).
-                            !
-                            ! C3: the capacity is FLUID-FRACTION WEIGHTED,
-                            !   C_cell = f + (1 - f) C_s,
-                            ! because a cut cell physically contains both
-                            ! materials. It cannot change any steady state (it
-                            ! divides an rhs that vanishes there -- C1 gated
-                            ! exactly that), and it is what makes the TRANSIENT
-                            ! second order: with the pointwise value a cut cell
-                            ! carries one material's whole heat capacity, an
-                            ! O(1) error on an O(h) band, i.e. first order.
-                            ! The volumetric source is weighted with the SAME
-                            ! fraction, as the power density f C_f S_f +
-                            ! (1-f) C_s S_s it is (C_f = 1); at f = 1 and f = 0
-                            ! it reduces to the pointwise C1 statement.
-                            rhs = (-conv + diff &
-                                   + sc%vfrac(i,j,k,b)*srcVal &
-                                   + (1.0d0 - sc%vfrac(i,j,k,b))*csb*ssb) &
-                                /(sc%vfrac(i,j,k,b) &
-                                  + (1.0d0 - sc%vfrac(i,j,k,b))*csb)
-                        else
-                            rhs = -conv + diff + srcVal
-                        end if
+                        rhs = -conv + diff + srcVal
                         ss = s0 + dt_alpha*rhs + dt_beta*blk%oldrhs(i,j,k,scr,b)
                         ! Volume penalization toward the body value (dirichlet
                         ! mode), with the momentum predictor's integrating
@@ -3351,9 +3071,7 @@ contains
                         ! cell (coef_p = 0, factors exactly 1) is skipped: the
                         ! divides are paid in the body's cells only.
                         ! oldrhs keeps the UNpenalized rhs, exactly as the
-                        ! momentum predictor does. The conjugate mode does NOT
-                        ! penalise at all: its solid cells are unknowns, not
-                        ! boundary values.
+                        ! momentum predictor does.
                         if (useIbm .and. sc%ibmMode(is) == SC_IBM_DIRICHLET) then
                             xpen = dt_gamma*coef(i,j,k,VAR_P,b)
                             if (xpen /= 0.0d0) then
@@ -3370,7 +3088,487 @@ contains
         end do
         end do
         !$omp end target teams distribute parallel do
-    end subroutine scalar_transport_kernel
+    end subroutine scalar_transport_plain
+
+    ! The conjugate family: every scalar of sc%conjList. Three things the
+    ! config guarantees are built in rather than tested per cell
+    ! (validate_conjugate_config): there IS an immersed body, [scalar]
+    ! convection is advective or skew (the divergence form is refused, so the
+    ! div(u) subtraction always runs), and wall functions are off. A
+    ! conjugate scalar is never adiabatic, so the diffusive masks are the
+    ! FACE_CLOSED flags alone and the convective masks add the solid and the
+    ! cut faces.
+    subroutine scalar_transport_conjugate(sc, blk, dns, dt_alpha, dt_beta, dt_gamma, &
+            nut, useNut, coef)
+        type(scalar_type), intent(in) :: sc
+        type(block_set_type), intent(inout) :: blk
+        type(dns_type), intent(in) :: dns
+        real(C_DOUBLE), intent(in) :: dt_alpha, dt_beta, dt_gamma
+        real(C_DOUBLE), intent(in) :: nut(0:,0:,0:,1:)
+        logical, intent(in) :: useNut
+        real(C_DOUBLE), intent(in) :: coef(0:,0:,0:,1:,1:)
+
+        integer :: i, j, k, b, il, is, nx, ny, nz, nBlocks, nList, var, scr
+        real(C_DOUBLE) :: ire, re, uw, ue, vs, vn, wb, wt, divu, divuse
+        real(C_DOUBLE) :: s0, conv, diff, rhs, srcVal, dm, fw, fe, ss
+        real(C_DOUBLE) :: ntw, nte, nts, ntn, ntb, ntt
+        real(C_DOUBLE) :: dxw, dxe, dys, dyn, dzb, dzt
+        ! Conjugate interface (C1): the six neighbour signed distances and
+        ! this cell's, plus the per-scalar solid properties.
+        real(C_DOUBLE) :: phc, phw, phe, phs, phn, phb, pht, ks, rc
+        ! The solid's second material band (F2): its depth and outer kappa,
+        ! and this cell's band capacity and band source. Without a band the
+        ! last two are the scalar's solid_rhocp / solid_source, so the rhs
+        ! expression below is unchanged operand for operand.
+        real(C_DOUBLE) :: dsh, ko, csb, ssb
+        ! Tangential correction (C2): the face-centred gradients of T and phi
+        ! in (face-normal, tangential 1, tangential 2) form, and the six face
+        ! corrections themselves. Zero unless the face is CUT and the scalar
+        ! asked for the correction, so the C1 flux line is untouched
+        ! elsewhere.
+        real(C_DOUBLE) :: gtd, gt1, gt2, gpd, gp1, gp2
+        real(C_DOUBLE) :: crw, cre, crs, crn, crb, crt
+        real(C_DOUBLE) :: convFac
+        logical :: solc, tang, banded
+        logical :: cutw, cute, cuts, cutn, cutb, cutt
+        logical :: clw, cle, cls, cln, clb, clt
+        logical :: solw, sole, sols, soln, solb, solt
+        logical :: cmw, cme, cms, cmn, cmb, cmt
+
+        nx = int(blk%nb(1))
+        ny = int(blk%nb(2))
+        nz = int(blk%nb(3))
+        nBlocks = int(blk%nBlocks)
+        nList = int(sc%nConjugate)
+        re = dns%re
+        ire = 1.0d0/re
+        ! The divergence form (f = 0) is refused for a conjugate scalar, so
+        ! the subtraction below is unconditional.
+        convFac = 0.0d0
+        if (sc%convMode == SC_CONV_SKEW) convFac = 0.5d0
+        if (sc%convMode == SC_CONV_ADV)  convFac = 1.0d0
+
+        !$omp target teams distribute parallel do collapse(4) &
+        !$omp& map(to: ire, re, dt_alpha, dt_beta, dt_gamma, convFac, useNut, &
+        !$omp& nList, nx, ny, nz, sc%conjList, &
+        !$omp& sc%cdx, sc%cdy, sc%cdz, sc%tangCorr, &
+        !$omp& blk%q, blk%d1x, blk%d1y, blk%d1z, blk%physLow, blk%physHigh, nut, coef, &
+        !$omp& sc%pr, sc%prt, sc%prtModel, sc%source, sc%srcType, sc%srcDir, &
+        !$omp& sc%invDx, sc%invDy, sc%invDz, &
+        !$omp& sc%phi, sc%vfrac, sc%solidK, sc%solidC, sc%solidSource, sc%contactR, &
+        !$omp& sc%solidDepth, sc%outerK, sc%outerC) &
+        !$omp& map(tofrom: blk%qs, blk%oldrhs) &
+        !$omp& private(i,j,k,b,il,is,var,scr,uw,ue,vs,vn,wb,wt,divu,divuse, &
+        !$omp& s0,conv,diff,rhs,srcVal,dm,fw,fe,ss,solc,ks,rc,tang, &
+        !$omp& banded,dsh,ko,csb,ssb, &
+        !$omp& gtd,gt1,gt2,gpd,gp1,gp2,crw,cre,crs,crn,crb,crt, &
+        !$omp& phc,phw,phe,phs,phn,phb,pht, &
+        !$omp& cutw,cute,cuts,cutn,cutb,cutt, &
+        !$omp& clw,cle,cls,cln,clb,clt,solw,sole,sols,soln,solb,solt, &
+        !$omp& cmw,cme,cms,cmn,cmb,cmt, &
+        !$omp& ntw,nte,nts,ntn,ntb,ntt,dxw,dxe,dys,dyn,dzb,dzt)
+        do b = 1, nBlocks
+        do k = 1, nz
+            do j = 1, ny
+                do i = 1, nx
+                    ! The p cell's six face velocities: exactly the six
+                    ! staggered components, no interpolation.
+                    uw = blk%q(i,  j,  k,  VAR_U,b)
+                    ue = blk%q(i+1,j,  k,  VAR_U,b)
+                    vs = blk%q(i,  j,  k,  VAR_V,b)
+                    vn = blk%q(i,  j+1,k,  VAR_V,b)
+                    wb = blk%q(i,  j,  k,  VAR_W,b)
+                    wt = blk%q(i,  j,  k+1,VAR_W,b)
+                    divu = (ue - uw)*blk%d1x(i,VAR_P,b) &
+                         + (vn - vs)*blk%d1y(j,VAR_P,b) &
+                         + (wt - wb)*blk%d1z(k,VAR_P,b)
+
+                    ! A FACE_CLOSED face borders a block removed inside the
+                    ! immersed body: its halo is held at zero, so the
+                    ! DIFFUSIVE flux must be masked. FACE_PHYS faces are NOT
+                    ! masked: their ghosts carry the boundary condition.
+                    clw = i == 1  .and. blk%physLow(1,b)  == FACE_CLOSED
+                    cle = i == nx .and. blk%physHigh(1,b) == FACE_CLOSED
+                    cls = j == 1  .and. blk%physLow(2,b)  == FACE_CLOSED
+                    cln = j == ny .and. blk%physHigh(2,b) == FACE_CLOSED
+                    clb = k == 1  .and. blk%physLow(3,b)  == FACE_CLOSED
+                    clt = k == nz .and. blk%physHigh(3,b) == FACE_CLOSED
+
+                    ! Solid staggered faces of this p cell -- nothing is
+                    ! advected across them. rans.f90's test for k, verbatim.
+                    solw = abs(coef(i,  j,  k,  VAR_U,b)) > SOLID_FACE_THRESHOLD
+                    sole = abs(coef(i+1,j,  k,  VAR_U,b)) > SOLID_FACE_THRESHOLD
+                    sols = abs(coef(i,  j,  k,  VAR_V,b)) > SOLID_FACE_THRESHOLD
+                    soln = abs(coef(i,  j+1,k,  VAR_V,b)) > SOLID_FACE_THRESHOLD
+                    solb = abs(coef(i,  j,  k,  VAR_W,b)) > SOLID_FACE_THRESHOLD
+                    solt = abs(coef(i,  j,  k+1,VAR_W,b)) > SOLID_FACE_THRESHOLD
+
+                    ! Conjugate interface geometry (C1): the six neighbour
+                    ! signed distances and the cut flags. Pure geometry --
+                    ! scalar-independent, so hoisted out of the scalar loop
+                    ! (the level-set weight itself needs no normal at all,
+                    ! the obliquity lemma; see conjugate_face_diffusivity).
+                    phc = sc%phi(i,  j,  k,  b)
+                    phw = sc%phi(i-1,j,  k,  b)
+                    phe = sc%phi(i+1,j,  k,  b)
+                    phs = sc%phi(i,  j-1,k,  b)
+                    phn = sc%phi(i,  j+1,k,  b)
+                    phb = sc%phi(i,  j,  k-1,b)
+                    pht = sc%phi(i,  j,  k+1,b)
+                    solc = phc < 0.0d0
+                    cutw = (phw < 0.0d0) .neqv. solc
+                    cute = (phe < 0.0d0) .neqv. solc
+                    cuts = (phs < 0.0d0) .neqv. solc
+                    cutn = (phn < 0.0d0) .neqv. solc
+                    cutb = (phb < 0.0d0) .neqv. solc
+                    cutt = (pht < 0.0d0) .neqv. solc
+
+                    ! The CONVECTIVE masks: the solid conducts (diffusion is
+                    ! masked at FACE_CLOSED faces only) while nothing at all
+                    ! is advected across a solid or a cut face.
+                    cmw = clw .or. solw .or. cutw
+                    cme = cle .or. sole .or. cute
+                    cms = cls .or. sols .or. cuts
+                    cmn = cln .or. soln .or. cutn
+                    cmb = clb .or. solb .or. cutb
+                    cmt = clt .or. solt .or. cutt
+
+                    ! Face eddy viscosities: the same 1/2 (L + R) average the
+                    ! momentum SGS correction uses for its face-normal terms.
+                    ! Scalar-independent, so they are hoisted out of the
+                    ! scalar loop; Pr_t is not (it may be per-scalar).
+                    ntw = 0.0d0; nte = 0.0d0; nts = 0.0d0
+                    ntn = 0.0d0; ntb = 0.0d0; ntt = 0.0d0
+                    if (useNut) then
+                        ntw = 0.5d0*(nut(i-1,j,k,b) + nut(i,j,k,b))
+                        nte = 0.5d0*(nut(i,j,k,b) + nut(i+1,j,k,b))
+                        nts = 0.5d0*(nut(i,j-1,k,b) + nut(i,j,k,b))
+                        ntn = 0.5d0*(nut(i,j,k,b) + nut(i,j+1,k,b))
+                        ntb = 0.5d0*(nut(i,j,k-1,b) + nut(i,j,k,b))
+                        ntt = 0.5d0*(nut(i,j,k,b) + nut(i,j,k+1,b))
+                    end if
+
+                    do il = 1, nList
+                        is = int(sc%conjList(il))
+                        var = VAR_S0 + is
+                        scr = SCR_S0 + is
+                        s0 = blk%q(i,j,k,var,b)
+                        tang = sc%tangCorr(is) /= 0_C_INT
+                        banded = sc%solidDepth(is) > 0.0d0
+
+                        conv = (merge(0.0d0, ue*0.5d0*(s0 + blk%q(i+1,j,k,var,b)), cme) &
+                              - merge(0.0d0, uw*0.5d0*(blk%q(i-1,j,k,var,b) + s0), cmw)) &
+                                *blk%d1x(i,VAR_P,b) &
+                             + (merge(0.0d0, vn*0.5d0*(s0 + blk%q(i,j+1,k,var,b)), cmn) &
+                              - merge(0.0d0, vs*0.5d0*(blk%q(i,j-1,k,var,b) + s0), cms)) &
+                                *blk%d1y(j,VAR_P,b) &
+                             + (merge(0.0d0, wt*0.5d0*(s0 + blk%q(i,j,k+1,var,b)), cmt) &
+                              - merge(0.0d0, wb*0.5d0*(blk%q(i,j,k-1,var,b) + s0), cmb)) &
+                                *blk%d1z(k,VAR_P,b)
+                        ! The skew/advective term must subtract the divergence
+                        ! of the SAME face velocities the convective flux
+                        ! used, or a sealed solid cell would be "advected" by
+                        ! the penalised velocity's residual divergence. With
+                        ! the masked form a uniform scalar stays uniform
+                        ! exactly, in the solid as in the fluid.
+                        divuse = (merge(0.0d0, ue, cme) - merge(0.0d0, uw, cmw)) &
+                                    *blk%d1x(i,VAR_P,b) &
+                               + (merge(0.0d0, vn, cmn) - merge(0.0d0, vs, cms)) &
+                                    *blk%d1y(j,VAR_P,b) &
+                               + (merge(0.0d0, wt, cmt) - merge(0.0d0, wb, cmb)) &
+                                    *blk%d1z(k,VAR_P,b)
+                        conv = conv - convFac*s0*divuse
+
+                        ! THE conjugate scheme: one face coefficient. Within
+                        ! one material this is kappa*dm (kappa = 1 in the
+                        ! fluid, so a fluid-fluid face is the plain kernel's
+                        ! line unchanged); across a cut face it is the
+                        ! distance-weighted harmonic mean built on the
+                        ! level-set fraction of the arm.
+                        dm = ire/sc%pr(is)
+                        dxw = dm; dxe = dm; dys = dm
+                        dyn = dm; dzb = dm; dzt = dm
+                        crw = 0.0d0; cre = 0.0d0; crs = 0.0d0
+                        crn = 0.0d0; crb = 0.0d0; crt = 0.0d0
+                        ks = sc%solidK(is)
+                        rc = sc%contactR(is)
+                        ! The band branch (F2) is entered only by a scalar
+                        ! that asked for one, so the single-material lines
+                        ! below stay byte for byte what they were.
+                        csb = sc%solidC(is)
+                        ssb = sc%solidSource(is)
+                        if (banded) then
+                            dsh = sc%solidDepth(is)
+                            ko = sc%outerK(is)
+                            dxw = band_face_diffusivity(dm, phw, phc, ks, ko, dsh, &
+                                rc, sc%invDx(i,b))
+                            dxe = band_face_diffusivity(dm, phc, phe, ks, ko, dsh, &
+                                rc, sc%invDx(i+1,b))
+                            dys = band_face_diffusivity(dm, phs, phc, ks, ko, dsh, &
+                                rc, sc%invDy(j,b))
+                            dyn = band_face_diffusivity(dm, phc, phn, ks, ko, dsh, &
+                                rc, sc%invDy(j+1,b))
+                            dzb = band_face_diffusivity(dm, phb, phc, ks, ko, dsh, &
+                                rc, sc%invDz(k,b))
+                            dzt = band_face_diffusivity(dm, phc, pht, ks, ko, dsh, &
+                                rc, sc%invDz(k+1,b))
+                            ! The outer band carries its own capacity and
+                            ! NO source: it stands in for whatever is
+                            ! beyond the wall, and a solid_source that
+                            ! fired there would have nowhere to send its
+                            ! heat (an insulated band would simply run
+                            ! away). The shell keeps the solid's own pair.
+                            if (band_material(phc, dsh) == 2) then
+                                csb = sc%outerC(is)
+                                ssb = 0.0d0
+                            end if
+                        else
+                            dxw = conjugate_face_diffusivity(dm, phw, phc, ks, rc, sc%invDx(i,b))
+                            dxe = conjugate_face_diffusivity(dm, phc, phe, ks, rc, sc%invDx(i+1,b))
+                            dys = conjugate_face_diffusivity(dm, phs, phc, ks, rc, sc%invDy(j,b))
+                            dyn = conjugate_face_diffusivity(dm, phc, phn, ks, rc, sc%invDy(j+1,b))
+                            dzb = conjugate_face_diffusivity(dm, phb, phc, ks, rc, sc%invDz(k,b))
+                            dzt = conjugate_face_diffusivity(dm, phc, pht, ks, rc, sc%invDz(k+1,b))
+                        end if
+                        ! nu_t enters NEITHER the solid NOR a cut face
+                        ! (strategy doc Section 12): at DNS resolution
+                        ! nu_t -> 0 at the wall anyway, and ibm_aware
+                        ! already zeroes it in solid cells, but the
+                        ! interface coefficient is molecular by
+                        ! construction and must not be polluted.
+                        if (useNut .and. .not. solc) then
+                            if (.not. cutw) dxw = dxw + eddy_diffusivity(ntw, sc%pr(is), &
+                                sc%prt(is), sc%prtModel(is), re)
+                            if (.not. cute) dxe = dxe + eddy_diffusivity(nte, sc%pr(is), &
+                                sc%prt(is), sc%prtModel(is), re)
+                            if (.not. cuts) dys = dys + eddy_diffusivity(nts, sc%pr(is), &
+                                sc%prt(is), sc%prtModel(is), re)
+                            if (.not. cutn) dyn = dyn + eddy_diffusivity(ntn, sc%pr(is), &
+                                sc%prt(is), sc%prtModel(is), re)
+                            if (.not. cutb) dzb = dzb + eddy_diffusivity(ntb, sc%pr(is), &
+                                sc%prt(is), sc%prtModel(is), re)
+                            if (.not. cutt) dzt = dzt + eddy_diffusivity(ntt, sc%pr(is), &
+                                sc%prt(is), sc%prtModel(is), re)
+                        end if
+                        ! THE C2 TANGENTIAL CORRECTION (off by default;
+                        ! [scalar.N] tangential_correction). The exact
+                        ! cut-face flux is
+                        !   F = k_face (T_R - T_L)/h_d + s_t (k_loc - k_face)
+                        ! and C1 keeps only the first term. The second is
+                        ! IDENTICALLY ZERO away from the interface --
+                        ! k_loc == k_face there -- so it is evaluated at
+                        ! CUT FACES ONLY, and the flux line below stays
+                        ! byte-for-byte C1's everywhere else.
+                        !
+                        ! Both gradients come from the central differences
+                        ! the stencil already reaches: the face-normal
+                        ! component is the arm difference, each tangential
+                        ! component the mean of the two cells' own central
+                        ! differences. Written in the fixed low -> high
+                        ! cell order, so the two cells sharing a face
+                        ! compute the SAME number to the last bit and the
+                        ! correction stays a conservative face flux.
+                        !
+                        ! The tangential terms reach the EDGE ghosts of
+                        ! the 3^3 neighbourhood, which the 26-neighbour
+                        ! exchange fills -- 1 == 4 ranks is exact, gated.
+                        ! A cut face may not sit on a 2:1 block face
+                        ! (check_conjugate_refinement), but a cut face one
+                        ! cell inside a refined block can still read a
+                        ! halo value that came from a level transfer;
+                        ! refine_body's one-block buffer is what keeps
+                        ! that away from the surface in practice.
+                        if (tang) then
+                            if (cutw .and. .not. clw) then
+                                gtd = (s0 - blk%q(i-1,j,k,var,b))*sc%invDx(i,b)
+                                gt1 = 0.5d0*((blk%q(i-1,j+1,k,var,b) - blk%q(i-1,j-1,k,var,b)) &
+                                           + (blk%q(i,  j+1,k,var,b) - blk%q(i,  j-1,k,var,b))) &
+                                        *sc%cdy(j,b)
+                                gt2 = 0.5d0*((blk%q(i-1,j,k+1,var,b) - blk%q(i-1,j,k-1,var,b)) &
+                                           + (blk%q(i,  j,k+1,var,b) - blk%q(i,  j,k-1,var,b))) &
+                                        *sc%cdz(k,b)
+                                gpd = (phc - phw)*sc%invDx(i,b)
+                                gp1 = 0.5d0*((sc%phi(i-1,j+1,k,b) - sc%phi(i-1,j-1,k,b)) &
+                                           + (sc%phi(i,  j+1,k,b) - sc%phi(i,  j-1,k,b))) &
+                                        *sc%cdy(j,b)
+                                gp2 = 0.5d0*((sc%phi(i-1,j,k+1,b) - sc%phi(i-1,j,k-1,b)) &
+                                           + (sc%phi(i,  j,k+1,b) - sc%phi(i,  j,k-1,b))) &
+                                        *sc%cdz(k,b)
+                                crw = conjugate_tangential(gtd, gt1, gt2, gpd, gp1, gp2, &
+                                        dxw/dm, phw, phc, ks, sc%invDx(i,b)) &
+                                    *(conjugate_face_local_k(dm, phw, phc, ks) - dxw)
+                            end if
+                            if (cute .and. .not. cle) then
+                                gtd = (blk%q(i+1,j,k,var,b) - s0)*sc%invDx(i+1,b)
+                                gt1 = 0.5d0*((blk%q(i,  j+1,k,var,b) - blk%q(i,  j-1,k,var,b)) &
+                                           + (blk%q(i+1,j+1,k,var,b) - blk%q(i+1,j-1,k,var,b))) &
+                                        *sc%cdy(j,b)
+                                gt2 = 0.5d0*((blk%q(i,  j,k+1,var,b) - blk%q(i,  j,k-1,var,b)) &
+                                           + (blk%q(i+1,j,k+1,var,b) - blk%q(i+1,j,k-1,var,b))) &
+                                        *sc%cdz(k,b)
+                                gpd = (phe - phc)*sc%invDx(i+1,b)
+                                gp1 = 0.5d0*((sc%phi(i,  j+1,k,b) - sc%phi(i,  j-1,k,b)) &
+                                           + (sc%phi(i+1,j+1,k,b) - sc%phi(i+1,j-1,k,b))) &
+                                        *sc%cdy(j,b)
+                                gp2 = 0.5d0*((sc%phi(i,  j,k+1,b) - sc%phi(i,  j,k-1,b)) &
+                                           + (sc%phi(i+1,j,k+1,b) - sc%phi(i+1,j,k-1,b))) &
+                                        *sc%cdz(k,b)
+                                cre = conjugate_tangential(gtd, gt1, gt2, gpd, gp1, gp2, &
+                                        dxe/dm, phc, phe, ks, sc%invDx(i+1,b)) &
+                                    *(conjugate_face_local_k(dm, phc, phe, ks) - dxe)
+                            end if
+                            if (cuts .and. .not. cls) then
+                                gtd = (s0 - blk%q(i,j-1,k,var,b))*sc%invDy(j,b)
+                                gt1 = 0.5d0*((blk%q(i+1,j-1,k,var,b) - blk%q(i-1,j-1,k,var,b)) &
+                                           + (blk%q(i+1,j,  k,var,b) - blk%q(i-1,j,  k,var,b))) &
+                                        *sc%cdx(i,b)
+                                gt2 = 0.5d0*((blk%q(i,j-1,k+1,var,b) - blk%q(i,j-1,k-1,var,b)) &
+                                           + (blk%q(i,j,  k+1,var,b) - blk%q(i,j,  k-1,var,b))) &
+                                        *sc%cdz(k,b)
+                                gpd = (phc - phs)*sc%invDy(j,b)
+                                gp1 = 0.5d0*((sc%phi(i+1,j-1,k,b) - sc%phi(i-1,j-1,k,b)) &
+                                           + (sc%phi(i+1,j,  k,b) - sc%phi(i-1,j,  k,b))) &
+                                        *sc%cdx(i,b)
+                                gp2 = 0.5d0*((sc%phi(i,j-1,k+1,b) - sc%phi(i,j-1,k-1,b)) &
+                                           + (sc%phi(i,j,  k+1,b) - sc%phi(i,j,  k-1,b))) &
+                                        *sc%cdz(k,b)
+                                crs = conjugate_tangential(gtd, gt1, gt2, gpd, gp1, gp2, &
+                                        dys/dm, phs, phc, ks, sc%invDy(j,b)) &
+                                    *(conjugate_face_local_k(dm, phs, phc, ks) - dys)
+                            end if
+                            if (cutn .and. .not. cln) then
+                                gtd = (blk%q(i,j+1,k,var,b) - s0)*sc%invDy(j+1,b)
+                                gt1 = 0.5d0*((blk%q(i+1,j,  k,var,b) - blk%q(i-1,j,  k,var,b)) &
+                                           + (blk%q(i+1,j+1,k,var,b) - blk%q(i-1,j+1,k,var,b))) &
+                                        *sc%cdx(i,b)
+                                gt2 = 0.5d0*((blk%q(i,j,  k+1,var,b) - blk%q(i,j,  k-1,var,b)) &
+                                           + (blk%q(i,j+1,k+1,var,b) - blk%q(i,j+1,k-1,var,b))) &
+                                        *sc%cdz(k,b)
+                                gpd = (phn - phc)*sc%invDy(j+1,b)
+                                gp1 = 0.5d0*((sc%phi(i+1,j,  k,b) - sc%phi(i-1,j,  k,b)) &
+                                           + (sc%phi(i+1,j+1,k,b) - sc%phi(i-1,j+1,k,b))) &
+                                        *sc%cdx(i,b)
+                                gp2 = 0.5d0*((sc%phi(i,j,  k+1,b) - sc%phi(i,j,  k-1,b)) &
+                                           + (sc%phi(i,j+1,k+1,b) - sc%phi(i,j+1,k-1,b))) &
+                                        *sc%cdz(k,b)
+                                crn = conjugate_tangential(gtd, gt1, gt2, gpd, gp1, gp2, &
+                                        dyn/dm, phc, phn, ks, sc%invDy(j+1,b)) &
+                                    *(conjugate_face_local_k(dm, phc, phn, ks) - dyn)
+                            end if
+                            if (cutb .and. .not. clb) then
+                                gtd = (s0 - blk%q(i,j,k-1,var,b))*sc%invDz(k,b)
+                                gt1 = 0.5d0*((blk%q(i+1,j,k-1,var,b) - blk%q(i-1,j,k-1,var,b)) &
+                                           + (blk%q(i+1,j,k,  var,b) - blk%q(i-1,j,k,  var,b))) &
+                                        *sc%cdx(i,b)
+                                gt2 = 0.5d0*((blk%q(i,j+1,k-1,var,b) - blk%q(i,j-1,k-1,var,b)) &
+                                           + (blk%q(i,j+1,k,  var,b) - blk%q(i,j-1,k,  var,b))) &
+                                        *sc%cdy(j,b)
+                                gpd = (phc - phb)*sc%invDz(k,b)
+                                gp1 = 0.5d0*((sc%phi(i+1,j,k-1,b) - sc%phi(i-1,j,k-1,b)) &
+                                           + (sc%phi(i+1,j,k,  b) - sc%phi(i-1,j,k,  b))) &
+                                        *sc%cdx(i,b)
+                                gp2 = 0.5d0*((sc%phi(i,j+1,k-1,b) - sc%phi(i,j-1,k-1,b)) &
+                                           + (sc%phi(i,j+1,k,  b) - sc%phi(i,j-1,k,  b))) &
+                                        *sc%cdy(j,b)
+                                crb = conjugate_tangential(gtd, gt1, gt2, gpd, gp1, gp2, &
+                                        dzb/dm, phb, phc, ks, sc%invDz(k,b)) &
+                                    *(conjugate_face_local_k(dm, phb, phc, ks) - dzb)
+                            end if
+                            if (cutt .and. .not. clt) then
+                                gtd = (blk%q(i,j,k+1,var,b) - s0)*sc%invDz(k+1,b)
+                                gt1 = 0.5d0*((blk%q(i+1,j,k,  var,b) - blk%q(i-1,j,k,  var,b)) &
+                                           + (blk%q(i+1,j,k+1,var,b) - blk%q(i-1,j,k+1,var,b))) &
+                                        *sc%cdx(i,b)
+                                gt2 = 0.5d0*((blk%q(i,j+1,k,  var,b) - blk%q(i,j-1,k,  var,b)) &
+                                           + (blk%q(i,j+1,k+1,var,b) - blk%q(i,j-1,k+1,var,b))) &
+                                        *sc%cdy(j,b)
+                                gpd = (pht - phc)*sc%invDz(k+1,b)
+                                gp1 = 0.5d0*((sc%phi(i+1,j,k,  b) - sc%phi(i-1,j,k,  b)) &
+                                           + (sc%phi(i+1,j,k+1,b) - sc%phi(i-1,j,k+1,b))) &
+                                        *sc%cdx(i,b)
+                                gp2 = 0.5d0*((sc%phi(i,j+1,k,  b) - sc%phi(i,j-1,k,  b)) &
+                                           + (sc%phi(i,j+1,k+1,b) - sc%phi(i,j-1,k+1,b))) &
+                                        *sc%cdy(j,b)
+                                crt = conjugate_tangential(gtd, gt1, gt2, gpd, gp1, gp2, &
+                                        dzt/dm, phc, pht, ks, sc%invDz(k+1,b)) &
+                                    *(conjugate_face_local_k(dm, phc, pht, ks) - dzt)
+                            end if
+                        end if
+
+                        fw = merge(0.0d0, dxw*(s0 - blk%q(i-1,j,k,var,b)) &
+                            *sc%invDx(i,b), clw)
+                        fe = merge(0.0d0, dxe*(blk%q(i+1,j,k,var,b) - s0) &
+                            *sc%invDx(i+1,b), cle)
+                        diff = (fe - fw)*blk%d1x(i,VAR_P,b)
+                        fw = merge(0.0d0, dys*(s0 - blk%q(i,j-1,k,var,b)) &
+                            *sc%invDy(j,b), cls)
+                        fe = merge(0.0d0, dyn*(blk%q(i,j+1,k,var,b) - s0) &
+                            *sc%invDy(j+1,b), cln)
+                        diff = diff + (fe - fw)*blk%d1y(j,VAR_P,b)
+                        fw = merge(0.0d0, dzb*(s0 - blk%q(i,j,k-1,var,b)) &
+                            *sc%invDz(k,b), clb)
+                        fe = merge(0.0d0, dzt*(blk%q(i,j,k+1,var,b) - s0) &
+                            *sc%invDz(k+1,b), clt)
+                        diff = diff + (fe - fw)*blk%d1z(k,VAR_P,b)
+                        ! The C2 correction enters as its own flux divergence,
+                        ! ADDED to the finished C1 term rather than folded into
+                        ! it: the fused expression above then stays byte for
+                        ! byte what it was, so the correction is inert by
+                        ! CONSTRUCTION when off (the bodyforce lesson -- not a
+                        ! "+ 0.0" argument). It is still a face flux, so
+                        ! conservation is untouched: the neighbour subtracts
+                        ! the same number.
+                        if (tang) diff = diff + (cre - crw)*blk%d1x(i,VAR_P,b) &
+                                              + (crn - crs)*blk%d1y(j,VAR_P,b) &
+                                              + (crt - crb)*blk%d1z(k,VAR_P,b)
+
+                        ! The volumetric source (see the plain kernel).
+                        srcVal = sc%source(is)
+                        if (sc%srcType(is) == SC_SRC_VELOCITY) then
+                            if (sc%srcDir(is) == 2_C_INT) then
+                                srcVal = sc%source(is)*0.5d0*(vs + vn)
+                            else if (sc%srcDir(is) == 3_C_INT) then
+                                srcVal = sc%source(is)*0.5d0*(wb + wt)
+                            else
+                                srcVal = sc%source(is)*0.5d0*(uw + ue)
+                            end if
+                        end if
+
+                        ! Divide the flux divergence by the cell's own
+                        ! volumetric capacity, and let the solid carry its
+                        ! own volumetric source (Joule heating, ...).
+                        !
+                        ! C3: the capacity is FLUID-FRACTION WEIGHTED,
+                        !   C_cell = f + (1 - f) C_s,
+                        ! because a cut cell physically contains both
+                        ! materials. It cannot change any steady state (it
+                        ! divides an rhs that vanishes there -- C1 gated
+                        ! exactly that), and it is what makes the TRANSIENT
+                        ! second order: with the pointwise value a cut cell
+                        ! carries one material's whole heat capacity, an
+                        ! O(1) error on an O(h) band, i.e. first order.
+                        ! The volumetric source is weighted with the SAME
+                        ! fraction, as the power density f C_f S_f +
+                        ! (1-f) C_s S_s it is (C_f = 1); at f = 1 and f = 0
+                        ! it reduces to the pointwise C1 statement.
+                        rhs = (-conv + diff &
+                               + sc%vfrac(i,j,k,b)*srcVal &
+                               + (1.0d0 - sc%vfrac(i,j,k,b))*csb*ssb) &
+                            /(sc%vfrac(i,j,k,b) &
+                              + (1.0d0 - sc%vfrac(i,j,k,b))*csb)
+                        ! No penalization: the solid cells are unknowns, not
+                        ! boundary values. oldrhs keeps the rhs, as the
+                        ! momentum predictor does.
+                        ss = s0 + dt_alpha*rhs + dt_beta*blk%oldrhs(i,j,k,scr,b)
+                        blk%qs(i,j,k,scr,b) = ss
+                        blk%oldrhs(i,j,k,scr,b) = rhs
+                    end do
+                end do
+            end do
+        end do
+        end do
+        !$omp end target teams distribute parallel do
+    end subroutine scalar_transport_conjugate
 
     ! Substage tail: qs -> q for the scalar slots, then the ghost/halo sync.
     ! Runs AFTER the pressure projection returns -- the scalar never enters
