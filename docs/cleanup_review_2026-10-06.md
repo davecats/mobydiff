@@ -270,7 +270,11 @@ control-flow only, gateable at production flags; "moves" = the nofma gate.
     IF nothing else reads the mirrored ghost. The comment at `:316-318` says
     the tangential extension can write physical halos; a halo read-set proof
     comes first (no kernel found reading the edge halos `phi(nx+1, ny+1, k)`).
-    Candidate, not asserted.
+    Candidate, not asserted. **DONE 2026-10-21** (the ghost is held at ZERO
+    and the correction uses the diagonal's own `2*d1f`: one metric
+    `face_grad`, `face_grad_corr`/`face_grad_denom` gone, the write-set
+    proof in `pressure_projection`; `max_abs 0` at nofma AND production
+    flags -- `docs/next_session_code_simplification.md` "Item 6, done").
 17. Red-black diagonal from the `dnLow/dnHigh/d1P` tables instead of six
     `face_grad_denom` per cell: the sweep visits index 0 (the redundant halo
     layer, `:1128-1130`) and the tables start at 1 (`:475-477`), so they need

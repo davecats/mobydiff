@@ -2715,6 +2715,35 @@ immersed boundary. Phased, each phase verified before the next:
   the interface cases are `max_abs 0` at PRODUCTION flags too, so the
   reference set is unchanged. ncu on HoreKa's `refined_yp82` NOT run.
 
+- **Code simplification, item 6 -- the per-iteration phi mirror on outlet
+  cases is gone, and with it the metric pair (DONE 2026-10-21, handout
+  "Item 6, done").** The outlet's `phi_face = 0` is DATA: phi's ghost plane
+  behind a declared outlet is zero from allocation and nothing writes it
+  for the whole run (write-set proof in `pressure_projection`'s comment:
+  `jacobi_compute_phi` interior only, `redblack_sweep` index 0 on OPEN faces
+  only, the scalar exchange writes plane 0 / nb+1 only through an entry
+  with `off(d) = -/+1`, which needs a leaf across a non-periodic domain
+  face and finds none; the tangential extension reaches only edge/corner
+  ghosts, which no kernel reads). The Jacobi correction reads that zero
+  through the diagonal's own `2*d1f`: `face_grad(fk, atBnd, d1f, outlet,
+  refined)` is THE metric (diagonal, `cfLow`/`cfHigh`, red-black, interface
+  list), `face_grad_denom`/`face_grad_corr` deleted, `apply_scalar_bc` no
+  longer called by the projection (36 surface launches per step at niter
+  12). BIT-EXACT AT PRODUCTION FLAGS TOO: `(x - (-x))*c == (x - 0)*(2c)`
+  exactly (power-of-two scaling commutes with rounding), so the outlet
+  suite is `max_abs 0` at nofma AND production, CPU and GPU, and the
+  reference set is UNCHANGED (`~/pass2_ref_binaries`). MEASURED (RTX 3060,
+  production GPU, 100 steps, before = `4f827b4`): `cyl_re100` (2 M cells,
+  Chebyshev 12) step 83.4 -> 82.5 ms (**-1.1 %**), `phi_exchange` -7 %;
+  `blasius2d` (245 k cells, two outlets, Jacobi 12) step 9.34 -> 8.61 ms
+  (**-7.9 %**), `phi_exchange` -52 %; `apply`/`sweep` unmoved. The saving is
+  a constant 0.72-0.78 ms/step = 36 launches x ~20 us, so it is worth most
+  on the launch-bound boundary-layer class. GATES all `max_abs 0` / PASS:
+  outlet suite 1 + 4 ranks CPU and GPU + production flags, freestream
+  `low refined restart`, `body_outlet` all groups incl. `pocket` (profile
+  numbers reproduce the README), 8-case (CPU 4 ranks + GPU) and 11-case
+  (CPU + GPU) suites -- 80 field comparisons.
+
 ## Verification
 
 - Pure refactors must be bit-exact vs. the pre-refactor code: compare

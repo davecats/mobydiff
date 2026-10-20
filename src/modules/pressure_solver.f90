@@ -3,8 +3,7 @@ module pressure_solver
     use :: init, only: dns_type, VAR_U, VAR_V, VAR_W, VAR_P
     use :: blocks, only: block_set_type, FACE_PHYS, FACE_CLOSED, FACE_COARSE, FACE_FINE
     use :: ibmm, only: ibm_type, ibm_body_blocks
-    use :: boundary, only: boundary_type, apply_bc, apply_scalar_bc, &
-        boundary_face_id, NFACES, PATCH_OUTLET, SCALAR_BC_NONE, SCALAR_BC_MIRROR
+    use :: boundary, only: boundary_type, apply_bc, boundary_face_id, PATCH_OUTLET
     use :: comm, only: comm_type, exchange_halos, exchange_scalar_halos, sync_divergence_halos, &
         comm_allreduce_max_int
     use :: profiling, only: prof_tic, prof_toc, proj_prof, &
@@ -50,6 +49,9 @@ module pressure_solver
     ! divergence, then applies pressure and the velocity-face corrections in
     ! separate race-free passes. phi shares blk%q's spatial bounds (0:nb+1) so
     ! exchange_scalar_halos can fill the halo layer the face corrections read.
+    ! Its ghost plane behind a Dirichlet-pressure OUTLET face holds phi_face
+    ! = 0 (the increment of a HELD pressure) for the whole run: zeroed at
+    ! allocation and written by nothing -- the proof is in pressure_projection.
     real(C_DOUBLE), allocatable :: phi(:,:,:,:)
 
     ! Chebyshev search increment delta_k = alpha_k z_k + gamma_k delta_{k-1}
@@ -65,7 +67,7 @@ module pressure_solver
     ! -- so it is identical across all niter iterations and is formed at most
     ! once per substage instead of once per iteration (and, since 2026-09-17,
     ! only on the blocks whose mu changes: see below). That alone removed six
-    ! branchy face_grad_denom calls, six mu loads and ~11 fp64 operations from
+    ! branchy face_grad calls, six mu loads and ~11 fp64 operations from
     ! the per-iteration kernel (measured: -26 % on the sweep).
     !
     ! It is stored INVERTED so the iteration kernel multiplies instead of
@@ -82,8 +84,8 @@ module pressure_solver
     ! is its preconditioner diagonal, so the perturbation is many orders below
     ! the projection's own residual after niter iterations. The operator stays
     ! SPD -- the diagonal is strictly positive, only its final bit moves -- and
-    ! the SPD pairing with face_grad_corr is untouched, because the CORRECTION
-    ! metric is not involved. A degenerate all-faces-pinned cell produced
+    ! the correction metric (the same face_grad values, cfLow/cfHigh) is not
+    ! involved. A degenerate all-faces-pinned cell produced
     ! Inf/NaN before (division by an exactly zero diagonal) and still does, now
     ! via 1/0; the failure mode is unchanged in kind.
     real(C_DOUBLE), allocatable :: rdenom(:,:,:,:)
@@ -98,9 +100,9 @@ module pressure_solver
     ! STATIC face metric tables, precomputed per (face-normal index, direction,
     ! block) and shared by the two volume kernels of the projection.
     !
-    ! Every metric these kernels need at a face is
-    ! face_grad_corr / face_grad_denom (face kind, at-boundary, d1f, outlet,
-    ! refined) -- a function of the block and the index along the face NORMAL
+    ! Every metric these kernels need at a face is face_grad (face kind,
+    ! at-boundary, d1f, outlet, refined) -- a function of the block and the
+    ! index along the face NORMAL
     ! only, never of the two tangential indices the collapse(4) loops also span.
     ! Evaluating them inside a kernel therefore recomputed the same branchy
     ! expression nb^2 times per value and, worse, kept
@@ -114,12 +116,14 @@ module pressure_solver
     ! Hoisting is bit-exact by construction -- identical expression, identical
     ! inputs, evaluated once instead of nb^2 times.
     !
-    !   cfLow/cfHigh   jacobi_apply's velocity-face CORRECTION metric.
-    !                  cfLow(idx,d,b) carries the interface zeroing already (2:1
-    !                  interface faces are corrected by interface_correct, not
-    !                  there); cfHigh(d,b) is zero unless the block's high face
-    !                  in d is an OUTLET physical face -- the only high face
-    !                  that kernel owns, so one value per block suffices.
+    !   cfLow/cfHigh   jacobi_apply's velocity-face CORRECTION metric: the
+    !                  diagonal's own face_grad values (ONE metric, see
+    !                  face_grad), except that cfLow(idx,d,b) carries the
+    !                  interface zeroing (2:1 interface faces are corrected by
+    !                  interface_correct, not there) and cfHigh(d,b) is zero
+    !                  unless the block's high face in d is an OUTLET physical
+    !                  face -- the only high face that kernel owns, so one
+    !                  value per block suffices.
     !   dnLow/dnHigh   compute_rdenom's DIAGONAL metric, both faces, every index
     !                  (the high face enters the diagonal at every cell, not
     !                  only at the block boundary -- hence the full index range
@@ -239,8 +243,7 @@ contains
         real(C_DOUBLE) :: omega
         real(C_DOUBLE) :: dd, cc, alpha, alphaPrev, beta, gamma
         logical(C_BOOL) :: outLow(3), outHigh(3), refd(3)
-        logical :: anyOutlet, hasIface
-        integer(C_INT) :: phiMode(NFACES)
+        logical :: hasIface
 
         if (ps%method == PRESSURE_REDBLACK) then
             call redblack_projection(ps, blk, dt_gamma, ibm, bc, c)
@@ -262,18 +265,31 @@ contains
         ! Dirichlet-pressure outlet faces (declared [boundary] _patch = outlet).
         ! The flags are per DOMAIN face; inside the kernels they act only where
         ! the block's own face is FACE_PHYS (i.e. the block face IS that domain
-        ! face). phi's ghost at an outlet face is mirrored after every halo
-        ! exchange (phi_face = 0: the increment of a HELD outlet pressure), so
-        ! the projection owns and corrects the outlet face flux -- this is what
+        ! face). The projection owns and corrects the outlet face flux against
+        ! phi_face = 0, the increment of a HELD outlet pressure -- this is what
         ! keeps the Poisson problem solvable under net prescribed inflow.
+        ! That face value is DATA, not a boundary row: phi's ghost plane behind
+        ! an outlet face (index 0 or nb+1 along the outlet normal, tangential
+        ! indices 1..nb) is zero from allocate_phi and nothing writes it
+        ! afterwards --
+        !   jacobi_compute_phi and redblack_sweep write interior cells (the
+        !   sweep also index 0, but on OPEN faces only: iLo = 1 at a physical
+        !   face);
+        !   the scalar exchange writes the plane 0 / nb+1 of a direction only
+        !   through an entry with off(d) = -1 / +1 (comm.f90 entry_boxes),
+        !   which needs a leaf across that face -- an outlet is a non-periodic
+        !   domain face and has none; an entry with off(d) = 0 reaches those
+        !   indices only through the tangential extension, i.e. at HALO
+        !   indices of its own direction: the edge and corner ghosts, which no
+        !   kernel reads (jacobi_apply and interface_correct read phi at
+        !   tangential indices 1..nb only).
+        ! So the correction at an outlet face reads a zero ghost through the
+        ! same 2*d1f metric as the diagonal (face_grad): one metric, SPD by
+        ! construction. Until 2026-10-21 the ghost was instead re-MIRRORED
+        ! (-phi_i) after every exchange and corrected with d1f -- the same bits,
+        ! (phi_i - (-phi_i))*d1f == (phi_i - 0)*(2*d1f) in IEEE, at 36 surface
+        ! launches per step.
         call outlet_flags(bc, outLow, outHigh)
-        do dir = 1, 3
-            phiMode(boundary_face_id(int(dir), 0)) = &
-                merge(SCALAR_BC_MIRROR, SCALAR_BC_NONE, outLow(dir))
-            phiMode(boundary_face_id(int(dir), 1)) = &
-                merge(SCALAR_BC_MIRROR, SCALAR_BC_NONE, outHigh(dir))
-        end do
-        anyOutlet = any(outLow) .or. any(outHigh)
 
         ! Chebyshev semi-iteration coefficients over [lmin, lmax].
         dd = 0.5d0*(ps%chebLmax + ps%chebLmin)
@@ -328,11 +344,6 @@ contains
             call prof_toc(proj_prof, PROF_SWEEP, t0)
             t0 = prof_tic()
             call exchange_scalar_halos(c, phi, ifaceRow=.true.)
-
-            ! Re-mirror the outlet phi ghosts EVERY iteration: the exchange's
-            ! tangential extension can write physical halos, so do not rely on
-            ! them staying zero.
-            if (anyOutlet) call apply_scalar_bc(blk, bc, phi, phiMode)
             call prof_toc(proj_prof, PROF_PHI_EXCHANGE, t0)
             t0 = prof_tic()
             call jacobi_apply(blk, dt_gamma, ibm)
@@ -492,22 +503,20 @@ contains
             do d = 1_C_INT, 3_C_INT
                 n = blk%nb(d)
                 do idx = 1_C_INT, n
-                    cfLow(idx,d,b) = face_grad_corr(blk%physLow(d,b), idx == 1_C_INT, &
+                    dnLow(idx,d,b) = face_grad(blk%physLow(d,b), idx == 1_C_INT, &
                         d1_normal(blk, d, idx, b), outLow(d), refd(d))
-                    dnLow(idx,d,b) = face_grad_denom(blk%physLow(d,b), idx == 1_C_INT, &
-                        d1_normal(blk, d, idx, b), outLow(d), refd(d))
-                    dnHigh(idx,d,b) = face_grad_denom(blk%physHigh(d,b), idx == n, &
+                    dnHigh(idx,d,b) = face_grad(blk%physHigh(d,b), idx == n, &
                         d1_normal(blk, d, idx + 1_C_INT, b), outHigh(d), refd(d))
                     d1P(idx,d,b) = d1_divergence(blk, d, idx, b)
                 end do
-                ! Interface faces belong to interface_correct: zero rather than
-                ! a second predicate, exactly as the kernel used to do.
+                ! The correction metric is the diagonal's, except: interface
+                ! faces belong to interface_correct (zero rather than a second
+                ! predicate, exactly as the kernel used to do), and the high
+                ! face is the neighbour's low face (filled by the velocity
+                ! exchange) unless it is an outlet physical face.
+                cfLow(1:n,d,b) = dnLow(1:n,d,b)
                 if (is_interface(blk%physLow(d,b))) cfLow(1,d,b) = 0.0d0
-                ! The high face is the neighbour's low face (filled by the
-                ! velocity exchange) unless it is an outlet physical face.
-                if (outHigh(d) .and. blk%physHigh(d,b) == FACE_PHYS) &
-                    cfHigh(d,b) = face_grad_corr(blk%physHigh(d,b), .true., &
-                        d1_normal(blk, d, n + 1_C_INT, b), outHigh(d), refd(d))
+                if (outHigh(d) .and. blk%physHigh(d,b) == FACE_PHYS) cfHigh(d,b) = dnHigh(n,d,b)
             end do
         end do
 
@@ -519,7 +528,8 @@ contains
     ! Fill the 2:1 interface face list (see its declaration) and map it. Like
     ! init_face_metrics it runs once: nothing it reads changes during a run.
     ! The order is (block, direction, low face, high face); it does not matter,
-    ! every entry writes its own face and reads phi only.
+    ! every entry writes its own face and reads phi only. An interface face is
+    ! never a physical face, so face_grad's outlet flag is simply false here.
     subroutine init_interface_faces(blk, refd)
         type(block_set_type), intent(in) :: blk
         logical(C_BOOL), intent(in) :: refd(3)
@@ -550,13 +560,13 @@ contains
                     e = e + 1_C_INT
                     ifBlock(e) = b; ifDir(e) = d; ifIdx(e) = 1_C_INT
                     ifCoef(e) = face_grad(blk%physLow(d,b), .true., &
-                        d1_normal(blk, d, 1_C_INT, b), refd(d))
+                        d1_normal(blk, d, 1_C_INT, b), .false._C_BOOL, refd(d))
                 end if
                 if (is_interface(blk%physHigh(d,b))) then
                     e = e + 1_C_INT
                     ifBlock(e) = b; ifDir(e) = d; ifIdx(e) = blk%nb(d) + 1_C_INT
                     ifCoef(e) = face_grad(blk%physHigh(d,b), .true., &
-                        d1_normal(blk, d, blk%nb(d) + 1_C_INT, b), refd(d))
+                        d1_normal(blk, d, blk%nb(d) + 1_C_INT, b), .false._C_BOOL, refd(d))
                 end if
             end do
         end do
@@ -599,10 +609,10 @@ contains
     ! summed, then inverted.
     ! face_grad returns 0 for a pinned wall face, the coarse-fine gradient 1/d
     ! for a 2:1 interface face (the symmetric composite stencil), and the regular
-    ! 1/h otherwise. An OUTLET physical face counts 2*d1f (face_grad_denom): its
-    ! phi ghost is MIRRORED, so the flux sensitivity per unit phi_i doubles --
-    ! the matching correction in jacobi_apply uses the regular d1f against the
-    ! mirrored ghost. Keep the pair consistent: SPD lives there.
+    ! 1/h otherwise. An OUTLET physical face counts 2*d1f: phi is held at 0 ON
+    ! the face, so the flux sensitivity per unit phi_i is the half-cell
+    ! gradient's -- and jacobi_apply corrects that face with the same 2*d1f
+    ! against the zero ghost (one metric: SPD lives there).
     !
     ! Called once per substage on the blocks listed in rdenomBlocks (every
     ! block on the first call, the body blocks afterwards -- see the rdenom
@@ -620,7 +630,7 @@ contains
         nTodo = int(nRdenomBlocks, C_INT)
         if (nTodo <= 0_C_INT) return
 
-        ! dnLow/dnHigh/d1P are the face_grad_denom and divergence metrics
+        ! dnLow/dnHigh/d1P are the face_grad and divergence metrics
         ! precomputed per (normal index, direction, block) -- see their
         ! declaration for why that is bit-exact and why d1P stays a separate
         ! factor. Only ibm%mu, which changes every substage, is still read here.
@@ -748,7 +758,7 @@ contains
     ! frozen phi (with the halo layer filled by the scalar exchange) so there is
     ! no in-place race and no colouring. Each cell corrects its own LOW faces
     ! (1..nb) and, on a declared outlet, the high face nb+1 against the
-    ! mirrored phi ghost (cfHigh); every other high halo face is the
+    ! zero phi ghost (cfHigh); every other high halo face is the
     ! neighbour's low face, filled by the velocity exchange. Pinned faces have
     ! cfLow = 0 and are left untouched.
     subroutine jacobi_apply(blk, dt_gamma, ibm)
@@ -779,16 +789,17 @@ contains
         ! halo = avg of the fine increments / the fine halo = the coarse increment,
         ! both from the scalar exchange), which keeps the two sides conservative.
         ! An OUTLET physical face (either side) is also corrected, with the
-        ! REGULAR d1f against the MIRRORED phi ghost (face_grad_corr): e.g.
-        ! q(nx+1) += (phi(nx) - (-phi(nx)))*d1f*mu = 2*phi(nx)*d1f*mu -- the
-        ! half-cell Dirichlet gradient whose 2*d1f sensitivity the denominator
-        ! already counts. The predictor advances the outlet face with that
-        ! same half-cell gradient of the stored pressure (step.f90
-        ! predict_outlet_faces), so phi is a true increment there too and
-        ! p += phi/dt_gamma keeps the boundary cell tied to the outlet value.
-        ! cfLow/cfHigh hold face_grad_corr for every face this kernel owns,
-        ! precomputed per (block, normal index) -- see their declaration for why
-        ! that is both bit-exact and the point of the kernel's shape.
+        ! half-cell Dirichlet metric 2*d1f against the ZERO phi ghost (the
+        ! increment of the held outlet pressure; see pressure_projection):
+        ! q(nx+1) += (phi(nx) - 0)*2*d1f*mu -- the same 2*d1f the denominator
+        ! counts, so the operator is SPD at that row by construction. The
+        ! predictor advances the outlet face with that same half-cell gradient
+        ! of the stored pressure (step.f90 predict_outlet_faces), so phi is a
+        ! true increment there too and p += phi/dt_gamma keeps the boundary
+        ! cell tied to the outlet value. cfLow/cfHigh hold face_grad for every
+        ! face this kernel owns, precomputed per (block, normal index) -- see
+        ! their declaration for why that is both bit-exact and the point of the
+        ! kernel's shape.
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do collapse(4) &
         !$omp& map(to: idt, nx, ny, nz, cfLow, cfHigh, ibm%mu) &
@@ -954,9 +965,17 @@ contains
         is_interface = fk == FACE_COARSE .or. fk == FACE_FINE
     end function is_interface
 
-    ! Pressure-gradient metric for one cell face. atBnd marks a face on the
+    ! Pressure-gradient metric for one cell face: THE metric of the projection
+    ! operator -- the diagonal (compute_rdenom, the red-black sweep), the
+    ! Jacobi velocity-face correction (cfLow/cfHigh) and the red-black in-place
+    ! correction all use this one value, which is what makes the operator SPD
+    ! at every face row. atBnd marks a face on the
     ! block boundary (where the face kind fk applies); interior faces always use
-    ! the regular metric d1f. A pinned wall/closed face contributes 0. A 2:1
+    ! the regular metric d1f. A pinned wall/closed face contributes 0 -- except
+    ! a declared Dirichlet-pressure OUTLET (outlet: the domain face's flag,
+    ! acting where the block face is FACE_PHYS), whose metric is the half-cell
+    ! gradient 2*d1f against phi_face = 0 (the Jacobi path reads that zero from
+    ! phi's ghost, the red-black path reads no ghost: pressure_projection). A 2:1
     ! interface face uses the coarse-fine gradient 1/d over the coarse+fine
     ! half-cell gap: on a uniform dyadic grid d = 3/4 h_coarse = 3/2 h_fine, so
     ! 1/d = (2/3) d1_fine = (4/3) d1_coarse -- each cell forms it from its OWN d1
@@ -969,15 +988,17 @@ contains
     ! -- only the tangential resolution (i.e. the phi ghost content:
     ! 4-sample restrict / injection) differs. Denominator and correction
     ! then both count the SAME d1f: the SPD pair.
-    pure real(C_DOUBLE) function face_grad(fk, atBnd, d1f, refined)
+    pure real(C_DOUBLE) function face_grad(fk, atBnd, d1f, outlet, refined)
 !$omp declare target
         integer(C_INT), intent(in) :: fk
         logical, intent(in) :: atBnd
         real(C_DOUBLE), intent(in) :: d1f
-        logical(C_BOOL), intent(in) :: refined
+        logical(C_BOOL), intent(in) :: outlet, refined
 
         if (.not. atBnd) then
             face_grad = d1f
+        else if (outlet .and. fk == FACE_PHYS) then
+            face_grad = 2.0d0*d1f
         else if (fk == FACE_PHYS .or. fk == FACE_CLOSED) then
             face_grad = 0.0d0
         else if (.not. refined) then
@@ -991,55 +1012,17 @@ contains
         end if
     end function face_grad
 
-    ! Outlet-aware metrics: the Dirichlet-pressure outlet is the ONE face kind
-    ! where the Jacobi DENOMINATOR and the velocity-face CORRECTION need
-    ! different values, because the correction reads the MIRRORED phi ghost
-    ! (phi_ghost = -phi_i, i.e. phi held at 0 ON the face):
-    !   denominator:  2*d1f  (d/dphi_i of the corrected face flux),
-    !   correction:     d1f  (applied to phi_i - phi_ghost = 2*phi_i).
-    ! The product is the same half-cell Dirichlet gradient on both sides of
-    ! the operator -- change one without the other and the projection loses
-    ! SPD at exactly this face row. Every other face kind defers to face_grad
-    ! (whose branches are validated and locked).
-    pure real(C_DOUBLE) function face_grad_denom(fk, atBnd, d1f, outlet, refined)
-!$omp declare target
-        integer(C_INT), intent(in) :: fk
-        logical, intent(in) :: atBnd
-        real(C_DOUBLE), intent(in) :: d1f
-        logical(C_BOOL), intent(in) :: outlet, refined
-
-        if (atBnd .and. outlet .and. fk == FACE_PHYS) then
-            face_grad_denom = 2.0d0*d1f
-        else
-            face_grad_denom = face_grad(fk, atBnd, d1f, refined)
-        end if
-    end function face_grad_denom
-
-    pure real(C_DOUBLE) function face_grad_corr(fk, atBnd, d1f, outlet, refined)
-!$omp declare target
-        integer(C_INT), intent(in) :: fk
-        logical, intent(in) :: atBnd
-        real(C_DOUBLE), intent(in) :: d1f
-        logical(C_BOOL), intent(in) :: outlet, refined
-
-        if (atBnd .and. outlet .and. fk == FACE_PHYS) then
-            face_grad_corr = d1f
-        else
-            face_grad_corr = face_grad(fk, atBnd, d1f, refined)
-        end if
-    end function face_grad_corr
-
     ! -------------------------------------------------------------------------
     ! Red-black SOR projection ([pressure] solver = redblack): the original
     ! coloured Gauss-Seidel scheme, restored as a selectable single-level
     ! alternative to damped Jacobi. In-place over-relaxed sweeps; the same-level
     ! halo exchange refreshes the velocity each colour (pressure only at the
-    ! end). It reuses the SPD diagonal metric face_grad_denom for BOTH the
-    ! divergence denominator AND the in-place face corrections: applying phi in
-    ! place (no ghost read) means the correction metric equals the diagonal
-    ! metric (d1f interior, 0 pinned, 2*d1f for the Dirichlet-p outlet), so the
-    ! outlet is handled exactly as in the Jacobi path and, on outlet-free grids,
-    ! the sweep is identical to the original red-black scheme.
+    ! end). It uses the one metric face_grad for BOTH the divergence
+    ! denominator AND the in-place face corrections (d1f interior, 0 pinned,
+    ! 2*d1f for the Dirichlet-p outlet; the Jacobi tables hold the same
+    ! values), so the outlet is handled exactly as in the Jacobi path and, on
+    ! outlet-free grids, the sweep is identical to the original red-black
+    ! scheme.
     subroutine redblack_projection(ps, blk, dt_gamma, ibm, bc, c)
         type(pressure_solver_type), intent(in) :: ps
         type(block_set_type), intent(inout) :: blk
@@ -1200,12 +1183,12 @@ contains
 
                     ! SPD face metric (0 pinned, 2*d1f outlet, d1f otherwise); the
                     ! in-place correction reuses the same value as the diagonal.
-                    gLo1 = face_grad_denom(blk%physLow(1,b),  i == 1_C_INT, blk%d1x(i,VAR_U,b),  outLow(1),  refd(1))
-                    gHi1 = face_grad_denom(blk%physHigh(1,b), i == hi(1),   blk%d1x(ip,VAR_U,b), outHigh(1), refd(1))
-                    gLo2 = face_grad_denom(blk%physLow(2,b),  j == 1_C_INT, blk%d1y(j,VAR_V,b),  outLow(2),  refd(2))
-                    gHi2 = face_grad_denom(blk%physHigh(2,b), j == hi(2),   blk%d1y(jp,VAR_V,b), outHigh(2), refd(2))
-                    gLo3 = face_grad_denom(blk%physLow(3,b),  k == 1_C_INT, blk%d1z(k,VAR_W,b),  outLow(3),  refd(3))
-                    gHi3 = face_grad_denom(blk%physHigh(3,b), k == hi(3),   blk%d1z(kp,VAR_W,b), outHigh(3), refd(3))
+                    gLo1 = face_grad(blk%physLow(1,b),  i == 1_C_INT, blk%d1x(i,VAR_U,b),  outLow(1),  refd(1))
+                    gHi1 = face_grad(blk%physHigh(1,b), i == hi(1),   blk%d1x(ip,VAR_U,b), outHigh(1), refd(1))
+                    gLo2 = face_grad(blk%physLow(2,b),  j == 1_C_INT, blk%d1y(j,VAR_V,b),  outLow(2),  refd(2))
+                    gHi2 = face_grad(blk%physHigh(2,b), j == hi(2),   blk%d1y(jp,VAR_V,b), outHigh(2), refd(2))
+                    gLo3 = face_grad(blk%physLow(3,b),  k == 1_C_INT, blk%d1z(k,VAR_W,b),  outLow(3),  refd(3))
+                    gHi3 = face_grad(blk%physHigh(3,b), k == hi(3),   blk%d1z(kp,VAR_W,b), outHigh(3), refd(3))
 
                     denom = (gLo1*mu_u_i + gHi1*mu_u_ip)*blk%d1x(i,VAR_P,b) &
                           + (gLo2*mu_v_j + gHi2*mu_v_jp)*blk%d1y(j,VAR_P,b) &

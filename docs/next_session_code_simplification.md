@@ -4,9 +4,9 @@ STATUS: handout written 2026-10-20 on head `68c6360`. **Items 1 (the scalar
 kernel split), 2 (one face-diffusivity helper), 3 (comm.f90's one
 enumeration) and 4 (the lattice probe and the node-line subdivision, once
 each) are DONE 2026-10-20, item 5 (`interface_correct` as one launch over
-a static face list) DONE 2026-10-21** -- see "Item N, done" at the end of
-this file for the measurements and what each one cost; items 6-11 are not
-started.
+a static face list) and item 6 (the per-iteration phi mirror on outlet
+cases) DONE 2026-10-21** -- see "Item N, done" at the end of this file for
+the measurements and what each one cost; items 7-11 are not started.
 It continues `docs/cleanup_review_2026-10-06.md` section 9 (the
 ranked findings) after the items DONE on 2026-10-08: the config hardening
 (F11/F12), the body-force support restriction, the apply k1+k2 and
@@ -565,3 +565,75 @@ UNCHANGED (`~/pass2_ref_binaries`)**. Landmine met, not caused:
 blocks" (the prepare log beside it says `rank layout 1 1 1`); deleted and
 rerun, PASS. An nb-less case file is pinned to the rank count that prepared
 it -- a gate directory keeps the last run's.
+
+## Item 6, done (2026-10-21)
+
+The per-iteration mirror is gone, and so is the metric PAIR it existed for.
+The outlet's `phi_face = 0` is now DATA: phi's ghost plane behind a declared
+outlet face (index 0 or nb+1 along the outlet normal, tangential indices
+1..nb) is zero from `allocate_phi` and nothing writes it for the whole run,
+and the Jacobi velocity-face correction reads that zero through the
+diagonal's own metric `2*d1f`. `face_grad` gained the `outlet` argument and
+is THE metric (diagonal, Jacobi correction tables `cfLow`/`cfHigh`,
+red-black in-place correction, interface list with `outlet = false`);
+`face_grad_denom` / `face_grad_corr` are deleted, `cfLow(1:n) = dnLow(1:n)`
+with the interface zeroing and `cfHigh = dnHigh(n)` at an outlet. The
+red-black path already worked this way ("no ghost read, one metric"); the
+Jacobi path now does too.
+
+THE WRITE-SET PROOF (in `pressure_projection`'s comment, the way
+`sync_divergence_halos` carries its read-set proof): `jacobi_compute_phi`
+writes interior cells; `redblack_sweep` interior cells plus index 0 on OPEN
+faces only (`iLo = 1` at a physical face); the scalar exchange writes the
+plane 0 / nb+1 of a direction only through an entry with `off(d) = -1 / +1`
+(`entry_boxes`), which needs a leaf across that face -- an outlet is a
+non-periodic domain face and `neighbor_origin` finds none; an `off(d) = 0`
+entry reaches those indices only through the tangential extension, i.e. at
+HALO indices of its own direction (`entry_boxes`: `lo = 0` / `hi = nb+1`
+only where the combined neighbour is absent), which are the edge and
+corner ghosts -- and those no kernel reads (`jacobi_apply` reads
+`phi(i-1,j,k)` etc. at tangential indices 1..nb, `interface_correct` the
+same at interface faces, which are never physical). The exchange does READ
+the outlet-plane ghost as the SOURCE of a tangentially extended entry
+(`phi(1,0,k)` of the +x neighbour when y_min is an outlet) and copies it
+into the destination's edge halo `phi(nx+1,0,k)`: before the change that
+carried the PREVIOUS iteration's mirror value (the exchange ran before the
+mirror), now a zero -- unread either way, which is what the gates confirm.
+
+BIT-EXACT, and at production flags too: the old correction was
+`(phi_i - (-phi_i))*d1f*mu` with the mirror `(-1)*phi_i + 0 = -phi_i`
+exactly; the new one `(phi_i - 0)*(2*d1f)*mu`. `phi_i + phi_i = 2 phi_i`
+exactly, and `(2x)*c == x*(2c) == 2*(x*c)` exactly (a power-of-two scaling
+commutes with rounding), so the products agree to the bit and nothing
+contracts differently: the outlet suite is `max_abs 0` at nofma AND at
+production flags, CPU and GPU, so **the reference set is UNCHANGED
+(`~/pass2_ref_binaries`)**. Outlet-free cases are bit-exact by construction
+(`face_grad` returns the old values wherever `outlet` is false, and the
+mirror never ran) and were run anyway.
+
+MEASURED (RTX 3060, production GPU builds, 100 steps, `[output] profile =
+true`, two repetitions, before = `4f827b4`):
+
+| case | step before -> new | `proj_timing phi_exchange` | `apply` / `sweep` (controls) |
+|---|---|---|---|
+| `validation/cylinder/cyl_re100` (512x512x8, nb 8, 4096 blocks, Chebyshev 12, x_max outlet) | 83.29 / 83.53 -> 82.51 / 82.48 ms (**-1.1 %**) | 11.04 -> 10.26 ms/step (-7.0 %) | 29.88 / 17.93 unmoved |
+| `validation/blasius/blasius2d` (384x160x4, one block, Jacobi 12, x_max + y_max outlets) | 9.349 / 9.340 -> 8.606 / 8.608 ms (**-7.9 %**) | 1.384 -> 0.659 ms/step (-52 %) | 3.475 / 1.92 unmoved |
+
+The saving is the same 0.72-0.78 ms/step on both -- 36 launches of a
+surface kernel at ~20 us each, the per-launch floor of this GPU, so it is
+a constant off the step: 1 % of a 2 M-cell case, 8 % of a 245 k-cell one
+(the boundary-layer class, where the step is launch-bound). The expected
+HoreKa figure is the same launch count times the A100's per-launch cost.
+
+GATES (nofma vs `~/pass2_ref_binaries` unless stated), every comparison
+`max_abs 0` / every physics gate PASS: the outlet suite
+(`validation/freestream/run_bitexact_outlet.sh`, 7 cases) at 1 and 4 ranks
+on CPU and GPU, AND at PRODUCTION flags on CPU and GPU (1 rank) -- 42
+comparisons; `validation/freestream/run_gates.sh low refined restart`
+(mirror / Poiseuille / vortex-in-minus-x, the three from-rest refined
+transfers, five restart == continuous legs); `validation/body_outlet/
+run_gates.sh all` (profile, mirror, permute, limits, ranks, restart, gpu,
+twin, pocket -- the profile numbers reproduce the README's: outlet profile
+1.347e-3 of 1.5, last-cell p ratio 0.99921, solid outlet faces 1.6e-28,
+flux imbalance 8e-16); the 8-case suite (CPU 4 ranks + GPU, 16) and the
+11-case suite (CPU + GPU, 22). 80 field comparisons at `max_abs 0` in all.
