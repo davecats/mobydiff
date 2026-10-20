@@ -1,7 +1,11 @@
 # Next session: code simplification (the review's section 9, continued)
 
-STATUS: handout written 2026-10-20 on head `68c6360`. Nothing below is
-started. It continues `docs/cleanup_review_2026-10-06.md` section 9 (the
+STATUS: handout written 2026-10-20 on head `68c6360`. **Items 1 (the scalar
+kernel split), 2 (one face-diffusivity helper), 3 (comm.f90's one
+enumeration) and 4 (the lattice probe and the node-line subdivision, once
+each) are DONE 2026-10-20** -- see "Item N, done" at the end of this file
+for the measurements and what each one cost; items 5-11 are not started.
+It continues `docs/cleanup_review_2026-10-06.md` section 9 (the
 ranked findings) after the items DONE on 2026-10-08: the config hardening
 (F11/F12), the body-force support restriction, the apply k1+k2 and
 `cheb_combine` fusions, the boundary face-index helpers, the shared
@@ -304,3 +308,203 @@ topologies, the restart pair, the dtmax-bound pair, ncu before/after).
 - The nut consumer chain (`add_eddy_viscosity_correction`) is the
   bit-exactness argument of T0-T5: a helper there is a nofma gate on every
   LES/IDDES case, or leave it.
+
+## Item 1, done (2026-10-20)
+
+`scalar_transport_kernel` is two kernels, `scalar_transport_plain`
+(dirichlet / adiabatic, the wall-function and Kays ladders, the
+penalization) and `scalar_transport_conjugate` (the conjugate scheme with
+its band and C2 tangential branches), each over its own scalar list
+(`sc%plainList` / `sc%conjList`, built in `validate_conjugate_config`,
+1-cell dummies when empty, a kernel launches only for a non-empty list).
+Every per-cell expression moved verbatim; the lines that changed are the
+ones the handout listed (`if (adiab .or. conjug)` -> `if (adiab)`, the
+masks, `divuse`, the `rhs` branch), plus three per-run flags the config
+guarantees for a conjugate scalar and that the conjugate kernel therefore
+no longer tests (`useIbm`, `nondiv`, `wallfn`). The C2 tangential block
+stayed inside the conjugate kernel (not a third kernel).
+
+GATE FIRST, as asked: `validation/scalar/mixed.ini` (dirichlet + Kays,
+adiabatic + Kasagi source, conjugate; the analytic wavy wall, flow on) and
+`mixedles.ini` (the same under WALE) are the first cases with one plain AND
+one conjugate scalar; both are in `run_bitexact_s3.sh`. Gates vs
+`~/pass2_ref_binaries` (`d821341`), all `max_abs 0`: the 11-case S3 suite
+(CPU 1 rank, GPU), the 7-case suite (CPU 4 ranks, GPU), the mixed pair at
+CPU 1 and 4 ranks and GPU, 4 == 1 ranks, CPU == GPU; at PRODUCTION flags
+the CPU is `max_abs 0` too on `mixedles` and `turbsst` (every dataset, the
+split moves no contraction), so **the reference set is unchanged**;
+conjugate C1 / C2 / C3 with the new nofma binaries: see the commit message
+for the counts.
+
+MEASURED (RTX 3060, production flags, 128x128x32 = 524k cells, nb 32, one
+substage launch, nsys over 36 launches; `cuobjdump -res-usage` for the
+static resources -- ncu needs performance-counter permission this
+workstation does not grant):
+
+| kernel | registers | stack | ms/launch before | after | change |
+|---|---|---|---|---|---|
+| fused (one dirichlet scalar, constant Pr_t, WALE) | 255 | 88 B | 1.849 | 1.086 (plain) | **-41 %** |
+| fused (one dirichlet scalar, KAYS Pr_t, WALE) | 255 | 88 B | 3.965 | 3.198 (plain) | -19 % |
+| fused (one conjugate scalar, WALE) | 255 | 88 B | 1.932 | 1.881 (conjugate) | -3 % |
+| fused (dirichlet + adiabatic + conjugate, WALE) | 255 | 88 B | 5.824 | 3.974 + 1.882 | +0.6 % |
+
+Registers did NOT move: all three kernels sit at the 255 cap (the
+`jacobi_apply` lever is not available here -- occupancy is register-capped
+identically before and after), what moved is the stack frame (88 -> 40 B in
+both new kernels, i.e. the spills) and the dormant work per scalar. The
+production shapes gain (one plain scalar under LES/RANS, the S2 campaigns:
+-41 %; one conjugate scalar, the CHT tutorials: -3 %); a case with scalars
+of BOTH families pays the hoisted per-cell loads (face velocities, masks,
+nu_t averages) once per kernel and is at parity. TWO FINDINGS the
+measurement produced: (1) **`prt_model = kays` TRIPLES the plain kernel**
+(3.20 vs 1.09 ms per launch at one scalar): `prt_kays` is evaluated six
+times per cell per scalar, once per face from the face Peclet number; a
+cell-centred Pr_t (one evaluation, faces averaging it) is a numerics change,
+not bit-exact -- the review section 8 item, now sized. (2) The dormant
+wall-function ladder in the plain kernel costs NOTHING: a build with it
+compiled out runs 1.095 / 3.204 ms on the two plain cases (vs 1.086 /
+3.198), so a third "wall-function family" kernel is not warranted.
+Not done: the same cut on `rans_transport_kernel` (the handout's "second,
+after the scalar one") -- its own session.
+
+## Item 2, done (2026-10-20) -- and what it costs
+
+THE HELPERS. `plain_face_diffusivity(dm, useNut, wallfn, nutL, nutR, ypL,
+ypR, pr, prt, prtModel, re, P, y+_T)` is the plain family's ladder
+(molecular; + the thermal wall function's face value; + nu_t,face/Pr_t),
+`conjugate_face_total(dm, phL, phR, ks, rc, invd, addNut, nutFace, ...)` and
+its F2 twin `band_face_total(...)` the conjugate family's (the C1 / band
+coefficient + the eddy part where `addNut` = a fluid cell's uncut face
+under a turbulence model). The transport kernels AND the two statistics
+kernels of scalar_stats.f90 (sample, heat) call them, so the S4 statement
+"the statistics report the flux the kernel applied" is one definition, not
+three copies. The band dispatch is the CALLER's, once per scalar around its
+six faces -- see the cost table for why. The kernels hoist the nu_t and
+(under wall functions) y+ stencils once per cell, GUARDED, because both
+arrays are 1-cell dummies when their model is off and a helper argument
+is evaluated at the call site; the helper forms the 0.5 (L + R) average in
+the order the kernels used.
+
+NOT DONE, measured and dropped: the C2 tangential stencil as ONE
+offset-form loop in the conjugate kernel (the handout's "six blocks ->
+indicator_pass form"). It is bit-exact (gated with `tangential_correction
+= true`) but costs the conjugate kernel a further +3.6 % (stack frame 40 ->
+160 B: the loop's index arithmetic on a kernel already at the 255-register
+cap). The six blocks stay; what is unified is the CONVENTION: the two
+tangential axes in increasing order everywhere (`indicator_pass` and
+`face_corr_rate` used (z, x) for a y face, the kernel (x, z); the dot
+products in `conjugate_tangential` round differently) -- the printed
+indicator moves at round-off on y faces, invisible at its 4 printed digits.
+
+COST (RTX 3060, production flags, 524k cells, one substage launch, nsys,
+36 launches; item 1's kernels are the baseline):
+
+| variant | plain kernel (1 dirichlet, WALE) | conjugate kernel (1 conjugate, WALE) |
+|---|---|---|
+| item 1 (inline ladders) | 1.085 ms, stack 40 B | 1.883 ms, stack 40 B |
+| helpers, band dispatch INSIDE the helper, + the tangential loop | 1.109 (+2.2 %) | 2.043 (+8.5 %), stack 160 |
+| helpers, band dispatch inside, six blocks | 1.111 (+2.4 %) | 1.973 (+4.8 %), stack 80 |
+| **shipped: helpers, band dispatch by the caller, six blocks** | **1.110 (+2.0 %), stack 64** | **1.929 (+2.4 %), stack 96** |
+
+So the one definition costs about 2 % of EACH transport kernel: on a
+scalar case the kernel is ~10 % of the step, i.e. ~0.2 % of the step, at
+the edge of what the campaign matrix resolves. Every form tried keeps the
+255-register cap and raises the stack frame; the inlined helper changes the
+schedule, not the arithmetic. **This is the user's call: the commit stands
+alone, a one-commit revert returns the inline ladders.** The handout
+labelled the item performance-neutral; it is not quite.
+
+GATES (all at nofma vs `~/pass2_ref_binaries`): fields `max_abs 0` on CPU
+and GPU for the mixed pair, `wavy.ini` with `tangential_correction = true`,
+`wfs180_y30` (the wall-function ladder), a banded slab (`band_slab.ini`,
+F2) and `ibmwf180`; the STATISTICS FILE and the HEAT FILE byte-identical on
+the CPU for `ibmwf180` (wall functions + heat) and `wavy` + stats (the
+conjugate Nusselt columns); the 11-case and 7-case suites CPU + GPU; S4
+gates; conjugate C1-C3 -- counts in the commit message; the S4 statistics
+groups (stats accum plane levels restart det noeffect tools, 25 checks)
+PASS once `turbles_67600.h5` -- the S2 campaign snapshot they restart from,
+which lives in the sibling checkout `mobydiff.scalar`, not in this tree --
+is linked into `validation/scalar/`. FOUND, PRE-EXISTING (identical on the
+reference binary): the S4 `heat` group's check (u), `check_scalar_stats.py
+heat ... --balance`, reports the graded column as 3.8e+25 against the
+solver's 0.25 -- its Python form of the penalization term is stale (the
+2026-10-01 rational factor, or the case file's coefficient column), while
+the `--balance` closure at 1 % passes. One for the one-by-one
+re-validation pass; not touched here. LANDMINE FOUND: **the
+GPU statistics and heat files are not bit-reproducible run to run with ONE
+binary** (4e-16, the `atomic update` accumulation order; the fields are
+exactly reproducible), so a statistics identity is a CPU statement and a GPU
+one is round-off.
+
+## Item 3, done (2026-10-20)
+
+`init_block_exchange` enumerates ONCE. `collect_pieces` is the body the
+three families used to repeat (resolve -> round filter -> piece loop ->
+`candidate_boxes`), appending `piece_type` records -- what a transfer piece
+is before any family stores its part -- in the canonical (direction,
+candidate, piece) order for one destination block, one source owner (or
+any) and one round. My blocks are enumerated once for EVERY owner, in
+(round, block, direction, candidate, piece) order: the local entries are
+that list filtered to my own rank, the recv entries of peer p the same list
+filtered to p -- so the per-peer re-run of `resolve_neighbors` over all my
+blocks is gone and the order both ends rely on is visibly one list. The
+peers' blocks are enumerated once per peer with my rank as the owner (the
+send list, peer-major by construction). Three small `fill_*` routines hold
+what differs (local: both slots, gather map, blend, normal, phi row; recv:
+destination slot and box, blend, normal; send: source slot, destination
+box, gather map), `allocate_entries` the allocation block, and the pass
+loop (count, then fill) is gone with it: the records are counted. Also
+`axis_dim(off)` (the signed axis of a pure axis direction) is the one loop
+behind `interface_normal_dim` / `div_entry_var` / `iface_restrict_normal`.
+Lines: +315/-229 in comm.f90 -- not shorter, since the fills and the
+record type are new text, but the 40-line enumeration body exists once and
+the three families are its three uses.
+
+Integer bookkeeping and copies, so a copy is a copy; gated at nofma anyway
+vs `~/pass2_ref_binaries`: `min_channel` at 1, 2, 3 AND 4 ranks each
+`max_abs 0` vs the reference and 2 == 3 == 4 == 1 ranks (the load-bearing
+gate: four peer topologies, the one the divergence-list work was validated
+with); `validation/redblack_interface` 1 == 4 ranks EXACT and the uniform
+3-level patch 0.0, CPU and GPU; the 7-case suite CPU 4 ranks and GPU 7/7;
+the 11-case suite CPU and GPU 11/11.
+
+## Item 4, done (2026-10-20)
+
+`lattice_candidates(blk, level, cl, off, n, ids, ops, subs)` in blocks.f90
+is THE 2:1-aware probe: the same-level leaf (OP_COPY), else the coarser
+leaf covering the cell (OP_PROLONG), else the finer leaves inside it that
+are adjacent across `off` (OP_RESTRICT, fixed child order, their parity),
+`off = 0` keeping every child. The four copies are its four uses:
+`face_kind` (off = 0: ANY finer leaf makes the face FINE -- the one place
+the former copies differed, so the probe has the mode rather than the
+callers being made "equivalent"), `occupied_any_level` (off = 0, n > 0),
+`partition_surface` (off = +e_d, the children on the near side) and
+comm.f90's `resolve_neighbors` (off, plus owner/slot and the PROLONG
+parity). The OP_* constants moved to blocks.f90 with it: what the probe
+finds IS the exchange operation. `subdivide_node_line` moved to init.f90
+(it needs nothing from blocks) and is called by `build_node_line`'s
+`subdivided` branch, by blocks' `subdivide_level_line` -- now public, and
+what ibm.f90's level-line loop calls instead of re-implementing
+`build_level_lines` -- i.e. one midpoint formula for the three. Integer
+bookkeeping and the same formula: gated at nofma anyway vs
+`~/pass2_ref_binaries`: P0 29/29 (`validation/prepare/run_gates.sh`, the
+egg-carton classification included), P1 15/15 (`run_gates_stl.sh`),
+`run_gates_order.sh` 42/43 -- the one failing leg compares today's
+PRODUCTION binary with the 2026-10-01 one at production flags and differs
+by 1e-13, the FMA class the 2026-10-08 projection fusions introduced
+(pre-existing, the same on the previous commits) -- the 7-case suite (CPU
+4 ranks, GPU) 7/7, the 11-case suite (CPU, GPU) 11/11,
+`validation/redblack_interface` CPU and GPU all PASS.
+CAUGHT BY THE GPU GATE, FIXED BEFORE THE COMMIT: the probe's first form
+sized its result arrays 4, the exchange's maximum of ADJACENT children, but
+`face_kind`'s "every child" mode returns up to 8 -- a stack overflow inside
+`face_kind` on any refined cell that clobbered the caller's saved registers.
+The CPU builds passed every gate by stack layout; the GPU builds (same host
+code, `-mp=gpu`) segfaulted on every refined case, in `build_block_metadata`
+right after the call, with a bounds-checked -O0 build running clean. The
+arrays are `MAX_CANDIDATES = 8` now and `resolve_neighbors` copies the
+at-most-4 adjacent ones into the entry arrays with a guard. LESSON: a gate
+that passes on one build is not a gate; and gdb on a deterministic
+segfault (callee-saved registers holding small integers = a stack
+overflow in the callee) beats reasoning about the source.
+

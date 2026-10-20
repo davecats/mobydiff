@@ -2616,6 +2616,82 @@ immersed boundary. Phased, each phase verified before the next:
   `docs/history/worklog_2026.md`); then the one-by-one numerics
   re-validation of `validation/README.md`.
 
+- **Code simplification, item 1 -- the scalar transport kernel split by
+  mode (DONE 2026-10-20, `docs/next_session_code_simplification.md` "Item 1,
+  done").** `scalar_transport_kernel` (600 lines, ~100 privates, every mode
+  flag re-tested per cell) is `scalar_transport_plain` (dirichlet /
+  adiabatic; wall-function and Kays ladders; penalization) +
+  `scalar_transport_conjugate` (the C1 coefficient, the F2 band, the C2
+  tangential block), each over its own scalar list (`sc%plainList` /
+  `sc%conjList` from `validate_conjugate_config`); per-cell expressions
+  verbatim. GATE FIRST: `validation/scalar/mixed{,les}.ini` are the first
+  cases with one scalar of EVERY wall mode (in `run_bitexact_s3.sh`, now 11
+  cases). `max_abs 0` (nofma) vs `~/pass2_ref_binaries` on the 11-case,
+  7-case, mixed 1/4 ranks, CPU and GPU, and conjugate C1-C3; `max_abs 0` at
+  PRODUCTION flags too (CPU, `mixedles`/`turbsst`), so the reference set is
+  UNCHANGED. MEASURED (RTX 3060, 524k cells, per launch): one plain scalar
+  under WALE **-41 %** (1.85 -> 1.09 ms), one conjugate -3 %, a three-mode
+  case at parity (the hoisted per-cell loads are paid once per kernel).
+  Registers did NOT move -- all three kernels sit at the 255 cap; the stack
+  frame fell 88 -> 40 B -- so this is not the `jacobi_apply` occupancy lever,
+  it is dormant work removed. FOUND: **`prt_model = kays` triples the plain
+  kernel** (`prt_kays` six times per cell per scalar, once per face; a
+  cell-centred Pr_t would be a numerics change); the dormant wall-function
+  ladder costs nothing (compiled out: 1.095 vs 1.086 ms), so no third
+  kernel. ncu needs performance-counter permission the workstation lacks:
+  registers/stack are `cuobjdump -res-usage`, times are nsys.
+
+- **Code simplification, item 2 -- one face-diffusivity helper per scalar
+  family (DONE 2026-10-20, handout "Item 2, done").** `plain_face_diffusivity`
+  (molecular + thermal wall function + nu_t/Pr_t) and `conjugate_face_total`
+  / `band_face_total` (the C1 / F2 coefficient + the eddy part on a fluid
+  cell's uncut faces) are called by the transport kernels AND the statistics
+  kernels, so "the statistics report the flux the kernel applied" is one
+  definition. The band dispatch stays with the CALLER (per scalar, not per
+  face: inside the helper it cost the conjugate kernel 5 %); the C2
+  tangential stencil stays six blocks (one loop cost +3.6 %), only its
+  tangential-axis CONVENTION is unified across kernel / indicator /
+  `face_corr_rate`. **COST: ~2 % of each transport kernel (~0.2 % of a
+  scalar step), measured on the 3060 against item 1; every helper form
+  raises the stack frame at the 255-register cap. Its own commit, a one-line
+  revert if the user prefers the 2 %.** Gated `max_abs 0` (nofma, CPU + GPU)
+  on fields incl. `tangential_correction = true`, wall functions, the banded
+  slab; statistics + heat files byte-identical on the CPU. LANDMINE: **GPU
+  statistics / heat files are not bit-reproducible run to run** (4e-16,
+  `atomic update` order) -- the fields are; a stats identity is gated on the
+  CPU.
+
+- **Code simplification, item 3 -- comm.f90's one enumeration (DONE
+  2026-10-20, handout "Item 3, done").** `init_block_exchange` builds the
+  local / send / recv entry lists from ONE enumeration body
+  (`collect_pieces` -> `piece_type` records): my blocks once for every owner
+  (local = my rank's, recv of peer p = p's, the same list filtered -- the
+  per-peer re-run of `resolve_neighbors` is gone), the peers' blocks once per
+  peer; three `fill_*` hold what each family stores; `axis_dim` is the one
+  loop behind the three +axis classifications. Order preserved as (round,
+  block, direction, candidate, piece); the pass loop is gone (records are
+  counted). Gated `max_abs 0` (nofma): `min_channel` 1 == 2 == 3 == 4 ranks
+  and each vs the reference, `redblack_interface` 1 == 4 CPU and GPU, the
+  7-case (CPU 4 ranks + GPU) and 11-case (CPU + GPU) suites.
+
+- **Code simplification, item 4 -- the lattice probe and the node-line
+  subdivision, once each (DONE 2026-10-20, handout "Item 4, done").**
+  `lattice_candidates` (blocks.f90) is the one 2:1-aware probe behind
+  `face_kind`, `occupied_any_level`, `partition_surface` and comm.f90's
+  `resolve_neighbors` (it carries the "any child" mode `face_kind` needs,
+  the other three take the adjacent children); OP_COPY/RESTRICT/PROLONG live
+  in blocks.f90. `subdivide_node_line` lives in init.f90 and serves
+  `[grid.<d>] subdivided`, `build_level_lines` and ibm.f90's level lines
+  (through the now-public `subdivide_level_line`). Gated `max_abs 0`
+  (nofma): P0 29/29, P1 15/15, order 42/43 (the failing leg is the
+  pre-existing production-flag comparison with the 2026-10-01 binary, 1e-13),
+  the 7-case and 11-case suites CPU + GPU, red-black CPU + GPU. CAUGHT BY
+  THE GPU GATE: the probe's first form sized its results 4 (the adjacent
+  children) where `face_kind`'s "any child" mode returns up to 8 -- a stack
+  overflow the CPU builds survived by layout and the `-mp=gpu` host code
+  did not (segfault after the call, saved registers clobbered). **A gate
+  that passes on one build is not a gate.**
+
 ## Verification
 
 - Pure refactors must be bit-exact vs. the pre-refactor code: compare
