@@ -65,4 +65,12 @@ beyond the limit). The suites say which is which (recorded in
 Six fixed-step legs (the table: decay and no warning below, blow-up and the
 warning above) and six adaptive legs, the same two values on all three grids
 (`pecletmax` 0.60: no warning, decay; 0.66: the warning, and the run leaves
-the decaying solution). Recorded 2026-10-02: 12/12 PASS.
+the decaying solution).
+
+RE-VALIDATED 2026-10-21, commit 532ef54 (banner), production flags,
+workstation CPU, 1 rank, 27 s: 12/12 PASS. Fixed-step legs: max|u| at step
+600 decays to 1.5e-8 / 1.8e-10 / 2.4e-16 below (a/b/c, no warning) and is nan
+above (the warning printed); adaptive legs: `pecletmax` 0.60 decays
+(2.3e-8 / 2.5e-10 / 3.1e-16, no warning), 0.66 leaves the solution (4.4 /
+3.6 / 5.0, the warning). Same 12/12 as 2026-10-02. Settings changed for the
+rerun: none.

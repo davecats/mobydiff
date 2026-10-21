@@ -53,6 +53,15 @@ levels.
 
 ## Results (2026-07-13, all PASS)
 
+RE-VALIDATED 2026-10-21, commit 532ef54 (banner), production flags,
+workstation CPU 1 and 4 ranks + RTX 3060, 64 s, `run_gates.sh`: ALL PASS --
+uniform EXACT (0.0 on un/vn/wn, pn spread 0.0) on 1 rank, 4 ranks and the
+GPU, 1 == 4 ranks max_abs 0; dwall vs the exact prism reference 1.776e-15 /
+4.441e-16 / 8.620e-14 at levels 0/1/2 (yeff 1.776e-15 / 4.441e-16 /
+3.996e-15), ransgeom 1 == 4 ranks identical -- the 2026-09-26 numbers to the
+digit (F7 cannot move the zero-coefficient twin). Settings changed for the
+rerun: none.
+
 - uniform: max|u-u0| = max|v-v0| = max|w-w0| = 0.0 and pn spread = 0.0
   after 50 steps, on CPU 1 rank, CPU 4 ranks AND GPU; 1 == 4 ranks
   byte-identical (compare_fields --tolerance 0).

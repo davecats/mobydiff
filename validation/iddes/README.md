@@ -17,7 +17,7 @@ Evaluation toggles: `[turbulence] iddes_cdt1` (20 vs the DDES 8),
 ```bash
 cd validation/iddes
 ./run_gates.sh                  # all gates, one job at a time
-BIN=../../build_cpu/main RANKS=4 ./run_gates.sh iddes180
+BIN=../../build_cpu/moby_solve RANKS=4 ./run_gates.sh iddes180
 python3 check_gates.py          # needs python3 + h5py + numpy
 ```
 

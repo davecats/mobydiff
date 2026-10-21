@@ -26,7 +26,7 @@ cd "$(dirname "$0")"
 
 ARCH="${1:-gpu}"
 NRANKS="${2:-1}"
-BIN="../../build_${ARCH}/moby_solve"
+BIN="${BIN:-../../build_${ARCH}/moby_solve}"
 TRANSIENT_T=5.0
 AVERAGE_T=20.0
 

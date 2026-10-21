@@ -47,7 +47,7 @@ Why the core, not a wall patch (the decision):
    steps `max|u−1|=max|v−0.5|=max|w−0.25|=0.0`, p constant. The transfer
    (RESTRICT/PROLONG/copy) is exact for constants at every face/edge/corner under
    const-½ + reflux-off.
-3. **250-step turbulent stability** (`MOBY_STEPDIV=1`, a per-step divergence
+3. RETIRED 2026-10-21 (its `MOBY_STEPDIV` hook left with the diagnostic hooks; gates 1, 2, 4 and 5 cover the case). It was: **250-step turbulent stability** (`MOBY_STEPDIV=1`, a per-step divergence
    print removed in the 2026-06-30 hook cleanup; not reproducible as-is) — PASS. Step 1
    `div_max=9.24` (interpolated-IC transient, absorbed by the first projection),
    then post-transient `div_max` peaks 0.078 and **decays to ~0.012**; `div_l2`

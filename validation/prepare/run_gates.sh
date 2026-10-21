@@ -4,7 +4,7 @@
 # and the case file must be independent of the prepare rank count.
 #
 # Usage:  ./run_gates.sh [build_dir]        (default ../../build_cpu_nofma)
-# Needs the nofma CPU build (main + moby_prepare) and python3+h5py.
+# Needs the nofma CPU build (moby_solve + moby_prepare) and python3+h5py.
 set -uo pipefail
 
 cd "$(dirname "$0")"
@@ -50,8 +50,8 @@ run_case() { # <base> <steps-suffix-of-final-field> <ransgeom:0|1>
     rm -f "${pfx}.case.h5"
     check "${base}: prepare (default name)" mpirun -n 1 "$BUILD/moby_prepare" "${base}.ini"
     check "${base}: default-named == named case file" $PY h5same.py "${pfx}.case.h5" "$case"
-    check "${base}: solve (default-named case file)" mpirun -n 1 "$BUILD/main" "${base}.ini"
-    check "${base}: solve from case file" mpirun -n 1 "$BUILD/main" "${base}_file.ini"
+    check "${base}: solve (default-named case file)" mpirun -n 1 "$BUILD/moby_solve" "${base}.ini"
+    check "${base}: solve from case file" mpirun -n 1 "$BUILD/moby_solve" "${base}_file.ini"
     check "${base}: fields bit-exact" $CMP "${pfx}_${step}.h5" "${pfxf}_${step}.h5" un vn wn pn
     if [ "$rans" = 1 ]; then
         check "${base}: ransgeom identical" $PY h5same.py "${pfx}_ransgeom.h5" "${pfxf}_ransgeom.h5"
@@ -83,7 +83,7 @@ if [ -n "${GPU_BUILD:-}" ]; then
     sed -e "s|^field_prefix = wavyrf|field_prefix = wavyrG|" wavy_refine_file.ini \
         > wavy_refine_file_gpu.ini
     check "wavy_refine: GPU solve from case file" \
-        mpirun -n 1 "$GPU_BUILD/main" wavy_refine_file_gpu.ini
+        mpirun -n 1 "$GPU_BUILD/moby_solve" wavy_refine_file_gpu.ini
     check "wavy_refine: GPU==CPU from case file" \
         $CMP wavyrf_1.h5 wavyrG_1.h5 un vn wn pn
 fi

@@ -70,6 +70,26 @@ Notes:
   Inside the projection loop the copy stays OFF — the Dirichlet-p correction
   owns the face there.
 
+## Re-validated 2026-10-21
+
+RE-VALIDATED 2026-10-21, commit 532ef54 (banner), production flags (the
+bit-exact suite nofma), workstation CPU 1 and 4 ranks + RTX 3060 for the
+`ranks` group's GPU legs; `run_gates.sh` all groups 16 min, `run_restart_outlet.sh`
+69 s, `run_bitexact_outlet.sh` 1 rank 201 s and 4 ranks 201 s: ALL PASS.
+oblique EXACT; pois profile deviation vs the periodic reference 1.637e-3
+(x/lx 0.5) / 1.521e-3 (0.9); the Lamb-Oseen vortex's reflected fraction
+9.801e-5 (9.80e-5 on 2026-10-01 -- informational, no threshold: the number
+is the record, monotone since the outlet was predicted); oblique and
+pois_io 1 == 4 ranks EXACT; CPU vs GPU oblique 0.0, pois_io 7.8e-16 /
+2.6e-15 (the FMA class at production flags); config contradictions
+refused; `low` and `refined` groups PASS (the `refined` group runs at
+`dtmax = 2.5e-3`, which binds, so the 2026-10-21 interior-only Courant
+reduction cannot move it); restart == continuous max_abs 0 on all six
+outlet cases, the plane-less fallback 1.9e-4 / 2.2e-4 as recorded; the seven
+outlet cases max_abs 0 against the pass-2 reference set at 1 and 4 ranks.
+Settings changed for the rerun: none (`oblique.ini` keeps plain Jacobi 6 as
+a one-step exactness case).
+
 ## 2026-10-01: what the outlet does to these gates, and a prototype
 
 `../cylinder/README.md` (last section) runs down the outlet pressure mode:

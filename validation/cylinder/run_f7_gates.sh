@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# RETIRED 2026-10-21 (re-validation handout, section 3.5): a one-off
+# investigation driver of numerics-review step 9 -- it needs the
+# ~/step8_ref_binaries set and a sibling checkout. Its findings stay in
+# README.md ("how the numbers were produced"); it is not a gate.
+#
 # Numerics review step 9 (F7, the exact penalization factor): the two
 # cylinder measurements, each run with TWO binaries from the same state.
 #

@@ -2877,3 +2877,90 @@ immersed boundary. Phased, each phase verified before the next:
   pipe with the faster of Chebyshev 12 / SOR 6 (timed first on istmcorax)
   on HoreKa; the S2 LES pair on istmcetus; the R1 cheap items plus the band
   channel; the three main channel cases run and recorded.
+
+- **Re-validation pass, day 1 (2026-10-21/22, `docs/next_session_revalidation.md`;
+  binaries `532ef54`, staged in `~/reval_bin/532ef54` with the `main` symlink
+  and the unit-test binaries beside the solvers; the pass-2 reference set
+  unchanged).** One bullet per directory, numbers in the READMEs' dated blocks:
+  - `rans_sst` (first, the user's order): the twelve plain-Jacobi-6 inis moved
+    to Chebyshev 12, all sixteen to `cflmax = 1.0` without `sor` (commit
+    `532ef54`; the step is Peclet/dtmax-bound on every case). All 18 checks
+    PASS: turb180 u_tau 1.0000 / U+ 18.16 / log 5.0 %, turb395 20.17, ibm180
+    unchanged, refine180 core 0.6/0.5/2.8/1.7 %, the wf sweep as recorded,
+    laminart/lam30t/turb180t and the front checks as recorded. ONE finding:
+    `wf180_y30`'s near-centre deviation from the resolved reference read 3.02 %
+    against a tolerance set AT the measured 2.97 % -- the documented profile-
+    shape bias, not a defect; `--tolerance-center` is 0.035 with the history in
+    `check_gates.sh`. Restart == continuous at the DEVELOPED state (the nut
+    read-back on a converged field): turb180 from step 120 000 and ibm180wf
+    from step 100 000 both `max_abs 0` on `un vn wn pn k omega nut`; ibm180wf's
+    converged field is bit-identical to ibm180's (max_abs 0, 4.5e-16 in July).
+    The 9-case suite max_abs 0 (CPU 4 ranks + GPU, nofma) after the ini move;
+    `iddes/run_gates.sh` reads the LATEST turb180 field. A restart from a
+    non-RANS IC reads its `nut` back and reinitialises k/omega (the handout
+    said "reinitialises nut"; only the first steps differ).
+  - scalar twins: the ten RANS inis + conduction moved to Chebyshev 12 /
+    cflmax 1.0; the 11-case suite max_abs 0 (CPU) after the move. S1 ALL PASS
+    (the det group CPU == GPU exactly at nofma; the first run paired a
+    production CPU with a nofma GPU, my batch's fault). S3 solid / conserve /
+    balance / prep / refine / det / missing ALL PASS **after a checker fix**:
+    `check_scalar_ibm.py` paired the case file's coefficient tiles with the
+    field's blocks by row POSITION, and the two files list the leaves in
+    different key orders since 2026-10-01 -- half the "solid" tiles sat on
+    fluid blocks, which is what the 2026-10-20 S4 heat finding (Python graded
+    3.8e+25 vs the solver's 0.25) was; the tiles are matched by (origin,
+    level) now (`case_tiles`), the balance closes to 1.2e-4 (tolerance 1e-2),
+    and the solver's exclusion of solid cells from the graded term is mirrored.
+  - `courant_limit` 12/12, `diffusion_limit` 12/12, `penalization` to the
+    digit (orders 2.77/2.88/2.94; the step-9 `REF=` leg can no longer run: the
+    old binary refuses a case file of the new block order), `bodyforce` ALL
+    PASS (README written -- it had none), `rans_inlet` PASS (0.14 % / 2.15 %,
+    ranks EXACT), `block_nb` cpu + gpu ALL PASS, `redblack_interface` cpu +
+    gpu ALL PASS, `interface_decay` contraction 7.7x / 10.9x, `blasius` PASS
+    (theta 1.66 %, H 0.82 %; the ini moved to Chebyshev 12), `multilevel_body`
+    to the digit, `rans_geometry` flat 0.0 / wavy 2.3e-11, `freestream` all
+    groups + restart + bit-exact (1 and 4 ranks) ALL PASS with the 2026-10-01
+    numbers (reflected fraction 9.80e-5 stays informational), `body_outlet`
+    all + pocket + gpu (nofma) + twin ALL PASS to the digit, `conjugate` C1 61
+    / C2 75 / C3 all / pipe 36 PASS with ONE conservation number (1.288e-12),
+    `prepare` P0 29/29 and P1 15/15 (their first runs failed on the missing
+    `main` symlink in the staged set; the drivers call `moby_solve` now),
+    `refine2d` with a driver written from the README's gate statements
+    (uniform EXACT, twin EXACT, order 2.73, rans_xz EXACT; `setup.sh`
+    regenerates the xz zero-coefficient twin, whose archived copy the solver
+    refuses as legacy-ordered; `unibody_xz.ini` carries `keep_buried` itself),
+    `tutorials/sailplane` prepared on 2 ranks and 1 == 2 GPU ranks max_abs 0,
+    `tutorials/min_channel` README rewritten as the suite case.
+  - **Red-black across 2:1 (decision 6 -> decision 1):** the developed band
+    channel on istmcetus with Chebyshev 12 (the first niter-12 statistics of
+    `channel_interface/developed`: within ~1 % of KMM, no interface band) and
+    with red-black 6 / sor 1.5 (`run_developed.py --redblack`): the same
+    statistics to <= 0.5 %, no band, 0.143 against 0.120 s/step on the A6000.
+    SOR is admissible on refined cases and 19 % slower there; the omega limit
+    with an interface present lies in (1.6, 1.7) (`run_r1_items.sh cpu`).
+  - `tutorials/channel_kmm180`: the two-leg statistics on the RTX 5090 (33 +
+    22 min): U+ 18.44, u'+ 2.640, v'+ 0.834, w'+ 1.085, -<u'v'>+ 0.724 --
+    within ~1 % of KMM and the sampling scatter of the 2026-09-30 F1 legs;
+    recorded in the README with the inputs in `asset/reval_2026-10-21/`.
+  - The CHT pipe projection timing on istmcorax: Chebyshev 12 0.715 s/step,
+    red-black 6 0.630 s/step (200 steps each, same binary, the 5090); the
+    HoreKa statistics chain (`tutorials/cht/pipe/horeka/submit_cht_pipe.sh`)
+    runs leg D with red-black 6 from the settled state with its pressure
+    zeroed. **istmcorax rebooted five times during the evening** (17:54,
+    18:48, 19:53, 20:06, 20:09): both pipe snapshots were truncated and the
+    chains died; the KMM legs ran between reboots; the refine2d xz channel
+    moved to istmcetus. The CHT channel chain on HoreKa
+    (`tutorials/cht/channel/horeka/submit_cht_channel.sh`, resumable chunks,
+    the user's fallback account wired in) runs settle 65 000 + clean 650 000
+    steps from the campaign's settled state at 0.051 s/step on 4 A100.
+  - Drivers fixed on the way: `run_les.py` / `run_gate5.py` never prepared
+    their case files (step 7), now do, and take `--binary`; `run_developed.py`
+    takes `--binary` and `--redblack`; `run_validation.sh` takes `BIN`;
+    `run_beltrami.sh` takes `BIN` and runs nx 128 and the three slabs;
+    `check_gates.sh` (rans_sst) tolerance; `run_r1_items.sh`,
+    `refine2d/run_gates.sh`, `refine2d/setup.sh`, `analyse_developed.py` new;
+    the retired P1b / `run_f7_gates.sh` / `run_outlet_mode.sh` / core_patch
+    gate 3 carry their headers. A restart ini must state `sor` EXPLICITLY even
+    under Chebyshev when the IC carries another value (the KMM180-derived ICs
+    hold 1.5; F13 stops the run otherwise): the "delete the ignored sor line"
+    rule is for cold starts.

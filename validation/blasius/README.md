@@ -40,6 +40,17 @@ variant (a Dirichlet top, say) silently transplants that variant's faces —
 the outlet-top run restarted that way diverged by t ~ 14 on every binary
 (`docs/history/next_session_after_step8.md`).
 
+## Re-validated 2026-10-21
+
+RE-VALIDATED 2026-10-21, commit 532ef54 (banner), production flags, RTX 3060,
+1 rank (the case file is pinned to one rank), 42 s, `run_blasius.sh`: PASS --
+worst over the four stations at t = 2000: theta 1.66 %, H 0.82 %, du/Ue
+1.48e-3, dv/v_edge 0.0128, i.e. the Chebyshev row of the table below to the
+digit. Settings changed for the rerun: the ini moved from plain damped Jacobi
+to `accel = chebyshev` at the same `niter = 12` (decision 1 of the
+re-validation handout; the table below had already shown the two agree) and
+`cflmax = 1.0` (dtmax binds).
+
 ## Recorded results (2026-10-01, the outlet face predicted, GPU build, 1 rank)
 
 `docs/next_session_outlet.md`: the outlet faces (x_max and the top) are

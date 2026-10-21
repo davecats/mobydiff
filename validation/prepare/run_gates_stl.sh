@@ -53,8 +53,8 @@ sed -e "/^stl_file = /d" \
 ../../tools/set_case_file.sh flat_solve_ref.ini ../rans_geometry/ibm_coeff_blocks_l1.h5
 sed -e "s|^field_prefix = .*|field_prefix = ${pfx_new}|" flat.ini > flat_solve_new.ini
 ../../tools/set_case_file.sh flat_solve_new.ini flat_case.h5
-check "flat: solve from committed file" mpirun -n 1 "$BUILD/main" flat_solve_ref.ini
-check "flat: solve from prepared file" mpirun -n 1 "$BUILD/main" flat_solve_new.ini
+check "flat: solve from committed file" mpirun -n 1 "$BUILD/moby_solve" flat_solve_ref.ini
+check "flat: solve from prepared file" mpirun -n 1 "$BUILD/moby_solve" flat_solve_new.ini
 check "flat: 1-step fields match (1e-10)" $PY ../../tools/compare_fields.py \
     --tolerance 1e-10 "${pfx_ref}_1.h5" "${pfx_new}_1.h5" un vn wn pn
 check "flat: ransgeom dwall match (1e-9)" $PY - <<EOF

@@ -99,6 +99,7 @@ def run_case(name, a, binary):
     os.makedirs(dirB, exist_ok=True)
 
     mpirun = ["mpirun", "-n", str(a.ranks)]
+    pim = os.path.join(ROOT, "tools", "prepare_if_missing.sh")  # the case file, when missing
     big_nsteps = [(r"^nsteps = .*$", "nsteps = 100000000")]   # t_final governs
     dims = [(r"^dims = .*$", f"dims = {a.ranks} 1 1")]
     t_end = a.t_transient + a.t_average
@@ -109,6 +110,7 @@ def run_case(name, a, binary):
              [(r"^t_final = .*$", f"t_final = {a.t_transient}"),
               (r"^field_interval = .*$", "field_interval = 0"),
               (r"^file = .*$", f"file = {ic}")] + big_nsteps + dims)
+    sh([pim, str(a.ranks), binary, "input.ini"], cwd=dirA)
     sh(mpirun + [binary, "input.ini"], cwd=dirA)
     restart = final_field(dirA, case["prefix"])
     print(f"   transient final field: {restart}")
@@ -122,6 +124,7 @@ def run_case(name, a, binary):
              [(r"^t_final = .*$", f"t_final = {t_end}"),
               (r"^field_interval = .*$", f"field_interval = {a.snap_interval}"),
               (r"^file = .*$", f"file = {restart}")] + big_nsteps + dims)
+    sh([pim, str(a.ranks), binary, "input.ini"], cwd=dirB)
     sh(mpirun + [binary, "input.ini"], cwd=dirB)
     nsnap = len(glob.glob(os.path.join(dirB, f"{case['prefix']}_*.h5")))
     print(f"== {name} done: {nsnap} snapshots in {dirB}")
@@ -137,9 +140,11 @@ def main():
     ap.add_argument("--snap-interval", type=int, default=320,
                     help="dump a field every N steps during the stats leg "
                          "(~200+ snapshots over the window at dtmax)")
+    ap.add_argument("--binary", default=None,
+                    help="solver binary (default build_<arch>/moby_solve)")
     a = ap.parse_args()
 
-    binary = os.path.join(ROOT, f"build_{a.arch}", "main")
+    binary = a.binary or os.path.join(ROOT, f"build_{a.arch}", "moby_solve")
     if not os.path.isfile(binary):
         sys.exit(f"binary {binary} not found -- build with ./compile.sh {a.arch}")
 

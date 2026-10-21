@@ -49,6 +49,21 @@ group), `RANKS`. Helpers:
 
 ## Results (2026-08-27/28, CPU `build_cpu`, GPU `build_gpu_nofma`)
 
+RE-VALIDATED 2026-10-21, commit 532ef54 (banner), production flags (the
+determinism legs nofma), workstation CPU 1 rank + the RTX 3060 for the
+`det` legs: `run_gates_c1.sh all` 61/61 PASS (7 min), `run_gates_c2.sh all`
+75/75 PASS (31 min), `run_gates_c3.sh fraction transient nusselt budget
+channel` ALL PASS (the `channel` leg = `chan_conj` flat + refine budgets at
+1e-4, 4 min), `run_gates_pipe.sh all` 36/36 PASS (5 min). THE ONE
+conservation number of the insulated wavy box (gate 3, `check_conjugate.py
+conserve`, 100 steps): sum(C theta dV) drift **1.288e-12**, relative
+2.238e-11, tolerance 1e-9 -- the ADVECTIVE convective form's cut-cell leak
+(numerics review F2, 2026-09-27: 1.286e-12 / 2.235e-11 then; the 6.9e-18
+rows further down are the pre-F2 divergence-form state and stay as its
+record). Settings changed for the rerun: none (the conjugate gates carry
+their own `niter`). The drivers REWRITE the tracked record files
+(`*.dat`, `*.heat.txt`): `git status` after this batch shows which moved.
+
 PROVENANCE: every number below was produced with all four binaries
 (`build_{cpu,gpu}`, `build_{cpu,gpu}_nofma`) rebuilt from the FINAL source.
 That is worth stating because the Peclet-rate fix below changes `dt`: a gate

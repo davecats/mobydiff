@@ -51,7 +51,7 @@ the KMM180 DNS restart (`tools/make_channel_restart.py`, coarse base via the new
   `nut` sane (≥0, no NaN, coarse-side > fine-side = physical step), LES active
   (`nut_max/ν` 4.4–5.1).
 
-### Statistics campaign — READY TO RUN (developed-flow)
+### Statistics campaign (developed-flow)
 
 The quantitative gate (mean U log law + resolved stresses + `nut` profile,
 time-averaged over t=5..25). Four cases via `run_les.py` (two legs each:

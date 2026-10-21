@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
+# RETIRED 2026-10-21 (re-validation handout, section 3.5): this covered the
+# bit-exactness of moby_prepare's case files against the retired mobygeom
+# layout on the big committed geometries; the airfoil rows cannot be re-run
+# (their cases left on 2026-09-26) and the sailplane leg is now the
+# 1-rank == 2-rank one-step statement in tutorials/sailplane/README.md.
+# The record: `git show 532ef54^:validation/prepare/run_gates_big.sh`.
+#
 # P1b gates (docs/prepare_solve_strategy.md): moby_prepare vs mobygeom on
 # the BIG committed geometries. Only the ASCII+transform sailplane remains:
 # the NACA 0012 / SD7003 5-level airfoil legs were removed with

@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# RETIRED 2026-10-21 (re-validation handout, section 3.5): a one-off
+# investigation driver of the outlet pressure mode -- it needs the
+# ~/step8_ref_binaries set and a sibling checkout. Its findings stay in
+# README.md; it is not a gate.
+#
 # The outlet pressure mode on the Re 100 cylinder (docs/next_session_after_step9.md
 # item 3; README.md, last sections): from a clean pressure, ONE time unit at
 # Chebyshev niter 60 takes the stored p rms from 0.30 to 0.9-1.6 and the

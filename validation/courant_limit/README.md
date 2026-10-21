@@ -53,4 +53,13 @@ a rectangle, and near `pecletmax = 0.5` the convective margin is smaller
 Six fixed-step legs (the table) and six adaptive legs, the same two values
 for the three flows (`cflmax` 1.60: the perturbation stays below twice its
 seed; 1.85: it grows by more than 1e3 and the solver announces the value at
-init). Recorded 2026-10-02: 12/12 PASS.
+init).
+
+RE-VALIDATED 2026-10-21, commit 532ef54 (banner), production flags,
+workstation CPU, 1 rank, 46 s: 12/12 PASS. Fixed-step legs: the perturbation
+stays at its seed below (x 4.2e-7, xy 6.6e-7, d 7.5e-7 against the 5e-7 seed)
+and is inf above; adaptive legs: `cflmax` 1.60 stable on all three flows
+(3.9e-7 / 7.2e-7 / 7.1e-7), 1.85 unstable (6.2e-2 / 1.0e-1 / 1.2e+0, announced
+at init). Same 12/12 as 2026-10-02; the interior-only Courant reduction of
+2026-10-21 (`431a4f5`) moves none of these (periodic boxes, no inlet).
+Settings changed for the rerun: none.

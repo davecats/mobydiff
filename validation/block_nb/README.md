@@ -70,6 +70,18 @@ smoothing swallow level 0 entirely (at `nb = 16 8 16`: 280 leaves, all refined)
 and the gate silently loses half its coverage — `run_gates.sh` therefore checks
 the level histogram, not just the deviation.
 
+## Re-validated 2026-10-21
+
+RE-VALIDATED 2026-10-21, commit 532ef54 (banner), production flags, workstation
+CPU (4 ranks for the rank gate, 27 s) AND RTX 3060 (10 s): `run_gates.sh cpu`
+and `gpu` ALL PASS -- the three single-level tilings and `nb` unset max_abs 0,
+1 rank == 4 ranks max_abs 0, the two uniform-flow patches 0.0 / 0.0 with the
+level histograms 448/248/32 and 448/504/64. `beltrami_rect` and its red-black
+twin: max_abs 0 against the pass-2 reference set in the 9-case suite (CPU 4
+ranks and GPU, nofma, the same day). The FINDING table below was NOT
+re-measured (its layouts are not in the driver; nothing of the interface
+changed since). Settings changed for the rerun: none.
+
 ## FINDING: the 2:1 interface is NOT nb-independent
 
 Measured 2026-08-27. Two layouts refining the **identical** cell range

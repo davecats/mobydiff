@@ -11,14 +11,14 @@
 #           t=5..10 stats legs for default vs iddes_cdt1=8 / iddes_clip /
 #           iddes_delta=cbrt; check_gates.py reports them side by side)
 #
-# Environment:  BIN=<solver>  (default ../../build_gpu/main)
+# Environment:  BIN=<solver>  (default ../../build_gpu/moby_solve)
 #               RANKS=<n>     (default 1; the ranks gate manages its own)
 # Then: python3 check_gates.py
 set -o pipefail
 cd "$(dirname "$0")"
 set -u
 
-BIN=${BIN:-../../build_gpu/main}
+BIN=${BIN:-../../build_gpu/moby_solve}
 RANKS=${RANKS:-1}
 sel=${1:-all}
 status=0
@@ -70,14 +70,17 @@ fi
 
 # --- gate (c), fd = 1 limit: hold the T2 RANS turb180 fixed point ---
 if want fd1; then
-    if [ ! -f ../rans_sst/turb180_132565.h5 ]; then
-        echo "== fd1 SKIPPED: ../rans_sst/turb180_132565.h5 missing"; status=1
+    # the T2 fixed point is the LATEST turb180 field (../rans_sst/run_gates.sh turb180
+    # writes it; the step count moves with the time-step settings)
+    T2=$(ls -v ../rans_sst/turb180_[0-9]*.h5 2>/dev/null | tail -1)
+    if [ -z "$T2" ]; then
+        echo "== fd1 SKIPPED: ../rans_sst/turb180_<step>.h5 missing (run ../rans_sst/run_gates.sh turb180)"; status=1
     else
         sed -e 's/^model = rans/model = iddes/' \
             -e 's/^nsteps.*/nsteps = 2000/' -e 's/^t_final.*/t_final = 0.0/' \
             -e 's/^field_prefix.*/field_prefix = fd1_rans/' ../rans_sst/turb180.ini > .fd1.ini
         printf '\n[turbulence]\nfd_force = 1.0\n[les]\nmodel = wale\n' >> .fd1.ini
-        printf '[restart]\nfile = ../rans_sst/turb180_132565.h5\n' >> .fd1.ini
+        printf '[restart]\nfile = %s\n' "$T2" >> .fd1.ini
         run .fd1.ini "$RANKS" fd1_rans
         rm -f .fd1.ini
     fi

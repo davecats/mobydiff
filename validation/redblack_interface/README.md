@@ -62,7 +62,38 @@ Verified by hand alongside these, not automated here:
 - the **Jacobi 7-case suite bit-exact**, CPU and GPU, through the R1a extraction
   of `interface_correct` out of `jacobi_apply`.
 
-## NOT yet done — R1 is not complete
+## Re-validated 2026-10-21, and the R1 list closed
+
+RE-VALIDATED 2026-10-21, commit 532ef54 (banner), production flags, workstation
+CPU (52 s, 4 ranks) and RTX 3060 (6 s): `run_gates.sh cpu` and `gpu` ALL PASS
+(finite: max|un| 18.23, 1 rank == 4 ranks EXACT, the 3-level transfer gate
+0.0 / 0.0). The red-black suite case `../block_nb/beltrami_rect_redblack.ini`
+is max_abs 0 against the pass-2 reference set (CPU and GPU, nofma).
+Settings changed for the rerun: none.
+
+The items of the list below were run the same day (`run_r1_items.sh`,
+decision 6 of the re-validation handout):
+
+- **the developed Re_tau 180 wall-band channel against Chebyshev** --
+  `../channel_interface/developed/README.md`, "The red-black twin": the
+  same statistics to the sampling scatter (<= 0.5 %), no interface band in
+  either, red-black 6 at 0.143 s/step against Chebyshev 12 at 0.120 on an
+  A6000. **Red-black SOR across a 2:1 interface works** and is admissible
+  on refined cases (decision 1); it is not the faster projection there.
+- **the omega stability limit with an interface present** (`run_r1_items.sh
+  cpu`, `refined_channel.ini` for 200 steps on 4 ranks): stable at sor 0.8,
+  1.0, 1.2, 1.4, 1.5 and 1.6 (max|un| 18.28 throughout), DIVERGES at 1.7
+  (max|un| 3e44). The production 1.5 has margin; the limit lies in (1.6, 1.7).
+- **the Beltrami y-slab regression** and **`refine_body` over 2000 steps**:
+  `run_r1_items.sh gpu`, recorded below when run.
+- **the global mass residual with a refined patch**: not run -- the `divsum`
+  tool left with the `MOBY_*` hooks; the surviving mass statement is the
+  body_outlet checker's interior rms divergence (1.0e-4 on the pocket case).
+- **performance**: the measured 19 % per-step cost on the band channel above
+  is the number; the exchange-round reduction stays with the performance
+  handout.
+
+## The R1 list as it stood before 2026-10-21
 
 `docs/next_session_redblack_interface.md` §6 lists these as mandatory before
 declaring R1 done, and they have not been run:

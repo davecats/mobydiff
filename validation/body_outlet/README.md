@@ -79,6 +79,20 @@ matter, and it is why the domain is four gap widths long.
 
 ## Measurements
 
+RE-VALIDATED 2026-10-21, commit 532ef54 (banner), production flags (the
+`gpu` group with the nofma pair), workstation CPU 4 ranks + RTX 3060;
+`run_gates.sh all` 43 min, `pocket` 4 min, `gpu` + `twin` 2 min: ALL PASS.
+profile: bulk-flux ratio 0.999102, `max|u_outlet - u_twin|` 1.347e-3,
+developed-ness 2.6e-5, G 1.199866, last-cell p 3.7466e-2 / ratio 0.99921,
+solid u 9.4e-28, plane solid faces 1.6e-28, flux imbalance -5.6e-16 -- the
+2026-10-05 numbers below to the digit; mirror u 2.9e-15 (3.3e-15 then), p
+5.0e-13, outlet face 3.3e-15; permute y 0.0, permute z 2.4e-15 / p 6.0e-13;
+limits as recorded; ranks 1 == 4 EXACT (incl. `un_xmax`); restart ==
+continuous EXACT; GPU == CPU EXACT at nofma; the zeroed-coefficient twin ==
+body-free EXACT; pocket max|u| in the dimple rows 7.69e-2 (bound 0.5),
+interior rms divergence 1.012e-4 (bound 1e-3; 1.0e-4 recorded). Settings
+changed for the rerun: none.
+
 All numbers 2026-10-05, `build_cpu` (production flags) unless said otherwise,
 head of the session's branch; `run_gates.sh all` plus the `gpu` group with the
 nofma pair.

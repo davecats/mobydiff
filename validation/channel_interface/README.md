@@ -4,14 +4,14 @@ Re_tau = 180 channel (u_tau = 1: one time unit = one eddy turnover).
 Three cases:
 
 > **Solver (defaults set in the inis).** The projection is
-> Chebyshev-accelerated damped Jacobi (`accel = chebyshev`) at `sor` (omega)
-> `= 0.8`, `niter = 6`. `sor < 1` is REQUIRED -- simple Jacobi DIVERGES for
-> `sor > 0.8` (the old red-black SOR used 1.5). At this niter the projection is
-> under-converged for both accelerators (it plateaus on the large scales; a
-> multi-level Schwarz is the planned fix), but on the uniform reference (1000
-> steps) Chebyshev holds ~3.4x lower divergence than plain Jacobi at the same
-> niter=6 for ~1.6% more cost -- see `divergence_comparison.png`. Set
-> `[pressure] accel = jacobi` to compare against plain damped Jacobi.
+> Chebyshev-accelerated damped Jacobi (`accel = chebyshev`) at `niter = 12`
+> (6 until 2026-09-26) with `sor = 0.8` -- `sor < 1` is REQUIRED, simple
+> Jacobi DIVERGES for `sor > 0.8` (the old red-black SOR used 1.5; the
+> red-black twin of `developed/` runs at 1.5 with `solver = redblack`). On
+> the uniform reference (1000 steps) Chebyshev held ~3.4x lower divergence
+> than plain Jacobi at equal niter for ~1.6 % more cost -- see
+> `divergence_comparison.png`. `cflmax = 1.0` since the 2026-10-21 rerun
+> (dtmax binds).
 >
 > **Note (2026-09-26): the reflux setup originally described here no longer
 > exists.** The refined cases were first run with `[blocks] momentum_reflux =

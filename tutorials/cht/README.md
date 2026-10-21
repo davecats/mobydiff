@@ -11,7 +11,7 @@ published DNS.
 | what it isolates | the conjugate **physics**: the face coefficient is the exact harmonic mean here | the **immersed-boundary approximation** on top of that physics |
 | Re_τ, Pr | 149, 0.71 | 181, 0.71 |
 | sweep | 6 scalars: κ_s and C_s each over four decades | 7 scalars: the effusivity bracket from isothermal to isoflux |
-| headline | near-wall variance peak **+0.7 %**, full profiles 0.4–3.8 % | conjugate signature **≤ 2 %** across the whole bracket, conductivity pair **0.1 %** |
+| headline | near-wall variance peak **+0.7 %**, full profiles 0.4–3.8 % | conjugate signature **≤ 2 %** across the whole bracket, conductivity pair **0.2 %** |
 
 Read `channel/` first: it establishes that the scheme gets conjugate
 turbulence right where the discretisation is exact, which is what makes the

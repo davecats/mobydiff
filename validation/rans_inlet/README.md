@@ -31,6 +31,15 @@ are inlet-face-gated and dormant in every channel.
 
 ## Results (2026-07-13, all PASS)
 
+RE-VALIDATED 2026-10-21, commit 532ef54 (banner), production flags,
+workstation CPU, 1 and 4 ranks, 19 s: ALL GATES PASS -- the three faces
+reported "(declared)" inlet / outlet / wall, first-column mid-channel k =
+k_inf to 0.14 % and omega = omega_inf to 2.15 % after 500 steps (the
+2026-09-26 niter-12 values to the digit), 1 == 4 ranks EXACT (max_abs 0 on
+un vn wn pn k omega nut). A cold start, so the nut read-back of 2026-10-21
+does not enter. Settings changed for the rerun: none (the ini was at
+Chebyshev 12 already).
+
 - gate (a): all 7 cases BIT-EXACT (max_abs 0) vs the dd37937 binaries,
   CPU AND GPU, incl. k/omega/nut (+gamma/rethetat on lam30t).
 - gate (b): report_patch_types prints inlet/outlet/wall "(declared)";

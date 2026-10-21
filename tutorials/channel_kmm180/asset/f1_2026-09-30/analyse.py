@@ -25,7 +25,7 @@ for name, q, where in [("U+ centreline", "Up", "y = 1"), ("u'+ peak", "u", "max"
     else:
         ia, ib = np.argmax(a[q]), np.argmax(b[q]); va, vb = a[q][ia], b[q][ib]; loc = f"y+ {a['yp'][ia]:.1f}/{b['yp'][ib]:.1f}"
     print(f"{name:14s} {va:10.4f} {vb:10.4f} {vb - va:10.2e}  {loc}")
-Ub_a = np.trapz(a["Up"], a["y"]) / 2.0; Ub_b = np.trapz(b["Up"], b["y"]) / 2.0
+Ub_a = np.trapezoid(a["Up"], a["y"]) / 2.0; Ub_b = np.trapezoid(b["Up"], b["y"]) / 2.0
 print(f"{'bulk U+':14s} {Ub_a:10.4f} {Ub_b:10.4f} {Ub_b - Ub_a:10.2e}")
 print("\nmax |F1 - pre| over the profile, and the profile's own scale:")
 for name, q in [("U+", "Up"), ("u'+", "u"), ("v'+", "v"), ("w'+", "w"), ("-<u'v'>+", "uv")]:

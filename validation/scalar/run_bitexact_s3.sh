@@ -18,7 +18,7 @@
 #
 # BOTH binaries must be nofma builds (`./compile.sh cpu_nofma` / `gpu_nofma`).
 #
-#   REF=~/backflow_ref_binaries/build_cpu_nofma/moby_solve NEW=../../build_cpu_nofma/moby_solve ./run_bitexact_s3.sh
+#   REF=~/pass2_ref_binaries/build_cpu_nofma/moby_solve NEW=/abs/build_cpu_nofma/moby_solve ./run_bitexact_s3.sh
 #
 # The output prefix is keyed on MODE: two suites with the same MODE running
 # at once in this tree delete each other's snapshots (measured 2026-09-27,

@@ -98,6 +98,7 @@ def run_case(name, a, binary):
     dA, dB = os.path.join(runs, "transient"), os.path.join(runs, "stats")
     os.makedirs(dA, exist_ok=True); os.makedirs(dB, exist_ok=True)
     mpirun = a.mpirun.split() + ["-n", str(a.ranks)]
+    pim = os.path.join(ROOT, "tools", "prepare_if_missing.sh")  # the case file, when missing
     dims = [(r"^dims = .*$", f"dims = {a.ranks} 1 1")]
 
     # 1. transient: stats OFF, no snapshots
@@ -108,6 +109,7 @@ def run_case(name, a, binary):
               (r"^stats_write_interval = .*$", "stats_write_interval = -1"),
               (r"^field_interval = .*$", "field_interval = 0"),
               (r"^file = .*$", f"file = {ic}")] + dims)
+    sh([pim, str(a.ranks), binary, "input.ini"], cwd=dA)
     sh(mpirun + [binary, "input.ini"], cwd=dA)
     restart = final_field(dA, name)
 
@@ -122,6 +124,7 @@ def run_case(name, a, binary):
              [(r"^t_final = .*$", f"t_final = {a.t_transient + a.t_average}"),
               (r"^field_interval = .*$", f"field_interval = {a.snap_interval}"),
               (r"^file = .*$", f"file = {restart}")] + dims)
+    sh([pim, str(a.ranks), binary, "input.ini"], cwd=dB)
     sh(mpirun + [binary, "input.ini"], cwd=dB)
     nsnap = len(glob.glob(os.path.join(dB, f"{name}_*.h5")))
     print(f"== {name} done: channel_stats + {nsnap} snapshots in {dB}")
@@ -139,8 +142,10 @@ def main():
                     help="dump a field (with nut) every N steps in the stats leg")
     ap.add_argument("--mpirun", default="mpirun",
                     help="mpirun launcher (use the hpcx full path on this host)")
+    ap.add_argument("--binary", default=None,
+                    help="solver binary (default build_<arch>/moby_solve)")
     a = ap.parse_args()
-    binary = os.path.join(ROOT, f"build_{a.arch}", "main")
+    binary = a.binary or os.path.join(ROOT, f"build_{a.arch}", "moby_solve")
     if not os.path.isfile(binary):
         sys.exit(f"binary {binary} not found -- ./compile.sh {a.arch}")
     order = ["reference", "uniform", "slab", "patch"]

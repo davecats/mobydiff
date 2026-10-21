@@ -69,13 +69,18 @@ def main():
                     help="xz: wall bands refined in x,z only (R2D-2 gate; y keeps "
                          "the stretched base line at level 1; own IC_xz.h5)")
     ap.add_argument("--name", default=None, help="run subdir name (default: default / xz)")
+    ap.add_argument("--binary", default=None,
+                    help="solver binary (default build_<arch>/moby_solve)")
+    ap.add_argument("--redblack", action="store_true",
+                    help="red-black SOR (niter 6, sor 1.5) instead of Chebyshev 12: the R1 "
+                         "admission test of SOR across the 2:1 wall bands (default name: redblack)")
     a = ap.parse_args()
 
-    binary = os.path.join(ROOT, f"build_{a.arch}", "moby_solve")
+    binary = a.binary or os.path.join(ROOT, f"build_{a.arch}", "moby_solve")
     if not os.path.isfile(binary):
         sys.exit(f"binary {binary} not found -- build with ./compile.sh {a.arch}")
     xz = a.refine_dims == "xz"
-    name = a.name or ("xz" if xz else "default")
+    name = a.name or ("redblack" if a.redblack else "xz" if xz else "default")
     t_end = a.t_transient + a.t_average
     # xz quadtree: the wall bands refine in x,z only (the IC leaf table and
     # the solver builder must agree, so the IC is refine_dims-specific).
@@ -86,6 +91,9 @@ def main():
     # (same rank count as the solve: an unset nb is one block per prepare rank).
     pim = os.path.join(ROOT, "tools", "prepare_if_missing.sh")
     dims_sub = [(r"^dims = .*$", f"dims = {a.ranks} 1 1")]
+    if a.redblack:
+        dims_sub += [(r"^accel = chebyshev$", "solver = redblack"),
+                     (r"^sor = 0.8.*$", "sor = 1.5"), (r"^niter = 12$", "niter = 6")]
 
     # 0. initial condition
     if not os.path.isfile(ic):

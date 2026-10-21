@@ -56,6 +56,17 @@ python3 check_rans_geometry.py --mode wavy  wavy_ransgeom.h5
 python3 check_rans_geometry.py --mode wavy  wavy_refine_ransgeom.h5
 ```
 
+RE-VALIDATED 2026-10-21, commit 532ef54 (banner), production flags,
+workstation CPU 1 rank, minutes (the dumps are init-only): ALL PASS --
+`flat_l1` / `flat_refine` against the exact slab-box reference max|dwall-ref|
+0.0 / 0.0 at every level (the files `ibm_coeff_blocks_l1/l2.h5` as they
+stand; wallcell mismatches 0), `wavy` 2.277e-11, `wavy_refine` 2.347e-11 /
+2.435e-11 (levels 0/1; 2.35e-11 / 2.44e-11 on 2026-07-07), `walldist_test`
+(the sphere through the periodic face) 1.56e-7 / 1.56e-10 at tolerance
+1e-7 / 1e-10. `setup.sh`'s mobygeom path is retired (its note of
+2026-09-26); `moby_prepare` is the generator. Settings changed for the
+rerun: none.
+
 Re-run 2026-09-26 (`niter = 12`, was 6 — irrelevant here, the dump is
 init-only): `flat_l1` / `flat_refine` PASS against the exact slab-box
 reference with the coefficient files built by `moby_prepare` from

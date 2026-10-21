@@ -46,6 +46,20 @@ file was bit-exact against it (validation/prepare/run_gates_big.sh, P1b), and
 the retired mobygeom cross-check still reads the grid straight from the case
 file (`--grid-file sailplane_case.h5`).
 
+## Re-validated 2026-10-21
+
+RE-VALIDATED 2026-10-21, commit 532ef54 (banner), production flags: `moby_prepare`
+on 2 workstation CPU ranks (18 000 leaves, `nb = 10`, under 2 min), then the
+tutorial's one-step solve (`nsteps = 1`) on the RTX 3060 on 1 rank and on 2
+ranks (23 s each, the first-call setup): the two fields are identical at
+**max_abs 0** on `un vn wn pn` (18 M cells). No physics number exists for
+this case or is needed -- it is the file-IBM-from-CAD exercise; the
+bit-exactness of the prepared file against the retired mobygeom layout
+(the former P1b leg of `validation/prepare/run_gates_big.sh`, retired
+2026-10-21) is superseded by this rank-independence statement. Settings
+changed for the rerun: none (`cflmax = 0.5` kept: a one-step case at a
+fixed `dt`).
+
 ## Boundary conditions (changed 2026-09-27, numerics review F4)
 
 `x_min` is a uniform inflow (`u = 1`, Neumann p); `x_max` is a declared

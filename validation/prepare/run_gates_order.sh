@@ -82,7 +82,7 @@ dt = 0.001
 dtmax = 0.001
 nsteps = 5
 t_final = 0.0
-cflmax = 0.8
+cflmax = 1.0
 pecletmax = 0.5
 
 [pressure]

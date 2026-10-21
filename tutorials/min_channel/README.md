@@ -1,64 +1,34 @@
-# Minimal-span channel: cheap full-step reproduction of the 2:1 interface blow-up
+# Minimal-span channel: the suite's blocks + 2:1 + Chebyshev case
 
-> **HISTORICAL.** This case and the numbers below date from the original
-> diagnosis, run with the old `sor = 1.5 / niter = 3`. That `sor = 1.5` ALONE
-> diverges (simple Jacobi needs `sor <= 0.8`), so it confounded the interface
-> study. The inis have since been updated to the current defaults
-> (`sor = 0.8, niter = 6, accel = chebyshev`) and the interface treatment has been
-> reworked, so the runs below no longer reproduce as written -- re-measure if used.
-> Today the refined `input_gpu.ini` is the standard regression suite's blocks +
-> 2:1 interface + Chebyshev case (`validation/README.md`), run 1- and 4-rank for
-> bit-exactness; the blow-up study below is the record of how it got there.
+A Re_tau = 180 channel (natural-stretched y, `forcing_x = 1`, the channel
+initialiser's mean profile + transition disturbance) shrunk in span to a
+minimal-flow-unit slab, with both near-wall bands refined to level 1 (flat
+y-interfaces at y+ = 112, as in `validation/channel_interface`). It keeps the
+channel velocity (~18) that makes the 2:1 interface projection a real test
+-- a laminar Poiseuille base never exercised it -- at ~1/200th of the
+validation's cost. It is the first case of the 9-case bit-exactness suite
+(`validation/scalar/run_bitexact.sh`, 20 steps, 1 == 4 ranks), i.e. the
+suite's blocks + 2:1 interface + Chebyshev-Jacobi (`niter = 12`) case.
 
-This is the **Step-1 confirmation gate** for the 2:1 interface projection
-instability (`docs/history/interface_review.md` §vi). It
-reproduces the `validation/channel_interface` turbulent blow-up at ~1/200th the
-cost by keeping the *exact* Reynolds number, wall-normal/streamwise grid and
-velocity scale of the Re_tau=180 channel but shrinking the spanwise extent to a
-minimal-flow-unit slab.
+| ini | grid | steps | role |
+|---|---|---|---|
+| `input.ini` | 128 x 64 x 8 | 400 | the SUITE case (the driver caps it at 20 steps) |
+| `input_gpu.ini` | 128 x 64 x 16 | 4000 | the refined case at full length, a stability run |
+| `input_gpu_noref.ini` | 128 x 64 x 16 | 4000 | its uniform control (`[blocks] refine` removed) |
+| `input_gpu_short.ini` | 128 x 64 x 16 | short | a quick GPU smoke test |
 
-Why the cheap laminar reproductions failed first: the zero-coarse-average
-interface mode is high-k and viscously damped, so on a low-velocity laminar base
-it always decays. It only blows up when the **channel velocity (~18)** makes the
-nonlinear advection of the amplified interface-normal velocity outrun viscosity.
-The minimal-span channel keeps that velocity; the laminar Poiseuille (Umax=1) did
-not, which is why it stayed stable at every Re.
+```bash
+module load toolkits/nvhpc/25.9
+mpirun -n 1 build_cpu/moby_prepare tutorials/min_channel/input_gpu.ini   # the case file, once
+mpirun -n 1 build_gpu/moby_solve tutorials/min_channel/input_gpu.ini
+```
 
-## The two cases (run on GPU; CPU is ~80x slower)
+Inspect max|u|, max|v| over the `channel_field_*.h5` snapshots (a few lines
+of h5py over `un`/`vn`): the refined run must stay bounded, turbulent O(20),
+like the control.
 
-    module load toolkits/nvhpc/25.9
-    mpirun -n 1 build_cpu/moby_prepare input_gpu.ini      # the case files, once
-    mpirun -n 1 build_cpu/moby_prepare input_gpu_noref.ini
-    mpirun -n 1 build_gpu/moby_solve input_gpu.ini        # refined: 2:1 interface
-    mpirun -n 1 build_gpu/moby_solve input_gpu_noref.ini  # control: uniform, no interface
-
-Both: 128 x 64 x 16, Re_tau=180, natural-y grid, forcing_x=1, the channel
-initialiser's mean profile + transition disturbance. `input_gpu.ini` refines
-both near-wall bands to level 1 (flat y-interfaces at y+=112, as in the
-validation); `input_gpu_noref.ini` is identical with `[blocks] refine` removed.
-
-Inspect max|u|, max|v| vs step over the `channel_field_*.h5` snapshots (the
-original `tools/check_interface_shear_mode.py` no longer exists; a few lines of
-h5py over the `un`/`vn` datasets reproduce the table below).
-
-## Result (current code, the defect)
-
-| step | refined (2:1 interface) | control (uniform) |
-|------|-------------------------|-------------------|
-| 250  | max\|u\|=18.4, max\|v\|=0.38 | 18.4, 0.14 |
-| 500  | 21.5, 3.36              | 18.4, 0.11 |
-| 750  | **245, 441**            | 18.5, 0.09 |
-| 1250 | **5e5**                 | 18.6, 0.06 |
-| 3500 | (10^80, dead)           | **19.2, 0.015** (bounded) |
-
-Identical inputs; the *only* difference is the 2:1 interface. The refined case
-blows up at the interface around step 750 (t~0.23); the uniform control stays
-bounded. This isolates the blow-up to the interface, full-step, at the real
-channel velocity.
-
-## Step-2 acceptance
-
-The projection-coupling fix must make `input_gpu.ini` stay **bounded** (turbulent
-O(20), like the control) instead of diverging — while every exact gate
-(uniform-flow 0.0, channel nb=4 bit-exact, interface_decay contraction, mass
-round-off, and the since-removed MOBY_HALO_AUDIT clean) still passes.
+History: this directory was the Step-1 confirmation gate of the original 2:1
+interface projection blow-up (`docs/history/interface_review.md` section vi),
+run with the old red-black `sor = 1.5 / niter = 3` before the interface
+treatment was reworked; those numbers no longer reproduce and were removed
+on 2026-10-21 (`git show 532ef54:tutorials/min_channel/README.md` has them).

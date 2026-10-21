@@ -33,6 +33,16 @@ order >= 2.7 and `|err| <= 2e-4` at dt = 0.04; at `lambda = 200` (the steady
 fixed point, lambda T = 40) `|err| <= 1e-13` at every dt; the fields uniform
 to round-off, v = w = 0.
 
+RE-VALIDATED 2026-10-21, commit 532ef54 (banner), production flags,
+workstation CPU, 1 rank, 5 s: PASS, every number of the two "rational P3"
+rows below and the `lambda = 200` steady values (2.9e-15 velocity, 2.2e-15
+scalar at dt = 0.04, round-off below) reproduced TO THE DIGIT. The `REF=`
+leg (an older factor for comparison) is no longer runnable here: the step-9
+binary refuses a case file prepared by today's `moby_prepare` ("case file
+does not match the ini", the block-order change of 2026-10-01), so the step-8
+and step-9 rows stand as the 2026-10-01 record. Settings changed for the
+rerun: none.
+
 Recorded 2026-10-01, `lambda = 20`, `|value(T) - exact|` (CPU and GPU builds
 give the same digits):
 

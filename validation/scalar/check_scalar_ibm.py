@@ -67,6 +67,8 @@ import h5py
 from scalar_tools import BlockGeometry, subdivide
 
 SOLID = 1.0e30
+# init.f90 SOLID_FACE_THRESHOLD: a cell whose coef_p exceeds it is SOLID
+SOLID_FACE_THRESHOLD = 1.0e20
 # ibm.f90 set_ibm_geometry_defaults / wavy_wall_height
 WAVY_AMP, WAVY_N, WAVY_PHASE, WAVY_OFFSET = 2.5e-2, 1, 0.0, 1.0e-2
 # ibm.f90 bisection
@@ -126,7 +128,7 @@ def cmd_solid(a) -> int:
         worst, nsolid = 0.0, 0
         solid_mask = None
         if a.case:
-            solid_mask = case_solid_mask(a.case, a.re)
+            solid_mask = case_solid_mask(a.case, a.re, geo.blocks)
         for bid in range(geo.n_blocks):
             x, y, _, _ = geo.mesh(bid)
             if solid_mask is not None:
@@ -145,15 +147,33 @@ def cmd_solid(a) -> int:
     return 0 if ok else 1
 
 
-def case_solid_mask(case_file: str, re: float):
+def case_tiles(case_file: str, field_blocks, name: str = "coef_p_blocks"):
+    """The case file's per-leaf tiles REORDERED to the field's block order,
+    matched by (origin, level). The two files may list the leaves in
+    different key orders (the solver's minimum-surface order since
+    2026-10-01 against the file's), so a positional pairing puts a tile on
+    the wrong block -- which is what made this checker's graded term read
+    3.8e+25 against the solver's 0.25 (found 2026-10-20, understood
+    2026-10-21: half the "solid" tiles sat on fluid blocks)."""
+    with h5py.File(case_file, "r") as c:
+        rows = c["blocks"][...]
+        tiles = c[name][...]
+    index = {tuple(int(v) for v in r[:4]): i for i, r in enumerate(rows)}
+    try:
+        order = [index[tuple(int(v) for v in r[:4])] for r in field_blocks]
+    except KeyError as e:
+        raise SystemExit(f"case file and field file have different leaves ({e})")
+    return tiles[order]
+
+
+def case_solid_mask(case_file: str, re: float, field_blocks):
     """Per-block boolean masks (in FIELD dataset order) of coef_p >= SOLID/Re."""
     out = []
-    with h5py.File(case_file, "r") as f:
-        coefp = f["coef_p_blocks"]
-        nbi, nbj, nbk = coefp.shape[1] - 2, coefp.shape[2] - 2, coefp.shape[3] - 2
-        for bid in range(coefp.shape[0]):
-            tile = coefp[bid, 1:nbi + 1, 1:nbj + 1, 1:nbk + 1]   # (i, j, k)
-            out.append(np.transpose(tile, (2, 1, 0)) >= 0.5 * SOLID / re)  # (k, j, i)
+    coefp = case_tiles(case_file, field_blocks)
+    nbi, nbj, nbk = coefp.shape[1] - 2, coefp.shape[2] - 2, coefp.shape[3] - 2
+    for bid in range(coefp.shape[0]):
+        tile = coefp[bid, 1:nbi + 1, 1:nbj + 1, 1:nbk + 1]   # (i, j, k)
+        out.append(np.transpose(tile, (2, 1, 0)) >= 0.5 * SOLID / re)  # (k, j, i)
     return out
 
 
@@ -298,20 +318,23 @@ def cmd_coefp(a) -> int:
 # (s) Nusselt number: the penalization integral and the CV border flux
 # --------------------------------------------------------------------------
 def penalization_heat(field: str, case: str, scalar: str, value: float, pr: float):
-    """(Q, int s dV, t) of one snapshot: Q = int coef_p (s_body - s)/Pr dV."""
-    with h5py.File(case, "r") as c:
-        coefp = c["coef_p_blocks"][...]
+    """(Q, int s dV, t) of one snapshot: Q = int coef_p (s_body - s)/Pr dV over
+    the NON-SOLID cells -- the solver's body_heat_kernel (scalar_stats.f90)
+    excludes solid cells explicitly, because their heat is the staircase
+    term and the 1e28 x (s_body - s) product there is a cancellation, not a
+    classification (exact only while s_body swallows the penalization
+    residual under its own ulp). The tiles come in FIELD order (case_tiles)."""
     with h5py.File(field, "r") as f:
         geo = BlockGeometry(f)
         data = f[scalar]
-        if coefp.shape[0] != geo.n_blocks:
-            raise SystemExit("case file and field file have different leaf counts")
+        coefp = case_tiles(case, geo.blocks)
         nbx, nby, nbz = geo.nb
         q, tot = 0.0, 0.0
         for bid in range(geo.n_blocks):
             _, _, _, dV = geo.mesh(bid)
             # coef_p tile is (i, j, k) ghost-inclusive -> field order (k, j, i)
             cp = np.transpose(coefp[bid, 1:nbx + 1, 1:nby + 1, 1:nbz + 1], (2, 1, 0))
+            cp = np.where(np.abs(cp) > SOLID_FACE_THRESHOLD, 0.0, cp)
             block = data[bid][...]
             q += float(np.sum(cp * (value - block) * dV))
             tot += float(np.sum(block * dV))
@@ -353,10 +376,9 @@ def body_heat_release(field: str, case: str, scalar: str, value: float,
 
     Returns (staircase, graded, int s dV, t, geo)."""
     dth = 1.0 / (re * pr)
-    with h5py.File(case, "r") as c:
-        coefp = c["coef_p_blocks"][...]
     with h5py.File(field, "r") as f:
         geo = BlockGeometry(f)
+        coefp = case_tiles(case, geo.blocks)
         s = assemble(f, scalar, geo)
         u = assemble(f, "un", geo)
         v = assemble(f, "vn", geo)

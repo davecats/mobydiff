@@ -5,6 +5,25 @@ Gates for the anisotropic 2:1 refinement phases R2D-0..3
 direction keeps ONE global (possibly stretched) node line at all levels.
 `[blocks] refine_dims = xyz` (default octree) | `xz` (quadtree).
 
+## Re-validated 2026-10-21
+
+RE-VALIDATED 2026-10-21, commit 532ef54 (banner), production flags, workstation
+CPU 1 and 4 ranks, minutes, `run_gates.sh all` (the driver written that day
+from the gate statements below; `setup.sh` regenerates the xz zero-coefficient
+twin, whose archived copy the solver now refuses as "blocks table is not in
+its key order"): ALL PASS -- uniform oblique flow EXACT through the xz patch
+(levels 192/248/32) and the xz-refined zero-coefficient body (508 leaves,
+220/96/192; `unibody_xz.ini` now carries `keep_buried = true` itself, the
+key its case file is prepared with); gate (c) `allref_xz == twin_xz` EXACT
+and `allref_xz` 1 == 4 ranks EXACT; the Beltrami xz patch pair L2(vel)
+5.484e-3 (base 32) -> 8.268e-4 (base 64), order 2.73 (2.83 at niter 6/50 on
+2026-07-15; the errors moved with the projection); `rans_xz` 50 steps finite
+(max|un| 18.22) and 1 == 4 ranks EXACT incl. k/omega/nut. Settings changed
+for the rerun: `rans_xz.ini` plain Jacobi 6 -> Chebyshev 12, `cflmax = 1.0`.
+Gate (b) is retired (its mobygeom leaf builder is gone, 2026-09-26). The
+turbulent xz wall-band channel (`developed/run_developed.py --refine-dims xz`)
+is re-run on istmcetus and recorded in `../channel_interface/developed/`.
+
 ## R2D-0 — builder + lines + io (PASS 2026-07-15)
 
 Infrastructure only: quadtree leaf table (2x1x2 children), mixed Morton

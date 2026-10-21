@@ -472,40 +472,40 @@ measured after (`12` = niter 6 -> 12, `F1`, `F2`, `F7`, `out` = the outlet,
 
 | case | last | since | tier | where | status |
 |---|---|---|---|---|---|
-| `rans_sst` T2/T3/T4 | 2026-07-08/09; turb180 2026-09-30 | ini, 12, F1, F7 (ibm), sum, nut | first | WS CPU + GPU | PENDING |
+| `rans_sst` T2/T3/T4 | 2026-10-21 (ALL PASS; wf180_y30 near-centre 3.02 % -> tolerance 0.035; ibm180wf == ibm180 and both restart gates max_abs 0) | -- | first | WS CPU + GPU | DONE 2026-10-21 |
 | `scalar` RANS twins (S2 sst/kays/wferr, S5a, ibmwf, wfsst) | 2026-08-05/07; ibmwf budgets 2026-10-01 | ini, 12, F1, sum, nut (wfsst) | first | WS | PENDING |
-| `courant_limit` | 2026-10-02 (12/12); 11/11 on 2026-10-21 unrecorded | cou | A | WS CPU | PENDING |
-| `diffusion_limit` | 2026-10-02 | -- | A | WS CPU | PENDING |
-| `penalization` | 2026-10-01 | -- | A | WS | PENDING |
-| `freestream` (all groups, restart, bit-exact outlet) | 2026-10-01 | cou (refined group, dtmax-bound) | A | WS | PENDING |
-| `body_outlet` (all, pocket, gpu) | 2026-10-05/06 | -- | A | WS | PENDING |
-| `bodyforce` (no README) | 2026-10-08 | -- | A | WS | PENDING |
+| `courant_limit` | 2026-10-21 (12/12, unchanged) | -- | A | WS CPU | DONE 2026-10-21 |
+| `diffusion_limit` | 2026-10-21 (12/12, unchanged) | -- | A | WS CPU | DONE 2026-10-21 |
+| `penalization` | 2026-10-21 (to the digit; the step-9 REF leg no longer runs) | -- | A | WS | DONE 2026-10-21 |
+| `freestream` (all groups, restart, bit-exact outlet) | 2026-10-21 (ALL PASS, numbers unchanged) | -- | A | WS | DONE 2026-10-21 |
+| `body_outlet` (all, pocket, gpu) | 2026-10-21 (ALL PASS to the digit; gpu/twin at nofma) | -- | A | WS | DONE 2026-10-21 |
+| `bodyforce` (README written) | 2026-10-21 (ALL PASS) | -- | A | WS | DONE 2026-10-21 |
 | `prepare` P0 / P1 / order | 2026-10-06 / 2026-07-16 / 2026-10-01 | exactness | A | WS | PENDING |
-| `prepare` P1b | 2026-07-17 (mobygeom) | -- | -- | -- | RETIRE |
-| `multilevel_body` | 2026-09-26 | (F7: zero-coefficient twin) | A | WS | PENDING |
-| `rans_geometry` | flat 2026-09-26, wavy 2026-07-07 | F1 (wavy init only) | A | WS CPU | PENDING |
-| `rans_inlet` | 2026-09-26 | nut (cold start: no) | A | WS | PENDING |
-| `block_nb` (+ the beltrami_rect suite cases) | 2026-09-26; FINDING 2026-08-27 | -- | A | WS | PENDING |
-| `redblack_interface` (+ the R1 cheap items) | undated; R1 list open | -- | A | WS | PENDING (decided 6) |
-| `redblack_interface` R1 band channel (Re_tau 180 vs Jacobi) | never run | -- | C | cetus | PENDING (decided 6; admits SOR on 2:1, decision 1) |
-| `interface_decay` | undated | -- | A | WS GPU | PENDING |
-| `refine2d` uniform/unibody / Beltrami pair + rans_xz / xz channel | 2026-09-26 / 2026-07-15 / 2026-07-15 | -- / 12, F1 / 12, F1, sum | A / A / C | WS / WS / corax | PENDING |
+| `prepare` P1b | 2026-07-17 (mobygeom) | -- | -- | -- | RETIRED 2026-10-21 (header; the sailplane leg is the tutorial's record) |
+| `multilevel_body` | 2026-10-21 (ALL PASS, numbers to the digit) | -- | A | WS | DONE 2026-10-21 |
+| `rans_geometry` | 2026-10-21 (flat 0.0, wavy 2.3e-11, sphere test PASS) | -- | A | WS CPU | DONE 2026-10-21 |
+| `rans_inlet` | 2026-10-21 (0.14 % / 2.15 %, ranks EXACT) | -- | A | WS | DONE 2026-10-21 (CPU; the GPU ulp line of 2026-07-13 stands) |
+| `block_nb` (+ the beltrami_rect suite cases) | 2026-10-21 (cpu + gpu ALL PASS; the suite pair max_abs 0; the FINDING table not re-measured) | -- | A | WS | DONE 2026-10-21 |
+| `redblack_interface` (+ the R1 cheap items) | 2026-10-21 (cpu + gpu ALL PASS; omega limit in (1.6, 1.7); Beltrami slab + refine_body items on the GPU pending) | -- | A | WS | DONE 2026-10-21 (GPU items pending) |
+| `redblack_interface` R1 band channel (Re_tau 180 vs Jacobi) | 2026-10-21 (same statistics to <= 0.5 %, no band; 19 % slower per step than Chebyshev 12) | -- | C | cetus | DONE 2026-10-21 (SOR admissible on 2:1) |
+| `interface_decay` | 2026-10-21 (contraction 7.7x velocity / 10.9x pressure) | -- | A | WS GPU | DONE 2026-10-21 |
+| `refine2d` uniform/unibody / Beltrami pair + rans_xz / xz channel | 2026-10-21 (driver `run_gates.sh`: uniform EXACT, twin EXACT, order 2.73, rans_xz EXACT) / xz channel on istmcetus (corax reboots) | -- | A / A / C | WS / WS / cetus | DONE 2026-10-21 (xz channel pending) |
 | `beltrami` (no README) | undated | -- | A | WS | PENDING |
-| `blasius` | 2026-10-01 | -- | A | WS GPU 1 rank | PENDING |
-| `tutorials/min_channel` | historical | suite case | A | -- | PENDING (README only) |
-| `tutorials/sailplane` | 2026-09-27 (one step, no number) | F7, out | A | WS GPU | PENDING |
+| `blasius` | 2026-10-21 (theta 1.66 %, H 0.82 %; ini moved to Chebyshev 12) | -- | A | WS GPU 1 rank | DONE 2026-10-21 |
+| `tutorials/min_channel` | README rewritten 2026-10-21 (the suite case) | suite case | A | -- | DONE 2026-10-21 |
+| `tutorials/sailplane` | 2026-10-21 (prepare 2 ranks; 1 == 2 GPU ranks max_abs 0) | -- | A | WS GPU | DONE 2026-10-21 |
 | `scalar` S1 / S3 / S4 (not cyl) | 2026-08-07 / 2026-10-01 / 2026-08-07 (heat 10-01) | 12 (S1, S4), F1 (conduction?) | A | WS | PENDING |
 | `scalar` S3/S4 `cyl` | 2026-08-07 | 12, F1, F7, out | B | WS/A6000 | PENDING |
 | `scalar` S2 `les`/`band` | 2026-08-07 | 12, sum | C | cetus | PENDING (decided 5: both) |
-| `conjugate` C1 / C2 / C3 / pipe gates | C3 era (~09) / undated / undated / 2026-09-15 | 12, F1, F7 (bodies) | A | WS | PENDING |
+| `conjugate` C1 / C2 / C3 / pipe gates | 2026-10-21 (61 / 75 / all / 36 PASS; drift 1.288e-12 stated once) | -- | A | WS | DONE 2026-10-21 |
 | `channel_interface/les_ibm` | 2026-06-30; a_wale 2026-10-01 (20 steps) | 12, F7 (statistics) | B | WS GPU | PENDING |
 | `iddes` | 2026-07-10 | 12, F1, F7 (ibm), sum, nut | B | WS GPU | PENDING |
 | `cylinder` | Re 40 2026-10-01; St 2026-07-13 (penalization) | St: 12, F7, out | B | A6000 | PENDING |
-| `channel_interface/developed` | none | -- | C | cetus 2 GPU | PENDING |
+| `channel_interface/developed` | 2026-10-21 (first niter-12 statistics, within ~1 % of KMM, no band; red-black twin equal) | -- | C | cetus | DONE 2026-10-21 |
 | `channel_interface` main (3 cases) | none | -- | C | cetus | PENDING (decided 7: run) |
 | `channel_interface/core_patch` | 2026-06-29 | 12, sum | C | cetus | PENDING (gate 3 RETIRE) |
 | `channel_interface/les` (+ wall jump 2026-10-02) | 2026-06-30 | 12, sum | C | cetus/corax | PENDING |
-| `tutorials/channel_kmm180` | no statistics in the README (F1 legs 2026-09-30 in `asset/`) | -- | C | corax | PENDING |
+| `tutorials/channel_kmm180` | 2026-10-21 two-leg statistics block (5090; within ~1 % of KMM, scatter vs the F1 legs) | -- | C | corax | DONE 2026-10-21 |
 | `tutorials/naca/rans` | 2026-08-08; restart check 2026-10-01 | F1, F7, out (check only), nut | C | HoreKa (scratch, nose grid) | PENDING (decided 2) |
 | `tutorials/cht/pipe` | 2026-09-28 at niter 6 | 12, F1, F7 | C | corax (timing) + HoreKa | PENDING (decided 4: fastest of Cheb 12 / SOR 6) |
 | `tutorials/cht/channel` | undated | 12, F1, F2, F7 | C | HoreKa | PENDING (decided 3) |

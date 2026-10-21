@@ -3,7 +3,7 @@
 # convergence (uniform) + 2:1-interface artifact (refined 3D patch), both against
 # the exact self-similar decay. Exercises all three directions (unlike the 2D TGV).
 #
-#   ./run_beltrami.sh [cpu|gpu] [niter]
+#   [BIN=/abs/moby_solve] ./run_beltrami.sh [cpu|gpu] [niter]
 #
 # [niter] (optional) overrides the projection iteration count [pressure] niter.
 
@@ -11,7 +11,7 @@ set -uo pipefail
 cd "$(dirname "$0")"
 ARCH="${1:-cpu}"
 NITER="${2:-}"
-BIN="../../build_${ARCH}/moby_solve"
+BIN="${BIN:-../../build_${ARCH}/moby_solve}"   # BIN overrides (a staged binary)
 [ -x "$BIN" ] && BIN="$(cd "$(dirname "$BIN")" && pwd)/moby_solve" || {
     echo "binary $BIN not found (build with ./compile.sh $ARCH)"; exit 1; }
 source /etc/profile.d/modules.sh 2>/dev/null
@@ -33,13 +33,16 @@ run() {  # run() <dir> <ini>
 }
 
 echo "== uniform convergence sweep (cube)"
-for N in 32 64; do
+for N in 32 64 128; do
     sed -e "s|^nx = .*|nx = $N|" -e "s|^ny = .*|ny = $N|" -e "s|^nz = .*|nz = $N|" \
         uniform.ini > "runs/uniform_$N.ini"
     run "uniform_$N" "runs/uniform_$N.ini"
 done
 
-echo "== refined central 3D patch (nx=64 base)"
+echo "== 2:1 slabs normal to x / y / z (nx=64 base): the one-direction interface artifact"
+for d in x y z; do run "slab_$d" slab_$d.ini; done
+
+echo "== refined central 3D patch (nx=64 base): edges and corners"
 run "refined" refined.ini
 
 echo "== done. uniform L2 should drop ~4x (order 2); refined shows the 3D interface artifact."

@@ -44,5 +44,38 @@ natural_dyw_plus = 0.05  dt = 7.696035e-06  cfl = 0.0032  Peclet = 0.5000  dy_wa
 0.5 line is dtmax-bound with both limiters well below their caps.
 
 Any KMM statistic recorded before this date was measured on the 0.05 line
-at `dt = 7.7e-6`; the case is on the one-by-one re-validation list
-(`validation/README.md`).
+at `dt = 7.7e-6`.
+
+## Developed statistics (re-validated 2026-10-21)
+
+RE-VALIDATED 2026-10-21, commit 532ef54 (banner), production flags, istmcorax
+RTX 5090 (`build_gpu_corax`), 1 rank, leg A 33 min + leg B 22 min
+(0.0205 s/step, 64 000 steps): the two-leg form of `asset/f1_2026-09-30`
+-- restart from the archived dyw+ 0.5 field
+(`mobydiff.scalar/tutorials/channel_kmm180/channel_kmm180_restart_dywplus0p5.h5`,
+t = 5), leg A to t = 35 with statistics off (the transient, discarded), leg
+B to t = 55 with statistics on (20 t.u., sampled every 500 steps). Settings
+of the tutorial (red-black `niter = 3`, `sor = 1.5`, `dtmax = 3.125e-4`
+binding) with `cflmax = 1.0` (the rerun convention; dtmax binds, so the step
+is unchanged). Inputs, the statistics file and the driver are in
+`asset/reval_2026-10-21/`; `asset/f1_2026-09-30/analyse.py <a> <b>` compares
+two statistics files.
+
+| quantity | this run | F1 legs 2026-09-30 (A6000) | KMM / Moser Re_tau 180 |
+|---|---|---|---|
+| U+ centreline | 18.44 | 18.51 | 18.3 (+0.8 %) |
+| bulk U+ | 15.79 | 15.83 | -- |
+| u'+ peak (y+ 14.8) | 2.640 | 2.623 | 2.66 (-0.8 %) |
+| v'+ peak (y+ 57) | 0.834 | 0.834 | 0.84 |
+| w'+ peak (y+ 40) | 1.085 | 1.083 | 1.08 |
+| -<u'v'>+ peak (y+ 32) | 0.724 | 0.719 | 0.73 |
+
+Max |this - F1| over the folded profiles: U+ 0.106 (0.6 % of scale, at y+
+121), u'+ 0.032, v'+ 0.006, w'+ 0.020, -<u'v'>+ 0.005 -- the sampling scatter
+of a 20 t.u. window on a chaotic field (the wall-to-wall asymmetry of one run
+is of the same size; the two runs are different GPUs, cc86 vs cc120, so they
+part at round-off). Against KMM every quantity sits within ~1 %. PASS: no
+tolerance is declared for the tutorial; this block is its record.
+The full 640 000-step cold start of `input.ini` (`t_final = 200`) was NOT
+re-run (3.7 h on the 5090): the tutorial's own developed field is the
+archived restart above; regenerate it only if that file is lost.
