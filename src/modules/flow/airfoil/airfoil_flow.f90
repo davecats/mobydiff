@@ -392,7 +392,6 @@ contains
 
         allocate(fb(NCV, nBlocks))
 
-#ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute &
         !$omp& map(to: nbx, nby, nbz, c0, c1, l0, l1, nu, tol, varL, dj, dk, spanY, hasNut, &
         !$omp&        p_inf, box, blk%x, blk%y, blk%z, blk%d1x, blk%d1y, blk%d1z, &
@@ -400,7 +399,6 @@ contains
         !$omp& map(from: fb(1:NCV,1:nBlocks)) &
         !$omp& private(i,j,k,m,ii,ib,sC,sL,fC_,fL_,coord,sgn,lc,cc,dA, &
         !$omp&         un,pf,ut,nue,dundn,dundt,dutdn,tnn,tnt,fn,ft,dl2,wcp,wcm,vol)
-#endif
         do b = 1_C_INT, nBlocks
             sC = 0.0d0; sL = 0.0d0
             fC_ = 0.0d0; fL_ = 0.0d0
@@ -532,9 +530,7 @@ contains
             fb(1,b) = sC;  fb(2,b) = sL
             fb(3,b) = fC_; fb(4,b) = fL_
         end do
-#ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute
-#endif
 
         call cv_reduce(blk, c, fb, NCV, acc)
 
@@ -614,13 +610,11 @@ contains
         nBlocks = blk%nBlocks
         allocate(pb(NPI, nBlocks))
 
-#ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute &
         !$omp& map(to: nbx, nby, nbz, c0, l0, l1, tol, spanY, &
         !$omp&        blk%x, blk%y, blk%z, blk%d1y, blk%d1z, blk%q) &
         !$omp& map(from: pb(1:NPI,1:nBlocks)) &
         !$omp& private(i,j,k,ii,pA_,aW_,lc,dA,pf)
-#endif
         do b = 1_C_INT, nBlocks
             pA_ = 0.0d0; aW_ = 0.0d0
             ii = -1_C_INT
@@ -645,9 +639,7 @@ contains
             end if
             pb(1,b) = pA_; pb(2,b) = aW_
         end do
-#ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute
-#endif
 
         call cv_reduce(blk, c, pb, NPI, acc)
         p_inf = 0.0d0

@@ -192,13 +192,11 @@ contains
         ! Each block accumulates into its own level's rows; cell areas come
         ! from the block's level-l coordinate slices (bitwise the global
         ! line values at level 0).
-#ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do collapse(4) &
         !$omp& map(to: dns, lvlOff, blk%origin, blk%level, blk%q, blk%x, blk%z, &
         !$omp& blk%d1x, blk%d1y, blk%d1z) &
         !$omp& map(tofrom: sample_sum, sample_count) &
         !$omp& private(i,j,k,b,s,global_wall_idx,base,row,cell_area,p,kin,eps,velocity,sample)
-#endif
         do b = 1, nBlocks
         do k = 1, nz
             do j = 1, ny
@@ -225,9 +223,7 @@ contains
             end do
         end do
         end do
-#ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
-#endif
     end subroutine collect_channel_sample
 
     subroutine add_channel_sample(this, sample_sum, sample_count)

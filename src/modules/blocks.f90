@@ -398,8 +398,7 @@ contains
                 blk%winLo(:, l+1) = int(lo, C_INT)
                 blk%winDims(:, l+1) = int(hi - lo + 1, C_INT)
             end if
-            blk%levelOffset(l+1) = blk%levelOffset(l) &
-                + int(product(int(blk%winDims(:, l+1))), C_INT)
+            blk%levelOffset(l+1) = window_offset(blk%levelOffset(l), blk%winDims(:, l+1))
         end do
         allocate(blk%lidOf(int(blk%levelOffset(int(blk%nLevels)))))
         blk%lidOf = -1_C_INT
@@ -410,8 +409,8 @@ contains
             idx = lid_index(blk, l, c)
             if (blk%lidOf(idx) /= -1_C_INT) error stop "case file: duplicate leaf"
             blk%lidOf(idx) = int(i - 1, C_INT)
-            if (.not. key_covers(blk, lmax, l, c)) &
-                error stop "case file: a leaf needs more key bits than block_key_order records"
+            if (.not. key_covers(blk, lmax, l, c)) error stop "case file: a leaf's finest-lattice " // &
+                "coordinates exceed the key width (block_key_order in xyz mode; 2^21 cells in xz mode)"
             key = leaf_key(blk, lmax, l, c)
             if (key <= prev) error stop "case file: blocks table is not in its key order"
             prev = key
@@ -704,6 +703,22 @@ contains
         end if
     end subroutine subdivide_level_line
 
+    ! The lidOf offset of the next level: this level's offset plus its window
+    ! volume, formed in int64 and refused beyond the int32 range lidOf is
+    ! indexed in -- the lidOf comment cites 7e9-block finest lattices, and a
+    ! window above 2^31 cells would wrap silently in default integer.
+    function window_offset(prev, dims) result(next)
+        integer(C_INT), intent(in) :: prev, dims(3)
+        integer(C_INT) :: next
+
+        integer(int64) :: n
+
+        n = int(prev, int64) + product(int(dims, int64))
+        if (n > int(huge(0_C_INT), int64)) &
+            error stop "block table: a level window exceeds the int32 lidOf index range"
+        next = int(n, C_INT)
+    end function window_offset
+
     ! Flat lidOf index of the level-`level` window cell c (the caller must
     ! have checked c lies inside the window; leaf_at is the checked entry).
     pure integer function lid_index(blk, level, c) result(idx)
@@ -787,8 +802,7 @@ contains
         allocate(blk%levelOffset(0:int(blk%nLevels)))
         blk%levelOffset(0) = 0_C_INT
         do l = 0, lmax
-            blk%levelOffset(l+1) = blk%levelOffset(l) &
-                + int(product(int(blk%winDims(:, l+1))), C_INT)
+            blk%levelOffset(l+1) = window_offset(blk%levelOffset(l), blk%winDims(:, l+1))
         end do
         allocate(blk%lidOf(int(blk%levelOffset(int(blk%nLevels)))))
         blk%lidOf = int(M_NONE, C_INT)
@@ -1393,17 +1407,25 @@ contains
         end if
     end function leaf_key
 
-    ! True when the key order has a bit for every set bit of this leaf's
-    ! finest-lattice coords (xyz mode). A leaf beyond it would alias another
-    ! key position silently; the table reader checks instead.
+    ! True when the key has a bit for every set bit of this leaf's
+    ! finest-lattice coords: in xyz mode the key order must name the
+    ! direction often enough, in xz mode morton2_key interleaves
+    ! KEY_COORD_BITS of x and z and y has LEAF_KEY_YBITS below them. A leaf
+    ! beyond either width would alias another key silently; the table reader
+    ! checks instead.
     pure logical function key_covers(blk, lmax, l, c) result(ok)
         type(block_set_type), intent(in) :: blk
         integer, intent(in) :: lmax, l, c(3)
 
         integer :: cf(3), d
 
+        if (any(blk%refMask /= 1_C_INT)) then
+            cf = c*2**((lmax - l)*int(blk%refMask))
+            ok = cf(1) < 2**KEY_COORD_BITS .and. cf(3) < 2**KEY_COORD_BITS &
+                .and. cf(2) < 2**LEAF_KEY_YBITS
+            return
+        end if
         ok = .true.
-        if (any(blk%refMask /= 1_C_INT)) return
         cf = c*2**(lmax - l)
         do d = 1, 3
             if (cf(d) >= 2**count(blk%keyOrder(1:blk%nKeyBits) == d)) ok = .false.

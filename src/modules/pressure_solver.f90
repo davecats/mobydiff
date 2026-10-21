@@ -640,13 +640,11 @@ contains
         ! precomputed per (normal index, direction, block) -- see their
         ! declaration for why that is bit-exact and why d1P stays a separate
         ! factor. Only ibm%mu, which changes every substage, is still read here.
-#ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do collapse(4) &
         !$omp& map(to: nx, ny, nz, nTodo, dnLow, dnHigh, d1P, ibm%mu, rdenomBlocks) &
         !$omp& map(tofrom: rdenom) &
         !$omp& private(i,ip,j,jp,k,kp,b,bb, &
         !$omp& mu_u_i,mu_u_ip,mu_v_j,mu_v_jp,mu_w_k,mu_w_kp)
-#endif
         do bb = 1_C_INT, nTodo
         do k = 1_C_INT, nz
             do j = 1_C_INT, ny
@@ -666,9 +664,7 @@ contains
             end do
         end do
         end do
-#ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
-#endif
     end subroutine compute_rdenom
 
     ! Jacobi step 1: phi(i,j,k) = -omega * div / denom for every interior cell,
@@ -701,12 +697,10 @@ contains
         ! (an unallocated array cannot sit in a map clause); the divergence and
         ! z lines are the same text in both.
         if (cheb) then
-#ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do collapse(4) &
         !$omp& map(to: omega, alpha, gamma, nx, ny, nz, d1P) &
         !$omp& map(tofrom: phi, delta, blk%q, rdenom) &
         !$omp& private(i,ip,j,jp,k,kp,b,div,z,s)
-#endif
         do b = 1_C_INT, nBlocks
         do k = 1_C_INT, nz
             do j = 1_C_INT, ny
@@ -723,16 +717,12 @@ contains
             end do
         end do
         end do
-#ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
-#endif
         else
-#ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do collapse(4) &
         !$omp& map(to: omega, nx, ny, nz, d1P) &
         !$omp& map(tofrom: phi, blk%q, rdenom) &
         !$omp& private(i,ip,j,jp,k,kp,b,div)
-#endif
         do b = 1_C_INT, nBlocks
         do k = 1_C_INT, nz
             do j = 1_C_INT, ny
@@ -751,9 +741,7 @@ contains
             end do
         end do
         end do
-#ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
-#endif
         end if
     end subroutine jacobi_compute_phi
 
@@ -806,11 +794,9 @@ contains
         ! face this kernel owns, precomputed per (block, normal index) -- see
         ! their declaration for why that is both bit-exact and the point of the
         ! kernel's shape.
-#ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do collapse(4) &
         !$omp& map(to: idt, nx, ny, nz, cfLow, cfHigh, ibm%mu) &
         !$omp& map(tofrom: blk%q, phi) private(i,ip,j,jp,k,kp,b,cf)
-#endif
         do b = 1_C_INT, nBlocks
         do k = 1_C_INT, nz
             do j = 1_C_INT, ny
@@ -850,9 +836,7 @@ contains
             end do
         end do
         end do
-#ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
-#endif
     end subroutine jacobi_apply
 
     ! See the ifaceAny declaration: global, cached, computed once.
@@ -930,11 +914,9 @@ contains
         ! (nx, ny); t1 and t2 run over the largest of each.
         n1 = max(nx, ny); n2 = max(ny, nz)
 
-#ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do collapse(3) &
         !$omp& map(to: nF, n1, n2, nx, ny, nz, ifBlock, ifDir, ifIdx, ifCoef, ibm%mu) &
         !$omp& map(tofrom: blk%q, phi) private(t1,t2,i,j,k,io,jo,ko,b,d,f,var,cf,inFace)
-#endif
         do e = 1_C_INT, nF
         do t2 = 1_C_INT, n2
             do t1 = 1_C_INT, n1
@@ -958,9 +940,7 @@ contains
             end do
         end do
         end do
-#ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
-#endif
     end subroutine interface_correct
 
     ! A 2:1 coarse-fine interface face (either orientation).
@@ -1098,10 +1078,8 @@ contains
         type(block_set_type), intent(in) :: blk
         integer(C_INT) :: i, j, k, b
 
-#ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do collapse(4) map(tofrom: phi) &
         !$omp& private(i,j,k,b)
-#endif
         do b = 1_C_INT, blk%nBlocks
         do k = lbound(phi,3), ubound(phi,3)
             do j = lbound(phi,2), ubound(phi,2)
@@ -1111,9 +1089,7 @@ contains
             end do
         end do
         end do
-#ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
-#endif
     end subroutine zero_phi
 
     ! One red-black sweep of `color`. Each block sweeps from its halo layer (0)
@@ -1152,7 +1128,6 @@ contains
         idt = 1.0_C_DOUBLE/dt_gamma
         store = storePhi
 
-#ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do collapse(4) &
         !$omp& map(to: color, nColorX, sor, idt, dt_gamma, hi(1:3), store, &
         !$omp& blk%origin, blk%physLow, blk%physHigh, &
@@ -1162,7 +1137,6 @@ contains
         !$omp& phiC,denom,div,dP1,dP2,dP3,nLowerHaloDirections, gLo1,gHi1,gLo2,gHi2,gLo3,gHi3, &
         !$omp& cLo1,cHi1,cLo2,cHi2,cLo3,cHi3, &
         !$omp& mu_u_i,mu_u_ip,mu_v_j,mu_v_jp,mu_w_k,mu_w_kp)
-#endif
         DO b=1_C_INT,nBlocks
         DO k=0_C_INT,hi(3)
             DO j=0_C_INT,hi(2)
@@ -1243,9 +1217,7 @@ contains
             END DO
         END DO
         END DO
-#ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
-#endif
     end subroutine redblack_sweep
 
 end module pressure_solver

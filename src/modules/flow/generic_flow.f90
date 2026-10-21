@@ -128,7 +128,7 @@ contains
         if (dns%initial_noise > 0.0d0) then
             call random_seed(size=nSeed)
             allocate(seed(nSeed))
-            seed = 20260612 + 7919*c%cart_rank
+            seed = 20260612 + 7919*c%world_rank
             call random_seed(put=seed)
             do b = 1, int(blk%nBlocks)
                 do v = 1, 3

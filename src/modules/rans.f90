@@ -357,16 +357,30 @@ contains
 
         if (.not. allocated(sst%dwall)) return
 
+#ifdef USE_OPENMP_OFFLOAD
         !$omp target enter data map(to: sst)
+#endif
+#ifdef USE_OPENMP_OFFLOAD
         !$omp target enter data map(to: sst%dwall, sst%yeff, sst%wallcell)
+#endif
         if (allocated(sst%k)) then
+#ifdef USE_OPENMP_OFFLOAD
             !$omp target enter data map(to: sst%k, sst%omg, sst%ks, sst%omgs)
+#endif
+#ifdef USE_OPENMP_OFFLOAD
             !$omp target enter data map(to: sst%koldrhs, sst%omgoldrhs, sst%domwall, sst%wnorm)
+#endif
+#ifdef USE_OPENMP_OFFLOAD
             !$omp target enter data map(to: sst%gam, sst%ret, sst%gams, sst%rets)
+#endif
+#ifdef USE_OPENMP_OFFLOAD
             !$omp target enter data map(to: sst%gamoldrhs, sst%retoldrhs)
+#endif
         end if
         if (allocated(sst%kfix)) then
+#ifdef USE_OPENMP_OFFLOAD
             !$omp target enter data map(to: sst%kfix, sst%ktriprate)
+#endif
         end if
     end subroutine enter_rans_data
 
@@ -376,16 +390,30 @@ contains
         if (.not. allocated(sst%dwall)) return
 
         if (allocated(sst%kfix)) then
+#ifdef USE_OPENMP_OFFLOAD
             !$omp target exit data map(delete: sst%kfix, sst%ktriprate)
+#endif
         end if
         if (allocated(sst%k)) then
+#ifdef USE_OPENMP_OFFLOAD
             !$omp target exit data map(delete: sst%gamoldrhs, sst%retoldrhs)
+#endif
+#ifdef USE_OPENMP_OFFLOAD
             !$omp target exit data map(delete: sst%gam, sst%ret, sst%gams, sst%rets)
+#endif
+#ifdef USE_OPENMP_OFFLOAD
             !$omp target exit data map(delete: sst%koldrhs, sst%omgoldrhs, sst%domwall, sst%wnorm)
+#endif
+#ifdef USE_OPENMP_OFFLOAD
             !$omp target exit data map(delete: sst%k, sst%omg, sst%ks, sst%omgs)
+#endif
         end if
+#ifdef USE_OPENMP_OFFLOAD
         !$omp target exit data map(delete: sst%dwall, sst%yeff, sst%wallcell)
+#endif
+#ifdef USE_OPENMP_OFFLOAD
         !$omp target exit data map(delete: sst)
+#endif
     end subroutine exit_rans_data
 
     ! Immersed-surface distance from the coefficient file: the per-leaf

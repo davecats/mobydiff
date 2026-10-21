@@ -313,13 +313,21 @@ contains
 
         if (.not. allocated(bf%f)) return
 
+#ifdef USE_OPENMP_OFFLOAD
         !$omp target enter data map(to: bf)
+#endif
+#ifdef USE_OPENMP_OFFLOAD
         !$omp target enter data map(to: bf%f, bf%sup_blocks)
+#endif
         if (allocated(bf%trip_blocks)) then
+#ifdef USE_OPENMP_OFFLOAD
             !$omp target enter data map(to: bf%trip_blocks)
+#endif
         end if
         if (allocated(bf%trip_gs)) then
+#ifdef USE_OPENMP_OFFLOAD
             !$omp target enter data map(to: bf%trip_gs, bf%trip_g, bf%trip_gp1)
+#endif
         end if
     end subroutine enter_bodyforce_data
 
@@ -329,13 +337,21 @@ contains
         if (.not. allocated(bf%f)) return
 
         if (allocated(bf%trip_gs)) then
+#ifdef USE_OPENMP_OFFLOAD
             !$omp target exit data map(delete: bf%trip_gs, bf%trip_g, bf%trip_gp1)
+#endif
         end if
         if (allocated(bf%trip_blocks)) then
+#ifdef USE_OPENMP_OFFLOAD
             !$omp target exit data map(delete: bf%trip_blocks)
+#endif
         end if
+#ifdef USE_OPENMP_OFFLOAD
         !$omp target exit data map(delete: bf%f, bf%sup_blocks)
+#endif
+#ifdef USE_OPENMP_OFFLOAD
         !$omp target exit data map(delete: bf)
+#endif
     end subroutine exit_bodyforce_data
 
     ! Device-side zero of f (for a custom fill that adds increments).
@@ -503,14 +519,12 @@ contains
         w = 8.0d0*atan(1.0d0)/bf%trip_lz         ! 2*pi/Lz
         root2 = sqrt(2.0d0)
 
-#ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do collapse(2) &
         !$omp& map(to: w, root2, nharm, nz, nTrip, blk%z, bf%trip_blocks, &
         !$omp& bf%trip_phase_s(1:nharm+1), bf%trip_phase_old(1:nharm+1), &
         !$omp& bf%trip_phase_new(1:nharm+1)) &
         !$omp& map(to: bf%trip_gs, bf%trip_g, bf%trip_gp1) &
         !$omp& private(k,b,bb,m,z,arg,gs,gold,gnew)
-#endif
         do bb = 1, nTrip
             do k = 1, nz
                 b = int(bf%trip_blocks(bb))
@@ -530,9 +544,7 @@ contains
                 bf%trip_gp1(k,bb) = gnew
             end do
         end do
-#ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
-#endif
     end subroutine fill_trip_span
 
     ! Device kernel: fill bf%f's v-component from the tabulated spanwise
@@ -564,13 +576,11 @@ contains
         amps = bf%trip_amp_s/real(bf%trip_nmodes, C_DOUBLE)
         x0 = bf%trip_x0; lx = bf%trip_lx; ly = bf%trip_ly
 
-#ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do collapse(4) &
         !$omp& map(to: bstep, ampt, amps, x0, lx, ly, nx, ny, nz, nTrip, &
         !$omp& blk%x, blk%y, bf%trip_blocks, bf%trip_gs, bf%trip_g, bf%trip_gp1) &
         !$omp& map(to: bf%f) &
         !$omp& private(i,j,k,b,bb,x,y,ex,env)
-#endif
         do bb = 1, nTrip
         do k = 1, nz
             do j = 1, ny
@@ -593,9 +603,7 @@ contains
             end do
         end do
         end do
-#ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
-#endif
     end subroutine fill_trip_kernel
 
     ! Fill f from a named analytic profile at each component's staggered

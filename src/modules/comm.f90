@@ -2,7 +2,7 @@ module comm
     use, intrinsic :: iso_c_binding
     use, intrinsic :: iso_fortran_env, only: int64
     use :: mpi_f08
-    use :: init, only: dns_type
+    use :: init, only: dns_type, VAR_U, VAR_V, VAR_W, NVEL
     use :: blocks, only: block_set_type, zorder_owner, zorder_start, zorder_count, &
         lattice_candidates, MAX_CANDIDATES, OP_COPY, OP_RESTRICT, OP_PROLONG, &
         leaf_at, level_cells, level_cell_width, occupied_any_level, parent_coord, child_origin, &
@@ -27,11 +27,17 @@ module comm
         logical :: initialized = .false.
         logical :: exchangeActive = .false.
 
-        type(MPI_Comm) :: cart_comm = MPI_COMM_NULL
+        ! The solver's communicator: a DUPLICATE of MPI_COMM_WORLD, so the
+        ! halo traffic has its own context. Ranks are WORLD ranks throughout:
+        ! the block split (zorder_owner) and select_target_device both assume
+        ! node-contiguous world ids, and the MPI_Cart_create(reorder = .true.)
+        ! topology this replaced (2026-10-21) was permitted to renumber them
+        ! (Open MPI never did, which is why it never bit). The Cartesian
+        ! layout survives only as dims/periodic -- the nb rule's rank box
+        ! (derive_block_nb); no topology query is made anywhere.
+        type(MPI_Comm) :: comm = MPI_COMM_NULL
         integer :: world_rank = 0
         integer :: world_size = 1
-        integer :: cart_rank = 0
-        integer :: cart_size = 1
         integer :: local_rank = 0
         ! Node this rank runs on: the smallest world rank sharing its memory
         ! (MPI_COMM_TYPE_SHARED), i.e. one id per node.
@@ -215,8 +221,6 @@ contains
 
         call MPI_Comm_rank(MPI_COMM_WORLD, c%world_rank, ierr)
         call MPI_Comm_size(MPI_COMM_WORLD, c%world_size, ierr)
-        c%cart_rank = c%world_rank
-        c%cart_size = c%world_size
         c%has_terminal = (c%world_rank == 0)
     end subroutine comm_init_world
 
@@ -233,9 +237,7 @@ contains
         c%periodic = bc%isPeriodic
         call comm_cart_dims(c, c%world_size, for_solve=.true.)
 
-        call MPI_Cart_create(MPI_COMM_WORLD, 3, c%dims, c%periodic, .true., c%cart_comm, ierr)
-        call MPI_Comm_rank(c%cart_comm, c%cart_rank, ierr)
-        call MPI_Comm_size(c%cart_comm, c%cart_size, ierr)
+        call MPI_Comm_dup(MPI_COMM_WORLD, c%comm, ierr)
         if (c%has_terminal) then
             write(*,'(A,1X,I0,1X,I0,1X,I0)') "MPI Cartesian dimensions:", c%dims
         end if
@@ -438,19 +440,19 @@ contains
         localDivPts = c%nLocalDivPts
         localCopyPts = c%nLocalCopyPts
         peers = c%nPeers
-        call MPI_Allreduce(sendPts, sendMin, 1, MPI_INTEGER, MPI_MIN, c%cart_comm, ierr)
-        call MPI_Allreduce(sendPts, sendMax, 1, MPI_INTEGER, MPI_MAX, c%cart_comm, ierr)
-        call MPI_Allreduce(sendPts, sendSum, 1, MPI_INTEGER, MPI_SUM, c%cart_comm, ierr)
-        call MPI_Allreduce(copyPts, copySum, 1, MPI_INTEGER, MPI_SUM, c%cart_comm, ierr)
-        call MPI_Allreduce(divPts, divSum, 1, MPI_INTEGER, MPI_SUM, c%cart_comm, ierr)
-        call MPI_Allreduce(localPts, localSum, 1, MPI_INTEGER, MPI_SUM, c%cart_comm, ierr)
-        call MPI_Allreduce(localDivPts, localDivSum, 1, MPI_INTEGER, MPI_SUM, c%cart_comm, ierr)
-        call MPI_Allreduce(localCopyPts, localCopySum, 1, MPI_INTEGER, MPI_SUM, c%cart_comm, ierr)
-        call MPI_Allreduce(peers, peerMax, 1, MPI_INTEGER, MPI_MAX, c%cart_comm, ierr)
-        call MPI_Allreduce(c%localPtsOp, lPtsOp, 3, MPI_INTEGER, MPI_SUM, c%cart_comm, ierr)
-        call MPI_Allreduce(c%localEntOp, lEntOp, 3, MPI_INTEGER, MPI_SUM, c%cart_comm, ierr)
-        call MPI_Allreduce(c%sendPtsOp, sPtsOp, 3, MPI_INTEGER, MPI_SUM, c%cart_comm, ierr)
-        call MPI_Allreduce(c%sendEntOp, sEntOp, 3, MPI_INTEGER, MPI_SUM, c%cart_comm, ierr)
+        call MPI_Allreduce(sendPts, sendMin, 1, MPI_INTEGER, MPI_MIN, c%comm, ierr)
+        call MPI_Allreduce(sendPts, sendMax, 1, MPI_INTEGER, MPI_MAX, c%comm, ierr)
+        call MPI_Allreduce(sendPts, sendSum, 1, MPI_INTEGER, MPI_SUM, c%comm, ierr)
+        call MPI_Allreduce(copyPts, copySum, 1, MPI_INTEGER, MPI_SUM, c%comm, ierr)
+        call MPI_Allreduce(divPts, divSum, 1, MPI_INTEGER, MPI_SUM, c%comm, ierr)
+        call MPI_Allreduce(localPts, localSum, 1, MPI_INTEGER, MPI_SUM, c%comm, ierr)
+        call MPI_Allreduce(localDivPts, localDivSum, 1, MPI_INTEGER, MPI_SUM, c%comm, ierr)
+        call MPI_Allreduce(localCopyPts, localCopySum, 1, MPI_INTEGER, MPI_SUM, c%comm, ierr)
+        call MPI_Allreduce(peers, peerMax, 1, MPI_INTEGER, MPI_MAX, c%comm, ierr)
+        call MPI_Allreduce(c%localPtsOp, lPtsOp, 3, MPI_INTEGER, MPI_SUM, c%comm, ierr)
+        call MPI_Allreduce(c%localEntOp, lEntOp, 3, MPI_INTEGER, MPI_SUM, c%comm, ierr)
+        call MPI_Allreduce(c%sendPtsOp, sPtsOp, 3, MPI_INTEGER, MPI_SUM, c%comm, ierr)
+        call MPI_Allreduce(c%sendEntOp, sEntOp, 3, MPI_INTEGER, MPI_SUM, c%comm, ierr)
         if (c%has_terminal) then
             print '(a,i0,a,i0,a,i0,a,i0,a,i0)', &
                 " exchange sizes: peers/rank(max) ", peerMax, &
@@ -500,21 +502,21 @@ contains
         integer :: ierr
 
         mine = exch_prof%seconds(PROF_MPI_WAIT)
-        call MPI_Allreduce(mine, wmin, 1, MPI_DOUBLE_PRECISION, MPI_MIN, c%cart_comm, ierr)
-        call MPI_Allreduce(mine, wmax, 1, MPI_DOUBLE_PRECISION, MPI_MAX, c%cart_comm, ierr)
-        call MPI_Allreduce(mine, wsum, 1, MPI_DOUBLE_PRECISION, MPI_SUM, c%cart_comm, ierr)
+        call MPI_Allreduce(mine, wmin, 1, MPI_DOUBLE_PRECISION, MPI_MIN, c%comm, ierr)
+        call MPI_Allreduce(mine, wmax, 1, MPI_DOUBLE_PRECISION, MPI_MAX, c%comm, ierr)
+        call MPI_Allreduce(mine, wsum, 1, MPI_DOUBLE_PRECISION, MPI_SUM, c%comm, ierr)
         ! MAXLOC names the straggler instead of leaving it to be inferred.
         ! 2DOUBLE_PRECISION rather than 2INTEGER: the seconds must not be
         ! quantised to compare ranks that differ by microseconds.
         pair(1) = mine
-        pair(2) = real(c%cart_rank, C_DOUBLE)
+        pair(2) = real(c%world_rank, C_DOUBLE)
         call MPI_Allreduce(pair, pairMax, 1, MPI_2DOUBLE_PRECISION, MPI_MAXLOC, &
-            c%cart_comm, ierr)
+            c%comm, ierr)
 
         if (c%has_terminal) then
             print '(a,es16.8,a,es16.8,a,es16.8,a,f8.2,a,i0)', &
                 " exchange balance: mpi_wait seconds min ", wmin, " mean ", &
-                wsum/real(max(c%cart_size,1), C_DOUBLE), " max ", wmax, &
+                wsum/real(max(c%world_size,1), C_DOUBLE), " max ", wmax, &
                 "  max/min ", merge(wmax/wmin, 0.0d0, wmin > 0.0d0), &
                 "  slowest rank ", nint(pairMax(2))
         end if
@@ -537,18 +539,18 @@ contains
 
         ! Node id of every rank, indexed by the Cartesian rank the leaf
         ! ownership (zorder_owner) is expressed in.
-        allocate(nodeOf(0:c%cart_size - 1))
-        call MPI_Allgather(c%node_id, 1, MPI_INTEGER, nodeOf, 1, MPI_INTEGER, c%cart_comm, ierr)
+        allocate(nodeOf(0:c%world_size - 1))
+        call MPI_Allgather(c%node_id, 1, MPI_INTEGER, nodeOf, 1, MPI_INTEGER, c%comm, ierr)
         if (.not. c%has_terminal) return
 
-        call partition_surface(blk, logical(c%periodic, C_BOOL), int(c%cart_size, C_INT), nodeOf, &
+        call partition_surface(blk, logical(c%periodic, C_BOOL), int(c%world_size, C_INT), nodeOf, &
             cellsRank, cellsNode)
         nNodes = 0
-        do r = 0, c%cart_size - 1
+        do r = 0, c%world_size - 1
             if (.not. any(nodeOf(0:r-1) == nodeOf(r))) nNodes = nNodes + 1
         end do
         write(*,'(A,I0,A,I0,A,I0,A,I0,A)') " partition: face cells shared across ranks ", &
-            cellsRank, " (", c%cart_size, " ranks), across nodes ", cellsNode, &
+            cellsRank, " (", c%world_size, " ranks), across nodes ", cellsNode, &
             " (", nNodes, " nodes)"
     end subroutine report_partition
 
@@ -601,9 +603,9 @@ contains
         allocate(toPeer(64))
         nSend = 0
         do p = 1, c%nPeers
-            peerStart = int(zorder_start(blk%nBlocksGlobal, int(c%cart_size, C_INT), &
+            peerStart = int(zorder_start(blk%nBlocksGlobal, int(c%world_size, C_INT), &
                 int(c%peerRank(p), C_INT)))
-            peerBlocks = int(zorder_count(blk%nBlocksGlobal, int(c%cart_size, C_INT), &
+            peerBlocks = int(zorder_count(blk%nBlocksGlobal, int(c%world_size, C_INT), &
                 int(c%peerRank(p), C_INT)))
             do round = 1, 2
                 do pb = 1, peerBlocks
@@ -611,7 +613,7 @@ contains
                     dlevel = int(blk%leafLevel(peerStart + pb))
                     n = nSend
                     call collect_pieces(c, blk, dns, off, nb, dlevel, dorigin, pb, &
-                        c%cart_rank, round, toPeer, nSend)
+                        c%world_rank, round, toPeer, nSend)
                     toPeer(n+1:nSend)%peer = p
                 end do
             end do
@@ -869,7 +871,7 @@ contains
         type(comm_type), intent(in) :: c
         integer, intent(in) :: rank
 
-        if (rank == c%cart_rank) then
+        if (rank == c%world_rank) then
             p = 0
             return
         end if
@@ -1060,8 +1062,8 @@ contains
         integer, intent(in) :: id
         integer, intent(out) :: owner, slot
 
-        owner = int(zorder_owner(int(id, C_INT), blk%nBlocksGlobal, int(c%cart_size, C_INT)))
-        slot = id - int(zorder_start(blk%nBlocksGlobal, int(c%cart_size, C_INT), &
+        owner = int(zorder_owner(int(id, C_INT), blk%nBlocksGlobal, int(c%world_size, C_INT)))
+        slot = id - int(zorder_start(blk%nBlocksGlobal, int(c%world_size, C_INT), &
             int(owner, C_INT))) + 1
     end subroutine id_owner_slot
 
@@ -1511,14 +1513,14 @@ contains
         integer, allocatable :: found(:)
         logical :: known
 
-        allocate(found(max(1, c%cart_size)))
+        allocate(found(max(1, c%world_size)))
         c%nPeers = 0
         do b = 1, int(blk%nBlocks)
             do d = 1, 26
                 call resolve_neighbors(c, blk, dns, int(blk%level(b)), int(blk%origin(:,b)), &
                     off(:,d), ncand, owner, slot, opc, tqc)
                 do cand = 1, ncand
-                    if (owner(cand) == c%cart_rank) cycle
+                    if (owner(cand) == c%world_rank) cycle
                     known = .false.
                     do p = 1, c%nPeers
                         if (found(p) == owner(cand)) then
@@ -1575,8 +1577,8 @@ contains
 
         call free_block_exchange(c)
 
-        if (c%cart_comm /= MPI_COMM_NULL) then
-            call MPI_Comm_free(c%cart_comm, ierr)
+        if (c%comm /= MPI_COMM_NULL) then
+            call MPI_Comm_free(c%comm, ierr)
         end if
 
         call MPI_Finalize(ierr)
@@ -1590,7 +1592,7 @@ contains
 
         integer :: ierr
 
-        call MPI_Allreduce(MPI_IN_PLACE, values, size(values), MPI_DOUBLE_PRECISION, MPI_MAX, c%cart_comm, ierr)
+        call MPI_Allreduce(MPI_IN_PLACE, values, size(values), MPI_DOUBLE_PRECISION, MPI_MAX, c%comm, ierr)
     end subroutine comm_allreduce_max
 
     subroutine comm_allreduce_sum(c, values)
@@ -1599,13 +1601,13 @@ contains
 
         integer :: ierr
 
-        call MPI_Allreduce(MPI_IN_PLACE, values, size(values), MPI_DOUBLE_PRECISION, MPI_SUM, c%cart_comm, ierr)
+        call MPI_Allreduce(MPI_IN_PLACE, values, size(values), MPI_DOUBLE_PRECISION, MPI_SUM, c%comm, ierr)
     end subroutine comm_allreduce_sum
 
     ! Elementwise MAX merge of an integer raster over ALL ranks. Runs on
-    ! MPI_COMM_WORLD (not the Cartesian communicator): the rank-split
-    ! classification (prepare/solve split P2) is indexed by world rank,
-    ! and moby_prepare never builds a Cartesian topology.
+    ! MPI_COMM_WORLD: the rank-split classification (prepare/solve split P2)
+    ! is indexed by world rank, and moby_prepare never calls comm_init, so
+    ! c%comm is null there.
     subroutine comm_allreduce_max_int(c, values)
         type(comm_type), intent(in) :: c
         integer(C_INT), intent(inout) :: values(:)
@@ -1638,27 +1640,23 @@ contains
             call pack_entries(c, blk)
             call prof_toc(exch_prof, PROF_PACK, t0)
             t0 = prof_tic()
-#ifdef USE_OPENMP_OFFLOAD
             !$omp target data use_device_addr(c%sendbuf, c%recvbuf)
-#endif
             ! A copy-only exchange is a prefix of the full message on both
             ! ends (entries are ordered same-level first per peer).
             do p = 1, c%nPeers
                 nRecvPts = c%peerRecvOff(p) - c%peerRecvOff(p-1)
                 if (c%copyOnly) nRecvPts = c%peerRecvCopyOff(p) - c%peerRecvCopyOff(p-1)
                 call MPI_Irecv(c%recvbuf(1,p), nRecvPts*nv, &
-                    MPI_DOUBLE_PRECISION, c%peerRank(p), HALO_TAG, c%cart_comm, c%request(p), ierr)
+                    MPI_DOUBLE_PRECISION, c%peerRank(p), HALO_TAG, c%comm, c%request(p), ierr)
             end do
             do p = 1, c%nPeers
                 nSendPts = c%peerSendOff(p) - c%peerSendOff(p-1)
                 if (c%copyOnly) nSendPts = c%peerSendCopyOff(p) - c%peerSendCopyOff(p-1)
                 call MPI_Isend(c%sendbuf(1,p), nSendPts*nv, &
-                    MPI_DOUBLE_PRECISION, c%peerRank(p), HALO_TAG, c%cart_comm, &
+                    MPI_DOUBLE_PRECISION, c%peerRank(p), HALO_TAG, c%comm, &
                     c%request(c%nPeers+p), ierr)
             end do
-#ifdef USE_OPENMP_OFFLOAD
             !$omp end target data
-#endif
             call prof_toc(exch_prof, PROF_MPI_POST, t0)
         end if
 
@@ -1697,7 +1695,7 @@ contains
             ! exchange, so never quote a step time from a barrier run.
             if (c%exchangeBarrier) then
                 t0 = prof_tic()
-                call MPI_Barrier(c%cart_comm, ierr)
+                call MPI_Barrier(c%comm, ierr)
                 call prof_toc(exch_prof, PROF_SKEW, t0)
             end if
             t0 = prof_tic()
@@ -1757,21 +1755,17 @@ contains
             call prof_toc(exch_prof, PROF_PACK, t0)
             c%request = MPI_REQUEST_NULL
             t0 = prof_tic()
-#ifdef USE_OPENMP_OFFLOAD
             !$omp target data use_device_addr(c%sendbuf, c%recvbuf)
-#endif
             do p = 1, c%nPeers
                 call MPI_Irecv(c%recvbuf(1,p), c%peerRecvOff(p) - c%peerRecvOff(p-1), &
-                    MPI_DOUBLE_PRECISION, c%peerRank(p), HALO_TAG, c%cart_comm, c%request(p), ierr)
+                    MPI_DOUBLE_PRECISION, c%peerRank(p), HALO_TAG, c%comm, c%request(p), ierr)
             end do
             do p = 1, c%nPeers
                 call MPI_Isend(c%sendbuf(1,p), c%peerSendOff(p) - c%peerSendOff(p-1), &
-                    MPI_DOUBLE_PRECISION, c%peerRank(p), HALO_TAG, c%cart_comm, &
+                    MPI_DOUBLE_PRECISION, c%peerRank(p), HALO_TAG, c%comm, &
                     c%request(c%nPeers+p), ierr)
             end do
-#ifdef USE_OPENMP_OFFLOAD
             !$omp end target data
-#endif
             call prof_toc(exch_prof, PROF_MPI_POST, t0)
         end if
 
@@ -1788,7 +1782,7 @@ contains
             ! exchange, so never quote a step time from a barrier run.
             if (c%exchangeBarrier) then
                 t0 = prof_tic()
-                call MPI_Barrier(c%cart_comm, ierr)
+                call MPI_Barrier(c%comm, ierr)
                 call prof_toc(exch_prof, PROF_SKEW, t0)
             end if
             t0 = prof_tic()
@@ -1854,23 +1848,19 @@ contains
             call pack_div_entries(c, blk)
             call prof_toc(exch_prof, PROF_PACK, t0)
             t0 = prof_tic()
-#ifdef USE_OPENMP_OFFLOAD
             !$omp target data use_device_addr(c%sendbuf, c%recvbuf)
-#endif
             do p = 1, c%nPeers
                 nRecvPts = c%peerRecvDivOff(p) - c%peerRecvDivOff(p-1)
                 call MPI_Irecv(c%recvbuf(1,p), nRecvPts, &
-                    MPI_DOUBLE_PRECISION, c%peerRank(p), HALO_TAG, c%cart_comm, c%request(p), ierr)
+                    MPI_DOUBLE_PRECISION, c%peerRank(p), HALO_TAG, c%comm, c%request(p), ierr)
             end do
             do p = 1, c%nPeers
                 nSendPts = c%peerSendDivOff(p) - c%peerSendDivOff(p-1)
                 call MPI_Isend(c%sendbuf(1,p), nSendPts, &
-                    MPI_DOUBLE_PRECISION, c%peerRank(p), HALO_TAG, c%cart_comm, &
+                    MPI_DOUBLE_PRECISION, c%peerRank(p), HALO_TAG, c%comm, &
                     c%request(c%nPeers+p), ierr)
             end do
-#ifdef USE_OPENMP_OFFLOAD
             !$omp end target data
-#endif
             call prof_toc(exch_prof, PROF_MPI_POST, t0)
         end if
 
@@ -1905,13 +1895,11 @@ contains
         nPts = c%nLocalDivPts
         if (nPts <= 0) return
 
-#ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
         !$omp& map(to: nPts, c%lDivPt, c%lDivEnt, c%lDivVar, c%lDivOff, &
         !$omp& c%lSrcSlot, c%lDstSlot, c%lDstLo, c%lExt, c%lGB) &
         !$omp& map(tofrom: blk%q) &
         !$omp& private(n,e,pt,ni,nj,di,dj,dk,qj,qk,var)
-#endif
         do gp = 0, nPts - 1
             n = c%lDivPt(gp)
             e = c%lDivEnt(n)
@@ -1928,9 +1916,7 @@ contains
                 blk%q(di + c%lGB(1,e), dj + c%lGB(2,e), dk + c%lGB(3,e), &
                       var, c%lSrcSlot(e))
         end do
-#ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
-#endif
     end subroutine copy_local_div_entries
 
     ! Pack the divergence list: one double per point (the entry's normal
@@ -1948,13 +1934,11 @@ contains
         totalItems = c%peerSendDivOff(c%nPeers)
         if (totalItems == 0) return
 
-#ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
         !$omp& map(to: totalItems, c%sDivPt, c%sDivEnt, c%sDivVar, c%sDivOff, &
         !$omp& c%sSlot, c%sPeer, c%sDstLo, c%sExt, c%sGB, c%peerSendDivOff, blk%q) &
         !$omp& map(tofrom: c%sendbuf) &
         !$omp& private(n,e,pt,ni,nj,di,dj,dk,peer,qj,qk,var)
-#endif
         do gp = 0, totalItems - 1
             n = c%sDivPt(gp)
             e = c%sDivEnt(n)
@@ -1971,9 +1955,7 @@ contains
             c%sendbuf(gp - c%peerSendDivOff(peer-1) + 1, peer) = &
                 blk%q(di + c%sGB(1,e), dj + c%sGB(2,e), dk + c%sGB(3,e), var, c%sSlot(e))
         end do
-#ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
-#endif
     end subroutine pack_div_entries
 
     ! Unpack the divergence list. No ghost blend and no owned-face skip: both
@@ -1989,13 +1971,11 @@ contains
         totalItems = c%peerRecvDivOff(c%nPeers)
         if (totalItems == 0) return
 
-#ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
         !$omp& map(to: totalItems, c%rDivPt, c%rDivEnt, c%rDivVar, c%rDivOff, &
         !$omp& c%rSlot, c%rPeer, c%rLo, c%rExt, c%peerRecvDivOff, c%recvbuf) &
         !$omp& map(tofrom: blk%q) &
         !$omp& private(n,e,pt,ni,nj,i,j,k,peer,qj,qk,var)
-#endif
         do gp = 0, totalItems - 1
             n = c%rDivPt(gp)
             e = c%rDivEnt(n)
@@ -2011,9 +1991,7 @@ contains
             peer = c%rPeer(e)
             blk%q(i, j, k, var, c%rSlot(e)) = c%recvbuf(gp - c%peerRecvDivOff(peer-1) + 1, peer)
         end do
-#ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
-#endif
     end subroutine unpack_div_entries
 
     ! phase = 1 same-level copies only (the prefix), 2 cross-level prolong/restrict
@@ -2094,13 +2072,11 @@ contains
         ! going to coalesce with each other -- spreading them across threads (the
         ! original p = point*nv + var indexing) only made every warp straddle nv
         ! distinct regions of memory. Consecutive threads now walk consecutive i.
-#ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
         !$omp& map(to: nPts, nv, c%lOff, c%lPointEntry, c%lSrcSlot, c%lDstSlot, &
         !$omp& c%lDstLo, c%lExt, c%lGB, av) &
         !$omp& map(tofrom: blk%q) &
         !$omp& private(e,pt,ni,nj,di,dj,dk,qj,qk,v,var,si,sj,sk,ds,ss)
-#endif
         do gp = 0, nPts - 1
             e = c%lPointEntry(gp)
             pt = gp - c%lOff(e-1)
@@ -2124,9 +2100,7 @@ contains
                 blk%q(di, dj, dk, var, ds) = blk%q(si, sj, sk, var, ss)
             end do
         end do
-#ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
-#endif
     end subroutine copy_local_same_level
 
     ! Cross-level prolong/restrict entries (the entry-list suffix): the general
@@ -2154,7 +2128,6 @@ contains
         ! It is an automatic array because activeVars is sized NVAR + nScalar.
         av = c%activeVars
 
-#ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
         !$omp& map(to: pLo, pHi, nv, sf, c%nLocal, c%lOff, c%lPointEntry, c%lSrcSlot, c%lDstSlot, &
         !$omp& c%lDstLo, c%lExt, c%lGA, c%lGB, c%lGS, c%lGC, c%lDir, c%lWp, c%lWpDst, &
@@ -2162,7 +2135,6 @@ contains
         !$omp& map(tofrom: blk%q) &
         !$omp& private(p,gp,v,e,pt,ni,nj,di,dj,dk,var,b1,b2,b3,s1,s2,s3,val,doBlend, &
         !$omp& og1,og2,og3,np1,np2,np3,wa1,wb1,wa2,wb2,wa3,wb3)
-#endif
         do p = pLo + 1, pHi
             gp = (p - 1)/nv
             v = p - 1 - gp*nv
@@ -2181,17 +2153,17 @@ contains
             b1 = ishft(c%lGA(1,e)*di + c%lGB(1,e), -c%lGS(1,e))
             b2 = ishft(c%lGA(2,e)*dj + c%lGB(2,e), -c%lGS(2,e))
             b3 = ishft(c%lGA(3,e)*dk + c%lGB(3,e), -c%lGS(3,e))
-            if (c%lGC(1,e) == 2 .and. var /= 1) then
+            if (c%lGC(1,e) == 2 .and. var /= VAR_U) then
                 og1 = 1; np1 = 2; wa1 = 0.5d0; wb1 = 0.5d0
             else
                 og1 = 0; np1 = 1; wa1 = 1.0d0; wb1 = 0.0d0
             end if
-            if (c%lGC(2,e) == 2 .and. var /= 2) then
+            if (c%lGC(2,e) == 2 .and. var /= VAR_V) then
                 og2 = 1; np2 = 2; wa2 = 0.5d0; wb2 = 0.5d0
             else
                 og2 = 0; np2 = 1; wa2 = 1.0d0; wb2 = 0.0d0
             end if
-            if (c%lGC(3,e) == 2 .and. var /= 3) then
+            if (c%lGC(3,e) == 2 .and. var /= VAR_W) then
                 og3 = 1; np3 = 2; wa3 = 0.5d0; wb3 = 0.5d0
             else
                 og3 = 0; np3 = 1; wa3 = 1.0d0; wb3 = 0.0d0
@@ -2221,7 +2193,7 @@ contains
             ! The blend weight lives partly on the destination's first interior
             ! cell (entries write only halo cells, so that read is never a dst).
             doBlend = c%lWpDst(e) /= 0.0d0
-            if (doBlend .and. var <= 3) doBlend = c%lDir(var,e) == 0
+            if (doBlend .and. var <= NVEL) doBlend = c%lDir(var,e) == 0
             if (doBlend) then
                 val = c%lWp(e)*val + c%lWpDst(e) &
                     *blk%q(di-c%lDir(1,e), dj-c%lDir(2,e), dk-c%lDir(3,e), var, c%lDstSlot(e))
@@ -2230,9 +2202,7 @@ contains
             ! this is the conservation SYNC (sf), which writes it.
             if (sf == 1 .or. var /= c%lNrm(e)) blk%q(di,dj,dk,var,c%lDstSlot(e)) = val
         end do
-#ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
-#endif
     end subroutine copy_local_cross_level
 
     ! Gather every local cross-block halo point of a cell-centred scalar (phi /
@@ -2264,14 +2234,12 @@ contains
         sfr = merge(1, 0, c%phiIfaceRow)
         t0 = prof_tic()
 
-#ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
         !$omp& map(to: pLo, pHi, sfr, c%nLocal, c%lOff, c%lPointEntry, c%lSrcSlot, c%lDstSlot, &
         !$omp& c%lDstLo, c%lExt, c%lGA, c%lGB, c%lGS, c%lGC, c%lPhiN) &
         !$omp& map(tofrom: scalar) &
         !$omp& private(p,e,pt,ni,nj,di,dj,dk,b1,b2,b3,og1,og2,og3,np1,np2,np3,s1,s2,s3, &
         !$omp& val,wa1,wb1,wa2,wb2,wa3,wb3,pn,ss,ds)
-#endif
         do p = pLo + 1, pHi
             e = c%lPointEntry(p - 1)
             pt = p - 1 - c%lOff(e-1)
@@ -2324,9 +2292,7 @@ contains
             end do
             scalar(di,dj,dk,ds) = val
         end do
-#ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
-#endif
         call prof_toc(exch_prof, PROF_COPY_CROSS, t0)
     end subroutine copy_local_scalar_entries
 
@@ -2340,13 +2306,11 @@ contains
         nPts = c%nLocalCopyPts
         if (nPts <= 0) return
 
-#ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
         !$omp& map(to: nPts, c%lOff, c%lPointEntry, c%lSrcSlot, c%lDstSlot, &
         !$omp& c%lDstLo, c%lExt, c%lGB) &
         !$omp& map(tofrom: scalar) &
         !$omp& private(e,pt,ni,nj,di,dj,dk,qj,qk)
-#endif
         do p = 1, nPts
             e = c%lPointEntry(p - 1)
             pt = p - 1 - c%lOff(e-1)
@@ -2360,9 +2324,7 @@ contains
             scalar(di, dj, dk, c%lDstSlot(e)) = &
                 scalar(di + c%lGB(1,e), dj + c%lGB(2,e), dk + c%lGB(3,e), c%lSrcSlot(e))
         end do
-#ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
-#endif
     end subroutine copy_local_scalar_same_level
 
     subroutine pack_entries(c, blk)
@@ -2386,14 +2348,12 @@ contains
         ! It is an automatic array because activeVars is sized NVAR + nScalar.
         av = c%activeVars
 
-#ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
         !$omp& map(to: totalItems, nv, copyOnly, c%nPeers, c%nSend, c%sOff, c%sPointEntry, c%sSlot, c%sPeer, &
         !$omp& c%sDstLo, c%sExt, c%sGA, c%sGB, c%sGS, c%sGC, &
         !$omp& c%peerSendOff, c%peerSendCopyOff, av, blk%q) &
         !$omp& map(tofrom: c%sendbuf) &
         !$omp& private(p,gp,v,e,pt,ni,nj,di,dj,dk,var,peer,pos,b1,b2,b3,c1,c2,c3,s1,s2,s3,val)
-#endif
         do p = 1, totalItems
             gp = (p - 1)/nv
             v = p - 1 - gp*nv
@@ -2414,9 +2374,9 @@ contains
             b1 = ishft(c%sGA(1,e)*di + c%sGB(1,e), -c%sGS(1,e))
             b2 = ishft(c%sGA(2,e)*dj + c%sGB(2,e), -c%sGS(2,e))
             b3 = ishft(c%sGA(3,e)*dk + c%sGB(3,e), -c%sGS(3,e))
-            c1 = merge(1, c%sGC(1,e), var == 1)
-            c2 = merge(1, c%sGC(2,e), var == 2)
-            c3 = merge(1, c%sGC(3,e), var == 3)
+            c1 = merge(1, c%sGC(1,e), var == VAR_U)
+            c2 = merge(1, c%sGC(2,e), var == VAR_V)
+            c3 = merge(1, c%sGC(3,e), var == VAR_W)
             val = 0.0d0
             do s3 = 0, c3 - 1
                 do s2 = 0, c2 - 1
@@ -2429,9 +2389,7 @@ contains
             pos = (gp - c%peerSendOff(peer-1))*nv + v + 1
             c%sendbuf(pos,peer) = val/real(c1*c2*c3, C_DOUBLE)
         end do
-#ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
-#endif
     end subroutine pack_entries
 
     subroutine unpack_entries(c, blk)
@@ -2456,14 +2414,12 @@ contains
         ! It is an automatic array because activeVars is sized NVAR + nScalar.
         av = c%activeVars
 
-#ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
         !$omp& map(to: totalItems, nv, copyOnly, sf, c%nPeers, c%nRecv, c%rOff, c%rPointEntry, c%rSlot, c%rPeer, &
         !$omp& c%rLo, c%rExt, c%rDir, c%rWp, c%rWpDst, c%rNrm, &
         !$omp& c%peerRecvOff, c%peerRecvCopyOff, av, c%recvbuf) &
         !$omp& map(tofrom: blk%q) &
         !$omp& private(p,gp,v,e,pt,ni,nj,i,j,k,var,peer,pos,val,doBlend)
-#endif
         do p = 1, totalItems
             gp = (p - 1)/nv
             v = p - 1 - gp*nv
@@ -2487,7 +2443,7 @@ contains
             ! the fine halo centre; the normal component is left to the
             ! face-staggered increment.
             doBlend = c%rWpDst(e) /= 0.0d0
-            if (doBlend .and. var <= 3) doBlend = c%rDir(var,e) == 0
+            if (doBlend .and. var <= NVEL) doBlend = c%rDir(var,e) == 0
             if (doBlend) then
                 val = c%rWp(e)*val + c%rWpDst(e) &
                     *blk%q(i-c%rDir(1,e), j-c%rDir(2,e), k-c%rDir(3,e), var, c%rSlot(e))
@@ -2496,9 +2452,7 @@ contains
             ! this is the conservation SYNC (sf), which writes it.
             if (sf == 1 .or. var /= c%rNrm(e)) blk%q(i,j,k,var,c%rSlot(e)) = val
         end do
-#ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
-#endif
     end subroutine unpack_entries
 
     subroutine pack_scalar_entries(c, scalar)
@@ -2514,13 +2468,11 @@ contains
         if (totalItems == 0) return
         sfr = merge(1, 0, c%phiIfaceRow)
 
-#ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
         !$omp& map(to: totalItems, sfr, c%nSend, c%sOff, c%sPointEntry, c%sSlot, c%sPeer, &
         !$omp& c%sDstLo, c%sExt, c%sGA, c%sGB, c%sGS, c%sGC, c%sPhiN, c%peerSendOff, scalar) &
         !$omp& map(tofrom: c%sendbuf) &
         !$omp& private(p,e,pt,ni,nj,di,dj,dk,peer,pos,b1,b2,b3,c1,c2,c3,s1,s2,s3,val,pn)
-#endif
         do p = 1, totalItems
             e = c%sPointEntry(p - 1)
             pt = p - 1 - c%sOff(e-1)
@@ -2555,9 +2507,7 @@ contains
             pos = p - c%peerSendOff(peer-1)
             c%sendbuf(pos,peer) = val/real(c1*c2*c3, C_DOUBLE)
         end do
-#ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
-#endif
     end subroutine pack_scalar_entries
 
     subroutine unpack_scalar_entries(c, scalar)
@@ -2570,13 +2520,11 @@ contains
         totalItems = c%peerRecvOff(c%nPeers)
         if (totalItems == 0) return
 
-#ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do &
         !$omp& map(to: totalItems, c%nRecv, c%rOff, c%rPointEntry, c%rSlot, c%rPeer, &
         !$omp& c%rLo, c%rExt, c%peerRecvOff, c%recvbuf) &
         !$omp& map(tofrom: scalar) &
         !$omp& private(p,e,pt,ni,nj,i,j,k,peer,pos)
-#endif
         do p = 1, totalItems
             e = c%rPointEntry(p - 1)
             pt = p - 1 - c%rOff(e-1)
@@ -2589,9 +2537,7 @@ contains
             pos = p - c%peerRecvOff(peer-1)
             scalar(i,j,k,c%rSlot(e)) = c%recvbuf(pos,peer)
         end do
-#ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
-#endif
     end subroutine unpack_scalar_entries
 
     ! Largest e in 1..n with off(e-1) <= gp (off is a 0:n point prefix).

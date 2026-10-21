@@ -276,7 +276,9 @@ contains
 
         allocate(mark(0:nx+1,0:ny+1,0:nz+1,nBlocks), tmp(0:nx+1,0:ny+1,0:nz+1,nBlocks))
         allocate(solidh(0:nx+1,0:ny+1,0:nz+1,nBlocks), markh(0:nx+1,0:ny+1,0:nz+1,nBlocks))
+#ifdef USE_OPENMP_OFFLOAD
         !$omp target enter data map(alloc: mark, tmp)
+#endif
 
         cap = 1024
         allocate(bi(cap), bj(cap), bk(cap), bv(cap), bb(cap), bd(cap))
@@ -298,7 +300,9 @@ contains
             end do
             end do
             !$omp end target teams distribute parallel do
+#ifdef USE_OPENMP_OFFLOAD
             !$omp target update from(mark)
+#endif
             solidh = mark
 
             ! band_width one-cell dilations, exchange-interleaved so the
@@ -335,7 +339,9 @@ contains
                 !$omp end target teams distribute parallel do
                 call exchange_scalar_halos(c, mark)
             end do
+#ifdef USE_OPENMP_OFFLOAD
             !$omp target update from(mark)
+#endif
             markh = mark
 
             ! host: compressed list of fluid band DOFs, skipping faces the
@@ -377,7 +383,9 @@ contains
             end do
         end do
 
+#ifdef USE_OPENMP_OFFLOAD
         !$omp target exit data map(delete: mark, tmp)
+#endif
         deallocate(mark, tmp, solidh, markh)
 
         allocate(ibm%bandI(max(1, int(ibm%nBand))), ibm%bandJ(max(1, int(ibm%nBand))), &
@@ -1231,12 +1239,10 @@ contains
         klo = lbound(ibm%coef,3)
         khi = ubound(ibm%coef,3)
 
-#ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do collapse(5) &
         !$omp& map(to: dt_gamma, ilo, ihi, jlo, jhi, klo, khi, nBody, ibm%coef, bodyBlocks) &
         !$omp& map(tofrom: ibm%mu) &
         !$omp& private(ix,iy,iz,var,b,n)
-#endif
         do n = 1, nBody
         do var = VAR_U, VAR_W
             do iz = klo, khi
@@ -1249,9 +1255,7 @@ contains
             end do
         end do
         end do
-#ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
-#endif
     end subroutine update_ibm_mu
 
     ! The block slots holding any non-zero IBM coefficient, and how many.
@@ -1288,12 +1292,10 @@ contains
         allocate(isBody(nBlocks))
         isBody = 0_C_INT
 
-#ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do collapse(5) &
         !$omp& map(to: ilo, ihi, jlo, jhi, klo, khi, nBlocks, ibm%coef) &
         !$omp& map(tofrom: isBody) &
         !$omp& private(ix,iy,iz,var,b)
-#endif
         do b = 1, nBlocks
         do var = VAR_U, VAR_W
             do iz = klo, khi
@@ -1305,9 +1307,7 @@ contains
             end do
         end do
         end do
-#ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
-#endif
 
         nBody = int(count(isBody == 1_C_INT))
         allocate(blocks(max(1, nBody)))

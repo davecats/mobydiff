@@ -122,8 +122,8 @@ program moby_solve
             " (a retired-mobygeom global-layout file?); re-prepare the case"
         error stop "case file without a blocks table"
     end if
-    call init_block_set_from_table(blk, dns, g, bc%isPeriodic, int(c%cart_size, C_INT), &
-        int(c%cart_rank, C_INT), fileNb, fileRefMask, fileKeyOrder, leafRows)
+    call init_block_set_from_table(blk, dns, g, bc%isPeriodic, int(c%world_size, C_INT), &
+        int(c%world_rank, C_INT), fileNb, fileRefMask, fileKeyOrder, leafRows)
     deallocate(leafRows, fileKeyOrder)
     call report_partition(c, blk)
     call init_block_exchange(c, blk, dns)

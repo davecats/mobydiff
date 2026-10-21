@@ -5,9 +5,10 @@ kernel split), 2 (one face-diffusivity helper), 3 (comm.f90's one
 enumeration) and 4 (the lattice probe and the node-line subdivision, once
 each) are DONE 2026-10-20, item 5 (`interface_correct` as one launch over
 a static face list) and item 6 (the per-iteration phi mirror on outlet
-cases) and item 7 (the red-black sweep's diagonal from the tables) DONE
-2026-10-21** -- see "Item N, done" at the end of this file for
-the measurements and what each one cost; items 8-11 are not started.
+cases), item 7 (the red-black sweep's diagonal from the tables) and item
+9 (latent robustness) DONE 2026-10-21** -- see "Item N, done" at the end of
+this file for the measurements and what each one cost; item 8 waits for the
+user, items 10-11 are not started.
 It continues `docs/cleanup_review_2026-10-06.md` section 9 (the
 ranked findings) after the items DONE on 2026-10-08: the config hardening
 (F11/F12), the body-force support restriction, the apply k1+k2 and
@@ -718,3 +719,45 @@ the build that prepared it. The suites never see it because they strip
 `[case] file` and prepare per run; a hand-written nofma gate on that ini
 must do the same (this one did). Candidate for item 10: compare node lines
 to a few ulps, or have the solver take the file's lines.
+
+## Item 9, done (2026-10-21)
+
+Five latent-robustness items, none of which changes a result; gated at
+PRODUCTION flags against the item-7 head's own binaries (`d4b9f90`), since
+nothing arithmetic moves.
+
+- **The communicator is a duplicate of `MPI_COMM_WORLD`** (`comm_init`:
+  `MPI_Comm_dup`), and the `cart_rank`/`cart_size`/`cart_comm` fields are
+  gone -- every site reads `c%world_rank`/`c%world_size`/`c%comm`. The
+  `MPI_Cart_create(reorder = .true.)` topology was permitted to renumber
+  ranks while the block split and `select_target_device` assumed
+  node-contiguous WORLD ids (Open MPI never reorders, which is why it never
+  bit); now the premise is gone rather than relied on. `dims`/`periodic`
+  survive as the nb rule's rank box (`comm_cart_dims`, `derive_block_nb`),
+  which never queries a topology. The "MPI Cartesian dimensions" print and
+  the mismatch error keep their text (the scalar README cites it).
+- **xz-mode key width is checked**: `key_covers` now also covers xz mode
+  (x and z below `2^KEY_COORD_BITS`, the width `morton2_key` interleaves; y
+  below `2^LEAF_KEY_YBITS`), so a leaf beyond it stops the table reader
+  with the width named instead of aliasing another key silently.
+- **The lidOf level offset is formed in int64** (`window_offset`) and
+  stops above the int32 range `lidOf` is indexed in; the product of a level
+  window's dims used to be formed in default integer.
+- **The gather kernels test the component by name**: `VAR_U/V/W` and
+  `NVEL` where `comm.f90` compared `var` against the literals 1/2/3.
+- **One OpenMP guard convention**: `#ifdef USE_OPENMP_OFFLOAD` marks DATA
+  MOVEMENT only -- `target enter/exit data` and `target update`, the
+  points where the host and device copies diverge (the defect class of the
+  2026-08-05 RANS fix) -- and compute constructs (`target teams ...`) fall
+  back unguarded, as a comment on the CPU build (which links no OpenMP) and
+  as host execution under a hypothetical `-mp` host build. Applied by
+  script across nine files: 60 compute blocks unguarded (pressure_solver 14,
+  comm 28, bodyforce 4, ibm 4, airfoil/boundary-layer/channel stats 10),
+  48 data directives guarded (turbulence 22, rans 14, bodyforce 8, ibm 4);
+  blocks holding runtime calls (`omp_get_num_devices`, `use omp_lib`) or
+  mixed content stay as they were. PROOF through the preprocessor rather
+  than a gate: `cpp -DUSE_OPENMP_OFFLOAD` of every touched file is
+  byte-identical to HEAD's (the GPU build compiles the same text), and the
+  CPU-side preprocessed diff consists of directive lines only.
+
+GATES (production flags vs `d4b9f90`): the 9-case suite CPU 4 ranks + GPU (18), the 11-case suite CPU + GPU (22), the outlet suite CPU 1 + 4 ranks and GPU (21), the xz quadtree case `refine2d/uniform_xz` CPU 4 ranks + GPU and 1 == 4 ranks on the new binary (the `key_covers` width check must accept every xz table), `min_channel` 1 == 2 == 4 ranks EXACT on the new binary (the communicator's own gate: three peer topologies through the duplicated communicator), `redblack_interface` driver CPU + GPU (1 == 4 EXACT), prepare P0 29/29 -- every comparison `max_abs 0`.

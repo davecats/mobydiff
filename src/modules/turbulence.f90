@@ -192,17 +192,39 @@ contains
 
         if (.not. allocated(turb%nut)) return
 
+#ifdef USE_OPENMP_OFFLOAD
         !$omp target enter data map(to: turb)
+#endif
+#ifdef USE_OPENMP_OFFLOAD
         !$omp target enter data map(to: turb%nut)
+#endif
+#ifdef USE_OPENMP_OFFLOAD
         !$omp target enter data map(to: turb%nut_sgs, turb%fd)
+#endif
+#ifdef USE_OPENMP_OFFLOAD
         !$omp target enter data map(to: turb%fe, turb%fb, turb%fe1m1, turb%delta)
+#endif
+#ifdef USE_OPENMP_OFFLOAD
         !$omp target enter data map(to: turb%filter_x, turb%filter_y, turb%filter_z)
+#endif
+#ifdef USE_OPENMP_OFFLOAD
         !$omp target enter data map(to: turb%d1xm, turb%d1x0, turb%d1xp)
+#endif
+#ifdef USE_OPENMP_OFFLOAD
         !$omp target enter data map(to: turb%d1ym, turb%d1y0, turb%d1yp)
+#endif
+#ifdef USE_OPENMP_OFFLOAD
         !$omp target enter data map(to: turb%d1zm, turb%d1z0, turb%d1zp)
+#endif
+#ifdef USE_OPENMP_OFFLOAD
         !$omp target enter data map(to: turb%p_from_u_x, turb%p_from_v_y, turb%p_from_w_z)
+#endif
+#ifdef USE_OPENMP_OFFLOAD
         !$omp target enter data map(to: turb%u_from_p_x, turb%v_from_p_y, turb%w_from_p_z)
+#endif
+#ifdef USE_OPENMP_OFFLOAD
         !$omp target enter data map(to: turb%inv_dx, turb%inv_dy, turb%inv_dz)
+#endif
     end subroutine enter_turbulence_data
 
     subroutine exit_turbulence_data(turb)
@@ -210,17 +232,39 @@ contains
 
         if (.not. allocated(turb%nut)) return
 
+#ifdef USE_OPENMP_OFFLOAD
         !$omp target exit data map(delete: turb%inv_dx, turb%inv_dy, turb%inv_dz)
+#endif
+#ifdef USE_OPENMP_OFFLOAD
         !$omp target exit data map(delete: turb%u_from_p_x, turb%v_from_p_y, turb%w_from_p_z)
+#endif
+#ifdef USE_OPENMP_OFFLOAD
         !$omp target exit data map(delete: turb%p_from_u_x, turb%p_from_v_y, turb%p_from_w_z)
+#endif
+#ifdef USE_OPENMP_OFFLOAD
         !$omp target exit data map(delete: turb%d1zm, turb%d1z0, turb%d1zp)
+#endif
+#ifdef USE_OPENMP_OFFLOAD
         !$omp target exit data map(delete: turb%d1ym, turb%d1y0, turb%d1yp)
+#endif
+#ifdef USE_OPENMP_OFFLOAD
         !$omp target exit data map(delete: turb%d1xm, turb%d1x0, turb%d1xp)
+#endif
+#ifdef USE_OPENMP_OFFLOAD
         !$omp target exit data map(delete: turb%filter_x, turb%filter_y, turb%filter_z)
+#endif
+#ifdef USE_OPENMP_OFFLOAD
         !$omp target exit data map(delete: turb%fe, turb%fb, turb%fe1m1, turb%delta)
+#endif
+#ifdef USE_OPENMP_OFFLOAD
         !$omp target exit data map(delete: turb%nut_sgs, turb%fd)
+#endif
+#ifdef USE_OPENMP_OFFLOAD
         !$omp target exit data map(delete: turb%nut)
+#endif
+#ifdef USE_OPENMP_OFFLOAD
         !$omp target exit data map(delete: turb)
+#endif
     end subroutine exit_turbulence_data
 
     ! Velocity-gradient tensor g(a,b) = du_a/dx_b at the centre of cell (i,j,k)

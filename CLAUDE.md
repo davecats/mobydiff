@@ -2775,6 +2775,26 @@ immersed boundary. Phased, each phase verified before the next:
   stretched line is one bit apart; the node-line check is exact) -- the
   suites strip `[case] file` and prepare per run, do the same by hand.
 
+- **Code simplification, item 9 -- latent robustness (DONE 2026-10-21,
+  handout "Item 9, done"; review F15, F16).** (1) The solver's
+  communicator is `MPI_Comm_dup(MPI_COMM_WORLD)` and ranks are WORLD ranks
+  everywhere (`c%comm`, `c%world_rank/size`; the `cart_*` fields are gone):
+  the `MPI_Cart_create(reorder = .true.)` topology was permitted to renumber
+  ranks while the block split and `select_target_device` assumed
+  node-contiguous world ids -- a premise removed, not relied on; `dims` /
+  `periodic` survive as the nb rule's rank box. (2) `key_covers` checks the
+  xz-mode key widths (x, z below 2^21, y below `LEAF_KEY_YBITS`) instead of
+  aliasing silently. (3) The lidOf level offset is formed in int64
+  (`window_offset`) and stops above int32. (4) The gather kernels test the
+  component by `VAR_U/V/W`, `NVEL`. (5) ONE OpenMP guard convention:
+  `#ifdef USE_OPENMP_OFFLOAD` marks DATA MOVEMENT only (`enter/exit data`,
+  `target update` -- the host/device divergence points), compute constructs
+  fall back unguarded (60 blocks unguarded, 48 directives guarded, nine
+  files), PROVEN through the preprocessor: the GPU-side source of every
+  touched file is byte-identical to before, the CPU side differs by
+  directive lines only. GATES at PRODUCTION flags vs the item-7 binaries
+  (`d4b9f90`; nothing arithmetic moves): the 9-case suite CPU 4 ranks + GPU (18), the 11-case suite CPU + GPU (22), the outlet suite CPU 1 + 4 ranks and GPU (21), the xz quadtree case `refine2d/uniform_xz` CPU 4 ranks + GPU and 1 == 4 ranks on the new binary (the `key_covers` width check must accept every xz table), `min_channel` 1 == 2 == 4 ranks EXACT on the new binary (the communicator's own gate: three peer topologies through the duplicated communicator), `redblack_interface` driver CPU + GPU (1 == 4 EXACT), prepare P0 29/29 -- every comparison `max_abs 0`.
+
 ## Verification
 
 - Pure refactors must be bit-exact vs. the pre-refactor code: compare

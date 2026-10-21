@@ -174,12 +174,10 @@ contains
         sample_sum = 0.0d0
         sample_count = 0.0d0
 
-#ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do collapse(4) &
         !$omp& map(to: ny_g, blk%origin, blk%q, blk%z) &
         !$omp& map(tofrom: sample_sum, sample_count) &
         !$omp& private(i,j,k,b,s,gx,gy,row,base,dz,p,velocity,sample)
-#endif
         do b = 1, nBlocks
         do k = 1, nz
             do j = 1, ny
@@ -215,9 +213,7 @@ contains
             end do
         end do
         end do
-#ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
-#endif
     end subroutine collect_bl_sample
 
     subroutine bl_stats_write_hdf5(this, dns, c)
@@ -347,12 +343,10 @@ contains
         nBlocks = int(blk%nBlocks)
         s_div2 = 0.0d0; s_vol = 0.0d0; s_div = 0.0d0; m_vel = 0.0d0
 
-#ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do collapse(4) &
         !$omp& reduction(+: s_div2, s_vol, s_div) reduction(max: m_vel) &
         !$omp& map(to: blk%q, blk%d1x, blk%d1y, blk%d1z) &
         !$omp& private(i,j,k,b,div,vol,uc,vc,wc,vmag)
-#endif
         do b = 1, nBlocks
         do k = 1, nz
             do j = 1, ny
@@ -373,9 +367,7 @@ contains
             end do
         end do
         end do
-#ifdef USE_OPENMP_OFFLOAD
         !$omp end target teams distribute parallel do
-#endif
         sums(1) = s_div2; sums(2) = s_vol; sums(3) = s_div
         maxes(1) = m_vel
     end subroutine divergence_reductions
