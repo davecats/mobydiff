@@ -2,7 +2,9 @@
 
 STATUS: handout written 2026-10-21 on head `a6f50aa` (the four decisions of
 that day committed: F13, F14, the nut read-back, the CLAUDE.md log move).
-**NOTHING RE-RUN YET.** This is the second half of the user's standing order
+**NOTHING RE-RUN YET; the seven decisions of section 4 were TAKEN by the
+user on 2026-10-21 (the same day) and are folded into sections 2.1, 3.4
+and 7.** This is the second half of the user's standing order
 of 2026-09-26 ("first the code simplifications and a thorough analysis of the
 code; THEN re-go through every gate, validation case and tutorial ONE BY ONE
 -- re-run, re-measure, update or retire"); the first half closed with
@@ -44,10 +46,16 @@ measured after.
 
 ### 2.1 Settings (the ini the case is re-run with)
 
-- **Chebyshev `niter = 12` is THE production projection**, what this pass
-  validates. The 2026-09-26 sweep moved the Chebyshev inis only; the inis
-  that declare plain Jacobi still carry `niter = 6` and move to
-  `accel = chebyshev`, `niter = 12` WHEN THEIR CASE IS RERUN: all twelve
+- **The projection of a rerun case (decision 1): Chebyshev `niter = 12` if
+  it runs stably on the case, else plain Jacobi `niter = 12`; and red-black
+  SOR at `niter = 3` or `6` becomes an admissible production choice for
+  refined cases IF the R1 band channel of decision 6 shows it works across
+  the 2:1 interface (until then SOR stays where it is declared).** Record
+  which one the case ended up with and why in its README block. The
+  2026-09-26 sweep moved the Chebyshev inis only; the inis that declare
+  plain Jacobi still carry `niter = 6` and move to `accel = chebyshev`,
+  `niter = 12` WHEN THEIR CASE IS RERUN (falling back to Jacobi 12 on an
+  instability, which is itself a finding to record): all twelve
   `rans_sst` channels (`turb180 turb395 turb180t laminar laminart lam30
   lam30t wf180_y05/15/22/30/45`), their scalar twins in `validation/scalar`
   (`turbsst wfsst wferr wfs180_y05/15/30/45 ibmwf180 ibmwf1000 conduction`),
@@ -56,7 +64,7 @@ measured after.
   boundary layer, the sailplane), NACA 18, the exactness/stability gates
   with their own counts (Beltrami 200, `interface_decay` 3, conjugate and
   scalar 2/40/50, prepare 3, `bodyforce/trip_small` jacobi 6 -- it is a
-  bit-exactness gate of the force kernel). Decision 1 of section 4.
+  bit-exactness gate of the force kernel).
 - **`cflmax = 1.0` on every rerun** (the user's 2026-10-05 decision; 0.8
   is 46 % of the RK3 limit since `cflmax` bounds the sum); delete the `sor`
   line where it is ignored (Chebyshev / Jacobi); do NOT sweep the inis for
@@ -286,7 +294,12 @@ absolute paths; record the dated block even where the numbers do not move.
   table of 2026-08-27 -- the 2:1 interface is not nb-independent at 1e-4 --
   re-measure once; `beltrami_rect[_redblack]` have no recorded result:
   record the suite's), `redblack_interface/run_gates.sh cpu|gpu` (no dated
-  result; the R1 "NOT yet done" list is decision 6), `interface_decay`
+  result; the R1 "NOT yet done" list: DECIDED (6) -- run the cheap items,
+  mass residual, Beltrami y-slab order, `refine_body` 2000 steps, the omega
+  sweep 0.8-1.7, here, AND the Re_tau 180 band channel vs Jacobi as a
+  tier-C run on istmcetus: it is the test that admits SOR as a production
+  projection across a 2:1 interface, decision 1; the performance item is
+  deferred to the performance handout), `interface_decay`
   (no recorded result, `niter = 3`: run, record the contraction),
   `refine2d`: `uniform_xz`/`unibody_xz` (2026-09-26) + the Beltrami pair
   `bp_xz_32/64` + `rans_xz` (2026-07-15, niter 6/50: re-run, expect the
@@ -355,16 +368,16 @@ said.
 
 | case | run | where | cost | notes |
 |---|---|---|---|---|
-| CHT pipe `tutorials/cht/pipe` | `run_pipe.sh stats` from `p_pr_settle2_30000.h5` (5.6 GB) at niter 12, `cflmax 1.0` set explicitly; `pipe_stats.py`, `asset/pipe_numbers.py`, `compare_neuhauser.py` | istmcorax (22.7 GB device memory: the 5090 or an A6000 only) | 168 000 steps at 0.52-0.56 s/step = 24-26 h | on file: the 2026-09-28 F2 re-run AT NITER 6 ("the binary is the ONLY change"), pre-F1/F7; the ini says 12 now. Decision 4. Zero `pn` in a copy of the settled file first |
-| CHT channel `tutorials/cht/channel` | `run_flageul.sh` from a developed Re_tau 149 seed (`cht149_flageul.h5` 539 MB in the sibling checkout is the candidate; `SEED=`), develop 80 000 + settle 65 000 + clean 650 000 steps; `check_cht.py`, `asset/compare_flageul.py` | istmcetus (one A6000) or istmcorax after the pipe | 715 000 steps at 0.562 s/step on the RTX 3060 = 112 h; ~60 h on an A6000, ~30 h on the 5090 (the KMM180 ratio) | undated, niter unknown (6 by its date), pre-F1 (stretched y), pre-F2, pre-F7. The one CHT comparison against published data at a flat interface. Decision 3; `check_cht.py` prints FAIL on two understood checks (README L134-151): keep or re-tolerance after the run |
+| CHT pipe `tutorials/cht/pipe` | FIRST a timing on istmcorax (the 5090 holds the 22.7 GB): ~200 steps from the settled state with Chebyshev `niter = 12` and with red-black `solver = redblack, sor = 1.5, niter = 6`, same binary, s/step of each (and that both are stable over the window); THEN `run_pipe.sh stats` with the FASTER one on HoreKa, from `p_pr_settle2_30000.h5` (5.6 GB, scp'd to the workspace with the case file and the ini; `cflmax 1.0` set explicitly; `pn` zeroed in a copy), chunked `dev_accelerated` or `accelerated`; post-process locally (no h5py on HoreKa) | istmcorax (timing) + HoreKa (run) | 168 000 steps: 24-26 h on the 5090 at 0.52-0.56 s/step; on one A100 of the order of a day, chunked | on file: the 2026-09-28 F2 re-run AT NITER 6 ("the binary is the ONLY change"), pre-F1/F7; the ini says 12 now. DECIDED (4): benchmark Chebyshev 12 vs SOR 6, run the fastest on HoreKa |
+| CHT channel `tutorials/cht/channel` | `run_flageul.sh` from a developed Re_tau 149 seed (`cht149_flageul.h5` 539 MB in the sibling checkout is the candidate; `SEED=`), develop 80 000 + settle 65 000 + clean 650 000 steps; `check_cht.py`, `asset/compare_flageul.py` | HoreKa (`dev_accelerated` chunks or `accelerated`, the user allows both; the seed and the case file go up by scp; the projection per decision 1) | 715 000 steps at 0.562 s/step on the RTX 3060 = 112 h; a few days chunked on A100s, 4 ranks | undated, niter unknown (6 by its date), pre-F1 (stretched y), pre-F2, pre-F7. The one CHT comparison against published data at a flat interface. DECIDED (3): rerun on HoreKa. `check_cht.py` prints FAIL on two understood checks (README L134-151): re-tolerance after the run |
 | `channel_interface/developed` | `run_developed.py --arch gpu --ranks 2`: transient 16 000 + statistics 64 000 steps; `tools/plot_channel_stats.py` | istmcetus (2 ranks = the two A6000s; `dims = 2 1 1`, never split y) | ~0.6 s/step on an RTX-class GPU = ~14 h, half on two | NO numbers recorded at all (its reflux study is settled history): this run produces the first niter-12 statistics of the band-refined channel. Needs `IC.h5` (section 2.5) and the uniform-fine reference (`run_reference.sh`, 0.29 s/step, 6 GB) |
-| `channel_interface` main (`reference`, `refined_y110`, `refined_y55`) | `run_validation.sh gpu 1`: transient 5 + statistics 20 turnovers each; `tools/channel_interface_validation.py` | istmcetus, one case per GPU, the reference last (256x128x256: 80 000 steps at ~0.3 s/step on an A6000 = ~7 h; the refined ones ~3 h each) | ~15 GPU-h | NO numbers recorded; the README's solver box says niter 6. Decision 7: run and record, or retire in favour of `developed/` + `core_patch/` |
+| `channel_interface` main (`reference`, `refined_y110`, `refined_y55`) | `run_validation.sh gpu 1`: transient 5 + statistics 20 turnovers each; `tools/channel_interface_validation.py` | istmcetus, one case per GPU, the reference last (256x128x256: 80 000 steps at ~0.3 s/step on an A6000 = ~7 h; the refined ones ~3 h each) | ~15 GPU-h | NO numbers recorded; the README's solver box says niter 6. DECIDED (7): run and record |
 | `channel_interface/core_patch` | gates 1, 2, 4 (`core_patch.ini` 250 steps, `base.ini`), gate 5 `run_gate5.py --arch gpu --ranks 2` (t 5..25, 201 snapshots, ~8 GB) | istmcetus | gate 5 ~5 h | 2026-06-29, niter 6; gate 3 needed `MOBY_STEPDIV` (removed): RETIRE gate 3. The base-128 pressure null mode (pn std 2e5) was blamed on niter 6: the run says whether it is gone |
 | `channel_interface/les` | `run_les.py --arch gpu --case all` (`uniform`, `slab`, `patch` 64^3 + WALE, `reference` 128x64x128 DNS), `les_stats.py`; `run_wall_jump.sh` (2026-10-02, seconds) | istmcetus / corax | the LES cases ~1-2 h each, the reference several hours | 2026-06-30, niter 6 ("the under-converged niter=6 projection" named in the p column); needs the four ICs (section 2.5); the "READY TO RUN" header goes. Also the iddes WALE reference |
 | `refine2d` xz channel | `developed/run_developed.py --refine-dims xz` from `IC_xz.h5`, `analyze_xz_channel.py` | istmcorax | 80 000 steps, ~4 h on the 5090 (2026-07) | 2026-07-15, "niter = 6 throughout"; the last xz validation with turbulence |
 | KMM180 `tutorials/channel_kmm180` | `input.ini` cold start (`[case] name = channel`, red-black 3, `t_final 200`, dt 3.125e-4 = 640 000 steps) OR a two-leg restart from `channel_kmm180_restart_dywplus0p5.h5` as on 2026-09-30 (30 t.u. discarded + 20 averaged, 64 000 steps) | istmcorax (0.0208 s/step = 3.7 h full; 22 min for the two-leg form) | 0.4-4 h | NO statistics recorded in the README ("the case is on the one-by-one re-validation list"); the F1 legs' statistics are in `asset/f1_2026-09-30/` (U+ 18.51, u'+ 2.65, both ~1 % from KMM). Record a statistics block in the README from the two-leg form; the full cold start only if the user wants the tutorial's own developed field regenerated |
-| NACA `tutorials/naca/rans` | `run_case.sh restart` from `c11_aoa5_460000.h5` (baseline, t = 29; the production `c11_nose_660000.h5` is NOT on this filesystem) for 1 t.u. with the nut read-back; `postprocess.sh`, `cv_forces.py`, `compare_openfoam.py` | istmcetus (0.50 s/step on an A6000; baseline dt 5e-5 = 20 000 steps per t.u. = 2.8 h) | 3-6 h; from scratch 33 + 46 h | 2026-08-08 at niter 18 (not 6 -> 12), pre-F1/F7/outlet/nut; the 2026-10-01 restart check read C_D 0.01275 on either binary against the table's 0.01294 ("one scatter below", unresolved). Decision 2 |
-| scalar S2 `les`, `band` | `run_gates_s2.sh les band` (`turbles` then `turbslab`: relax + re-target + statistics legs, 1 rank, pinned `dims 1 1 1`) | istmcetus (one GPU each) | 64x48x64 at dtmax 5e-4 to t 40 + relax: ~2 h each on an A6000 (the README says "hours to days" for the CPU form) | 2026-08-07, niter 6; the band excess sign question (-0.0265 vs +0.0012, a normalisation effect, README L1300, L1384) is settled by stating ONE normalisation in the block. Decision 5 |
+| NACA `tutorials/naca/rans` | `run_case.sh scratch` on the NOSE grid (stages L10 -> L11 -> nose per the README protocol, `interp_restart.py` between them; prepare ~40 min on 20 CPU ranks, done on the workstation and scp'd), the stopping table's tolerances; then `postprocess.sh`, `cv_forces.py`, `compare_openfoam.py` | HoreKa (A100s, chunked; the user: "use HoreKa if necessary to speed up") -- the production file `c11_nose_660000.h5` is NOT on this filesystem, so the scratch run also regenerates the tutorial's own restart | 2026-08: ~33 h stage 1 on an RTX 3060 + ~46 h stages 2-3 on an A6000; on A100s a day or two chunked | 2026-08-08 at niter 18 (not 6 -> 12), pre-F1/F7/outlet/nut; the 2026-10-01 restart check read C_D 0.01275 on either binary against the table's 0.01294 ("one scatter below", unresolved): the scratch run settles it. DECIDED (2): re-converge from scratch on the nose grid |
+| scalar S2 `les`, `band` | `run_gates_s2.sh les band` (`turbles` then `turbslab`: relax + re-target + statistics legs, 1 rank, pinned `dims 1 1 1`) | istmcetus (one GPU each) | 64x48x64 at dtmax 5e-4 to t 40 + relax: ~2 h each on an A6000 (the README says "hours to days" for the CPU form) | 2026-08-07, niter 6; the band excess sign question (-0.0265 vs +0.0012, a normalisation effect, README L1300, L1384) is settled by stating ONE normalisation in the block. DECIDED (5): rerun both on istmcetus |
 | boundary layer `tutorials/turbulentBoundaryLayer` | -- | HoreKa | 500 000 steps at 0.18 s/step on 4 A100 = 25 h | **STANDS**: measured 2026-10-05/06 on main with the predicted outlet, post-F1, red-black (no niter change), `cflmax 1.0` and `convection = divergence` already by the user's decision; the only later change (the interior Courant reduction) cannot touch a restart from a developed field. Record "stands" in the ledger and the index; no run |
 
 ### 3.5 Retire (with a header) -- no decision needed
@@ -381,42 +394,38 @@ C3 transient control rows (already retired 2026-10-06, keep the note),
 (removed 2026-09-26; needs a `cv_box` and a re-measured reference if
 revived -- not in this pass).
 
-## 4. NEEDS THE USER (decide before the tier the item sits in)
+## 4. DECIDED by the user on 2026-10-21 (asked one by one)
 
-1. **Plain-Jacobi `niter = 6` inis move to Chebyshev 12 when rerun**
-   (section 2.1; twelve rans_sst channels, eleven scalar RANS twins,
-   `rans_xz`, `cylinder/empty`, `freestream/oblique`). Recommended: YES --
-   the pass validates the production projection; plain Jacobi at 6 is the
-   2026-07 setting nobody runs. The alternative (keep plain Jacobi, move to
-   12) is what the 2026-09-30 turb180 re-measure did.
-2. **NACA: restart leg only, or re-converge from scratch.** The production
-   restart file is not on this filesystem (only the baseline's t = 29 file
-   in `~/Codes/mobydiff/`). Recommended: the baseline restart leg for 1
-   t.u. on an A6000 (~3 h) with the nut read-back, the C_D window long
-   enough to answer the 0.01275-vs-0.01294 question; from scratch (80 GPU-h
-   on the nose grid) only if the drag disagrees beyond its scatter, and then
-   on the production grid so the tutorial's own file is regenerated.
-3. **CHT channel: re-run (~30 h on the 5090 / ~60 h on an A6000) from the
-   archived developed seed.** Recommended: YES, after the pipe on the same
-   host; it is the only flat-interface CHT comparison with published data
-   and the only CHT number set that never saw F2.
-4. **CHT pipe: re-run the stats leg (25 h on the 5090).** Recommended: YES,
-   first thing on istmcorax; its numbers are the largest set on file and
-   were measured at niter 6 on purpose ("the binary is the ONLY change").
-5. **Scalar S2 LES legs (`turbles`/`turbslab`, ~2 h each on an A6000).**
-   Recommended: run; they are the only scalar-under-LES validation and the
-   band gate's normalisation question needs one clean number.
-6. **`redblack_interface` R1 "NOT yet done" list** (mass residual, the
-   Beltrami y-slab order, the Re_tau 180 band channel vs Jacobi, 2000 steps
-   of `refine_body`, the omega sweep, refined-grid performance; README
-   L65-89). Recommended: run the cheap items (residual, y-slab order,
-   `refine_body` 2000 steps, the omega sweep: an afternoon on the CPU),
-   leave the band channel and the performance item as "not done" with a
-   reason -- red-black across a 2:1 interface has no production case.
-7. **The three main `channel_interface` cases (~15 GPU-h, no numbers ever
-   recorded).** Recommended: run them on the idle A6000s in the background
-   and record; retire only if `developed/` + `core_patch/` cover what they
-   show (they do not: the main cases are the only 256-wide reference).
+1. **Projection of the plain-Jacobi `niter = 6` inis when rerun:** Chebyshev
+   `niter = 12` if it works stably on the case, otherwise plain Jacobi
+   `niter = 12`; and if red-black SOR is observed to work across the 2:1
+   interface too (to be tested: decision 6), SOR at `niter = 3` or `6` is
+   also acceptable. Rule in section 2.1.
+2. **NACA: re-converge from scratch on the nose grid**, on HoreKa if that
+   speeds it up (the production restart file is lost; the scratch run
+   regenerates it). Row in 3.4.
+3. **CHT channel: rerun on HoreKa**, `accelerated` allowed as well as
+   `dev_accelerated`. Row in 3.4.
+4. **CHT pipe: first time Chebyshev-Jacobi `niter = 12` against red-black SOR
+   `niter = 6` on the case; run the stats leg with the FASTER one, on
+   HoreKa.** Row in 3.4 (the timing on istmcorax, the only local device that
+   holds the 22.7 GB).
+5. **Scalar S2 LES legs (`turbles`, `turbslab`): rerun both on istmcetus.**
+6. **Red-black R1 list: run the cheap items AND the Re_tau 180 band channel
+   vs Jacobi**; the performance item waits for the performance handout.
+   Decision 1 makes this the admission test of SOR on refined cases.
+7. **The three main `channel_interface` cases: run and record** (istmcetus,
+   one per A6000, the reference last).
+
+Host plan after the decisions: HoreKa takes the NACA scratch run, the CHT
+channel and the CHT pipe (three chains; `dev_accelerated` is one job per
+user, `accelerated` is allowed for these -- the user's own jobs sit there
+too; two chains that build the same worktree must not overlap). istmcetus
+takes `developed/`, the three main channel cases, the S2 LES pair,
+`channel_interface/les`, `core_patch` gate 5 and the R1 band channel (two
+A6000s, so queue them in a status-file chain per GPU). istmcorax takes the
+pipe timing, the refine2d xz channel and KMM180. The workstation takes
+tiers A and B.
 
 ## 5. Text to fix on the way (found in the survey; fix when the case is touched)
 
@@ -477,7 +486,8 @@ measured after (`12` = niter 6 -> 12, `F1`, `F2`, `F7`, `out` = the outlet,
 | `rans_geometry` | flat 2026-09-26, wavy 2026-07-07 | F1 (wavy init only) | A | WS CPU | PENDING |
 | `rans_inlet` | 2026-09-26 | nut (cold start: no) | A | WS | PENDING |
 | `block_nb` (+ the beltrami_rect suite cases) | 2026-09-26; FINDING 2026-08-27 | -- | A | WS | PENDING |
-| `redblack_interface` | undated; R1 list open | -- | A | WS | PENDING (decision 6) |
+| `redblack_interface` (+ the R1 cheap items) | undated; R1 list open | -- | A | WS | PENDING (decided 6) |
+| `redblack_interface` R1 band channel (Re_tau 180 vs Jacobi) | never run | -- | C | cetus | PENDING (decided 6; admits SOR on 2:1, decision 1) |
 | `interface_decay` | undated | -- | A | WS GPU | PENDING |
 | `refine2d` uniform/unibody / Beltrami pair + rans_xz / xz channel | 2026-09-26 / 2026-07-15 / 2026-07-15 | -- / 12, F1 / 12, F1, sum | A / A / C | WS / WS / corax | PENDING |
 | `beltrami` (no README) | undated | -- | A | WS | PENDING |
@@ -486,17 +496,17 @@ measured after (`12` = niter 6 -> 12, `F1`, `F2`, `F7`, `out` = the outlet,
 | `tutorials/sailplane` | 2026-09-27 (one step, no number) | F7, out | A | WS GPU | PENDING |
 | `scalar` S1 / S3 / S4 (not cyl) | 2026-08-07 / 2026-10-01 / 2026-08-07 (heat 10-01) | 12 (S1, S4), F1 (conduction?) | A | WS | PENDING |
 | `scalar` S3/S4 `cyl` | 2026-08-07 | 12, F1, F7, out | B | WS/A6000 | PENDING |
-| `scalar` S2 `les`/`band` | 2026-08-07 | 12, sum | C | cetus | PENDING (decision 5) |
+| `scalar` S2 `les`/`band` | 2026-08-07 | 12, sum | C | cetus | PENDING (decided 5: both) |
 | `conjugate` C1 / C2 / C3 / pipe gates | C3 era (~09) / undated / undated / 2026-09-15 | 12, F1, F7 (bodies) | A | WS | PENDING |
 | `channel_interface/les_ibm` | 2026-06-30; a_wale 2026-10-01 (20 steps) | 12, F7 (statistics) | B | WS GPU | PENDING |
 | `iddes` | 2026-07-10 | 12, F1, F7 (ibm), sum, nut | B | WS GPU | PENDING |
 | `cylinder` | Re 40 2026-10-01; St 2026-07-13 (penalization) | St: 12, F7, out | B | A6000 | PENDING |
 | `channel_interface/developed` | none | -- | C | cetus 2 GPU | PENDING |
-| `channel_interface` main (3 cases) | none | -- | C | cetus | PENDING (decision 7) |
+| `channel_interface` main (3 cases) | none | -- | C | cetus | PENDING (decided 7: run) |
 | `channel_interface/core_patch` | 2026-06-29 | 12, sum | C | cetus | PENDING (gate 3 RETIRE) |
 | `channel_interface/les` (+ wall jump 2026-10-02) | 2026-06-30 | 12, sum | C | cetus/corax | PENDING |
 | `tutorials/channel_kmm180` | no statistics in the README (F1 legs 2026-09-30 in `asset/`) | -- | C | corax | PENDING |
-| `tutorials/naca/rans` | 2026-08-08; restart check 2026-10-01 | F1, F7, out (check only), nut | C | A6000 | PENDING (decision 2) |
-| `tutorials/cht/pipe` | 2026-09-28 at niter 6 | 12, F1, F7 | C | corax | PENDING (decision 4) |
-| `tutorials/cht/channel` | undated | 12, F1, F2, F7 | C | corax/cetus | PENDING (decision 3) |
+| `tutorials/naca/rans` | 2026-08-08; restart check 2026-10-01 | F1, F7, out (check only), nut | C | HoreKa (scratch, nose grid) | PENDING (decided 2) |
+| `tutorials/cht/pipe` | 2026-09-28 at niter 6 | 12, F1, F7 | C | corax (timing) + HoreKa | PENDING (decided 4: fastest of Cheb 12 / SOR 6) |
+| `tutorials/cht/channel` | undated | 12, F1, F2, F7 | C | HoreKa | PENDING (decided 3) |
 | `tutorials/turbulentBoundaryLayer` (+ rough) | 2026-10-05/06, 10-08 | (cou: cannot touch it) | -- | HoreKa | STANDS |

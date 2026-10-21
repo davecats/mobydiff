@@ -2869,4 +2869,11 @@ immersed boundary. Phased, each phase verified before the next:
   (Chebyshev 12 for the plain-Jacobi inis, NACA restart vs scratch, the two
   CHT reruns, the S2 LES legs, the red-black R1 list, the three main
   channel cases). Retired without a decision: prepare P1b, refine2d gate
-  (b), core_patch gate 3, the cylinder investigation drivers.
+  (b), core_patch gate 3, the cylinder investigation drivers. **The seven
+  decisions were TAKEN the same day** (handout section 4): Chebyshev 12
+  where stable else Jacobi 12, SOR 3/6 admissible once the R1 band channel
+  shows it works across 2:1; NACA re-converged from scratch on the nose
+  grid (HoreKa); the CHT channel on HoreKa (`accelerated` allowed); the CHT
+  pipe with the faster of Chebyshev 12 / SOR 6 (timed first on istmcorax)
+  on HoreKa; the S2 LES pair on istmcetus; the R1 cheap items plus the band
+  channel; the three main channel cases run and recorded.
