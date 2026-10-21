@@ -1,9 +1,9 @@
 module io
     use, intrinsic :: iso_c_binding
     use :: init, only: dns_type, grid_type, VAR_U, VAR_V, VAR_W, VAR_P, NVAR, NVEL, &
-        config_seen_type
+        config_seen_type, GRID_NATURAL
     use :: blocks, only: block_set_type, KEY_MAX_BITS, FACE_PHYS
-    use :: boundary, only: boundary_type, NFACES, boundary_face_id, BC_OUTFLOW
+    use :: boundary, only: boundary_type, NFACES, boundary_face_id, BC_OUTFLOW, PATCH_UNSET
     use :: comm, only: comm_type, comm_allreduce_max_int
     implicit none
 
@@ -727,6 +727,30 @@ subroutine read_scalar_field(blk, name, file_name, s, found, has_terminal)
     found = ifound /= 0_C_INT
 end subroutine read_scalar_field
 
+! Restart metadata against the input: ONE precedence rule (review F13,
+! decided 2026-10-21; the table is in docs/configuration.md "[restart]").
+!   * STATE is the file's: step, t_current, cfl and dt (the ini's dt is the
+!     cold-start value, the file's the adaptive step's; restart ==
+!     continuous needs the latter).
+!   * RUN LENGTH (nsteps, t_final) is the ini's when it sets one, else the
+!     file's.
+!   * What the CASE FILE owns -- grid size, lengths, periodicity, the
+!     node-line distribution parameters -- is the ini's, and the restart
+!     file must AGREE: a disagreement stops the run naming both values (a
+!     field cannot be restarted on another grid; until now the file's value
+!     silently replaced the ini's and the case-file check then blamed the
+!     ini for it).
+!   * Everything else (re, forcing, cflmax, pecletmax, dtmax, niter, sor,
+!     ibm_enabled, the BC rows) is the ini's. A key the ini sets explicitly
+!     wins whatever the file holds -- changing t_final, niter or cflmax, or
+!     switching a body on, at restart is the normal workflow. A key the ini
+!     LEAVES AT ITS DEFAULT must agree with the file, else the run stops and
+!     says to set it: the file never overrides the input silently (the
+!     2026-10-05 absent-body restart was such an override, and so was the
+!     Blasius template that carried boundary rows its ini did not). BC rows
+!     are checked on non-periodic faces only; a face with a declared patch
+!     type is the ini's through the declaration (resolve_face_bcs seeds its
+!     rows after this call).
 subroutine read_restart_metadata(dns, g, bc, pressure_niter, pressure_sor, file_name, c, seen)
     type(dns_type), intent(inout) :: dns
     type(grid_type), intent(inout) :: g
@@ -735,80 +759,147 @@ subroutine read_restart_metadata(dns, g, bc, pressure_niter, pressure_sor, file_
     real(C_DOUBLE), intent(inout) :: pressure_sor
     character(len=*), intent(in) :: file_name
     type(comm_type), intent(in) :: c
-    ! Which values the ini set explicitly; config wins over the restart file for these.
+    ! Which values the ini set explicitly.
     type(config_seen_type), intent(in) :: seen
 
     character(kind=C_CHAR,len=:), allocatable :: c_file_name
     integer(C_INT) :: ierr
-    integer(C_INT) :: file_nsteps
-    integer(C_INT) :: periodic(1:3)
-    integer(C_INT) :: ibm_enabled
-    integer :: dir
-    real(C_DOUBLE) :: input_cflmax, input_pecletmax, input_dtmax, input_t_final
-    integer(C_INT) :: input_pressure_niter
-    real(C_DOUBLE) :: input_pressure_sor
-    integer(C_INT) :: input_bc_type(VAR_U:VAR_P,1:NFACES)
-    real(C_DOUBLE) :: input_bc_value(VAR_U:VAR_P,1:NFACES)
-    real(C_DOUBLE) :: input_re, input_forcing(1:3)
-    logical :: input_ibm_enabled
+    ! The file's values, read into COPIES: only the state and the run
+    ! length below are written from them.
+    integer(C_INT) :: f_size(1:3), f_step, f_nsteps, f_niter, f_ibm, f_periodic(1:3), f_dist(1:3)
+    integer(C_INT) :: f_bc_type(VAR_U:VAR_P,1:NFACES)
+    real(C_DOUBLE) :: f_leng(1:3), f_re, f_dt, f_t_final, f_t_current, f_cfl(1:size(dns%cfl))
+    real(C_DOUBLE) :: f_cflmax, f_pecletmax, f_dtmax, f_forcing(1:3), f_sor
+    real(C_DOUBLE) :: f_stretch(1:3), f_dyw(1:3), f_bc_value(VAR_U:VAR_P,1:NFACES)
+    character(len=1), parameter :: dirName(1:3) = ["x", "y", "z"]
+    character(len=1), parameter :: varName(1:4) = ["u", "v", "w", "p"]
+    character(len=3), parameter :: sideName(0:1) = ["min", "max"]
+    character(len=48) :: row
+    integer :: dir, side, var, face_id
+    logical :: declared
 
-    input_re = dns%re
-    input_forcing = dns%forcing
-    input_ibm_enabled = dns%ibm_enabled
-    input_bc_type = bc%faceBcType
-    input_bc_value = bc%faceBcDefaultValue
-    file_nsteps = dns%nsteps
-    periodic = merge(1_C_INT, 0_C_INT, bc%isPeriodic)
-    ibm_enabled = merge(1_C_INT, 0_C_INT, dns%ibm_enabled)
-    input_cflmax = dns%cflmax
-    input_pecletmax = dns%pecletmax
-    input_dtmax = dns%dtmax
-    input_t_final = dns%t_final
-    input_pressure_niter = pressure_niter
-    input_pressure_sor = pressure_sor
+    f_size = dns%globalSize; f_step = dns%step_current; f_nsteps = dns%nsteps
+    f_leng = dns%leng; f_re = dns%re; f_dt = dns%dt; f_t_final = dns%t_final
+    f_t_current = dns%t_current; f_cfl = dns%cfl
+    f_cflmax = dns%cflmax; f_pecletmax = dns%pecletmax; f_dtmax = dns%dtmax
+    f_forcing = dns%forcing; f_niter = pressure_niter; f_sor = pressure_sor
+    f_ibm = merge(1_C_INT, 0_C_INT, dns%ibm_enabled)
+    f_periodic = merge(1_C_INT, 0_C_INT, bc%isPeriodic)
+    f_bc_type = bc%faceBcType; f_bc_value = bc%faceBcDefaultValue
+    f_dist = g%distribution(1:3); f_stretch = g%stretch(1:3); f_dyw = g%natural_dyw_plus(1:3)
     c_file_name = to_c_string(file_name)
-    ierr = fdm_h5_read_metadata(c_file_name, dns%globalSize(1), dns%globalSize(2), dns%globalSize(3), &
-        dns%step_current, file_nsteps, &
-        dns%leng(1), dns%leng(2), dns%leng(3), dns%re, dns%dt, dns%t_final, dns%t_current, dns%cfl, &
-        dns%cflmax, dns%pecletmax, dns%dtmax, dns%forcing, &
-        pressure_niter, pressure_sor, ibm_enabled, int(size(bc%faceBcType), C_INT), periodic, &
-        bc%faceBcType(VAR_U:VAR_P,1:NFACES), bc%faceBcDefaultValue(VAR_U:VAR_P,1:NFACES), &
-        g%distribution(1:3), g%stretch(1:3), g%natural_dyw_plus(1:3))
+    ierr = fdm_h5_read_metadata(c_file_name, f_size(1), f_size(2), f_size(3), f_step, f_nsteps, &
+        f_leng(1), f_leng(2), f_leng(3), f_re, f_dt, f_t_final, f_t_current, f_cfl, &
+        f_cflmax, f_pecletmax, f_dtmax, f_forcing, f_niter, f_sor, f_ibm, &
+        int(size(bc%faceBcType), C_INT), f_periodic, f_bc_type, f_bc_value, &
+        f_dist, f_stretch, f_dyw)
     if (ierr /= 0_C_INT) then
         if (c%has_terminal) print *, "error: could not read restart metadata: ", trim(file_name)
         error stop
     end if
 
-    ! Config is authority: for every value the ini set explicitly, keep the ini
-    ! value rather than the one stored in the restart file. This matters most for
-    ! the pressure solver -- a restart from an old red-black run stores sor=1.5,
-    ! which DIVERGES under damped Jacobi (sor>0.8).
-    ! (dt is NOT on this list: the ini's dt is the cold-start value, the
-    ! file's is the adaptive step's state, and restart == continuous needs
-    ! the latter.)
-    if (seen%cflmax)         dns%cflmax     = input_cflmax
-    if (seen%pecletmax)      dns%pecletmax  = input_pecletmax
-    if (seen%dtmax)          dns%dtmax      = input_dtmax
-    if (seen%t_final)        dns%t_final    = input_t_final
-    if (seen%re)             dns%re         = input_re
-    where (seen%forcing)     dns%forcing    = input_forcing
-    if (seen%pressure_niter) pressure_niter = input_pressure_niter
-    if (seen%pressure_sor)   pressure_sor   = input_pressure_sor
-    ! BC rows the ini set explicitly also beat the restart file's (and the
-    ! patch-type contradiction check must see the ini's values).
-    where (bc%faceBcTypeSet)  bc%faceBcType         = input_bc_type
-    where (bc%faceBcValueSet) bc%faceBcDefaultValue = input_bc_value
+    ! State.
+    dns%step_current = f_step
+    dns%t_current = f_t_current
+    dns%dt = f_dt
+    dns%cfl = f_cfl
+    ! Run length.
+    if (dns%nsteps <= 0_C_INT) dns%nsteps = f_nsteps
+    if (.not. seen%t_final) dns%t_final = f_t_final
 
-    if (dns%nsteps <= 0_C_INT) dns%nsteps = file_nsteps
+    ! The case file's keys: the ini must agree.
     do dir = 1, 3
-        bc%isPeriodic(dir) = periodic(dir) /= 0_C_INT
+        call restart_must_agree_int("[grid] n" // dirName(dir), dns%globalSize(dir), f_size(dir), .true., c)
+        call restart_must_agree_real("[grid] l" // dirName(dir), dns%leng(dir), f_leng(dir), .true., c)
+        call restart_must_agree_int("[boundary] periodic_" // dirName(dir), &
+            merge(1_C_INT, 0_C_INT, bc%isPeriodic(dir)), f_periodic(dir), .true., c)
+        call restart_must_agree_int("[grid." // dirName(dir) // "] distribution", &
+            g%distribution(dir), f_dist(dir), .true., c)
+        call restart_must_agree_real("[grid." // dirName(dir) // "] stretch", &
+            g%stretch(dir), f_stretch(dir), .true., c)
+        ! The reader presets 0.05 where the attribute is absent (older
+        ! files); compare it only where it shapes the line.
+        if (g%distribution(dir) == GRID_NATURAL) &
+            call restart_must_agree_real("[grid." // dirName(dir) // "] natural_dyw_plus", &
+                g%natural_dyw_plus(dir), f_dyw(dir), .true., c)
     end do
-    ! An explicit [ibm] enabled beats the file's flag: a rough wall restarted
-    ! from a smooth developed field (found 2026-10-05: the file's "false" won,
-    ! the body was silently absent and the two sides ran bit-identical).
-    dns%ibm_enabled = ibm_enabled /= 0_C_INT
-    if (seen%ibm_enabled) dns%ibm_enabled = input_ibm_enabled
+
+    ! Run control and physics: the ini's; a key left at its default must
+    ! agree with the file.
+    if (.not. seen%cflmax)    call restart_must_agree_real("[time] cflmax", dns%cflmax, f_cflmax, .false., c)
+    if (.not. seen%pecletmax) call restart_must_agree_real("[time] pecletmax", dns%pecletmax, f_pecletmax, .false., c)
+    if (.not. seen%dtmax)     call restart_must_agree_real("[time] dtmax", dns%dtmax, f_dtmax, .false., c)
+    if (.not. seen%re)        call restart_must_agree_real("[flow] re", dns%re, f_re, .false., c)
+    do dir = 1, 3
+        if (.not. seen%forcing(dir)) call restart_must_agree_real("[flow] forcing_" // dirName(dir), &
+            dns%forcing(dir), f_forcing(dir), .false., c)
+    end do
+    if (.not. seen%pressure_niter) call restart_must_agree_int("[pressure] niter", pressure_niter, f_niter, .false., c)
+    if (.not. seen%pressure_sor)   call restart_must_agree_real("[pressure] sor", pressure_sor, f_sor, .false., c)
+    if (.not. seen%ibm_enabled)    call restart_must_agree_int("[ibm] enabled", &
+        merge(1_C_INT, 0_C_INT, dns%ibm_enabled), f_ibm, .false., c)
+    do dir = 1, 3
+        if (bc%isPeriodic(dir)) cycle
+        do side = 0, 1
+            face_id = boundary_face_id(dir, side)
+            declared = bc%facePatchType(face_id) /= PATCH_UNSET
+            do var = int(VAR_U), int(VAR_P)
+                row = "[boundary] " // dirName(dir) // "_" // sideName(side) // "_" // varName(var)
+                if (.not. (declared .or. bc%faceBcTypeSet(var, face_id))) &
+                    call restart_must_agree_int(trim(row) // "_type", bc%faceBcType(var, face_id), &
+                        f_bc_type(var, face_id), .false., c)
+                if (.not. (declared .or. bc%faceBcValueSet(var, face_id))) &
+                    call restart_must_agree_real(trim(row) // "_value", bc%faceBcDefaultValue(var, face_id), &
+                        f_bc_value(var, face_id), .false., c)
+            end do
+        end do
+    end do
 end subroutine read_restart_metadata
+
+! The restart file disagrees with the input on `name`: stop, naming both.
+! caseOwned says which half of the rule applies in the message.
+subroutine restart_disagreement(name, input_text, file_text, caseOwned, c)
+    character(len=*), intent(in) :: name, input_text, file_text
+    logical, intent(in) :: caseOwned
+    type(comm_type), intent(in) :: c
+
+    if (c%has_terminal) then
+        print '(a)', " error: restart file disagrees with the input on " // name // &
+            ": input " // trim(adjustl(input_text)) // ", file " // trim(adjustl(file_text))
+        if (caseOwned) then
+            print '(a)', "        the case file owns " // name // ": a field cannot be restarted on another grid"
+        else
+            print '(a)', "        set " // name // " in the input to change it on restart"
+        end if
+    end if
+    error stop "restart file disagrees with the input"
+end subroutine restart_disagreement
+
+subroutine restart_must_agree_int(name, input_value, file_value, caseOwned, c)
+    character(len=*), intent(in) :: name
+    integer(C_INT), intent(in) :: input_value, file_value
+    logical, intent(in) :: caseOwned
+    type(comm_type), intent(in) :: c
+    character(len=24) :: a, b
+
+    if (input_value == file_value) return
+    write(a, '(i0)') input_value
+    write(b, '(i0)') file_value
+    call restart_disagreement(name, a, b, caseOwned, c)
+end subroutine restart_must_agree_int
+
+subroutine restart_must_agree_real(name, input_value, file_value, caseOwned, c)
+    character(len=*), intent(in) :: name
+    real(C_DOUBLE), intent(in) :: input_value, file_value
+    logical, intent(in) :: caseOwned
+    type(comm_type), intent(in) :: c
+    character(len=32) :: a, b
+
+    if (input_value == file_value) return
+    write(a, '(g0)') input_value
+    write(b, '(g0)') file_value
+    call restart_disagreement(name, a, b, caseOwned, c)
+end subroutine restart_must_agree_real
 
 ! The case file's LAYOUT (step 7-2): header attributes checked against the
 ! ini -- the file is the single source of truth for grid, block size and

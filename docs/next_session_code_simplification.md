@@ -912,3 +912,46 @@ omega nut` (+ `gamma rethetat` for lam30t), CPU 4 ranks AND GPU 1 rank;
 item-11 binaries and at nofma vs `~/pass2_ref_binaries`, every comparison
 `max_abs 0`; `freestream restart` group ALL PASS. Scratch: `gates12/` of
 the session scratchpad (`restart_pair` in `common12.sh`).
+
+## Item 8, F13 restart precedence, done (2026-10-21)
+
+The user's decision (asked 2026-10-21): **config-authority with a hard stop
+on a mismatch.** The rule, now one table in `docs/configuration.md`
+"[restart]" and the comment above `read_restart_metadata` (io.f90):
+
+| metadata | rule |
+|---|---|
+| `step`, `t_current`, `cfl`, `dt` | the file's (state) |
+| `nsteps`, `t_final` | the ini's if set, else the file's (run length) |
+| `nx ny nz`, `lx ly lz`, `periodic_*`, `distribution`, `stretch`, `natural_dyw_plus` | the ini's; the file must agree, else stop naming both (the case file owns the grid) |
+| `re`, `forcing_*`, `cflmax`, `pecletmax`, `dtmax`, `niter`, `sor`, `[ibm] enabled`, BC rows | the ini's; an explicit key wins silently, a key left at its default must agree with the file, else stop and say to set it |
+
+Implementation: the file's values go into local copies (`f_*`); nothing is
+written from them except the state and the run length; `restart_must_agree_int/real`
+compare exactly (the file stores the double the ini parsed) and stop through
+`restart_disagreement`, whose second line says which half of the rule bit.
+BC rows: non-periodic faces only (periodicity itself is compared), and a
+face with a declared patch type counts as set (`resolve_face_bcs` seeds its
+rows AFTER this call, so comparing them here would see the defaults);
+`natural_dyw_plus` is compared only on a `natural` line because the reader
+presets 0.05 where the attribute is absent. `moby_prepare` runs the same
+routine (it reads the restart metadata so the case file describes what the
+solver will see), so a mismatch stops the prepare too. Deviations from the
+handout text: `nsteps`/`t_final` stay set-if-unset (a run length, not a
+mismatch); an EXPLICIT run-control key that differs from the file is not an
+error (the handout's "a mismatch is an error" would have forbidden every
+legitimate restart change). One cosmetic residual: an unset `dtmax` prints
+as `0.1797693134862316E+309` (its `huge()` default) in the message.
+
+GATES: on the `turb180` restart ini of item 12's pair -- `nx = 8 -> 16`
+stops: `error: restart file disagrees with the input on [grid] nx: input
+16, file 8 / the case file owns [grid] nx: a field cannot be restarted on
+another grid`; `dtmax` line deleted stops: `[time] dtmax: input
+0.1797...E+309, file 0.5E-01 / set [time] dtmax in the input to change it
+on restart`; `niter = 6 -> 12` and `cflmax = 0.5 -> 1.0` set explicitly
+runs to its snapshot with no disagreement line. The suites exercise the
+agreement half on every case that restarts from an IC file (min_channel,
+les_ibm, the scalar ICs, pois_io / lamboseen / blasius2d from minted ICs):
+the 9-case, 11-case and outlet suites CPU + GPU, production vs the item-11
+binaries and nofma vs pass2, all `max_abs 0`; `freestream restart` ALL
+PASS; prepare P0 29/29. No committed ini needed a change.

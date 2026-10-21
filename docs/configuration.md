@@ -351,6 +351,20 @@ functions.
 |-----|------|---------|---------|
 | `file` | string | (empty) | Restart HDF5 field file. When set, the run continues from it and full validation is skipped. |
 
+**Which value wins on a restart** (`io.f90 read_restart_metadata`, one rule
+since 2026-10-21; before, the file silently replaced the ini's grid, lengths,
+periodicity and node-line parameters, and any key the ini left unset):
+
+| metadata stored in the field file | rule |
+|---|---|
+| `step`, `t_current`, `cfl`, `dt` | **the file's** — the state of the run (`dt` is the adaptive step's last value; the ini's `dt` is the cold-start value) |
+| `nsteps`, `t_final` | the ini's when it sets one, else the file's (run length) |
+| `[grid] nx ny nz`, `lx ly lz`, `[boundary] periodic_*`, `[grid.<d>] distribution`, `stretch`, `natural_dyw_plus` | **the ini's, and the file must agree** — a disagreement stops the run naming both values. The case file owns the grid; a field cannot be restarted on another one |
+| `[flow] re`, `forcing_*`, `[time] cflmax`, `pecletmax`, `dtmax`, `[pressure] niter`, `sor`, `[ibm] enabled`, the `[boundary]` rows | **the ini's.** A key set explicitly wins whatever the file holds (changing `t_final`, `niter`, `cflmax`, or switching a body on at restart is the normal workflow). A key left at its default must agree with the file, else the run stops and says to set it — the file never overrides the input silently. Boundary rows are checked on non-periodic faces only; a face with a declared `_patch` is the ini's through the declaration |
+
+A restart ini is therefore the cold-start ini plus `[restart] file`; an ini
+written for another snapshot states every key it means to carry over.
+
 ---
 
 **Notes**

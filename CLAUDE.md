@@ -2860,6 +2860,34 @@ immersed boundary. Phased, each phase verified before the next:
   ranks); the item-11 binary on the same `turb180` pair reads 1.46e-5 (the
   finding). Dormancy: the three code items of 2026-10-21 (this one, F13, F14) were built and gated TOGETHER, each on its own evidence: at PRODUCTION flags vs the item-11 binaries the 9-case suite CPU 4 ranks + GPU (18), the 11-case suite CPU + GPU (22) and the outlet suite CPU 4 ranks + GPU (14) -- every comparison `max_abs 0`; at NOFMA vs `~/pass2_ref_binaries` the same three suites CPU + GPU (54) `max_abs 0`, so the reference set is UNCHANGED; `validation/freestream/run_gates.sh restart` ALL PASS (5 outlet restarts == continuous); `validation/courant_limit/run_gate.sh` 11/11 PASS; prepare P0 29/29.
 
+- **Code simplification, item 8, F13 -- ONE restart precedence rule (DONE
+  2026-10-21, the user's decision: config-authority with a hard stop on a
+  mismatch; `docs/configuration.md` "[restart]" has the table).**
+  `read_restart_metadata` reads the file into COPIES and writes `dns`/`g`/`bc`
+  from them only for the STATE (`step`, `t_current`, `cfl`, `dt`) and the run
+  length (`nsteps`, `t_final`: the ini's if set, else the file's). What the
+  case file owns -- `nx ny nz`, `lx ly lz`, `periodic_*`, the node-line
+  `distribution`/`stretch`/`natural_dyw_plus` (the last only on a `natural`
+  line; the reader presets 0.05 where the attribute is absent) -- must AGREE
+  or the run stops naming both values ("the case file owns [grid] nx: a field
+  cannot be restarted on another grid"); until now the file silently replaced
+  the ini's value and the case-file check then blamed the ini. Everything
+  else (`re`, `forcing_*`, `cflmax`, `pecletmax`, `dtmax`, `niter`, `sor`,
+  `[ibm] enabled`, the BC rows) is the ini's: an explicit key wins silently
+  (changing `t_final`/`niter`/`cflmax` or switching a body on at restart is
+  the normal workflow), a key LEFT AT ITS DEFAULT must agree with the file or
+  the run stops and says to set it -- the file never overrides the input
+  silently (the 2026-10-05 absent-body restart and the Blasius template that
+  carried rows its ini did not were both that override). BC rows are checked
+  on non-periodic faces only, and a face with a declared `_patch` is the
+  ini's through the declaration (`resolve_face_bcs` seeds its rows later).
+  GATES: a `turb180` restart with `nx = 16` against its step-10 snapshot
+  stops with `[grid] nx: input 16, file 8`; the same with `dtmax` deleted
+  stops with `[time] dtmax: input <huge>, file 0.05 -- set [time] dtmax in
+  the input`; with `niter` and `cflmax` changed explicitly it runs (0
+  disagreement lines, snapshot written). Every suite case restarting from a
+  committed or minted IC file passes the agreement checks: the three code items of 2026-10-21 (this one, F13, F14) were built and gated TOGETHER, each on its own evidence: at PRODUCTION flags vs the item-11 binaries the 9-case suite CPU 4 ranks + GPU (18), the 11-case suite CPU + GPU (22) and the outlet suite CPU 4 ranks + GPU (14) -- every comparison `max_abs 0`; at NOFMA vs `~/pass2_ref_binaries` the same three suites CPU + GPU (54) `max_abs 0`, so the reference set is UNCHANGED; `validation/freestream/run_gates.sh restart` ALL PASS (5 outlet restarts == continuous); `validation/courant_limit/run_gate.sh` 11/11 PASS; prepare P0 29/29.
+
 ## Verification
 
 - Pure refactors must be bit-exact vs. the pre-refactor code: compare
