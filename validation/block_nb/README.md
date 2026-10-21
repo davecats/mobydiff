@@ -55,6 +55,15 @@ nb-independent, see below); it runs as the 8th case of
 which is where any per-orientation indexing mistake in a face-list kernel
 shows up as a nonzero.
 
+**Its red-black twin, `beltrami_rect_redblack.ini`** (added 2026-10-21, the
+9th suite case): the same ini with `[pressure] solver = redblack`, `sor =
+1.5` and no acceleration. The 7/8-case suite had no red-black case at all,
+so the coupled sweep (`redblack_sweep`, the production smoother of the
+boundary-layer tutorial) was gated only by `validation/redblack_interface`'s
+self-consistency checks; this twin puts it under the same new-vs-reference
+comparison as the Jacobi path, on a 2:1 layout with non-cubic blocks, at 4
+ranks and on the GPU.
+
 The tiling is deliberately fine enough that levels 0, 1 **and** 2 all survive,
 so both l0–l1 and l1–l2 interfaces are exercised. A coarser `nb` lets the 2:1
 smoothing swallow level 0 entirely (at `nb = 16 8 16`: 280 leaves, all refined)

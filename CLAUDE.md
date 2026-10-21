@@ -2744,6 +2744,37 @@ immersed boundary. Phased, each phase verified before the next:
   numbers reproduce the README), 8-case (CPU 4 ranks + GPU) and 11-case
   (CPU + GPU) suites -- 80 field comparisons.
 
+- **Code simplification, item 7 -- the red-black sweep's diagonal from the
+  tables (DONE 2026-10-21, handout "Item 7, done").** `dnLow`/`dnHigh`/`d1P`
+  now start at index 0 (the lower halo layer the sweep visits redundantly
+  with its owner; at index 0 `face_grad` is the plain `d1f`) and
+  `redblack_sweep` reads them instead of calling `face_grad` six times per
+  cell: `init_face_metrics` serves both projections, the sweep maps neither
+  the three `d1?` arrays nor the outlet/refinement flags, and its signature
+  lost them. Expression unchanged (the divide stays: a reciprocal would be
+  a numerics change of the production smoother), so bit-exact by
+  construction: `max_abs 0` at nofma on CPU and GPU, and at production
+  flags on the CPU; the GPU compiler contracts the table-fed statement
+  differently (5e-15..2e-12, the FMA class) -- reference set UNCHANGED
+  (`~/pass2_ref_binaries`, gated at nofma). Registers 96 -> 92 (same granule,
+  occupancy unmoved: this kernel's live set is its 13 in-place `q`/`mu`
+  values, not array bases). MEASURED (RTX 3060, production GPU, before =
+  `f5293ff`): sweep kernel **-6.3 %** (`redblack_interface`, 2:1), -1.8 %
+  (`pocket`), -3.4 % (Blasius under red-black), -3.5 % (sailplane, 18 M
+  cells, red-black 20); step -2.4 / -0.9 / -2.2 / -1.9 %, momentum flat.
+  NEW SUITE CASE: `validation/block_nb/beltrami_rect_redblack.ini` (the
+  red-black twin of `beltrami_rect`: 2:1 + non-cubic blocks + real flow
+  under the coupled sweep) is the 9th case of `run_bitexact.sh` -- the suite
+  had no red-black case. GATES: A/B on eight red-black cases (the six
+  above incl. `les_ibm_refine` and `min_channel` under red-black, pocket,
+  sailplane) CPU 4 ranks + GPU 16/16 `max_abs 0`; production-flag CPU 5/5;
+  1 == 2 == 4 ranks EXACT under red-black (the gate with power over the
+  index-0 entries); `redblack_interface` driver CPU + GPU, `body_outlet
+  pocket` PASS; the 9-case suite CPU 4 ranks + GPU 18/18 `max_abs 0`. FOUND, pre-existing: the committed
+  `validation/blasius/blasius.case.h5` is refused by NOFMA builds (its
+  stretched line is one bit apart; the node-line check is exact) -- the
+  suites strip `[case] file` and prepare per run, do the same by hand.
+
 ## Verification
 
 - Pure refactors must be bit-exact vs. the pre-refactor code: compare

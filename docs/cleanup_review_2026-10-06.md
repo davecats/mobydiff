@@ -279,7 +279,12 @@ control-flow only, gateable at production flags; "moves" = the nofma gate.
     `face_grad_denom` per cell: the sweep visits index 0 (the redundant halo
     layer, `:1128-1130`) and the tables start at 1 (`:475-477`), so they need
     a `0:nb` extension -- new code, same expression; production-flag gate on
-    `validation/redblack_interface` + the red-black suite cases.
+    `validation/redblack_interface` + the red-black suite cases. **DONE
+    2026-10-21** (tables `0:nb`, the sweep reads them and maps nothing else;
+    registers 96 -> 92, same granule; sweep kernel -2 to -6 %, step -1 to
+    -2.4 % on four red-black cases; `max_abs 0` at nofma on CPU and GPU
+    and at production flags on the CPU, FMA-class on the GPU --
+    `docs/next_session_code_simplification.md` "Item 7, done").
 
 ## 4. Correctness risks found by reading
 

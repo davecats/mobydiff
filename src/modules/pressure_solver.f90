@@ -98,7 +98,7 @@ module pressure_solver
     logical, save :: dnsHasTerminal = .false.
 
     ! STATIC face metric tables, precomputed per (face-normal index, direction,
-    ! block) and shared by the two volume kernels of the projection.
+    ! block) and shared by the volume kernels of both projections (Jacobi and red-black).
     !
     ! Every metric these kernels need at a face is face_grad (face kind,
     ! at-boundary, d1f, outlet, refined) -- a function of the block and the
@@ -124,10 +124,13 @@ module pressure_solver
     !                  unless the block's high face in d is an OUTLET physical
     !                  face -- the only high face that kernel owns, so one
     !                  value per block suffices.
-    !   dnLow/dnHigh   compute_rdenom's DIAGONAL metric, both faces, every index
-    !                  (the high face enters the diagonal at every cell, not
-    !                  only at the block boundary -- hence the full index range
-    !                  here where cfHigh needs one value).
+    !   dnLow/dnHigh   the DIAGONAL metric of compute_rdenom and of the
+    !                  red-black sweep, both faces, every index (the high face
+    !                  enters the diagonal at every cell, not only at the block
+    !                  boundary -- hence the full index range here where cfHigh
+    !                  needs one value). Index 0 is the lower halo layer, which
+    !                  the red-black sweep visits redundantly with its owner
+    !                  (the Jacobi kernels read 1..nb).
     !   d1P            the cell's own divergence metric d1?(idx,VAR_P,b), the
     !                  last thing that kept all three d1 arrays live in
     !                  compute_rdenom. It MUST stay a separate factor: the
@@ -151,9 +154,9 @@ module pressure_solver
     ! values already there.
     real(C_DOUBLE), allocatable :: cfLow(:,:,:)   ! (1:maxval(nb), 3, nBlocks)
     real(C_DOUBLE), allocatable :: cfHigh(:,:)    ! (3, nBlocks)
-    real(C_DOUBLE), allocatable :: dnLow(:,:,:)   ! (1:maxval(nb), 3, nBlocks)
-    real(C_DOUBLE), allocatable :: dnHigh(:,:,:)  ! (1:maxval(nb), 3, nBlocks)
-    real(C_DOUBLE), allocatable :: d1P(:,:,:)     ! (1:maxval(nb), 3, nBlocks)
+    real(C_DOUBLE), allocatable :: dnLow(:,:,:)   ! (0:maxval(nb), 3, nBlocks)
+    real(C_DOUBLE), allocatable :: dnHigh(:,:,:)  ! (0:maxval(nb), 3, nBlocks)
+    real(C_DOUBLE), allocatable :: d1P(:,:,:)     ! (0:maxval(nb), 3, nBlocks)
 
     ! The 2:1 interface faces of THIS rank, listed once (init_interface_faces):
     ! per face its block, the direction of its normal, its index along that
@@ -490,9 +493,12 @@ contains
         integer(C_INT) :: b, d, idx, n
 
         if (allocated(cfLow)) return
+        ! The diagonal tables start at index 0: the red-black sweep visits the
+        ! lower halo layer (redundantly with its owner) and reads the metric
+        ! there like anywhere else; the Jacobi kernels read 1..nb.
         allocate(cfLow(maxval(blk%nb),3,blk%nBlocks), cfHigh(3,blk%nBlocks), &
-                 dnLow(maxval(blk%nb),3,blk%nBlocks), dnHigh(maxval(blk%nb),3,blk%nBlocks), &
-                 d1P(maxval(blk%nb),3,blk%nBlocks))
+                 dnLow(0:maxval(blk%nb),3,blk%nBlocks), dnHigh(0:maxval(blk%nb),3,blk%nBlocks), &
+                 d1P(0:maxval(blk%nb),3,blk%nBlocks))
         cfLow = 0.0d0
         cfHigh = 0.0d0
         dnLow = 0.0d0
@@ -502,7 +508,7 @@ contains
         do b = 1_C_INT, blk%nBlocks
             do d = 1_C_INT, 3_C_INT
                 n = blk%nb(d)
-                do idx = 1_C_INT, n
+                do idx = 0_C_INT, n
                     dnLow(idx,d,b) = face_grad(blk%physLow(d,b), idx == 1_C_INT, &
                         d1_normal(blk, d, idx, b), outLow(d), refd(d))
                     dnHigh(idx,d,b) = face_grad(blk%physHigh(d,b), idx == n, &
@@ -1046,6 +1052,9 @@ contains
             call init_interface_faces(blk, refd)
         end if
         call outlet_flags(bc, outLow, outHigh)
+        ! The sweep reads its diagonal metrics from the same static tables as
+        ! the Jacobi kernels (dnLow/dnHigh/d1P, index 0 included).
+        call init_face_metrics(blk, outLow, outHigh, refd)
         call prof_toc(proj_prof, PROF_PROJ_SETUP, t0)
 
         ! The coupled sweep updates pressure AND velocity in one kernel, so on a
@@ -1061,7 +1070,7 @@ contains
                 ! Zero per COLOUR, not per iteration: the patch must see this
                 ! colour's increment alone (see redblack_sweep).
                 if (hasIface) call zero_phi(blk)
-                call redblack_sweep(ps, blk, dt_gamma, ibm, color, outLow, outHigh, refd, hasIface)
+                call redblack_sweep(ps, blk, dt_gamma, ibm, color, hasIface)
                 call prof_toc(proj_prof, PROF_SWEEP, t0)
                 if (hasIface) then
                     t0 = prof_tic()
@@ -1119,16 +1128,15 @@ contains
     ! faces are then kept in the DENOMINATOR but NOT corrected here -- the patch
     ! owns them, which keeps the interface formula in exactly one place and
     ! avoids stray writes into tangential halo copies of an interface face.
-    subroutine redblack_sweep(ps, blk, dt_gamma, ibm, color, outLow, outHigh, refd, storePhi)
+    subroutine redblack_sweep(ps, blk, dt_gamma, ibm, color, storePhi)
         type(pressure_solver_type), intent(in) :: ps
         type(block_set_type), intent(inout) :: blk
         real(C_DOUBLE), intent(in) :: dt_gamma
         type(ibm_type), intent(in) :: ibm
         integer(C_INT), intent(in) :: color
-        logical(C_BOOL), intent(in) :: outLow(3), outHigh(3), refd(3)
         logical, intent(in) :: storePhi
 
-        real(C_DOUBLE) :: phiC, denom, idt, sor, div
+        real(C_DOUBLE) :: phiC, denom, idt, sor, div, dP1, dP2, dP3
         real(C_DOUBLE) :: gLo1, gHi1, gLo2, gHi2, gLo3, gHi3
         real(C_DOUBLE) :: cLo1, cHi1, cLo2, cHi2, cLo3, cHi3
         logical :: store
@@ -1147,12 +1155,11 @@ contains
 #ifdef USE_OPENMP_OFFLOAD
         !$omp target teams distribute parallel do collapse(4) &
         !$omp& map(to: color, nColorX, sor, idt, dt_gamma, hi(1:3), store, &
-        !$omp& outLow(1:3), outHigh(1:3), refd(1:3), &
         !$omp& blk%origin, blk%physLow, blk%physHigh, &
-        !$omp& blk%d1x, blk%d1y, blk%d1z, ibm%mu) &
+        !$omp& dnLow, dnHigh, d1P, ibm%mu) &
         !$omp& map(tofrom: blk%q, phi) &
         !$omp& private(i,ip,j,jp,k,kp,b,iColor,iLo,jLo,kLo,colorOffset, &
-        !$omp& phiC,denom,div,nLowerHaloDirections, gLo1,gHi1,gLo2,gHi2,gLo3,gHi3, &
+        !$omp& phiC,denom,div,dP1,dP2,dP3,nLowerHaloDirections, gLo1,gHi1,gLo2,gHi2,gLo3,gHi3, &
         !$omp& cLo1,cHi1,cLo2,cHi2,cLo3,cHi3, &
         !$omp& mu_u_i,mu_u_ip,mu_v_j,mu_v_jp,mu_w_k,mu_w_kp)
 #endif
@@ -1181,22 +1188,22 @@ contains
                     mu_v_j  = ibm%mu(i,j,k,VAR_V,b);  mu_v_jp = ibm%mu(i,jp,k,VAR_V,b)
                     mu_w_k  = ibm%mu(i,j,k,VAR_W,b);  mu_w_kp = ibm%mu(i,j,kp,VAR_W,b)
 
-                    ! SPD face metric (0 pinned, 2*d1f outlet, d1f otherwise); the
-                    ! in-place correction reuses the same value as the diagonal.
-                    gLo1 = face_grad(blk%physLow(1,b),  i == 1_C_INT, blk%d1x(i,VAR_U,b),  outLow(1),  refd(1))
-                    gHi1 = face_grad(blk%physHigh(1,b), i == hi(1),   blk%d1x(ip,VAR_U,b), outHigh(1), refd(1))
-                    gLo2 = face_grad(blk%physLow(2,b),  j == 1_C_INT, blk%d1y(j,VAR_V,b),  outLow(2),  refd(2))
-                    gHi2 = face_grad(blk%physHigh(2,b), j == hi(2),   blk%d1y(jp,VAR_V,b), outHigh(2), refd(2))
-                    gLo3 = face_grad(blk%physLow(3,b),  k == 1_C_INT, blk%d1z(k,VAR_W,b),  outLow(3),  refd(3))
-                    gHi3 = face_grad(blk%physHigh(3,b), k == hi(3),   blk%d1z(kp,VAR_W,b), outHigh(3), refd(3))
+                    ! The face metric (0 pinned, 2*d1f outlet, d1f otherwise) and
+                    ! the divergence metric from the static tables -- the same
+                    ! values face_grad used to return here per cell, formed once
+                    ! on the host (see the tables' declaration); the in-place
+                    ! correction reuses the diagonal's value.
+                    gLo1 = dnLow(i,1,b); gHi1 = dnHigh(i,1,b); dP1 = d1P(i,1,b)
+                    gLo2 = dnLow(j,2,b); gHi2 = dnHigh(j,2,b); dP2 = d1P(j,2,b)
+                    gLo3 = dnLow(k,3,b); gHi3 = dnHigh(k,3,b); dP3 = d1P(k,3,b)
 
-                    denom = (gLo1*mu_u_i + gHi1*mu_u_ip)*blk%d1x(i,VAR_P,b) &
-                          + (gLo2*mu_v_j + gHi2*mu_v_jp)*blk%d1y(j,VAR_P,b) &
-                          + (gLo3*mu_w_k + gHi3*mu_w_kp)*blk%d1z(k,VAR_P,b)
+                    denom = (gLo1*mu_u_i + gHi1*mu_u_ip)*dP1 &
+                          + (gLo2*mu_v_j + gHi2*mu_v_jp)*dP2 &
+                          + (gLo3*mu_w_k + gHi3*mu_w_kp)*dP3
 
-                    div = (blk%q(ip,j,k,VAR_U,b)-blk%q(i,j,k,VAR_U,b))*blk%d1x(i,VAR_P,b) &
-                        + (blk%q(i,jp,k,VAR_V,b)-blk%q(i,j,k,VAR_V,b))*blk%d1y(j,VAR_P,b) &
-                        + (blk%q(i,j,kp,VAR_W,b)-blk%q(i,j,k,VAR_W,b))*blk%d1z(k,VAR_P,b)
+                    div = (blk%q(ip,j,k,VAR_U,b)-blk%q(i,j,k,VAR_U,b))*dP1 &
+                        + (blk%q(i,jp,k,VAR_V,b)-blk%q(i,j,k,VAR_V,b))*dP2 &
+                        + (blk%q(i,j,kp,VAR_W,b)-blk%q(i,j,k,VAR_W,b))*dP3
 
                     phiC = -sor*div/denom
 

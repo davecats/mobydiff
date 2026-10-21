@@ -4,9 +4,10 @@
 # +- refine_body, Beltrami y-slab, turb180, wf180_y30, lam30t -- the 7-case
 # suite of the records -- plus, since 2026-10-21, beltrami_rect: a 3D refined
 # patch on NON-CUBIC blocks with a real flow, the one case whose 2:1 interface
-# faces have unequal tangential extents) with a REFERENCE binary and the NEW
-# binary and compares every field dataset with tools/compare_fields.py at
-# tolerance 0.
+# faces have unequal tangential extents, and its red-black twin
+# beltrami_rect_rb, the suite's only `[pressure] solver = redblack` case)
+# with a REFERENCE binary and the NEW binary and compares every field dataset
+# with tools/compare_fields.py at tolerance 0.
 #
 # BOTH binaries must be nofma builds (`./compile.sh cpu_nofma` / `gpu_nofma`):
 # default FMA contraction introduces 1-2 ulp differences for arithmetically
@@ -44,6 +45,7 @@ CASES=(
   "wf180_y30|$ROOT/validation/rans_sst|wf180_y30.ini|$STEPS|0|un vn wn pn nut k omega"
   "lam30t|$ROOT/validation/rans_sst|lam30t.ini|$STEPS|0|un vn wn pn nut k omega gamma rethetat"
   "beltrami_rect|$ROOT/validation/block_nb|beltrami_rect.ini|$STEPS|0|un vn wn pn"
+  "beltrami_rect_rb|$ROOT/validation/block_nb|beltrami_rect_redblack.ini|$STEPS|0|un vn wn pn"
 )
 
 # Rewrite a case ini for a short fixed-step run with its own output prefix.

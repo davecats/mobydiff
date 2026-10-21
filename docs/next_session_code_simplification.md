@@ -5,8 +5,9 @@ kernel split), 2 (one face-diffusivity helper), 3 (comm.f90's one
 enumeration) and 4 (the lattice probe and the node-line subdivision, once
 each) are DONE 2026-10-20, item 5 (`interface_correct` as one launch over
 a static face list) and item 6 (the per-iteration phi mirror on outlet
-cases) DONE 2026-10-21** -- see "Item N, done" at the end of this file for
-the measurements and what each one cost; items 7-11 are not started.
+cases) and item 7 (the red-black sweep's diagonal from the tables) DONE
+2026-10-21** -- see "Item N, done" at the end of this file for
+the measurements and what each one cost; items 8-11 are not started.
 It continues `docs/cleanup_review_2026-10-06.md` section 9 (the
 ranked findings) after the items DONE on 2026-10-08: the config hardening
 (F11/F12), the body-force support restriction, the apply k1+k2 and
@@ -310,6 +311,10 @@ topologies, the restart pair, the dtmax-bound pair, ncu before/after).
 - The nut consumer chain (`add_eddy_viscosity_correction`) is the
   bit-exactness argument of T0-T5: a helper there is a nofma gate on every
   LES/IDDES case, or leave it.
+- `validation/blasius/blasius.case.h5` (committed) is refused by NOFMA
+  builds ("node-line mismatch": the stretched line is one bit apart under
+  `-Mnofma`); strip `[case] file` and prepare per run, as the suites do
+  (found 2026-10-21, "Item 7, done").
 
 ## Item 1, done (2026-10-20)
 
@@ -637,3 +642,79 @@ twin, pocket -- the profile numbers reproduce the README's: outlet profile
 1.347e-3 of 1.5, last-cell p ratio 0.99921, solid outlet faces 1.6e-28,
 flux imbalance 8e-16); the 8-case suite (CPU 4 ranks + GPU, 16) and the
 11-case suite (CPU + GPU, 22). 80 field comparisons at `max_abs 0` in all.
+
+## Item 7, done (2026-10-21)
+
+`redblack_sweep` reads its diagonal from the static tables `dnLow`/
+`dnHigh`/`d1P` -- the same values the six per-cell `face_grad` calls and
+the three `d1?(idx,VAR_P,b)` loads returned, formed once on the host by
+`init_face_metrics` (now called by `redblack_projection` too) -- so the
+sweep no longer maps `d1x/d1y/d1z`, `outLow/outHigh/refd` or calls
+`face_grad` at all, and the `outLow, outHigh, refd` arguments are gone from
+its signature. The tables start at index 0: the sweep visits the lower halo
+layer redundantly with its owner (`i = 0` on an OPEN low face), and at that
+index `face_grad(atBnd = .false.)` is the plain `d1f`, which is what the
+table holds there. The expression (`(gLo*mu_i + gHi*mu_ip)*dP` summed, the
+divide, the in-place corrections with the `is_interface` zeroing) is
+textually unchanged: bit-exact by construction, and measured so at nofma
+on both devices and at production flags on the CPU; the GPU compiler
+contracts the table-fed statement differently from the function-fed one
+(1e-15..1e-12 after 20 steps, the FMA class of the 2026-09-14 landmine),
+so the production-flag identity with the reference holds on the CPU only.
+The reference set stays `~/pass2_ref_binaries`, gated at NOFMA as this
+handout says. The divide stays: a per-substage reciprocal
+(the Jacobi `rdenom` lever of 2026-09-02) would be a numerics change of the
+production smoother and needs its own argument; not taken.
+
+REGISTERS (cuobjdump, production GPU): 96 -> 92, STACK/LOCAL 0 -- the same
+8-register granule, so occupancy does NOT move. This kernel's live set is
+the six `mu` and seven `q` values of the in-place update, not the array
+bases the Jacobi kernels were carrying; what the tables remove here is the
+per-cell branchy work and six array/flag maps, not an occupancy tier.
+
+MEASURED (RTX 3060, production GPU builds, 100 steps unless stated,
+`[output] profile = true`, two repetitions, before = `f5293ff`):
+
+| case | step before -> new | `proj_timing sweep` | `momentum` (control) |
+|---|---|---|---|
+| `validation/redblack_interface/refined_channel` (128x64x8 + 2:1 patch, nb 8, red-black 3) | 13.75 / 13.74 -> 13.39 / 13.42 ms (**-2.4 %**) | 5.38 -> 5.04 ms/step (**-6.3 %**) | 2.42 / 2.42 |
+| `validation/body_outlet/pocket` (106x192x22, rough wall on the outlet, red-black 6) | 11.33 / 11.33 -> 11.24 / 11.22 ms (**-0.9 %**) | 6.27 -> 6.16 ms/step (-1.8 %) | 3.06 / 3.06 |
+| `validation/blasius/blasius2d` with `solver = redblack` (384x160x4, two outlets, red-black 12) | 14.77 / 14.77 -> 14.43 / 14.45 ms (**-2.2 %**) | 10.43 -> 10.08 ms/step (-3.4 %) | 1.53 / 1.53 |
+| `tutorials/sailplane` (400x450x100, nb 10, 18000 leaves, STL body, red-black 20; 20 steps) | 1.668 / 1.666 -> 1.635 / 1.635 s (**-1.9 %**) | 918 -> 886 ms/step (-3.5 %) | 94.8 / 94.6 |
+
+A -2 to -6 % sweep kernel, -1 to -2.4 % of a red-black step. The kernel is
+bound by its in-place loads and stores (13 `q`/`mu` values per cell), which
+the tables do not touch; the `face_grad` branches were a few percent of it.
+`zero_phi` and the per-colour `phi_exchange` (2:1 red-black only) were not
+on this item and did not move.
+
+GATES (nofma vs `~/pass2_ref_binaries` unless stated), every comparison
+`max_abs 0` / every gate PASS. A/B on eight red-black cases, 20 steps (the
+sailplane 5): `redblack_interface/refined_channel`, `min_channel`,
+`les_ibm`, `les_ibm_refine`, `block_nb/beltrami_rect` and `blasius2d` each
+under `solver = redblack` (sor 1.5, no accel), `body_outlet/pocket`, the
+sailplane (18000 leaves, STL body, red-black 20) -- CPU at 4 ranks (1 where
+the case pins it) and GPU: 16 comparisons; at PRODUCTION flags on five of
+them (refined_channel, beltrami_rect, pocket, les_ibm, blasius): CPU 5/5
+`max_abs 0`, GPU 5/5 at 5e-15..2.3e-12 (FMA class, see above). Rank
+identity on the NEW nofma CPU binary, `beltrami_rect` and `min_channel`
+under red-black, 1 == 2 == 4 ranks EXACTLY (the index-0 table entries are
+the redundant halo sweep's, so this is the gate with power over them).
+`validation/redblack_interface/run_gates.sh` cpu (4 ranks) and gpu: finite,
+1 == 4 EXACT, uniform 0.0. `validation/body_outlet/run_gates.sh pocket`
+(2500 steps, 4 ranks): PASS. The 9-case suite with the new case: CPU 4 ranks 9/9 and GPU 9/9 `max_abs 0`.
+
+NEW SUITE CASE: `validation/block_nb/beltrami_rect_redblack.ini`, the
+red-black twin of `beltrami_rect` (the suite had no red-black case), is the
+9th case of `validation/scalar/run_bitexact.sh`.
+
+FOUND, pre-existing: the committed `validation/blasius/blasius.case.h5` is
+readable by PRODUCTION-flag builds only. Its natural one-sided y line was
+written by a production build; a nofma build regenerates it one bit apart
+and stops with "case file / [grid.*] node-line mismatch" (NEW and
+reference nofma binaries alike, CPU and GPU) -- the node-line check is an
+exact comparison, so a stretched-line case file is tied to the FMA mode of
+the build that prepared it. The suites never see it because they strip
+`[case] file` and prepare per run; a hand-written nofma gate on that ini
+must do the same (this one did). Candidate for item 10: compare node lines
+to a few ulps, or have the solver take the file's lines.
