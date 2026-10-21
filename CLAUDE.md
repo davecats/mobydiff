@@ -86,9 +86,11 @@ handouts are indexed in `docs/history/README.md`; the master design is
 `docs/block_refinement_strategy.md`; the two reviews are
 `docs/numerics_review_2026-09-26.md` (findings F1-F9, numerics) and
 `docs/cleanup_review_2026-10-06.md` (F10-F16, duplication, simplifications,
-the profile). **The CURRENT handout is `docs/next_session_code_simplification.md`**
-(items 1-12 done 2026-10-21; what follows it is the one-by-one numerics
-re-validation of `validation/README.md`, the index of every surviving case).
+the profile). **The CURRENT handout is `docs/next_session_revalidation.md`** (the
+one-by-one numerics re-validation of `validation/README.md`, the index of
+every surviving case; its section 7 is the ledger, section 4 the decisions
+it needs); `docs/next_session_code_simplification.md` (items 1-12) closed
+2026-10-21.
 `main` is the working branch (consolidated 2026-09-25); the only unmerged
 history is the tag `archive/claude-jacobi-interface` (`boostconv`,
 `kpin_dwall`, both deliberately dropped).
@@ -208,7 +210,8 @@ the level jump on a physical face, the body on an outlet plane are all FIXED
 and gated -- the worklog has each mechanism.
 
 **Open, in order.** (1) The one-by-one re-validation of
-`validation/README.md` at `niter = 12` with the predicted outlet (every long
+`validation/README.md` (`docs/next_session_revalidation.md`, handout
+written 2026-10-21, nothing re-run yet) at `niter = 12` with the predicted outlet (every long
 number on file is a niter-6 value; the long tier ~200 GPU-h, the CHT
 tutorials most of it; inputs in the sibling checkouts `mobydiff.scalar` /
 `mobydiff.bl`; zero `pn` when restarting a niter-6 snapshot); the RANS

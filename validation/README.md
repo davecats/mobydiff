@@ -1,11 +1,14 @@
 # Test cases — index
 
-> **PLAN (2026-09-26):** after a round of code simplifications and a thorough
-> code analysis, every gate, validation case and tutorial listed here is to be
-> re-gone-through ONE BY ONE (re-run, re-measure, update or retire). Until then,
-> numbers recorded in the per-case READMEs for cases with long runs are niter-6
-> values: all Chebyshev inis moved to `niter = 12` on 2026-09-26 and only the
-> cheap gates have been re-measured (see CLAUDE.md "Test-case cleanup").
+> **PLAN (2026-09-26; the handout is `docs/next_session_revalidation.md`,
+> 2026-10-21):** after a round of code simplifications and a thorough
+> code analysis (done 2026-10-21), every gate, validation case and tutorial
+> listed here is re-gone-through ONE BY ONE (re-run, re-measure, update or
+> retire). Until a case's row in that handout's ledger says DONE, the numbers
+> recorded in its README are what the ledger says they are: niter-6 values
+> for the long Chebyshev cases (all Chebyshev inis moved to `niter = 12` on
+> 2026-09-26), pre-F1/F7/outlet values for most, and the inis that declare
+> plain Jacobi still carry `niter = 6` (moved when their case is rerun).
 
 The repository has exactly two homes for runnable cases:
 

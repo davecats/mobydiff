@@ -16,7 +16,8 @@ unchanged), item 12 (the RANS/IDDES restart reads `nut` back, the item-10
 finding fixed), the CLAUDE.md log move to `docs/history/worklog_2026.md`
 (the state summary stays), and the cv_box inis closed without a change
 (three KEEP inis remain). THIS HANDOUT IS COMPLETE.** NEXT: the one-by-one
-numerics re-validation of `validation/README.md` (its own handout).
+numerics re-validation of `validation/README.md` --
+**`docs/next_session_revalidation.md`** (written 2026-10-21).
 It continues `docs/cleanup_review_2026-10-06.md` section 9 (the
 ranked findings) after the items DONE on 2026-10-08: the config hardening
 (F11/F12), the body-force support restriction, the apply k1+k2 and

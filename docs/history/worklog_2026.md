@@ -2843,3 +2843,30 @@ immersed boundary. Phased, each phase verified before the next:
   `max_abs 0` (CPU 4 ranks + GPU); `validation/courant_limit/run_gate.sh`
   11/11 PASS (the limit itself is unmoved: the gate's uniform flow has no
   binding ghost). The three code items of 2026-10-21 (this one, F13, F14) were built and gated TOGETHER, each on its own evidence: at PRODUCTION flags vs the item-11 binaries the 9-case suite CPU 4 ranks + GPU (18), the 11-case suite CPU + GPU (22) and the outlet suite CPU 4 ranks + GPU (14) -- every comparison `max_abs 0`; at NOFMA vs `~/pass2_ref_binaries` the same three suites CPU + GPU (54) `max_abs 0`, so the reference set is UNCHANGED; `validation/freestream/run_gates.sh restart` ALL PASS (5 outlet restarts == continuous); `validation/courant_limit/run_gate.sh` 11/11 PASS; prepare P0 29/29.
+
+- **The re-validation handout (2026-10-21, `docs/next_session_revalidation.md`).**
+  The second half of the 2026-09-26 plan starts: every README under
+  `validation/` and `tutorials/` was read in full and condensed into a
+  ledger (one row per case: the newest recorded result, which of the
+  changes since 2026-09-26 it has NOT been measured after, the tier, the
+  host). Findings of the survey: the 2026-09-26 `niter` sweep moved the
+  CHEBYSHEV inis only -- the inis that declare plain Jacobi (the twelve
+  `rans_sst` channels, eleven scalar RANS twins, `rans_xz`, `cylinder/empty`,
+  `freestream/oblique`) still say `niter = 6`; `channel_interface`'s three
+  main cases, `developed/`, `beltrami/` (no README), `interface_decay`,
+  `redblack_interface`, `block_nb`'s two beltrami_rect cases and the KMM180
+  tutorial have NO recorded result at all; the CHT pipe's shipped numbers
+  are a niter-6 run by design and the CHT channel's are undated; the NACA
+  production restart file (`c11_nose_660000.h5`) is not on this filesystem
+  (the baseline's t = 29 file is, in `~/Codes/mobydiff/`); every archived
+  snapshot in use reads under F13 (all metadata attributes are required by
+  the reader, so an old file stops at the read, not at the comparison); the
+  boundary-layer tutorial STANDS (measured 2026-10-05/06 after every change
+  that can touch it). Order: `rans_sst` first (the nut read-back), the cheap
+  tier in one workstation session, the GPU-hour tier, the long tier (~150-
+  250 GPU-h, the CHT tutorials most of it) launched on the idle istmcetus /
+  istmcorax at the start. Seven decisions for the user in section 4
+  (Chebyshev 12 for the plain-Jacobi inis, NACA restart vs scratch, the two
+  CHT reruns, the S2 LES legs, the red-black R1 list, the three main
+  channel cases). Retired without a decision: prepare P1b, refine2d gate
+  (b), core_patch gate 3, the cylinder investigation drivers.
