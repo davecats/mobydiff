@@ -6,9 +6,10 @@ enumeration) and 4 (the lattice probe and the node-line subdivision, once
 each) are DONE 2026-10-20, item 5 (`interface_correct` as one launch over
 a static face list) and item 6 (the per-iteration phi mirror on outlet
 cases), item 7 (the red-black sweep's diagonal from the tables) and item
-9 (latent robustness) DONE 2026-10-21** -- see "Item N, done" at the end of
-this file for the measurements and what each one cost; item 8 waits for the
-user, items 10-11 are not started.
+9 (latent robustness) and 10 (the small leftovers) DONE 2026-10-21** -- see
+"Item N, done" at the end of this file for the measurements and what each
+one cost; item 8 waits for the user; of item 11 the scalar module split is
+in progress and the CLAUDE.md log move / cv_box inis are the user's call.
 It continues `docs/cleanup_review_2026-10-06.md` section 9 (the
 ranked findings) after the items DONE on 2026-10-08: the config hardening
 (F11/F12), the body-force support restriction, the apply k1+k2 and
@@ -761,3 +762,87 @@ nothing arithmetic moves.
   CPU-side preprocessed diff consists of directive lines only.
 
 GATES (production flags vs `d4b9f90`): the 9-case suite CPU 4 ranks + GPU (18), the 11-case suite CPU + GPU (22), the outlet suite CPU 1 + 4 ranks and GPU (21), the xz quadtree case `refine2d/uniform_xz` CPU 4 ranks + GPU and 1 == 4 ranks on the new binary (the `key_covers` width check must accept every xz table), `min_channel` 1 == 2 == 4 ranks EXACT on the new binary (the communicator's own gate: three peer topologies through the duplicated communicator), `redblack_interface` driver CPU + GPU (1 == 4 EXACT), prepare P0 29/29 -- every comparison `max_abs 0`.
+
+## Item 10, done (2026-10-21)
+
+Eight of the ten leftovers; the two left out are recorded with the reason.
+
+- **`set_constrained_cells_host` deleted** (rans.f90). `rans_prepare` runs
+  the device twin `rans_set_constrained_cells` before anything reads `k`
+  or `omg`, on the same inputs, so the host pass was a second copy of that
+  kernel without its `kfix` branch; `init_rans_transport` keeps the
+  `ks = k` / `omgs = omg` scratch copies. Gated by the three RANS suite
+  cases AND a `turb180` restart == continuous pair (the host pass also ran
+  at restart).
+- **`read_case_layout` stops on a file without a leaf table** itself; the
+  `has_layout` flag and `moby_solve`'s branch are gone (the solver has not
+  built a layout from the ini since step 7-4).
+- **`ibm_body_blocks` runs once per run**: the projection reads ibmm's
+  `bodyBlocks` / `nBodyBlocks` (found by the first `update_ibm_mu`, which
+  precedes the projection in every substage) instead of calling the
+  reduction again for its own `rdenomBlocks`; `compute_rdenom(blk, ibm,
+  blocks, n)` takes the list it visits -- every block on the first call,
+  the body blocks after -- and the three list routines are gone.
+- **`moby_prepare --case-file-name input.ini`** prints the case file the
+  solver will read (`case_file_name`, the one rule); `tools/
+  prepare_if_missing.sh` asks it and keeps its shell transcription only as
+  the fallback for a `moby_prepare` without the flag (every reference set
+  before today), with the unset-prefix default now `.case.h5` like the
+  Fortran's (it said `field.case.h5`). Gated by running both on every
+  tracked ini: 903 inis agree, 0 differ, 21 the binary cannot parse (`@KEY@` templates and the like -- the fallback serves them).
+- **One ini tokenizer**: config.f90 uses `case_config_helpers`
+  (`strip_config_comment`, `parse_config_section`, `split_config_key_value`,
+  `to_lower`); its own four copies are deleted. The helpers' key splitter
+  does not accept the `key value` form without `=` that config.f90's did --
+  no tracked ini uses it (checked), and such a line now stops as an unknown
+  key. The flow cases still read their own `[case.<name>]` section from the
+  file (config.f90 does not know the case types); that second read stays.
+- **`scalar_reserve` replaces `scalar_grow`**: config.f90 pre-scans the ini
+  (`scalar_count_hint`: the largest `[scalar.N]` index or `[scalar] count`)
+  and sizes the per-scalar arrays once; the parser's two remaining calls
+  are no-ops and a larger index afterwards is a pre-scan bug that stops.
+  The copy of thirty arrays through a temporary at every growth is gone.
+- **`update_smagorinsky_viscosity`**: the "generic" algebraic routine had
+  one live case; the `model`/`cs` maps and the per-cell `select` are gone,
+  the dispatcher names the model and stops on an unknown one. Gated on a
+  Smagorinsky variant of `les_ibm` at nofma (vs `~/pass2_ref_binaries`)
+  and at production flags (vs the item-9 binaries): `max_abs 0` on CPU and GPU at both.
+- **`check_conjugate_refinement`** is one loop over (block, direction,
+  side) with the straddling pair `(lo, lo+1)` along the normal, instead of
+  six plane loops. Same count (the conjugate C1 gates, `refine` group
+  included, pass).
+
+NOT done, deliberately:
+- **`apply_bc`'s `BCK_FACE` rows** keep being rewritten every call (`w = 0`,
+  `0*q + C = C`). Skipping them after init needs a proof that nothing
+  touches a pinned face between two calls -- the exchange's tangential
+  extension writes the face plane's edge ghosts, which the point list
+  spans -- and buys nothing measurable (three launches per step over a
+  fraction of the boundary points). An idempotent write is the cheaper
+  invariant.
+- **The per-block face-start table** (`momentum_face_start` x3 per cell in
+  five kernels): three byte loads and two compares per cell against three
+  integer loads -- below the 0.1-0.3 % step jitter of a 100-step
+  measurement, and the trip case it was to be measured on is not available
+  on this workstation. Not measurable, not kept.
+
+GATES (PRODUCTION flags vs the item-9 binaries unless stated; nothing
+arithmetic moves except where the Smagorinsky select was removed):
+the 9-case suite CPU 4 ranks + GPU (18), the 11-case suite CPU + GPU (22), the outlet suite CPU 1 + 4 ranks and GPU (21), the Smagorinsky `les_ibm` variant CPU + GPU at production flags vs the item-9 binaries AND at nofma vs `~/pass2_ref_binaries` (4) -- every comparison `max_abs 0`; `validation/conjugate/run_gates_c1.sh all` 61 PASS / 0 FAIL (the one-loop refinement check and the pre-scanned scalar config); `validation/bodyforce` ALL PASS (nofma vs pass2); prepare P0 29/29; `body_outlet pocket` PASS; `redblack_interface` 1 == 4 EXACT, CPU and GPU.
+
+FOUND, pre-existing, NOT changed: **a RANS restart is not bit-continuous.**
+`turb180` run 10 + 10 steps from its own step-10 snapshot against 20
+continuous steps (4 ranks, production flags): `k` 8.7e-8, `omega` 1.5e-5,
+`nut` 3.8e-9, `u` 1.3e-8 (v, w, p exactly 0 -- vacuous on a 1D RANS
+channel). The item-9 and the `~/pass2_ref_binaries` production binaries
+reproduce the SAME numbers to the last digit, and the new binary's restart
+run equals theirs at `max_abs 0`: item 10 (the deleted host pin) changes
+nothing here. The gap is present after ONE restarted step (`omega` 3.8e-5
+at step 11) and then shrinks, so it is the restart's INITIAL state, not a
+drift. Candidate mechanism: the snapshot writes `nut` but the restart does
+not read it; `rans_prepare` re-assembles it from the FINAL step-10
+velocity, whereas the continuous run carries the `nut` assembled at the
+end of the last RANS substage, from the velocity one momentum/projection
+earlier (the RANS substage runs before the momentum). Candidate fix: read
+`nut` back on restart (one io change) -- to be decided in the one-by-one
+re-validation of `validation/rans_sst`, not here.

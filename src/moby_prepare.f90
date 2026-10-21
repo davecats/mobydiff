@@ -11,11 +11,11 @@ program moby_prepare
     implicit none
 
     character(len=256) :: input_file, output_file
-    logical :: show_help, check_only
+    logical :: show_help, check_only, name_only
     type(comm_type) :: c
 
     call comm_init_world(c)
-    call parse_prepare_args(input_file, output_file, show_help, check_only)
+    call parse_prepare_args(input_file, output_file, show_help, check_only, name_only)
 
     if (show_help) then
         if (c%has_terminal) call print_usage()
@@ -23,15 +23,15 @@ program moby_prepare
         stop
     end if
 
-    call prepare_case(input_file, trim(output_file), c, check_only)
+    call prepare_case(input_file, trim(output_file), c, check_only, name_only)
     call comm_finalize(c)
 
 contains
 
-    subroutine parse_prepare_args(input_file, output_file, show_help, check_only)
+    subroutine parse_prepare_args(input_file, output_file, show_help, check_only, name_only)
         character(len=*), intent(out) :: input_file
         character(len=*), intent(out) :: output_file
-        logical, intent(out) :: show_help, check_only
+        logical, intent(out) :: show_help, check_only, name_only
 
         character(len=256) :: arg
         integer :: argc, i, positional
@@ -40,6 +40,7 @@ contains
         output_file = ""
         show_help = .false.
         check_only = .false.
+        name_only = .false.
         positional = 0
         argc = command_argument_count()
         i = 1
@@ -51,6 +52,8 @@ contains
                 return
             case ("--check-config")
                 check_only = .true.
+            case ("--case-file-name")
+                name_only = .true.
             case ("--input", "-i")
                 i = i + 1
                 if (i > argc) error stop "missing value after --input"
@@ -79,6 +82,7 @@ contains
         print '(A)', "       moby_prepare --input input.ini --output case.h5"
         print '(A)', "       (no case.h5: the ini's [case] file, else <field_prefix>.case.h5)"
         print '(A)', "       moby_prepare --check-config input.ini   (parse + validate only, no geometry)"
+        print '(A)', "       moby_prepare --case-file-name input.ini (print the case file the solver will read)"
     end subroutine print_usage
 
 end program moby_prepare

@@ -11,7 +11,11 @@ module config
         PROFILE_CONSTANT, PROFILE_PARABOLA, PROFILE_BLASIUS
     use :: comm, only: comm_type
     use :: scalar, only: scalar_type, apply_scalar_config, validate_scalar_config, scalars_enabled, &
-        scalar_section_index
+        scalar_section_index, scalar_reserve
+    ! The ini tokenizer is the flow cases' (one definition of comments,
+    ! section headers and key = value lines).
+    use :: case_config_helpers, only: strip_config_comment, parse_config_section, &
+        split_config_key_value, to_lower
     implicit none
 
     logical, save :: terminal_output = .true.
@@ -53,18 +57,24 @@ subroutine read_runtime_config(dns, g, turb, les, ps, bc, sc, c, input_file, has
         error stop "could not open input file"
     end if
 
+    ! The scalar arrays are sized ONCE, from a pre-scan for the largest
+    ! [scalar.N] index and [scalar] count, so apply_scalar_config never has
+    ! to grow them mid-parse (which copied every per-scalar array twice
+    ! through a temporary at each growth).
+    call scalar_reserve(sc, scalar_count_hint(unit))
+
     line_no = 0
     do
         read(unit, '(A)', iostat=stat) line
         if (stat /= 0) exit
         line_no = line_no + 1
 
-        call strip_comment(line)
+        call strip_config_comment(line)
         line = adjustl(line)
         if (len_trim(line) == 0) cycle
 
         if (line(1:1) == "[") then
-            call parse_section(line, section)
+            call parse_config_section(line, section)
             ! T1 hook (docs/history/next_session_iddes.md): the [rans] section's mere
             ! presence builds the SST geometry state at init, even with no
             ! keys, so the wall distance can be validated before the RANS
@@ -73,7 +83,7 @@ subroutine read_runtime_config(dns, g, turb, les, ps, bc, sc, c, input_file, has
             cycle
         end if
 
-        call split_key_value(line, key, value)
+        call split_config_key_value(line, key, value)
         if (len_trim(key) == 0) cycle
         call apply_config_value(section, key, value, dns, g, turb, les, ps, bc, sc, c, seen, line_no)
     end do
@@ -100,6 +110,44 @@ subroutine read_runtime_config(dns, g, turb, les, ps, bc, sc, c, input_file, has
     end if
     call validate_turbulence_values(turb, les, dns)
 end subroutine read_runtime_config
+
+! The number of scalars an ini declares: the largest [scalar.N] section index
+! or [scalar] count, whichever is larger (validate_scalar_config reconciles
+! the two). Reads the open unit from the top and rewinds it for the parse.
+integer function scalar_count_hint(unit) result(n)
+    integer, intent(in) :: unit
+
+    integer :: stat, line_no
+    integer(C_INT) :: cnt
+    character(len=512) :: line, key, value
+    character(len=64) :: section
+
+    n = 0
+    section = ""
+    line_no = 0
+    rewind(unit)
+    do
+        read(unit, '(A)', iostat=stat) line
+        if (stat /= 0) exit
+        line_no = line_no + 1
+        call strip_config_comment(line)
+        line = adjustl(line)
+        if (len_trim(line) == 0) cycle
+        if (line(1:1) == "[") then
+            call parse_config_section(line, section)
+            n = max(n, scalar_section_index(section))
+            cycle
+        end if
+        if (trim(section) /= "scalar") cycle
+        call split_config_key_value(line, key, value)
+        if (to_lower(trim(key)) == "count") then
+            cnt = 0_C_INT
+            call read_int(value, cnt, line_no)
+            n = max(n, int(cnt))
+        end if
+    end do
+    rewind(unit)
+end function scalar_count_hint
 
 ! An unknown key in a known section STOPS the run (2026-10-06). Until then it
 ! was silently ignored, which produced a wrong-but-successful run at least
@@ -134,8 +182,8 @@ subroutine apply_config_value(section, key, value, dns, g, turb, les, ps, bc, sc
     integer(C_INT) :: niter_value
     integer :: scalar_index
 
-    section_l = lower(trim(section))
-    key_l = lower(trim(key))
+    section_l = to_lower(trim(section))
+    key_l = to_lower(trim(key))
 
     select case (section_l)
     case ("grid")
@@ -174,7 +222,7 @@ subroutine apply_config_value(section, key, value, dns, g, turb, les, ps, bc, sc
             ! research only -- it is NOT energy-neutral under the incremental
             ! projection (docs/history/next_session_skew_convection.md S3). This key is
             ! INDEPENDENT of [scalar] convection, which drives a different operator.
-            select case (trim(lower(clean_string(value))))
+            select case (trim(to_lower(clean_string(value))))
             case ("skew", "skew_symmetric", "skew-symmetric", "skewsym")
                 dns%conv_skew = .true._C_BOOL
             case ("divergence", "conservative", "div", "cons")
@@ -273,7 +321,7 @@ subroutine apply_config_value(section, key, value, dns, g, turb, les, ps, bc, sc
         case ("solver")
             ! jacobi (default: damped Jacobi / Chebyshev-Jacobi, the 2:1-interface
             ! projection) | redblack (the original single-level red-black SOR).
-            select case (trim(lower(clean_string(value))))
+            select case (trim(to_lower(clean_string(value))))
             case ("jacobi", "")
                 ps%method = PRESSURE_JACOBI
             case ("redblack", "red-black", "red_black", "sor")
@@ -285,7 +333,7 @@ subroutine apply_config_value(section, key, value, dns, g, turb, les, ps, bc, sc
             end select
         case ("accel")
             ! none | jacobi (default) or chebyshev (Chebyshev-Jacobi).
-            select case (trim(lower(clean_string(value))))
+            select case (trim(to_lower(clean_string(value))))
             case ("chebyshev", "cheb")
                 ps%cheb = .true.
             case ("none", "jacobi", "")
@@ -403,7 +451,7 @@ subroutine apply_config_value(section, key, value, dns, g, turb, les, ps, bc, sc
             call read_refine_box(value, dns%block_refine_body_box(:, dns%block_refine_body_nboxes), &
                 dns%block_refine_body_box_level(dns%block_refine_body_nboxes), line_no)
         case ("refine_dims")
-            select case (lower(clean_string(value)))
+            select case (to_lower(clean_string(value)))
             case ("xyz")
                 dns%block_refine_mask = 1_C_INT
             case ("xz")
@@ -491,7 +539,7 @@ subroutine apply_config_value(section, key, value, dns, g, turb, les, ps, bc, sc
         if (key_l == "stats_file" .or. key_l == "heat_file") then
             call apply_scalar_config(0, key_l, clean_string(value), sc, line_no, terminal_output)
         else
-            call apply_scalar_config(0, key_l, lower(clean_string(value)), sc, line_no, terminal_output)
+            call apply_scalar_config(0, key_l, to_lower(clean_string(value)), sc, line_no, terminal_output)
         end if
     case default
         scalar_index = scalar_section_index(section_l)
@@ -510,7 +558,7 @@ subroutine apply_config_value(section, key, value, dns, g, turb, les, ps, bc, sc
                 call apply_scalar_config(scalar_index, key_l, clean_string(value), sc, &
                     line_no, terminal_output)
             else
-                call apply_scalar_config(scalar_index, key_l, lower(clean_string(value)), sc, &
+                call apply_scalar_config(scalar_index, key_l, to_lower(clean_string(value)), sc, &
                     line_no, terminal_output)
             end if
         end if
@@ -819,7 +867,7 @@ subroutine read_iddes_delta(value, target, line_no)
 
     character(len=:), allocatable :: value_l
 
-    value_l = lower(clean_string(value))
+    value_l = to_lower(clean_string(value))
     select case (trim(value_l))
     case ("iddes")
         target = IDDES_DELTA_IDDES
@@ -846,7 +894,7 @@ subroutine apply_rans_value(key, value, dns, line_no)
 
     select case (trim(key))
     case ("model")
-        value_l = lower(clean_string(value))
+        value_l = to_lower(clean_string(value))
         select case (trim(value_l))
         case ("sst")
             dns%rans_model = 1_C_INT
@@ -858,7 +906,7 @@ subroutine apply_rans_value(key, value, dns, line_no)
             error stop "unknown [rans] model"
         end select
     case ("wall_treatment")
-        value_l = lower(clean_string(value))
+        value_l = to_lower(clean_string(value))
         select case (trim(value_l))
         case ("resolved")
             dns%rans_wall_treatment = 0_C_INT
@@ -1135,7 +1183,7 @@ subroutine read_bool(value, target, line_no)
 
     character(len=:), allocatable :: value_l
 
-    value_l = lower(clean_string(value))
+    value_l = to_lower(clean_string(value))
     select case (trim(value_l))
     case ("true", ".true.", "1", "yes")
         target = .true.
@@ -1154,7 +1202,7 @@ subroutine read_patch_type(value, target, line_no)
 
     character(len=:), allocatable :: value_l
 
-    value_l = lower(clean_string(value))
+    value_l = to_lower(clean_string(value))
     select case (trim(value_l))
     case ("wall")
         target = PATCH_WALL
@@ -1178,7 +1226,7 @@ subroutine read_bc_profile(value, target, line_no)
 
     character(len=:), allocatable :: value_l
 
-    value_l = lower(clean_string(value))
+    value_l = to_lower(clean_string(value))
     select case (trim(value_l))
     case ("constant")
         target = PROFILE_CONSTANT
@@ -1201,7 +1249,7 @@ subroutine read_bc_type(value, target, line_no)
     integer :: stat, parsed
     character(len=:), allocatable :: value_l
 
-    value_l = lower(clean_string(value))
+    value_l = to_lower(clean_string(value))
     select case (trim(value_l))
     case ("dirichlet", "0")
         target = 0_C_INT
@@ -1225,7 +1273,7 @@ subroutine read_grid_distribution(value, target, line_no)
 
     character(len=:), allocatable :: value_l
 
-    value_l = lower(clean_string(value))
+    value_l = to_lower(clean_string(value))
     select case (trim(value_l))
     case ("uniform")
         target = GRID_UNIFORM
@@ -1256,7 +1304,7 @@ subroutine read_turbulence_model(value, target, line_no)
 
     character(len=:), allocatable :: value_l
 
-    value_l = lower(clean_string(value))
+    value_l = to_lower(clean_string(value))
     select case (trim(value_l))
     case ("none", "off", "disabled")
         target = TURB_NONE
@@ -1289,7 +1337,7 @@ subroutine read_les_model(value, target, line_no)
     integer :: stat, parsed
     character(len=:), allocatable :: value_l
 
-    value_l = lower(clean_string(value))
+    value_l = to_lower(clean_string(value))
     select case (trim(value_l))
     case ("none", "off", "disabled", "0")
         target = LES_NONE
@@ -1307,56 +1355,6 @@ subroutine read_les_model(value, target, line_no)
         end if
     end select
 end subroutine read_les_model
-
-subroutine parse_section(line, section)
-    character(len=*), intent(in) :: line
-    character(len=*), intent(out) :: section
-    integer :: last
-
-    last = index(line, "]")
-    if (last > 2) then
-        section = lower(trim(line(2:last-1)))
-    end if
-end subroutine parse_section
-
-subroutine split_key_value(line, key, value)
-    character(len=*), intent(in) :: line
-    character(len=*), intent(out) :: key, value
-    integer :: eq, sep
-
-    key = ""
-    value = ""
-    eq = index(line, "=")
-
-    if (eq > 0) then
-        key = adjustl(line(:eq-1))
-        value = adjustl(line(eq+1:))
-    else
-        sep = scan(line, " "//char(9))
-        if (sep > 0) then
-            key = adjustl(line(:sep-1))
-            value = adjustl(line(sep+1:))
-        else
-            key = adjustl(line)
-        end if
-    end if
-
-    key = trim(key)
-    value = trim(value)
-end subroutine split_key_value
-
-subroutine strip_comment(line)
-    character(len=*), intent(inout) :: line
-    integer :: semicolon, hash, cut
-
-    semicolon = index(line, ";")
-    hash = index(line, "#")
-    cut = 0
-
-    if (semicolon > 0) cut = semicolon
-    if (hash > 0 .and. (cut == 0 .or. hash < cut)) cut = hash
-    if (cut > 0) line(cut:) = ""
-end subroutine strip_comment
 
 ! Parse a single integer config value. The C_INT target also accepts default
 ! integer actuals (same kind on this platform), so one routine serves both.
@@ -1487,21 +1485,6 @@ subroutine read_real(value, target, line_no)
         error stop
     end if
 end subroutine read_real
-
-function lower(text) result(out)
-    character(len=*), intent(in) :: text
-    character(len=len(text)) :: out
-    integer :: i, c
-
-    do i = 1, len(text)
-        c = iachar(text(i:i))
-        if (c >= iachar("A") .and. c <= iachar("Z")) then
-            out(i:i) = achar(c + iachar("a") - iachar("A"))
-        else
-            out(i:i) = text(i:i)
-        end if
-    end do
-end function lower
 
 function clean_string(text) result(out)
     character(len=*), intent(in) :: text

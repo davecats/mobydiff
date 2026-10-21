@@ -2795,6 +2795,36 @@ immersed boundary. Phased, each phase verified before the next:
   directive lines only. GATES at PRODUCTION flags vs the item-7 binaries
   (`d4b9f90`; nothing arithmetic moves): the 9-case suite CPU 4 ranks + GPU (18), the 11-case suite CPU + GPU (22), the outlet suite CPU 1 + 4 ranks and GPU (21), the xz quadtree case `refine2d/uniform_xz` CPU 4 ranks + GPU and 1 == 4 ranks on the new binary (the `key_covers` width check must accept every xz table), `min_channel` 1 == 2 == 4 ranks EXACT on the new binary (the communicator's own gate: three peer topologies through the duplicated communicator), `redblack_interface` driver CPU + GPU (1 == 4 EXACT), prepare P0 29/29 -- every comparison `max_abs 0`.
 
+- **Code simplification, item 10 -- the small leftovers (DONE 2026-10-21,
+  handout "Item 10, done").** Eight of ten: the RANS host pin
+  `set_constrained_cells_host` deleted (the device twin runs first in
+  `rans_prepare`); `read_case_layout` stops on a legacy file itself (no
+  `has_layout` flag); `ibm_body_blocks` runs once (the projection reads
+  ibmm's `bodyBlocks`; `compute_rdenom` takes its block list); `moby_prepare
+  --case-file-name input.ini` prints the one case-file rule and
+  `tools/prepare_if_missing.sh` asks it (shell rule = fallback for older
+  binaries, its `field.case.h5` default fixed to the Fortran's `.case.h5`;
+  903 tracked inis agree, 0 differ); config.f90 uses the flow cases' ini
+  tokenizer (`case_config_helpers`, its own four copies gone; the `key
+  value` form without `=` is no longer accepted -- no ini used it);
+  `scalar_reserve` + a config pre-scan (`scalar_count_hint`) replace
+  `scalar_grow`'s copy of thirty arrays per growth;
+  `update_smagorinsky_viscosity` is the one live algebraic model (no
+  `model`/`cs` maps, no per-cell select); `check_conjugate_refinement` is
+  one loop over (block, direction, side). NOT done: the `apply_bc`
+  `BCK_FACE` skip (needs a proof nothing touches a pinned face between
+  calls; saves nothing measurable) and the face-start table (below
+  measurement noise; the trip case is not local). GATES at production flags
+  vs the item-9 binaries: the 9-case, 11-case and outlet suites CPU + GPU,
+  a Smagorinsky `les_ibm` variant (production AND nofma vs pass2), conjugate
+  C1 61/61, bodyforce, prepare P0 29/29, pocket, red-black 1 == 4 -- all
+  `max_abs 0` / PASS. **FOUND, pre-existing, not changed: a RANS restart is
+  not bit-continuous** (`turb180` 10 + 10 vs 20: `omega` 1.5e-5, `k` 9e-8;
+  identical with the pass2 binary; present after ONE restarted step, then
+  shrinking). The snapshot writes `nut` but the restart re-assembles it
+  from the final velocity instead of reading it back -- candidate fix for
+  the `rans_sst` re-validation.
+
 ## Verification
 
 - Pure refactors must be bit-exact vs. the pre-refactor code: compare

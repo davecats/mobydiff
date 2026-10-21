@@ -956,7 +956,10 @@ contains
             sst%ktriprate = 0.0d0
         end if
 
-        call set_constrained_cells_host(sst, dns, blk)
+        ! The constrained-cell values (k = 0 in the solid, the pinned omega)
+        ! are written on the DEVICE by rans_set_constrained_cells at the top
+        ! of rans_prepare, before anything reads k or omg; a host pass here
+        ! was a second copy of that kernel without its kfix branch.
         sst%ks = sst%k
         sst%omgs = sst%omg
         sst%gams = sst%gam
@@ -1243,48 +1246,10 @@ contains
         end if
     end function dwall_slope
 
-    ! Host-side constrained-cell values (init/restart time, before the
-    ! device maps exist): solid cells carry k = 0 and a benign pinned
-    ! omega; IBM wall cells and domain-wall rows carry the pinned omega.
-    subroutine set_constrained_cells_host(sst, dns, blk)
-        type(sst_type), intent(inout) :: sst
-        type(dns_type), intent(in) :: dns
-        type(block_set_type), intent(in) :: blk
-
-        integer :: i, j, k, b, nx, ny, nz
-        real(C_DOUBLE) :: nu
-        logical :: pinned, wallfn
-
-        nx = int(blk%nb(1))
-        ny = int(blk%nb(2))
-        nz = int(blk%nb(3))
-        nu = 1.0d0/dns%re
-        wallfn = dns%rans_wall_treatment == 1_C_INT
-
-        do b = 1, int(blk%nBlocks)
-        do k = 1, nz
-            do j = 1, ny
-                do i = 1, nx
-                    pinned = sst%wallcell(i,j,k,b) /= WALL_CELL_FLUID .or. &
-                             sst%domwall(i,j,k,b) /= 0_C_SIGNED_CHAR
-                    if (sst%wallcell(i,j,k,b) == WALL_CELL_SOLID) sst%k(i,j,k,b) = 0.0d0
-                    if (pinned) then
-                        if (wallfn) then
-                            sst%omg(i,j,k,b) = omega_wall_blend(nu, sst%yeff(i,j,k,b), &
-                                sst%k(i,j,k,b))
-                        else
-                            sst%omg(i,j,k,b) = omega_wall_value(nu, sst%yeff(i,j,k,b))
-                        end if
-                    end if
-                end do
-            end do
-        end do
-        end do
-    end subroutine set_constrained_cells_host
-
-    ! Device twin of set_constrained_cells_host, run at the top of every
-    ! substage BEFORE the transport kernel reads neighbours, so adjacent
-    ! cells' diffusion sees the constrained values.
+    ! Constrained-cell values, run at the top of every substage (and of
+    ! rans_prepare, so a cold-started or restarted field is pinned before
+    ! its first read) BEFORE the transport kernel reads neighbours, so
+    ! adjacent cells' diffusion sees the constrained values.
     subroutine rans_set_constrained_cells(sst, dns, blk)
         type(sst_type), intent(inout) :: sst
         type(dns_type), intent(in) :: dns

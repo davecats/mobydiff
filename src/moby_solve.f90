@@ -57,7 +57,7 @@ program moby_solve
     integer(C_INT) :: fileNb(3), fileRefMask(3)
     ! ... and its leaf-key bit order (size 0: the legacy order).
     integer(C_INT), allocatable :: fileKeyOrder(:)
-    logical :: fileLayout, case_exists
+    logical :: case_exists
     ! Outlet-normal faces whose value the restart file supplied (per domain
     ! face): a LOW face is an interior index and always in the file; a HIGH
     ! one is not (see init_outlet_faces).
@@ -116,12 +116,7 @@ program moby_solve
     ! lists, the metric tables, the device maps.
     if (c%has_terminal) print *, "reading case file layout: ", trim(dns%case_file)
     call read_case_layout(dns, g, dns%case_file, inputs, fileNb, fileRefMask, fileKeyOrder, &
-        leafRows, fileLayout, c%has_terminal)
-    if (.not. fileLayout) then
-        if (c%has_terminal) print *, "error: ", trim(dns%case_file), " carries no leaf table", &
-            " (a retired-mobygeom global-layout file?); re-prepare the case"
-        error stop "case file without a blocks table"
-    end if
+        leafRows, c%has_terminal)
     call init_block_set_from_table(blk, dns, g, bc%isPeriodic, int(c%world_size, C_INT), &
         int(c%world_rank, C_INT), fileNb, fileRefMask, fileKeyOrder, leafRows)
     deallocate(leafRows, fileKeyOrder)

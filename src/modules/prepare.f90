@@ -55,10 +55,14 @@ contains
     ! grid, the nb rule -- and stop before any geometry work. The sweep that
     ! catches a key the parser does not know (an unknown key stops the run
     ! since 2026-10-06).
-    subroutine prepare_case(input_file, case_file, c, check_only)
+    subroutine prepare_case(input_file, case_file, c, check_only, name_only)
         character(len=*), intent(in) :: input_file, case_file
         type(comm_type), intent(inout) :: c
         logical, intent(in), optional :: check_only
+        ! name_only (moby_prepare --case-file-name): print the resolved case
+        ! file name (case_file_name, the one rule) and stop -- what the gate
+        ! drivers' tools/prepare_if_missing.sh asks before preparing.
+        logical, intent(in), optional :: name_only
 
         class(case_type), allocatable :: flow
         type(dns_type) :: dns
@@ -101,6 +105,12 @@ contains
         cell_centred = scalars_enabled(sc)
         out_file = trim(case_file)
         if (len(out_file) == 0) out_file = case_file_name(dns)
+        if (present(name_only)) then
+            if (name_only) then
+                if (c%has_terminal) print '(A)', out_file
+                return
+            end if
+        end if
         if (c%has_terminal) print *, "preparing case: ", trim(input_file), " -> ", out_file
         ! A restart file supplies whatever the ini leaves unset (grid, re,
         ! periodicity, ibm_enabled), exactly as in the solver -- the file

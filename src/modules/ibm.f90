@@ -1265,7 +1265,7 @@ contains
     ! ghost-inclusive range has a dt-independent mu and everything derived
     ! from it is fixed for the run. That is what lets update_ibm_mu and the
     ! predictor's state correction visit the body blocks alone (bodyBlocks),
-    ! and the projection recompute rdenom for them alone (rdenomBlocks).
+    ! and the projection recompute rdenom for them alone (the same list).
     !
     ! ONE kernel, not one per block. The obvious shape -- a device reduction per
     ! block -- costs a LAUNCH per block (measured: 36.5 us x 640 blocks on

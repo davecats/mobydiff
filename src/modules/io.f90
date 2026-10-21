@@ -820,8 +820,7 @@ end subroutine read_restart_metadata
 ! covers every grid key at once, and the file's lines are what the solver
 ! keeps. Older block-table files (retired mobygeom) carry no node lines;
 ! the ini's are used and a note is printed.
-subroutine read_case_layout(dns, g, file_name, inputs, nb, refMask, keyOrder, rows, has_layout, &
-        has_terminal)
+subroutine read_case_layout(dns, g, file_name, inputs, nb, refMask, keyOrder, rows, has_terminal)
     type(dns_type), intent(inout) :: dns
     type(grid_type), intent(inout) :: g
     character(len=*), intent(in) :: file_name
@@ -835,10 +834,6 @@ subroutine read_case_layout(dns, g, file_name, inputs, nb, refMask, keyOrder, ro
     ! file records none (written before 2026-10-01, or xz mode).
     integer(C_INT), allocatable, intent(out) :: keyOrder(:)
     integer(C_INT), allocatable, intent(out) :: rows(:,:)
-    ! False for a LEGACY global-layout coefficient file, which carries no
-    ! leaf table (the caller then still builds the layout from the ini;
-    ! that path goes with the legacy reader in step 7-4).
-    logical, intent(out) :: has_layout
     logical, intent(in) :: has_terminal
 
     character(kind=C_CHAR,len=:), allocatable :: c_file_name
@@ -857,11 +852,12 @@ subroutine read_case_layout(dns, g, file_name, inputs, nb, refMask, keyOrder, ro
         error stop
     end if
     keyOrder = keyBuf(1:nKey)
-    has_layout = nLeaves > 0_C_INT
-    if (.not. has_layout) then
-        if (has_terminal) print *, "note: legacy coefficient file without a leaf table;", &
-            " block layout from the ini: ", trim(file_name)
-        return
+    ! A legacy global-layout coefficient file carries no leaf table; the
+    ! solver has not built a layout from the ini since step 7-4.
+    if (nLeaves <= 0_C_INT) then
+        if (has_terminal) print *, "error: ", trim(file_name), " carries no leaf table", &
+            " (a retired-mobygeom global-layout file?); re-prepare the case"
+        error stop "case file without a blocks table"
     end if
     ierr = fdm_h5_case_read_inputs(c_file_name, fileEcho, int(ECHO_CAP, C_INT), found)
     if (ierr /= 0_C_INT) then

@@ -2,7 +2,7 @@ module pressure_solver
     use, intrinsic :: iso_c_binding
     use :: init, only: dns_type, VAR_U, VAR_V, VAR_W, VAR_P
     use :: blocks, only: block_set_type, FACE_PHYS, FACE_CLOSED, FACE_COARSE, FACE_FINE
-    use :: ibmm, only: ibm_type, ibm_body_blocks
+    use :: ibmm, only: ibm_type, bodyBlocks, nBodyBlocks
     use :: boundary, only: boundary_type, apply_bc, boundary_face_id, PATCH_OUTLET
     use :: comm, only: comm_type, exchange_halos, exchange_scalar_halos, sync_divergence_halos, &
         comm_allreduce_max_int
@@ -89,13 +89,13 @@ module pressure_solver
     ! Inf/NaN before (division by an exactly zero diagonal) and still does, now
     ! via 1/0; the failure mode is unchanged in kind.
     real(C_DOUBLE), allocatable :: rdenom(:,:,:,:)
-    ! The blocks compute_rdenom still has to visit -- see the metric tables.
-    ! Unallocated until the first projection, which visits every block; narrowed
-    ! afterwards to the blocks holding IBM coefficients. Empty means nothing can
-    ! change any more, which is the whole of a body-free case.
-    integer, allocatable :: rdenomBlocks(:)
-    integer, save :: nRdenomBlocks = 0
-    logical, save :: dnsHasTerminal = .false.
+    ! Whether the first projection has filled rdenom on every block. After
+    ! it, compute_rdenom visits ibmm's bodyBlocks alone -- the blocks holding
+    ! IBM coefficients, found by the first update_ibm_mu (which precedes the
+    ! projection in every substage) and resident on the device since. An
+    ! empty list means nothing can change any more: the whole of a body-free
+    ! case.
+    logical, save :: rdenomFilled = .false.
 
     ! STATIC face metric tables, precomputed per (face-normal index, direction,
     ! block) and shared by the volume kernels of both projections (Jacobi and red-black).
@@ -148,7 +148,7 @@ module pressure_solver
     ! zero, whatever dt does, so a block holding no
     ! coefficient has a dt-independent rdenom and needs computing once, like the
     ! tables above. The first projection visits every block; afterwards only the
-    ! body blocks (rdenomBlocks, from ibm_body_blocks), which on a body-free
+    ! body blocks (ibmm's bodyBlocks, see rdenomFilled), which on a body-free
     ! case is none at all. Skipping is bit-exact by construction: same inputs,
     ! same expression, same result -- the recomputation was writing back the
     ! values already there.
@@ -313,17 +313,17 @@ contains
         ! formed once here rather than inside the loop -- and on a body-free rank
         ! it is constant across SUBSTAGES too, so it is formed once per run.
         call init_face_metrics(blk, outLow, outHigh, refd)
-        if (.not. allocated(rdenomBlocks)) then
-            ! First projection: every block, then narrow to the body ones.
-            allocate(rdenomBlocks(blk%nBlocks))
-            rdenomBlocks = [(dir, dir = 1, int(blk%nBlocks))]
-            nRdenomBlocks = int(blk%nBlocks)
-            dnsHasTerminal = c%has_terminal
-            call enter_rdenom_blocks()
-            call compute_rdenom(blk, ibm)
-            call narrow_rdenom_blocks(ibm)
-        else if (nRdenomBlocks > 0) then
-            call compute_rdenom(blk, ibm)
+        if (.not. rdenomFilled) then
+            ! First projection: every block; the body blocks from then on.
+            call compute_rdenom(blk, ibm, [(dir, dir = 1, int(blk%nBlocks))], int(blk%nBlocks))
+            rdenomFilled = .true.
+            ! Printed like the trip force's block list, and for the same
+            ! reason: the fraction is the whole value of the narrowing and a
+            ! silent 100 % would look exactly like a silent 0 %.
+            if (c%has_terminal) print '(a,i0,a,i0)', &
+                " projection: rdenom recomputed on body blocks ", nBodyBlocks, "/", int(blk%nBlocks)
+        else if (nBodyBlocks > 0) then
+            call compute_rdenom(blk, ibm, bodyBlocks, nBodyBlocks)
         end if
         call prof_toc(proj_prof, PROF_PROJ_SETUP, t0)
 
@@ -419,42 +419,6 @@ contains
 #endif
         end if
     end subroutine allocate_phi
-
-    ! rdenomBlocks lives on the device for the whole run (compute_rdenom indexes
-    ! through it every substage on a body case), so it is mapped once here and
-    ! remapped by narrow_rdenom_blocks when the list shrinks.
-    subroutine enter_rdenom_blocks()
-#ifdef USE_OPENMP_OFFLOAD
-        !$omp target enter data map(to: rdenomBlocks)
-#endif
-    end subroutine enter_rdenom_blocks
-
-    ! After the first projection has filled every block, keep only the blocks
-    ! whose rdenom can still change -- those holding IBM coefficients. On a
-    ! body-free rank that is none, and compute_rdenom never runs again.
-    subroutine narrow_rdenom_blocks(ibm)
-        type(ibm_type), intent(in) :: ibm
-
-        integer, allocatable :: body(:)
-        integer :: nBody
-
-        call ibm_body_blocks(ibm, body, nBody)
-#ifdef USE_OPENMP_OFFLOAD
-        !$omp target exit data map(delete: rdenomBlocks)
-#endif
-        deallocate(rdenomBlocks)
-        allocate(rdenomBlocks(max(1, nBody)))
-        rdenomBlocks = 0
-        if (nBody > 0) rdenomBlocks(1:nBody) = body(1:nBody)
-        nRdenomBlocks = nBody
-        call enter_rdenom_blocks()
-        deallocate(body)
-        ! Printed like the trip force's block list, and for the same reason: the
-        ! fraction is the whole value of the change and a silent 100% would look
-        ! exactly like a silent 0%.
-        if (dnsHasTerminal) print '(a,i0,a,i0)', &
-            " projection: rdenom recomputed on body blocks ", nBody, "/", size(rdenom,4)
-    end subroutine narrow_rdenom_blocks
 
     ! Chebyshev increment buffer (same bounds as phi), allocated on first use.
     subroutine allocate_delta(blk)
@@ -620,20 +584,20 @@ contains
     ! gradient's -- and jacobi_apply corrects that face with the same 2*d1f
     ! against the zero ghost (one metric: SPD lives there).
     !
-    ! Called once per substage on the blocks listed in rdenomBlocks (every
-    ! block on the first call, the body blocks afterwards -- see the rdenom
-    ! declaration), and stored inverted so the iteration kernel multiplies
-    ! rather than divides.
+    ! Called once per substage on the listed blocks (every block on the first
+    ! call, ibmm's bodyBlocks afterwards -- see rdenomFilled), and stored
+    ! inverted so the iteration kernel multiplies rather than divides.
 
-    subroutine compute_rdenom(blk, ibm)
+    subroutine compute_rdenom(blk, ibm, blocks, nBlocksTodo)
         type(block_set_type), intent(in) :: blk
         type(ibm_type), intent(in) :: ibm
+        integer, intent(in) :: blocks(:), nBlocksTodo
 
         real(C_DOUBLE) :: mu_u_i, mu_u_ip, mu_v_j, mu_v_jp, mu_w_k, mu_w_kp
         integer(C_INT) :: i, ip, j, jp, k, kp, b, bb, nTodo, nx, ny, nz
 
         nx = blk%nb(1); ny = blk%nb(2); nz = blk%nb(3)
-        nTodo = int(nRdenomBlocks, C_INT)
+        nTodo = int(nBlocksTodo, C_INT)
         if (nTodo <= 0_C_INT) return
 
         ! dnLow/dnHigh/d1P are the face_grad and divergence metrics
@@ -641,7 +605,7 @@ contains
         ! declaration for why that is bit-exact and why d1P stays a separate
         ! factor. Only ibm%mu, which changes every substage, is still read here.
         !$omp target teams distribute parallel do collapse(4) &
-        !$omp& map(to: nx, ny, nz, nTodo, dnLow, dnHigh, d1P, ibm%mu, rdenomBlocks) &
+        !$omp& map(to: nx, ny, nz, nTodo, dnLow, dnHigh, d1P, ibm%mu, blocks(1:nTodo)) &
         !$omp& map(tofrom: rdenom) &
         !$omp& private(i,ip,j,jp,k,kp,b,bb, &
         !$omp& mu_u_i,mu_u_ip,mu_v_j,mu_v_jp,mu_w_k,mu_w_kp)
@@ -649,7 +613,7 @@ contains
         do k = 1_C_INT, nz
             do j = 1_C_INT, ny
                 do i = 1_C_INT, nx
-                    b = rdenomBlocks(bb)
+                    b = blocks(bb)
                     ip = i + 1; jp = j + 1; kp = k + 1
 
                     mu_u_i  = ibm%mu(i,j,k,VAR_U,b);  mu_u_ip = ibm%mu(ip,j,k,VAR_U,b)

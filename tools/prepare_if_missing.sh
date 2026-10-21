@@ -23,18 +23,22 @@ ranks=$1 solver=$2 ini=$3 log=${4:-$3.prep.log}
 prep="$(dirname "$solver")/moby_prepare"
 [ -x "$prep" ] || exit 0
 
-case_of() {  # the case file the solver will read
+case_of() {  # the case file the solver will read (fallback transcription of case_file_name)
     local f
     f=$(awk -F'=' '/^[ \t]*\[/{s=$0; gsub(/[ \t]/,"",s)}
                    s=="[case]" && $1 ~ /^[ \t]*file[ \t]*$/ {v=$2; sub(/[;#].*/,"",v); gsub(/^[ \t"]+|[ \t"]+$/,"",v); print v; exit}' "$1")
     if [ -z "$f" ]; then
         local pfx
         pfx=$(awk -F'=' '$1 ~ /^[ \t]*field_prefix[ \t]*$/ {v=$2; sub(/[;#].*/,"",v); gsub(/^[ \t"]+|[ \t"]+$/,"",v); print v; exit}' "$1")
-        f="${pfx:-field}.case.h5"
+        f="${pfx}.case.h5"   # an unset prefix is "" in config.f90 too
     fi
     printf '%s\n' "$f"
 }
 
-case_file=$(case_of "$ini")
+# The binary resolves the name (one rule, config.f90 case_file_name); a
+# moby_prepare without the flag (before 2026-10-21) prints nothing usable, and
+# then the shell transcription above answers.
+case_file=$(mpirun -n 1 "$prep" --case-file-name "$ini" 2>/dev/null | tail -n 1)
+case "$case_file" in *.h5) ;; *) case_file=$(case_of "$ini") ;; esac
 [ -f "$case_file" ] && exit 0
 mpirun -n "$ranks" "$prep" "$ini" > "$log" 2>&1

@@ -271,7 +271,7 @@ module scalar
     end type scalar_type
 
     public :: scalars_enabled, scalar_count
-    public :: apply_scalar_config, validate_scalar_config, destroy_scalar
+    public :: apply_scalar_config, validate_scalar_config, destroy_scalar, scalar_reserve
     public :: init_scalar, init_scalar_fields, enter_scalar_data, exit_scalar_data
     public :: scalar_sync, scalar_finish, scalar_transport
     public :: scalar_names, scalar_min_pr, scalar_min_prt
@@ -1053,7 +1053,7 @@ contains
                 is = int(read_int_value(value, key, line_no))
                 if (is < 0) error stop "[scalar] count must be non-negative"
                 sc%countKey = int(is, C_INT)
-                call scalar_grow(sc, is)
+                call scalar_reserve(sc, is)
             ! Statistics (increment S4, scalar_stats.f90). Off unless asked.
             case ("stats_sample_interval")
                 sc%statsSample = read_int_value(value, key, line_no)
@@ -1089,7 +1089,7 @@ contains
         end if
 
         if (index < 1) error stop "[scalar.N] section index must be >= 1"
-        call scalar_grow(sc, index)
+        call scalar_reserve(sc, index)
         sc%sectionSeen(index) = .true.
         is = index
 
@@ -1272,34 +1272,17 @@ contains
 
     ! Grow the per-scalar arrays to at least n entries, preserving values
     ! (host-only ini-parse cost; the count is unknown until the file ends).
-    subroutine scalar_grow(sc, n)
+    ! Size the per-scalar arrays ONCE for n scalars, with every default
+    ! filled in. config.f90 calls it before the parse with the count its
+    ! pre-scan found (scalar_count_hint), so the two calls the parser still
+    ! makes (at [scalar] count and at each [scalar.N] header) are no-ops; a
+    ! larger n after that is a pre-scan bug and stops.
+    subroutine scalar_reserve(sc, n)
         type(scalar_type), intent(inout) :: sc
         integer, intent(in) :: n
 
-        type(scalar_type) :: old
-        integer :: nOld
-
         if (n <= int(sc%n)) return
-        nOld = int(sc%n)
-        if (nOld > 0) then
-            old%pr = sc%pr; old%prt = sc%prt; old%prtModel = sc%prtModel
-            old%source = sc%source; old%initValue = sc%initValue
-            old%srcType = sc%srcType; old%srcDir = sc%srcDir
-            old%srcDirSet = sc%srcDirSet
-            old%ibmValue = sc%ibmValue; old%inlet = sc%inlet
-            old%ibmMode = sc%ibmMode; old%initProfile = sc%initProfile
-            old%solidK = sc%solidK; old%solidC = sc%solidC
-            old%solidInit = sc%solidInit; old%solidSource = sc%solidSource
-            old%contactR = sc%contactR; old%tangCorr = sc%tangCorr
-            old%solidDepth = sc%solidDepth
-            old%outerK = sc%outerK; old%outerC = sc%outerC
-            old%solidKeySet = sc%solidKeySet; old%solidInitSet = sc%solidInitSet
-            old%ibmValueSet = sc%ibmValueSet
-            old%bcType = sc%bcType; old%bcValue = sc%bcValue
-            old%bcTypeSet = sc%bcTypeSet; old%bcValueSet = sc%bcValueSet
-            old%name = sc%name; old%sectionSeen = sc%sectionSeen
-            call deallocate_config(sc)
-        end if
+        if (sc%n > 0_C_INT) error stop "[scalar]: more scalars than the config pre-scan reserved"
 
         allocate(sc%pr(n), sc%prt(n), sc%prtModel(n))
         allocate(sc%source(n), sc%initValue(n), sc%ibmValue(n), sc%inlet(n))
@@ -1353,32 +1336,8 @@ contains
         sc%name = ""
         sc%sectionSeen = .false.
 
-        if (nOld > 0) then
-            sc%pr(1:nOld) = old%pr; sc%prt(1:nOld) = old%prt
-            sc%prtModel(1:nOld) = old%prtModel
-            sc%source(1:nOld) = old%source; sc%initValue(1:nOld) = old%initValue
-            sc%ibmValue(1:nOld) = old%ibmValue; sc%inlet(1:nOld) = old%inlet
-            sc%ibmMode(1:nOld) = old%ibmMode; sc%initProfile(1:nOld) = old%initProfile
-            sc%srcType(1:nOld) = old%srcType; sc%srcDir(1:nOld) = old%srcDir
-            sc%srcDirSet(1:nOld) = old%srcDirSet
-            sc%solidK(1:nOld) = old%solidK; sc%solidC(1:nOld) = old%solidC
-            sc%solidInit(1:nOld) = old%solidInit
-            sc%solidSource(1:nOld) = old%solidSource
-            sc%contactR(1:nOld) = old%contactR
-            sc%tangCorr(1:nOld) = old%tangCorr
-            sc%solidDepth(1:nOld) = old%solidDepth
-            sc%outerK(1:nOld) = old%outerK; sc%outerC(1:nOld) = old%outerC
-            sc%solidKeySet(1:nOld) = old%solidKeySet
-            sc%solidInitSet(1:nOld) = old%solidInitSet
-            sc%ibmValueSet(1:nOld) = old%ibmValueSet
-            sc%bcType(1:nOld,:) = old%bcType; sc%bcValue(1:nOld,:) = old%bcValue
-            sc%bcTypeSet(1:nOld,:) = old%bcTypeSet
-            sc%bcValueSet(1:nOld,:) = old%bcValueSet
-            sc%name(1:nOld) = old%name; sc%sectionSeen(1:nOld) = old%sectionSeen
-            call deallocate_config(old)
-        end if
         sc%n = int(n, C_INT)
-    end subroutine scalar_grow
+    end subroutine scalar_reserve
 
     ! Post-parse validation: contiguous sections, a count that agrees with
     ! the highest section index, positive Prandtl numbers and dataset names
@@ -2105,69 +2064,33 @@ contains
         type(block_set_type), intent(in) :: blk
         type(comm_type), intent(in) :: c
 
-        integer :: i, j, k, b, d, nx, ny, nz
+        integer :: i, j, k, b, d, side, n(3), lo(3), hi(3), p(3), q(3)
         integer(C_INT) :: kind
         real(C_DOUBLE) :: bad(1)
 
-        nx = int(blk%nb(1))
-        ny = int(blk%nb(2))
-        nz = int(blk%nb(3))
+        n = int(blk%nb(1:3))
         bad = 0.0d0
 
+        ! Every 2:1 face of every block: the cell pair straddling it is
+        ! (0, 1) on the low side and (n, n+1) on the high side along d, at
+        ! every interior index of the two tangential directions.
         do b = 1, int(blk%nBlocks)
             do d = 1, 3
-                kind = blk%physLow(d,b)
-                if (kind == FACE_COARSE .or. kind == FACE_FINE) then
-                    select case (d)
-                    case (1)
-                        do k = 1, nz
-                            do j = 1, ny
-                                if (face_crosses_material(sc, sc%phi(0,j,k,b), &
-                                    sc%phi(1,j,k,b))) bad(1) = bad(1) + 1.0d0
+                do side = 0, 1
+                    kind = merge(blk%physHigh(d,b), blk%physLow(d,b), side == 1)
+                    if (kind /= FACE_COARSE .and. kind /= FACE_FINE) cycle
+                    lo = 1; hi = n
+                    lo(d) = merge(n(d), 0, side == 1); hi(d) = lo(d)
+                    do k = lo(3), hi(3)
+                        do j = lo(2), hi(2)
+                            do i = lo(1), hi(1)
+                                p = [i, j, k]; q = p; q(d) = p(d) + 1
+                                if (face_crosses_material(sc, sc%phi(p(1),p(2),p(3),b), &
+                                    sc%phi(q(1),q(2),q(3),b))) bad(1) = bad(1) + 1.0d0
                             end do
                         end do
-                    case (2)
-                        do k = 1, nz
-                            do i = 1, nx
-                                if (face_crosses_material(sc, sc%phi(i,0,k,b), &
-                                    sc%phi(i,1,k,b))) bad(1) = bad(1) + 1.0d0
-                            end do
-                        end do
-                    case default
-                        do j = 1, ny
-                            do i = 1, nx
-                                if (face_crosses_material(sc, sc%phi(i,j,0,b), &
-                                    sc%phi(i,j,1,b))) bad(1) = bad(1) + 1.0d0
-                            end do
-                        end do
-                    end select
-                end if
-                kind = blk%physHigh(d,b)
-                if (kind == FACE_COARSE .or. kind == FACE_FINE) then
-                    select case (d)
-                    case (1)
-                        do k = 1, nz
-                            do j = 1, ny
-                                if (face_crosses_material(sc, sc%phi(nx,j,k,b), &
-                                    sc%phi(nx+1,j,k,b))) bad(1) = bad(1) + 1.0d0
-                            end do
-                        end do
-                    case (2)
-                        do k = 1, nz
-                            do i = 1, nx
-                                if (face_crosses_material(sc, sc%phi(i,ny,k,b), &
-                                    sc%phi(i,ny+1,k,b))) bad(1) = bad(1) + 1.0d0
-                            end do
-                        end do
-                    case default
-                        do j = 1, ny
-                            do i = 1, nx
-                                if (face_crosses_material(sc, sc%phi(i,j,nz,b), &
-                                    sc%phi(i,j,nz+1,b))) bad(1) = bad(1) + 1.0d0
-                            end do
-                        end do
-                    end select
-                end if
+                    end do
+                end do
             end do
         end do
 

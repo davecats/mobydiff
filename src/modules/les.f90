@@ -42,8 +42,10 @@ contains
             return
         case (LES_WALE)
             call update_wale_viscosity(les, turb, blk, dns, ibm, nut)
+        case (LES_SMAGORINSKY)
+            call update_smagorinsky_viscosity(les, turb, blk, dns, ibm, nut)
         case default
-            call update_generic_les_viscosity(les, turb, blk, dns, ibm, nut)
+            error stop "les: unknown SGS model"
         end select
     end subroutine update_sgs_viscosity
 
@@ -51,7 +53,7 @@ contains
     ! (hoisted for IDDES: the shielding function needs it there, and the
     ! module graph runs turbulence -> les/rans, not the other way).
 
-    subroutine update_generic_les_viscosity(les, turb, blk, dns, ibm, nut)
+    subroutine update_smagorinsky_viscosity(les, turb, blk, dns, ibm, nut)
         type(les_type), intent(in) :: les
         type(turb_type), intent(in) :: turb
         type(block_set_type), intent(in) :: blk
@@ -60,9 +62,8 @@ contains
         real(C_DOUBLE), intent(inout) :: nut(0:,0:,0:,1:)
 
         integer :: i, j, k, b, nx, ny, nz, nBlocks
-        integer(C_INT) :: model
         logical(C_BOOL) :: ibm_aware, ibm_enabled
-        real(C_DOUBLE) :: cs, cs2, delta_scale
+        real(C_DOUBLE) :: cs2, delta_scale
         real(C_DOUBLE) :: delta
         real(C_DOUBLE) :: g11, g12, g13, g21, g22, g23, g31, g32, g33
         real(C_DOUBLE) :: s11, s22, s33, s12, s13, s23, s2, strain_mag
@@ -73,18 +74,14 @@ contains
         ny = int(blk%nb(2))
         nz = int(blk%nb(3))
         nBlocks = int(blk%nBlocks)
-        model = les%model
-        cs = les%cs
-        cs2 = cs*cs
+        cs2 = les%cs*les%cs
         delta_scale = les%delta_scale
         ibm_aware = les%ibm_aware
         ibm_enabled = dns%ibm_enabled
         solid_threshold = SOLID_FACE_THRESHOLD
 
-        if (model == LES_NONE) return
-
         !$omp target teams distribute parallel do collapse(4) &
-        !$omp& map(to: model, cs2, delta_scale, ibm_aware, ibm_enabled, solid_threshold, &
+        !$omp& map(to: cs2, delta_scale, ibm_aware, ibm_enabled, solid_threshold, &
         !$omp& blk%q, blk%d1x, blk%d1y, blk%d1z, ibm%coef, &
         !$omp& turb%filter_x, turb%filter_y, turb%filter_z, &
         !$omp& turb%d1xm, turb%d1x0, turb%d1xp, turb%d1ym, turb%d1y0, turb%d1yp, &
@@ -123,20 +120,14 @@ contains
                     s23 = 0.5d0*(g23 + g32)
                     s2 = s11*s11 + s22*s22 + s33*s33 + 2.0d0*(s12*s12 + s13*s13 + s23*s23)
 
-                    ! WALE is dispatched to update_wale_viscosity; this generic
-                    ! path handles the Smagorinsky (and any future algebraic
-                    ! eddy-viscosity) model.
-                    select case (model)
-                    case (LES_SMAGORINSKY)
-                        strain_mag = sqrt(max(0.0d0, 2.0d0*s2))
-                        nut(i,j,k,b) = cs2*delta*delta*strain_mag
-                    end select
+                    strain_mag = sqrt(max(0.0d0, 2.0d0*s2))
+                    nut(i,j,k,b) = cs2*delta*delta*strain_mag
                 end do
             end do
         end do
         end do
         !$omp end target teams distribute parallel do
-    end subroutine update_generic_les_viscosity
+    end subroutine update_smagorinsky_viscosity
 
     subroutine update_wale_viscosity(les, turb, blk, dns, ibm, nut)
         type(les_type), intent(in) :: les
