@@ -2841,6 +2841,25 @@ immersed boundary. Phased, each phase verified before the next:
   are THE USER'S CALL and untouched. GATES (a pure move; production flags
   vs the item-10 binaries): the 9-case suite CPU 4 ranks + GPU (18), the 11-case suite CPU + GPU (22), the outlet suite CPU 4 ranks + GPU (14) -- every comparison `max_abs 0`; `validation/conjugate/run_gates_c1.sh all` 61 PASS / 0 FAIL; `build_cpu/scalar_test` ALL PASS.
 
+- **Code simplification, item 12 -- a RANS / IDDES restart reads `nut` back
+  (DONE 2026-10-21, the user's decision; handout "Item 12, done"). The
+  restart was not bit-continuous because the k-omega transport of a substage
+  reads the LAGGED `nut` -- assembled at the end of the previous substage
+  from THAT substage's velocity -- while `rans_prepare` re-assembled it from
+  the end-of-step velocity of the snapshot. The snapshot already carried the
+  lagged value (`write_field` appends `nut` after the last substage):
+  `rans_restore_nut` reads it (`read_scalar_field`, interior like k/omega,
+  `target update to` since `turb%nut` is mapped by then), `rans_prepare`
+  skips the assembly, and under IDDES the blend too (the snapshot's `nut` is
+  the blended one, which the shielding reads first); wall ghosts and halos
+  are re-applied as in every substage; an older snapshot without the dataset
+  assembles with a note. GATES: restart (10 + 10) == continuous (20) at
+  `max_abs 0` over `un vn wn pn k omega nut` (+ `gamma rethetat`) on
+  `turb180`, `wf180_y30`, `lam30t`, CPU 4 ranks AND GPU, and on an IDDES
+  cold-start pair (`iddes180` without its IC; 8 datasets incl. `fd`, CPU 4
+  ranks); the item-11 binary on the same `turb180` pair reads 1.46e-5 (the
+  finding). Dormancy: the three code items of 2026-10-21 (this one, F13, F14) were built and gated TOGETHER, each on its own evidence: at PRODUCTION flags vs the item-11 binaries the 9-case suite CPU 4 ranks + GPU (18), the 11-case suite CPU + GPU (22) and the outlet suite CPU 4 ranks + GPU (14) -- every comparison `max_abs 0`; at NOFMA vs `~/pass2_ref_binaries` the same three suites CPU + GPU (54) `max_abs 0`, so the reference set is UNCHANGED; `validation/freestream/run_gates.sh restart` ALL PASS (5 outlet restarts == continuous); `validation/courant_limit/run_gate.sh` 11/11 PASS; prepare P0 29/29.
+
 ## Verification
 
 - Pure refactors must be bit-exact vs. the pre-refactor code: compare

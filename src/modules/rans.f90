@@ -138,7 +138,7 @@ module rans
     public :: fill_body_distance_analytic
     public :: enter_rans_data, exit_rans_data
     public :: write_rans_geometry
-    public :: init_rans_transport, rans_prepare, rans_substage
+    public :: init_rans_transport, rans_prepare, rans_restore_nut, rans_substage
     public :: rans_set_constrained_cells
     ! S5a (thermal wall function): the wall-cell y+ field the passive-scalar
     ! kernels read, and the log-law constants they share with the momentum
@@ -1506,15 +1506,53 @@ contains
         call exchange_scalar_halos(c, yplus)
     end subroutine rans_wall_yplus
 
+    ! A restart reads nut BACK from the snapshot instead of assembling it.
+    ! The k/omega transport of a substage reads the LAGGED nut: the one
+    ! assembled at the END of the previous substage from THAT substage's
+    ! velocity, not the end-of-step velocity the snapshot holds. A restart
+    ! that re-assembled nut from the restarted velocity therefore fed the
+    ! first substage a different diffusivity and was not bit-continuous
+    ! (turb180: omega 1.5e-5 after one restarted step, found 2026-10-21).
+    ! The snapshot's nut IS the lagged value (write_field appends it after
+    ! the last substage), interior only like k/omega; the wall ghosts and
+    ! halos are re-applied by the caller as in every substage. Under IDDES
+    ! it is the BLENDED nut, which is what the shielding reads first, so
+    ! the caller skips the blend too. Absent (older snapshot) -> assembled,
+    ! with a note.
+    subroutine rans_restore_nut(turb, blk, dns, has_terminal, restored)
+        type(turb_type), intent(inout) :: turb
+        type(block_set_type), intent(in) :: blk
+        type(dns_type), intent(in) :: dns
+        logical, intent(in) :: has_terminal
+        logical, intent(out) :: restored
+
+        restored = .false.
+        if (len_trim(dns%restart_file) == 0) return
+        call read_scalar_field(blk, "nut", dns%restart_file, turb%nut, restored, has_terminal)
+        if (restored) then
+            ! turb%nut is already mapped (enter_turbulence_data): the host
+            ! read is invisible to the device without this.
+#ifdef USE_OPENMP_OFFLOAD
+            !$omp target update to(turb%nut)
+#endif
+            if (has_terminal) print *, "restart: nut read from the snapshot"
+        else if (has_terminal) then
+            print *, "note: restart file has no nut dataset; assembling nut from k/omega", &
+                " (the first step is not bit-continuous)"
+        end if
+    end subroutine rans_restore_nut
+
     ! Pre-loop preparation: constrained cells, scalar ghosts/halos, and the
-    ! first nut assembly so the momentum predictor starts consistent.
-    subroutine rans_prepare(sst, turb, blk, dns, bc, c)
+    ! first nut assembly so the momentum predictor starts consistent --
+    ! unless rans_restore_nut read it back (nutRestored).
+    subroutine rans_prepare(sst, turb, blk, dns, bc, c, nutRestored)
         type(sst_type), intent(inout) :: sst
         type(turb_type), intent(inout) :: turb
         type(block_set_type), intent(inout) :: blk
         type(dns_type), intent(in) :: dns
         type(boundary_type), intent(in) :: bc
         type(comm_type), intent(inout) :: c
+        logical, intent(in) :: nutRestored
 
         call rans_set_constrained_cells(sst, dns, blk)
         call rans_apply_scalar_bcs(sst, dns, blk, bc)
@@ -1524,7 +1562,7 @@ contains
             call exchange_scalar_halos(c, sst%gam)
             call exchange_scalar_halos(c, sst%ret)
         end if
-        call rans_assemble_nut(sst, turb, blk, dns, turb%nut)
+        if (.not. nutRestored) call rans_assemble_nut(sst, turb, blk, dns, turb%nut)
         if (dns%rans_wall_treatment == 1_C_INT) &
             call rans_apply_nut_wall_ghosts(sst, blk, bc, turb%nut)
     end subroutine rans_prepare

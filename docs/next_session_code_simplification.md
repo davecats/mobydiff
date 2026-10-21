@@ -258,7 +258,11 @@ Poiseuille, the TBL tutorial) to move by the step alone -- show it with
   CALL (review 6.5); ask before doing it.
 - The fourteen airfoil inis without a `cv_box` (`docs/history/
   next_session_port_finish.md` section 3): decide per ini (a box, or the
-  warning stays). THE USER'S CALL.
+  warning stays). THE USER'S CALL. **CLOSED 2026-10-21 without a change**:
+  that table already reduces the fourteen to its three KEEP rows (the two
+  prepare-only `tutorials/naca/rans/.prep_c11*.ini` and the scalar gate
+  `validation/scalar/cylheat.ini`), and the tree holds exactly those three
+  (`grep -l "name = airfoil"` minus `cv_box`); none needs a box.
 
 ## 2. What is NOT on this list, and why
 
@@ -847,7 +851,8 @@ velocity, whereas the continuous run carries the `nut` assembled at the
 end of the last RANS substage, from the velocity one momentum/projection
 earlier (the RANS substage runs before the momentum). Candidate fix: read
 `nut` back on restart (one io change) -- to be decided in the one-by-one
-re-validation of `validation/rans_sst`, not here.
+re-validation of `validation/rans_sst`, not here. **FIXED 2026-10-21 (the
+user's decision; "Item 12, the RANS restart reads nut back" below).**
 
 ## Item 11, the scalar module split, done (2026-10-21)
 
@@ -872,8 +877,38 @@ re-exports:
 module were computed from the names it uses, so none carries an unused
 `only:` name.
 
-NOT done, THE USER'S CALL (handout item 11): the CLAUDE.md "Active work"
-log move to `docs/history/worklog_2026.md`, and the fourteen airfoil inis
-without a `cv_box`.
+NOT done at the time, THE USER'S CALL (handout item 11): the CLAUDE.md
+"Active work" log move to `docs/history/worklog_2026.md` (DONE 2026-10-21,
+decided by the user, see "Item 11, the log move, done"), and the fourteen
+airfoil inis without a `cv_box` (CLOSED 2026-10-21: only the three KEEP
+inis remain, section 1 item 11).
 
 GATES (a pure move: production flags vs the item-10 binaries): the 9-case suite CPU 4 ranks + GPU (18), the 11-case suite CPU + GPU (22), the outlet suite CPU 4 ranks + GPU (14) -- every comparison `max_abs 0`; `validation/conjugate/run_gates_c1.sh all` 61 PASS / 0 FAIL; `build_cpu/scalar_test` ALL PASS.
+
+## Item 12, the RANS restart reads `nut` back, done (2026-10-21)
+
+The user's decision (asked 2026-10-21, with F13/F14 and the log move). The
+item-10 finding above had the mechanism right: the k-omega transport of a
+substage reads the LAGGED `nut`, and `rans_prepare` re-assembled it from the
+snapshot's end-of-step velocity. The snapshot already carries the lagged
+value, so the fix is `rans_restore_nut` (rans.f90): read the `nut` dataset
+with `read_scalar_field` (interior only, like k/omega), `!$omp target update
+to(turb%nut)` because `turb%nut` is already mapped at that point (the
+2026-08-05 class), then `rans_prepare(..., nutRestored)` skips the assembly;
+`moby_solve.f90` calls the read BEFORE the IDDES shielding (which reads the
+lagged blended nut) and skips `blend_iddes_nut` when the read succeeded
+(the snapshot's `nut` is the blended one). Wall ghosts and halos are
+re-applied exactly as after every substage. A snapshot without the dataset
+prints a note and assembles as before.
+
+GATES (NEW binary, production flags): `turb180` / `wf180_y30` / `lam30t`
+restart (10 + 10) == continuous (20) at `max_abs 0` over `un vn wn pn k
+omega nut` (+ `gamma rethetat` for lam30t), CPU 4 ranks AND GPU 1 rank;
+`iddes180` as a cold-start pair (its committed IC is not on this tree;
+`[restart]` dropped for legs a/c) `max_abs 0` over 8 datasets incl. `fd`
+(CPU 4 ranks); the SAME `turb180` pair with the item-11 binary reads
+`1.4571e-5` (the finding reproduced, 0 read-back lines). Dormancy: the
+9-case, 11-case and outlet suites CPU + GPU at production flags vs the
+item-11 binaries and at nofma vs `~/pass2_ref_binaries`, every comparison
+`max_abs 0`; `freestream restart` group ALL PASS. Scratch: `gates12/` of
+the session scratchpad (`restart_pair` in `common12.sh`).

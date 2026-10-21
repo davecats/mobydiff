@@ -61,7 +61,7 @@ program moby_solve
     integer(C_INT) :: fileNb(3), fileRefMask(3)
     ! ... and its leaf-key bit order (size 0: the legacy order).
     integer(C_INT), allocatable :: fileKeyOrder(:)
-    logical :: case_exists
+    logical :: case_exists, nutRestored
     ! Outlet-normal faces whose value the restart file supplied (per domain
     ! face): a LOW face is an interior index and always in the file; a HIGH
     ! one is not (see init_outlet_faces).
@@ -279,17 +279,23 @@ program moby_solve
     ! Every producer fills the same turb%nut; the consumer chain (exchange,
     ! dt limits) is model-agnostic.
     if (turbulence_is_enabled(turb)) then
+        ! A RANS / IDDES restart continues from the snapshot's nut (the
+        ! lagged value the first substage reads); nothing to assemble or
+        ! blend then. Read first: the IDDES shielding below reads it.
+        nutRestored = .false.
+        if (turb%model == TURB_RANS .or. turb%model == TURB_IDDES) &
+            call rans_restore_nut(turb, blk, dns, c%has_terminal, nutRestored)
         select case (turb%model)
         case (TURB_RANS)
-            call rans_prepare(sst, turb, blk, dns, bc, c)
+            call rans_prepare(sst, turb, blk, dns, bc, c, nutRestored)
         case (TURB_IDDES)
             ! IDDES: SGS viscosity into the scratch, the DDES shielding fd
             ! (reads the lagged blended nut), the RANS pass (l_hyb rides
             ! turb%fd inside the kernel), then the blend.
             call update_sgs_viscosity(les, turb, blk, dns, ibm, turb%nut_sgs)
             call compute_iddes_fd(turb, blk, dns, sst%yeff)
-            call rans_prepare(sst, turb, blk, dns, bc, c)
-            call blend_iddes_nut(turb, blk)
+            call rans_prepare(sst, turb, blk, dns, bc, c, nutRestored)
+            if (.not. nutRestored) call blend_iddes_nut(turb, blk)
         case default
             call update_sgs_viscosity(les, turb, blk, dns, ibm, turb%nut)
         end select
