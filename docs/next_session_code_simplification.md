@@ -955,3 +955,31 @@ les_ibm, the scalar ICs, pois_io / lamboseen / blasius2d from minted ICs):
 the 9-case, 11-case and outlet suites CPU + GPU, production vs the item-11
 binaries and nofma vs pass2, all `max_abs 0`; `freestream restart` ALL
 PASS; prepare P0 29/29. No committed ini needed a change.
+
+## Item 8, F14 the Courant reduction over the interior, done (2026-10-21)
+
+The user's decision: interior only, consistent with the Peclet loop. The
+Courant loop of `get_timestep_rates` (step.f90) runs `1..n` in every
+direction (was `0..n+1`); the comment above the routine records why.
+
+MEASURED -- and the handout's expectation was wrong in degree: **no suite
+case moves.** The inlet cases (blasius2d, pois_io, lamboseen, oblique,
+cyl_re100, outlet_high/low) are `max_abs 0` vs the item-11 binaries at
+production flags and vs `~/pass2_ref_binaries` at nofma, CPU 4 ranks and
+GPU, together with the 9-case and 11-case suites (54 nofma + 54 production
+comparisons, all 0). On a developed inlet flow the tangential ghost `2v - q`
+is of the interior's size, the normal face value is index 1 (inside the
+loop either way), and where neither holds `dtmax` binds. **The reference
+set is therefore UNCHANGED: `~/pass2_ref_binaries`.** The change is live
+where an inlet datum exceeds the interior velocity: the oblique inlet
+started FROM REST (`oblique.ini` with `initial_u/v = 0`, `dtmax = 0.1`,
+100 steps, 4 CPU ranks and GPU): old reduction t = 1.3534563 after 100
+steps, new 1.5043252 (dt at step 100: 0.014790 vs 0.016018; fields differ
+by 0.40); its `dtmax = 1e-3` twin `max_abs 0` on both devices. All seven
+outlet cases with `dtmax = 1e-4` binding on both sides `max_abs 0` (CPU 4
+ranks, GPU). `validation/courant_limit/run_gate.sh` 11/11 PASS (uniform
+flow + perturbation: no ghost binds there, the bracket is unmoved).
+
+A case whose cold start from rest was Courant-bound before 2026-10-21 takes
+a larger first step now and is not reproducible bit for bit against an
+older binary; every `dtmax`-bound or developed-flow run is.

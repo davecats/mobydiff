@@ -973,7 +973,11 @@ contains
     ! the directions sum_d |u_d|/dx_d (the three staggered faces of the
     ! cell's index): the quantity the stability limit is on, see
     ! RK3_CONVECTION_LIMIT. rates(CFL_PECLET) is the largest diffusion rate
-    ! sum_d nu_eff/dx_d^2, see RK3_DIFFUSION_LIMIT.
+    ! sum_d nu_eff/dx_d^2, see RK3_DIFFUSION_LIMIT. Both reductions run over
+    ! the INTERIOR cells: a ghost holds a boundary datum, not a transported
+    ! value (a tangential Dirichlet ghost is 2 v_wall - q, and until
+    ! 2026-10-21 the Courant loop included it, so an inlet whose datum
+    ! exceeds the interior velocity had its GHOST set the step; review F14).
     subroutine get_timestep_rates(blk, dns, rates, turb, sc)
         type(block_set_type), intent(inout) :: blk
         type(dns_type),   intent(in)    :: dns
@@ -1004,9 +1008,9 @@ contains
         !$omp& map(to: blk%d1x, blk%d1y, blk%d1z, blk%q) &
         !$omp& private(i,j,k,b)
         do b = 1, nBlocks
-        do k = 0, nz+1
-            do j = 0, ny+1
-                do i = 0, nx+1
+        do k = 1, nz
+            do j = 1, ny
+                do i = 1, nx
                     cfl_rate = max(cfl_rate, abs(blk%q(i,j,k,VAR_U,b)*blk%d1x(i,VAR_U,b)) &
                                            + abs(blk%q(i,j,k,VAR_V,b)*blk%d1y(j,VAR_V,b)) &
                                            + abs(blk%q(i,j,k,VAR_W,b)*blk%d1z(k,VAR_W,b)))

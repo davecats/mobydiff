@@ -2888,6 +2888,26 @@ immersed boundary. Phased, each phase verified before the next:
   disagreement lines, snapshot written). Every suite case restarting from a
   committed or minted IC file passes the agreement checks: the three code items of 2026-10-21 (this one, F13, F14) were built and gated TOGETHER, each on its own evidence: at PRODUCTION flags vs the item-11 binaries the 9-case suite CPU 4 ranks + GPU (18), the 11-case suite CPU + GPU (22) and the outlet suite CPU 4 ranks + GPU (14) -- every comparison `max_abs 0`; at NOFMA vs `~/pass2_ref_binaries` the same three suites CPU + GPU (54) `max_abs 0`, so the reference set is UNCHANGED; `validation/freestream/run_gates.sh restart` ALL PASS (5 outlet restarts == continuous); `validation/courant_limit/run_gate.sh` 11/11 PASS; prepare P0 29/29.
 
+- **Code simplification, item 8, F14 -- the Courant reduction over the
+  INTERIOR (DONE 2026-10-21, the user's decision).** `get_timestep_rates`
+  reduced `sum_d |u_d|/h_d` over `0..n+1`, the Peclet rate over `1..n`; a
+  tangential Dirichlet ghost holds `2 v_wall - q`, so an inlet whose datum
+  exceeds the interior velocity had its GHOST set the step. Both run over
+  `1..n` now. MEASURED, and it corrected the handout's expectation: NO suite
+  case moves -- not blasius2d, pois_io or the cylinder -- because on a
+  developed inlet flow the ghost `2v - q` never exceeds the interior rate
+  and `dtmax` binds elsewhere; the 9-case, 11-case and outlet suites are
+  `max_abs 0` at production flags AND at nofma vs `~/pass2_ref_binaries`
+  (CPU + GPU), so **the reference set is UNCHANGED**. Where it is live: the
+  oblique inlet started FROM REST (`oblique.ini`, `initial_u/v = 0`, `dtmax
+  = 0.1`, 100 steps) reaches t = 1.353 with the old reduction and 1.504 with
+  the new (step 0.01479 vs 0.01602 at step 100; fields differ by 0.40),
+  CPU 4 ranks and GPU alike, while its `dtmax = 1e-3` twin is `max_abs 0`
+  on both; the same `dtmax = 1e-4` twins of all seven outlet cases
+  `max_abs 0` (CPU 4 ranks + GPU); `validation/courant_limit/run_gate.sh`
+  11/11 PASS (the limit itself is unmoved: the gate's uniform flow has no
+  binding ghost). the three code items of 2026-10-21 (this one, F13, F14) were built and gated TOGETHER, each on its own evidence: at PRODUCTION flags vs the item-11 binaries the 9-case suite CPU 4 ranks + GPU (18), the 11-case suite CPU + GPU (22) and the outlet suite CPU 4 ranks + GPU (14) -- every comparison `max_abs 0`; at NOFMA vs `~/pass2_ref_binaries` the same three suites CPU + GPU (54) `max_abs 0`, so the reference set is UNCHANGED; `validation/freestream/run_gates.sh restart` ALL PASS (5 outlet restarts == continuous); `validation/courant_limit/run_gate.sh` 11/11 PASS; prepare P0 29/29.
+
 ## Verification
 
 - Pure refactors must be bit-exact vs. the pre-refactor code: compare
