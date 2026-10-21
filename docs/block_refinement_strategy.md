@@ -1,6 +1,6 @@
 # Block-Based Local Refinement and Solid-Block Removal Strategy
 
-> STATUS (2026-09-26): DONE -- Phases 0-3 implemented and validated (CLAUDE.md "Active work"). Historical design record. `mobygrid` was deleted in the prepare/solve split (P3): the leaf table is built by the solver/`moby_prepare` (`src/moby_prepare.f90`), which writes it into the case file.
+> STATUS (2026-09-26): DONE -- Phases 0-3 implemented and validated (`docs/history/worklog_2026.md`). Historical design record. `mobygrid` was deleted in the prepare/solve split (P3): the leaf table is built by the solver/`moby_prepare` (`src/moby_prepare.f90`), which writes it into the case file.
 
 Design notes for extending mobydiff with (1) local mesh refinement following the
 Building-Cube Method (Nakahashi & Kim, AIAA 2004-434) and its HPC formulation in

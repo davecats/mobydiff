@@ -23,5 +23,6 @@ live handouts stay in `docs/`. One line each, in rough chronological order.
 | `next_session_scalar.md`, `next_session_verification.md` | passive scalars S0-S5a and the host/device staleness audit | 2026-08-07 |
 | `next_session_conjugate.md`, `next_session_pipe_cht.md` | conjugate heat transfer C1-C3 and the Neuhauser pipe | 2026-08-28 / 09-28 |
 | `next_session_block_overhead.md`, `next_session_2to1_penalty.md`, `next_session_apply_registers.md`, `next_session_divergence_halos.md` | the performance campaign (block tax, the 2:1 penalty, registers, divergence halos); results in `tutorials/turbulentBoundaryLayer/overheadTest/results_*.md` | 2026-09 |
-| `next_session_merge_to_main.md`, `next_session_port_finish.md`, `next_session_skew_convection.md` | branch consolidation, the jacobi-interface feature port, the skew lockdown | 2026-09-25/26 (port_finish section 3 still lists the 14 airfoil inis without a `cv_box`, an undecided follow-up) |
+| `next_session_merge_to_main.md`, `next_session_port_finish.md`, `next_session_skew_convection.md` | branch consolidation, the jacobi-interface feature port, the skew lockdown | 2026-09-25/26 (port_finish section 3: the `cv_box` question closed itself -- only its three KEEP inis remain on the tree, 2026-10-21) |
 | `next_session_numerics_steps.md` | execution of the 2026-09-26 review, steps 0-6 | 2026-09-27 |
+| `worklog_2026.md` | THE WORK LOG: the `CLAUDE.md` "Active work" list (Phase 0 to code-simplification item 12), moved verbatim 2026-10-21; new work is appended here | live (append) |

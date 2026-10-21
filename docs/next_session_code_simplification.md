@@ -8,10 +8,15 @@ a static face list) and item 6 (the per-iteration phi mirror on outlet
 cases), item 7 (the red-black sweep's diagonal from the tables) and item
 9 (latent robustness) and 10 (the small leftovers) DONE 2026-10-21** -- see
 "Item N, done" at the end of this file for the measurements and what each
-one cost; **item 11's scalar module split DONE 2026-10-21 too.** What is
-left needs the user: item 8 (F13 restart precedence, F14 the Courant
-reduction over ghosts) and the rest of item 11 (the CLAUDE.md log move to
-`docs/history/worklog_2026.md`, the fourteen cv_box-less airfoil inis).
+one cost; **item 11's scalar module split DONE 2026-10-21 too. The user
+decided the four open questions on 2026-10-21 and they are DONE the same
+day: item 8 (F13 config-authority with a hard stop on a mismatch; F14 the
+Courant reduction over the interior -- no suite case moves, reference set
+unchanged), item 12 (the RANS/IDDES restart reads `nut` back, the item-10
+finding fixed), the CLAUDE.md log move to `docs/history/worklog_2026.md`
+(the state summary stays), and the cv_box inis closed without a change
+(three KEEP inis remain). THIS HANDOUT IS COMPLETE.** NEXT: the one-by-one
+numerics re-validation of `validation/README.md` (its own handout).
 It continues `docs/cleanup_review_2026-10-06.md` section 9 (the
 ranked findings) after the items DONE on 2026-10-08: the config hardening
 (F11/F12), the body-force support restriction, the apply k1+k2 and
@@ -983,3 +988,18 @@ flow + perturbation: no ghost binds there, the bracket is unmoved).
 A case whose cold start from rest was Courant-bound before 2026-10-21 takes
 a larger first step now and is not reproducible bit for bit against an
 older binary; every `dtmax`-bound or developed-flow run is.
+
+## Item 11, the log move, done (2026-10-21)
+
+The user's decision: move the log, keep a two-page state summary.
+`CLAUDE.md` went from 208 kB to 16 kB: the "Active work" section (Phase 0
+to item 12, 2770 lines) is `docs/history/worklog_2026.md` VERBATIM under a
+short header that says new work is appended there; `CLAUDE.md` keeps
+"What this is", "Build and run", "Coding conventions", "Verification" and a
+new "State of the solver (2026-10-21)" (where things are, the time step in
+one pass, the prepare/solve contract, the gate rules and reference set, the
+landmines still live, the open items in order). `docs/history/README.md`
+indexes the worklog; the four documents whose status headers pointed at
+`CLAUDE.md "Active work"` point at the worklog now. Nothing was rewritten
+in the log; the state summary is new text and a reader of this handout can
+check it against the bullets it condenses.

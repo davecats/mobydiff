@@ -1,6 +1,6 @@
 # 2:1 interface pressure projection — correct SPD formulation and SOR recast
 
-> STATUS (2026-09-26): SUPERSEDED -- the SOR/MP/agglomeration prototypes below were abandoned; the projection was rebuilt on damped Jacobi/Chebyshev with the symmetric `face_grad` composite stencil (`docs/history/jacobi_interface_handout.md`, CLAUDE.md "Active work"). Every `MOBY_*` env hook named here was removed (2026-06-30 cleanup; git history 5fcdd0c), as were `tools/beltrami_regression.py` and `tools/plot_div_slice.py`. Historical record.
+> STATUS (2026-09-26): SUPERSEDED -- the SOR/MP/agglomeration prototypes below were abandoned; the projection was rebuilt on damped Jacobi/Chebyshev with the symmetric `face_grad` composite stencil (`docs/history/jacobi_interface_handout.md`, `docs/history/worklog_2026.md`). Every `MOBY_*` env hook named here was removed (2026-06-30 cleanup; git history 5fcdd0c), as were `tools/beltrami_regression.py` and `tools/plot_div_slice.py`. Historical record.
 
 Status: **design note** (2026-06-22). Captures the correct formulation after three
 failed bolt-on fixes (task #38). The diagnosis is settled; this note derives *why*

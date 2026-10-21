@@ -18,7 +18,7 @@ Status: **DONE 2026-07-17 — P0-P3 all implemented and gated** (per-phase
 records below; `src/moby_prepare.f90` + `src/moby_solve.f90`, one case-file
 contract; mobygrid deleted, mobygeom retired to a validation reference).
 The P1b naca0012/sd7003 cases were removed 2026-09-26 (`run_gates_big.sh` now
-runs the sailplane leg only). Current state: CLAUDE.md "Active work".
+runs the sailplane leg only). Current state: `docs/history/worklog_2026.md`.
 Original status line: PROPOSAL (2026-07-16). No code has been changed. Modeled on the
 AMPHIBIOUS (CPL) preproc/solver split, adapted to mobydiff's block/leaf
 architecture.

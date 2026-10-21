@@ -500,7 +500,7 @@ passive-scalar fronts, not for DNS/LES momentum.
 needs a second halo layer, and `comm.f90` is single-layer everywhere: entry
 boxes, gather maps, the 2:1 restrict/prolong rows, the divergence subset,
 `phiIfaceRow`. That is the same increment S5b/TVD and the RANS van Leer have
-been waiting for; the CLAUDE.md log already carries its measured motivation
+been waiting for; the work log (`docs/history/worklog_2026.md`) already carries its measured motivation
 (the SD7003 γ front). So the honest plan is: 2-layer halo first (comm-only,
 gated bit-exact because nothing reads the new layer), then per-cell order
 switching.
