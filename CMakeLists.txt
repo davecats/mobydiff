@@ -37,6 +37,10 @@ set(MODULE_SOURCES
     ${MODULE_DIR}/rans.f90
     ${MODULE_DIR}/bodyforce.f90
     ${MODULE_DIR}/comm.f90
+    ${MODULE_DIR}/scalar_types.f90
+    ${MODULE_DIR}/scalar_wallfn.f90
+    ${MODULE_DIR}/scalar_conjugate.f90
+    ${MODULE_DIR}/scalar_config.f90
     ${MODULE_DIR}/scalar.f90
     ${MODULE_DIR}/scalar_stats.f90
     ${MODULE_DIR}/step.f90
@@ -93,7 +97,7 @@ add_executable(walldist_test ${SRC_DIR}/test_walldist.f90 ${MODULE_SOURCES})
 add_executable(transition_test ${SRC_DIR}/test_transition.f90 ${MODULE_SOURCES})
 # Leaf-table builder dump vs mobygeom's Python mirror (R2D-0 gate b).
 add_executable(leaftable_test ${SRC_DIR}/test_leaftable.f90 ${MODULE_SOURCES})
-# Host-side unit test for the Kays-Crawford Pr_t correlation (scalar.f90).
+# Host-side unit test for the Kays-Crawford Pr_t correlation (scalar_wallfn.f90) and the conjugate closed forms (scalar_conjugate.f90).
 add_executable(scalar_test ${SRC_DIR}/test_scalar.f90 ${MODULE_SOURCES})
 # Flux-form viscous stencil identities on stretched lines (numerics review F1, step 8).
 add_executable(stencil_test ${SRC_DIR}/test_stencil.f90 ${MODULE_SOURCES})

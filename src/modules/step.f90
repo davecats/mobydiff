@@ -22,7 +22,7 @@ module step
     use :: turbulence, only: turb_type, turbulence_is_enabled, TURB_PROF_SGS
     use :: chron, only: profiler_type, wall_seconds, profiler_add
     use :: bodyforce, only: bodyforce_type, bodyforce_is_enabled
-    use :: scalar, only: scalar_type, scalars_enabled, scalar_min_pr, scalar_min_prt
+    use :: scalar_types, only: scalar_type, scalars_enabled, scalar_min_pr, scalar_min_prt
     use :: boundary, only: boundary_type, SIDE_MIN, NFACES, boundary_face_dir, boundary_face_side, &
         boundary_face_indices
     implicit none

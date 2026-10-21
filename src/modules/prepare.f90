@@ -25,8 +25,8 @@ module prepare
     use :: flow_case, only: case_type, create_flow_case
     use :: config, only: config_seen_type, read_runtime_config, validate_dns_values, &
         case_input_echo, case_file_name, has_restart_file
-    use :: scalar, only: scalar_type, destroy_scalar, scalars_enabled, &
-        scalar_conjugate_enabled
+    use :: scalar_types, only: scalar_type, scalars_enabled, scalar_conjugate_enabled
+    use :: scalar, only: destroy_scalar
     use :: boundary, only: boundary_type
     use :: io, only: write_case_file, read_restart_metadata
     use :: ibmm, only: ibm_type, init_ibm, set_ibm_geometry, set_ibm_coeff, &

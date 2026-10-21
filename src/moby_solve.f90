@@ -17,7 +17,11 @@ program moby_solve
     use :: les_model
     use :: rans
     use :: bodyforce
-    use :: scalar
+    use :: scalar_types, only: scalar_type, scalars_enabled, scalar_names, scalar_conjugate_enabled
+    use :: scalar, only: init_scalar, init_scalar_fields, enter_scalar_data, exit_scalar_data, &
+        scalar_sync, scalar_finish, scalar_transport, destroy_scalar
+    use :: scalar_conjugate, only: init_scalar_conjugate, init_scalar_solid_fields, &
+        scalar_conjugate_to_device, scalar_conjugate_peclet_rate, scalar_conjugate_indicator
     use :: scalar_stats, only: scalar_stats_type, scalar_stats_setup, &
         scalar_stats_after_step, scalar_stats_finalize
     use :: comm, only: comm_type, comm_init_world, comm_init, comm_finalize, &

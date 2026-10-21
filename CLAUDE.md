@@ -2825,6 +2825,22 @@ immersed boundary. Phased, each phase verified before the next:
   from the final velocity instead of reading it back -- candidate fix for
   the `rans_sst` re-validation.
 
+- **Code simplification, item 11 -- `scalar.f90` split into five modules
+  (DONE 2026-10-21, handout "Item 11, the scalar module split, done").**
+  `scalar_types` (the type, the `[scalar]` key constants, the accessors),
+  `scalar_wallfn` (Kays Pr_t, the thermal wall function,
+  `plain_face_diffusivity`), `scalar_conjugate` (C1-C3: the face
+  coefficient, band, volume fraction, tangential term + indicator, Peclet
+  rate, conjugate init and checks), `scalar_config` (parser, reservation,
+  validation) and `scalar` (init, maps, the transport kernels, finish and
+  sync). Every routine moved VERBATIM (checked by script against the old
+  file), every consumer imports from the owning module (config, step,
+  prepare, scalar_stats, moby_solve, test_scalar) -- no re-exports; each
+  new module's imports were computed from the names it uses. The CLAUDE.md
+  log move and the fourteen cv_box-less airfoil inis (the rest of item 11)
+  are THE USER'S CALL and untouched. GATES (a pure move; production flags
+  vs the item-10 binaries): the 9-case suite CPU 4 ranks + GPU (18), the 11-case suite CPU + GPU (22), the outlet suite CPU 4 ranks + GPU (14) -- every comparison `max_abs 0`; `validation/conjugate/run_gates_c1.sh all` 61 PASS / 0 FAIL; `build_cpu/scalar_test` ALL PASS.
+
 ## Verification
 
 - Pure refactors must be bit-exact vs. the pre-refactor code: compare

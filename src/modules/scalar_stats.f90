@@ -52,9 +52,12 @@ module scalar_stats
     ! The face diffusivities are the transport kernels' OWN helpers
     ! (plain_face_diffusivity / conjugate_face_total): every flux reported
     ! here is the flux the kernel applied, by construction.
-    use :: scalar, only: scalar_type, scalars_enabled, scalar_conjugate_enabled, &
-        plain_face_diffusivity, conjugate_face_total, band_face_total, &
+    use :: scalar_types, only: scalar_type, scalars_enabled, scalar_conjugate_enabled, &
         SC_IBM_ADIABATIC, SC_IBM_CONJUGATE, SC_LAYOUT_PROFILE, SC_LAYOUT_PLANE
+    ! The face diffusivities are the transport kernels' own definitions: the
+    ! statistics report the flux the kernel applied.
+    use :: scalar_wallfn, only: plain_face_diffusivity
+    use :: scalar_conjugate, only: conjugate_face_total, band_face_total
     implicit none
 
     private

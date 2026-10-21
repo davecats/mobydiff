@@ -8,8 +8,10 @@ a static face list) and item 6 (the per-iteration phi mirror on outlet
 cases), item 7 (the red-black sweep's diagonal from the tables) and item
 9 (latent robustness) and 10 (the small leftovers) DONE 2026-10-21** -- see
 "Item N, done" at the end of this file for the measurements and what each
-one cost; item 8 waits for the user; of item 11 the scalar module split is
-in progress and the CLAUDE.md log move / cv_box inis are the user's call.
+one cost; **item 11's scalar module split DONE 2026-10-21 too.** What is
+left needs the user: item 8 (F13 restart precedence, F14 the Courant
+reduction over ghosts) and the rest of item 11 (the CLAUDE.md log move to
+`docs/history/worklog_2026.md`, the fourteen cv_box-less airfoil inis).
 It continues `docs/cleanup_review_2026-10-06.md` section 9 (the
 ranked findings) after the items DONE on 2026-10-08: the config hardening
 (F11/F12), the body-force support restriction, the apply k1+k2 and
@@ -846,3 +848,32 @@ end of the last RANS substage, from the velocity one momentum/projection
 earlier (the RANS substage runs before the momentum). Candidate fix: read
 `nut` back on restart (one io change) -- to be decided in the one-by-one
 re-validation of `validation/rans_sst`, not here.
+
+## Item 11, the scalar module split, done (2026-10-21)
+
+`scalar.f90` (3595 lines) is five modules, every routine moved VERBATIM
+(checked by script: each routine's text appears unchanged in the old file)
+and every consumer importing from the module that owns what it uses -- no
+re-exports:
+
+| module | lines | holds | public to |
+|---|---|---|---|
+| `scalar_types` | 272 | `scalar_type`, the `[scalar]` key constants, the accessors that read only the type (`scalars_enabled`, `scalar_count`, `scalar_names`, `scalar_min_pr/prt`, `scalar_conjugate_enabled`) | everyone |
+| `scalar_wallfn` | 221 | the PLAIN family's face diffusivity: `prt_kays`, `eddy_diffusivity`, the S5a thermal wall function (`jayatilleke_p`, `thermal_yplus`, `wall_diffusivity`, `wall_face_diffusivity`), `plain_face_diffusivity` | `scalar`, `scalar_conjugate`, `scalar_stats`, the unit test |
+| `scalar_conjugate` | 1162 | C1-C3: the face coefficient, the band, `plane_box_fraction` / the volume fraction, the tangential term and its indicator, the Peclet rate, `init_scalar_conjugate` and the solid fields, `check_conjugate_refinement`; `conjugate_face_total` / `band_face_total` | `scalar`, `scalar_stats`, `moby_solve`, the unit test |
+| `scalar_config` | 658 | `apply_scalar_config`, `scalar_reserve`, `validate_scalar_config` (+ the conjugate defaults), `scalar_section_index`, the value readers, `deallocate_config` | `config`, `scalar` |
+| `scalar` | 1233 | `init_scalar`, the field IC, the device maps, `scalar_transport` (plain + conjugate kernels), `scalar_finish`, `scalar_sync`, `destroy_scalar` | `moby_solve`, `prepare` |
+
+`CONJ_MIN_*` moved with the conjugate code; `SC_NAME_LEN` and
+`SRC_DIR_NAME` became public (read outside the types module now).
+`moby_solve` lost its blanket `use :: scalar` for three `only:` lists;
+`config.f90`, `step.f90`, `prepare.f90`, `scalar_stats.f90` and
+`test_scalar.f90` import from the owning module. The imports of each new
+module were computed from the names it uses, so none carries an unused
+`only:` name.
+
+NOT done, THE USER'S CALL (handout item 11): the CLAUDE.md "Active work"
+log move to `docs/history/worklog_2026.md`, and the fourteen airfoil inis
+without a `cv_box`.
+
+GATES (a pure move: production flags vs the item-10 binaries): the 9-case suite CPU 4 ranks + GPU (18), the 11-case suite CPU + GPU (22), the outlet suite CPU 4 ranks + GPU (14) -- every comparison `max_abs 0`; `validation/conjugate/run_gates_c1.sh all` 61 PASS / 0 FAIL; `build_cpu/scalar_test` ALL PASS.

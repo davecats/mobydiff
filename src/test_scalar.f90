@@ -29,8 +29,8 @@
 ! outside the cut band are checked too.
 program test_scalar
     use, intrinsic :: iso_c_binding
-    use :: scalar, only: prt_kays, jayatilleke_p, thermal_yplus, wall_diffusivity, &
-        plane_box_fraction, scalar_volume_fraction, &
+    use :: scalar_wallfn, only: prt_kays, jayatilleke_p, thermal_yplus, wall_diffusivity
+    use :: scalar_conjugate, only: plane_box_fraction, scalar_volume_fraction, &
         band_face_diffusivity, band_material, conjugate_face_diffusivity
     implicit none
 

@@ -10,7 +10,8 @@ module config
         PATCH_GENERIC, PATCH_WALL, PATCH_INLET, PATCH_OUTLET, &
         PROFILE_CONSTANT, PROFILE_PARABOLA, PROFILE_BLASIUS
     use :: comm, only: comm_type
-    use :: scalar, only: scalar_type, apply_scalar_config, validate_scalar_config, scalars_enabled, &
+    use :: scalar_types, only: scalar_type, scalars_enabled
+    use :: scalar_config, only: apply_scalar_config, validate_scalar_config, &
         scalar_section_index, scalar_reserve
     ! The ini tokenizer is the flow cases' (one definition of comments,
     ! section headers and key = value lines).

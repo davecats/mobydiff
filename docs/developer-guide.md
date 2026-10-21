@@ -26,7 +26,11 @@ src/
     turbulence.f90         model family, nut, IDDES blend
     les.f90                subgrid model (Smagorinsky / WALE)
     rans.f90               k-ω SST, transition, wall functions
-    scalar.f90             passive scalars + conjugate heat transfer
+    scalar_types.f90       passive scalars: the state (scalar_type), the key constants, the accessors
+    scalar_config.f90      ...the [scalar] / [scalar.N] parser, reservation and validation
+    scalar_wallfn.f90      ...the plain family's face diffusivity (Kays Pr_t, the thermal wall function)
+    scalar_conjugate.f90   ...conjugate heat transfer at the immersed interface (C1-C3)
+    scalar.f90             ...init, device maps, the transport kernels, finish/sync
     scalar_stats.f90       in-solver scalar statistics
     bodyforce.f90          spatially varying volumetric force f(x), trip forcing
     io.f90                 HDF5 field / case-file / restart I/O
