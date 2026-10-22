@@ -246,6 +246,22 @@ carries.
 
 ## Landmines hit on the way
 
+* **The imposed outer-wall flux is the only non-zero scalar Neumann datum in
+  the tree, and it found a bug nothing else could** (2026-10-22 re-run on
+  HoreKa, commit 532ef54). The Q4 boundary-row resolver of 2026-09-27
+  (`resolve_affine_rows`) formed the Neumann ghost constant `dn * g` from the
+  coordinate tables indexed by the scalar's OWN variable index, which lies
+  past the tables' NVAR columns: the row took the next block's spacing, the
+  last block's whatever follows in memory. Velocities, pressure and every
+  zero-datum scalar were untouched (`dn * 0`), so all bit-exact suites held;
+  here the solid's outer rows ran away within 500 steps of the restart
+  (a1 1.0e3 -> 3.3e4 at y = 4, the y = 0 rows drifting more slowly), the
+  velocity statistics stayed within 0.3-1.1 % of Flageul and `check_cht.py`
+  reported θ′² peaks of 5000. Bisected with the campaign's `Cdev_65000.h5`
+  (the pre-Q4 binaries hold the start values to the digit); the scalar rows
+  take the pressure column now, as they did before Q4, and
+  `validation/scalar/run_gates.sh` `cond_flux_hi/lo` keep a non-zero datum on
+  each face under gate (exact fixed point, Linf 0.0).
 * **A stale binary silently ran a DIFFERENT GRID.** `build_cpu` was rebuilt
   after `nodes_file` was added and `build_gpu` was not, so the solve ignored
   the key and fell back to a built-in distribution while `moby_prepare` used

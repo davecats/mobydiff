@@ -36,7 +36,7 @@ restart path), `check_scalar.py` (all the checkers).
 |---|---|
 | `uniform3.ini` | (a) uniform scalar through a **3-level** refined block layout — the cylinder-shaped `validation/multilevel_body` leaf table on its ZERO-FORCE twin, so every l0–l1 and l1–l2 interface, edge and corner is crossed while the body exerts no force. Two scalars, Pr 0.71 and 10, plus inlet (Dirichlet) and outlet (zero-gradient) physical faces. |
 | `conserve.ini` | (b) global conservation: fully periodic Beltrami box, manufactured `sin(k·x)` scalar, single level (the flux form telescopes exactly only across matching faces). |
-| `conduction.ini` | (c) pure conduction between Dirichlet walls on a **stretched** (tanh) grid, no flow. `cond_lin`: the linear profile is an exact fixed point of the discrete operator. `cond_16/32/64`: constant volumetric source ⇒ parabolic steady state ⇒ spatial order. |
+| `conduction.ini` | (c) pure conduction between Dirichlet walls on a **stretched** (tanh) grid, no flow. `cond_lin`: the linear profile is an exact fixed point of the discrete operator. `cond_16/32/64`: constant volumetric source ⇒ parabolic steady state ⇒ spatial order. `cond_flux_hi` / `cond_flux_lo` (2026-10-22): the same linear profile with a **non-zero Neumann datum** on the high / the low y face, on four blocks stacked in y — an exact fixed point only if every ghost row carries its own spacing (the Q4 row-resolver finding, below). |
 | `wave.ini` | (d) advection–diffusion MMS: uniform oblique velocity in a periodic cube (an exact NS solution, so the advecting field stays constant to round-off) carrying `s = sin(k·x)`; exact solution `exp(-D\|k\|²t) sin(k·(x − ut))`. `cflmax = pecletmax = 0` freezes `dt`, so the (negligible) time error is identical on all three grids. |
 | `prsweep.ini` | (e) Pr sweep 0.1/1/10 in a laminar Poiseuille channel: the scalar depends on y only and `u` does not vary in x, so the discrete convection vanishes identically and the transient is pure conduction at `D = 1/(Re·Pr)` **while a real flow is advanced** — it isolates the Pr scaling and checks the transport kernel does not corrupt it. Compared against the analytic series and the wall (Nusselt) flux. |
 | `det.ini` | (f) determinism on a refined transport case (`conserve.ini` + a 2:1 y slab): 1 rank == 4 ranks, CPU == GPU; also reports the (non-zero) 2:1-interface conservation residual. |
@@ -159,6 +159,17 @@ run of the 9-case suite the same day).
   (order 2.0 / 2.0), Pr sweep 0.1 / 1 / 10 PASS (wall-flux ratios 1.0011 /
   1.0004 / 1.0041), det 1 == 4 ranks max_abs 0 and CPU == GPU max_abs 0 at
   nofma, restart hit/miss PASS. `cond_64` is 165 055 steps.
+  **`cond_flux_hi` / `cond_flux_lo` (added 2026-10-22, run on the fixed
+  binary, 1 and 2 ranks): Linf 0.0 PASS.** They exist because of the CHT
+  channel's re-run: the Q4 boundary-row resolver (`resolve_affine_rows`,
+  2026-09-27) indexed the coordinate tables with the scalar's own variable
+  index, PAST their NVAR columns, so a non-zero scalar Neumann datum took
+  the next block's spacing (whatever follows the last block's) and the
+  channel's imposed outer-wall flux rows ran away within 500 steps of the
+  restart. No gated case held a non-zero scalar Neumann datum before (the
+  conjugate `ind30` has one but runs a single 1e-8 step). On the 532ef54
+  binary the two cases read Linf 1.93 / 0.81 (FAIL); the fix takes the pressure
+  column, which is what `apply_scalar_bc_q` read before Q4.
 - **S2** `kays` PASS; `sst` (turbsst, 186 838 steps): theta_tau 0.053416
   (nut-integral prediction to 0.267 %), theta vs the prediction 0.0962 % of
   the wall difference, the Kays-Crawford twin 0.262 % / 0.0941 %, Pr_t

@@ -454,9 +454,20 @@ contains
         integer(C_INT), intent(in) :: bctype(NFACES)
         real(C_DOUBLE), intent(in) :: pointValue(:)
 
-        integer :: f, n, npts, dir, side, b, ndir
+        integer :: f, n, npts, dir, side, b, ndir, col
         integer :: gi(3), ii(3)
         real(C_DOUBLE) :: dn
+
+        ! The coordinate column of this row. The coordinate tables hold the
+        ! NVAR velocity/pressure columns only; a passive scalar (var > VAR_P)
+        ! is cell-centred, so its ghost-to-interior distance is the pressure
+        ! column's -- what apply_scalar_bc_q read before Q4. Indexing the
+        ! tables with the scalar's own var reads PAST them (the next block's
+        ! velocity column, or whatever follows the last block): a NON-ZERO
+        ! scalar Neumann datum then carried a foreign spacing, and the CHT
+        ! channel's outer-wall flux rows blew up (found 2026-10-22; no gated
+        ! case held a non-zero scalar Neumann datum before cond_flux).
+        col = merge(int(VAR_P), var, var > int(VAR_P))
 
         npts = int(bc%nTotal)
         do f = 1, NFACES
@@ -516,11 +527,11 @@ contains
                 ! ghost-to-interior distance.
                 select case (dir)
                 case (DIR_X)
-                    dn = blk%x(gi(1),var,b) - blk%x(ii(1),var,b)
+                    dn = blk%x(gi(1),col,b) - blk%x(ii(1),col,b)
                 case (DIR_Y)
-                    dn = blk%y(gi(2),var,b) - blk%y(ii(2),var,b)
+                    dn = blk%y(gi(2),col,b) - blk%y(ii(2),col,b)
                 case default
-                    dn = blk%z(gi(3),var,b) - blk%z(ii(3),var,b)
+                    dn = blk%z(gi(3),col,b) - blk%z(ii(3),col,b)
                 end select
                 bc%bcC(var,n) = dn*pointValue(n)
             end if

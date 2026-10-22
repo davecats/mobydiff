@@ -2993,3 +2993,35 @@ immersed boundary. Phased, each phase verified before the next:
   `accelerated`, ~0.3 s/step on 4 A100), NACA stage 1 on HoreKa (started
   05:25, ~0.07 s/step) and its hedge on istmcetus (1 t.u./h), their
   read-outs and the NACA stages 2-3.
+- **Re-validation finding: a non-zero scalar Neumann datum read a foreign
+  spacing (2026-10-22).** The CHT channel's first rerun on HoreKa (settle +
+  clean, 65 000 -> 780 000 steps on 4 A100, from the campaign's `Cdev_65000`
+  with its pressure zeroed) came back with velocity statistics within
+  0.3-1.1 % of Flageul and conjugate scalars that had run away (theta'^2
+  peaks of 5000 against 6.2). Located with the start snapshot on the
+  workstation: within 500 steps the solid's outer-wall row at y_max (the
+  last blocks of the key order) went a1 1.0e3 -> 3.3e4, the y_min rows
+  drifting slowly; bisected over the staged binaries -- the current, step
+  7b and step 8 identical to the digit, the pre-Q4 binaries (f1_ref
+  0e0e225, numrev 6db60ef = steps 0-5 WITH F2) holding the start values --
+  so F2's advective form was innocent and the Q4 row resolver
+  (`resolve_affine_rows`, 97315b8) the root: it formed the Neumann constant
+  `dn * g` from `blk%x/y/z(:, var, b)` with the SCALAR's var index, past
+  the tables' NVAR columns -- the next block's velocity column, or whatever
+  follows the last block. `dn * 0` hid it from every bit-exact suite and
+  every zero-datum gate (the conjugate `ind30` has a non-zero datum but
+  runs one 1e-8 step); the imposed outer-wall flux of the Flageul channel
+  is the only non-zero scalar Neumann datum in the tree. Fix: a scalar row
+  takes the pressure column (cell-centred, what `apply_scalar_bc_q` read
+  before Q4). Gate: `validation/scalar/run_gates.sh` `cond_flux_hi/lo`, the
+  linear profile started on itself with a non-zero datum on one face and a
+  Dirichlet value on the other, four blocks stacked in y (data chosen so
+  `init_profile = linear_y`'s slope IS the datum): Linf 0.0 on the fixed
+  binary (1 and 2 ranks), 1.93 / 0.81 FAIL on 532ef54. The three bit-exact
+  suites are max_abs 0 against `~/pass2_ref_binaries` at nofma (nothing
+  gated carries a non-zero datum), the fixed GPU nofma binary holds the
+  channel's start values on the bisect case. The CHT pipe is unaffected
+  (jacket level set, no domain-face datum; its snapshots probed sane). The
+  channel chain was archived (`failed_q4_2026-10-22/`, the two leg-end
+  snapshots kept) and relaunched from `Cdev_65000` on the fixed code the
+  same morning.

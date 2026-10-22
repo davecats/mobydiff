@@ -489,7 +489,7 @@ measured after (`12` = niter 6 -> 12, `F1`, `F2`, `F7`, `out` = the outlet,
 | `redblack_interface` (+ the R1 cheap items) | 2026-10-21/22 (cpu + gpu ALL PASS; omega limit in (1.6, 1.7); y-slab rb6/cheb12 error ratio 1.002; refine_body 2000 steps finite) | -- | A | WS + cetus | DONE 2026-10-22 |
 | `redblack_interface` R1 band channel (Re_tau 180 vs Jacobi) | 2026-10-21 (same statistics to <= 0.5 %, no band; 19 % slower per step than Chebyshev 12) | -- | C | cetus | DONE 2026-10-21 (SOR admissible on 2:1) |
 | `interface_decay` | 2026-10-21 (contraction 7.7x velocity / 10.9x pressure) | -- | A | WS GPU | DONE 2026-10-21 |
-| `refine2d` uniform/unibody / Beltrami pair + rans_xz / xz channel | 2026-10-21 (driver `run_gates.sh`: uniform EXACT, twin EXACT, order 2.73, rans_xz EXACT) / xz channel on istmcetus (corax reboots) | -- | A / A / C | WS / WS / cetus | DONE 2026-10-21 (xz channel pending) |
+| `refine2d` uniform/unibody / Beltrami pair + rans_xz / xz channel | 2026-10-21/22 (driver `run_gates.sh`: uniform EXACT, twin EXACT, order 2.73, rans_xz EXACT; the xz channel smooth at the band edges, core ratios 0.97-1.00) | -- | A / A / C | WS / WS / cetus | DONE 2026-10-22 |
 | `beltrami` (README written) | 2026-10-22 (order 2.00 with Chebyshev 200; plain Jacobi 200 floors at 128^3; slabs 3.08e-3 symmetric) | -- | A | WS | DONE 2026-10-22 |
 | `blasius` | 2026-10-21 (theta 1.66 %, H 0.82 %; ini moved to Chebyshev 12) | -- | A | WS GPU 1 rank | DONE 2026-10-21 |
 | `tutorials/min_channel` | README rewritten 2026-10-21 (the suite case) | suite case | A | -- | DONE 2026-10-21 |
@@ -502,11 +502,11 @@ measured after (`12` = niter 6 -> 12, `F1`, `F2`, `F7`, `out` = the outlet,
 | `iddes` | 2026-10-22 (ALL PASS; fd 0.872/0.034, log layer 0.3 %, fd1 drift 1e-12 with the nut read-back) | -- | B | WS GPU | DONE 2026-10-22 |
 | `cylinder` | 2026-10-22 (C_D 1.6968 +- 3e-5; St 0.1734, C_D 1.4385; empty exact; forces 1 == 4 ranks) | -- | B | WS GPU | DONE 2026-10-22 |
 | `channel_interface/developed` | 2026-10-21 (first niter-12 statistics, within ~1 % of KMM, no band; red-black twin equal) | -- | C | cetus | DONE 2026-10-21 |
-| `channel_interface` main (3 cases) | none | -- | C | cetus | PENDING (decided 7: run) |
+| `channel_interface` main (3 cases) | 2026-10-22 (u_tau +0.75 % / +0.61 %, mean-U 1.22 % / 1.58 %, interface divergence below the fine interior's) | -- | C | cetus | DONE 2026-10-22 |
 | `channel_interface/core_patch` | 2026-10-22 (gate 5 PASS within 2 % incl. p; the base-128 null mode gone) | -- | C | cetus | DONE 2026-10-22 (gate 3 retired) |
 | `channel_interface/les` (+ wall jump 2026-10-02) | 2026-10-22 (four cases PASS; the niter-6 pressure null mode gone) | -- | C | cetus | DONE 2026-10-22 (the wall-jump gate stands at 2026-10-02) |
 | `tutorials/channel_kmm180` | 2026-10-21 two-leg statistics block (5090; within ~1 % of KMM, scatter vs the F1 legs) | -- | C | corax | DONE 2026-10-21 |
 | `tutorials/naca/rans` | 2026-08-08; restart check 2026-10-01 | F1, F7, out (check only), nut | C | HoreKa (scratch, nose grid) | PENDING (decided 2) |
 | `tutorials/cht/pipe` | 2026-09-28 at niter 6 | 12, F1, F7 | C | corax (timing) + HoreKa | PENDING (decided 4: fastest of Cheb 12 / SOR 6) |
-| `tutorials/cht/channel` | undated | 12, F1, F2, F7 | C | HoreKa | PENDING (decided 3) |
+| `tutorials/cht/channel` | undated; 2026-10-22 FIRST rerun FAILED (settle + clean to step 780000 on 4 A100: velocity statistics within 0.3-1.1 % of Flageul, the conjugate scalars ran away from the solid's outer-wall rows) -> root: the Q4 row resolver's out-of-range coordinate column on a non-zero scalar Neumann datum, FIXED and gated (`validation/scalar` `cond_flux_*`); the chain RELAUNCHED from `Cdev_65000` the same day | 12, F1, F2, F7 | C | HoreKa | RUNNING (relaunched 2026-10-22 after the fix) |
 | `tutorials/turbulentBoundaryLayer` (+ rough) | 2026-10-05/06, 10-08 | (cou: cannot touch it) | -- | HoreKa | STANDS |

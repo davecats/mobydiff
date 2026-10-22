@@ -95,7 +95,11 @@ def cmd_parabola(a) -> int:
 
         l2, linf = field_error(f, a.scalar, exact)
     print(f"{a.h5}: L2 = {l2:.6e}   Linf = {linf:.6e}")
-    return 0
+    if a.tolerance is None:
+        return 0
+    ok = linf <= a.tolerance
+    print("PASS" if ok else "FAIL")
+    return 0 if ok else 1
 
 
 def y_profile(f, name):
@@ -188,6 +192,8 @@ def main() -> int:
     p.add_argument("--diffusivity", type=float, required=True)
     p.add_argument("--s0", type=float, default=0.0)
     p.add_argument("--s1", type=float, default=0.0)
+    p.add_argument("--tolerance", type=float, default=None,
+                   help="with it, Linf against the exact profile is a PASS/FAIL gate")
     p.set_defaults(func=cmd_parabola)
 
     p = sub.add_parser("profile")

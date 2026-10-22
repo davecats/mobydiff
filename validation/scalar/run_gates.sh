@@ -83,6 +83,32 @@ if want conduction; then
         python3 check_scalar.py parabola "$(newest cond_lin)" --scalar s1 \
             --source 0.0 --diffusivity 1.0 --s0 1.0 --s1 0.0 | sed 's/^/   /'
     rm -f .cond_lin.ini
+    # (c3) a NON-ZERO Neumann datum on each y face in turn, on four blocks
+    # stacked in y: the same linear profile, started on it, is an exact
+    # fixed point only if every ghost row carries ITS OWN spacing. The
+    # 2026-10-22 finding: the Q4 row resolver (2026-09-27) read the
+    # coordinate tables with the scalar's var index, past their NVAR
+    # columns, so a non-zero scalar Neumann datum took the next block's
+    # spacing (garbage on the last block) and the CHT channel's outer-wall
+    # flux rows ran away; no gated case held a non-zero scalar Neumann datum
+    # until this one. linear_y interpolates the two faces' VALUES whatever
+    # their type, so the data are chosen to make that line's slope the
+    # Neumann datum: 1 - y (Dirichlet 1 below, ds/dy = -1 above) and
+    # -1 - y (ds/dy = -1 below, Dirichlet -3 above).
+    for v in hi lo; do
+        if [ $v = hi ]; then lo_t=dirichlet lo_v=1.0 hi_t=neumann hi_v=-1.0 s0=1.0 s1=-1.0
+        else lo_t=neumann lo_v=-1.0 hi_t=dirichlet hi_v=-3.0 s0=-1.0 s1=-3.0; fi
+        sed -e 's/^source = 1.0/source = 0.0/' -e 's/^initial = 0.0/initial = 0.0\ninit_profile = linear_y/' \
+            -e "s/^y_min_type = .*/y_min_type = $lo_t/" -e "s/^y_min_value = .*/y_min_value = $lo_v/" \
+            -e "s/^y_max_type = .*/y_max_type = $hi_t/" -e "s/^y_max_value = .*/y_max_value = $hi_v/" \
+            -e 's/^\[ibm\]/[blocks]\nnb = 4\n\n[ibm]/' -e 's/^t_final = 4.0/t_final = 0.5/' \
+            -e "s/^field_prefix = conduction/field_prefix = cond_flux_$v/" conduction.ini > ".cond_flux_$v.ini"
+        rm -f "cond_flux_${v}_"*.h5
+        run ".cond_flux_$v.ini" "$RANKS" "cond_flux_$v" && \
+            python3 check_scalar.py parabola "$(newest "cond_flux_$v")" --scalar s1 \
+                --source 0.0 --diffusivity 1.0 --s0 $s0 --s1 $s1 --tolerance 1e-12 | sed 's/^/   /' || status=1
+        rm -f ".cond_flux_$v.ini"
+    done
     # (c2) constant source: order study on the stretched grid
     for ny in 16 32 64; do
         # t_final = 12 leaves an analytic transient residual of exp(-D pi^2
