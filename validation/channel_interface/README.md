@@ -39,6 +39,31 @@ therefore has *exactly* the reference resolution (fine wall spacing
 y+ = 0.77); deviations are attributable to the interface treatment and
 to the coarser (2x) far field, not to near-wall resolution.
 
+## Re-validated 2026-10-22: the first recorded numbers
+
+RE-VALIDATED 2026-10-22, commit 532ef54 (banner), production flags, istmcetus
+A6000, 1 rank, `run_validation.sh gpu 1` 6.8 h for the three cases (transient
+5 + statistics 20 turnovers each; 0.09-0.12 s/step), `tools/channel_interface_validation.py`
+against the uniform 256 x 128 x 256 reference (u_tau 0.99696). No result had
+been recorded for these cases before (the README's solver box was the only
+record). Settings changed for the rerun: `cflmax = 1.0` (dtmax 3.125e-4
+binds), `sor = 0.8` explicit (the ICs come from the KMM180 red-black run),
+`niter = 12` since 2026-09-26.
+
+| case | u_tau (dev) | max mean-U deviation (of centreline) | divergence rms: interface / fine interior / coarse interior |
+|---|---|---|---|
+| refined_y110 (interface y+ 112) | 1.00439 (+0.75 %) | 1.22 % at y+ 98 | 2.0e-4 / 7.9e-4 / 3.4e-5 |
+| refined_y55 (interface y+ 55) | 1.00309 (+0.61 %) | 1.58 % at y+ 50 | 6.6e-4 / 1.0e-3 / 4.8e-5 |
+
+Reported as they come out, nothing tuned: the mean-velocity deviation
+peaks just below the interface (the coarse side's first rows) at 1.2-1.6 %
+of the centreline velocity, the wall shear sits within 0.8 % of the
+reference, and the interface rows' divergence residual is BELOW the fine
+interior's (the projection's residual on the finest cells), i.e. the 2:1
+transfer adds no divergence of its own. The y+ 55 interface sits in the
+buffer layer and costs more than the y+ 112 one, as expected. The profiles
+and spectra are in `plots_y110/` and `plots_y55/` (untracked).
+
 ## Running (sized for a real GPU node, not a laptop)
 
 ```bash

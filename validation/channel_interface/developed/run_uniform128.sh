@@ -16,7 +16,7 @@ ROOT="$(cd "$HERE/../../.." && pwd)"
 ARCH="${1:-gpu}"; RANKS="${2:-1}"
 T_TRANSIENT="${T_TRANSIENT:-5.0}"; T_AVERAGE="${T_AVERAGE:-20.0}"; FIELD1="${FIELD1:-2000}"
 PY="${PYTHON:-python3}"
-BIN="$ROOT/build_$ARCH/main"
+BIN="${BIN:-$ROOT/build_$ARCH/moby_solve}"   # BIN overrides (a staged binary)
 INI="$ROOT/validation/channel_interface/uniform128.ini"
 SRC="$ROOT/tutorials/channel_kmm180/channel_kmm180_restart.h5"
 RUN="$HERE/runs/uniform128"; IC="$RUN/BASE_IC.h5"

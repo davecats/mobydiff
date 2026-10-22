@@ -20,9 +20,23 @@ and `allref_xz` 1 == 4 ranks EXACT; the Beltrami xz patch pair L2(vel)
 2026-07-15; the errors moved with the projection); `rans_xz` 50 steps finite
 (max|un| 18.22) and 1 == 4 ranks EXACT incl. k/omega/nut. Settings changed
 for the rerun: `rans_xz.ini` plain Jacobi 6 -> Chebyshev 12, `cflmax = 1.0`.
-Gate (b) is retired (its mobygeom leaf builder is gone, 2026-09-26). The
-turbulent xz wall-band channel (`developed/run_developed.py --refine-dims xz`)
-is re-run on istmcetus and recorded in `../channel_interface/developed/`.
+Gate (b) is retired (its mobygeom leaf builder is gone, 2026-09-26).
+
+**The turbulent xz wall-band channel** (`../channel_interface/developed/
+run_developed.py --refine-dims xz --name xz` from `IC_xz.h5`, istmcetus A6000
+1 rank, transient + statistics 88 min, moved there from the rebooting
+istmcorax; `analyze_xz_channel.py` against the uniform-128 control run the
+same night and the uniform-256 reference of `../channel_interface/runs`):
+PASS. Interface jump ratios at both band edges u' 1.022 / 1.018, v' 0.999 /
+1.033, w' 1.001 / 0.993, -u'v' 1.026 / 1.037 (0.995-1.039 on 2026-07-15 at
+niter 6; the reflux band was 1.56 / 0.31); core (0.7 < y < 1.3, the control's
+exact resolution) fluctuation ratios u'/v'/w'/-u'v' 1.001 / 0.965 / 0.966 /
+0.983 (0.976 / 0.972 / 0.956 / 0.978 then; the ~4 % const-1/2 small-scale
+under-transmission of the validated xyz case); mean U shifted toward the
+better-resolved reference (bulk U 15.87 against the reference's 15.70 and
+the control's lower value, +4.3 % core mean-U against the control, as the
+validated case); U+ centreline 18.44, u'+ 2.623, v'+ 0.836, w'+ 1.104,
+-<u'v'>+ 0.719 (`analyse_developed.py`), within ~2 % of KMM.
 
 ## R2D-0 — builder + lines + io (PASS 2026-07-15)
 

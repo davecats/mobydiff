@@ -2964,3 +2964,32 @@ immersed boundary. Phased, each phase verified before the next:
     under Chebyshev when the IC carries another value (the KMM180-derived ICs
     hold 1.5; F13 stops the run otherwise): the "delete the ignored sor line"
     rule is for cold starts.
+- **Re-validation pass, day 1 continued into the night (2026-10-22, commits
+  `08cae79` and after).** Read out and recorded (READMEs, ledger, index):
+  `cylinder` (Re 40 C_D 1.6968 +- 3e-5 -- the one number; Re 100 St 0.1734,
+  C_D 1.4385, C_L 0.388 = the predicted-outlet column; empty exact; forces
+  1 == 4 ranks), `les_ibm` (bulk U 15.01, nut step 2.00, band/core 0.05: the
+  first statistics with the rational factor), `channel_interface/les` (four
+  cases PASS; **the niter-6 pressure null mode is gone at niter 12**: pn
+  std 1-1.3 against 2e5-1e6, the p band column valid now), `core_patch`
+  gate 5 (every class within 2 % incl. p; the base-128 null mode gone too),
+  `beltrami` (README written; order 2.00 between 64 and 128 WITH a
+  converged projection -- plain Jacobi 200 floors at 128^3; the slab
+  artifact 3.08e-3, symmetric in x/y/z and projection-independent),
+  `prepare` order 43/43 at nofma (the OLD step-9b solver on its own file
+  max_abs 0), scalar S3/S4 `cyl` (Nu 3.3673, CV cross-check), `iddes` (ALL
+  PASS; fd 0.872 / 0.034, log layer 0.3 %, fd1 drift 1e-12 with the nut
+  read-back), the R1 GPU items (y-slab rb6 / cheb12 error ratio 1.002,
+  refine_body 2000 steps finite), the three main `channel_interface` cases
+  (first recorded numbers: u_tau +0.75 % / +0.61 %, mean-U 1.22 % / 1.58 %
+  below the interface, the interface divergence residual below the fine
+  interior's), the xz wall-band channel (interface jumps 0.99-1.04, core
+  ratios 0.97-1.00 vs a fresh uniform-128 control), S5a (the reference
+  restarts from the LATEST turbsst field; the first run died on a hard-coded
+  step the S2 rerun had deleted), S2 wferr (its leg never prepared its case
+  file). The IDDES inis state `sor` explicitly (the first rerun stopped on
+  F13 like the band channel). Open at the morning of 2026-10-22: the CHT
+  channel chain's last chunk, the CHT pipe chain (started 05:20 on
+  `accelerated`, ~0.3 s/step on 4 A100), NACA stage 1 on HoreKa (started
+  05:25, ~0.07 s/step) and its hedge on istmcetus (1 t.u./h), their
+  read-outs and the NACA stages 2-3.
