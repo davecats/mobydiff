@@ -69,6 +69,7 @@ if want wferr; then
     echo "== [scalar] + [rans] wall_treatment = wall_function must be ACCEPTED (S5a)"
     sed -e "s/^nsteps.*/nsteps = 5/" -e "s/^t_final.*/t_final = 0.0/" \
         wferr.ini > .wferr_short.ini
+    "$PIM" 1 "$CBIN" .wferr_short.ini > wferr.prep.log 2>&1 || echo "   PREPARE FAILED -- see wferr.prep.log"
     if mpirun -n 1 "$CBIN" .wferr_short.ini > wferr.log 2>&1; then
         grep -m1 "thermal wall function" wferr.log | sed 's/^/   /'
         grep -q "thermal wall function" wferr.log \

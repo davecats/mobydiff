@@ -84,8 +84,14 @@ decision 6 of the re-validation handout):
   cpu`, `refined_channel.ini` for 200 steps on 4 ranks): stable at sor 0.8,
   1.0, 1.2, 1.4, 1.5 and 1.6 (max|un| 18.28 throughout), DIVERGES at 1.7
   (max|un| 3e44). The production 1.5 has margin; the limit lies in (1.6, 1.7).
-- **the Beltrami y-slab regression** and **`refine_body` over 2000 steps**:
-  `run_r1_items.sh gpu`, recorded below when run.
+- **the Beltrami y-slab regression** (`run_r1_items.sh gpu`, istmcetus A6000):
+  the exact decaying flow through a y-normal 2:1 slab at t = 2, L2 velocity
+  error 3.095e-3 with red-black 6 / sor 1.5 against 3.088e-3 with Chebyshev
+  12 -- ratio 1.002 (tolerance 1.5): the per-colour transfer adds no
+  interface error over the Jacobi path's (which is itself the const-1/2
+  transfer's, `../beltrami/README.md`).
+- **`refine_body` over 2000 steps** (the les_ibm `channel_ibm_refine.ini`,
+  2:1 around an immersed wall, red-black 6 / sor 1.5): finite, max|un| 22.3.
 - **the global mass residual with a refined patch**: not run -- the `divsum`
   tool left with the `MOBY_*` hooks; the surviving mass statement is the
   body_outlet checker's interior rms divergence (1.0e-4 on the pocket case).

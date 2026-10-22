@@ -72,6 +72,10 @@ fi
 if want ref; then
     rm -f wfsst_*.h5 wfsst_stats*.h5
     stats_on wfsst.ini .wfsst_st.ini 200
+    # the resolved reference restarts from the LATEST turbsst field (`run_gates_s2.sh sst`
+    # writes it and deletes the older ones; the ini's name is the campaign's)
+    T2=$(ls -v turbsst_[0-9]*.h5 2>/dev/null | tail -1)
+    [ -n "$T2" ] && sed -i "s|^file = turbsst_.*|file = $T2|" .wfsst_st.ini
     run .wfsst_st.ini "$RANKS" wfsst && {
         python3 ../../tools/scalar_stats.py profile wfsst_stats.h5 \
             --pr 0.71 --walls 1.0 -1.0 | sed 's/^/   /' || status=1

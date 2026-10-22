@@ -249,17 +249,21 @@ fi
 CYLBIN=${CYLBIN:-$ROOT/build_gpu/moby_solve}
 if want cyl; then
     echo "== (s) heated cylinder Re 40, Pr 0.71"
-    if [ ! -f ../cylinder/cyl_re40_20001.h5 ]; then
-        echo "   ../cylinder/cyl_re40_20001.h5 (the steady A2 restart) missing -- SKIPPED"
+    # the steady A2 state is the LATEST Re 40 field the cylinder gate wrote
+    # (../cylinder/cyl_re40.ini to t = 100; the step count moves with the time-step settings)
+    A2=$(ls -v ../cylinder/cyl_re40_[0-9]*.h5 2>/dev/null | tail -1)
+    if [ -z "$A2" ]; then
+        echo "   ../cylinder/cyl_re40_<step>.h5 (the steady A2 restart) missing -- run ../cylinder/cyl_re40.ini -- SKIPPED"
         status=1
     else
+        export A2
         if [ ! -f cylheat_case.h5 ]; then
             run mpirun -n 4 --oversubscribe "$PREP" cylheat.ini cylheat_case.h5 \
                 > prep_cylheat.log 2>&1
         fi
         $PY - <<'EOF'
-import shutil, h5py
-shutil.copyfile("../cylinder/cyl_re40_20001.h5", "cylheat_ic.h5")
+import shutil, h5py, os
+shutil.copyfile(os.environ["A2"], "cylheat_ic.h5")
 with h5py.File("cylheat_ic.h5", "r+") as f:
     f["pn"][...] = 0.0
 print("cylheat_ic.h5: the steady A2 restart with pn zeroed")

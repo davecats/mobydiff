@@ -236,8 +236,9 @@ fi
 # Churchill-Bernstein's 3.35).
 if want cyl; then
     echo "== (u3) heated cylinder Re 40: runtime Nusselt"
-    if [ ! -f cylheat_24000.h5 ] || [ ! -f cylheat_case.h5 ]; then
-        echo "   cylheat_24000.h5 / cylheat_case.h5 missing -- run ./run_gates_s3.sh cyl -- SKIPPED"
+    CH=$(ls -v cylheat_[0-9]*.h5 2>/dev/null | tail -1)   # the S3 cyl group's final field
+    if [ -z "$CH" ] || [ ! -f cylheat_case.h5 ]; then
+        echo "   cylheat_<step>.h5 / cylheat_case.h5 missing -- run ./run_gates_s3.sh cyl -- SKIPPED"
     else
         sed -e "s|^field_prefix.*|field_prefix = s4cyl|" \
             -e "s|^field_interval.*|field_interval = 20|" \
@@ -245,7 +246,7 @@ if want cyl; then
             -e "s|^count = 1|count = 1\nheat_interval = 20\nheat_file = s4cyl.txt|" \
             -e "s|^runtime_file.*|runtime_file = forces_s4cyl.txt|" cylheat.ini > .s4cyl.ini
         "$ROOT/tools/set_case_file.sh" .s4cyl.ini cylheat_case.h5
-        printf '\n[restart]\nfile = cylheat_24000.h5\n' >> .s4cyl.ini
+        printf '\n[restart]\nfile = %s\n' "$CH" >> .s4cyl.ini
         rm -f s4cyl_*.h5 s4cyl.txt
         cbin=$BIN; [ -x "$GBIN" ] && cbin=$GBIN
         "$PIM" 1 "$cbin" .s4cyl.ini

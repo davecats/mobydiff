@@ -101,6 +101,24 @@ band-aware `nut` damping is needed; **no solver code change**. See `ibm_les_prof
 - les.f90 solid rule: cell solid iff **any** of its 6 staggered faces has `|coef|>1e20`
   (so the cell straddling the wall is masked; the first full-`nut` cell is ~1.5 cells in).
 
+## Re-validated 2026-10-22
+
+RE-VALIDATED 2026-10-22, commit 532ef54 (banner), production flags, RTX 3060,
+1 rank, `run_ibm_les.py --case all` 2.4 h for the three cases (the GPU was
+shared with a scalar run for half of it), `measure_nut.py`, `ibm_les_stats.py`:
+ALL PASS -- gate 1 max|nut| over the solid cells 0.0 (51 snapshots); gate 2
+nut/nu band cell 0.0106 -> core 0.2205, band/core 0.05 (physical nut -> 0,
+no spike; 0.011 / 0.222 / 0.05 in June); gate 3 a_wale bulk U 15.01 (15.09
+June, 15.07 on 2026-10-01 at 20 steps), b_none 14.62 (14.69), c_refine 15.68,
+U+ at y+ 29: 13.05 (13.1) against the log law's 13.43, sublayer U+/y+ 1.06
+at y+ 1.1; gate 4 nut fine-side max 0.087, coarse-side 0.174, step ratio
+2.00 (2.03), a smooth step, no band; gate 5 all three cases to t = 25 with
+no NaN. These are the first statistics with the rational penalization
+factor (the 2026-10-01 re-measurement was 20 steps) and at `niter = 12`;
+every number sits within the sampling scatter of the June campaign.
+Settings changed for the rerun: `cflmax = 1.0` (dtmax binds), no `sor`
+(the les_ibm IC carries 0.8).
+
 ## Re-measured 2026-10-01 — exact penalization factor (numerics review step 9, F7)
 
 Paired campaign, case `a_wale`, the full developed-statistics protocol

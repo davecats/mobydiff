@@ -123,6 +123,25 @@ The uniform-256 reference (`../reference.ini`, `../run_reference.sh`) and the
 uniform-128 isolation control (this `base` case) complete the picture, as for the
 flat band.
 
+### Re-validated 2026-10-22 — PASS
+
+RE-VALIDATED 2026-10-22, commit 532ef54 (banner), production flags, istmcetus
+A6000, 1 rank, `run_gate5.py --ranks 1` 87 min for patch + base (201 snapshots
+each over t = 5..25), `tools/patch_interface_stats.py`: BAND ratio
+(`<fluct_rms>_patch / <fluct_rms>_base`, matched cells) interior 1.005 /
+0.997 / 1.003 / 0.997 (u v w p), face 1.016 / 0.985 / 0.998 / 1.002, edge
+1.017 / 1.000 / 1.006 / 1.000, corner 1.013 / 1.018 / 1.006 / 1.010 -- every
+class within 2 % for u, v, w AND p, edge and corner not worse than face (the
+June result to the digit for the velocities). **The base-128 pressure null
+mode of the side observation below is gone at `niter = 12`**: the final
+base snapshot has pn std 1.34 and max|pn| 16.2 (patch 1.27 / 18.1) against
+std 2e5 and ±3e6 at niter 6, so the `p` column is valid now. Gates 1, 2 and 4
+stand as recorded; gate 3 is retired (its `MOBY_STEPDIV` hook left with the
+diagnostic hooks). Settings changed for the rerun: `cflmax = 1.0` (dtmax
+binds), `sor = 0.8` explicit (the ICs carry the KMM180 run's 1.5), `niter =
+12` since 2026-09-26; the driver prepares its case files now (it never had
+since step 7) and takes `--binary`.
+
 ### Result (2026-06-29, 201 snapshots/case over t = 5..25) — PASS
 
 `gate5_metric.log`. No edge/corner band in developed turbulence:

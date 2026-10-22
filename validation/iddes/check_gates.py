@@ -5,7 +5,7 @@
     -> 0 in the LES core (final stats-leg snapshot, x/z-averaged).
 (b) mean profile: no gross log-layer mismatch vs the pure-WALE stats
     reference (../channel_interface/les/runs/uniform/stats) and the T2
-    RANS turb180 profile (../rans_sst/turb180_132565.h5).
+    RANS turb180 profile (the latest ../rans_sst/turb180_<step>.h5).
 (c) consistency limits: fd_force = 0 bit-exact vs pure WALE (the blend
     reduces to nut = nut_sgs exactly); fd_force = 1 holds the T2 RANS
     turb180 fixed point (round-off-class drift only: the k-sink is the
@@ -103,7 +103,11 @@ else:
 stats = os.path.join(HERE, "channel_stats.h5")
 wale_stats = os.path.join(HERE, "..", "channel_interface", "les",
                           "runs", "uniform", "stats", "channel_stats.h5")
-rans_ref = os.path.join(HERE, "..", "rans_sst", "turb180_132565.h5")
+# the T2 fixed point is the LATEST turb180 field (../rans_sst/run_gates.sh turb180 writes
+# it; the step count moves with the time-step settings), the same file run_gates.sh restarts from
+_t2 = sorted(glob.glob(os.path.join(HERE, "..", "rans_sst", "turb180_[0-9]*.h5")),
+             key=lambda f: int(f.rsplit("_", 1)[1][:-3]))
+rans_ref = _t2[-1] if _t2 else os.path.join(HERE, "..", "rans_sst", "turb180_<step>.h5")
 refs = {}
 if os.path.exists(wale_stats):
     y_w, P_w = read_channel_stats(wale_stats)

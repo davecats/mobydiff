@@ -36,6 +36,23 @@ solve-from-file (`tools/compare_fields.py --tolerance 0`), and for the
 `[rans]` cases the `*_ransgeom.h5` dumps (dwall/yeff/wallcell) compared
 exactly (`h5same.py`; h5diff is not installed everywhere).
 
+## Re-validated 2026-10-21/22
+
+RE-VALIDATED 2026-10-22, commit 532ef54 (banner), nofma builds (these are
+exactness gates), workstation CPU 1-8 ranks: P0 `run_gates.sh` 29/29 PASS
+(6 min), P1 `run_gates_stl.sh` 15/15 PASS incl. the sphere leg with the
+`~/ibmc` venv (2 min), `run_gates_order.sh` 43/43 PASS (13 min) with
+`OLD = ~/step9b_ref_binaries/build_cpu_nofma` (the last legacy-order
+writer) and NEW the nofma build: the legacy-order file and the re-prepared
+one solve to identical fields at every rank count, the old solver on its
+own file max_abs 0 (at PRODUCTION flags that leg reads 1e-13: the FMA
+class of the pass-2 fusions, not the block order), the partition line
+equals `partition_analysis.py`, `keyorder_test` PASS. Driver changes: the
+solves call `moby_solve` (the staged binaries carry no `main`; the first
+run of the batch read "solve" failures for that), the order driver's
+generated ini says `cflmax = 1.0`. P1b is RETIRED (header in
+`run_gates_big.sh`; its sailplane leg is `tutorials/sailplane/README.md`).
+
 ## Status 2026-10-06 (P0 + gate 4, nofma build)
 
 29/29 PASS with the classification fix (`e0015ac`+): the three P0 cases

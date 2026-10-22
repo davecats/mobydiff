@@ -140,6 +140,62 @@ turb180, wf180_y30, lam30t) run with a pre-change nofma binary and the new
 one, compared at tolerance 0 on every field dataset (`un vn wn pn` plus
 `nut`, `k`, `omega`, `gamma`, `rethetat` where the case has them).
 
+## Re-validated 2026-10-21/22
+
+RE-VALIDATED 2026-10-22, commit 532ef54 (banner), production flags (the
+determinism groups nofma), workstation CPU 1 and 4 ranks + the RTX 3060
+(the S2 `sst` leg ran on the GPU binary, 2 h shared with another run);
+the S2 LES pair on an istmcetus A6000. Settings changed for the rerun: the
+ten RANS twins (`turbsst wfsst wferr wfs180_y05/15/30/45 ibmwf180
+ibmwf1000`) and `conduction` moved from plain Jacobi 6 to Chebyshev 12 with
+`cflmax = 1.0` and no `sor`; `turbles` / `turbslab` `cflmax = 1.0` with
+`sor = 0.8` kept explicit (restarts). The 11-case suite is max_abs 0 on
+every case against `~/pass2_ref_binaries` after the move (CPU; the GPU
+run of the 9-case suite the same day).
+
+- **S1** `run_gates.sh` all groups: uniform EXACT (0.0 through the 3-level
+  layout), conserve drift 3.2e-18, conduction L2 2.81e-3 / 7.05e-4 / 1.76e-4
+  at ny 16/32/64 (order 2.0 / 2.0), wave L2/amp 1.58e-2 / 3.97e-3 / 9.93e-4
+  (order 2.0 / 2.0), Pr sweep 0.1 / 1 / 10 PASS (wall-flux ratios 1.0011 /
+  1.0004 / 1.0041), det 1 == 4 ranks max_abs 0 and CPU == GPU max_abs 0 at
+  nofma, restart hit/miss PASS. `cond_64` is 165 055 steps.
+- **S2** `kays` PASS; `sst` (turbsst, 186 838 steps): theta_tau 0.053416
+  (nut-integral prediction to 0.267 %), theta vs the prediction 0.0962 % of
+  the wall difference, the Kays-Crawford twin 0.262 % / 0.0941 %, Pr_t
+  0.8832..1.7000 -- the 2026-08 numbers; `wferr` PASS (the leg prepares its
+  case file now); `les` (turbles, 10 400 + 8 000 steps in 3 min on the
+  A6000): theta_tau 0.052154, theta+ centreline 19.17, Kader deviation
+  0.199 max (y+ 6.3) / 0.056 mean, sublayer 0.994..1.006, PASS; `band`
+  (turbslab, 12 min): theta'_rms ratio refined/control 0.9693 adjacent to
+  the interface vs 0.9610 in the core, **excess +0.0086** in the checker's
+  normalisation (the ONE number; the -0.0265 / +0.0012 pair below were two
+  normalisations of the 2026-08 run), footprint 0.040 / 0.035, PASS.
+- **S3** solid / conserve / balance / prep / refine / det / missing ALL PASS
+  **with a checker fix**: `check_scalar_ibm.py` paired the case file's
+  coefficient tiles with the field's blocks by row POSITION; the two files
+  list the leaves in different key orders since 2026-10-01, so half the
+  "solid" tiles sat on fluid blocks. `case_tiles` matches by (origin,
+  level) now; the balance closes to 1.2e-4 (tolerance 1e-2; it read 17.6 x
+  off with the misplaced tiles), solid cells at the body value to 0.0,
+  conserve drift 0.0. `cyl` (from the 2026-10-22 Re 40 field, its pressure
+  zeroed; the driver finds the latest `cyl_re40_<step>.h5`): Nu(surface)
+  3.5366 -> 3.4253 -> 3.3868 -> **3.3673** over the 4000-step leg (3.3655
+  recorded; literature band [2.8, 4.0]), the Gauss/CV cross-check PASS.
+- **S4** stats / accum / plane / levels / restart / det / noeffect / heat /
+  adia / tools ALL PASS. The `heat` gate's Python columns now equal the
+  solver's to 1e-15 (staircase 0.1465, graded 0.2492, total 0.3958 at step
+  10): the 2026-10-20 reading of 3.8e+25 for the graded column was the tile
+  order above, not the penalization factor. `cyl` (runtime Nusselt on the
+  heated cylinder from the S3 field; the driver finds the latest
+  `cylheat_<step>.h5`): 4/4 PASS.
+- **S5a** unit / ref / sweep / det ALL PASS: the resolved reference restarts
+  from the LATEST turbsst field (the driver finds it; the campaign's
+  186 711 is gone with the `sst` rerun) with theta_tau 0.053416; the
+  wall-function sweep theta_tau 0.054155 / 0.054629 / 0.056424 / 0.057272 at
+  y+_1 5 / 15 / 30 / 45, Kader at the first cell 16.8 % / 17.1 % / 0.1 % /
+  0.7 %, every J(y) constant to 1e-11 or better, the compare against the
+  reference within 0.12 (theta) and 0.16 (theta_kc); det PASS.
+
 ## Results — S0/S1 (2026-08-03, branch `scalar`) — ALL PASS
 
 Local runs (RTX 3060 GPU + nvhpc 25.9 CPU builds), branch `scalar`.

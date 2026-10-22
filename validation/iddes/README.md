@@ -53,6 +53,25 @@ directory: rebuild both sides -Mnofma / -gpu=nofma and compare the
 standard short list (min_channel, les_ibm ± refine_body, Beltrami
 y-slab, turb180, wf180_y30, lam30t) with tools/compare_fields.py.
 
+## Re-validated 2026-10-22
+
+RE-VALIDATED 2026-10-22, commit 532ef54 (banner), production flags, RTX
+3060, `run_gates.sh` all groups 40 min (iddes180 50 000 steps on 64x48x64
+in 18 min), `check_gates.py` ALL PASS: (a) the fd shielding profile 1.000
+through y+ <= 15, band means 0.872 (y+ 5-25) / 0.034 (25-60) / 0.002 (60-120)
+(0.87 / 0.03 recorded), core max 0.000; (b) log-layer |U - U_WALE|/U max
+0.3 %, mean 0.2 % (0.5 % recorded) against the LES campaign's uniform run
+of the same day; (c) `fd_force = 0` == pure WALE bit-exact (max_abs 0 on
+un vn wn pn nut), `fd_force = 1` from the NEW turb180 T2 field (restarted
+WITH its nut, the 2026-10-21 read-back) drifts 8.2e-13 / 1.8e-12 (u / k)
+over 2000 steps; (d) the les_ibm channel under IDDES stable (max|u| 25.1,
+max nut 1.85e-2); (e) 1 == 4 ranks EXACT incl. k, omega, nut and fd;
+toggles cdt8 / clip / cbrt as recorded (log-layer 1.0-1.4 % vs WALE).
+Settings changed for the rerun: `cflmax = 1.0` (dtmax binds), `sor = 0.8`
+kept EXPLICIT (the les ICs carry the KMM180 run's 1.5; the first rerun
+without it stopped at the restart check); the driver and the checker read
+the LATEST `turb180_<step>.h5` instead of a hard-coded step.
+
 ## RESULTS 2026-07-10, increment 2 (full IDDES elevating branch —
 ## all gates PASS; local GPU runs, nofma builds)
 

@@ -105,6 +105,27 @@ Gates:
 - `wall_jump.ini`, `check_wall_jump.py`, `run_wall_jump.sh` — the level jump that
   touches a wall (last section).
 
+## Re-validated 2026-10-21/22
+
+RE-VALIDATED 2026-10-22, commit 532ef54 (banner), production flags, istmcetus
+A6000, 1 rank, `run_les.py --case all` 88 min for the four cases (reference
+128x64x128 DNS 0.021 / 0.024 s/step transient / statistics, the 64x48x64 LES
+cases ~8 ms/step), `les_stats.py`: PASS. CORE (0.3 < y < 1.7) ratio
+LES/reference, uniform: U 1.008, u' 1.060, v' 0.888, w' 0.878, -<u'v'> 0.986
+(June: 1.01 / +5 % / -10 % / -10 % / 0.99); slab: 1.035, 1.046, 0.917, 0.896,
+1.015. Patch band ratios (patch / uniform LES control): interior 1.003 /
+0.998 / 1.012 / 1.014 / 0.992 (u v w p nut), face 1.012 / 0.993 / 1.035 /
+1.077 / 1.000, edge 1.028 / 1.010 / 1.029 / 1.041 / 1.008, corner 1.014 /
+1.015 / 1.038 / 1.057 / 1.043 -- no band, edge and corner not worse than
+face, within the June 0.98-1.03 for velocity and nut. **The pressure null
+mode of the June campaign is gone at `niter = 12`**: pn std 1.01 / 1.15 /
+1.34 and max|pn| 9.1 / 13.8 / 16.2 on the final uniform / patch / reference
+snapshots, against std 2e5-1.3e6 and max 2e7 at niter 6, so the `p` column
+is valid now (band ratio 1.04-1.08, no longer 1.2-1.5) and the caveat below
+is history. Settings changed for the rerun: `cflmax = 1.0` (dtmax binds),
+`sor = 0.8` explicit (the ICs carry the KMM180 run's 1.5), `niter = 12`
+since 2026-09-26.
+
 ## Results (developed run, t=5..25, GPU)
 
 Figures: `les_profiles.png` (profiles), `fig_{patch,slab}_slice_*.png`

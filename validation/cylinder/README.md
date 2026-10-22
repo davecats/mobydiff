@@ -47,11 +47,12 @@ control-volume budget, and every ini here carries a `cv_box`.
 CONSEQUENCE: the original `forces_re40.txt` and `forces_re100.txt` are the
 OLD penalization series (generated files, not in git). The Re 40 gate below
 is RE-MEASURED on the control-volume series (2026-10-01,
-`run_f7_gates.sh steady` writes `f7/forces_st_new.txt`). The Re 100
-`strouhal` gate still quotes penalization numbers: regenerating it needs the
-clean-p protocol below, because a 40 000-step run at `niter = 6` pollutes the
-stored pressure that the budget reads — and the outlet pressure mode of the
-last section limits how long a clean-p leg stays clean. The `empty` and
+`run_f7_gates.sh steady` writes `f7/forces_st_new.txt`; the driver is
+retired). The Re 100 `strouhal` gate quotes the control-volume numbers since
+2026-10-22 (the block above): at `niter = 12` with the predicted outlet a
+40 000-step run from a cold start keeps its stored pressure clean (the
+table of the last section), so the clean-p protocol below was NOT needed
+for it; at the 2026-07 production `niter = 6` it was. The `empty` and
 determinism gates were re-run and pass as stated.
 
 Cross-validation of the new statistic, on the converged Re 40 state
@@ -62,6 +63,24 @@ offline `tutorials/naca/rans/postProcess/cv_forces.py --boxes 1.5 --nose 5.5
 8.0 --span-z` (its residual is the first-order one-sided gradients it must
 use at block edges, having no halos). Box scatter on that same field:
 C_D = 1.698 (margin 1.5 D) / 1.704 / 1.726 / 1.765 (6 D) — use a TIGHT box.
+
+RE-VALIDATED 2026-10-22, commit 532ef54 (banner), production flags, RTX
+3060 1 rank (the two cylinder runs) + workstation CPU (empty, determinism):
+`setup.sh` (moby_prepare, both coefficient files), ALL PASS -- Re 40 from a
+cold start to t = 100 (20 000 steps, 0.120 s/step, 40 min): **C_D 1.6968
++- 2.9e-5** over the last 20 %, |C_L| 3.7e-4 (steady gate, hard band
+1.4-1.7) -- THE ONE NUMBER of this case, equal to the outlet section's
+1.69682 +- 1e-5; the 1.6924 of the earlier gate entry was the pre-outlet
+series. Re 100 to t = 200 (40 000 steps, 0.082 s/step, 55 min): St 0.1734
+(spectral peak over the last 100 t.u.), mean C_D 1.4385, mean C_L -5.8e-3,
+C_L amplitude (max|C_L|) 0.388 -- the predicted-outlet column of the table
+below (0.1744 / 1.4383 / 0.393 over the last 50) to the scatter; the
+2026-07-13 PENALIZATION St 0.168 is history. `empty` C_L = C_D = 0.0
+exactly. Force determinism: the forces file of a 20-step Re 100 run on 1
+and 4 CPU ranks byte-identical. Settings changed for the rerun: `empty.ini`
+plain Jacobi 6 -> Chebyshev 12, all three inis `cflmax = 1.0` without `sor`
+(dtmax binds). `run_f7_gates.sh` and `run_outlet_mode.sh` are RETIRED
+(headers): their findings stay in the sections below.
 
 Gates (python3 check_cylinder.py ...):
 
@@ -119,7 +138,7 @@ Exercised here 2026-08-03, both directions:
 
 ## Clean-p protocol (REQUIRED for control-volume forces on a long run)
 
-Long IBM runs at production niter = 6 accumulate a large VELOCITY-NEUTRAL
+Long IBM runs at the 2026-07 production niter = 6 accumulated a large VELOCITY-NEUTRAL
 oscillating mode in the stored pressure (std ~4e2 here; the same family as
 the known channel pn drift, memory: pressure-volume-average-drift). u, the
 dynamics and the old u-only penalization force were untouched by it, but the
