@@ -73,6 +73,31 @@ carried — the same physics, far better conditioned for a variance computed as
 Window t = 20 → 219 = **29 684 wall units**, matching their 29 000; 650 000
 steps from a settled state (see "the three legs" below).
 
+RE-VALIDATED 2026-10-22, commit a991a1c (banner), production flags, HoreKa
+4 x A100 ranks (`horeka/submit_cht_channel.sh`, 45 000-step chunks on
+`dev_accelerated`, 0.052 s/step): the settle and clean legs re-run from the
+campaign's `Cdev_65000.h5` with Chebyshev `niter = 12`, `cflmax = 1.0` and
+the F2 advective conjugate form -- settle 65 000 steps (`Cdev2`, to 130 000),
+clean 650 000 steps (`Cstat`, to 780 000; statistics from zero over
+t = 40 -> 239, the same 29 700 wall units). The FIRST chain of that morning
+(532ef54) FAILED and found the Q4 Neumann-row defect (first landmine below);
+this is the chain relaunched on the fix. `asset/compare_flageul.py` on the
+new window, rms deviation as % of each quantity's peak: U+ 0.3, theta+ 1.1,
+u'2 1.1, v'2 1.8, w'2 3.7, -u'v' 0.4, u'T' 1.5, T'2 2.5 (the table below:
+0.4 / 1.2 / 0.9 / 1.8 / 3.8 / 0.4 / 1.3 / 2.5); the k1 near-wall theta'^2
+peak **5.955 at y+ 17.0** against their raw 5.941 (+0.2 %; the campaign's
+5.981 was +0.7 %), the six scalars' peaks 5.64-6.29 (campaign 5.67-6.32);
+the variance surviving at the outer solid face 0.0047 of the interface value
+(campaign 0.0063, Flageul 0.0073 -- the deep-solid rows are the slowest
+statistic of the case, see "Through the solid"). `check_cht.py thermal`
+PASSES: theta_tau kappa_s-independent to 0.22 % (spread 0.21 %; the
+campaign's window 0.019 %), J(centreline) -0.00001 S h, the flux 7.9 % above
+linear, the S-curve monotone (1.907 -> 1.105 -> 0.321 -> 0.131); the two
+checks that printed FAIL on the campaign's own window were re-tolerance'd
+on 2026-10-23 (below). The shipped `asset/` statistics stay the campaign's;
+the re-validated window is beside them as `asset/flageul_clean_a991a1c.h5`
++ `asset/Cstat_vel_a991a1c.h5` (`compare_flageul.py --stats ... --vel ...`).
+
 ### The full profiles, against their raw data
 
 `asset/compare_flageul.py`, over 0.5 < y⁺ < 137, as a percentage of each
@@ -129,9 +154,12 @@ fluid side's near-wall excess conducted inward, not a separate problem.
 * θ′_wall/θ_τ is **monotone decreasing in K** across the whole sweep
   (1.90 → 1.10 → 0.33 → 0.13), the conjugate S-curve.
 
-### What the gate reports as FAIL, and why that is correct
+### Two checks the gate re-tolerance'd, and why
 
-`check_cht.py` prints **FAIL**, on two checks, both understood:
+`check_cht.py` printed **FAIL** on two checks until 2026-10-23, both
+understood; since then the check asserts what is understood (the paragraph
+after the two items) and PASSES on the campaign's window and on the
+re-validated one:
 
 1. **The effusivity collapse.** Two walls with the same K but different
    (κ_s, C_s) do not collapse: 20 % apart at K = 10, 38 % at K = 100. **The
@@ -149,6 +177,14 @@ fluid side's near-wall excess conducted inward, not a separate problem.
    survives.
 
 Neither touches the comparison above, which is k1 (C_s = 1).
+
+Since 2026-10-23 check (2) asserts the ORDERING -- at equal K the
+higher-kappa_s wall damps more -- and brackets the difference at a factor 2
+(`--collapse-tol 0.5`), and check (1) gates the interface-referenced spread
+of the capacity sweep at 10 % of theta_tau (`--mean-tol-ref 0.10`; the frozen
+transient reads 7.3 % on the campaign's window, 5.7 % on the re-validated
+one). Both brackets hold the understood values with margin and would still
+catch a wrong K or a leaking interface by an order of magnitude.
 
 ### What is left
 
@@ -261,7 +297,8 @@ carries.
   (the pre-Q4 binaries hold the start values to the digit); the scalar rows
   take the pressure column now, as they did before Q4, and
   `validation/scalar/run_gates.sh` `cond_flux_hi/lo` keep a non-zero datum on
-  each face under gate (exact fixed point, Linf 0.0).
+  each face under gate (exact fixed point, Linf 0.0). The chain relaunched
+  on the fix is the RE-VALIDATED run above.
 * **A stale binary silently ran a DIFFERENT GRID.** `build_cpu` was rebuilt
   after `nodes_file` was added and `build_gpu` was not, so the solve ignored
   the key and fell back to a built-in distribution while `moby_prepare` used

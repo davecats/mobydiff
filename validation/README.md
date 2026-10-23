@@ -89,7 +89,7 @@ or `tools/compare_fields.py --tolerance 0`). Driver:
 |---|---|---|
 | `channel_kmm180/` | Re_tau 180 channel (KMM), natural-stretched y, `[case] name = channel` cold start | re-validated 2026-10-21 (statistics block) |
 | `min_channel/` | minimal-span refined channel; the suite's blocks + 2:1 + Chebyshev case (`input_gpu*.ini`) | re-validated 2026-10-21 |
-| `cht/` | conjugate heat transfer: Flageul turbulent channel (`channel/`) and Neuhauser pipe (`pipe/`) vs published references | pending |
+| `cht/` | conjugate heat transfer: Flageul turbulent channel (`channel/`) and Neuhauser pipe (`pipe/`) vs published references | re-validated 2026-10-22 (channel a991a1c, pipe 532ef54) |
 | `naca/rans/` | NACA 0012, alpha 5, Re_c 4e5 SST vs OpenFOAM (C_L, Cp, Cf), control-volume forces | pending |
 | `naca/LES/` | strategy note only (`STRATEGY.md`, the planned NACA LES); no runnable case yet | pending |
 | `sailplane/` | file-based IBM from a CAD STL through `moby_prepare` | re-validated 2026-10-21 |

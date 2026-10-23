@@ -100,6 +100,33 @@ Statistics window t = 55…245 D/u_b, 168 000 steps. Every number below is
 printed by `asset/pipe_numbers.py` from the shipped accumulators; none is
 typed by hand.
 
+RE-VALIDATED 2026-10-22, commit 532ef54 (banner), production flags, HoreKa
+4 x A100 ranks (`horeka/submit_cht_pipe.sh`, 24 000-step chunks on
+`accelerated`, ~0.27 s/step): leg D re-run from the shipped settled state
+`p_pr_settle2_30000.h5` with its pressure zeroed, 168 000 steps over the same
+window t = 55 -> 245, `cflmax = 1.0`, and the FASTER projection of the
+2026-10-21 decision -- red-black SOR `solver = redblack, sor = 1.5, niter = 6`
+(0.630 s/step against Chebyshev 12's 0.715 on the RTX 5090, 200 steps each,
+same binary), so `pipe_thermal.ini`'s Chebyshev 12 is NOT what this run used.
+The accumulators are in `asset/reval_2026-10-22/`; `pipe_numbers.py` prints
+them as the `reval` row of every table beside `production` (the velocity
+profiles from 21 snapshots, every 6 000-12 000 steps, instead of 14).
+Against the shipped tables: velocity <u_z> core +0.7 % (shipped +1.1), u_z'
+core +1.2 % (-3.4), u_r' +0.2 % (-0.6), u_theta' +0.4 % (-0.1), <u_r u_z>
++1.1 % (+1.0), stress law max 2.5 % (3.1); thermal c0 <theta>+ at the axis
++0.5 % (+0.7), theta'+ at the axis -3.9 % (-6.0), theta'+ for y+ < 50 +0.2 %
+(-0.1); the interface signature at y+ 7.25 c4 0.905 / mbc 0.864 / isof 1.209
+(shipped 0.907 / 0.866 / 1.207; Neuhauser 0.921 / 0.880 / 1.190); through
+the solid 0.794 / 0.627 / 0.518 / 0.407 / 0.368 / 0.357 (shipped 0.802 /
+0.633 / 0.521 / 0.404 / 0.365 / 0.353; Neuhauser 0.757 / 0.591 / 0.490 /
+0.388 / 0.353 / 0.343). Every move is inside the realisation-to-realisation
+scatter the provenance paragraph below bounds. One caveat: the heat-balance
+q_w of this rerun, 0.24802, is a 27-time-unit mean (t = 219 -> 245, 24 rows),
+because the solver REPLACED the heat file at every chunk restart -- found
+here, fixed 2026-10-23 (`io.f90` `resume_runtime_log`: a restart keeps the
+resumed run's rows up to its own first sample and appends; the airfoil
+forces and the boundary-layer trace had the same behaviour).
+
 **Provenance of the shipped accumulators (2026-09-28).** They come from a
 RE-RUN of the statistics leg with the solver at numerics-review step 2
 (`docs/numerics_review_2026-09-26.md`, finding F2): a conjugate scalar now

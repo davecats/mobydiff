@@ -30,7 +30,13 @@ NAMES = ["c0", "c1", "c2", "c3", "c4", "mbc", "isof"]
 GRID = {"production": dict(stats="pipe_prod_statsD.npz",
                            snaps="pipe_prod_snaps.npz",
                            heat="pipe_prod_heat.txt",
-                           dxp=1.84, dzp=5.06, n="256x256x896")}
+                           dxp=1.84, dzp=5.06, n="256x256x896"),
+        # the 2026-10-22 re-validation run (README "RE-VALIDATED": red-black
+        # 6, 532ef54, HoreKa); its heat file holds the last chunk only
+        "reval": dict(stats="reval_2026-10-22/pipe_prod_statsD.npz",
+                      snaps="reval_2026-10-22/pipe_prod_snaps.npz",
+                      heat="reval_2026-10-22/pipe_prod_heat.txt",
+                      dxp=1.84, dzp=5.06, n="256x256x896")}
 
 
 def wall_value(r, t, interface=0.5):
