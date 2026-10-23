@@ -16,7 +16,7 @@ module boundarylayer_stats
         CFL_COURANT, CFL_PECLET
     use :: blocks, only: block_set_type
     use :: comm, only: comm_type, comm_allreduce_sum, comm_allreduce_max
-    use :: io, only: to_c_string
+    use :: io, only: to_c_string, resume_runtime_log
     implicit none
 
     private
@@ -308,12 +308,17 @@ contains
 
         if (.not. this%runtime_header_written) then
             write(*,'(A)') header
-            open(newunit=unit, file=trim(this%runtime_file), status="replace", action="write", iostat=stat)
-            if (stat == 0) then
-                write(unit,'(A)') header
-                close(unit)
-            else
-                print *, "warning: could not open runtime data file: ", trim(this%runtime_file)
+            ! A restart keeps the resumed run's rows (io.f90); a fresh file
+            ! gets the header.
+            if (.not. resume_runtime_log(trim(this%runtime_file), int(dns%step_current), &
+                                         len_trim(dns%restart_file) > 0)) then
+                open(newunit=unit, file=trim(this%runtime_file), status="replace", action="write", iostat=stat)
+                if (stat == 0) then
+                    write(unit,'(A)') header
+                    close(unit)
+                else
+                    print *, "warning: could not open runtime data file: ", trim(this%runtime_file)
+                end if
             end if
             this%runtime_header_written = .true.
         end if

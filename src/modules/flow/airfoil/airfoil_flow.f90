@@ -22,14 +22,16 @@ module airfoil_flow
     use :: ibmm, only: ibm_type
     use :: turbulence, only: turb_type, TURB_NONE
     use :: comm, only: comm_type, comm_allreduce_sum, comm_allreduce_max
+    use :: io, only: resume_runtime_log
     use :: case_config_helpers, only: next_config_entry, to_lower, clean_config_string
     implicit none
 
     private
 
     character(len=*), parameter :: AIRFOIL_CASE_NAME = "airfoil"
-    ! per-block CV accumulators: momC momL fluxC fluxL
-    integer, parameter :: NCV = 4
+    ! per-block CV accumulators of the border-flux pass: fluxC fluxL (the
+    ! momentum inside the box has its own kernel, cv_momentum)
+    integer, parameter :: NCV = 2
     ! per-block accumulators of the p_inf pass: p*dA and dA on the upstream border
     integer, parameter :: NPI = 2
 
@@ -201,6 +203,14 @@ contains
             error stop "[case.airfoil] cv_box: empty control volume after snapping"
         if (c%has_terminal) write(*,'(A,4(1X,ES14.6))') &
             " airfoil CV box snapped to (c0 c1 l0 l1):", this%cv_box
+        ! A restart primes the unsteady term's difference from the restart
+        ! field (the fields are read and on the device by now), so the first
+        ! sample of a resumed run reads like any other (cv_momentum).
+        if (len_trim(dns%restart_file) > 0) then
+            call cv_momentum(this, blk, c, this%mom_prev)
+            this%t_prev = dns%t_current
+            this%have_prev = .true.
+        end if
     end subroutine airfoil_setup_after_grid
 
     ! Snap one CV border onto a cell face of the COARSEST level it crosses.
@@ -347,8 +357,10 @@ contains
     !
     ! The unsteady term is differenced between the last two samples, so it
     ! costs one extra momentum reduction and no extra state: at the first
-    ! sample after a (re)start it is unknown and the budget is reported
-    ! without it (flagged by dmdt = 0 in the file).
+    ! sample of a COLD start it is unknown and the budget is reported
+    ! without it (flagged by dmdt = 0 in the file); a restart primes the
+    ! difference from the restart field (airfoil_setup_after_grid), so a
+    ! chunked run's trace reads like a straight run's.
     subroutine cv_forces(this, blk, dns, c, turb)
         class(airfoil_case_type), intent(inout) :: this
         type(block_set_type), intent(inout) :: blk
@@ -357,11 +369,11 @@ contains
         type(turb_type), intent(in) :: turb
 
         real(C_DOUBLE), allocatable :: fb(:,:)
-        real(C_DOUBLE) :: acc(NCV), p_inf, fc, fl, dmdt(2), a, cl, cd, qref
+        real(C_DOUBLE) :: acc(NCV), mom(2), p_inf, fc, fl, dmdt(2), a, cl, cd, qref
         real(C_DOUBLE) :: c0, c1, l0, l1, nu, tol, coord, sgn
         real(C_DOUBLE) :: lc, cc, dA, un, pf, ut, nue, dundn, dundt, dutdn
-        real(C_DOUBLE) :: tnn, tnt, fn, ft, dl2, wcp, wcm, vol
-        real(C_DOUBLE) :: sC, sL, fC_, fL_, unsteady
+        real(C_DOUBLE) :: tnn, tnt, fn, ft, dl2, wcp, wcm
+        real(C_DOUBLE) :: fC_, fL_, unsteady
         ! plain local copy: mapping a component of the polymorphic `this`
         ! into a target region is not portable
         real(C_DOUBLE) :: box(4)
@@ -390,6 +402,9 @@ contains
         ! ---- pass 1: the reference pressure, from the upstream border ----
         p_inf = cv_pinf(blk, c, box, tol, spanY, nbx, nby, nbz)
 
+        ! ---- the momentum inside the box: its own kernel (a restart primes it) ----
+        call cv_momentum(this, blk, c, mom)
+
         allocate(fb(NCV, nBlocks))
 
         !$omp target teams distribute &
@@ -397,31 +412,10 @@ contains
         !$omp&        p_inf, box, blk%x, blk%y, blk%z, blk%d1x, blk%d1y, blk%d1z, &
         !$omp&        blk%q, turb%nut) &
         !$omp& map(from: fb(1:NCV,1:nBlocks)) &
-        !$omp& private(i,j,k,m,ii,ib,sC,sL,fC_,fL_,coord,sgn,lc,cc,dA, &
-        !$omp&         un,pf,ut,nue,dundn,dundt,dutdn,tnn,tnt,fn,ft,dl2,wcp,wcm,vol)
+        !$omp& private(i,j,k,m,ii,ib,fC_,fL_,coord,sgn,lc,cc,dA, &
+        !$omp&         un,pf,ut,nue,dundn,dundt,dutdn,tnn,tnt,fn,ft,dl2,wcp,wcm)
         do b = 1_C_INT, nBlocks
-            sC = 0.0d0; sL = 0.0d0
             fC_ = 0.0d0; fL_ = 0.0d0
-
-            ! ---- momentum inside the box (each component on its own grid) ----
-            do k = 1_C_INT, nbz
-                do j = 1_C_INT, nby
-                    do i = 1_C_INT, nbx
-                        lc = merge(blk%z(k,VAR_U,b), blk%y(j,VAR_U,b), spanY)
-                        if (blk%x(i,VAR_U,b) > c0 .and. blk%x(i,VAR_U,b) < c1 .and. &
-                            lc > l0 .and. lc < l1) then
-                            vol = 1.0d0/(blk%d1x(i,VAR_U,b)*blk%d1y(j,VAR_U,b)*blk%d1z(k,VAR_U,b))
-                            sC = sC + blk%q(i,j,k,VAR_U,b)*vol
-                        end if
-                        lc = merge(blk%z(k,varL,b), blk%y(j,varL,b), spanY)
-                        if (blk%x(i,varL,b) > c0 .and. blk%x(i,varL,b) < c1 .and. &
-                            lc > l0 .and. lc < l1) then
-                            vol = 1.0d0/(blk%d1x(i,varL,b)*blk%d1y(j,varL,b)*blk%d1z(k,varL,b))
-                            sL = sL + blk%q(i,j,k,varL,b)*vol
-                        end if
-                    end do
-                end do
-            end do
 
             ! ---- the four lateral borders ----
             do ib = 1_C_INT, 4_C_INT
@@ -527,23 +521,22 @@ contains
                 end if
             end do
 
-            fb(1,b) = sC;  fb(2,b) = sL
-            fb(3,b) = fC_; fb(4,b) = fL_
+            fb(1,b) = fC_; fb(2,b) = fL_
         end do
         !$omp end target teams distribute
 
         call cv_reduce(blk, c, fb, NCV, acc)
 
-        fc = acc(3)
-        fl = acc(4)
+        fc = acc(1)
+        fl = acc(2)
 
         dmdt = 0.0d0
         have_dmdt = this%have_prev .and. dns%t_current > this%t_prev
         if (have_dmdt) then
-            dmdt(1) = (acc(1) - this%mom_prev(1))/(dns%t_current - this%t_prev)
-            dmdt(2) = (acc(2) - this%mom_prev(2))/(dns%t_current - this%t_prev)
+            dmdt(1) = (mom(1) - this%mom_prev(1))/(dns%t_current - this%t_prev)
+            dmdt(2) = (mom(2) - this%mom_prev(2))/(dns%t_current - this%t_prev)
         end if
-        this%mom_prev(1) = acc(1); this%mom_prev(2) = acc(2)
+        this%mom_prev = mom
         this%t_prev = dns%t_current
         this%have_prev = .true.
 
@@ -646,6 +639,65 @@ contains
         if (acc(2) > 0.0d0) p_inf = acc(1)/acc(2)
     end function cv_pinf
 
+    ! The momentum inside the box, each component on its own staggered grid;
+    ! the budget's unsteady term is its time difference between samples. Its
+    ! own kernel, because a RESTART evaluates it once at setup to prime that
+    ! difference (airfoil_setup_after_grid): the first sample of a resumed
+    ! run then carries the unsteady term a straight run would, and a chunked
+    ! chain's forces trace equals the straight run's row for row (the
+    ! cylinder 20 + 20 against 40, gated 2026-10-23). The cost is one extra
+    ! launch per SAMPLE, not per step.
+    subroutine cv_momentum(this, blk, c, mom)
+        class(airfoil_case_type), intent(in) :: this
+        type(block_set_type), intent(inout) :: blk
+        type(comm_type), intent(in) :: c
+        real(C_DOUBLE), intent(out) :: mom(2)
+
+        real(C_DOUBLE), allocatable :: fb(:,:)
+        real(C_DOUBLE) :: c0, c1, l0, l1, lc, vol, sC, sL
+        integer(C_INT) :: i, j, k, b, nbx, nby, nbz, nBlocks, varL
+        logical :: spanY
+
+        nbx = blk%nb(1); nby = blk%nb(2); nbz = blk%nb(3)
+        nBlocks = blk%nBlocks
+        c0 = this%cv_box(1); c1 = this%cv_box(2)
+        l0 = this%cv_box(3); l1 = this%cv_box(4)
+        spanY = (this%spanDim == 2)
+        varL = merge(VAR_W, VAR_V, spanY)
+        allocate(fb(2, nBlocks))
+
+        !$omp target teams distribute &
+        !$omp& map(to: nbx, nby, nbz, c0, c1, l0, l1, varL, spanY, &
+        !$omp&        blk%x, blk%y, blk%z, blk%d1x, blk%d1y, blk%d1z, blk%q) &
+        !$omp& map(from: fb(1:2,1:nBlocks)) &
+        !$omp& private(i,j,k,sC,sL,lc,vol)
+        do b = 1_C_INT, nBlocks
+            sC = 0.0d0; sL = 0.0d0
+            do k = 1_C_INT, nbz
+                do j = 1_C_INT, nby
+                    do i = 1_C_INT, nbx
+                        lc = merge(blk%z(k,VAR_U,b), blk%y(j,VAR_U,b), spanY)
+                        if (blk%x(i,VAR_U,b) > c0 .and. blk%x(i,VAR_U,b) < c1 .and. &
+                            lc > l0 .and. lc < l1) then
+                            vol = 1.0d0/(blk%d1x(i,VAR_U,b)*blk%d1y(j,VAR_U,b)*blk%d1z(k,VAR_U,b))
+                            sC = sC + blk%q(i,j,k,VAR_U,b)*vol
+                        end if
+                        lc = merge(blk%z(k,varL,b), blk%y(j,varL,b), spanY)
+                        if (blk%x(i,varL,b) > c0 .and. blk%x(i,varL,b) < c1 .and. &
+                            lc > l0 .and. lc < l1) then
+                            vol = 1.0d0/(blk%d1x(i,varL,b)*blk%d1y(j,varL,b)*blk%d1z(k,varL,b))
+                            sL = sL + blk%q(i,j,k,varL,b)*vol
+                        end if
+                    end do
+                end do
+            end do
+            fb(1,b) = sC; fb(2,b) = sL
+        end do
+        !$omp end target teams distribute
+
+        call cv_reduce(blk, c, fb, 2, mom)
+    end subroutine cv_momentum
+
     ! Deterministic reduction of per-block partials: scatter into the global
     ! block table (one contributor per entry, so the allreduce is exact) and
     ! sum in global-id order on every rank -- the result is independent of
@@ -685,13 +737,18 @@ contains
 
         if (.not. this%header_written) then
             write(*,'(A)') header
-            open(newunit=unit, file=trim(this%runtime_file), status="replace", &
-                action="write", iostat=stat)
-            if (stat == 0) then
-                write(unit,'(A)') header
-                close(unit)
-            else
-                print *, "warning: could not open runtime data file: ", trim(this%runtime_file)
+            ! A restart keeps the resumed run's rows (io.f90); a fresh file
+            ! gets the header.
+            if (.not. resume_runtime_log(trim(this%runtime_file), int(dns%step_current), &
+                                         len_trim(dns%restart_file) > 0)) then
+                open(newunit=unit, file=trim(this%runtime_file), status="replace", &
+                    action="write", iostat=stat)
+                if (stat == 0) then
+                    write(unit,'(A)') header
+                    close(unit)
+                else
+                    print *, "warning: could not open runtime data file: ", trim(this%runtime_file)
+                end if
             end if
             this%header_written = .true.
         end if

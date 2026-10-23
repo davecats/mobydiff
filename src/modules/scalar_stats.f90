@@ -46,7 +46,7 @@ module scalar_stats
     use :: init, only: dns_type, grid_type, VAR_U, VAR_V, VAR_W, VAR_P, VAR_S0, SOLID_FACE_THRESHOLD
     use :: blocks, only: block_set_type, FACE_CLOSED
     use :: comm, only: comm_type, comm_allreduce_sum
-    use :: io, only: to_c_string
+    use :: io, only: to_c_string, resume_runtime_log
     use :: turbulence, only: turb_type, turbulence_is_enabled
     use :: ibmm, only: ibm_type
     ! The face diffusivities are the transport kernels' OWN helpers
@@ -680,19 +680,24 @@ contains
         if (.not. c%has_terminal) return
 
         if (.not. this%heat_header_written) then
-            open(newunit=unit, file=trim(this%heat_file), status="replace", action="write", iostat=stat)
-            if (stat /= 0) then
-                print *, "warning: could not open scalar heat file: ", trim(this%heat_file)
-                return
+            ! A restart keeps the resumed run's rows (io.f90); a fresh file
+            ! gets the header.
+            if (.not. resume_runtime_log(trim(this%heat_file), int(dns%step_current), &
+                                         len_trim(dns%restart_file) > 0)) then
+                open(newunit=unit, file=trim(this%heat_file), status="replace", action="write", iostat=stat)
+                if (stat /= 0) then
+                    print *, "warning: could not open scalar heat file: ", trim(this%heat_file)
+                    return
+                end if
+                write(unit,'(A)', advance="no") "# step time"
+                do is = 1, nScal
+                    write(tag,'(A)') trim(sc%name(is))
+                    write(unit,'(1X,A)', advance="no") &
+                        trim(tag)//"_staircase "//trim(tag)//"_graded "//trim(tag)//"_total"
+                end do
+                write(unit,'(A)') ""
+                close(unit)
             end if
-            write(unit,'(A)', advance="no") "# step time"
-            do is = 1, nScal
-                write(tag,'(A)') trim(sc%name(is))
-                write(unit,'(1X,A)', advance="no") &
-                    trim(tag)//"_staircase "//trim(tag)//"_graded "//trim(tag)//"_total"
-            end do
-            write(unit,'(A)') ""
-            close(unit)
             this%heat_header_written = .true.
         end if
 

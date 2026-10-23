@@ -363,6 +363,54 @@ module io
 
 contains
 
+! A run that RESTARTS continues the text traces of the run it resumes (the
+! scalar heat file, the airfoil forces, the boundary-layer runtime line)
+! where it continues the state: the rows at or after the first step this
+! run samples are dropped (they belong to a run that went past the snapshot
+! being resumed), everything before them -- the header included -- is kept,
+! and the caller appends as usual. Returns .false. when there is nothing to
+! resume (a cold start, or no file yet): the caller then writes a fresh file
+! with its header. Until 2026-10-23 every run REPLACED the file, so a
+! chunked chain kept only its last chunk (the HoreKa pipe re-validation
+! held 24 of its 168 heat rows).
+logical function resume_runtime_log(name, first_step, restarting) result(resumed)
+    character(len=*), intent(in) :: name
+    integer, intent(in) :: first_step
+    logical, intent(in) :: restarting
+
+    character(len=4096) :: line
+    integer :: uin, uout, stat, step
+    logical :: exists
+
+    resumed = .false.
+    if (.not. restarting) return
+    inquire(file=trim(name), exist=exists)
+    if (.not. exists) return
+
+    ! Sieve the old rows into a scratch file, then write them back.
+    open(newunit=uin, file=trim(name), status="old", action="read", iostat=stat)
+    if (stat /= 0) return
+    open(newunit=uout, status="scratch", action="readwrite")
+    do
+        read(uin, '(A)', iostat=stat) line
+        if (stat /= 0) exit
+        read(line, *, iostat=stat) step          ! a header line does not parse
+        if (stat == 0 .and. step >= first_step) cycle
+        write(uout, '(A)') trim(line)
+    end do
+    close(uin)
+    rewind(uout)
+    open(newunit=uin, file=trim(name), status="replace", action="write")
+    do
+        read(uout, '(A)', iostat=stat) line
+        if (stat /= 0) exit
+        write(uin, '(A)') trim(line)
+    end do
+    close(uout)
+    close(uin)
+    resumed = .true.
+end function resume_runtime_log
+
 logical function output_is_due(step, output_interval)
     integer, intent(in) :: step, output_interval
 

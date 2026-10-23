@@ -98,7 +98,7 @@ restart)
     prepare .prep_c11_nose.ini "$COEF_NOSE"
     [ -f "$STATE_NOSE" ] || { echo "no $STATE_NOSE; use '$0 scratch'"; exit 1; }
     echo "== restarting the nose-refined case from $STATE_NOSE"
-    sed "s|^file = .*|file = $STATE_NOSE|" c11_aoa5_nose.ini > .run.ini
+    sed "/^\[restart\]/,/^$/ s|^file = .*|file = $STATE_NOSE|" c11_aoa5_nose.ini > .run.ini
     $MPIRUN -n 1 "$ROOT/build_gpu/moby_solve" .run.ini
     ;;
 scratch)
@@ -125,7 +125,7 @@ scratch)
 
     steady_conf
     T2=$($PY -c "print('%.4f'%($(t_of "$LAST") + $S2_SPAN))")
-    sed -e 's|^file = .*|file = .restart_l11.h5|' -e "s/^t_final = .*/t_final = $T2/" \
+    sed -e '/^\[restart\]/,/^$/ s|^file = .*|file = .restart_l11.h5|' -e "s/^t_final = .*/t_final = $T2/" \
         -e 's/^runtime_file = .*/runtime_file = forces_stage2_c11.txt/' \
         -e "$(steady_sed "$S2_TOL" "$S2_SAMPLES" "$S2_FSI")" c11_aoa5.ini > .stage2.ini
     echo "== $(date +%F\ %T) stage 2: L11, steady_tol $S2_TOL over $S2_SAMPLES" \
@@ -141,7 +141,7 @@ scratch)
 
     steady_conf
     T3=$($PY -c "print('%.4f'%($(t_of "$LAST") + $S3_SPAN))")
-    sed -e 's|^file = .*|file = .restart_nose.h5|' -e "s/^t_final = .*/t_final = $T3/" \
+    sed -e '/^\[restart\]/,/^$/ s|^file = .*|file = .restart_nose.h5|' -e "s/^t_final = .*/t_final = $T3/" \
         -e "$(steady_sed "$S3_TOL" "$S3_SAMPLES" "$S3_FSI")" c11_aoa5_nose.ini > .stage3.ini
     echo "== $(date +%F\ %T) stage 3: nose band, steady_tol $S3_TOL over $S3_SAMPLES" \
          "samples (net t = $T3; ~12.7 h per time unit on an RTX 3060) -> .stage3.log"
