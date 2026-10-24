@@ -229,11 +229,16 @@ the text traces (`52ee737`). (1) The performance ideas measured but not
 taken: the momentum predictor split by component, the red-black reduced
 exchange round, 7-5 (a weighted Morton split), the `apply_bc` face-row skip,
 the `rans_transport_kernel` register cut (the twin of the scalar one,
-`docs/next_session_code_simplification.md` item 1). (2) The feature tail:
-S5b (TVD/van-Leer + second halo), C4 (conducting corners -- read C2's
-verdict first), the IDDES flat-plate inlet, transition/wall functions under
-IDDES, the MacDonald rough-wall forced-convection case (no new physics
-needed).
+`docs/next_session_code_simplification.md` item 1), the fp64 divide in
+`compute_rdenom` on body blocks, the unexplained `phi_exchange` locality
+shift (`docs/cleanup_review_2026-10-06.md` section 8). (2) The feature tail:
+the IDDES flat-plate inlet, transition/wall functions under IDDES. (3) The
+sailplane wing-fuselage junction (decided 2026-10-24): a DNS / wall-resolved
+LES of the junction region -- half the fuselage, a few chords of wing -- with
+IDDES/RANS elsewhere, the laminar-turbulent transition at the junction the
+question; strategy proposed 2026-10-24 (worklog), no case yet. Dropped
+2026-10-24 by decision: S5b (TVD + second halo), C4 (conducting corners), the
+MacDonald rough-wall forced-convection case.
 
 ## Verification
 

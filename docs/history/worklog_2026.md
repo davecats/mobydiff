@@ -3114,3 +3114,8 @@ immersed boundary. Phased, each phase verified before the next:
   paragraph (Quadro RTX 3000 / WSL) replaced, the pipe `asset/` table lists
   `reval_2026-10-22/`, the boundary layer carries its STANDS note, the NACA LES
   strategy points at the boundary-layer README for the trip.
+- Open list re-prioritised (2026-10-24, user decision): S5b, C4 and the
+  MacDonald case DROPPED; the two campaign leftovers (`compute_rdenom` divide,
+  `phi_exchange` locality shift) tracked; NEW item: the sailplane wing-fuselage
+  junction transition study (DNS / wall-resolved LES of the junction, IDDES
+  elsewhere) -- strategy proposed in the session report, no case yet.
