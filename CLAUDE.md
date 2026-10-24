@@ -75,7 +75,7 @@ mpirun -n 1 ./build_gpu/moby_solve path/to/input.ini    # main is a symlink
   `predict_outlet_faces`: two runs in three). The boundary kernels loop
   over all `npts` points and skip for this reason.
 
-## State of the solver (2026-10-21)
+## State of the solver (2026-10-24)
 
 The full work log (block refactor, 2:1 refinement, RANS/IDDES, the airfoil,
 passive scalars and conjugate heat transfer, the prepare/solve split, the
@@ -86,11 +86,14 @@ handouts are indexed in `docs/history/README.md`; the master design is
 `docs/block_refinement_strategy.md`; the two reviews are
 `docs/numerics_review_2026-09-26.md` (findings F1-F9, numerics) and
 `docs/cleanup_review_2026-10-06.md` (F10-F16, duplication, simplifications,
-the profile). **The CURRENT handout is `docs/next_session_revalidation.md`** (the
-one-by-one numerics re-validation of `validation/README.md`, the index of
-every surviving case; its section 7 is the ledger, section 4 the decisions
-it needs); `docs/next_session_code_simplification.md` (items 1-12) closed
-2026-10-21.
+the profile). **There is NO current handout (2026-10-24).** The last two are closed and
+stay in `docs/` until the next cleaning pass moves them to `docs/history/`:
+`docs/next_session_code_simplification.md` (items 1-12, closed 2026-10-21)
+and `docs/next_session_revalidation.md` (the one-by-one numerics
+re-validation of `validation/README.md`, the index of every surviving case;
+closed 2026-10-24 -- its section 7 ledger reads 36 DONE, 1 RETIRED, the
+boundary layer STANDS, no PENDING row). What is still open is listed at the
+end of this section.
 `main` is the working branch (consolidated 2026-09-25); the only unmerged
 history is the tag `archive/claude-jacobi-interface` (`boostconv`,
 `kpin_dwall`, both deliberately dropped).
@@ -133,7 +136,12 @@ dirichlet | adiabatic | conjugate`, central convection, the conjugate face
 coefficient on the level-set fraction, `scalar_*` modules). Time step:
 `cflmax` and `pecletmax` bound the SUM over directions (RK3 limits sqrt(3)
 and 0.628), both reductions over the INTERIOR (2026-10-21), `dtmax` the cap;
-do not push both limits at once.
+do not push both limits at once. The runtime text traces (the scalar heat
+file, the airfoil forces, the boundary-layer line) RESUME across a restart
+since 2026-10-23 (`io.f90` `resume_runtime_log`: rows up to the resumed
+run's first sample kept, later ones dropped, then append) and an airfoil
+restart primes the control-volume momentum at setup, so a chunked chain
+writes one continuous trace with no dmdt = 0 row per chunk.
 
 **The prepare/solve contract.** Every run reads a CASE FILE written by
 `mpirun -n N moby_prepare input.ini` (`[case] file`, default
@@ -157,7 +165,8 @@ are cut from a COMMIT, with the hash in a PROVENANCE file:
 + prepare) is the current set** -- every change since it is `max_abs 0` on
 the suites at nofma (the 2026-10-21 interior-only Courant reduction moves
 only a Courant-bound cold start from rest with an inlet, which no suite
-holds). Use the NOFMA builds (`./compile.sh cpu_nofma | gpu_nofma`) for any change
+holds; last confirmed 2026-10-23 after `52ee737`: 9 / 11 / 7 cases, CPU and
+GPU). Use the NOFMA builds (`./compile.sh cpu_nofma | gpu_nofma`) for any change
 that moves an expression and the production flags only when the arithmetic
 source is byte-identical; the GPU compiler contracts a moved statement
 differently (the "FMA class", 1e-15..1e-12) and a production-flag difference
@@ -209,19 +218,22 @@ measured motivation for the deferred TVD/second-halo increment (S5b). The
 the level jump on a physical face, the body on an outlet plane are all FIXED
 and gated -- the worklog has each mechanism.
 
-**Open, in order.** (1) The one-by-one re-validation of
-`validation/README.md` (`docs/next_session_revalidation.md`, handout
-written 2026-10-21, nothing re-run yet) at `niter = 12` with the predicted outlet (every long
-number on file is a niter-6 value; the long tier ~200 GPU-h, the CHT
-tutorials most of it; inputs in the sibling checkouts `mobydiff.scalar` /
-`mobydiff.bl`; zero `pn` when restarting a niter-6 snapshot); the RANS
-`rans_sst` cases first (the nut read-back changed their restart). (2) The
-performance ideas measured but not taken: the momentum predictor split by
-component, the red-black reduced exchange round, 7-5 (a weighted Morton
-split), the `apply_bc` face-row skip. (3) The feature tail: S5b
-(TVD/van-Leer + second halo), C4 (conducting corners -- read C2's verdict
-first), the IDDES flat-plate inlet, transition/wall functions under IDDES,
-the MacDonald rough-wall forced-convection case (no new physics needed).
+**Open, in order.** The re-validation pass is DONE (2026-10-21 -> 10-24):
+every long number on file is now measured on a NAMED binary at the pass's
+conventions (Chebyshev `niter = 12` where the ini is Chebyshev, `cflmax =
+1.0`; the NACA keeps its `niter = 18`, the pipe ran red-black 6, the
+boundary layer stands at its red-black 6) -- the `RE-VALIDATED` blocks in
+the tutorial and `validation/*/` READMEs are the records; the pass found and
+fixed the Q4 Neumann ghost row (`a991a1c`) and the three restart defects of
+the text traces (`52ee737`). (1) The performance ideas measured but not
+taken: the momentum predictor split by component, the red-black reduced
+exchange round, 7-5 (a weighted Morton split), the `apply_bc` face-row skip,
+the `rans_transport_kernel` register cut (the twin of the scalar one,
+`docs/next_session_code_simplification.md` item 1). (2) The feature tail:
+S5b (TVD/van-Leer + second halo), C4 (conducting corners -- read C2's
+verdict first), the IDDES flat-plate inlet, transition/wall functions under
+IDDES, the MacDonald rough-wall forced-convection case (no new physics
+needed).
 
 ## Verification
 

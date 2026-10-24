@@ -13,6 +13,12 @@ published DNS.
 | sweep | 6 scalars: κ_s and C_s each over four decades | 7 scalars: the effusivity bracket from isothermal to isoflux |
 | headline | near-wall variance peak **+0.7 %**, full profiles 0.4–3.8 % | conjugate signature **≤ 2 %** across the whole bracket, conductivity pair **0.2 %** |
 
+Both were RE-VALIDATED 2026-10-22 on named binaries (channel `a991a1c` at
+Chebyshev `niter = 12`, pipe `532ef54` with red-black 6, both on HoreKa; the
+blocks in each README): the channel rerun's peak is +0.2 % and its profiles
+0.3–3.7 %, the pipe's tables sit within the realisation scatter of the shipped
+ones.
+
 Read `channel/` first: it establishes that the scheme gets conjugate
 turbulence right where the discretisation is exact, which is what makes the
 pipe's residuals attributable to the curved interface rather than to the

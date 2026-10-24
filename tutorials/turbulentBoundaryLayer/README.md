@@ -83,6 +83,12 @@ sublayer, log region and wake. **Two takeaways:**
 > AMPHIBIOUS curve above is `TRIP_SKEWSYM_CENTERED` (same centered differencing and
 > numerics, skew instead of CONS convection). CaNS is the direct CONS reference.
 
+STANDS in the 2026-10 re-validation pass (`docs/next_session_revalidation.md`,
+ledger closed 2026-10-24): the numbers below were measured 2026-10-05/06/08 on
+main with the predicted outlet, post-F1, and were not re-run at the pass's
+Chebyshev-12 convention because this case runs red-black `niter = 6` by
+design (AMPHIBIOUS's projection).
+
 The table is the **1250-time-unit window** (steps 712 500–775 000) of the
 2026-10-05/06 rerun of this case on main with the PREDICTED outlet face
 (`docs/next_session_outlet.md`; HoreKa, 4 A100, `tests_record.md` section 14),

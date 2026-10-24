@@ -2,7 +2,9 @@
 
 **The live case is [`rans/`](rans/README.md)** — the converged alpha = 5,
 Re_c = 4e5 k-omega SST validation against a body-fitted OpenFOAM reference
-(C_L 0.5199 vs 0.5142, Cp_min matching to four digits), with its drivers
+(C_L 0.5199 vs 0.5142, Cp_min matching to four digits; re-converged from
+scratch on HoreKa 2026-10-24 to C_L 0.5205, Cp rms 0.0003 against the
+shipped curves), with its drivers
 (`run_case.sh`, `postprocess.sh`), prepare inis and post-processing scripts
 (`rans/postProcess/`: control-volume forces, surface Cp/Cf, the OpenFOAM
 overlay). Start there.
@@ -33,7 +35,7 @@ overlay). Start there.
   also avoids the gamma-Re_theta_t fine-grid unreliability found with the
   first-order-upwind transition scalars (the front smears over ~100 cells
   and separation-induced transition stops firing on finer grids — see
-  CLAUDE.md, R2D-3 and A3 increment 3). `rans/` instead reproduces
+  `docs/history/worklog_2026.md`, R2D-3 and A3 increment 3). `rans/` instead reproduces
   OpenFOAM's fvOptions forced transition with `[rans] kpin_box` /
   `ktrip_box`.
 - **Forces.** Use the runtime control-volume budget (`cv_box`, a TIGHT box

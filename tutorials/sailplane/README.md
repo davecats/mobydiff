@@ -79,7 +79,5 @@ projection (see the step-3 MEASURED entry in
 `docs/numerics_review_2026-09-26.md` section 10); `solver = redblack` is kept
 in the ini as the faster choice for this outflow case.
 
-The tutorial is currently sized as a large one-step smoke case for the 6 GB
-Quadro RTX 3000 in this workstation. It is intentionally kept a little below
-the estimated device-memory ceiling so both the solver and the Python STL
-preprocessing remain stable under WSL.
+The tutorial is sized as a large one-step smoke case (18 M cells) that fits
+the workstation's RTX 3060; the 2026-10-21 block above is its record.

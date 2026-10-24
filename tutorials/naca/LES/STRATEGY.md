@@ -7,7 +7,7 @@
 > why it came over rather than being archived with the branch; nothing in `main`
 > implements it either. The trip forcing it mentions as "ported from
 > mobydiff.bl" IS in the solver (`[force] type = trip`, now the exact
-> CaNS/SIMSON form — see CLAUDE.md), so that part of the plan is already done.
+> CaNS/SIMSON form — see `../../turbulentBoundaryLayer/README.md`), so that part of the plan is already done.
 > The rest is unbuilt.
 
 STATUS (2026-07-29): strategy agreed with the user — **Re_c = 4e5**

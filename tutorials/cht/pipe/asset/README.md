@@ -61,6 +61,7 @@ Conventions that must hold on both sides of every comparison, and do:
 | `grid_residual.npz` | the z-averaged cross-sections behind Fig. 6b,c |
 | `pipe_prod_plane.npz` | one z-plane of one production snapshot (Fig. 7) |
 | `pipe_prod_blocks.npz` | the leaf table and node lines (Fig. 8) |
+| `reval_2026-10-22/` | the 2026-10-22 re-validation's accumulators (`pipe_prod_statsD.npz`, `pipe_prod_snaps.npz`, `pipe_prod_heat.txt`; red-black 6 on `532ef54`, README "RE-VALIDATED"), printed by `pipe_numbers.py` as the `reval` row of every table |
 | `make_caches.py` | rebuilds the last three from the run outputs |
 | `compare_neuhauser.py` | the profile-by-profile comparison, and the shared reference loader |
 | `pipe_numbers.py` | every table in the README |

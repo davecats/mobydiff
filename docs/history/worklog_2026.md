@@ -3101,3 +3101,16 @@ immersed boundary. Phased, each phase verified before the next:
     Ledger: `tutorials/naca/rans` DONE; index row re-validated. The
     re-validation pass of `docs/next_session_revalidation.md` has no RUNNING row
     left.
+- Records refresh (2026-10-24, after the pass): `CLAUDE.md` "State of the solver"
+  re-dated, no current handout (the two closed ones stay in `docs/` until the
+  next cleaning pass moves them), the trace-resume behaviour in the one-pass
+  summary, the reference-set line dated to its last confirmation (`52ee737`),
+  "Open, in order" without the finished re-validation and with the
+  `rans_transport_kernel` cut added. Numerics review F7 / F9 rows marked
+  FIXED / CLOSED (they were, without a marker). Tutorial READMEs audited (15
+  files): every backticked file reference resolves or is marked as removed; the
+  CHT index gained the re-validation line, `naca/README.md` the scratch result
+  and a `docs/history` pointer where it said CLAUDE.md, the sailplane's hardware
+  paragraph (Quadro RTX 3000 / WSL) replaced, the pipe `asset/` table lists
+  `reval_2026-10-22/`, the boundary layer carries its STANDS note, the NACA LES
+  strategy points at the boundary-layer README for the trip.
