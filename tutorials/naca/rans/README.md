@@ -67,6 +67,45 @@ re-convergence: the table above is still the 2026-08 campaign's, and the
 drag of today's code on this state (0.01275, either binary) sits one
 scatter below its 0.01294.
 
+RE-VALIDATED 2026-10-24, commit 532ef54 (banner), production flags, HoreKa
+4 x A100 ranks on one node (`horeka/submit_naca_stage.sh`, self-chaining
+chunks): the WHOLE `run_case.sh scratch` protocol re-run from rest on the
+nose grid (decision 2 of `docs/next_session_revalidation.md`; the production
+state `c11_nose_660000.h5` was not on this filesystem), `cflmax = 1.0`
+throughout, Chebyshev `niter = 18` as the inis say, the stage inis composed
+as run_case.sh composes them. Stage 1 (L10) ran to its t = 12 net (C_L
+0.490; 4 x 40 000-step chunks of 30 min on `dev_accelerated`). Stage 2 (L11)
+stopped on its own measure at t = 29.0 (1.17e-3 < 2e-3 over 4 samples;
+2026-08: 1.09e-3 at t = 29), C_L 0.5139 / C_D 0.01303 against the baseline
+column's 0.5136 / 0.01277 (3 x 120 000-step chunks of 2 h on `accelerated`,
+0.060 s/step). Stage 3 (nose band) ran out to t = 34.0 in 7 chunks of
+30 000 steps (31 min each, 0.062 s/step): the 4-sample window cannot close
+across a chunk boundary (3 samples per chunk, and on this binary the first
+row of every chunk has no unsteady term), so `steady_tol` never fired and
+the stage ran its published 5 t.u., which is what the paragraph below asks
+for anyway; the measure read 0.67e-3..1.3e-3 from t = 29.5 on (2026-08:
+8.5e-4 at t = 31, 1.2e-3 at the end). The state at step 660000 reproduces
+the production column: runtime CV over the last time unit C_L 0.5205 +-
+0.0005 (4 samples 0.25 t.u. apart; shipped 0.5199 +- 0.0001 at 20-step
+sampling), C_D 0.01306 +- 0.00021 (0.01294 +- 0.00017); offline over the
+1.5c / 2.5c boxes x the snapshots at steps 640000 and 660000 C_L 0.5224 +-
+0.0040 (0.5222 +- 0.0046), C_D 0.0133 +- 0.0010 (0.0131 +- 0.0001; the 2.5c
+box of the final snapshot reads 0.0148 -- the box margin again); Cp_min
+-1.7805 at x/c 0.0127 (shipped -1.7797, same station; OpenFOAM -1.7797),
+stagnation Cp +1.0024 (+1.0025). Against the shipped curves the Cp rms
+difference is 0.0003 (max 0.0009) and the Cf median difference 0.01 % over
+the 300 stations: the from-scratch run lands on the same discrete solution.
+The 2026-10-01 drag question (0.01275 on either binary against the table's
+0.01294) dissolves in this run's own scatter (C_D 0.0129 +- 0.0004 over the
+last two time units). Total ~45 A100-hours. The outputs are in
+`assets/reval_2026-10-24/` (the surface curves as `cpcf_c11_nose_final.*`,
+the three stage forces traces merged from the chunk logs -- the 532ef54
+trace file was REPLACED at every chunk restart, fixed 2026-10-23 -- and the
+HoreKa provenance); the shipped `assets/referenceStats/` and
+`assets/figures/` are untouched. The re-converged state itself is
+`~/horeka_stage/naca/c11_nose_660000.h5` on the workstation and
+`$W/reval_naca/` on HoreKa (not shipped, 496 MB).
+
 Cp_min reads -1.7797 against OpenFOAM's -1.7797 — agreement to four
 decimals is luck (the peak sits between stations ~0.007 apart in x/c, so
 read it as "within a station"), but it is a real improvement on the
@@ -158,6 +197,15 @@ What actually stopped each stage in the 2026-08 run:
 | 1 (L10)  | 5e-3 | 1 t.u. | `t_final` net (measure reached 7.6e-3) | t = 12 |
 | 2 (L11)  | 2e-3 | 1 t.u. | `steady_tol` at 1.09e-3 | t = 29 |
 | 3 (nose) | 1e-3 | 1 t.u. | `steady_tol` at 8.5e-4, then CONTINUED | t = 34 |
+
+And in the 2026-10-24 re-validation (HoreKa, chunked -- see the RE-VALIDATED
+block above; the window restarts at every chunk boundary):
+
+| stage | tolerance | window | stopped by | at |
+|-------|-----------|--------|------------|-----|
+| 1 (L10)  | 2e-3 | 1 t.u. | `t_final` net (measure 7.9e-3 at the end) | t = 12 |
+| 2 (L11)  | 2e-3 | 1 t.u. | `steady_tol` at 1.17e-3 | t = 29.0 |
+| 3 (nose) | 1e-3 | 1 t.u. | `t_final` net: 3 samples per 30 000-step chunk, the window never closes (measure 0.7e-3..1.3e-3) | t = 34.0 |
 
 Stage 3's certification at t = 31 is sound but incomplete, and this is the
 one trap worth knowing: the measure is a CONTROL-VOLUME MOMENTUM budget,

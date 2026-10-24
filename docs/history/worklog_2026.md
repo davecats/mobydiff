@@ -3078,3 +3078,26 @@ immersed boundary. Phased, each phase verified before the next:
     chunks). Stages 2-3, the post-processing and the README block are the open
     item; the chain stays on 532ef54 (its forces file truncates per chunk: the
     rows are in the chunk logs).
+- Re-validation, day 3 (2026-10-24): the NACA scratch protocol read out
+  (`tutorials/naca/rans`, decision 2, all three stages on 532ef54, 4 x A100).
+  - Stage 2 (L11) stopped on its own measure at t = 29.0 (1.17e-3 < 2e-3; 2026-08
+    1.09e-3), C_L 0.5139 / C_D 0.01303 (baseline column 0.5136 / 0.01277). Stage
+    3 (nose band): `interp_restart.py` onto the nose layout (16976 leaves), stage
+    ini composed as `run_case.sh` does (1e-3 / 4 / 10000, t_final = t + 5,
+    cflmax 1.0), 7 x 30 000-step chunks on `dev_accelerated` (31 min each, 0.062
+    s/step) -- `accelerated` estimated a 2026-10-26 start (exasim fairshare
+    0.013) -- ran out to t = 34.0: the 4-sample window cannot close across a
+    chunk boundary, so the stage ran its published 5 t.u. as the README asks.
+  - Result: the production column reproduced -- runtime CV C_L 0.5205 +- 0.0005
+    / C_D 0.01306 +- 0.00021 (shipped 0.5199 / 0.01294), offline two boxes x two
+    snapshots 0.5224 +- 0.0040 / 0.0133 +- 0.0010 (0.5222 / 0.0131), Cp_min
+    -1.7805 at the shipped station (-1.7797; OpenFOAM -1.7797), stagnation
+    +1.0024; Cp rms 0.0003 and Cf median 0.01 % against the shipped 300-station
+    curves. The 2026-10-01 drag question (0.01275 vs 0.01294) sits inside this
+    run's scatter (0.0129 +- 0.0004 over the last two time units). ~45 A100-h in
+    all. README RE-VALIDATED block + a second stopping table; outputs in
+    `assets/reval_2026-10-24/` (curves, the three forces traces merged from the
+    chunk logs, HoreKa provenance); the shipped reference assets untouched.
+    Ledger: `tutorials/naca/rans` DONE; index row re-validated. The
+    re-validation pass of `docs/next_session_revalidation.md` has no RUNNING row
+    left.

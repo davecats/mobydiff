@@ -1,0 +1,129 @@
+# HoreKa chain provenance and chunk status, reval_naca (all stages on 532ef54, 4 x A100)
+job    : 5205820   2026-10-22 05:33:38 CEST
+node   : hkn0436.localdomain
+code   : 532ef5497d28633e928363874fc72022b7574f4c
+gpu    : NVIDIA A100-SXM4-40GB
+stage  : stage1.ini, prefix .l10_stage, chunk 40000 steps
+successor of 5205820: Submitted batch job 5205919 (attempt 1, account hk-project-exasim)
+job    : 5205919   2026-10-22 06:05:39 CEST
+node   : hkn0508.localdomain
+code   : 532ef5497d28633e928363874fc72022b7574f4c
+gpu    : NVIDIA A100-SXM4-40GB
+stage  : stage1.ini, prefix .l10_stage, chunk 40000 steps
+successor of 5205919: Submitted batch job 5205932 (attempt 1, account hk-project-exasim)
+job    : 5205932   2026-10-22 06:37:40 CEST
+node   : hkn0508.localdomain
+code   : 532ef5497d28633e928363874fc72022b7574f4c
+gpu    : NVIDIA A100-SXM4-40GB
+stage  : stage1.ini, prefix .l10_stage, chunk 40000 steps
+successor of 5205932: Submitted batch job 5205943 (attempt 1, account hk-project-exasim)
+job    : 5205943   2026-10-22 07:09:42 CEST
+node   : hkn0508.localdomain
+code   : 532ef5497d28633e928363874fc72022b7574f4c
+gpu    : NVIDIA A100-SXM4-40GB
+stage  : stage1.ini, prefix .l10_stage, chunk 40000 steps
+successor of 5205943: Submitted batch job 5205957 (attempt 1, account hk-project-exasim)
+job    : 5205957   2026-10-22 07:11:42 CEST
+node   : hkn0508.localdomain
+code   : 532ef5497d28633e928363874fc72022b7574f4c
+gpu    : NVIDIA A100-SXM4-40GB
+stage  : stage1.ini, prefix .l10_stage, chunk 40000 steps
+job    : 5208118   2026-10-23 12:25:54 CEST
+node   : hkn0702.localdomain
+code   : 532ef5497d28633e928363874fc72022b7574f4c
+gpu    : NVIDIA A100-SXM4-40GB
+stage  : stage2.ini, prefix c11_aoa5, chunk 120000 steps
+successor of 5208118: Submitted batch job 5208412 (attempt 1, account hk-project-exasim)
+job    : 5208412   2026-10-23 14:52:36 CEST
+node   : hkn0718.localdomain
+code   : 532ef5497d28633e928363874fc72022b7574f4c
+gpu    : NVIDIA A100-SXM4-40GB
+stage  : stage2.ini, prefix c11_aoa5, chunk 120000 steps
+successor of 5208412: Submitted batch job 5208484 (attempt 1, account hk-project-exasim)
+job    : 5208484   2026-10-24 04:49:05 CEST
+node   : hkn0627.localdomain
+code   : 532ef5497d28633e928363874fc72022b7574f4c
+gpu    : NVIDIA A100-SXM4-40GB
+stage  : stage2.ini, prefix c11_aoa5, chunk 120000 steps
+successor of 5208484: Submitted batch job 5209962 (attempt 1, account hk-project-exasim)
+job    : 5209962   2026-10-24 09:29:23 CEST
+node   : hkn0413.localdomain
+code   : 532ef5497d28633e928363874fc72022b7574f4c
+gpu    : NVIDIA A100-SXM4-40GB
+stage  : stage2.ini, prefix c11_aoa5, chunk 120000 steps
+job    : 5210119   2026-10-24 11:35:09 CEST
+node   : hkn0403.localdomain
+code   : 532ef5497d28633e928363874fc72022b7574f4c
+gpu    : NVIDIA A100-SXM4-40GB
+stage  : stage3.ini, prefix c11_nose, chunk 30000 steps
+successor of 5210119: Submitted batch job 5210120 (attempt 1, account hk-project-exasim)
+job    : 5210120   2026-10-24 12:08:05 CEST
+node   : hkn0401.localdomain
+code   : 532ef5497d28633e928363874fc72022b7574f4c
+gpu    : NVIDIA A100-SXM4-40GB
+stage  : stage3.ini, prefix c11_nose, chunk 30000 steps
+successor of 5210120: Submitted batch job 5210141 (attempt 1, account hk-project-exasim)
+job    : 5210141   2026-10-24 12:40:05 CEST
+node   : hkn0401.localdomain
+code   : 532ef5497d28633e928363874fc72022b7574f4c
+gpu    : NVIDIA A100-SXM4-40GB
+stage  : stage3.ini, prefix c11_nose, chunk 30000 steps
+successor of 5210141: Submitted batch job 5210156 (attempt 1, account hk-project-exasim)
+job    : 5210156   2026-10-24 13:12:06 CEST
+node   : hkn0401.localdomain
+code   : 532ef5497d28633e928363874fc72022b7574f4c
+gpu    : NVIDIA A100-SXM4-40GB
+stage  : stage3.ini, prefix c11_nose, chunk 30000 steps
+successor of 5210156: Submitted batch job 5210184 (attempt 1, account hk-project-exasim)
+job    : 5210184   2026-10-24 13:44:05 CEST
+node   : hkn0401.localdomain
+code   : 532ef5497d28633e928363874fc72022b7574f4c
+gpu    : NVIDIA A100-SXM4-40GB
+stage  : stage3.ini, prefix c11_nose, chunk 30000 steps
+successor of 5210184: Submitted batch job 5210187 (attempt 1, account hk-project-exasim)
+job    : 5210187   2026-10-24 14:16:06 CEST
+node   : hkn0401.localdomain
+code   : 532ef5497d28633e928363874fc72022b7574f4c
+gpu    : NVIDIA A100-SXM4-40GB
+stage  : stage3.ini, prefix c11_nose, chunk 30000 steps
+successor of 5210187: Submitted batch job 5210188 (attempt 1, account hk-project-exasim)
+job    : 5210188   2026-10-24 14:48:55 CEST
+node   : hkn0401.localdomain
+code   : 532ef5497d28633e928363874fc72022b7574f4c
+gpu    : NVIDIA A100-SXM4-40GB
+stage  : stage3.ini, prefix c11_nose, chunk 30000 steps
+successor of 5210188: Submitted batch job 5210220 (attempt 1, account hk-project-exasim)
+job    : 5210220   2026-10-24 15:11:03 CEST
+node   : hkn0401.localdomain
+code   : 532ef5497d28633e928363874fc72022b7574f4c
+gpu    : NVIDIA A100-SXM4-40GB
+stage  : stage3.ini, prefix c11_nose, chunk 30000 steps
+
+start .l10_stage cold-start 2026-10-22 05:33:38
+exit 0 .l10_stage cold-start 2026-10-22 06:03:53
+start .l10_stage .l10_stage_40000.h5 2026-10-22 06:05:39
+exit 0 .l10_stage .l10_stage_40000.h5 2026-10-22 06:35:53
+start .l10_stage .l10_stage_80000.h5 2026-10-22 06:37:40
+exit 0 .l10_stage .l10_stage_80000.h5 2026-10-22 07:07:50
+start .l10_stage .l10_stage_120000.h5 2026-10-22 07:09:42
+exit 0 .l10_stage .l10_stage_120000.h5 2026-10-22 07:09:48
+start c11_aoa5 cold-start 2026-10-23 12:25:54
+exit 0 c11_aoa5 cold-start 2026-10-23 14:25:17
+start c11_aoa5 c11_aoa5_240018.h5 2026-10-23 14:52:36
+exit 0 c11_aoa5 c11_aoa5_240018.h5 2026-10-23 16:52:18
+start c11_aoa5 c11_aoa5_360018.h5 2026-10-24 04:49:05
+exit 0 c11_aoa5 c11_aoa5_360018.h5 2026-10-24 06:28:45
+start c11_nose cold-start 2026-10-24 11:35:09
+exit 0 c11_nose cold-start 2026-10-24 12:06:24
+start c11_nose c11_nose_490000.h5 2026-10-24 12:08:05
+exit 0 c11_nose c11_nose_490000.h5 2026-10-24 12:39:19
+start c11_nose c11_nose_520000.h5 2026-10-24 12:40:05
+exit 0 c11_nose c11_nose_520000.h5 2026-10-24 13:11:13
+start c11_nose c11_nose_550000.h5 2026-10-24 13:12:06
+exit 0 c11_nose c11_nose_550000.h5 2026-10-24 13:43:14
+start c11_nose c11_nose_580000.h5 2026-10-24 13:44:05
+exit 0 c11_nose c11_nose_580000.h5 2026-10-24 14:15:15
+start c11_nose c11_nose_610000.h5 2026-10-24 14:16:06
+exit 0 c11_nose c11_nose_610000.h5 2026-10-24 14:47:31
+start c11_nose c11_nose_640000.h5 2026-10-24 14:48:55
+exit 0 c11_nose c11_nose_640000.h5 2026-10-24 15:09:44
