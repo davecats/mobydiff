@@ -86,7 +86,9 @@ handouts are indexed in `docs/history/README.md`; the master design is
 `docs/block_refinement_strategy.md`; the two reviews are
 `docs/numerics_review_2026-09-26.md` (findings F1-F9, numerics) and
 `docs/cleanup_review_2026-10-06.md` (F10-F16, duplication, simplifications,
-the profile). **There is NO current handout (2026-10-24).** The last two are closed and
+the profile). **The current handout (2026-10-25) is `docs/next_session_sailplane_junction.md`**
+(the wing-fuselage junction study; its section 2 is the ledger, step 1 = the
+XFOIL + AVL lifting line). The two before it are closed and
 stay in `docs/` until the next cleaning pass moves them to `docs/history/`:
 `docs/next_session_code_simplification.md` (items 1-12, closed 2026-10-21)
 and `docs/next_session_revalidation.md` (the one-by-one numerics
@@ -236,7 +238,11 @@ the IDDES flat-plate inlet, transition/wall functions under IDDES. (3) The
 sailplane wing-fuselage junction (decided 2026-10-24): a DNS / wall-resolved
 LES of the junction region -- half the fuselage, a few chords of wing -- with
 IDDES/RANS elsewhere, the laminar-turbulent transition at the junction the
-question; strategy proposed 2026-10-24 (worklog), no case yet. Dropped
+question; strategy proposed 2026-10-24 (worklog), the PLAN is
+`docs/next_session_sailplane_junction.md` (2026-10-25: geometry measured --
+AR 30, root chord 0.831 m, flapped section, no horizontal tail, no fillet;
+steps 1-7 with their decisions D1-D5; `tutorials/sailplane/junction/
+stl_sections.py` slices, measures and pitches the STL), no case yet. Dropped
 2026-10-24 by decision: S5b (TVD + second halo), C4 (conducting corners), the
 MacDonald rough-wall forced-convection case.
 

@@ -3119,3 +3119,21 @@ immersed boundary. Phased, each phase verified before the next:
   `phi_exchange` locality shift) tracked; NEW item: the sailplane wing-fuselage
   junction transition study (DNS / wall-resolved LES of the junction, IDDES
   elsewhere) -- strategy proposed in the session report, no case yet.
+- Sailplane junction study PLANNED (2026-10-25, `docs/next_session_sailplane_junction.md`,
+  the current handout): the STL measured (`tutorials/sailplane/junction/stl_sections.py`:
+  span 19.49 m, AR 30, root chord 0.831 m = the reference length, incidence +2.3 deg
+  constant, dihedral 3.1 deg, t/c 0.129, a trailing-edge flap at 0.87 c about 6 deg
+  down, shoulder wing on a 0.37 m half-width fuselage, fin only -- no horizontal tail,
+  no fillet); XFOIL smoke test of the y = 1 m section at Re 3e5 (C_l 0.61 at zero
+  chord-line angle, Ncrit 12). Plan: step 1 Route A lifting line (XFOIL polars at
+  Ncrit 9 and 12 + AVL of the whole wing, fuselage excluded -> alpha_box = alpha -
+  alpha_i(root), about 0.6 deg at C_L 1), step 2 the calibration box (120 M cells,
+  alpha +- 0.5 deg, cut 3 c vs 4 c, the boom through the outlet), step 3 the
+  go/no-go physics tests (projection floor on the SD7003 bubble, TS growth through
+  the IBM), step 4 the zonal model-off levels + strip-load script, steps 5-7 the
+  production grid, the exchange at 8-16 nodes, the Delta+ 4 then Delta+ 3 runs
+  (10 000-20 000 A100-h: an allocation). The angle of attack is set by pitching
+  the STL offline (no `stl_rotate` key; free-slip top/bottom faces hold w = 0),
+  alpha TRANSFERRED from the lifting line rather than fitted in the box (the
+  calibration model's decambering error is the size of the correction). Decisions
+  D1-D5 for the user (fillet, flight C_L, Ncrit band, AVL host, the allocation).
