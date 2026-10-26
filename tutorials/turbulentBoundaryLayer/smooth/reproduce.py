@@ -71,7 +71,7 @@ FIELD = field_with_nodes()
 if need(STATS, FIELD):
     since = ["--since", STATS_T0] if os.path.exists(STATS_T0) else []
     run("make_mobydiff_nc.py", STATS, FIELD, NC,
-        "--ini", os.path.join(HERE, "production_stats.ini"), "--repo", os.path.join(HERE, "..", ".."), *since)
+        "--ini", os.path.join(HERE, "production_stats.ini"), "--repo", os.path.join(HERE, "..", "..", ".."), *since)
 
 # 2. code comparison (SIMSON / CaNS / AMPHIBIOUS); compare_codes skips any
 #    reference whose file is absent (e.g. the LSDF share not mounted).

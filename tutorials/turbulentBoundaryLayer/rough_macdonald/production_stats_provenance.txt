@@ -1,0 +1,12 @@
+The shipped statistics (assets/mobydiff/xyz_3200_384_136/data.nc, assets/rough_compare.txt,
+rough_comparison.png): the through-outlet rough chain of 2026-10-06 on HoreKa (run dir rough_io_run, branch
+rough-outlet = c7b2773, the total-pressure backflow datum; jobs 5184061 .. 5185089, eight chained 12 500-step
+chunks on 4 A100, one node, hkn0401/0403), production_stats.ini physics (the chunk ini differs only in nsteps,
+stats_write_interval, file names and restart). Restarted at step 737500 from smooth_737500.h5, the smooth side
+of the 2026-10-05/06 pair chain (../smooth/production_stats_provenance.txt), with the roughness switched on, and
+run to step 837500 (2000 time units, dt 0.02, red-black 6). Statistics window = steps 775000 .. 837500 = 1250
+time units (production_stats.h5 minus production_stats_t0.h5 = the chunk-end copies stats_rough_837500.h5 and
+stats_rough_775000.h5; the first 750 units, one flow-through, are the transient of the roughness switch-on).
+Every chunk exit 0, L2 div 5.8-6.3e-6, Linf 1.11-1.25. restart_field.h5 = rough_837500.h5 (final field).
+production_stats_runtime.txt covers the LAST chunk only (the runtime file was rewritten per chunk then).
+Smooth comparison window: ../smooth production_stats.h5 minus production_stats_t0.h5 (steps 712500 .. 775000).

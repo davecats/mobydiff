@@ -1,11 +1,11 @@
-# Large data kept locally — all exceed GitHub's 100 MB limit (see README).
+# Large data kept locally in smooth/ and rough_macdonald/ — all exceed GitHub's
+# 100 MB limit (see the READMEs). Patterns without a slash match in every subdirectory.
 production_stats.h5
 production_stats_t0.h5
-production_stats_rough.h5
-production_stats_rough_t0.h5
+restart_field.h5
 skewsym_stats.h5
 grid_nodes.h5
-assets/postpro/passivewall.hdf5
+passivewall.hdf5
 
 # Run outputs regenerated from the .ini files (field snapshots, logs).
 coldstart_*.h5
@@ -14,3 +14,4 @@ production_p2_*.h5
 skewsym_*.h5
 *_runtime.txt
 new_y*.npy
+*.mat

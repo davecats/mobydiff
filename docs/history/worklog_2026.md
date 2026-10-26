@@ -3178,3 +3178,18 @@ immersed boundary. Phased, each phase verified before the next:
   field), and wall functions / transition are rejected under `iddes` (the calibration
   is `rans`; the production LES ring's first cell at y+ 4-5 under the resolved
   treatment is flagged for the step-3 SD7003 check).
+- Boundary-layer tutorials split (2026-10-26): `tutorials/turbulentBoundaryLayer/` is
+  now an index over `smooth/` (the former tutorial, moved with `git mv`; plus the
+  MATLAB export `assets/matlab/` for external transition-model validation) and
+  `rough_macdonald/` (the MacDonald egg-carton roughness through the outlet, packaged
+  from the 2026-10-06 HoreKa chain `rough_io_run`, c7b2773, nothing rerun: committed
+  `data.nc`, `rough_comparison.png`, `rough_compare.txt` -- Hama table identical to the
+  2026-10-08 read-out, Delta U+ 3.41 +- 0.25 vs 3.72; from-scratch inis `production.ini`
+  (roughness on from `../smooth/production_175000.h5`, 37 500 steps) and
+  `production_stats.ini` (62 500 steps); `rough_compare.py --plot`). `overheadTest/`
+  stays where it is; `submit_rough_tbl.sh` points at the new ini paths. The smooth
+  local `restart_field.h5` was the 750-long in-house grid's step-1587500 field, not this
+  case: moved to `~/outlet_runs/tbl/inhouse_4096x224x192_step1587500.h5` and replaced by
+  `smooth_775000.h5`, the last field of the shipped smooth window. Local (ignored) in
+  each directory: `production_stats.h5`, `production_stats_t0.h5`, `restart_field.h5`,
+  `grid_nodes.h5`.

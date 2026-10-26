@@ -21,8 +21,8 @@
 #            [NSTEPS=12500] [END_STEP=775000] [SIDES="smooth rough"]
 #     cd $RUN_DIR && sbatch --export=ALL submit_rough_tbl.sh
 #
-#   smooth   tutorials/turbulentBoundaryLayer/production_stats.ini
-#   rough    tutorials/turbulentBoundaryLayer/production_stats_rough.ini
+#   smooth   tutorials/turbulentBoundaryLayer/smooth/production_stats.ini
+#   rough    tutorials/turbulentBoundaryLayer/rough_macdonald/production_stats.ini
 #
 # RESUMABLE AND SELF-CHAINING, in chunks of NSTEPS: each side restarts from its
 # own latest snapshot (<side>_<step>.h5; the first chunk from
@@ -43,7 +43,7 @@
 set -uo pipefail
 CODE_DIR="${CODE_DIR:?}"; RUN_DIR="${RUN_DIR:?}"
 NSTEPS="${NSTEPS:-12500}"; END_STEP="${END_STEP:-775000}"; SIDES="${SIDES:-smooth rough}"
-TUT="$CODE_DIR/tutorials/turbulentBoundaryLayer"
+TUT="$CODE_DIR/tutorials/turbulentBoundaryLayer"   # smooth/ and rough_macdonald/ below it
 
 module purge
 module load toolkit/nvidia-hpc-sdk/25.3
@@ -104,7 +104,7 @@ submit_successor() {
 
 n=0
 for side in $SIDES; do
-    src="$TUT/production_stats.ini"; [ "$side" = rough ] && src="$TUT/production_stats_rough.ini"
+    src="$TUT/smooth/production_stats.ini"; [ "$side" = rough ] && src="$TUT/rough_macdonald/production_stats.ini"
     node="${NODES[$((n % ${#NODES[@]}))]}"; n=$((n + 1))
     latest=$(latest_of "$side"); restart="${latest:-start_field.h5}"
     [ "$(step_of "${latest:-x_0.h5}")" -ge "$END_STEP" ] && { echo "=== $side at END_STEP"; continue; }

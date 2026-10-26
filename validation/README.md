@@ -93,7 +93,7 @@ or `tools/compare_fields.py --tolerance 0`). Driver:
 | `naca/rans/` | NACA 0012, alpha 5, Re_c 4e5 SST vs OpenFOAM (C_L, Cp, Cf), control-volume forces | re-validated 2026-10-24 (532ef54, from scratch on the nose grid on HoreKa) |
 | `naca/LES/` | strategy note only (`STRATEGY.md`, the planned NACA LES); no runnable case yet | pending |
 | `sailplane/` | file-based IBM from a CAD STL through `moby_prepare` | re-validated 2026-10-21 |
-| `turbulentBoundaryLayer/` | spatially developing TBL with the CaNS/SIMSON trip, Blasius inlet, outlets; `overheadTest/` holds the performance campaign (configs, drivers, results) | stands (2026-10-05/06, after every change that touches it) |
+| `turbulentBoundaryLayer/` | spatially developing TBL with the CaNS/SIMSON trip, Blasius inlet, outlets: `smooth/` (the code comparison) and `rough_macdonald/` (egg-carton roughness through the outlet, Hama Delta U+ 3.41 vs 3.72); `overheadTest/` holds the performance campaign (configs, drivers, results) | stands (2026-10-05/06, after every change that touches it) |
 
 ## Removed on 2026-09-26 (recover with `git show <commit>^:<path>`)
 

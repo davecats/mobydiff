@@ -4,7 +4,7 @@ Reynolds number along the plate and the Hama roughness function.
 
     rough_compare.py --smooth <stats.h5> [<earlier stats.h5>] --rough <stats.h5> [<earlier>]
                      [--re 450] [--ymax 60] [--k 0.38348] [--crest 0.767]
-                     [--stations 300 385 450 550 600] [--half 10]
+                     [--stations 300 385 450 550 600] [--half 10] [--plot out.png]
 
 A statistics file is the solver's cumulative one (raw sums + counts); giving
 an EARLIER copy of the same file makes the window the difference of the two
@@ -24,6 +24,8 @@ Printed:
     U+_rough(y+) averaged over the log region ABOVE THE CRESTS (y > crest,
     30 < y+ < 0.2 delta99+), each side in its own u_tau, the rough y measured
     from the mean plane (--k); and the two c_f.
+With --plot (both sides given): c_f, H and k+ along x, and U+(y+) of both
+sides at the --profile station.
 
 The rough-wall c_f is 2 d theta/dx + (H + 2) theta/U_e dU_e/dx (the balance
 solved for c_f), smoothed over +-10 cells; it is the total drag per unit
@@ -135,6 +137,8 @@ def main():
     ap.add_argument("--half", type=int, default=10, help="running-mean half-width (cells) of the balance c_f")
     ap.add_argument("--bands", type=float, nargs="+",
                     default=[100, 120, 160, 200, 250, 300, 385, 450, 500, 550, 600, 630, 640, 645, 648, 649.5, 650])
+    ap.add_argument("--plot", default=None, help="write the comparison figure here")
+    ap.add_argument("--profile", type=float, default=450.0, help="x of the U+ panel")
     a = ap.parse_args()
 
     runs = []
@@ -172,6 +176,47 @@ def main():
                   f"  {d['dU']:+.2f} +- {d['dU_sd']:.2f} [{d['lo']:.0f}, {d['hi']:.0f}]"
                   f"   {e['dU']:+.2f} +- {e['dU_sd']:.2f} [{e['lo']:.0f}, {e['hi']:.0f}]")
         print("reference: MacDonald, Chan, Chung, Hutchins & Ooi 2016, full-span channel k+ 10 / lambda+ 113: dU+ = 3.72")
+        if a.plot:
+            plot(rs, rr, a)
+
+
+def plot(rs, rr, a):
+    """c_f, H, k+ along the plate and U+(y+) at one station. Shaded: x < 250
+    (the ramp-in at 120-160 and the adjustment after it, where the balance c_f
+    does not apply) and the outlet zone x > 550."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    x = rs["x"]
+    m = (x >= 100) & (x <= 640)
+    fig, ax = plt.subplots(2, 2, figsize=(12, 9))
+    ut_r = np.sqrt(np.maximum(rr["cf"], 0)/2)*rr["ue"]
+    for axi, (ys, yr, lab) in zip(ax.flat[:3], ((rs["cf"], rr["cf"], "$c_f$"),
+                                               (rs["H"], rr["H"], "$H$"),
+                                               (a.k*np.sqrt(rs["cf"]/2)*rs["ue"]*a.re, a.k*ut_r*a.re,
+                                                "$k^+ = k u_\\tau/\\nu$"))):
+        axi.plot(x[m], ys[m], label="smooth")
+        axi.plot(x[m], yr[m], label="rough (c$_f$ from the momentum balance)")
+        axi.axvspan(100, 250, color="0.9"); axi.axvspan(550, 640, color="0.9")
+        axi.set_xlabel("$x/\\delta^*_{in}$"); axi.set_ylabel(lab)
+    ax[0, 0].set_ylim(0, 0.012); ax[0, 0].legend()
+    ax[1, 0].set_ylim(0, 15); ax[1, 0].axhline(10, ls=":", c="k")
+    d = delta_u_plus(rs, rr, a.k, a.crest, a.re, a.profile, a.k)
+    i = int(np.argmin(abs(x - a.profile)))
+    for name, r, y0, ut in (("smooth", rs, 0.0, d["ut_s"]), ("rough (y from the mean plane)", rr, a.k, d["ut_r"])):
+        ok = r["y"] > y0
+        ax[1, 1].semilogx((r["y"][ok] - y0)*ut*a.re, r["prof"][i, ok, U]/ut, label=name)
+    yl = np.geomspace(20, 500, 50)
+    ax[1, 1].semilogx(yl, np.log(yl)/KAPPA + 5.0, "k--", lw=0.8, label="log law")
+    ax[1, 1].semilogx(yl, np.log(yl)/KAPPA + 5.0 - d["dU"], "k:", lw=0.8,
+                      label=f"log law $-\\Delta U^+$ = {d['dU']:.2f}")
+    ax[1, 1].axvspan(d["lo"], d["hi"], color="0.9")
+    ax[1, 1].set_xlim(1, 1000); ax[1, 1].set_ylim(0, 25)
+    ax[1, 1].set_xlabel("$y^+$"); ax[1, 1].set_ylabel("$U^+$"); ax[1, 1].legend()
+    ax[1, 1].set_title(f"x = {d['x']:.0f}, $k^+$ = {d['kplus']:.1f} (MacDonald et al.: $\\Delta U^+$ = 3.72 at $k^+$ 10)")
+    fig.tight_layout()
+    fig.savefig(a.plot, dpi=110)
+    print(f"wrote {a.plot}")
 
 
 if __name__ == "__main__":
