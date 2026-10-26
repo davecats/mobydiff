@@ -1,15 +1,10 @@
 # Next session: the sailplane wing-fuselage junction (transition study)
 
 STATUS: plan written 2026-10-25 on head `46b1b38`; step 1 re-based on
-AeroSandbox 2026-10-26 (user's suggestion) and run once with NeuralFoil
-section data (section 3.4: preliminary alpha_box); the XFOIL polars of
-section 3.1 are still owed. The geometry measurements of section 1 and the
-tools of section 1.3 are done. This is the study
-decided 2026-10-24 (CLAUDE.md "Open, in order", item 3): the laminar-turbulent
-transition at the junction of the sailplane wing and fuselage, DNS in the
-junction region, LES / IDDES elsewhere, Re_c = 3e5 on the root chord, NO trip.
-The strategy behind it was laid out in three session reports on 2026-10-24
-(worklog); this file is the executable version. Section 2 is the ledger.
+AeroSandbox and DONE 2026-10-26 (`tutorials/sailplane/junction/liftingline/
+README.md`: **alpha_box = 1.5 deg** at C_L 1.0, band 1.45-1.8). Decisions
+D1-D5 TAKEN by the user 2026-10-26 (section 6). Next: step 2, the
+calibration box (section 4).
 
 Read first: CLAUDE.md "State of the solver" (gate rules, hosts, landmines),
 `tutorials/sailplane/README.md` (the present case: file IBM from the CAD STL,
@@ -120,7 +115,7 @@ build and a non-monotonic x is refused by AeroSandbox's `repanel`.
 
 | step | what | status |
 |---|---|---|
-| 1 | Route A lifting line in AeroSandbox: NeuralFoil / XFOIL section polars + the nonlinear lifting line of the whole wing -> alpha_i(y), C_l(y), alpha_box (section 3) | PRELIMINARY 2026-10-26 (NeuralFoil; section 3.4); XFOIL polars and the Ncrit band owed |
+| 1 | Route A lifting line in AeroSandbox: XFOIL section polars + the nonlinear lifting line of the whole wing -> alpha_i(y), C_l(y), alpha_box (section 3) | **DONE 2026-10-26**: alpha_box 1.5 deg (`liftingline/README.md`) |
 | 2 | The calibration box: coarse truncated model at Re_c 3e5, alpha_box and +-0.5 deg, strip loads, cut at 3 c vs 4 c (section 4) | PENDING |
 | 3 | Go / no-go physics tests: projection-residual floor on the SD7003 bubble, TS growth through the IBM (section 5.1) | PENDING |
 | 4 | Solver increments: zonal model-off levels; strip-load post-processing (section 5.2) | PENDING |
@@ -159,10 +154,12 @@ aerosandbox[full]`). What it brings, all pure Python, no AVL binary:
   needs an X display (`Cannot open display...aborting` without one) and
   with graphics off (`plop g`, which the wrapper sends) traps a floating-
   point exception inside `PACC` on the first converged point -- the wrapper
-  reports every run as failed. Fix: run the wrapper from a session with a
-  live `DISPLAY` (the 2026-10-25 polars came from one), or build XFOIL from
-  source without `-ffpe-trap` and give the wrapper `xfoil_command=`. There is
-  no `xvfb-run` on the workstation. (Replaces D4.)
+  reports every run as failed. DONE 2026-10-26 (D4): XFOIL 6.99 is built
+  from Drela's source by `tutorials/sailplane/junction/assets/xfoil/build.sh`
+  (double precision, no FPE traps, `Xfoil/` and the tarball git-ignored),
+  and `xfoil_polars.py` drives that binary DIRECTLY -- the wrapper also
+  refuses the source build's polar files (the `CINC` column carries no
+  header label, the Itr columns are absent). AVL is not needed.
 - `asb.LiftingLine`: the NONLINEAR lifting line with viscous section data
   (NeuralFoil internally, Ncrit at its default 9 -- not settable through
   the class; the Ncrit 12 side of the band is done by polar inversion in
@@ -179,30 +176,33 @@ aerosandbox[full]`). What it brings, all pure Python, no AVL binary:
 - Sections: `stl_sections.py section` at y = 0.5 (root, thickened), 1.0,
   2.0, 3.0, 5.0, 7.0, 9.0, 9.6 m (done; the scratch copies are not in git,
   regenerate them: seconds). Re(y) = 3e5 c(y) / 0.831, Mach 0.
-- NeuralFoil polars at Ncrit 9 and 12 for every section (the band of D3),
-  then XFOIL polars (`asb.XFoil`, `n_crit`, `max_iter 200`, alpha -4..10 by
-  0.5) for the root region sections 0.5, 1.0, 2.0 at least -- these set the
-  final alpha_box. Record C_l, C_d, C_m, Top_Xtr, Bot_Xtr; alpha_0 and the
-  slope over the linear range. The XFOIL polar of the y = 1 m section at
+- XFOIL polars (`xfoil_polars.py`: `PPAR N 240`, `ITER 300`, alpha -4..10
+  by 0.5 as two `ASEQ` branches from 0) at Ncrit 9 and 12 for every section
+  (the band of D3): DONE, `liftingline/polars/*.csv` with alpha, C_l, C_d,
+  C_dp, C_m, Top_Xtr, Bot_Xtr; the summary table is in
+  `liftingline/README.md`. The XFOIL polar of the y = 1 m section at
   Ncrit 12 (2026-10-25): C_l 0.61 / 0.85 / 0.98 at 0 / 2 / 3 deg to the
   chord line, C_l,max 1.22 at 6 deg, upper-surface transition 0.66 c at low
   alpha (the bubble), lower surface laminar to the trailing edge. So at zero
   fuselage angle the wing already sits at C_l about 0.9: the flap is in its
   thermalling position (D2).
 - Output: `tutorials/sailplane/junction/liftingline/` (polars as csv, the
-  strip tables, one `README.md` with the tables).
+  strip tables, one `README.md` with the tables) -- DONE.
 
 ### 3.2 The lifting line
 
-`liftingline.py SECTION_DIR --cl C_L [--ncrit N] [--csv OUT]`: the planform
+`liftingline.py SECTION_DIR --cl C_L [--ncrit N] [--polars DIR] [--csv OUT]`: the planform
 of section 1 is hard-wired (root chord carried to y = 0, incidence 2.3 deg,
 the real sections), S_ref = the wing area, c_ref = 0.831 m. It sweeps alpha
 (fuselage axis) -3..6, prints alpha for C_L 0.6 .. 1.1, and at the target
 C_L the strip table with c_l(y), alpha_i(y) both ways and alpha_eff(y), the
 root-region means over y = 0.55-1.05 m, the loading drop to the cut and
-alpha_box. Spanwise resolution 8 strips per planform interval (every
-0.06 m at the root). The AVL / VLM cross-check of the inviscid loading
-shape is optional (3.0).
+alpha_box by two routes: the downwash route alpha_flight - alpha_i (inherits
+the lifting line's NeuralFoil alpha at C_L) and the polar route
+alpha_eff(c_l,root) - 2.3 with `--polars` on the XFOIL polars (independent
+of it; THE number). Spanwise resolution 8 strips per planform interval
+(every 0.06 m at the root). The AVL / VLM cross-check of the inviscid
+loading shape is optional (3.0).
 
 ### 3.3 What step 1 settles
 
@@ -214,25 +214,27 @@ nothing. Route B (far field from a vortex lattice imposed on the box faces,
 a new face kind; `asb.VortexLatticeMethod` would provide the field) is held
 in reserve and taken only if step 2 shows the loading gradient matters.
 
-### 3.4 First result (2026-10-26, NeuralFoil section data, Ncrit 9)
+### 3.4 Result (2026-10-26; `liftingline/README.md` has the full tables)
 
-| quantity | C_L 1.0 | C_L 0.8 |
-|---|---|---|
-| alpha_fuselage (chord line) | 2.24 (4.54) deg | 0.08 (2.38) deg |
-| root-region c_l (y 0.55-1.05 m) | 1.04 | 0.85 |
-| alpha_i root region, downwash / polar | 0.45 / 0.66 deg | 0.46 / 0.41 deg |
-| **alpha_box (fuselage axis)** | **1.6-1.8 deg** | **-0.35 deg** |
-| loading drop y 0.6 m -> cut 2.95 m | 4.2 % | 7.5 % |
-| C_L,max of the lifting line (NeuralFoil) | 1.11 at alpha 4 | |
+| quantity | C_L 1.0 (D2) |
+|---|---|
+| alpha_fuselage at C_L 1.0 (lifting line, NeuralFoil sections) | 2.24 deg |
+| root-region c_l (y 0.55-1.05 m); at the cut (2.95 m) | 1.043; 1.022 (**-4.2 %**, < 1 % over the DNS core) |
+| alpha_i root region (downwash at the bound vortex) | 0.45 deg |
+| alpha_eff root region from the XFOIL polars, Ncrit 9 / 12 | 3.76 / 3.81 deg to the chord line |
+| **alpha_box, polar route, Ncrit 9 / 12** | **1.46 / 1.51 deg -> 1.5 deg** |
+| alpha_box, downwash route | 1.79 deg |
+| C_L,max of the wing | 1.11 (C_L 1.2 unreachable) |
 
-Caveats: the NeuralFoil bias (3.0) moves alpha at fixed C_L by about
--0.4 deg and alpha_i by less than 0.1 deg; the strips over the thickened
-root section (y 0.5-0.75) show a 0.3 deg wobble between the two alpha_i
-estimates (the section polar changes there) -- the root-region mean is the
-number to use; C_L 1.2 (D2) is NOT reachable: the wing stalls at C_L 1.1 in
-this model, so the choice is between 0.8 (cruise-ish with this flap) and
-1.0 (thermalling). The loading drop to the cut is 4-8 %, larger than the
-elliptic estimate; at the DNS core (y < 0.9 m) it is under 1 %.
+The polar route is taken (`alpha_eff(c_l,root) - 2.3`): at AR 30 the loading
+is set by the planform, and the XFOIL polar does the rest; the downwash
+route carries NeuralFoil's 0.3-0.4 deg bias on this flapped section. The
+Ncrit band is worth 0.05 deg; the 0.3 deg between the routes is covered by
+the +-0.5 deg runs of step 2, and if the junction turns out sensitive at
+that level the refinement is a lifting line on the XFOIL polars themselves.
+C_L 0.8 would be alpha_box about -0.35 deg (loading drop 7.5 %). First DNS
+reference from the polars: the free-wing bubble transition at about 0.63 c,
+the thickened root section at about 0.40 c, lower surface laminar.
 
 ## 4. Step 2: the calibration box
 
@@ -362,23 +364,17 @@ spent.
   convention (binary hash, ini, settings, every number), the worklog bullet,
   `validation/README.md` row.
 
-## 6. Decisions for the user
+## 6. Decisions -- TAKEN 2026-10-26 (user)
 
-- **D1 fillet.** The STL has none ("ohne Rundung"). Study the sharp corner
-  as built, or obtain / construct a fillet? (The real aircraft has one; the
-  sharp corner makes the corner vortex and its transition a different
-  problem.)
-- **D2 flight C_L.** The flap is set for thermalling (C_l about 0.9 at zero
-  fuselage angle; the lifting line stalls at C_L 1.1). Proposal: C_L = 1.0
-  (the known root-separation regime of sailplanes in thermalling flight,
-  alpha_box about 1.7 deg), with 0.8 (alpha_box about -0.35 deg) as the
+- **D1 fillet: the sharp corner as built, at first.** (A filleted variant
+  is a later study; the fine STL of step 5 is cut from the same CAD.)
+- **D2 flight C_L = 1.0** (thermalling; alpha_box 1.5 deg). 0.8 is the
   comparison if a second production run is ever affordable.
-- **D3 XFOIL Ncrit.** Carry 9 and 12 as the band (proposal); the DNS floor
-  measured in step 3 says which end applies.
-- **D4 XFOIL binary.** The Debian build fails under the AeroSandbox wrapper
-  without an X display (section 3.0): run the polars from a session with a
-  live `DISPLAY` (proposal), or build XFOIL from source. AVL is not needed.
-- **D5 allocation.** 10 000-20 000 A100-h on HoreKa: a project proposal has
-  to be filed before step 7; steps 1-6 fit the exasim share and
-  `hk-project-p0024333` (calibration under 100 A100-h, the physics tests a
-  few hundred).
+- **D3 Ncrit 9 and 12 carried as the band** (worth 0.05 deg in alpha_box).
+- **D4 XFOIL built from source** under `tutorials/sailplane/junction/
+  assets/xfoil/` (`build.sh`); AVL not needed (AeroSandbox's own lifting
+  line), the user's offer of an AVL build stands if a cross-check is ever
+  wanted (it would go to `assets/avl/`).
+- **D5 the hours exist: project `hk-project-p0024333` on HoreKa** -- every
+  job of this study, including the production runs, is submitted with
+  `--account=hk-project-p0024333` (not the exasim share).

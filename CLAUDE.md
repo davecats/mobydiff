@@ -243,8 +243,10 @@ question; strategy proposed 2026-10-24 (worklog), the PLAN is
 AR 30, root chord 0.831 m, flapped section, no horizontal tail, no fillet;
 steps 1-7 with their decisions D1-D5; `tutorials/sailplane/junction/
 stl_sections.py` slices, measures and pitches the STL, `liftingline.py` is
-the AeroSandbox nonlinear lifting line of step 1 -- first result 2026-10-26:
-alpha_box about 1.7 deg at C_L 1.0), no case yet. Dropped
+the AeroSandbox nonlinear lifting line of step 1 -- DONE 2026-10-26:
+alpha_box = 1.5 deg at C_L 1.0 on XFOIL polars, decisions D1-D5 taken: sharp
+corner, C_L 1.0, Ncrit 9/12, XFOIL from source in `assets/xfoil`, account
+`hk-project-p0024333`; next: step 2, the calibration box), no case yet. Dropped
 2026-10-24 by decision: S5b (TVD + second halo), C4 (conducting corners), the
 MacDonald rough-wall forced-convection case.
 

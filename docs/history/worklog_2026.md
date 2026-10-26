@@ -3151,3 +3151,17 @@ immersed boundary. Phased, each phase verified before the next:
   in PACC with graphics off, so `asb.XFoil` fails here without a live DISPLAY
   (handout section 3.0, D4). `stl_sections.py` now collapses the three-point blunt
   TE stub and coincident LE points (XFOIL FPE / AeroSandbox repanel refusals).
+- Sailplane junction step 1 DONE (2026-10-26): decisions D1-D5 taken by the user
+  (sharp corner as built; C_L 1.0; Ncrit 9 and 12; XFOIL from source; the hours are on
+  `hk-project-p0024333`). XFOIL 6.99 built from Drela's source without the Debian FPE
+  traps (`tutorials/sailplane/junction/assets/xfoil/build.sh`, double precision);
+  AeroSandbox's wrapper refuses its polar files (unlabeled CINC column, no Itr
+  columns), so `xfoil_polars.py` drives the binary directly (PPAR 240, two ASEQ
+  branches from 0, Ncrit 9 and 12, all 8 sections -> `liftingline/polars/`). The
+  lifting line with the XFOIL-polar inversion (`liftingline.py --polars`): root c_l
+  1.043 at C_L 1.0, alpha_eff 3.76 / 3.81 deg (Ncrit 9 / 12) -> **alpha_box = 1.5 deg**
+  (polar route; the downwash route on NeuralFoil's alpha gives 1.79: NeuralFoil's
+  0.3-0.4 deg bias on the flapped section); loading at the 3 c cut 4.2 % below the
+  root, < 1 % over the DNS core, so the cut stands. Records in
+  `tutorials/sailplane/junction/liftingline/README.md`; ledger row 1 DONE. Next: step
+  2, the calibration box at alpha_box 1.5 +- 0.5 deg.

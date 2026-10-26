@@ -10,7 +10,13 @@ fuselage-axis alpha for the target C_L values, and at the chosen C_L the
 strip table of the root region: c, c_l, alpha_i (two ways) and alpha_eff.
 alpha_box = alpha_fuselage - alpha_i(root region) is the number the box takes.
 
-    python3 liftingline.py SECTION_DIR [--cl 1.0] [--re 3e5] [--ncrit 9] [--csv OUT]
+    python3 liftingline.py SECTION_DIR [--cl 1.0] [--re 3e5] [--ncrit 9] [--polars DIR] [--csv OUT]
+
+With --polars DIR the alpha_eff inversion uses the XFOIL polars written by
+xfoil_polars.py (DIR/sec_y<Y>_ncrit<N>.csv) instead of NeuralFoil; the
+lifting line itself (the loading, the downwash) stays on NeuralFoil, and
+alpha_box from the polar route = alpha_eff(c_l root) - incidence does not
+depend on the lifting line's own alpha at the target C_L.
 
 SECTION_DIR holds sec_y{0.5,1.0,2.0,3.0,5.0,7.0,9.0,9.6}.dat from
 `stl_sections.py section`.  Needs a venv with `pip install aerosandbox[full]`
@@ -60,6 +66,7 @@ def main():
     ap.add_argument("--cl", type=float, default=1.0, help="target C_L for the strip table")
     ap.add_argument("--re", type=float, default=3e5, help="Reynolds number on the root chord")
     ap.add_argument("--ncrit", type=float, default=9.0, help="NeuralFoil n_crit for the polar inversion")
+    ap.add_argument("--polars", default=None, help="XFOIL polar csv directory for the alpha_eff inversion")
     ap.add_argument("--csv", default=None, help="write the strip table here")
     a = ap.parse_args()
 
@@ -97,9 +104,15 @@ def main():
         if yc[i] < 0:
             continue
         k = min(afs, key=lambda k: abs(float(k) - max(yc[i], 0.5)))
-        pol = np.ravel(afs[k].get_aero_from_neuralfoil(alpha=aa, Re=U * ch[i] / nu, n_crit=a.ncrit,
-                                                        model_size="xlarge")["CL"])
-        aeff = float(np.interp(float(cl[i]), pol, aa))
+        if a.polars:
+            tab = np.loadtxt("%s/sec_y%s_ncrit%g.csv" % (a.polars, k, a.ncrit), delimiter=",")
+            imx = np.argmax(tab[:, 1])
+            al, pol = tab[:imx + 1, 0], tab[:imx + 1, 1]   # the rising branch
+        else:
+            al = aa
+            pol = np.ravel(afs[k].get_aero_from_neuralfoil(alpha=aa, Re=U * ch[i] / nu, n_crit=a.ncrit,
+                                                            model_size="xlarge")["CL"])
+        aeff = float(np.interp(float(cl[i]), pol, al))
         rows.append((yc[i], ch[i], cl[i], ai_w[i], a1 + INCIDENCE - aeff, aeff))
     rows = np.array(rows)
     print("\nC_L %.2f: alpha_fuselage %.2f deg (chord line %.2f); right half, root region and every metre"
@@ -113,8 +126,8 @@ def main():
     print("\nroot region y = 0.55-1.05 m: c_l %.3f, alpha_i %.2f (downwash) / %.2f (polar) deg"
           % (root[:, 2].mean(), root[:, 3].mean(), root[:, 4].mean()))
     print("loading drop from y = 0.6 to the cut at 2.95 m: %.1f %%" % (100 * (1 - cut[2] / root[0, 2])))
-    print("alpha_box (fuselage axis) = %.2f - alpha_i = %.2f .. %.2f deg"
-          % (a1, a1 - root[:, 4].mean(), a1 - root[:, 3].mean()))
+    print("alpha_box (fuselage axis): downwash route %.2f - %.2f = %.2f deg; polar route (%s, Ncrit %g) alpha_eff - %.1f = %.2f deg"
+          % (a1, root[:, 3].mean(), a1 - root[:, 3].mean(), "XFOIL" if a.polars else "NeuralFoil", a.ncrit, INCIDENCE, root[:, 5].mean() - INCIDENCE))
     if a.csv:
         np.savetxt(a.csv, rows, fmt="%.4f", header="y c cl alpha_i_downwash alpha_i_polar alpha_eff (C_L %.2f, alpha_fus %.3f)" % (a.cl, a1))
 
