@@ -1,0 +1,9 @@
+frue_a*.stl
+*.case.h5
+*_[0-9]*.h5
+*.xdmf
+*.prep.log
+*.log
+.*.ini
+*.status
+*.nohup

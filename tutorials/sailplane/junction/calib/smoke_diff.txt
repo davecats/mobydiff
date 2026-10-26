@@ -1,0 +1,9 @@
+comparing smoke16_20.h5 vs smoke32_20.h5
+  un           n=190252032    max_abs=0
+  vn           n=190252032    max_abs=0
+  wn           n=190252032    max_abs=0
+  pn           n=190252032    max_abs=0
+  nut          n=190252032    max_abs=0
+  k            n=190252032    max_abs=0
+  omega        n=190252032    max_abs=0
+OK: worst max_abs = 0 over 7 dataset(s)
