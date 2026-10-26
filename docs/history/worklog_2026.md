@@ -3137,3 +3137,17 @@ immersed boundary. Phased, each phase verified before the next:
   alpha TRANSFERRED from the lifting line rather than fitted in the box (the
   calibration model's decambering error is the size of the correction). Decisions
   D1-D5 for the user (fillet, flight C_L, Ncrit band, AVL host, the allocation).
+- Sailplane junction step 1 re-based on AeroSandbox (2026-10-26, user's suggestion):
+  `aerosandbox[full]` 4.2.10 in a venv gives the sections (`asb.Airfoil`), NeuralFoil
+  polars, the NONLINEAR lifting line with viscous section data, an own VLM and the
+  XFOIL/AVL wrappers -- no AVL build. `tutorials/sailplane/junction/liftingline.py`:
+  the measured planform, the real sections, S 12.75 m2, AR 29.9; at C_L 1.0 the
+  fuselage angle is 2.24 deg, root c_l 1.04, alpha_i 0.45-0.66 deg -> **alpha_box
+  1.6-1.8 deg**; at C_L 0.8 alpha_box -0.35 deg; loading drop root -> cut (2.95 m)
+  4.2 / 7.5 %, under 1 % at the DNS core; the lifting line stalls at C_L 1.1 (C_L 1.2
+  not reachable). NeuralFoil reads this flapped section 4-5 % low in C_l against
+  XFOIL (0.79 vs 0.83 at 2 deg, Ncrit 12): the DOE on NeuralFoil, the final alpha_box
+  on XFOIL polars (owed). The Debian XFOIL build needs an X display and traps an FPE
+  in PACC with graphics off, so `asb.XFoil` fails here without a live DISPLAY
+  (handout section 3.0, D4). `stl_sections.py` now collapses the three-point blunt
+  TE stub and coincident LE points (XFOIL FPE / AeroSandbox repanel refusals).

@@ -110,6 +110,16 @@ def section(tri, y0, out):
     pts = np.array(loop)
     if pts[1, 1] < pts[-1, 1]:  # walk the upper surface first
         pts = np.r_[pts[:1], pts[1:][::-1]]
+    # the tessellated trailing edge is a 2.5e-4 c blunt stub of three points;
+    # keep one TE point: a zero-length panel is an XFOIL floating-point trap
+    # and a non-monotonic x is refused by AeroSandbox's repanel
+    keep = np.r_[True, pts[1:, 0] < 1.0 - 5e-4]
+    pts = pts[keep]
+    # shared STL edges put two points on top of each other at the leading
+    # edge: keep the first of any run with the same x (strictly monotonic x
+    # per surface is what AeroSandbox's repanel wants)
+    keep = np.r_[True, np.abs(np.diff(pts[:, 0])) > 2e-6]
+    pts = pts[keep]
     np.savetxt(out, pts, fmt="%.6f", header="sailplane section y = %.3f m, chord %.4f m" % (y0, c))
     print("wrote %s: %d points, chord %.4f m" % (out, len(pts), c))
 
