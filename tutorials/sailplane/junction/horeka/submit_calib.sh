@@ -64,13 +64,18 @@ cd "$RUN_DIR"
 } | tee -a provenance.txt
 
 latest_of() { ls -1 ${1}_[0-9]*.h5 2>/dev/null | sed 's/.*_\([0-9]*\)\.h5/\1 &/' | sort -n | tail -1 | cut -d' ' -f2; }
-done_already() {  # the run reached t_final: the newest chunk log ended before a full chunk
+done_already() {  # the run reached t_final: the newest chunk ended ("main loop ended")
+    # after FEWER than NSTEPS steps. The generic case prints no time rows, so
+    # the step count comes from the snapshot names: the newest snapshot's
+    # step minus the step the last chunk restarted from (status.txt holds
+    # "exit <rc> <prefix> <restart file>"; a cold start is step 0).
     local log; log=$(ls -t ${PREFIX}_from_*.log 2>/dev/null | head -1); [ -n "$log" ] || return 1
     grep -q "main loop ended" "$log" || return 1
-    local tf; tf=$(grep '^t_final' "$STAGE_INI" | awk '{print $3}')
-    local tl; tl=$(grep -E '^ *[0-9]+ +[0-9.E+-]+ +[0-9.E+-]+ +[0-9.E+-]+ +[0-9.E+-]+ *$' "$log" | tail -1 | awk '{print $2}')
-    [ -n "$tl" ] && awk -v a="$tl" -v b="$tf" 'BEGIN{exit !(a >= b - 1e-6)}' && return 0
-    return 1
+    local from; from=$(grep "^exit 0 $PREFIX " status.txt 2>/dev/null | tail -1 | awk '{print $4}')
+    [ -n "$from" ] || return 1
+    local s0=0; [ "$from" != "cold-start" ] && s0=$(echo "$from" | sed 's/.*_\([0-9]*\)\.h5/\1/')
+    local s1; s1=$(latest_of "$PREFIX" | sed 's/.*_\([0-9]*\)\.h5/\1/'); [ -n "$s1" ] || return 1
+    [ $((s1 - s0)) -lt "$NSTEPS" ] && [ $((s1 - s0)) -ge 0 ]
 }
 if done_already; then echo "$STAGE_INI is done: nothing to do"; exit 0; fi
 if [ "$(grep "^exit [^0].* $PREFIX " status.txt 2>/dev/null | tail -2 | wc -l)" -ge 2 ] \
@@ -83,7 +88,8 @@ submit_successor() {
     local k=0 out
     while [ $k -lt 25 ]; do
         if out=$(sbatch --dependency=afterany:$SLURM_JOB_ID --job-name="$SLURM_JOB_NAME" \
-                     --partition="${SLURM_JOB_PARTITION:-dev_accelerated}" --export=ALL "$SCRIPT" 2>&1); then
+                     --partition="${SLURM_JOB_PARTITION:-dev_accelerated}" \
+                     --time="$(squeue -h -j "$SLURM_JOB_ID" -o %l)" --export=ALL "$SCRIPT" 2>&1); then
             echo "successor of $SLURM_JOB_ID: $out (attempt $((k + 1)))" | tee -a provenance.txt; return 0
         fi
         k=$((k + 1)); sleep 120
