@@ -1,10 +1,13 @@
 # Next session: the sailplane wing-fuselage junction (transition study)
 
-STATUS: plan written 2026-10-25 on head `46b1b38`; step 1 re-based on
-AeroSandbox and DONE 2026-10-26 (`tutorials/sailplane/junction/liftingline/
-README.md`: **alpha_box = 1.5 deg** at C_L 1.0, band 1.45-1.8). Decisions
-D1-D5 TAKEN by the user 2026-10-26 (section 6). Next: step 2, the
-calibration box (section 4).
+STATUS (2026-10-26 evening, head `8aaca29` + this handout): step 1 DONE
+(`tutorials/sailplane/junction/liftingline/README.md`: **alpha_box = 1.5 deg**
+at C_L 1.0), decisions D1-D5 taken (section 6). **The next session starts
+at section 4 (step 2, the calibration box), written as the executable
+procedure: 4.0 the strip-load script first, then 4.1-4.4.** Nothing of
+step 2 exists yet: no ini, no rotated STL, no case file, no script. The
+HoreKa account for every job of this study is `hk-project-p0024333` (D5).
+Five commits from `4d1759e` on are unpushed (push when the user says so).
 
 Read first: CLAUDE.md "State of the solver" (gate rules, hosts, landmines),
 `tutorials/sailplane/README.md` (the present case: file IBM from the CAD STL,
@@ -116,9 +119,9 @@ build and a non-monotonic x is refused by AeroSandbox's `repanel`.
 | step | what | status |
 |---|---|---|
 | 1 | Route A lifting line in AeroSandbox: XFOIL section polars + the nonlinear lifting line of the whole wing -> alpha_i(y), C_l(y), alpha_box (section 3) | **DONE 2026-10-26**: alpha_box 1.5 deg (`liftingline/README.md`) |
-| 2 | The calibration box: coarse truncated model at Re_c 3e5, alpha_box and +-0.5 deg, strip loads, cut at 3 c vs 4 c (section 4) | PENDING |
+| 2 | The calibration box (section 4): 2a `strip_loads.py` validated on the NACA; 2b four case files (alpha 1.0 / 1.5 / 2.0 at the 3 c cut, 1.5 at 4 c); 2c four SST wall-function runs on HoreKa; 2d read-out: C_l(y) vs the lifting line, dC_l/dalpha, the cut, the outlet through the boom | PENDING -- NEXT |
 | 3 | Go / no-go physics tests: projection-residual floor on the SD7003 bubble, TS growth through the IBM (section 5.1) | PENDING |
-| 4 | Solver increments: zonal model-off levels; strip-load post-processing (section 5.2) | PENDING |
+| 4 | Solver increment: zonal model-off levels (section 5.2; the strip-load script moved to 2a) | PENDING |
 | 5 | Production geometry and grid: fine STL (fillet per D1), the DNS core levels, prepare at 3-5 M leaves (section 5.3) | PENDING |
 | 6 | Cross-node exchange performance on an 8-node slice of the real grid (section 5.4) | PENDING |
 | 7 | Production run at Delta+ 4, then the Delta+ 3 core as the resolution check (section 5.5) | PENDING -- needs the allocation (D5) |
@@ -236,48 +239,213 @@ C_L 0.8 would be alpha_box about -0.35 deg (loading drop 7.5 %). First DNS
 reference from the polars: the free-wing bubble transition at about 0.63 c,
 the thickened root section at about 0.40 c, lower surface laminar.
 
-## 4. Step 2: the calibration box
+## 4. Step 2: the calibration box -- the procedure for the next session
 
-A cheap truncated model at the production topology, run three ways. It
-confirms the set-up (body through the outlet, the cut), measures the two
-sensitivities that decide whether 0.1 deg in alpha_box is good enough, and
-provides the initial field of the production run (`interp_restart.py`).
+A cheap truncated model at the production topology (chord units, the STL
+pitched by alpha_box, the 3 c cut, the boom through the outlet), run four
+times with SST + wall functions. It confirms the set-up, measures the two
+sensitivities that decide whether 0.3 deg in alpha_box matters (section
+3.4), provides the initial field of the production run, and is the first
+prepare above 20 000 leaves. Costs: four prepares on the workstation (CPU,
+minutes each), four 1-hour `dev_accelerated` jobs on 4 A100.
 
-- Geometry: the STL rotated by alpha_box (section 1.2), `stl_scale` to
-  chord units. Box in c: x from -4 (3.3 m ahead of the nose; the nose at 0,
-  the wing LE at 3.2 c, the TE at 4.2 c) to the outlet at 6.7 c (TE + 2.5 c,
-  through the boom: half-width 0.18 c there); y from 0 to y_cut = 3.55 c
-  (2.95 m) -- and a second prepare at 4.55 c; z 20 c tall, the wing in the
-  middle. Base grid Delta = c/16 (171 x 57 x 320 = 3.1 M), `refine_body` to
-  c/512 at the wing and forebody (Delta+ about 26 at Cf 0.004: a wall-
-  function RANS / IDDES wall, NOT resolved) -- about 120 M cells, 4 A100 at
-  about 0.4 s/step, 10 c/U in 5 000 steps: under an hour per run.
-- Model: `iddes` (RANS mode at this wall resolution, with the wall
-  functions; transition under IDDES is an open item, so the calibration
-  loading carries the fully-turbulent decambering error, section 4.1).
-  Chebyshev `niter = 12` unless the outlet case needs red-black (the
-  tutorial's note); `cflmax = 1.0`.
-- Runs: alpha_box, alpha_box +- 0.5 deg at y_cut = 3.55 c; alpha_box at
-  4.55 c. Measure the strip loads C_l(y) (section 5.2's script), the root
-  Cp at y = 0.5 and 1.0 m, the junction separation line (the Cf sign on the
-  wall), and the outlet's health with the boom through it (no backflow
-  blow-up: the total-pressure datum).
-- Read-out: dC_l/dalpha at the station (expected about 0.1 per deg);
-  how much the junction Cp and separation line move per 0.5 deg (on a
-  bubble section about 5 % chord per degree is the literature value, so
-  0.1 deg is below the floor of section 5.1); the 3 c vs 4 c difference at
-  the root (expected under 1 %: then 3 c stands).
+Two facts found 2026-10-26 that shape it:
 
-### 4.1 Why alpha is TRANSFERRED, not fitted
+- **There is no runtime force output for this case.** `[case] name =
+  airfoil` (the CV budget, `forces.txt`) requires a PERIODIC span and
+  inlets on every non-outlet face; the sailplane is `name = generic` with
+  a symmetry plane and free-slip faces. Every load of this study comes
+  from the field file by post-processing -> 4.0 first.
+- **Wall functions and the transition model are both REJECTED under
+  `iddes`** (`docs/configuration.md` [rans]); the calibration wall is
+  Delta+ about 27, so the model is `rans` + `sst` + `wall_function`, fully
+  turbulent (no bubble: the decambering error is exactly why alpha is
+  transferred, not fitted, 4.1). This also flags a production-run question
+  for step 5: the LES ring at Delta+ 8-10 puts the first cell centre at
+  y+ 4-5 under IDDES's `resolved` wall treatment -- acceptable for a
+  wall-resolved LES, but it must be stated and checked on the SD7003 case
+  of step 3, not assumed.
 
-The box's C_l at the station could be matched to the target by adjusting
+### 4.0 Step 2a: `tutorials/sailplane/junction/strip_loads.py`
+
+Surface pressure and skin friction on the STL body from a block-table
+field snapshot, integrated per spanwise strip:
+
+    strip_loads.py FIELD.h5 --case CASE.h5 --stl ROTATED.stl --scale S --translate X Y Z
+                   [--strips 0.1] [--chord 1.0] [--out strips.npz] [--cp-station Y ...]
+
+- Geometry: the triangles of the rotated STL (ASCII reader of
+  `stl_sections.py`), transformed exactly as `moby_prepare` does
+  (`v * scale + translate`), centroids, outward normals, areas. The wing
+  is the triangles with x < (x_TE + 0.3 c) and y > the fuselage side, the
+  strips are bins in y of width `--strips` (chords) from the fuselage
+  side to the cut; a "fuselage" bin takes the rest.
+- Cp at each centroid: the solver's pressure `pn` sampled at centroid +
+  1.5 Delta_local along the normal (the first fluid cell outside the
+  penalization band; trilinear from the block holding the point -- the
+  block table and the finest-lattice reassembly tools are in
+  `tools/compare_fields.py` and `validation/prepare/compare_snapshots.py`;
+  the NACA script `tutorials/naca/rans/postProcess/surface_cp_cf.py`
+  samples the same way on an analytic 2D polyline and is the reference
+  for the band logic). C_p = 2 (p - p_inf), p_inf from the inlet plane.
+- Cf sign per centroid from the penalization-band estimator of
+  `surface_cp_cf.py` (the band cells carry the wall gradient; a through-
+  origin fit of the staggered velocity against the tangential distance):
+  only the SIGN along the chordwise tangent is needed here (the
+  separation line), the magnitude is a bonus.
+- Per strip: c_l = sum(-C_p n_z dA)/(c_strip w) with the strip chord and
+  width, c_m about the quarter chord, and the chordwise position where Cf
+  changes sign on the upper surface (separation / reattachment).
+- Cp stations (`--cp-station 0.6 1.0`, metres from the symmetry plane,
+  converted with the scale): the upper and lower surface C_p(x/c) at that
+  y, written as csv.
+- VALIDATION before any sailplane use (the gate of 2a): the NACA nose case
+  (`~/horeka_stage/naca/c11_nose_660000.h5` with
+  `tutorials/naca/rans/assets/geometry/ibm_coeff_c11_nose.h5`; the STL is
+  not there -- the NACA is an analytic section, so the script takes an
+  `--analytic-naca` switch OR the 2D polyline is written as a one-strip
+  STL by a 20-line helper): the single strip's c_l must match the runtime
+  CV lift 0.5205 +- 0.0005 and `surface_cp_cf.py`'s C_p curve
+  (`assets/reval_2026-10-24/cpcf_c11_nose_final_cp.dat`) to the IBM
+  sampling error (a few 1e-3 in C_p, about 1 % in c_l). Record the
+  numbers in the script's docstring.
+
+### 4.1 Step 2b: geometry and case files (workstation, CPU build)
+
+Chord units: c = 0.831 m, `stl_scale = 1.2034e-3` (= 0.001 / 0.831),
+`re = 3.0e5`, U = 1. Four STLs / case files in
+`tutorials/sailplane/junction/calib/` (the STLs and case files are NOT
+committed -- 14 MB each / hundreds of MB; the inis and the rotation
+commands are):
+
+    cd tutorials/sailplane/junction
+    for a in 1.0 1.5 2.0; do
+      python3 stl_sections.py rotate "../FRUE V0 ohneRundung.stl" $a calib/frue_a$a.stl
+    done
+
+(`rotate` pitches about (x, z) = (2.84, 0.47) m in STL metres, nose-up
+positive; the fuselage-axis angle of the run is the rotation.)
+
+The ini `calib/calib_a1.5_y3.5.ini` (the other three differ in `stl_file`
+and `ny`/`ly` only); every number below is in chords:
+
+    [case]
+    name = generic
+    file = calib_a1.5_y3.5.case.h5
+    [grid]
+    nx = 176          ; 11.0 c: inlet 4 c ahead of the nose, outlet 2.8 c behind the root TE
+    ny = 56           ; 3.5 c: symmetry plane to the cut (fuselage side at 0.54 c + 3 c) -- the 4 c variant: ny = 72, ly = 4.5
+    nz = 320          ; 20 c, the wing at mid-height
+    lx = 11.0
+    ly = 3.5
+    lz = 20.0
+    [grid.x] / [grid.y] / [grid.z]  distribution = uniform
+    [blocks]
+    nb = 8                      ; 22 x 7 x 40 = 6160 base leaves of 512 cells
+    refine_body = true
+    refine_body_levels = 5      ; c/512 at the body: Delta+ about 27 (Cf 0.0045)
+    refine_levels = 5
+    refine_dims = xyz
+    keep_buried = false         ; no penalization force is read at runtime; set TRUE if 4.0 ends up using the penalization integral
+    [ibm]
+    enabled = true
+    stl_file = "frue_a1.5.stl"
+    stl_scale = 1.2034e-3
+    stl_translate = 4.0 0.0 9.434   ; nose at x = 4 c; y = 0 is the STL's symmetry plane; the root quarter chord at z = 10 c (0.47 m / 0.831)
+    [flow]
+    re = 3.0e5
+    [turbulence]
+    model = rans
+    [rans]
+    model = sst
+    wall_treatment = wall_function
+    tu = 1.0
+    nut_ratio = 10.0
+    ambient_sustain = false
+    [time]
+    nsteps = 100000000
+    t_final = 15.0              ; 10 c/U transient + 5 c/U of samples (4.3)
+    cflmax = 1.0
+    pecletmax = 0.5
+    dtmax = 2.0e-3
+    [pressure]
+    accel = chebyshev
+    niter = 12                  ; fall back to solver = redblack, sor = 1.5, niter = 6 if the outlet case diverges (the tutorial's note)
+    [output]
+    field_interval = 2000
+    field_prefix = calib_a1.5_y3.5
+    [boundary]                  ; as tutorials/sailplane/input.ini: x_min inflow (1,0,0) Neumann p, x_max_patch = outlet, y and z faces free-slip
+
+Prepare each on the workstation CPU build and keep the prepare logs
+(leaf counts, the `report_partition` line, wall time -- the first data
+point of the prepare scaling for step 5):
+
+    mpirun -n 4 ../../../build_cpu/moby_prepare calib_a1.5_y3.5.ini 2>&1 | tee calib_a1.5_y3.5.prep.log
+
+Expected: about 55 000 leaves (the c/512 band 41 000, c/256 10 000, the
+rest coarser), 28 M cells, under 15 min on 4 ranks (the 18 000-leaf
+tutorial prepare takes 2 min on 2). `moby_prepare --check-config` first.
+Then a 20-step solve on the RTX 3060 on 1 and 2 ranks of the smallest
+case (`max_abs 0` on `un vn wn pn`: rank identity, the smoke test of the
+boom through the outlet).
+
+### 4.2 Step 2c: the runs (HoreKa, 4 A100, one job each)
+
+Ship the four case files and inis to `$W/calib_run/` (`$W` as in the
+NACA re-validation; the worktree `moby-2to1-reval` is at `532ef54`, so
+push the current head there first: `git push horeka:$W/moby-2to1-code
+<sha>:refs/heads/junction` and `git -C $W/moby-2to1-code worktree add
+--detach $W/moby-junction junction`). The job is one chunk of
+`tutorials/naca/rans/horeka/submit_naca_stage.sh` with `NO_CHAIN=1`
+(it builds the worktree if needed, restarts from the latest snapshot,
+writes `provenance.txt`) -- copy it to `horeka/submit_calib.sh` with
+`--account=hk-project-p0024333`, the `airfoil`-specific `done_already`
+test replaced by "the log says main loop ended", and PREFIX = the ini's
+`field_prefix`:
+
+    export CODE_DIR=$W/moby-junction RUN_DIR=$W/calib_run HDF5_ROOT=$HOME/hdf5 \
+           STAGE_INI=calib_a1.5_y3.5.ini PREFIX=calib_a1.5_y3.5 NSTEPS=12000 NO_CHAIN=1
+    cd $RUN_DIR && sbatch --export=ALL --account=hk-project-p0024333 submit_calib.sh
+
+Step time: the 17 M-cell NACA ran 0.062 s/step on 4 A100; 28 M cells
+about 0.11 s/step; dt about 1.3e-3 at cflmax 1 (Delta = c/512) -> 15 c/U
+in about 11 500 steps, 20-25 min: one `dev_accelerated` hour holds a run
+with margin (if not, the chain mode resumes it). Four jobs, submitted in
+sequence (one dev job per user at a time); the user's own HoreKa jobs are
+not touched. Read `report_partition` and the first 100 steps' log before
+leaving a job alone: the divergence residual, the Courant number, no
+`WARNING ... exceeds the RK3 limit`.
+
+### 4.3 Step 2d: the read-out
+
+`strip_loads.py` on the final snapshot and on the 3 earlier ones of the
+last 5 c/U (the mean and the scatter of each strip):
+
+| measurement | from | expected / decides |
+|---|---|---|
+| c_l(y) over y = 0.54..3.5 c at alpha 1.5 | strips 0.1 c | shape vs the lifting line's (`liftingline/strips_cl1.0_ncrit12.csv`): the root-to-cut drop 4.2 % there; absolute c_l lower than 1.04 by the fully-turbulent decambering (expected 0.03-0.06) -- the SHAPE is the check, not the level |
+| dc_l/dalpha at y = 0.6-1.0 m | alpha 1.0 / 1.5 / 2.0 | about 0.1 per deg (2 pi per rad x 0.9); linear over the 1 deg |
+| junction C_p at y = 0.6 and 1.0 m, alpha 1.0 / 1.5 / 2.0 | `--cp-station` | how far the suction peak and the upper-surface pressure recovery move per 0.5 deg: this is the sensitivity the 0.3 deg uncertainty of alpha_box is measured against |
+| separation line (Cf sign) on the upper surface near the root, alpha 1.0 / 1.5 / 2.0 | per strip | with SST wall functions a turbulent separation near the TE / corner at most; its motion per 0.5 deg |
+| 3 c vs 4 c cut at alpha 1.5 | the two grids | root-region c_l within 1 % -> the 3 c cut stands for production; else 4 c |
+| the outlet through the boom | the log, the snapshot | no backflow blow-up (the total-pressure datum), divergence residual as in the NACA (1e-5..1e-4) |
+| prepare at 55 000 leaves | the prepare logs | wall time and memory on 4 workstation ranks: extrapolate to the production 3-5 M leaves (step 5) |
+
+Record in `tutorials/sailplane/junction/calib/README.md` (RE-VALIDATED
+convention: binary hash, ini, every number), the ledger row 2, the worklog
+bullet. The alpha 1.5 / 3 c final snapshot is the initial field of step 7
+(`interp_restart.py`), keep it on HoreKa and in `~/horeka_stage/junction/`.
+
+### 4.4 Why alpha is TRANSFERRED, not fitted
+
+The box's c_l at the station could be matched to the target by adjusting
 alpha, but the calibration model's viscous decambering error (a wall-
-function RANS misses the bubble: Delta C_l 0.03-0.05) is the same size as
-the correction itself (2 pi alpha_i = 0.07) and would be fitted INTO alpha.
-So alpha_box is taken from the lifting line (whose own C_l error is XFOIL's,
-much smaller) and the box runs only verify consistency within the model's
-error and measure sensitivities. The production run's own root C_l against
-the step-1 target is the post-hoc check (section 5.5).
+function SST has no bubble: Delta c_l 0.03-0.06) is the size of the
+correction itself (2 pi alpha_i = 0.05) and would be fitted INTO alpha.
+So alpha_box comes from the lifting line (section 3.4) and the box runs
+only verify consistency within the model's error and measure
+sensitivities. The production run's own root c_l against the step-1
+target is the post-hoc check (section 5.5).
 
 ## 5. Steps 3-7
 
@@ -309,12 +477,8 @@ production grid exists:
   behind the breakdown, but the argument is not the record). Gated: bit-
   exact outside its levels (nofma, the 7/9/11 suites untouched), the IDDES
   case with the key at a level above the grid identical to without it.
-- **Strip loads**: `tutorials/sailplane/junction/strip_loads.py` -- the
-  surface pressure sampled off the wall along the STL normals (the
-  `surface_cp_cf.py` way), integrated per spanwise strip over the triangles
-  of the rotated STL -> C_l(y), C_m(y), plus the wall Cf sign for the
-  separation line. Validated on the NACA (2D: every strip equal to the CV
-  force's lift within the IBM sampling error).
+- **Strip loads**: moved to step 2a (section 4.0) -- the calibration box
+  cannot be read without it.
 
 ### 5.3 Step 5: production geometry and grid
 
@@ -325,6 +489,11 @@ production grid exists:
   Either way a fine STL is produced (the CAD source, not the STL, if it can
   be had) and checked by `stl_sections.py` (sections smooth at the DNS
   resolution).
+- The LES ring under IDDES: `wall_treatment = resolved` is the only one
+  admitted under `iddes`; at Delta+ 8-10 (isotropic cells) the first cell
+  centre sits at y+ 4-5. State it, and check it on the SD7003 case of step
+  3 (the bubble's reattachment and the transition front at Delta+ 8 vs 4
+  under IDDES) before the ring resolution is fixed.
 - Levels: base c/16; `refine_body_box` nested: the DNS core box (x 3.0-4.4 c,
   y 0-0.5 c beyond the fuselage side, z around the upper surface) to
   Delta+ 4 = c/4096 (8 levels), the LES ring to c/2048, the forebody to

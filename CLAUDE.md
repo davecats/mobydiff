@@ -246,7 +246,8 @@ stl_sections.py` slices, measures and pitches the STL, `liftingline.py` is
 the AeroSandbox nonlinear lifting line of step 1 -- DONE 2026-10-26:
 alpha_box = 1.5 deg at C_L 1.0 on XFOIL polars, decisions D1-D5 taken: sharp
 corner, C_L 1.0, Ncrit 9/12, XFOIL from source in `assets/xfoil`, account
-`hk-project-p0024333`; next: step 2, the calibration box), no case yet. Dropped
+`hk-project-p0024333`; NEXT: step 2, the calibration box -- handout section 4
+is the executable procedure, 4.0 the strip-load script first), no case yet. Dropped
 2026-10-24 by decision: S5b (TVD + second halo), C4 (conducting corners), the
 MacDonald rough-wall forced-convection case.
 

@@ -3165,3 +3165,16 @@ immersed boundary. Phased, each phase verified before the next:
   root, < 1 % over the DNS core, so the cut stands. Records in
   `tutorials/sailplane/junction/liftingline/README.md`; ledger row 1 DONE. Next: step
   2, the calibration box at alpha_box 1.5 +- 0.5 deg.
+- Sailplane junction handout prepared for the next session (2026-10-26 evening):
+  section 4 (step 2, the calibration box) rewritten as the executable procedure --
+  2a `strip_loads.py` (pressure sampled 1.5 Delta off the STL triangles, per-strip
+  c_l / c_m / Cf sign, validated on the NACA nose snapshot against the CV lift),
+  2b four case files in chord units (`stl_scale 1.2034e-3`, nose at 4 c, 176 x 56 x 320
+  base, nb 8, refine_body to c/512, alpha 1.0 / 1.5 / 2.0 at the 3 c cut and 1.5 at 4 c,
+  about 55 000 leaves / 28 M cells), 2c one `dev_accelerated` job each on
+  `hk-project-p0024333` (SST + wall functions, 15 c/U, about 25 min), 2d the read-out
+  table. Two facts that shaped it: the `airfoil` case's force budget needs a periodic
+  span and inlets all around (unusable here: every load is post-processed from the
+  field), and wall functions / transition are rejected under `iddes` (the calibration
+  is `rans`; the production LES ring's first cell at y+ 4-5 under the resolved
+  treatment is flagged for the step-3 SD7003 check).
