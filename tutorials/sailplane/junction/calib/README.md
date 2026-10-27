@@ -218,4 +218,109 @@ error rms 7.7e-4, dt 7.6e-4; nut peaks at 178 nu at the wing cut (y =
 chain stays at the handout's niter 12 and the three sensitivity jobs
 were released (5213563/4/5 on `accelerated`). Checked again at every
 chunk end (`farfield_pressure.py` on the newest snapshot, on HoreKa).
-CHAIN_PROGRESS_PLACEHOLDER
+
+Chunk 1 end (04:27): 3000 steps in 2357 s (0.79 s/step), t = 2.12, dt
+6.4e-4 now at the PECLET limit 0.5 (Courant 0.82: the eddy viscosity has
+grown), max |u| 1.57, no cell above 3 U, inlet-chord <p> -1.8 (+1.3 at t
+1.40): the mode settles at an amplitude of 1.5-1.8 at 12 sweeps instead
+of vanishing. A smooth global mode cancels in the lift of a closed body
+but offsets Cp by about 1 at the wing against an inlet reference and by
++-0.3 across a chord. PLAN: run the transient at niter 12 (cheap) and
+switch the ini to niter 48 for the chunks that write the read-out
+snapshots (the last 3 c/U), where the mode decays within 250 steps; the
+same "polish" chunk follows each sensitivity run. The strip-load Cp
+reference becomes the far field at the wing's x (`--pinf-box`), not the
+inlet column. Solver-level consequence for the production run: the
+approximate projection needs a coarse-grid correction for domains of this
+size -- for the user to decide.
+
+Chunk 2 end (05:10): step 6000, t = 3.57, 0.79 s/step, dt 4.2e-4 (Peclet
+0.5, Courant 0.54), max |u| 1.54, inlet-chord <p> +0.31, NO cell with |p|
+above 3, p max 1.44 at the junction leading edge (7.17, 0.55, 9.98): the
+mode keeps decaying at 12 sweeps (5 -> 1.5 -> 0.3 over t 0.2 / 2.1 /
+3.6), so the niter-48 polish may not be needed; decided at the end on
+the inlet-chord <p> of the read-out snapshots (target below 0.05).
+
+Chunk 3 end (06:30): step 9000, t = 4.78, dt 4.0e-4 (Peclet-bound), max
+|u| 1.52, inlet-chord <p> -0.16, p max 1.40 at the junction leading edge;
+the mode decays further (0.31 -> 0.16 over t 3.6 -> 4.8).
+
+### Dry run of the read-out on the step-9000 snapshot (t = 4.78, NOT converged)
+
+`strip_loads.py` on `calib_a1.5_y3.5_9000.h5` with the README call plus
+`--pinf-box 7.0 8.5 1.0 3.0 14.0 16.0` (the far field above the wing):
+608 s, 6.0 GB RSS on the workstation; 1.93 M pieces, 1.24 M inside the
+domain, all on level 5; Cp from 99 % of them, Cf from 84 %. Geometry
+check at the y = 1.0 m station from the pieces: chord-line angle +3.83
+deg to the flow (= 1.5 pitch + 2.3 incidence), positive camber, chord
+0.924 c (0.768 m): the pitched STL is right.
+
+Preliminary flow at t 4.8 (the lift of an impulsive start is at about 85 %
+by the Wagner function here): strip c_l 0.28 at the root rising to 0.41
+at the cut; upper-surface Cf negative from x/c 0.60 to the trailing edge
+(a trailing-edge separation over the rear 40 % of the flapped section,
+f_sep 0.35 on every strip), lower surface attached; station y = 1.0 m
+upper Cp plateau -1.22 at x/c 0.2-0.3, both surfaces at -0.48 at the TE
+and the stagnation at +0.43: a uniform Cp offset of about -0.55 from the
+far-field reference (the global pressure mode is still 0.16 at the inlet
+chord; the lift is insensitive to it, Cp curves are not -- reference
+them to the TE or to the local far field of the final snapshots).
+
+XFOIL on the same section (`xfoil_polars.py` sequence, 240 panels, Re
+2.77e5, alpha 3.8 to the chord line): free transition Ncrit 9 c_l 1.036
+with the laminar bubble 0.53-0.88 (the step-1 basis, lifting line C_L
+1.0); FORCED transition at 0.02/0.02 (the basis for a fully turbulent SST
+box) c_l 0.793, c_d 0.0244, turbulent separation from x/c 0.75 to the
+TE, Cp at the TE +0.02 (`liftingline/polars/sec_y1.0_turb.csv`). The box
+at t 4.8 separates 0.15 c earlier and carries half that lift; judged on
+the converged snapshots, with the fully turbulent polar as the reference
+for the SST + wall-function model and the free-transition one for the
+transfer of alpha (section 4.4).
+
+Chunk 4 end (07:13): step 12000, t = 5.97, dt 4.0e-4, max |u| 1.66,
+inlet-chord <p> +0.08, p max 0.91 at the junction leading edge (the
+physical stagnation level); the mode is below 0.1 from t 6 on.
+
+Chunk 5 end (08:14): step 15000, t = 7.16, dt 4.0e-4, max |u| 1.86 and p
+max 1.25 both at the junction leading edge (7.23, 0.6, 10.04: the
+horseshoe region, growing with time), inlet-chord <p> -0.03.
+
+Chunk 6 end (09:16): step 18000, t = 8.34, max |u| 1.55, p max 1.10 at
+the junction leading edge, inlet-chord <p> +0.015. Chunks start within
+minutes of each other now (one per hour).
+
+Chunk 7 end (09:57): step 21000, t = 9.52, max |u| 1.55, p max 1.16 at
+the junction leading edge, inlet-chord <p> -0.003: the mode is gone.
+Chunk 8 waits behind the user's own dev job (one dev job per user).
+
+Chunk 8 end (10:42): step 24000, t = 10.70, max |u| 1.65, p max 1.02 at
+the junction leading edge, inlet-chord <p> +0.004. Chunk 9 queues behind
+the user's own CHT dev chain (alternating, one dev job per user).
+
+### Read-out at t = 10.7 (step 24000; the lift has converged)
+
+`strip_loads.py` on `calib_a1.5_y3.5_24000.h5` (same call as the dry
+run): area-weighted mean strip c_l 0.381 (0.371 at t 4.8: +3 %), c_dp
+0.021, c_df 0.005, c_m -0.025; c_l(y) 0.31 at the root strip rising to
+0.41 at the cut; upper-surface separation (Cf < 0) from x/c 0.68 at the
+y = 0.6 m station and about 0.65 at y = 1.0 m, f_sep 0.30-0.38 on every
+strip, lower surface attached. The Cp is clean now (stagnation 1.03, TE
+0.00 on both sides, the far-field box at (7-8.5, 1-3, 14-16) is a valid
+reference once the global mode is gone). Station y = 1.0 m, upper Cp at
+x/c 0.05 / 0.15 / 0.3 / 0.5 / 0.7 / 0.9: -0.53 / -0.67 / -0.75 / -0.51 /
+-0.18 / -0.15; lower +0.02 / +0.01 / -0.02 / -0.08 / -0.14 / -0.19. XFOIL
+fully turbulent at the same 3.8 deg: upper -1.24 / -1.03 / -1.06 / -0.80
+/ -0.15 / -0.02, lower +0.51 / +0.31 / +0.21 / +0.12 / +0.04 / -0.06,
+separation from 0.75, c_l 0.79. Both surfaces of the box carry less load
+than XFOIL, as if the section saw about 2 deg less incidence; the
+geometry is right (chord line +3.83 deg), and the free-slip cut mirrors
+the wing (no tip downwash in the box, by design). The prime suspect is
+the near-wall resolution: at c/512 the first cell centre sits at y+
+about 15 (Cf 0.003-0.005), right above the laminar/log switch of the
+two-layer wall function (`WF_YPLUS_LAM` 11.5, Weber Eqs. 4.39-4.42), so
+the wall shear and the separation of the flap's pressure recovery are
+computed in the buffer layer. A finer body band (c/2048, y+ 3-4 with
+`wall_treatment = resolved`, about 4x the cells) would decide it -- a
+cost question for the user. The sensitivities of section 4.3 remain
+measurable within the model.
+CHAIN_PROGRESS_PLACEHOLDER9
