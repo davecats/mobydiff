@@ -107,3 +107,115 @@ distance and the wall-cell classification. All four inis now declare it;
 the case file carries only the BODY distance, so no re-prepare was needed.
 The smoke runs themselves were made before the fix (identical inis on
 both rank counts, so the identity result stands).
+
+### The runs (HoreKa, 2026-10-27, build_gpu of `$W/moby-junction` at a2e0d9b, nvhpc 25.3)
+
+The `accelerated` queue estimated a 21 h wait (priority from age only;
+the account's fair share is 0.40), so the main case runs as a chain of
+1-hour `dev_accelerated` chunks of 3000 steps (job 5213577 + successors,
+`submit_calib.sh` without NO_CHAIN) and the three sensitivity cases wait
+on `accelerated` (5 h each, jobs 5213563/5213564/5213565, `afterany` the
+first chunk, which built the worktree). First chunk, node hkn0403, 4 x
+A100-SXM4-40GB: 22.0-22.1 GB per GPU at 98-99 % utilisation (190 M
+cells: 116 B per cell per GPU), `report_partition` 920 320 cross-rank
+face cells (2 x 2 x 1), "RANS domain face x_min: inlet (declared)", no
+warning in the set-up. Step time 0.75 s (2000 steps in
+25 min, snapshot `calib_a1.5_y3.5_2000.h5` at 01:03).
+
+**The cold start DIVERGED** (found on that snapshot, 01:10): at step
+2000, t = 0.164, dt had collapsed to 2.9e-5 with the Courant number at
+its limit 1.0 (the snapshot's `cfl` attribute is (Courant, Peclet) =
+(1.0, 0.027)); max |u| 25.5, |v| 28.3, |w| 26.3, |p| 2731; 25.7 M cells
+with |u| > 3, 22.3 M of them on level 5, 23 M in y < 0.5 (the fuselage
+side), concentrated at x 4.5-5.5 (forebody), 6.5-8 (the junction) and
+9-10 (the boom), only 20 000 near the wing cut at y > 3. The largest
+values sit on the wing near the cut (7.94, 3.35, 10.07) and behind the
+root trailing edge (8.3, 0.34, 9.89). Chain cancelled (5213577,
+5213655), the three sensitivity jobs HELD. The eddy viscosity in the
+snapshot (max 349 nu on level 5) bounds dt only at 5.4e-4, so the
+collapse of dt is the Courant number of the diverged velocity, not a
+diffusion limit. Diagnostics: 50 steps with a snapshot every 10 on
+istmhydra (`diag_hydra.sh`, `.diag50.ini`), 400 steps with a snapshot
+every 50 on 4 A100 (`../horeka/submit_diag.sh`, `.diag_base.ini`, job
+5213711).
+
+**Root cause (01:40): the run started FROM REST.** `[flow] initial_u`
+defaults to 0 and the ini did not set it, so the inflow at u = 1 was
+switched on against a fluid at rest: an impulsive, GLOBAL transient in
+which every column of the 190 M-cell domain must accelerate at once
+through the pressure. The approximate projection (Chebyshev-Jacobi, 12
+sweeps per step) cannot transmit that: after one step (`proj_cheb12_1.h5`,
+from rest) u = 1 only within a few cells of the inlet, p = 424 at level 0
+next to the inlet, |div| h rms 3.8e-2 on level 0 (the converged NACA
+field has 1e-7 to 1e-8, `snapshot_divergence.py`). The front then reaches
+the fuselage with a divergent field: step 10 max |u| 3.4 just upstream of
+the nose, step 20 max |u| 6.4 and p 2117 AT the nose on level 5, 2 M
+cells above 3 U spread over the whole forebody (x 4-5.25, every y row
+equally -- NOT the symmetry plane, NOT the wing cut), with a 2-cell
+alternation in y. Fix: `initial_u = 1.0` in all four inis (the uniform
+stream; the body's penalization then makes only the local impulsive
+start every immersed-boundary run makes). The from-rest numbers above
+are the record of the failure; the snapshots were deleted.
+Diagnostics relaunched with the uniform field: istmhydra 50 steps every
+10 (`diag_hydra.sh`) and six one-step projection variants (cheb 12/24/
+48/96, rb 6/20, `diag_proj_hydra.sh`), HoreKa 400 steps every 50 (job
+5213722) and the same with dt capped at 1e-4 (5213723).
+
+**Uniform start (02:30): stable, and a second finding.** HoreKa 400 steps
+(job 5213722, 0.85 s/step): no warning, no cell above 3 U after step 150;
+the trailing-edge peak of the starting vortex is 1.9 U at step 10, 3.4 at
+step 100 (25 cells), 2.4 at steps 200 and 400; dt settles at 6.9e-4
+(Courant 1.0); the body-band mass error (level 5 rms) decays 6.6e-3
+(step 1) -> 1.2e-3 (10) -> 6.8e-4 (400), levels 0-3 at 1e-4 or below.
+With dt capped at 1e-4 (job 5213723) the same transient: peak 4.9 U at
+t 0.01, 2.35 at t 0.04. One step from the uniform field, level-5 rms
+mass error vs sweeps: Chebyshev 12 / 24 / 48 = 6.6e-3 / 4.4e-3 / 2.7e-3
+(`proj_*_1.h5`), i.e. only as 1/sqrt(niter) at a cost linear in niter.
+
+But the FAR-FIELD PRESSURE carries a global inlet-to-outlet mode
+(`farfield_pressure.py`, level-0 slab means; the velocity stays at
+1.000 +- 0.005): baseline <p> in the inlet chord +2.9 (step 100), +5.1
+(200), -4.7 (400) against 0 at the outlet; with dt 1e-4: +14.8 (step
+100), +7.2 (200), -10.5 (300), -13.3 (400). The period is about 400
+STEPS in both (0.25 c/U at dt 6.5e-4, 0.045 at dt 1e-4) and the
+amplitude scales as 1/dt: the unconverged smooth component of phi,
+turned into pressure by the 1/dt of the projection -- a numerical mode
+of the 12-sweep Chebyshev-Jacobi projection on a 176 x 56 x 320 base
+grid (the lowest mode is damped by about pi^2/320^2 per Jacobi sweep),
+not a flow. The converged NACA field (thin domain, 660 000 steps at dt
+2.5e-5) has p in [-0.9, 0.5]. A linear-in-x mode cancels in the lift of
+a closed body but puts +-0.9 across a chord into Cp. Variants running:
+red-black sor 1.5 niter 6 (job 5213794), niter 20 (5213795, the
+sailplane tutorial's setting), Chebyshev 48 (5213796), 400 steps each
+with a snapshot every 50; read with `farfield_pressure.py` ON HoreKa
+(h5py 3.14 is available on the login node).
+
+Variant results (03:48; inlet-chord <p> at steps 50, 100, ..., 400; the
+outlet chord stays within +-0.3, <u> within +-0.5 %):
+
+| projection | s/step (4 A100) | inlet-chord <p> over steps 50..400 | verdict |
+|---|---|---|---|
+| Chebyshev 12 (base) | 0.85 | +0.3, +2.9, -4.7, +5.1, (200-400 not copied), -4.7 | sustained, about 5 |
+| red-black sor 1.5, 6 | 0.97 | +3.5, -1.2, +0.2, -1.8, +3.7, -0.9, +2.1, -3.6 | sustained, 2-4 |
+| red-black sor 1.5, 20 | 2.35 | -5.5, -3.6, -4.3, +2.4, +0.5, +4.7, +0.6, +2.6 | sustained, 3-5 |
+| Chebyshev 48 | 2.24 | +12.4, -3.4, -2.3, +2.7, -0.8, -0.9, +0.9, -0.5 | DECAYS to below 1 by step 250 |
+
+The mode flips sign every 50-100 steps; neither red-black setting damps
+it, 48 Chebyshev sweeps do (four times the sweeps of the base at 2.6x the
+step time: the projection is 0.038 s per sweep, the rest of the step
+0.4 s). The main-case chain (job 5213797, Chebyshev 12, started 03:47)
+is left running as the long-time test: its step-2000 snapshot (t about
+1.3) says whether the mode decays with the starting transient at 12
+sweeps; if not, the chain switches to niter 48 at the next chunk (the
+ini is the authority on restart) and a case costs about 13 h instead of
+5 h on 4 A100.
+
+Chain, chunk 1 (Chebyshev 12), step 2000, t = 1.40 (04:18): inlet-chord
+<p> +1.3 (from about 5 during the transient), |p| > 3 in 28 M cells (160 M
+at step 100), max |u| 1.59 on the wing, no cell above 3 U, level-5 mass
+error rms 7.7e-4, dt 7.6e-4; nut peaks at 178 nu at the wing cut (y =
+3.5). The mode DECAYS with the starting transient at 12 sweeps, so the
+chain stays at the handout's niter 12 and the three sensitivity jobs
+were released (5213563/4/5 on `accelerated`). Checked again at every
+chunk end (`farfield_pressure.py` on the newest snapshot, on HoreKa).
+CHAIN_PROGRESS_PLACEHOLDER
