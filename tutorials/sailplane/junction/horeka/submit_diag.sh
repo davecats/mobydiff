@@ -24,5 +24,5 @@ export UCX_MEMTYPE_CACHE=n OMP_NUM_THREADS=1
 cd "$RUN_DIR"
 log="${RUN_INI#.}"; log="${log%.ini}.log"
 echo "job ${SLURM_JOB_ID:-none} $(date '+%F %T') $RUN_INI -> $log, code $(git -C "$CODE_DIR" rev-parse --short HEAD)" | tee -a provenance.txt
-mpirun -n 4 --bind-to core --map-by numa "$CODE_DIR/build_gpu/moby_solve" "$RUN_INI" > "$log" 2>&1
+mpirun -n "${SLURM_NTASKS:-4}" --bind-to core --map-by numa "$CODE_DIR/build_gpu/moby_solve" "$RUN_INI" > "$log" 2>&1
 echo "exit $? $RUN_INI $(date '+%F %T')" | tee -a provenance.txt

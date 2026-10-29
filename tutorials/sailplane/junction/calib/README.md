@@ -393,3 +393,37 @@ on HoreKa and in `~/horeka_stage/junction/`, plus the read-out window
 and the step-20000 restart files on HoreKa; strip tables and pieces in
 `~/horeka_stage/junction/*_strips.csv`, `*_pieces.npz`, `*_cp_y*.csv`.
 
+## Decisions of 2026-10-29 and the c/2048 case
+
+Taken by the user on the read-out above: (1) ONE c/2048 case, alpha 1.5 /
+3.5 c, with the resolved SST wall treatment (first cell centre at y+ 3-4),
+to settle the near-wall question before alpha is transferred; (2)
+red-black SOR (sor 1.5, niter 6) instead of Chebyshev 12 for that case --
+the 400-step diagnostic showed neither damps the start-up pressure mode
+(red-black 2-4, Chebyshev 5, 0.97 vs 0.85 s/step) and the mode decays
+with the transient either way; (3) the three sensitivity continuations
+CANCELLED (jobs 5216676-78; the table keeps the t 9 values); (4) the
+step-2 commits pushed (origin/main at 33fa2b5).
+
+Cost of the c/2048 case, corrected: the time step of the c/512 runs was
+the eddy-viscosity Peclet bound (dt 4e-4 at c/512, proportional to h^2),
+so c/2048 runs near dt 2.5e-5: 600 000 steps from rest. Instead the c/512
+final field is injected onto the fine layout (`interp_restart3d.py`,
+piecewise constant, dt reset, outlet plane dropped) and the case runs 3
+c/U from there: about 120 000 steps; 750 M cells need 3-4 A100-40GB
+nodes (463 B per cell per GPU measured at c/512), at a step time near
+0.8 s on 16 GPUs about 27 h, i.e. 430 GPU-h. The user is asked again
+with the measured leaf count and step time before the long solve.
+
+- `calib_a1.5_y3.5_l7.ini`: the main-case ini with refine_body_levels 7,
+  refine_levels 7, wall_treatment resolved, solver redblack / sor 1.5 /
+  niter 6, dt 2e-5 (first step), dtmax 2e-4, field_interval 10000.
+- Prepare on HoreKa CPU nodes (`../horeka/submit_prepare.sh`: cpuonly, 2
+  nodes x 64 ranks, 480 GB, builds build_cpu in the worktree): job
+  5216894, submitted 11:25 -- the prepare rehearsal of step 5.
+- `interp_restart3d.py`: the 3D injection (the NACA's `interp_restart.py`
+  assumes refine_dims = xz).
+- Identity test of `interp_restart3d.py` (the c/512 final field onto its
+  own layout): all seven fields `max_abs 0`, 538 s, 0.4 GB RSS (written
+  leaf by leaf).
+PREP_L7_PLACEHOLDER

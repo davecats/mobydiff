@@ -89,6 +89,7 @@ submit_successor() {
     while [ $k -lt 25 ]; do
         if out=$(sbatch --dependency=afterany:$SLURM_JOB_ID --job-name="$SLURM_JOB_NAME" \
                      --partition="${SLURM_JOB_PARTITION:-dev_accelerated}" \
+                     --nodes="${SLURM_NNODES:-1}" --ntasks-per-node="${SLURM_NTASKS_PER_NODE:-4}" \
                      --time="$(squeue -h -j "$SLURM_JOB_ID" -o %l)" --export=ALL "$SCRIPT" 2>&1); then
             echo "successor of $SLURM_JOB_ID: $out (attempt $((k + 1)))" | tee -a provenance.txt; return 0
         fi
@@ -109,7 +110,7 @@ restart=${latest:-cold-start}
 log="${PREFIX}_from_$(basename "$restart" .h5).log"
 echo "=== $NSTEPS steps from $restart"
 echo "start $PREFIX $restart $(date '+%F %T')" >> status.txt
-mpirun -n 4 --bind-to core --map-by numa "$CODE_DIR/build_gpu/moby_solve" "$chunk" > "$log" 2>&1
+mpirun -n "${SLURM_NTASKS:-4}" --bind-to core --map-by numa "$CODE_DIR/build_gpu/moby_solve" "$chunk" > "$log" 2>&1
 rc=$?
 grep -q "main loop ended" "$log" || rc=$(( rc == 0 ? 99 : rc ))
 echo "exit $rc $PREFIX $restart $(date '+%F %T')" >> status.txt
