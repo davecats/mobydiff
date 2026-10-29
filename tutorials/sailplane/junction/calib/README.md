@@ -420,7 +420,12 @@ with the measured leaf count and step time before the long solve.
   niter 6, dt 2e-5 (first step), dtmax 2e-4, field_interval 10000.
 - Prepare on HoreKa CPU nodes (`../horeka/submit_prepare.sh`: cpuonly, 2
   nodes x 64 ranks, 480 GB, builds build_cpu in the worktree): job
-  5216894, submitted 11:25 -- the prepare rehearsal of step 5.
+  5216894, submitted 11:25 -- the prepare rehearsal of step 5. It ran 78 s
+  and stopped: the git-ignored STL was not in the run directory (the clone
+  does not carry it). Shipped (`ssh horeka "cat > $W/calib_run/frue_a1.5.stl"
+  < frue_a1.5.stl`; scp does not use the multiplexed connection) and
+  resubmitted as 5217147 at 13:01; `submit_prepare.sh` now checks the ini's
+  STL before the queue wait.
 - `interp_restart3d.py`: the 3D injection (the NACA's `interp_restart.py`
   assumes refine_dims = xz).
 - Identity test of `interp_restart3d.py` (the c/512 final field onto its

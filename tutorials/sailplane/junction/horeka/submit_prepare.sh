@@ -27,6 +27,11 @@ if [ ! -x "$CODE_DIR/build_cpu/moby_prepare" ]; then
     ( cd "$CODE_DIR" && ./compile.sh cpu ) > "$RUN_DIR/build_cpu.log" 2>&1 || { echo "CPU BUILD FAILED"; exit 1; }
 fi
 cd "$RUN_DIR"
+# The STL is git-ignored (14 MB per pitched copy): ship it into RUN_DIR by
+# hand. Stop here rather than let moby_prepare stop on every rank after the
+# queue wait (the first run of the l7 case lost its slot exactly that way).
+stl=$(sed -n 's/^stl_file *= *"\{0,1\}\([^"]*\)"\{0,1\}.*/\1/p' "$PREP_INI" | head -1)
+if [ -n "$stl" ] && [ ! -f "$stl" ]; then echo "no STL $stl in $RUN_DIR (ship it: ssh horeka \"cat > $RUN_DIR/$stl\" < calib/$stl)"; exit 1; fi
 log="${PREP_INI%.ini}.prep.log"
 echo "job ${SLURM_JOB_ID:-none} $(date '+%F %T') prepare $PREP_INI on $SLURM_NNODES nodes x $SLURM_NTASKS_PER_NODE ranks, code $(git -C "$CODE_DIR" rev-parse --short HEAD)" | tee -a provenance.txt
 /usr/bin/time -f "prepare wall %e s, max RSS %M kB (rank 0 of the time wrapper)" \
