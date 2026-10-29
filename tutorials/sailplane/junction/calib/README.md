@@ -365,4 +365,31 @@ HoreKa, 2026-10-29): main case at t 15.00: inlet-chord <p> +0.002, max
 3.9e-4, p max 1.05); all mode-free (|<p>| at the inlet below 0.006) and
 healthy. The outlet through the boom: <u> on the outlet chord 1.0011-
 1.0015 in every case, no backflow event in any log.
-SENSITIVITY_PLACEHOLDER
+
+## The read-out (section 4.3 of the handout), 2026-10-29
+
+Binary: `$W/moby-junction/build_gpu/moby_solve` at a2e0d9b, nvhpc 25.3,
+4 A100-40GB; inis as committed (initial_u 1.0, x_min_patch inlet,
+Chebyshev niter 12, cflmax 1.0, pecletmax 0.5); `strip_loads.py` with the
+README call plus `--pinf-box 7.0 8.5 1.0 3.0 14.0 16.0`. Main case: the
+four snapshots 27000 / 30000 / 33000 / 34925 (t 11.88 / 13.10 / 14.20 /
+15.00). Sensitivity cases: their step-20000 snapshots (t 9.78 / 8.75 /
+9.13 for alpha 1.0 / alpha 2.0 / the 4.5 c cut; continuations to t 15
+are queued, the main case moved by 0.3 % between t 10.7 and 15).
+
+| measurement | result | against the handout's expectation |
+|---|---|---|
+| c_l(y), alpha 1.5, 3.5 c | area-weighted mean 0.381 (0.3806 / 0.3805 / 0.3803 / 0.3816 over the four snapshots: scatter 0.001, the flow is steady); c_l(y) 0.31 at y 0.62 c, 0.34 at 1.0, 0.37 at 1.4, 0.39 at 1.8, 0.40 at 2.4, 0.42 at the cut; c_dp 0.0213, c_df 0.0049, c_m -0.025 | level 0.38 vs 1.04 (expected 0.98-1.01); shape 0.74 of the cut value at the root strip vs 1.08 (lifting line): FAILS both |
+| dc_l/dalpha, root region y 0.6-1.0 m | c_l 0.280 / 0.310 / 0.344 at y 0.62 c and 0.320 / 0.340 / 0.384 at 1.22 c for alpha 1.0 / 1.5 / 2.0; mean over the wing 0.348 / 0.381 / 0.414: 0.066 per deg, linear (0.0328 and 0.0325 per half degree) | about 0.1 per deg expected; two thirds of it, the separated flap |
+| junction Cp, y = 0.6 m, alpha 1.0 / 1.5 / 2.0 | upper plateau Cp(0.3 c) -0.79 / -0.81 / -0.81, Cp(0.5) -0.48 / -0.47 / -0.45; lower Cp(0.3) -0.15 / -0.12 / -0.08; suction peak -1.28 / -1.44 / -1.15 at 0.16 / 0.10 / 0.15 c (the peak values are the noisy leading-edge band) | the upper surface barely answers to 0.5 deg; the load change comes from the lower surface (+0.035 per 0.5 deg) |
+| junction Cp, y = 1.0 m | upper Cp(0.3) -0.73 / -0.75 / -0.76, lower Cp(0.3) -0.05 / -0.03 / +0.01; TE Cp -0.10 / -0.14 / -0.11 (no recovery: separated) | same |
+| separation line (upper Cf < 0 from, x/c, x > 0.3), alpha 1.0 / 1.5 / 2.0 | y = 0.6 m: 0.73 / 0.68 / 0.62; y = 1.0 m: 0.64 / 0.62 / 0.62; f_sep 0.30-0.38 on every strip | "a turbulent separation near the TE at most" expected: it is a 35 % chord separation on the whole span, moving 0.05 c forward per 0.5 deg at the junction |
+| 3 c vs 4 c cut, alpha 1.5 | root-region c_l(y) 0.312 / 0.334 / 0.350 / 0.378 (4.5 c cut, t 9.1) vs 0.311 / 0.333 / 0.350 / 0.377 (3.5 c cut at t 10.7) at y 0.62 / 0.92 / 1.22 / 1.52 c: within 0.3 % | the 3 c cut STANDS for production |
+| the outlet through the boom | every log clean, no backflow event, outlet <u> 1.0011-1.0015, final |div| h rms 7e-4 on the body band (1e-4 on levels 0-3) | the 1e-5..1e-4 of the NACA is not reached on the band with 12 sweeps (see the projection note above) |
+| prepare scaling | see "Prepare scaling" above: 372-420 k leaves, 52-60 min at 48 EPYC ranks, 2.1-2.5 GB per rank | 7x the handout's leaf estimate |
+
+Snapshots kept: `calib_a1.5_y3.5_34925.h5` (the initial field of step 7)
+on HoreKa and in `~/horeka_stage/junction/`, plus the read-out window
+and the step-20000 restart files on HoreKa; strip tables and pieces in
+`~/horeka_stage/junction/*_strips.csv`, `*_pieces.npz`, `*_cp_y*.csv`.
+

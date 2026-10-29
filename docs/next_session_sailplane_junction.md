@@ -119,7 +119,7 @@ build and a non-monotonic x is refused by AeroSandbox's `repanel`.
 | step | what | status |
 |---|---|---|
 | 1 | Route A lifting line in AeroSandbox: XFOIL section polars + the nonlinear lifting line of the whole wing -> alpha_i(y), C_l(y), alpha_box (section 3) | **DONE 2026-10-26**: alpha_box 1.5 deg (`liftingline/README.md`) |
-| 2 | The calibration box (section 4): 2a `strip_loads.py` validated on the NACA; 2b four case files (alpha 1.0 / 1.5 / 2.0 at the 3 c cut, 1.5 at 4 c); 2c four SST wall-function runs on HoreKa; 2d read-out: C_l(y) vs the lifting line, dC_l/dalpha, the cut, the outlet through the boom | PENDING -- NEXT |
+| 2 | Calibration box: four SST + wall-function runs of the truncated model at the production topology (section 4) | DONE 2026-10-29 (`tutorials/sailplane/junction/calib/README.md`): strip_loads.py validated on the NACA (-0.65 %); 372-420 k leaves = 190 M cells (7x the estimate); the cold start from rest diverged (initial_u = 1.0 fixed it); the 12-sweep projection leaves a global pressure mode that decays by t 6; alpha 1.5 / 3 c converged at c_l 0.38 with the flap separated from 0.65 c (lifting line 1.04, XFOIL fully turbulent 0.79, sep 0.75): level AND shape fail; dc_l/dalpha 0.066 per deg; the 3 c cut stands (0.3 %). Alpha cannot be transferred on this box; the near-wall resolution (first cell y+ 15) is the suspect -- decision pending |
 | 3 | Go / no-go physics tests: projection-residual floor on the SD7003 bubble, TS growth through the IBM (section 5.1) | PENDING |
 | 4 | Solver increment: zonal model-off levels (section 5.2; the strip-load script moved to 2a) | PENDING |
 | 5 | Production geometry and grid: fine STL (fillet per D1), the DNS core levels, prepare at 3-5 M leaves (section 5.3) | PENDING |

@@ -3193,3 +3193,42 @@ immersed boundary. Phased, each phase verified before the next:
   `smooth_775000.h5`, the last field of the shipped smooth window. Local (ignored) in
   each directory: `production_stats.h5`, `production_stats_t0.h5`, `restart_field.h5`,
   `grid_nodes.h5`.
+
+- **2026-10-26 -> 10-29, sailplane junction step 2: the calibration box**
+  (`docs/next_session_sailplane_junction.md` section 4, record in
+  `tutorials/sailplane/junction/calib/README.md`, commits 39734c3..55a9396 +
+  this one). 2a `strip_loads.py` (apex-split pieces, trilinear Cp extrapolated to
+  the wall, band-estimator Cf, wind-axes `--alpha`) validated on the NACA nose:
+  c_l 0.5171 vs the control volume 0.5205 (-0.65 %), Cp rms 0.0035, Cf within 1 %.
+  2b four inis (alpha 1.0 / 1.5 / 2.0 at the 3.5 c cut, 1.5 at 4.5 c) at c/512
+  on the body: 372-420 k leaves = 190 M cells, SEVEN times the handout's estimate
+  (the body band is 2-3 blocks thick); the prepare is 3 h on 4 Ryzen ranks and
+  rank-independent with an explicit nb (bit-exact 2 vs 4 ranks), so it ran at 48
+  EPYC ranks on istmhydra in an hour per case. Smoke test 16 vs 32 CPU ranks
+  `max_abs 0`. Found on the way: `x_min_patch = inlet` must be declared (the RANS
+  inferred a wall on the inflow face); the cold start from REST diverged within
+  20 steps at the nose (`[flow] initial_u` defaults to 0: a global impulsive
+  inlet transient the approximate projection cannot follow) -> `initial_u = 1.0`;
+  with the uniform start the 12-sweep Chebyshev projection on the 176 x 56 x 320
+  base grid leaves a global inlet-to-outlet pressure mode (amplitude ~5 rho U^2,
+  ∝ 1/dt, period 50-100 steps; red-black 6/20 sweeps do not damp it, Chebyshev 48
+  does at 2.6x the step time) that decays with the starting transient by t 6 at
+  12 sweeps -- lift unaffected, Cp needs the mode gone; the production domain
+  will need a coarse-grid correction (open). 2c on HoreKa, 4 A100-40GB, 22 GB per
+  GPU, 0.79 s/step: the main case as twelve 1-h dev chunks to t 15 (the
+  `accelerated` queue quoted 21 h), the three sensitivity cases as 5-h
+  `accelerated` jobs reaching t 9 (continuations queued). 2d: alpha 1.5 / 3 c
+  converged at c_l 0.381 (scatter 0.001 over the last 3 c/U), c_dp 0.021, c_df
+  0.005, the flap separated from x/c 0.65 over the whole span, root strip at 0.74
+  of the cut value -- the lifting line gives 1.04 with a flat distribution and
+  XFOIL with forced transition on the same section 0.79 with separation at 0.75:
+  level and shape FAIL the handout's expectation; dc_l/dalpha 0.066 per deg
+  (linear; 0.1 expected), the upper surface barely answers to 0.5 deg, the
+  separation moves 0.05 c per 0.5 deg at the junction; the 3 c cut stands (root
+  region within 0.3 % of the 4 c cut); the boom through the outlet is clean.
+  Verdict: alpha cannot be transferred on this box; the suspect is the near-wall
+  resolution (first cell centre at y+ ~15 at c/512, just above the two-layer wall
+  function's 11.5 switch) -- a c/2048 resolved band (4x the cells) would decide
+  it, the user's call. Tools added: `snapshot_extrema.py`, `snapshot_divergence.py`,
+  `farfield_pressure.py` (run on HoreKa's login node, which has h5py),
+  `slice_plot.py`, `surface_plot.py`, `horeka/submit_diag.sh`.
