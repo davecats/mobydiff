@@ -323,4 +323,46 @@ computed in the buffer layer. A finer body band (c/2048, y+ 3-4 with
 `wall_treatment = resolved`, about 4x the cells) would decide it -- a
 cost question for the user. The sensitivities of section 4.3 remain
 measurable within the model.
-CHAIN_PROGRESS_PLACEHOLDER9
+
+Shape of c_l(y) against the lifting line (section 4.3, first row), both
+normalised by the value at the cut: box 0.74 / 0.80 / 0.84 / 0.90 / 0.93
+/ 0.95 / 0.96 / 0.97 / 0.99 at y = 0.62 / 0.92 / 1.22 / 1.52 / 1.82 /
+2.12 / 2.42 / 2.72 / 3.32 c; lifting line (`strips_cl1.0_ncrit12.csv`,
+no fuselage) 1.08 at 0.61, 1.02 at 0.9-1.2, 1.00 at the cut. The box
+loses a quarter of the lift at the root strip and recovers over 2 c of
+span: the fuselage junction of the wall-function RANS (a separated
+corner), not the lifting line's 5 % root bump. The level (0.38 vs 1.04,
+expected 0.03-0.06 below) and the shape both fail the handout's
+expectation; the finding of step 2 is that the SST + wall-function box
+at c/512 does not reproduce the attached, lightly loaded flap flow the
+lifting line assumes, so alpha cannot be transferred on its basis
+without the near-wall resolution question settled first.
+
+Chunk 9 end (12:23): step 27000, t = 11.88, max |u| 1.57 (now at the
+wing near the cut, 7.1, 3.2), p max 1.17 at the junction leading edge,
+inlet-chord <p> +0.001. Snapshots from 27000 on are in the read-out
+window (the last 5 c/U).
+
+Chain end (2026-10-27 14:17): twelve chunks, the last trimmed to 1925
+steps by t_final; final snapshot `calib_a1.5_y3.5_34925.h5` at t = 15.00,
+kept on HoreKa and in `~/horeka_stage/junction/`. Read-out window
+snapshots: 27000 (t 11.88), 30000 (13.1), 33000 (14.2), 34925 (15.0).
+
+The three sensitivity cases ran their `accelerated` job on 2026-10-27
+from 15:50 / 16:04 / 16:06 (nodes hkn08xx, 0.79 / 0.80 / 0.88 s per step
+for a1.0 / a2.0 / y4.5): the 20 000-step chunk ended at step 20000, t
+about 9, after 4.4-4.9 h, inside the 5 h limit but with no time left for
+a second chunk; the jobs were killed at the limit before writing their
+exit line (the step-20000 snapshots are complete). Resubmitted 2026-10-29
+09:20 as jobs 5216676 / 5216677 / 5216678 (restart from 20000, to
+t_final).
+
+Final-state checks (`farfield_pressure.py`, `snapshot_extrema.py` on
+HoreKa, 2026-10-29): main case at t 15.00: inlet-chord <p> +0.002, max
+|u| 1.55 and p max 1.20 at the junction, no cell above 3 U, <u> outlet
+1.0014. Sensitivity cases at step 20000: a1.0 at t 9.78 (dt 4.3e-4, p max
+1.00), a2.0 at t 8.75 (dt 3.7e-4, p max 1.17), 4.5 c cut at t 9.13 (dt
+3.9e-4, p max 1.05); all mode-free (|<p>| at the inlet below 0.006) and
+healthy. The outlet through the boom: <u> on the outlet chord 1.0011-
+1.0015 in every case, no backflow event in any log.
+SENSITIVITY_PLACEHOLDER
