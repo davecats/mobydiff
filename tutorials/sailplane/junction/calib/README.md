@@ -31,6 +31,16 @@ production run. Everything in CHORD units (root chord 0.831 m = 1), Re_c
 - `../horeka/submit_calib.sh`: one 4-A100 `dev_accelerated` job per case
   (account `hk-project-p0024333`, D5), resumable chunks; the read-out is
   `../strip_loads.py` on the snapshots.
+- `slice_plot.py` (sections, plan and cross-plane cuts of a snapshot) and
+  `surface_plot.py` (upper-surface Cp and Cf,x in plan view from a pieces
+  file): the visualisations of 2026-10-29. `surface_plot.py --smooth SIGMA`
+  (chords; default off) replaces each piece's value by the area-weighted
+  Gaussian mean of the upper-surface pieces within 3 SIGMA, skipping the
+  pieces without a friction fit (NaN): the raw Cf,x is noisy piece to
+  piece at the cell scale (triangles ~0.003 c sampled on h = 0.002 c), and
+  SIGMA = 0.008 c (4 cells) shows the mean separation line at x/c 0.65-0.7
+  over the whole span without moving it; a faint regular pattern at the
+  block scale remains in the band of x/c 0.3-0.5.
 
 ## The strip-load call for these cases
 
