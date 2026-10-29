@@ -441,4 +441,28 @@ with the measured leaf count and step time before the long solve.
 - Identity test of `interp_restart3d.py` (the c/512 final field onto its
   own layout): all seven fields `max_abs 0`, 538 s, 0.4 GB RSS (written
   leaf by leaf).
+- Job 5217147 (2 nodes x 64 ranks, 20:43) was OOM-KILLED after 32 s in
+  the geometry classification: 469 GB used on each node. The per-level
+  touch/buried masks of `refine_body` are dense rasters windowed to the
+  STL bounding box (`classify_refinement_masks`) and replicated on every
+  rank; the level-5 window of the c/512 case is 456 x 224 x 152 = 15.5 M
+  blocks (case-file attrs), the level-7 window is 64x that, about 1e9
+  blocks per mask, 8-10 GB per rank with the level-6 masks. 64 ranks per
+  480 GB node cannot hold it; 32 can. `submit_prepare.sh` now defaults to
+  32 ranks per node on 6 nodes.
+- The leaf count of the full c/2048 band, extrapolated from the c/512
+  case file's per-level counts (level 2 / 3 / 4 / 5: 6.3 k / 18.7 k /
+  56.0 k / 282 k leaves, i.e. x3-5 per level): 6-9 M leaves, 3-4.5 G
+  cells -- production size, not the 1.5 M leaves / 750 M cells assumed
+  on 2026-10-29 (the band is 4 blocks thick at the finest level on 16 c2
+  of wetted surface inside the box). Limiting c/2048 to the wing and the
+  junction with `refine_body_box 6.9 8.3 0.0 3.5 9.7 10.4 7` (the wing
+  spans x 6.99-8.18, z 9.90-10.27 in the pitched STL; the fuselage top
+  between those x is included, the belly, nose and boom stay at c/512)
+  covers about 7 of the 17 c2: 2.7-4 M leaves, 1.4-2 G cells. A root-only
+  box (y to 2 c) would be 0.9-1.3 G cells with a mixed model along the
+  span. DECIDED 2026-10-29 evening (user): the wing-and-junction box.
+  `calib_a1.5_y3.5_l7.ini` now carries `refine_body_levels = 5` and the
+  box at level 7; expected 2.7-4 M leaves, 1.4-2 G cells, 6-8 A100 nodes,
+  800-1050 GPU-h for 3 c/U.
 PREP_L7_PLACEHOLDER

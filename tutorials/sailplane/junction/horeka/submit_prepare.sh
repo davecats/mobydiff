@@ -1,20 +1,31 @@
 #!/bin/bash
 #SBATCH --job-name=moby_prep
-#SBATCH --nodes=2
-#SBATCH --ntasks-per-node=64
+#SBATCH --nodes=6
+#SBATCH --ntasks-per-node=32
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=480000
-#SBATCH --time=04:00:00
+#SBATCH --time=06:00:00
 #SBATCH --partition=cpuonly
 #SBATCH --account=hk-project-p0024333
 #SBATCH --no-requeue
 #
 # moby_prepare of a large case on HoreKa CPU nodes (the c/2048 calibration
-# case, 2026-10-29: about 1.5 M leaves, 450 GB resident -- the ISTM hosts
-# hold 251 GB). Builds build_cpu in the worktree if missing. With an
+# case, 2026-10-29). Builds build_cpu in the worktree if missing. With an
 # explicit [blocks] nb the case file does not depend on the rank count.
+#
+# RANKS PER NODE: the per-level touch/buried masks of refine_body are
+# dense rasters windowed to the STL bounding box and REPLICATED on every
+# rank (classify_refinement_masks; the ranks split the scan and merge by
+# allreduce). At refine level 7 the window is about 1e9 blocks per mask,
+# 8-10 GB per rank for the two masks and the two deepest levels: 64 ranks
+# on a 480 GB node were OOM-killed in the classification (job 5217147,
+# 469 GB used on each node after 32 s). 32 ranks per node fit (about
+# 320 GB); add nodes for speed, never ranks per node. The scan itself is
+# cheap; the time goes to the per-leaf coefficients and wall distance
+# (0.47 rank-s per leaf measured at c/512: 3-4 M leaves = 400-500 rank-h,
+# 2-3 h on 6 x 32 ranks).
 #     export CODE_DIR=$W/moby-junction RUN_DIR=$W/calib_run HDF5_ROOT=$HOME/hdf5 PREP_INI=calib_a1.5_y3.5_l7.ini
-#     cd $RUN_DIR && sbatch --export=ALL submit_prepare.sh
+#     cd $RUN_DIR && sbatch --export=ALL submit_prepare.sh        # --nodes=N --ntasks-per-node=32 to resize
 set -uo pipefail
 CODE_DIR="${CODE_DIR:?}"; RUN_DIR="${RUN_DIR:?}"; PREP_INI="${PREP_INI:?}"
 module purge
