@@ -3232,3 +3232,35 @@ immersed boundary. Phased, each phase verified before the next:
   it, the user's call. Tools added: `snapshot_extrema.py`, `snapshot_divergence.py`,
   `farfield_pressure.py` (run on HoreKa's login node, which has h5py),
   `slice_plot.py`, `surface_plot.py`, `horeka/submit_diag.sh`.
+
+- **2026-10-30, the c/2048 prepare: an OOM in `classify_refinement_masks`,
+  fixed at the root.** The resolved-SST calibration case (`refine_body_levels
+  = 5`, `refine_body_box ... 7` on the wing and the junction) was OOM-killed
+  twice on HoreKa's 480 GB cpuonly nodes, at 64 and at 32 ranks per node
+  (jobs 5217147, 5217871; 26-32 s into "classifying geometry"). The masks of
+  `refine_body` are per-level dense rasters windowed to the STL bounding box,
+  REPLICATED on every rank, and allocated as (maxCount, nLevels): every
+  level column at the LARGEST window. The level-7 window of the case was
+  1e9 blocks -> 2 x 1e9 x 8 x 4 B = 64 GB per rank. Fix (`ibm.f90`): the
+  levels above the global body cap are reached only inside a
+  `refine_body_box` (`build_leaf_table`, `l < body_cap`), so their windows
+  are now the hull of the boxes reaching the level (`box_hull_reaching`; a
+  `refine` box reaching it counts too), bracketed by `mask_window_from_cull`
+  with a pad of 8 blocks (the 2:1-smoothing spill beyond a box's level-l
+  bracket is 1 block at the finest level and 3 + 2 ceil(E/4) one level
+  coarser, at most 7; the touch neighbour lookup one more) and intersected
+  with the cull window; the level AT the cap keeps the cull window (its
+  leaves line the whole band and are tested for burial). The prepare now
+  prints every level's window and the GB per rank before allocating. The
+  c/2048 case: level 7 384 x 896 x 208 = 72 M blocks (the box spans the
+  whole 3.5 c in y), 4.3 GB per rank. Equivalence on the NACA nose case
+  (`.prep_c11_nose.ini`, cap 11, box level 12, 8 ranks): leaf table,
+  coefficients, wall distance and the masks of levels 0-11 bit-identical,
+  the level-12 masks identical on the common window, wall 2427 -> 1162 s.
+  Gates on the nofma build: `validation/prepare/run_gates.sh` 29/29,
+  `run_gates_stl.sh` 15/15 (no gated case has a body box, so they are
+  unchanged by construction). Still open in the same routine: the
+  (maxCount, nLevels) allocation itself (the per-level sizes would be the
+  sum, not nLevels times the maximum) and the replication across ranks.
+  `horeka/submit_prepare.sh` rebuilds when the worktree commit changed and
+  stays at 6 x 32 ranks.

@@ -447,9 +447,32 @@ with the measured leaf count and step time before the long solve.
   STL bounding box (`classify_refinement_masks`) and replicated on every
   rank; the level-5 window of the c/512 case is 456 x 224 x 152 = 15.5 M
   blocks (case-file attrs), the level-7 window is 64x that, about 1e9
-  blocks per mask, 8-10 GB per rank with the level-6 masks. 64 ranks per
-  480 GB node cannot hold it; 32 can. `submit_prepare.sh` now defaults to
-  32 ranks per node on 6 nodes.
+  blocks per mask. First read as 8-10 GB per rank; `submit_prepare.sh`
+  was set to 32 ranks per node on 6 nodes.
+- Job 5217871 (6 nodes x 32 ranks, 01:45 on 2026-10-30) was OOM-killed the
+  same way after 26 s (491 GB on each node, rank 0 at 16.9 GB and growing).
+  The real size: `classify_refinement_masks` allocates `touch` and `buried`
+  as (maxCount, nLevels) with EVERY level column at the largest window --
+  2 x 1e9 x 8 columns x 4 B = 64 GB per rank, not 8-10. FIXED at the root
+  (`src/modules/ibm.f90`, 2026-10-30): the levels above `refine_body_levels`
+  are reached only inside a `refine_body_box`, so their masks are consulted
+  only near the boxes (touch at the blocks a box raises the cap of and their
+  26 neighbours; buried at the leaves those splits and the 2:1 smoothing
+  create, whose spill beyond the box bracket is at most 7 blocks); the
+  window at such a level is now the hull of the boxes reaching it, padded
+  by 8 blocks and intersected with the bounding-box window, and the prepare
+  prints every window and the GB per rank before allocating. For this case
+  (uniform base cell c/16, nb 8, so 256 level-7 blocks per c): level 6
+  200 x 448 x 112 = 10 M, level 7 384 x 896 x 208 = 72 M blocks (the box
+  spans the whole 3.5 c in y), 4.3 GB per rank. Equivalence: the NACA nose
+  case (`tutorials/naca/rans/.prep_c11_nose.ini`, cap 11, box level 12),
+  prepared on 8 ranks with the binary before and after the change: `blocks`,
+  `coef_blocks`, `dwall_blocks` and the masks of levels 0-11 bit-identical
+  (16976 leaves), the level-12 masks identical on the common window (the
+  window 2568 -> 1036 blocks in x; the 2622 touched and 112 020 buried
+  entries outside it were never consulted), wall time 2427 -> 1162 s (the
+  level-12 scan was half the prepare). Gates: `validation/prepare/
+  run_gates.sh` 29/29, `run_gates_stl.sh` 15/15 on the nofma build.
 - The leaf count of the full c/2048 band, extrapolated from the c/512
   case file's per-level counts (level 2 / 3 / 4 / 5: 6.3 k / 18.7 k /
   56.0 k / 282 k leaves, i.e. x3-5 per level): 6-9 M leaves, 3-4.5 G

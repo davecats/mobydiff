@@ -218,7 +218,7 @@ meant to cross a plane must extend beyond it (`validation/body_outlet/`).
 | `refine` | 6 or 7 reals | — | Refinement box `xmin xmax ymin ymax zmin zmax [level]`; the optional 7th value caps the box's level (default `refine_levels`). Repeatable, up to 16 boxes. |
 | `refine_levels` | int | 1 | Number of refinement levels. |
 | `refine_body_levels` | int | -1 (= `refine_levels`) | Cap on body-driven refinement. |
-| `refine_body_box` | 7 reals | — | `xmin xmax ymin ymax zmin zmax level`: raises the body cap to `level` inside the box (only the surface band refines, not the volume). Repeatable, up to 16. |
+| `refine_body_box` | 7 reals | — | `xmin xmax ymin ymax zmin zmax level`: raises the body cap to `level` inside the box (only the surface band refines, not the volume). Repeatable, up to 16. The prepare's geometry masks at the levels above `refine_body_levels` are windowed to the hull of the boxes reaching them (padded by 8 blocks), not to the body's bounding box; it prints every level's window and the resulting GB per rank before allocating (every rank holds every mask). |
 | `refine_dims` | enum | `xyz` | `xyz` (octree) or `xz` (quadtree: blocks refine in x and z only, y keeps one global node line at every level). |
 | `refine_body` | bool | false | Refine blocks touching the immersed body (geometry-driven). |
 | `keep_buried` | bool | false | Keep blocks buried inside the body. Required by conjugate heat transfer with `refine_body` (the solid is an unknown there). |

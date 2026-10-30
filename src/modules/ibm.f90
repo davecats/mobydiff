@@ -890,8 +890,13 @@ contains
         ! bit-identical to the redundant single-rank scan.
         type(comm_type), intent(in), optional :: c
 
-        integer :: level, maskCount, nLevels, maxCount
+        integer :: level, maskCount, nLevels, maxCount, bodyCap
         integer(int64) :: finest
+        integer(C_INT) :: boxLo(3), boxDims(3), boxHi(3)
+        real(C_DOUBLE) :: hullLo(3), hullHi(3)
+        logical :: haveBox, report
+        ! Pad of the box windows (blocks), see their loop below.
+        integer, parameter :: BOX_MASK_PAD = 8
 
         if (.not. dns%ibm_enabled) then
             error stop "[blocks] refine_body needs the IBM enabled"
@@ -921,6 +926,40 @@ contains
                     dns, g, level, cullLo, cullHi, periodic)
             end if
         end do
+        ! Levels ABOVE the global body cap ([blocks] refine_body_levels) are
+        ! reached only inside a refine_body_box (blocks.f90 build_leaf_table,
+        ! `l < body_cap`), so their masks are consulted only near the boxes:
+        ! touch at the blocks whose cap a box raises (and their 26
+        ! neighbours), buried at the leaves those splits and the 2:1
+        ! smoothing create below them; a `refine` box reaching the level
+        ! makes leaves there too. The window at such a level is the hull of
+        ! the boxes reaching it, bracketed on the base lines and padded by
+        ! BOX_MASK_PAD blocks, intersected with the window above: the
+        ! smoothing spill beyond a box's level-l bracket is one block at the
+        ! finest level and 3 + 2 ceil(E(l+1)/4) blocks one level coarser (at
+        ! most 7), the neighbour lookup one more. Everything outside stays
+        ! fluid, as outside the cull window. Without this the cull window of
+        ! a deep level is held on EVERY rank (and every column of the mask
+        ! array has the largest count): the c/2048 sailplane prepare of
+        ! 2026-10-30 held 1e9 entries per column, ~64 GB per rank, and was
+        ! killed on 480 GB nodes at 64 and at 32 ranks per node.
+        bodyCap = int(dns%block_refine_levels)
+        if (dns%block_refine_body_levels >= 0_C_INT) bodyCap = int(dns%block_refine_body_levels)
+        do level = bodyCap + 1, nLevels - 1
+            call box_hull_reaching(dns, level, hullLo, hullHi, haveBox)
+            if (.not. haveBox) then
+                ! no box reaches the level: nothing to classify there; one
+                ! block keeps the raster non-empty for the case writer.
+                maskLo(:, level+1) = 0_C_INT
+                maskDims(:, level+1) = 1_C_INT
+                cycle
+            end if
+            call mask_window_from_cull(boxLo, boxDims, dns, g, level, hullLo, hullHi, &
+                periodic, pad=BOX_MASK_PAD)
+            boxHi = min(maskLo(:, level+1) + maskDims(:, level+1), boxLo + boxDims)
+            maskLo(:, level+1) = max(maskLo(:, level+1), boxLo)
+            maskDims(:, level+1) = max(1_C_INT, boxHi - maskLo(:, level+1))
+        end do
         maxCount = 0
         do level = 0, nLevels - 1
             finest = product(int(maskDims(:, level+1), int64))
@@ -929,6 +968,20 @@ contains
             end if
             maxCount = max(maxCount, int(finest))
         end do
+        ! The windows decide the prepare's memory: say what they are before
+        ! the allocation (rank 0; the prepare's terminal).
+        report = has_terminal
+        if (present(c)) report = report .and. c%world_rank == 0_C_INT
+        if (report) then
+            do level = 0, nLevels - 1
+                print '(A,I0,A,I0,A,I0,A,I0,A,I0,A)', " refine_body masks: level ", level, &
+                    " window ", maskDims(1, level+1), " x ", maskDims(2, level+1), " x ", &
+                    maskDims(3, level+1), " blocks (", product(int(maskDims(:, level+1), int64)), ")"
+            end do
+            print '(A,F8.2,A)', " refine_body masks: ", &
+                2.0d0*real(maxCount, C_DOUBLE)*real(nLevels, C_DOUBLE)*4.0d0/1024.0d0**3, &
+                " GB per rank (two masks, every level column at the largest window)"
+        end if
         allocate(touch(max(1, maxCount), nLevels))
         allocate(buried(size(touch, 1), size(touch, 2)))
         if (present(c)) then
@@ -957,20 +1010,24 @@ contains
     ! block range whose dilated span (block_span: +-2 cells) can intersect
     ! [cullLo, cullHi], bracketed on the BASE node lines (level-l cells
     ! subdivide base cells exactly, so base-cell brackets scale to level
-    ! blocks without building the level line), padded by 4 blocks. If the
-    ! padded range crosses the domain in a PERIODIC dim (a body on/over
-    ! the boundary), the window falls back to the full range there.
-    subroutine mask_window_from_cull(lo, dims, dns, g, level, cullLo, cullHi, periodic)
+    ! blocks without building the level line), padded by `pad` blocks (4
+    ! when absent). If the padded range crosses the domain in a PERIODIC
+    ! dim (a body on/over the boundary), the window falls back to the
+    ! full range there.
+    subroutine mask_window_from_cull(lo, dims, dns, g, level, cullLo, cullHi, periodic, pad)
         integer(C_INT), intent(out) :: lo(3), dims(3)
         type(dns_type), intent(in) :: dns
         type(grid_type), intent(in) :: g
         integer, intent(in) :: level
         real(C_DOUBLE), intent(in) :: cullLo(3), cullHi(3)
         logical(C_BOOL), intent(in) :: periodic(1:3)
+        integer, intent(in), optional :: pad
 
-        integer :: d, nb(3), nT, lscale, ib0, ib1, j0, j1, n0, i
+        integer :: d, nb(3), nT, lscale, ib0, ib1, j0, j1, n0, i, npad
         real(C_DOUBLE) :: x
 
+        npad = 4
+        if (present(pad)) npad = pad
         nb = int(dns%block_nb)
         do d = 1, 3
             lscale = 2**(level*int(dns%block_refine_mask(d)))
@@ -994,8 +1051,8 @@ contains
                     exit
                 end if
             end do
-            j0 = (ib0*lscale)/nb(d) - 4
-            j1 = ((ib1 + 1)*lscale + nb(d) - 1)/nb(d) + 4
+            j0 = (ib0*lscale)/nb(d) - npad
+            j1 = ((ib1 + 1)*lscale + nb(d) - 1)/nb(d) + npad
             if ((j0 < 0 .or. j1 > nT) .and. periodic(d)) then
                 lo(d) = 0_C_INT
                 dims(d) = int(nT, C_INT)
@@ -1007,6 +1064,43 @@ contains
             end if
         end do
     end subroutine mask_window_from_cull
+
+    ! Hull of the refinement boxes whose leaves can reach `level`: the
+    ! refine_body_boxes with that level or above (their cap makes level-l
+    ! leaves, and touch is consulted below their cap) and the `refine`
+    ! boxes targeting it or above (< 0 = the finest). `have` is false when
+    ! no box reaches the level.
+    subroutine box_hull_reaching(dns, level, lo, hi, have)
+        type(dns_type), intent(in) :: dns
+        integer, intent(in) :: level
+        real(C_DOUBLE), intent(out) :: lo(3), hi(3)
+        logical, intent(out) :: have
+
+        integer :: box
+
+        have = .false.
+        lo = huge(1.0d0)
+        hi = -huge(1.0d0)
+        do box = 1, int(dns%block_refine_body_nboxes)
+            if (int(dns%block_refine_body_box_level(box)) < level) cycle
+            call widen(dns%block_refine_body_box(:, box))
+        end do
+        do box = 1, int(dns%block_refine_nboxes)
+            if (dns%block_refine_box_level(box) >= 0_C_INT .and. &
+                int(dns%block_refine_box_level(box)) < level) cycle
+            call widen(dns%block_refine_box(:, box))
+        end do
+
+    contains
+
+        subroutine widen(b)   ! b = x0 x1 y0 y1 z0 z1
+            real(C_DOUBLE), intent(in) :: b(6)
+
+            lo = min(lo, b(1:5:2))
+            hi = max(hi, b(2:6:2))
+            have = .true.
+        end subroutine widen
+    end subroutine box_hull_reaching
 
     ! Base node line value i in direction d.
     function base_node(g, d, i) result(x)
