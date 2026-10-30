@@ -498,4 +498,13 @@ with the measured leaf count and step time before the long solve.
   runs on 6 nodes; `dev_accelerated` refuses 6 nodes ("Node count
   specification invalid"), so it goes to `accelerated` (sbatch's start
   estimate: two days; the estimates have been wrong by days before).
+- Job 5219475 (the injection, cpuonly): FAILED in 0.5 s, `No module named
+  'scipy'` -- `interp_restart3d.py` imports `strip_loads`, which needs
+  scipy, and the compute image's system python3 has h5py but no scipy.
+  The chained test 5219476 would have STARTED without the restart file:
+  `submit_interp.sh` ended in an `echo`, so its batch exit was 0 and
+  `afterok` was satisfied; cancelled by hand. Fixed in `submit_interp.sh`:
+  `module load jupyter/base/2025-05-23` (scipy 1.15.3, h5py 3.13.0,
+  numpy 2.2.6) and `exit $rc`, so a chained job waits for a GOOD restart.
+  Resubmitted as 5219545 (interp) -> 5219546 (the 6-node test, afterok).
 TEST_L7_PLACEHOLDER
