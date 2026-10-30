@@ -14,6 +14,9 @@
 # divergence). No chunking, no restart logic, the ini says everything.
 #     export CODE_DIR=$W/moby-junction RUN_DIR=$W/calib_run RUN_INI=.diag_base.ini
 #     cd $RUN_DIR && sbatch --export=ALL submit_diag.sh
+# A multi-node test (the c/2048 case, 6 nodes): dev_accelerated refuses
+# more than its node limit ("Node count specification invalid"), so
+#     sbatch --partition=accelerated --nodes=6 --ntasks-per-node=4 --time=01:00:00 --export=ALL submit_diag.sh
 set -uo pipefail
 CODE_DIR="${CODE_DIR:?}"; RUN_DIR="${RUN_DIR:?}"; RUN_INI="${RUN_INI:?}"
 module purge
@@ -21,6 +24,14 @@ module load toolkit/nvidia-hpc-sdk/25.3
 export HDF5_ROOT="${HDF5_ROOT:-$HOME/hdf5}"
 export LD_LIBRARY_PATH="$HDF5_ROOT/lib:${LD_LIBRARY_PATH:-}"
 export UCX_MEMTYPE_CACHE=n OMP_NUM_THREADS=1
+# Rebuild when the worktree moved to another commit (the binary records
+# the commit it was built from), as submit_prepare.sh does.
+head=$(git -C "$CODE_DIR" rev-parse HEAD)
+if [ ! -x "$CODE_DIR/build_gpu/moby_solve" ] || [ "$(cat "$CODE_DIR/build_gpu/.commit" 2>/dev/null)" != "$head" ]; then
+    echo "=== building the GPU binaries in $CODE_DIR (${head:0:7})"
+    ( cd "$CODE_DIR" && ./compile.sh gpu ) > "$RUN_DIR/build_gpu.log" 2>&1 || { echo "GPU BUILD FAILED"; exit 1; }
+    echo "$head" > "$CODE_DIR/build_gpu/.commit"
+fi
 cd "$RUN_DIR"
 log="${RUN_INI#.}"; log="${log%.ini}.log"
 echo "job ${SLURM_JOB_ID:-none} $(date '+%F %T') $RUN_INI -> $log, code $(git -C "$CODE_DIR" rev-parse --short HEAD)" | tee -a provenance.txt

@@ -9,8 +9,9 @@
 #SBATCH --account=hk-project-p0024333
 #
 # The c/512 final field injected onto the c/2048 layout (interp_restart3d.py,
-# python3 + h5py of the HoreKa image), 2026-10-29: about 1.5 M leaves, 42 GB
-# written leaf by leaf (538 s for 372 k leaves on the workstation).
+# python3 + h5py of the HoreKa image), 2026-10-29: 2.82 M leaves (the boxed
+# c/2048 case of 2026-10-30), about 80 GB written leaf by leaf (538 s for
+# 372 k leaves on the workstation, so about 1.2 h here).
 #     export RUN_DIR=$W/calib_run SRC=calib_a1.5_y3.5_34925.h5 SRC_CASE=calib_a1.5_y3.5.case.h5 \
 #            TGT_CASE=calib_a1.5_y3.5_l7.case.h5 OUT=calib_a1.5_y3.5_l7_restart.h5
 #     cd $RUN_DIR && sbatch --export=ALL submit_interp.sh

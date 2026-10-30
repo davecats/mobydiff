@@ -488,4 +488,14 @@ with the measured leaf count and step time before the long solve.
   `calib_a1.5_y3.5_l7.ini` now carries `refine_body_levels = 5` and the
   box at level 7; expected 2.7-4 M leaves, 1.4-2 G cells, 6-8 A100 nodes,
   800-1050 GPU-h for 3 c/U.
-PREP_L7_PLACEHOLDER
+- Job 5218200 (6 nodes x 32 ranks, code f98be13, 13:22-15:12 on 2026-10-30):
+  the prepare DONE. 2 824 735 leaves (2 819 055 refined) = 1.446 G cells,
+  inside the 2.7-4 M estimate; wall 6557 s = 1 h 49 min on 192 ranks, i.e.
+  0.45 rank-s per leaf (the c/512 figure 0.47 holds); rank 0 max RSS 8.1 GB,
+  1.2 TB over the six nodes (200 GB per node, 6.3 GB per rank on average);
+  case file 91 GB. GPU memory at 463 B per cell: 670 GB, i.e. 28 GB per
+  GPU on 6 A100 nodes (24 GPUs), 24 GB on 7, 21 GB on 8. The 200-step test
+  runs on 6 nodes; `dev_accelerated` refuses 6 nodes ("Node count
+  specification invalid"), so it goes to `accelerated` (sbatch's start
+  estimate: two days; the estimates have been wrong by days before).
+TEST_L7_PLACEHOLDER
