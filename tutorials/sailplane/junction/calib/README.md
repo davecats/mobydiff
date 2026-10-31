@@ -507,4 +507,22 @@ with the measured leaf count and step time before the long solve.
   `module load jupyter/base/2025-05-23` (scipy 1.15.3, h5py 3.13.0,
   numpy 2.2.6) and `exit $rc`, so a chained job waits for a GOOD restart.
   Resubmitted as 5219545 (interp) -> 5219546 (the 6-node test, afterok).
+- Job 5219545 (the injection, cpuonly, 2026-10-30 16:48-17:24): DONE,
+  2 824 735 leaves in 2128 s (36 min, 0.75 ms per leaf), max RSS 0.6 GB,
+  `calib_a1.5_y3.5_l7_restart.h5` 82 GB, dt reset to 2e-5, no outlet
+  plane (the solver starts that face from the zero-gradient value and
+  says so).
+- Job 5219546 (the 200-step test, 6 nodes x 4 A100, 2026-10-31 05:43):
+  the whole setup went through in under 2 min (layout, 82 GB of restart
+  fields, IBM coefficients, RANS geometry: 30.0 M wall cells, 159.5 M
+  solid cells; partition: 8.04 M face cells across ranks, 4.88 M across
+  nodes, Cartesian 4 x 3 x 2) and then ZERO steps: the injected field
+  carries t = 15.00, the time the c/512 chain ended at, and the ini still
+  said `t_final = 15.0`. Both `calib_a1.5_y3.5_l7.ini` and the test ini
+  now say `t_final = 18.0` (3 c/U from the injected field, the plan of
+  the paragraph above; `t_final` is not part of the case-file echo, so
+  the case file stands). The empty snapshot `test_l7_34925.h5` deleted.
+  `submit_diag.sh` now samples `nvidia-smi` memory of its node every 20 s
+  into `<log>.gpumem` (the solver prints no device memory). Resubmitted
+  as job 5221061.
 TEST_L7_PLACEHOLDER

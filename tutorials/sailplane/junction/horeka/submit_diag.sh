@@ -35,5 +35,11 @@ fi
 cd "$RUN_DIR"
 log="${RUN_INI#.}"; log="${log%.ini}.log"
 echo "job ${SLURM_JOB_ID:-none} $(date '+%F %T') $RUN_INI -> $log, code $(git -C "$CODE_DIR" rev-parse --short HEAD)" | tee -a provenance.txt
+# The solver reports no device memory: sample the GPUs of THIS node every
+# 20 s into <log>.gpumem (the 2026-10-31 c/2048 test wants the GB per GPU).
+nvidia-smi --query-gpu=timestamp,index,memory.used --format=csv,noheader -l 20 > "${log%.log}.gpumem" 2>&1 &
+smi=$!
 mpirun -n "${SLURM_NTASKS:-4}" --bind-to core --map-by numa "$CODE_DIR/build_gpu/moby_solve" "$RUN_INI" > "$log" 2>&1
-echo "exit $? $RUN_INI $(date '+%F %T')" | tee -a provenance.txt
+rc=$?
+kill $smi 2>/dev/null
+echo "exit $rc $RUN_INI $(date '+%F %T')" | tee -a provenance.txt
