@@ -3307,7 +3307,11 @@ immersed boundary. Phased, each phase verified before the next:
   suite's les_ibm legs run from their own directory: give NEW an ABSOLUTE
   path, as the gate rule says); the NACA nose case keeps two
   buried leaves more (16 978 leaves), its old case file must be
-  re-prepared, and so must the c/2048 case file (91 GB, 2 h on 6 nodes).
+  re-prepared, and so must the c/2048 case file (91 GB, 2 h on 6 nodes);
+  and an injection from a snapshot on the OLD table meets target leaves
+  with no source leaf (the kept buried ones): `interp_restart3d.py` fills
+  them from the nearest source leaf with clamped cells (the re-prepared
+  box6 had 470 of its 776 kept leaves so).
   Also from the hunt: `[output] trace_interval` (one line of step, t, next
   dt, Courant and Peclet every N steps -- the run's pulse on a case with no
   other per-step trace), `calib/field_extrema.py` (per-leaf extrema and the

@@ -594,4 +594,13 @@ with the measured leaf count and step time before the long solve.
   at a steady Courant number. CONSEQUENCE: `calib_a1.5_y3.5_l7.case.h5`
   (and the box6 one) must be re-prepared; the old files are refused with
   the leaf named.
+- Re-prepared box6 (5221816, 33 min on 64 ranks): 421 260 leaves, 776
+  buried leaves kept. Its injection then FAILED: 470 target leaves have
+  no source leaf -- the kept buried leaves, which the c/512 source table
+  (old rule) dropped. `interp_restart3d.py` now fills such a leaf from
+  the NEAREST source leaf with the cell indices clamped to it (the
+  neighbour's solid edge values carried in: u ~ 0, the pressure
+  continued); checked on the box3 twin (covered leaves `max_abs 0`, the
+  identity test exact). Resubmitted: interp 5221956 -> dev test 5221957;
+  the chained c/2048 injection (5221820) reads the updated script.
 TEST_L7_PLACEHOLDER
