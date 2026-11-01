@@ -3311,7 +3311,9 @@ immersed boundary. Phased, each phase verified before the next:
   and an injection from a snapshot on the OLD table meets target leaves
   with no source leaf (the kept buried ones): `interp_restart3d.py` fills
   them from the nearest source leaf with clamped cells (the re-prepared
-  box6 had 470 of its 776 kept leaves so).
+  box6 had 470 of its 776 kept leaves so). The re-prepared box6 case then
+  ran its 200 steps on one A100 node at a steady Courant number (0.23 at
+  dt 1.7e-4, 1.02 s/step): the blow-up at scale is gone.
   Also from the hunt: `[output] trace_interval` (one line of step, t, next
   dt, Courant and Peclet every N steps -- the run's pulse on a case with no
   other per-step trace), `calib/field_extrema.py` (per-leaf extrema and the

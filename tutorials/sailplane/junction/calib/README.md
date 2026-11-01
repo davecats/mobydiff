@@ -601,6 +601,10 @@ with the measured leaf count and step time before the long solve.
   the NEAREST source leaf with the cell indices clamped to it (the
   neighbour's solid edge values carried in: u ~ 0, the pressure
   continued); checked on the box3 twin (covered leaves `max_abs 0`, the
-  identity test exact). Resubmitted: interp 5221956 -> dev test 5221957;
-  the chained c/2048 injection (5221820) reads the updated script.
+  identity test exact). Resubmitted: interp 5221956 (470 leaves filled,
+  335 s) -> dev test 5221957: the re-prepared box6 case is STABLE, 200
+  steps from the injected field at a steady Courant number 0.23-0.25
+  (dt 1.675e-4, Peclet-bound at 0.5), 1.02 s/step on 4 A100 of one node
+  (the blown-up run of the morning: dt 1e-121 after the first step). The
+  chained c/2048 injection (5221820) reads the updated script.
 TEST_L7_PLACEHOLDER
