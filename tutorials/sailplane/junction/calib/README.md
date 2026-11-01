@@ -525,4 +525,21 @@ with the measured leaf count and step time before the long solve.
   `submit_diag.sh` now samples `nvidia-smi` memory of its node every 20 s
   into `<log>.gpumem` (the solver prints no device memory). Resubmitted
   as job 5221061.
+- Job 5221061 (the 200-step test, 6 nodes x 4 A100, 2026-11-01
+  10:00-10:12, code f98be13): 200 steps in 583 s = 2.92 s per step (the
+  RANS part 0.43 s), 26.2 GB max per GPU on the batch node (`nvidia-smi`
+  every 20 s; the estimate was 28), setup under 2 min, BUT the field BLEW
+  UP within the first steps: the final snapshot carries t = 15.0000389
+  (two steps of 2e-5, then nothing), dt = 6e-134, Courant 1.0, Peclet
+  2.5e-132 -- the Courant rate sum |u|/h ran away to 1e133 and the
+  limiter chased it to zero. The Peclet limiter includes nu_t
+  (`get_timestep_rates`), so explicit diffusion is NOT the cause. The
+  step time of a blown-up run is not a measurement (the arithmetic on
+  denormals / infinities is not representative). Diagnosis in progress:
+  `field_extrema.py` (per-leaf extrema and the leaves of the largest
+  values, by level and position) on the injected restart and the final
+  snapshot, job 5221598 on cpuonly; the solver got `[output]
+  trace_interval` (commit 3e16906: step, t, next dt, Courant, Peclet
+  every N steps) so the next test shows the step and the growth of the
+  blow-up; both l7 inis carry it (1 for the test, 100 for the solve).
 TEST_L7_PLACEHOLDER
