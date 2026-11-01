@@ -425,6 +425,7 @@ contains
             print *, "block refinement:", n, "leaves,", &
                 count(blk%leafLevel(1:n) > 0_C_INT), "refined"
         end if
+        call check_interface_coverage(blk, periodic)
 
         blk%idStart = zorder_start(blk%nBlocksGlobal, nranks, myrank)
         blk%nBlocks = zorder_count(blk%nBlocksGlobal, nranks, myrank)
@@ -777,7 +778,7 @@ contains
         integer, parameter :: M_NONE = -1, M_SPLIT = -2, M_LEAF = 0
 
         integer :: l, c(3), cn(3), cc(3), gx, gy, gz, i, n, id
-        integer :: ox, oy, oz, sx, sy, sz, lmax, round, box
+        integer :: ox, oy, oz, sx, sy, sz, lmax, round, box, nKept
         integer :: w0(3), w1(3), mLo(3, blk%nLevels), mDims(3, blk%nLevels)
         integer(int64), allocatable :: keys(:)
         integer, allocatable :: order(:), tmpLevel(:), tmpCoord(:,:)
@@ -943,6 +944,7 @@ contains
         end do
 
         ! Collect leaves and number them along the finest-lattice Z-order.
+        nKept = 0
         n = 0
         do l = 0, lmax
             n = n + count(blk%lidOf(int(blk%levelOffset(l))+1:int(blk%levelOffset(l+1))) == int(M_LEAF, C_INT))
@@ -958,10 +960,29 @@ contains
                         c = [gx, gy, gz]
                         if (marker_at(l, c) /= M_LEAF) cycle
                         if (present(buried)) then
-                            ! Removal at every level (Phase 2 generalized).
+                            ! Removal at every level (Phase 2 generalized) --
+                            ! except a buried leaf with a coarser 26-neighbour,
+                            ! which stays (fully penalized) so that no 2:1 face
+                            ! of a surviving coarser leaf is only PARTLY covered
+                            ! by finer leaves. A partly covered face is FACE_FINE
+                            ! (any child counts) but the halo of the missing
+                            ! quarter is written by nothing and keeps the initial
+                            ! condition, while the coarse cell behind it is solid
+                            ! (its projection diagonal ~ mu ~ 1e-21): the first
+                            ! red-black sweep then divides an O(1) divergence by
+                            ! it. Found 2026-11-01 on the c/2048 calibration box,
+                            ! whose refine_body_box cuts the fuselage: the fine
+                            ! band ends on the body there, and the buried fine
+                            ! children next to the coarse touch leaves were
+                            ! dropped. The coarser levels are collected first,
+                            ! so a coarser leaf that is itself dropped as buried
+                            ! is M_NONE here and keeps nothing.
                             if (buried_at(l, c)) then
-                                blk%lidOf(lid_index(blk, l, c)) = int(M_NONE, C_INT)
-                                cycle
+                                if (.not. next_to_coarser_leaf(l, c)) then
+                                    blk%lidOf(lid_index(blk, l, c)) = int(M_NONE, C_INT)
+                                    cycle
+                                end if
+                                nKept = nKept + 1
                             end if
                         end if
                         i = i + 1
@@ -989,11 +1010,41 @@ contains
         if (lmax > 0 .and. myrank == 0_C_INT) then
             print *, "block refinement:", n, "leaves,", &
                 count(blk%leafLevel(1:n) > 0_C_INT), "refined"
+            if (nKept > 0) print *, "block refinement:", nKept, &
+                "buried leaves kept next to coarser leaves (2:1 faces fully covered)"
         end if
 
         deallocate(tmpLevel, tmpCoord, keys, order)
+        call check_interface_coverage(blk, periodic)
 
     contains
+
+        ! Is any 26-neighbour cell of the level-l leaf c covered by a leaf
+        ! one level coarser (2:1 smoothing bounds the jump to one level)?
+        ! Read when that coarser level has already been collected: a
+        ! dropped coarser leaf is M_NONE, not M_LEAF.
+        logical function next_to_coarser_leaf(l, c)
+            integer, intent(in) :: l, c(3)
+
+            integer :: ox, oy, oz, cn(3)
+
+            next_to_coarser_leaf = .false.
+            if (l == 0) return
+            do oz = -1, 1
+            do oy = -1, 1
+            do ox = -1, 1
+                if (ox == 0 .and. oy == 0 .and. oz == 0) cycle
+                cn = c + [ox, oy, oz]
+                if (.not. wrap_lattice(blk, periodic, l, cn)) cycle
+                if (marker_at(l, cn) /= M_NONE) cycle
+                if (marker_at(l-1, parent_coord(blk, cn)) == M_LEAF) then
+                    next_to_coarser_leaf = .true.
+                    return
+                end if
+            end do
+            end do
+            end do
+        end function next_to_coarser_leaf
 
         ! Construction marker of level-l cell c (M_NONE outside the window).
         integer function marker_at(l, c)
@@ -1192,6 +1243,53 @@ contains
 
         n = int(count(blk%lidOf(1:int(blk%levelOffset(1))) >= 0_C_INT), C_INT)
     end function count_level0_leaves
+
+    ! Every 2:1 face, edge and corner of the leaf table is FULLY covered by
+    ! finer leaves: a coarser leaf's neighbour cell that holds any finer
+    ! leaf holds all of the children adjacent across that offset. The
+    ! exchange and the face kinds assume it (a cell with any child is
+    ! FACE_FINE, its entries are the children that exist, the halo of a
+    ! missing child is written by nothing); build_leaf_table keeps the
+    ! buried leaves that complete such faces since 2026-11-01, and a case
+    ! file from before is refused here with the leaf named, instead of
+    ! blowing up in the first projection (the c/2048 calibration box).
+    ! Global, identical on every rank.
+    subroutine check_interface_coverage(blk, periodic)
+        type(block_set_type), intent(in) :: blk
+        logical(C_BOOL), intent(in) :: periodic(1:3)
+
+        integer :: i, l, c(3), cn(3), off(3), ox, oy, oz, d, n, expected
+        integer :: ids(MAX_CANDIDATES), ops(MAX_CANDIDATES), subs(3,MAX_CANDIDATES)
+
+        if (blk%nLevels <= 1_C_INT) return
+        do i = 1, int(blk%nBlocksGlobal)
+            l = int(blk%leafLevel(i))
+            c = int(blk%leafCoord(:, i))
+            do oz = -1, 1
+            do oy = -1, 1
+            do ox = -1, 1
+                off = [ox, oy, oz]
+                if (all(off == 0)) cycle
+                cn = c + off
+                if (.not. wrap_lattice(blk, periodic, l, cn)) cycle
+                call lattice_candidates(blk, l, cn, off, n, ids, ops, subs)
+                if (n == 0) cycle
+                if (ops(1) /= OP_RESTRICT) cycle
+                expected = 1
+                do d = 1, 3
+                    if (blk%refMask(d) == 1_C_INT .and. off(d) == 0) expected = 2*expected
+                end do
+                if (n < expected) then
+                    print *, "leaf table: the level", l, "leaf at", c, "has a finer neighbour cell at offset", off, &
+                        "covered by", n, "of", expected, "children: a buried fine leaf was removed next to a", &
+                        "coarser leaf. Re-run moby_prepare with a build from 2026-11-01 or later."
+                    error stop "leaf table: a 2:1 face is only partly covered by finer leaves"
+                end if
+            end do
+            end do
+            end do
+        end do
+    end subroutine check_interface_coverage
 
     ! Face kind of the level-`level` block at `origin` (level-l cells) in
     ! direction d, side -1/+1: physical wall outside non-periodic

@@ -3264,3 +3264,54 @@ immersed boundary. Phased, each phase verified before the next:
   sum, not nLevels times the maximum) and the replication across ranks.
   `horeka/submit_prepare.sh` rebuilds when the worktree commit changed and
   stays at 6 x 32 ranks.
+- **2026-11-01, the c/2048 injected start blew up in its first step: two
+  defects at a 2:1 interface that CROSSES the body, fixed at the root.**
+  The 6-node test of the c/2048 calibration box (the c/512 final field
+  injected, `refine_body_box` level 7 on the wing and the junction, red-black
+  6) died within two steps (final dt 6e-134; the extrema peak at the box
+  corner on the fuselage behind the root trailing edge, x 8.3, y 0.27, z 9.7,
+  on level-5, 6 and 7 leaves alike). The c/512 band covered the whole body,
+  so no interface crossed it; the box ends ON the fuselage. A 2D twin (the
+  NACA nose box, Chebyshev and red-black) is stable, a one-level-lower
+  reproduction on HoreKa (`calib/.box6.ini`: the c/512 case plus a small
+  level-6 box at that corner) blows up in the FIRST step whatever the
+  turbulence model, projection solver or dt, and a c/64 twin on the
+  workstation (`calib/.box3.ini`, 15 k leaves, 2 s) does the same on CPU and
+  GPU identically -- an arithmetic defect, not memory. Probes in the
+  red-black sweep (the first update already 1e22) named it: a cell whose six
+  faces are all solid on its own coefficient table has the projection
+  diagonal ~ mu ~ 1e-21, and at the interface such a cell sees an O(1)
+  velocity on its shared face -- twice over. (1) The LEAF TABLE: the buried
+  fine children next to a coarse touch leaf were removed, so the coarse
+  face was FACE_FINE (any child counts) with the halo of the missing quarter
+  written by nothing: it kept the initial condition (`initial_u = 1`; the
+  restart read fills the interior only). `build_leaf_table` now keeps a
+  buried leaf that has a coarser 26-neighbour (`next_to_coarser_leaf`,
+  the count printed), and `check_interface_coverage` (prepare and solver)
+  refuses a leaf table with a partly covered 2:1 face, so an old case file
+  stops with the leaf named. (2) The COEFFICIENT of the shared face: a 2:1
+  face carries one velocity, owned by the coarse side, but `set_ibm_coeff`
+  judged it twice -- at the coarse face centre with the coarse stencil and
+  at the fine quarter-face centre with the fine stencil -- and where the
+  surface passes between the two the coarse side is fluid (mu 1) and the
+  fine side solid (mu 1e-21). `set_interface_face_coeff` (prepare, after the
+  three component kernels) rewrites the normal component's coefficient on
+  every FACE_COARSE face of a fine block, ghost-inclusive tangential range,
+  with the coarse owner's value from the coarse level's node lines (the
+  per-point kernel factored out as `point_coef`). With both: the c/64 twin
+  runs 200 steps at a steady Courant number (0.18 -> 0.38 in the start-up
+  transient), no projection update above 1e6 anywhere, CPU == GPU. A band
+  that covers the body has no such face: the P0 gates 29/29 and the STL
+  gates 15/15 are unchanged by construction; the NACA nose case keeps two
+  buried leaves more (16 978 leaves), its old case file must be
+  re-prepared, and so must the c/2048 case file (91 GB, 2 h on 6 nodes).
+  Also from the hunt: `[output] trace_interval` (one line of step, t, next
+  dt, Courant and Peclet every N steps -- the run's pulse on a case with no
+  other per-step trace), `calib/field_extrema.py` (per-leaf extrema and the
+  leaves of the largest values; `blocks(:,1:3)` of a snapshot are cell
+  indices at the leaf's own level), `calib/leaf_dump.py` (a leaf's cells and
+  its touching leaves), `horeka/submit_cpusolve.sh`; `submit_interp.sh` loads
+  the jupyter python (scipy) and returns python's status; `submit_diag.sh`
+  samples the node's GPU memory; both c/2048 inis say `t_final = 18`
+  (the injected field is at t = 15; the first test ran zero steps at 15).
+

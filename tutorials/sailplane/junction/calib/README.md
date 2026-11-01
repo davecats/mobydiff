@@ -576,4 +576,22 @@ with the measured leaf count and step time before the long solve.
   dev_accelerated node 5221611. A blow-up there is the mechanism at a
   quarter of the cost on a fast queue, and the variants (wall_function,
   Chebyshev, fixed dt, the box moved) bisect it.
+- ROOT CAUSE, 2026-11-01 (worklog bullet of the day for the mechanism):
+  the reproduction blew up in its FIRST step whatever the model, solver
+  or dt (`.box6wf`, `.box6cb`, `.box6nt`, `.box6dt`, all on one dev node),
+  and so did a c/64 twin of the box corner on the workstation
+  (`.box3.ini`, 15 k leaves, 2 s, CPU == GPU). Probes in the red-black
+  sweep: a solid cell at the interface (six penalization factors 1e-21,
+  diagonal 1e-17) with an O(1) velocity on its shared face, from two
+  defects -- the buried fine children next to a coarse touch leaf were
+  removed (the face FACE_FINE, the missing quarter's halo keeping the
+  initial condition), and the shared face's coefficient was judged at
+  each level separately (coarse centre fluid, fine quarter solid). Fixed
+  in `build_leaf_table` (buried leaves with a coarser neighbour are kept;
+  the prepare and the solver refuse a partly covered face) and in the
+  prepare's `set_interface_face_coeff` (the fine side takes the coarse
+  owner's coefficient on the shared face). The twin then runs 200 steps
+  at a steady Courant number. CONSEQUENCE: `calib_a1.5_y3.5_l7.case.h5`
+  (and the box6 one) must be re-prepared; the old files are refused with
+  the leaf named.
 TEST_L7_PLACEHOLDER

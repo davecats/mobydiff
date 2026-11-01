@@ -16,8 +16,8 @@ module ibmm
     use, intrinsic :: iso_c_binding
     use, intrinsic :: iso_fortran_env, only: int64
     use :: init, only: dns_type, grid_type, VAR_U, VAR_V, VAR_W, VAR_P, &
-        is_face_staggered, face_at, cell_center_at
-    use :: blocks, only: block_set_type, subdivide_level_line, FACE_PHYS, FACE_CLOSED
+        is_face_staggered, face_at, cell_center_at, face_at, cell_center_at
+    use :: blocks, only: block_set_type, subdivide_level_line, FACE_PHYS, FACE_CLOSED, FACE_COARSE, level_cells
     use :: io, only: to_c_string
     use :: comm, only: comm_type, exchange_scalar_halos, comm_allreduce_max_int
     implicit none
@@ -140,6 +140,7 @@ module ibmm
     integer, allocatable, public :: bodyBlocks(:)
     integer, save, public :: nBodyBlocks = 0
     public :: penal_incr_factor, penal_state_factor, penal_state_minus_incr
+    public :: set_interface_face_coeff
 
 contains
 
@@ -1132,8 +1133,7 @@ contains
 
         integer :: ix, iy, iz, b, nBlocks
         integer :: ilo, ihi, jlo, jhi, klo, khi
-        real(C_DOUBLE) :: xA(1:3), xB(1:3), coeff
-        real(C_DOUBLE) :: re_inv, solid_coef
+        real(C_DOUBLE) :: xA(1:3)
 
         if (var < VAR_U .or. var > ubound(ibm%coef,4)) &
             error stop "invalid IBM coefficient variable"
@@ -1146,10 +1146,7 @@ contains
         khi = ubound(ibm%coef,3)
         nBlocks = size(ibm%coef,5)
 
-        re_inv = 1.0d0/dns%re
-        solid_coef = SOLID*re_inv
-
-        !$omp parallel do collapse(2) private(ix,iy,iz,b,xA,xB,coeff)
+        !$omp parallel do collapse(2) private(ix,iy,iz,b,xA)
         do b = 1, nBlocks
         do iz = klo, khi
             do iy = jlo, jhi
@@ -1160,34 +1157,155 @@ contains
                     xA(1) = blk%x(ix,var,b)
                     xA(2) = blk%y(iy,var,b)
                     xA(3) = blk%z(iz,var,b)
-                    if (inside(xA, ibm, dns)) then
-                        ibm%coef(ix,iy,iz,var,b) = solid_coef
-#ifdef USE_IBM_SECONDORDER
-                    else
-                        coeff = 0.0d0
-
-                        xB(1) = blk%x(ix-1,var,b); xB(2) = xA(2);             xB(3) = xA(3)
-                        call add_neighbor_coeff(coeff, xA, xB, ibm, dns, inside)
-                        xB(1) = blk%x(ix+1,var,b); xB(2) = xA(2);             xB(3) = xA(3)
-                        call add_neighbor_coeff(coeff, xA, xB, ibm, dns, inside)
-                        xB(1) = xA(1);             xB(2) = blk%y(iy-1,var,b); xB(3) = xA(3)
-                        call add_neighbor_coeff(coeff, xA, xB, ibm, dns, inside)
-                        xB(1) = xA(1);             xB(2) = blk%y(iy+1,var,b); xB(3) = xA(3)
-                        call add_neighbor_coeff(coeff, xA, xB, ibm, dns, inside)
-                        xB(1) = xA(1);             xB(2) = xA(2);             xB(3) = blk%z(iz-1,var,b)
-                        call add_neighbor_coeff(coeff, xA, xB, ibm, dns, inside)
-                        xB(1) = xA(1);             xB(2) = xA(2);             xB(3) = blk%z(iz+1,var,b)
-                        call add_neighbor_coeff(coeff, xA, xB, ibm, dns, inside)
-
-                        ibm%coef(ix,iy,iz,var,b) = coeff*re_inv
-#endif
-                    end if
+                    ibm%coef(ix,iy,iz,var,b) = point_coef(xA, &
+                        [blk%x(ix-1,var,b), blk%x(ix+1,var,b)], [blk%y(iy-1,var,b), blk%y(iy+1,var,b)], &
+                        [blk%z(iz-1,var,b), blk%z(iz+1,var,b)], ibm, dns, inside)
                 end do
             end do
         end do
         end do
         !$omp end parallel do
     end subroutine set_ibm_coeff
+
+    ! The coefficient of ONE staggered point xA: SOLID/Re inside the body,
+    ! else (second order) the graded sum over its six stencil neighbours
+    ! (xm/xp, ym/yp, zm/zp = the two neighbours in each direction, on the
+    ! node line of the level the point is evaluated at), times 1/Re.
+    function point_coef(xA, xn, yn, zn, ibm, dns, inside) result(coef)
+        real(C_DOUBLE), intent(in) :: xA(1:3), xn(2), yn(2), zn(2)
+        type(ibm_type), intent(in) :: ibm
+        type(dns_type), intent(in) :: dns
+        procedure(body_indicator_i) :: inside
+        real(C_DOUBLE) :: coef
+
+        real(C_DOUBLE) :: xB(1:3), coeff
+
+        coef = 0.0d0
+        if (.not. dns%ibm_enabled) return
+        if (inside(xA, ibm, dns)) then
+            coef = SOLID/dns%re
+#ifdef USE_IBM_SECONDORDER
+        else
+            coeff = 0.0d0
+            xB = xA; xB(1) = xn(1); call add_neighbor_coeff(coeff, xA, xB, ibm, dns, inside)
+            xB = xA; xB(1) = xn(2); call add_neighbor_coeff(coeff, xA, xB, ibm, dns, inside)
+            xB = xA; xB(2) = yn(1); call add_neighbor_coeff(coeff, xA, xB, ibm, dns, inside)
+            xB = xA; xB(2) = yn(2); call add_neighbor_coeff(coeff, xA, xB, ibm, dns, inside)
+            xB = xA; xB(3) = zn(1); call add_neighbor_coeff(coeff, xA, xB, ibm, dns, inside)
+            xB = xA; xB(3) = zn(2); call add_neighbor_coeff(coeff, xA, xB, ibm, dns, inside)
+            coef = coeff/dns%re
+#endif
+        end if
+    end function point_coef
+
+    ! A 2:1 interface face is ONE face with ONE velocity, owned by the coarse
+    ! side (the fine side reads it through the exchange), so it must carry
+    ! ONE penalization coefficient: the coarse owner's. set_ibm_coeff gives
+    ! every block the coefficient of its own level at every ghost-inclusive
+    ! point, so across an interface that crosses the body the shared face was
+    ! judged twice -- at the coarse face centre with the coarse stencil, and
+    ! at the fine quarter-face centre with the fine stencil -- and the two
+    ! can disagree where the surface passes between the two centres. Then a
+    ! fine cell whose six faces are all solid on its own table (projection
+    ! diagonal ~ mu ~ 1e-21) sees the coarse side's FLUID velocity on the
+    ! shared face: the first red-black sweep divides an O(1) divergence by
+    ! that diagonal (the c/2048 calibration box, whose refine_body_box cuts
+    ! the fuselage, 2026-11-01; measured with probes on the c/64 twin). This
+    ! pass rewrites, on every fine block face of kind FACE_COARSE, the
+    ! normal component's coefficient on the shared face (index 1 on a low
+    ! face, nb+1 on a high face, the ghost-inclusive tangential range) with
+    ! the value the coarse owner computes: the coarse face centre and the coarse
+    ! stencil, from the coarse level's node lines -- bit-identical to the
+    ! owner's own entry. A band that covers the body (refine_body without a
+    ! box ending on it) has no such face and is untouched.
+    subroutine set_interface_face_coeff(dns, blk, ibm, periodic, inside)
+        type(dns_type), intent(in) :: dns
+        type(block_set_type), intent(in) :: blk
+        type(ibm_type), intent(inout) :: ibm
+        logical(C_BOOL), intent(in) :: periodic(1:3)
+        procedure(body_indicator_i) :: inside
+
+        integer :: b, d, side, var, idx, t, j, k, jk(3), l, nb(3)
+        integer :: gFine, gCoarse, nCoarse(3)
+        real(C_DOUBLE) :: xA(3), nbr(2,3)
+        logical(C_BOOL) :: per(3)
+
+        if (.not. dns%ibm_enabled) return
+        nb = int(blk%nb(1:3))
+        per = periodic
+        do b = 1, int(blk%nBlocks)
+            l = int(blk%level(b))
+            if (l == 0) cycle
+            do d = 1, 3
+                nCoarse(d) = int(level_cells(dns, d, int(l - 1, C_INT)))
+            end do
+            do side = -1, 1, 2
+                do d = 1, 3
+                    if (side == -1) then
+                        if (blk%physLow(d,b) /= FACE_COARSE) cycle
+                        idx = 1
+                    else
+                        if (blk%physHigh(d,b) /= FACE_COARSE) cycle
+                        idx = nb(d) + 1
+                    end if
+                    var = d          ! VAR_U, VAR_V, VAR_W are 1, 2, 3
+                    ! The whole ghost-inclusive tangential range: the red-black
+                    ! sweep covers a block's lower halo layer redundantly, and
+                    ! that layer's cells have faces in the tangential halo rows
+                    ! of the interface plane.
+                    do k = 0, nb(mod(d+1,3)+1) + 1
+                    do j = 0, nb(mod(d,3)+1) + 1
+                        jk(d) = idx
+                        jk(mod(d,3)+1) = j
+                        jk(mod(d+1,3)+1) = k
+                        ! The coarse face centre and its coarse stencil.
+                        do t = 1, 3
+                            if (t == d) then
+                                ! the shared face: fine node origin+idx-1, halved
+                                ! in a refined direction
+                                gFine = int(blk%origin(t,b)) + idx - 1
+                                gCoarse = gFine/(1 + int(blk%refMask(t)))
+                                xA(t) = coarse_face(t, gCoarse)
+                                nbr(1,t) = coarse_face(t, gCoarse - 1)
+                                nbr(2,t) = coarse_face(t, gCoarse + 1)
+                            else
+                                ! fine cell jk(t) is global cell origin+jk(t) (1-based);
+                                ! its coarse parent is (g + refMask)/(1 + refMask).
+                                gFine = int(blk%origin(t,b)) + jk(t)
+                                gCoarse = (gFine + int(blk%refMask(t)))/(1 + int(blk%refMask(t)))
+                                xA(t) = coarse_centre(t, gCoarse)
+                                nbr(1,t) = coarse_centre(t, gCoarse - 1)
+                                nbr(2,t) = coarse_centre(t, gCoarse + 1)
+                            end if
+                        end do
+                        ibm%coef(jk(1),jk(2),jk(3),var,b) = point_coef(xA, nbr(:,1), nbr(:,2), nbr(:,3), ibm, dns, inside)
+                    end do
+                    end do
+                end do
+            end do
+        end do
+
+    contains
+
+        ! Node g / centre of cell g of the coarse level's line in direction t.
+        real(C_DOUBLE) function coarse_face(t, g)
+            integer, intent(in) :: t, g
+            select case (t)
+            case (1); coarse_face = face_at(blk%lineX(:, l), nCoarse(1), dns%leng(1), g, per(1))
+            case (2); coarse_face = face_at(blk%lineY(:, l), nCoarse(2), dns%leng(2), g, per(2))
+            case default; coarse_face = face_at(blk%lineZ(:, l), nCoarse(3), dns%leng(3), g, per(3))
+            end select
+        end function coarse_face
+
+        real(C_DOUBLE) function coarse_centre(t, g)
+            integer, intent(in) :: t, g
+            select case (t)
+            case (1); coarse_centre = cell_center_at(blk%lineX(:, l), nCoarse(1), dns%leng(1), g, per(1))
+            case (2); coarse_centre = cell_center_at(blk%lineY(:, l), nCoarse(2), dns%leng(2), g, per(2))
+            case default; coarse_centre = cell_center_at(blk%lineZ(:, l), nCoarse(3), dns%leng(3), g, per(3))
+            end select
+        end function coarse_centre
+    end subroutine set_interface_face_coeff
 
     subroutine add_neighbor_coeff(coeff, xA, xB, ibm, dns, inside)
         real(C_DOUBLE), intent(inout) :: coeff

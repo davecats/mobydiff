@@ -29,7 +29,7 @@ module prepare
     use :: scalar, only: destroy_scalar
     use :: boundary, only: boundary_type
     use :: io, only: write_case_file, read_restart_metadata
-    use :: ibmm, only: ibm_type, init_ibm, set_ibm_geometry, set_ibm_coeff, &
+    use :: ibmm, only: ibm_type, init_ibm, set_ibm_geometry, set_ibm_coeff, set_interface_face_coeff, &
         classify_refinement_masks, classify_active_mask, isInBody, body_indicator_i
     use :: geometry_stl, only: stl_geometry_load, stl_geometry_destroy, &
         stl_is_in_body, stl_fill_dwall, stl_cull_box
@@ -199,6 +199,9 @@ contains
             call set_ibm_coeff(dns, blk, ibm, VAR_V, inside)
             call set_ibm_coeff(dns, blk, ibm, VAR_W, inside)
             if (cell_centred) call set_ibm_coeff(dns, blk, ibm, VAR_P, inside)
+            ! A shared 2:1 face carries its coarse owner's coefficient on the
+            ! fine side too (set_interface_face_coeff: the 2026-11-01 finding).
+            call set_interface_face_coeff(dns, blk, ibm, bc%isPeriodic, inside)
         end if
 
         ! RANS wall distance: the raw body distance (the domain-wall min and
