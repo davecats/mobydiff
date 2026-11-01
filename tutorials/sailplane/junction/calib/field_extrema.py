@@ -20,8 +20,8 @@ blocks = f["blocks"][...].astype(np.int64); n = len(blocks); lev = blocks[:, 3]
 nb = int(f.attrs["block_nb_x"]) if "block_nb_x" in f.attrs else f["un"].shape[1]
 N = np.array([f.attrs[k] for k in ("nx", "ny", "nz")], dtype=float)
 L = np.array([f.attrs[k] for k in ("lx", "ly", "lz")], dtype=float)
-h_leaf = L[None, :] / (N[None, :] / nb * 2.0 ** lev[:, None])     # leaf edge lengths
-origin = blocks[:, :3] * h_leaf
+h_cell = L[None, :] / (N[None, :] * 2.0 ** lev[:, None])          # the cell size of each leaf's level
+origin = blocks[:, :3] * h_cell                                   # blocks(:, 1:3) are cell indices at the leaf's own level
 print(f"{a.file}: {n} leaves, levels {np.bincount(lev)}, attrs step {f.attrs.get('step')} "
       f"t {f.attrs.get('t_current')} dt {f.attrs.get('dt')}")
 fields = [x for x in a.fields.split(",") if x in f]
