@@ -342,6 +342,7 @@ functions.
 |-----|------|---------|---------|
 | `field_interval` | int | 0 | Steps between field dumps (≥ 0; 0 disables). |
 | `field_prefix` | string | (empty) | Output filename prefix (`<prefix>_<step>.h5`). |
+| `trace_interval` | int | 0 | Every N steps one line `trace: step S t T dt_next DT courant C peclet P` on rank 0: the step just taken, the dt chosen for the next one and the Courant / Peclet numbers it gives (the max over cells of dt × Σ_d \|u_d\|/h_d and dt × Σ_d ν_eff/h_d²). The run's pulse on a case without another per-step trace; a blow-up shows as the step where the Courant number runs away. 0 disables. |
 | `profile` | bool | false | Per-phase step timing (`profiling.f90`): three nested profilers (`step_timing` / `proj_timing` / `exch_timing`) printed after the loop, plus a coverage line against the loop timer. Diagnostic only — it reads clocks, so fields are bit-identical either way. |
 | `exchange_barrier` | bool | false | Diagnostic. Puts an `MPI_Barrier` immediately before every `MPI_Waitall`, so the exchange's arrival **skew** lands in its own `skew_barrier` bucket and whatever remains in `mpi_wait` is **transfer**. Aggregate `mpi_wait` contains both and cannot separate them. Needs `profile = true`. Bit-exact (verified: fields identical with it on and off), but it serialises the exchange — never quote a step time from a barrier run. |
 

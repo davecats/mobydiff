@@ -272,6 +272,10 @@ module init
         integer(C_INT) :: nVar = NVAR
         character(len=256) :: field_prefix = ""
         integer :: field_interval = 0
+        ! [output] trace_interval: one line of step, t, dt and the Courant /
+        ! Peclet numbers every N steps (0 = none), the run's pulse on cases
+        ! with no other per-step trace.
+        integer :: trace_interval = 0
         character(len=256) :: restart_file = ""
         ! [output] profile: per-phase step timing (profiling.f90), diagnostic only.
         logical(C_BOOL) :: profile_steps = .false._C_BOOL

@@ -435,6 +435,17 @@ program moby_solve
         else
             call update_timestep_limits(blk, dns, c)
         end if
+        ! The step just taken and the limits of the next one: a blow-up on a
+        ! case without a per-step trace (the c/2048 calibration box, whose
+        ! injected start died inside 200 steps with nothing in the log but
+        ! the final dt) shows up as the step where the Courant rate runs
+        ! away -- max sum_d |u_d|/h_d = courant / dt.
+        if (dns%trace_interval > 0 .and. c%has_terminal) then
+            if (mod(int(dns%step_current), dns%trace_interval) == 0) &
+                print '(a,i0,a,es14.7,a,es10.3,a,f7.4,a,f7.4)', " trace: step ", dns%step_current, &
+                    " t ", dns%t_current, " dt_next ", dns%dt, " courant ", dns%cfl(CFL_COURANT), &
+                    " peclet ", dns%cfl(CFL_PECLET)
+        end if
 
         if (dns%field_interval > 0) then
             call maybe_write_field(blk, dns, g, int(dns%step_current), c, bc, ps%nIter, ps%omega, &
