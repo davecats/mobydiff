@@ -3301,8 +3301,11 @@ immersed boundary. Phased, each phase verified before the next:
   per-point kernel factored out as `point_coef`). With both: the c/64 twin
   runs 200 steps at a steady Courant number (0.18 -> 0.38 in the start-up
   transient), no projection update above 1e6 anywhere, CPU == GPU. A band
-  that covers the body has no such face: the P0 gates 29/29 and the STL
-  gates 15/15 are unchanged by construction; the NACA nose case keeps two
+  that covers the body has no such face: the P0 gates 29/29, the STL
+  gates 15/15 and the 9-case bit-exact suite (nofma, `max_abs 0` on every
+  case against `~/pass2_ref_binaries`) are unchanged by construction (the
+  suite's les_ibm legs run from their own directory: give NEW an ABSOLUTE
+  path, as the gate rule says); the NACA nose case keeps two
   buried leaves more (16 978 leaves), its old case file must be
   re-prepared, and so must the c/2048 case file (91 GB, 2 h on 6 nodes).
   Also from the hunt: `[output] trace_interval` (one line of step, t, next
