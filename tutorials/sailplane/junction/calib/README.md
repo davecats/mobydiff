@@ -542,4 +542,38 @@ with the measured leaf count and step time before the long solve.
   trace_interval` (commit 3e16906: step, t, next dt, Courant, Peclet
   every N steps) so the next test shows the step and the growth of the
   blow-up; both l7 inis carry it (1 for the test, 100 for the solve).
+- The extrema (job 5221598, `field_extrema.py`, 2026-11-01): the injected
+  restart is clean (max |u| 1.55 at the wing root at the fuselage side,
+  like the c/512 field; omega max 2073, nut max 1.7e-3, no non-finite
+  value). The final snapshot peaks (|u| 1e130, |p| 1e259, omega 1e130)
+  on LEVEL-6, level-7 and level-5 leaves at (x 8.29, y 0.27, z 9.69) and
+  k (1e65) at (8.30, 0, 10.14) on the symmetry plane: the CORNER and the
+  x face of `refine_body_box = 6.9 8.3 0.0 3.5 9.7 10.4 7`, where the
+  box cuts the FUSELAGE behind the root trailing edge (x 8.18). The
+  c/2048 band ends ON the body there: a 7 -> 6 -> 5 staircase of 2:1
+  interfaces crossing the immersed surface, the level-6 leaves a
+  one-block ring between them. The c/512 band covered the whole body and
+  held no such interface. (`blocks(:, 1:3)` of a snapshot are cell
+  indices at the leaf's OWN level.)
+- NOT the red-black solver at an interface on the body, 2026-11-01: the
+  NACA production case `c11_aoa5_nose.ini` is exactly that configuration
+  in 2D (the level-12 band on the nose only, the box face cutting the
+  airfoil at 5 % chord, Chebyshev 18, 660 000 steps). Restarted from
+  `c11_nose_660000.h5` for 600 steps on the workstation GPU with the new
+  `trace_interval`: Chebyshev 18 and red-black 6 / sor 1.5 both hold a
+  steady Courant number 0.730 (RTX 3060: 0.73 and 0.66 s per step).
+- Differences left between the two: 3D (`refine_dims = xyz`), the
+  two-level staircase at the box corner, `wall_treatment = resolved` on
+  k / omega injected from a wall-function run (the resolved omega at a
+  c/512 wall cell is 16x the c/2048 one across the interface), the dt
+  jump 2e-5 -> 2e-4 after the first step, the injected start itself.
+  REPRODUCTION one level lower (`.box6.ini`, 2026-11-01): the c/512
+  case with a small level-6 box `7.9 8.3 0.0 1.0 9.7 10.4 6` -- the same
+  corner cutting the fuselage at the junction trailing edge, everything
+  else as the c/2048 ini (resolved, red-black 6, dt 2e-5 / dtmax 2e-4,
+  trace every step) -- injected from the c/512 final field: prepare
+  5221609 (2 cpuonly nodes) -> injection 5221610 -> 200 steps on one
+  dev_accelerated node 5221611. A blow-up there is the mechanism at a
+  quarter of the cost on a fast queue, and the variants (wall_function,
+  Chebyshev, fixed dt, the box moved) bisect it.
 TEST_L7_PLACEHOLDER
