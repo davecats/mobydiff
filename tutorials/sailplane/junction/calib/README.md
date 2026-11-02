@@ -634,3 +634,9 @@ with the measured leaf count and step time before the long solve.
              STAGE_INI=calib_a1.5_y3.5_l7.ini PREFIX=calib_a1.5_y3.5_l7 NSTEPS=27000
       sbatch --partition=accelerated --nodes=6 --ntasks-per-node=4 --time=24:00:00 --export=ALL submit_calib.sh
   (the successor keeps the partition, the node count and the time limit).
+- SUBMITTED 2026-11-02 09:52 (the user's go, with the three 24-h chunks):
+  job 5222653, chunk 1 of 3, from the linked injected field. Health of
+  the test's final snapshot (`field_extrema.py`, job 5222632): every
+  field finite; max |u| 1.44 at the wing-root leading edge (1.55 in the
+  injected field), p within -0.83..0.67, k up to 0.12 (0.057 injected:
+  the resolved wall), omega up to 6.2e3 at the wall, nut 1.7e-3.

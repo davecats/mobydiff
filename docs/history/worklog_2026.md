@@ -3275,7 +3275,10 @@ immersed boundary. Phased, each phase verified before the next:
   therefore 80 000 steps, 64 h on 6 nodes, 1 550 GPU-h (the estimate of
   2026-10-29 assumed 1 s/step: the same load per GPU on ONE node runs at
   1.02 s/step, the multi-node exchange is the difference -- a performance
-  item for later); it waits for the user's decision, as agreed.
+  item for later). Submitted on the user's decision 2026-11-02 09:52 as
+  three chained 24-h chunks of 27 000 steps (job 5222653 the first); the
+  test's final snapshot is healthy (max |u| 1.44, p within 0.83, all
+  finite).
 - **2026-11-01, the c/2048 injected start blew up in its first step: two
   defects at a 2:1 interface that CROSSES the body, fixed at the root.**
   The 6-node test of the c/2048 calibration box (the c/512 final field
