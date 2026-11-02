@@ -607,4 +607,30 @@ with the measured leaf count and step time before the long solve.
   (dt 1.675e-4, Peclet-bound at 0.5), 1.02 s/step on 4 A100 of one node
   (the blown-up run of the morning: dt 1e-121 after the first step). The
   chained c/2048 injection (5221820) reads the updated script.
-TEST_L7_PLACEHOLDER
+- RE-PREPARED AND TESTED, 2026-11-01/02 (code 34d2f7f). Prepare 5221819
+  (6 nodes x 32 ranks, 1 h 56 min, rank-0 RSS 8.1 GB, masks 4.27 GB per
+  rank): 2 826 905 leaves (2 821 225 refined; 2 170 buried leaves KEPT
+  next to coarser leaves), 7 levels, case file 91 GB. Injection 5221820
+  (36 min): 790 target leaves without a source leaf, filled from the
+  nearest one. Test 5221821 (`.test_l7.ini`, 6 nodes x 4 A100-40GB,
+  partition 4 x 3 x 2, 8.0 M face cells across ranks, 4.9 M across
+  nodes): STABLE -- 200 steps at Courant 0.17-0.29, dt 3.76e-5
+  (Peclet-bound at 0.5), 2.91 s/step (the turbulence model 0.43 s of
+  it), 26.0-26.2 GB per GPU.
+  COST of the long solve: 3 c/U = 80 000 steps = 64 h on 6 nodes =
+  1 550 GPU-h. The 2026-10-29 estimate (800-1050 GPU-h) assumed 1 s/step;
+  box6 (420 k leaves, the same 105-118 k leaves per GPU, ONE node) runs at
+  1.02 s/step, so the multi-node exchange costs the difference -- a
+  performance item for later, not for this run. Chunks: the accelerated
+  partition allows 48 h; NSTEPS 27 000 per 24-h chunk (22 h of steps plus
+  the 82 GB restart read and three snapshot writes) = 3 chunks;
+  field_interval 10000 writes eight 82 GB snapshots (660 GB). The
+  injected field is linked as `calib_a1.5_y3.5_l7_34925.h5` so that
+  submit_calib.sh's "latest snapshot" rule restarts the first chunk from
+  it (the ini has no [restart] section; the chunk ini gets one). On the
+  user's go:
+      cd $W/calib_run && ln -s calib_a1.5_y3.5_l7_restart.h5 calib_a1.5_y3.5_l7_34925.h5
+      export CODE_DIR=$W/moby-junction RUN_DIR=$W/calib_run HDF5_ROOT=$HOME/hdf5 \
+             STAGE_INI=calib_a1.5_y3.5_l7.ini PREFIX=calib_a1.5_y3.5_l7 NSTEPS=27000
+      sbatch --partition=accelerated --nodes=6 --ntasks-per-node=4 --time=24:00:00 --export=ALL submit_calib.sh
+  (the successor keeps the partition, the node count and the time limit).

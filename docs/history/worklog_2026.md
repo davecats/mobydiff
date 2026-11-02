@@ -3264,6 +3264,18 @@ immersed boundary. Phased, each phase verified before the next:
   sum, not nLevels times the maximum) and the replication across ranks.
   `horeka/submit_prepare.sh` rebuilds when the worktree commit changed and
   stays at 6 x 32 ranks.
+- **2026-11-02, the c/2048 calibration case re-prepared on the fixed code
+  and its 6-node test stable** (`tutorials/sailplane/junction/calib/
+  README.md`): 2 826 905 leaves (2 170 buried leaves kept by the new rule),
+  91 GB case file in 1 h 56 min on 6 CPU nodes x 32 ranks; the injection
+  of the c/512 field filled 790 leaves from their nearest source leaf; the
+  200-step test on 6 A100 nodes (24 ranks, partition 4 x 3 x 2, 4.9 M face
+  cells across nodes) runs at a steady Courant number 0.17-0.29 with dt
+  3.76e-5 (Peclet-bound), 2.91 s/step, 26 GB per GPU. The long solve is
+  therefore 80 000 steps, 64 h on 6 nodes, 1 550 GPU-h (the estimate of
+  2026-10-29 assumed 1 s/step: the same load per GPU on ONE node runs at
+  1.02 s/step, the multi-node exchange is the difference -- a performance
+  item for later); it waits for the user's decision, as agreed.
 - **2026-11-01, the c/2048 injected start blew up in its first step: two
   defects at a 2:1 interface that CROSSES the body, fixed at the root.**
   The 6-node test of the c/2048 calibration box (the c/512 final field
