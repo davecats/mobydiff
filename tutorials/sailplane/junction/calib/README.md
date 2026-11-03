@@ -640,3 +640,41 @@ with the measured leaf count and step time before the long solve.
   field finite; max |u| 1.44 at the wing-root leading edge (1.55 in the
   injected field), p within -0.83..0.67, k up to 0.12 (0.057 injected:
   the resolved wall), omega up to 6.2e3 at the wall, nut 1.7e-3.
+- Chunk 1 DONE 2026-11-03 15:53 (27 000 steps, 2.911 s/step, exit 0,
+  t 16.05, snapshots 40000/50000/60000/61925); chunk 2 = job 5223688.
+- INTERMEDIATE READ-OUT of the chunk-end snapshot (t 16.05, one c/U after
+  the injection; `strip_loads.py` as a cpuonly job, 24 min, 25 GB RSS --
+  the first attempt, 5225216, timed out at 6 h: h5py's fancy indexing of
+  the ~1 M band rows; the script now reads rows in contiguous slabs,
+  a46ff04, the c/512 read-out identical). Surface levels: 634 k pieces on
+  level 7, 595 k on level 5 (the fuselage), 6 k on 6; band 498 k blocks,
+  75 M staggered faces; Cf fitted from a median of 44 band points per
+  piece (9 at c/512). Against the c/512 final field (t 15.0):
+
+  | quantity (area-weighted over the 3 c of wing) | c/512, wall function | c/2048, resolved wall |
+  |---|---|---|
+  | c_l | 0.3816 | 0.3730 |
+  | c_dp / c_df | 0.0214 / 0.0049 | 0.0149 / 0.0085 |
+  | c_m | -0.0254 | -0.0167 |
+  | first reversed-flow point x/c (upper) | 0.07 (near-LE points), separation from 0.65-0.7 | 0.60-0.64 everywhere, 0.22 at the root strip |
+  | reversed fraction of the upper surface | 0.34 | 0.36 |
+  | c_l(y): y 0.62 / 0.92 / 1.22 / 1.52 c | 0.310 / 0.333 / 0.350 / 0.377 | 0.270 / 0.297 / 0.334 / 0.373 |
+  | c_l(y): y 1.82 c to the cut | 0.390 -> 0.417 | 0.388 -> 0.419 (ratio 1.000 +- 0.004) |
+  | Cp min, y 0.722 c / 1.203 c | -1.44 at x/c 0.10 / -0.91 at 0.28 | -1.01 at 0.15 / -0.83 at 0.25 |
+
+  READING (preliminary, one c/U after the injection): the near-wall
+  resolution is NOT the cause of the factor 2.7. Outboard of y 1.5 c the
+  resolved wall reproduces the wall-function lift to 0.4 % with the same
+  separation line (0.64 c against XFOIL turbulent's 0.75 c and c_l 0.79);
+  the friction doubles (the resolved Cf against the wall-function value
+  at y+ 15) and the pressure drag drops by the same order, the moment
+  follows. Near the fuselage (y < 1.2 c) the resolved run carries LESS
+  lift (-13 % at the root strip), with a weaker suction peak and the
+  corner separation reaching forward to 0.22 c at the root strip. Figure:
+  `~/horeka_stage/junction/viz/l7_61925_vs_c512.png` (c_l(y), x_sep(y),
+  Cp at the two stations, both resolutions). Caveats: the flap region
+  and the junction may still be adjusting to the resolved wall (judge
+  on the t 17.1 and t 18 snapshots); the fully turbulent SST on this
+  flapped section separates at 0.64 c where XFOIL's turbulent boundary
+  layer holds to 0.75 c -- the model, the section's flap geometry in the
+  STL, or the incidence are now the suspects, not the grid.

@@ -3279,6 +3279,16 @@ immersed boundary. Phased, each phase verified before the next:
   three chained 24-h chunks of 27 000 steps (job 5222653 the first); the
   test's final snapshot is healthy (max |u| 1.44, p within 0.83, all
   finite).
+  Chunk 1 done 2026-11-03 (t 16.05, 2.91 s/step). Intermediate read-out
+  of its end snapshot (`strip_loads.py` now reads band rows in slabs,
+  a46ff04: 24 min instead of a 6-h timeout): the resolved wall changes
+  the lift by -2 % overall (0.373 vs 0.382), by 0.4 % outboard of
+  y 1.5 c with the same separation line at 0.64 c, and by -13 % at the
+  root strip (the corner separation reaches 0.22 c; weaker suction peak);
+  the friction doubles, the pressure drag drops. The near-wall
+  resolution is therefore NOT the cause of the factor 2.7 against the
+  lifting line (preliminary, one c/U after the injection; final read-out
+  at t 18).
 - **2026-11-01, the c/2048 injected start blew up in its first step: two
   defects at a 2:1 interface that CROSSES the body, fixed at the root.**
   The 6-node test of the c/2048 calibration box (the c/512 final field
