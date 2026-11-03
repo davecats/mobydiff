@@ -155,6 +155,24 @@ def subdivide(tri, size):
 
 
 # ----------------------------------------------------------------------------- field
+def read_rows(dset, uniq, slab=4096):
+    """Rows `uniq` (sorted, unique) of a leaf-major dataset, read in
+    contiguous slabs from each wanted row: h5py's fancy indexing of a
+    large row list builds one hyperslab per row and took more than 6 h
+    for the c/2048 band (about a million rows of a 2.8 M-leaf file,
+    2026-11-03); a slab is one straight read, and the band's rows are
+    dense along the Z-order curve, so this is close to sequential."""
+    uniq = np.asarray(uniq, dtype=np.int64)
+    out = np.empty((len(uniq),) + dset.shape[1:], dset.dtype)
+    i = 0
+    while i < len(uniq):
+        lo = int(uniq[i]); hi = min(lo + slab, dset.shape[0])
+        j = int(np.searchsorted(uniq, hi))                 # the wanted rows in [lo, hi)
+        out[i:j] = dset[lo:hi][uniq[i:j] - lo]
+        i = j
+    return out
+
+
 class Field:
     """A block-table snapshot: leaf lookup for points, trilinear sampling of
     a cell-centred dataset, staggered band points with their coefficients."""
@@ -219,7 +237,7 @@ class Field:
         uniq, inv = np.unique(rows, return_inverse=True)
         if name not in self._cache or not np.array_equal(self._cache[name][0], uniq):
             src = self.c if name in ("coef_blocks",) else self.f
-            data = src[name][uniq] if len(uniq) else src[name][:0]
+            data = read_rows(src[name], uniq) if len(uniq) else src[name][:0]
             self._cache[name] = (uniq, data)
         return self._cache[name][1][inv]
 
@@ -256,7 +274,7 @@ class Field:
         (all six faces solid) of those blocks, for the Cp sanity check."""
         rows = np.unique(rows)
         nb = self.nb
-        coef = self.c["coef_blocks"][rows][:, 1:nb + 1, 1:nb + 1, 1:nb + 1, :]   # (n, x, y, z, 3)
+        coef = read_rows(self.c["coef_blocks"], rows)[:, 1:nb + 1, 1:nb + 1, 1:nb + 1, :]   # (n, x, y, z, 3)
         coef = coef.transpose(0, 3, 2, 1, 4)                                       # -> (n, z, y, x, 3)
         lev = self.blocks[rows, 3]
         h = self.L[None, :] / self.n_at[lev]                                      # (n, 3)
@@ -266,7 +284,7 @@ class Field:
         for ci, (name, off) in enumerate((("un", (0.0, 0.5, 0.5)),
                                           ("vn", (0.5, 0.0, 0.5)),
                                           ("wn", (0.5, 0.5, 0.0)))):
-            q = self.f[name][rows]                                                 # (n, z, y, x)
+            q = read_rows(self.f[name], rows)                                      # (n, z, y, x)
             c = coef[..., ci]
             m = (c > 0) & (c < SOLID_MIN)
             n_i, z_i, y_i, x_i = np.nonzero(m)
