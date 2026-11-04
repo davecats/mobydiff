@@ -678,3 +678,55 @@ with the measured leaf count and step time before the long solve.
   flapped section separates at 0.64 c where XFOIL's turbulent boundary
   layer holds to 0.75 c -- the model, the section's flap geometry in the
   STL, or the incidence are now the suspects, not the grid.
+- INVESTIGATION 2026-11-04 (the user's three hypotheses: the effective
+  incidence, the Reynolds number, a boundary layer that is not fully
+  turbulent). Checked in turn:
+  - Geometry: `stl_sections.py planform` on the pitched STL gives the
+    wing chord line at 3.77 deg to the x axis (2.27 in the unpitched STL
+    + 1.5 deg pitch) at every y from 0.75 to 3 m. Correct.
+  - Inflow: `bl_probe.py` samples the flow angle upstream of the leading
+    edge on the c/2048 snapshot: 0.0 deg at the inlet column, 0.1 at 6 c,
+    0.4 at 4 c, 1.0 at 1 c, 1.7 at 0.5 c upstream -- the wing's own upwash
+    (Gamma / 2 pi d for c_l 0.4), nothing else. The far field is axial as
+    designed.
+  - Reynolds number: the y = 1.0 m section has chord 0.768 m, Re 2.77e5
+    in the box and in the XFOIL polar alike.
+  - XFOIL on the same section (`scratchpad/xfoil`, sec_y1.0.dat from the
+    unpitched STL, 240 panels, Re 2.77e5): fully turbulent (xtr 0.02)
+    c_l 0.79 at 3.8 deg with Cp min -1.24 at 0.045 c and separation at
+    0.75 c; at -1.1 deg c_l 0.41, Cp min -0.78 at 0.34 c, separation 0.82;
+    free transition (Ncrit 9) 1.04 at 3.8 deg with the bubble 0.53-0.88.
+    The box's Cp at y 1.203 c (both resolutions) coincides with the
+    fully turbulent XFOIL curve at -1.1 deg from the leading edge to 0.5 c
+    (same Cp min -0.78 at 0.3 c, same edge velocity 1.33), then separates
+    at 0.6 c where that curve separates at 0.82; its Cf on the upper
+    surface is HALF of XFOIL's turbulent value at the same edge velocity
+    (0.0043 vs 0.0090 at 0.3 c). Figure `viz/xfoil_vs_box_y1.0.png`.
+  - Boundary-layer state (`bl_probe.py` on the c/2048 snapshot, cpuonly
+    job 5226709; wall-normal profiles of u_t, k, nut at x/c 0.05-0.8 on
+    three stations): k inside the layer stays at the free-stream level
+    (1e-4) and nut/nu below 6 over the first 0.3-0.4 c at every station,
+    k jumps to 1e-2 at 0.3-0.4 c, separation at 0.6 c. The layer is
+    LAMINAR for a third of the chord, transitions numerically, and
+    separates on the flap with a thin, young turbulent layer. (The c/512
+    wall-function run had k 1e-2 from 0.1 c -- the wall function seeds it
+    -- but Cf 0.004-0.006 and the same separation.)
+  - ROOT CAUSE: the box runs the SST with `tu = 1 %`, `nut_ratio = 10`
+    and no sustain, so the inlet k decays to nothing before the wing, and
+    the k-omega SST without a transition model at Re 3e5 does not become
+    turbulent by itself. The NACA validation (`tutorials/naca/rans`)
+    matched OpenFOAM only WITH the forced-transition recipe: `[rans]
+    kpin_box` (k = 0 ahead of 0.09 c) and `ktrip_box` strips hugging both
+    surfaces at 0.10-0.12 c. The sailplane box has neither, so the
+    "fully turbulent SST" that the calibration compared with XFOIL's
+    forced transition never existed in the run. This is the user's third
+    hypothesis, confirmed by measurement; the first two are excluded.
+  - 2D TWIN (`sec2d/`): the y = 1.0 m section extruded (`tools/
+    make_airfoil_stl.py selig`, span y, the NACA tutorial's grid and
+    boxes, `refine_levels 10` = c/3072, 10 648 leaves), `[case] name =
+    airfoil` with aoa 3.8, Re 2.77e5, Chebyshev 18, runtime forces:
+    `.sec2d_notrip.ini` (the box's settings) on the RTX 3060 and
+    `.sec2d_trip.ini` (kpin to 0.015 c, four ktrip boxes hugging the
+    surfaces at 0.02-0.04 c, rate 0.385 as the NACA) on istmcetus, both
+    to t 15. Expected: 0.4 without the trip, toward 0.79 with it.
+SEC2D_PLACEHOLDER
