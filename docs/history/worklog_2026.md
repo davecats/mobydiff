@@ -3304,14 +3304,38 @@ immersed boundary. Phased, each phase verified before the next:
   functions 0.57. The box itself is frozen at 0.380 on every c/512
   snapshot t 10-15 (job 5227764), Cp of a wing near -1 deg (stagnation at
   the LE, nothing on the lower surface), the strip tool verified on the 2D
-  snapshot (0.624 vs the control volume's 0.620). The remaining factor 1.6
-  is three-dimensional; a 0.5 c slab of the extruded section with the
-  box's xyz refinement (`sec2d/slab512.ini`) is the discriminator between
-  the 3D solver setup and the real wing + fuselage geometry. XFOIL far from
+  snapshot (0.624 vs the control volume's 0.620). XFOIL far from
   the junction (step-1 polars): the sections are laminar to 0.53 c on top
   (bubble, transition 0.62 c) and to the trailing edge below, L/D 72 at the
   flight point (c_l 1.04), 81 at best (alpha 5), 30 at alpha 0: the flapped
   section is designed for c_l about 1, not for low incidence.
+  **Resolved 2026-11-05: the twins were at the wrong incidence.**
+  `stl_sections.py section` writes the slice in the STL frame, with the
+  wing's own 2.285 deg chord-line incidence in it; the twins added 3.8 deg
+  on top (the a3.8 section, or `aoa = 3.8` on the unpitched one), so every
+  2D run and the extruded slab sat at 6.085 deg while the box's STL is
+  pitched 1.5 deg on top of the 2.285 (3.77 deg). Measured in the case
+  files at mid-span (solid chord line): slab 6.12 deg, the real pitched
+  STL 3.77 deg, the same body otherwise (thickness, the 1-2-cell tail
+  over the last 2 % of the chord, the fractional-cell count). With the
+  section pitched by the box's 1.5 deg only (`sec2d/*_a15.ini`): the 2D
+  c/512 wall-function twin in the box's domain gives **c_l 0.416 +- 0.001**
+  (t 10-15) -- the box's outboard strips read 0.41, its span average
+  0.380 with the root strips at 0.33, and a 0.5 c slice of the real STL
+  wing without the fuselage (`sec2d/wing512.ini`) 0.41. The box is the
+  solver's own 2D answer for this section at 3.8 deg; nothing is
+  three-dimensional, the STL is clean, and the "wing near -1 deg" Cp was
+  the same deficit seen from the pressure side. The 0.5 c slab of the
+  extruded section at 6.1 deg gave 0.558 = the 2D c/512 value (3D setup
+  fine); the solver's lift slope 0.063/deg matches XFOIL turbulent's
+  0.069. What remains is the solver's deficit against XFOIL fully
+  turbulent on THIS section, which shrinks with resolution in 2D: 59 %
+  of XFOIL at c/512 with wall functions (6.1 deg), 65-67 % at c/1024
+  resolved in the box domain, 77-79 % at c/3072 in the far field (trip or
+  not); the c/2048 box read as the c/512 one chord after the injection,
+  chunk 3 (t 18) tells whether 3D follows the trend. Suspects: the thin
+  flap trailing edge and the turbulent separation at 0.6-0.75 c (XFOIL's
+  own at 0.75). The corrected c/1024 and c/3072 twins run (istmcetus).
 - **2026-11-01, the c/2048 injected start blew up in its first step: two
   defects at a 2:1 interface that CROSSES the body, fixed at the root.**
   The 6-node test of the c/2048 calibration box (the c/512 final field

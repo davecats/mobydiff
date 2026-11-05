@@ -717,48 +717,91 @@ with the measured leaf count and step time before the long solve.
     matched OpenFOAM only WITH `kpin_box` + `ktrip_box` strips. The 2D
     twin below shows the untripped SST does NOT lose the lift in 2D: the
     laminar start is real but worth a few per cent, not a factor 2.
-  - 2D TWIN (`sec2d/`, 2026-11-04/05): the y = 1.0 m section extruded
-    (`tools/make_airfoil_stl.py selig`, span y, the NACA tutorial's grid
-    and boxes, `refine_levels 10` = c/3072, 10 648 leaves), `[case] name
-    = airfoil` with aoa 3.8, Re 2.77e5, Chebyshev 18, runtime forces, both
+  - 2D TWIN (`sec2d/`, 2026-11-04/05) -- AT 6.1 deg, NOT the box's 3.8 (the
+    incidence error below, found 2026-11-05; the numbers stand at 6.085 deg):
+    the y = 1.0 m section extruded (`tools/make_airfoil_stl.py selig`, span
+    y, the NACA tutorial's grid and boxes, `refine_levels 10` = c/3072,
+    10 648 leaves), `[case] name = airfoil` with aoa 3.8 ON TOP of the
+    section's own 2.285 deg, Re 2.77e5, Chebyshev 18, runtime forces, both
     to t 15: `sec2d_notrip.ini` (the box's settings; RTX 3060, stopped at
     t 5.5 as redundant) and `sec2d_trip.ini` (kpin to 0.015 c, four ktrip
     boxes hugging the surfaces at 0.02-0.04 c, rate 0.385 as the NACA;
     istmcetus, 0.23 s/step). RESULT: c_l 0.728 (notrip) vs 0.719 (trip)
-    at t 5-5.5, the trip run 0.746 +- 0.001 at t 13-15, c_d 0.0289 --
-    both at XFOIL fully turbulent (0.77-0.79), the trip worth 1 %. The
-    box's deficit is NOT the untripped SST.
-  - 2D IN THE BOX'S OWN DOMAIN (`sec2d/boxdom*.ini`, 2026-11-05): the same
-    section pitched 3.8 deg in the STL (`sec_y1.0_a3.8_2d.stl`), axial
-    inflow, the box's grid section (176 x 320 base cells of c/16, 11 x
-    20 c), the box's boundaries verbatim (inlet 7 c ahead, the declared
-    outlet 2.8 c behind the trailing edge, free-slip z faces -- declared
-    `z_min/max_patch = patch` so that the explicit keys may override the
-    airfoil case's far-field inlets), red-black 6, `refine_levels 6` =
-    c/1024 resolved, 3 049 leaves, 0.12 s/step on the RTX 3060:
-    **c_l 0.618 +- 0.002 at t 13-15**, c_d 0.0346; with the outlet 13.8 c
-    behind (`boxdom_long`, lx 22) 0.635 +- 0.000. The box's domain costs
-    15 % against the far-field twin (the outlet distance 2.5 points of
-    it); the c/512 wall-function version (`box2d512.ini`, the c/512
-    box's settings) 0.57 at t 14. `strip_loads.py` on the boxdom snapshot
-    reads 0.624 against the control volume's 0.620 (the tool is fine on
-    this section) and finds the same separation line, 0.62 c.
+    at t 5-5.5, the trip run 0.746 +- 0.001 at t 13-15, c_d 0.0289. XFOIL
+    fully turbulent at 6.1 deg: 0.948 (its Ncrit 9 value 1.18): the
+    resolved c/3072 SST carries 79 % of XFOIL turbulent; the trip is
+    worth 1 %, so the untripped SST is not the deficit.
+  - 2D IN THE BOX'S OWN DOMAIN (`sec2d/boxdom*.ini`, 2026-11-05), also at
+    6.1 deg: the section pitched a further 3.8 deg in the STL
+    (`sec_y1.0_a3.8_2d.stl`), axial inflow, the box's grid section (176 x
+    320 base cells of c/16, 11 x 20 c), the box's boundaries verbatim
+    (inlet 7 c ahead, the declared outlet 2.8 c behind the trailing edge,
+    free-slip z faces -- declared `z_min/max_patch = patch` so that the
+    explicit keys may override the airfoil case's far-field inlets),
+    red-black 6, `refine_levels 6` = c/1024 resolved, 3 049 leaves, 0.12
+    s/step on the RTX 3060: **c_l 0.618 +- 0.002 at t 13-15**, c_d 0.0346;
+    with the outlet 13.8 c behind (`boxdom_long`, lx 22) 0.635 +- 0.000;
+    the c/512 wall-function version (`box2d512.ini`, the c/512 box's
+    settings) 0.570 +- 0.002 at t 13-15, c_d 0.0446. `strip_loads.py` on
+    the boxdom snapshot reads 0.624 against the control volume's 0.620
+    (the tool is fine on this section), separation line 0.62 c.
   - THE BOX'S OWN LIFT IS FROZEN at 0.380 (area-weighted, strips 0.57-3.5)
     on every c/512 snapshot from step 24000 to 34925 (t about 10 to 15;
     HoreKa job 5227764), root strips 0.33, mid 0.39, outboard 0.41: a
     converged state, not a drift. Its Cp at y 1.2 next to the 2D
-    box-domain run (upper / lower): 0.02 c -0.09 / +0.12 vs -0.68 / +0.58,
-    0.10 c -0.62 / +0.04 vs -0.89 / +0.25, 0.30 c -0.79 / -0.03 vs -0.88 /
-    +0.14, 0.90 c -0.07 / -0.19 vs -0.18 / -0.14; the normal force from
-    the Cp difference 0.33 vs 0.62. The stagnation point sits at the
-    leading edge and the lower surface carries nothing: the wing of the
-    box behaves as if at an incidence near -1 deg, as the XFOIL match
-    said. What remains is a factor 1.6 that is THREE-DIMENSIONAL (the
-    section, incidence, Re, turbulence settings, resolution, domain,
-    boundaries and the load tool are all accounted for).
-  - SLAB TEST (`sec2d/slab512.ini`, running 2026-11-05 on istmcetus): the
-    same section extruded over 0.5 c between free-slip y faces with the
-    box's 3D refinement (`refine_dims xyz`, c/512 wall functions, 24 544
-    leaves). Equal to the 2D value (0.57) -> the cause is in the real
-    STL wing + fuselage; equal to the box (0.38) -> the 3D solver setup.
-    SLAB_PLACEHOLDER
+    box-domain run at 6.1 deg (upper / lower): 0.02 c -0.09 / +0.12 vs
+    -0.68 / +0.58, 0.10 c -0.62 / +0.04 vs -0.89 / +0.25, 0.30 c -0.79 /
+    -0.03 vs -0.88 / +0.14, 0.90 c -0.07 / -0.19 vs -0.18 / -0.14; the
+    normal force from the Cp difference 0.33 vs 0.62.
+  - SLAB TEST (`sec2d/slab512.ini`, istmcetus GPU0, 2026-11-05): the same
+    section (6.1 deg) extruded over 0.5 c between free-slip y faces with
+    the box's 3D refinement (`refine_dims xyz`, c/512 wall functions,
+    24 544 leaves): **c_l 0.558 +- 0.001 at t 13-14.5**, c_d 0.0457 -- the
+    2D c/512 value. The 3D solver setup is fine. Its twin `wing512.ini`
+    (the pitched STL itself, `stl_translate 4.0 -1.2034 9.434`, so that
+    the domain's 0.5 c of span is the wing between y_STL 1.0 and 1.415 m,
+    no fuselage, `chord 0.924`; 25 487 leaves; RTX 3060): c_l 0.41 at
+    t 6-6.5, still settling (dmdt 0.05-0.08) -- the box's value.
+  - THE INCIDENCE ERROR (2026-11-05 14:00; explains the twins, not the
+    deficit): `stl_sections.py section` writes the slice in the STL frame,
+    i.e. with the wing's own 2.285 deg chord-line incidence (sec_y1.0.dat:
+    leading edge (0, 0.0003), trailing edge (1, -0.0396)); the a3.8 file
+    rotated it by a further 3.8 deg (6.085 deg) and the far-field twins
+    put `aoa = 3.8` on the unpitched section (6.085 deg too), while the
+    box's STL is pitched 1.5 deg on top of the 2.285 (3.77-3.80 deg, as
+    `planform` said all along). Measured in the case files at mid-span
+    (solid cells, coef >= 1; scratchpad script secangle.py): slab512
+    chord line +6.12 deg, wing512 +3.77 deg; otherwise the same body --
+    maximum thickness 68 vs 62 cells at 0.38-0.40 c (chord 1.0 vs 0.92),
+    eleven columns 1-2 cells thick at the trailing edge in both, 510 vs
+    496 fractional cells on the mid-span section: the STL wing is as
+    clean as the extruded section. XFOIL fully turbulent: 0.793 at 3.8
+    deg, 0.948 at 6.1 (slope 0.069/deg); the solver's c/512 wall-function
+    pair 0.558 (6.1 deg, slab) and 0.41 (3.8, wing512): slope 0.063/deg,
+    the same slope. The box's 0.38 is what the solver gives this section
+    at 3.8 deg on the c/512 grid: nothing three-dimensional, no STL
+    defect, and the "wing near -1 deg" reading of the Cp was the same
+    deficit seen from the pressure side.
+  - WHAT THE DEFICIT IS (open): against XFOIL fully turbulent the solver's
+    2D lift on this section is -41 % at c/512 with wall functions (0.558
+    vs 0.948, 6.1 deg), -33 / -35 % at c/1024 resolved in the box domain
+    (0.635 / 0.618), -21 / -23 % at c/3072 in the far field (0.746 trip /
+    0.728 notrip) -- a resolution trend. The c/2048 box (its level-7 band
+    spans the whole 3.5 c of span) read 0.373 vs the c/512's 0.382 at
+    t 16.05, one chord after the injection; chunk 3 (t 18) tells whether
+    the 3D run follows the 2D trend or not. The section's thin flap
+    trailing edge (the last 2 % of the chord is 1-2 cells thick at c/512)
+    and the separation at 0.6-0.75 c are the suspects; XFOIL itself has
+    the turbulent separation at 0.75 c at 3.8 deg.
+  - CORRECTED TWINS at the box's incidence (1.5 + 2.285 = 3.785 deg;
+    `sec_y1.0_a1.5.dat` = the slice pitched 1.5 deg about the quarter
+    chord, `sec_y1.0_a1.5_2d.stl`; inis `box2d512_a15.ini`, `boxdom_a15.ini`,
+    `sec2d_trip_a15.ini` (aoa 1.5)), chained on istmcetus GPU0 from
+    2026-11-05 14:45 (`.chain_a15.sh`, ~0.5 h + 3 h + 22 h):
+    `box2d512_a15` (c/512 wall functions, 2D, 25 min on the A6000):
+    **c_l 0.416 +- 0.001 at t 10-15**, c_d 0.038 -- the box's outboard
+    strips read 0.41, its span average 0.380 with the root strips at
+    0.33, and the real-wing slice `wing512` 0.41. The box IS the solver's
+    2D answer for this section at 3.8 deg and c/512; XFOIL fully
+    turbulent says 0.793 (52 %). `boxdom_a15` (c/1024 resolved) and
+    `sec2d_trip_a15` (c/3072 far field) follow: A15_MORE_PLACEHOLDER
