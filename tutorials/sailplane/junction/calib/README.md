@@ -711,22 +711,54 @@ with the measured leaf count and step time before the long solve.
     separates on the flap with a thin, young turbulent layer. (The c/512
     wall-function run had k 1e-2 from 0.1 c -- the wall function seeds it
     -- but Cf 0.004-0.006 and the same separation.)
-  - ROOT CAUSE: the box runs the SST with `tu = 1 %`, `nut_ratio = 10`
-    and no sustain, so the inlet k decays to nothing before the wing, and
-    the k-omega SST without a transition model at Re 3e5 does not become
-    turbulent by itself. The NACA validation (`tutorials/naca/rans`)
-    matched OpenFOAM only WITH the forced-transition recipe: `[rans]
-    kpin_box` (k = 0 ahead of 0.09 c) and `ktrip_box` strips hugging both
-    surfaces at 0.10-0.12 c. The sailplane box has neither, so the
-    "fully turbulent SST" that the calibration compared with XFOIL's
-    forced transition never existed in the run. This is the user's third
-    hypothesis, confirmed by measurement; the first two are excluded.
-  - 2D TWIN (`sec2d/`): the y = 1.0 m section extruded (`tools/
-    make_airfoil_stl.py selig`, span y, the NACA tutorial's grid and
-    boxes, `refine_levels 10` = c/3072, 10 648 leaves), `[case] name =
-    airfoil` with aoa 3.8, Re 2.77e5, Chebyshev 18, runtime forces:
-    `.sec2d_notrip.ini` (the box's settings) on the RTX 3060 and
-    `.sec2d_trip.ini` (kpin to 0.015 c, four ktrip boxes hugging the
-    surfaces at 0.02-0.04 c, rate 0.385 as the NACA) on istmcetus, both
-    to t 15. Expected: 0.4 without the trip, toward 0.79 with it.
-SEC2D_PLACEHOLDER
+  - FIRST READING (2026-11-04, WITHDRAWN the next day): the laminar
+    layer looked like the cause -- the box runs the SST with `tu = 1 %`,
+    `nut_ratio = 10`, no sustain and no trip, whereas the NACA validation
+    matched OpenFOAM only WITH `kpin_box` + `ktrip_box` strips. The 2D
+    twin below shows the untripped SST does NOT lose the lift in 2D: the
+    laminar start is real but worth a few per cent, not a factor 2.
+  - 2D TWIN (`sec2d/`, 2026-11-04/05): the y = 1.0 m section extruded
+    (`tools/make_airfoil_stl.py selig`, span y, the NACA tutorial's grid
+    and boxes, `refine_levels 10` = c/3072, 10 648 leaves), `[case] name
+    = airfoil` with aoa 3.8, Re 2.77e5, Chebyshev 18, runtime forces, both
+    to t 15: `sec2d_notrip.ini` (the box's settings; RTX 3060, stopped at
+    t 5.5 as redundant) and `sec2d_trip.ini` (kpin to 0.015 c, four ktrip
+    boxes hugging the surfaces at 0.02-0.04 c, rate 0.385 as the NACA;
+    istmcetus, 0.23 s/step). RESULT: c_l 0.728 (notrip) vs 0.719 (trip)
+    at t 5-5.5, the trip run 0.746 +- 0.001 at t 13-15, c_d 0.0289 --
+    both at XFOIL fully turbulent (0.77-0.79), the trip worth 1 %. The
+    box's deficit is NOT the untripped SST.
+  - 2D IN THE BOX'S OWN DOMAIN (`sec2d/boxdom*.ini`, 2026-11-05): the same
+    section pitched 3.8 deg in the STL (`sec_y1.0_a3.8_2d.stl`), axial
+    inflow, the box's grid section (176 x 320 base cells of c/16, 11 x
+    20 c), the box's boundaries verbatim (inlet 7 c ahead, the declared
+    outlet 2.8 c behind the trailing edge, free-slip z faces -- declared
+    `z_min/max_patch = patch` so that the explicit keys may override the
+    airfoil case's far-field inlets), red-black 6, `refine_levels 6` =
+    c/1024 resolved, 3 049 leaves, 0.12 s/step on the RTX 3060:
+    **c_l 0.618 +- 0.002 at t 13-15**, c_d 0.0346; with the outlet 13.8 c
+    behind (`boxdom_long`, lx 22) 0.635 +- 0.000. The box's domain costs
+    15 % against the far-field twin (the outlet distance 2.5 points of
+    it); the c/512 wall-function version (`box2d512.ini`, the c/512
+    box's settings) 0.57 at t 14. `strip_loads.py` on the boxdom snapshot
+    reads 0.624 against the control volume's 0.620 (the tool is fine on
+    this section) and finds the same separation line, 0.62 c.
+  - THE BOX'S OWN LIFT IS FROZEN at 0.380 (area-weighted, strips 0.57-3.5)
+    on every c/512 snapshot from step 24000 to 34925 (t about 10 to 15;
+    HoreKa job 5227764), root strips 0.33, mid 0.39, outboard 0.41: a
+    converged state, not a drift. Its Cp at y 1.2 next to the 2D
+    box-domain run (upper / lower): 0.02 c -0.09 / +0.12 vs -0.68 / +0.58,
+    0.10 c -0.62 / +0.04 vs -0.89 / +0.25, 0.30 c -0.79 / -0.03 vs -0.88 /
+    +0.14, 0.90 c -0.07 / -0.19 vs -0.18 / -0.14; the normal force from
+    the Cp difference 0.33 vs 0.62. The stagnation point sits at the
+    leading edge and the lower surface carries nothing: the wing of the
+    box behaves as if at an incidence near -1 deg, as the XFOIL match
+    said. What remains is a factor 1.6 that is THREE-DIMENSIONAL (the
+    section, incidence, Re, turbulence settings, resolution, domain,
+    boundaries and the load tool are all accounted for).
+  - SLAB TEST (`sec2d/slab512.ini`, running 2026-11-05 on istmcetus): the
+    same section extruded over 0.5 c between free-slip y faces with the
+    box's 3D refinement (`refine_dims xyz`, c/512 wall functions, 24 544
+    leaves). Equal to the 2D value (0.57) -> the cause is in the real
+    STL wing + fuselage; equal to the box (0.38) -> the 3D solver setup.
+    SLAB_PLACEHOLDER
