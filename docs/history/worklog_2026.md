@@ -3289,6 +3289,29 @@ immersed boundary. Phased, each phase verified before the next:
   resolution is therefore NOT the cause of the factor 2.7 against the
   lifting line (preliminary, one c/U after the injection; final read-out
   at t 18).
+  Chunk 2 done 2026-11-05 01:00 (t 17.01, 27 000 steps in 21.7 h, 2.89
+  s/step, stable); chunk 3 queued. **The low lift investigated
+  (2026-11-04/05, `calib/README.md` INVESTIGATION):** the user's three
+  hypotheses -- effective incidence (excluded: chord line 3.77 deg on the
+  pitched STL, inflow axial), Reynolds number (excluded: 2.77e5 both),
+  not-yet-turbulent SST (the box's layer IS laminar to 0.3-0.4 c, `calib/
+  bl_probe.py`, but the 2D twin of the y 1.0 m section on the NACA template,
+  `calib/sec2d/`, gives c_l 0.746 with the NACA-style trip and 0.73 without
+  it against XFOIL turbulent 0.77: the untripped SST is worth 1-3 %, not a
+  factor 2 -- the first reading WITHDRAWN). The same section in the box's own
+  domain and boundaries (inlet 7 c ahead, outlet 2.8 c behind, free-slip
+  z faces, c/1024 resolved) 0.618; outlet 13.8 c behind 0.635; c/512 wall
+  functions 0.57. The box itself is frozen at 0.380 on every c/512
+  snapshot t 10-15 (job 5227764), Cp of a wing near -1 deg (stagnation at
+  the LE, nothing on the lower surface), the strip tool verified on the 2D
+  snapshot (0.624 vs the control volume's 0.620). The remaining factor 1.6
+  is three-dimensional; a 0.5 c slab of the extruded section with the
+  box's xyz refinement (`sec2d/slab512.ini`) is the discriminator between
+  the 3D solver setup and the real wing + fuselage geometry. XFOIL far from
+  the junction (step-1 polars): the sections are laminar to 0.53 c on top
+  (bubble, transition 0.62 c) and to the trailing edge below, L/D 72 at the
+  flight point (c_l 1.04), 81 at best (alpha 5), 30 at alpha 0: the flapped
+  section is designed for c_l about 1, not for low incidence.
 - **2026-11-01, the c/2048 injected start blew up in its first step: two
   defects at a 2:1 interface that CROSSES the body, fixed at the root.**
   The 6-node test of the c/2048 calibration box (the c/512 final field
