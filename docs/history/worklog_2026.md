@@ -3335,7 +3335,16 @@ immersed boundary. Phased, each phase verified before the next:
   not); the c/2048 box read as the c/512 one chord after the injection,
   chunk 3 (t 18) tells whether 3D follows the trend. Suspects: the thin
   flap trailing edge and the turbulent separation at 0.6-0.75 c (XFOIL's
-  own at 0.75). The corrected c/1024 and c/3072 twins run (istmcetus).
+  own at 0.75). Corrected twins at 3.8 deg, same evening: c/1024
+  resolved in the box domain 0.479 (60 % of XFOIL turbulent), the real
+  STL wing slice 0.402 final. The two incidences give the solver's lift
+  CURVE: slope 0.062/deg (c/512) and 0.060/deg (c/1024) against XFOIL
+  turbulent's 0.067 -- the slope is right, the curve is shifted down by
+  0.38 and 0.31, zero-lift angle -2.9 / -4.2 deg where XFOIL has -7.8:
+  the solver loses the CAMBER lift (the 6 deg flap's share), less so
+  with resolution -- the thin flap trailing edge where the Kutta
+  condition is set is the suspect. The c/3072 far-field twin at 3.8 deg
+  runs (istmcetus, 22 h).
 - **2026-11-01, the c/2048 injected start blew up in its first step: two
   defects at a 2:1 interface that CROSSES the body, fixed at the root.**
   The 6-node test of the c/2048 calibration box (the c/512 final field

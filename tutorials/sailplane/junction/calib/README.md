@@ -804,4 +804,19 @@ with the measured leaf count and step time before the long solve.
     0.33, and the real-wing slice `wing512` 0.41. The box IS the solver's
     2D answer for this section at 3.8 deg and c/512; XFOIL fully
     turbulent says 0.793 (52 %). `boxdom_a15` (c/1024 resolved) and
-    `sec2d_trip_a15` (c/3072 far field) follow: A15_MORE_PLACEHOLDER
+    `sec2d_trip_a15` (c/3072 far field) follow: `boxdom_a15` (c/1024 resolved, 2D, 2.4 h on the A6000):
+    **c_l 0.479 +- 0.001 at t 10-15**, c_d 0.0279 (60 % of XFOIL
+    turbulent); `wing512` final: **0.402 +- 0.001 at t 10-15**, c_d 0.0389
+    (the real STL wing slice, c/512 wall functions: the box's outboard
+    0.41). The two incidences give the solver's lift curve: slope
+    0.062/deg at c/512 (0.416 -> 0.558), 0.060/deg at c/1024 (0.479 ->
+    0.618) against XFOIL turbulent's 0.067/deg -- the SLOPE is right, the
+    curve is SHIFTED down by 0.38 (c/512) and 0.31 (c/1024): zero-lift
+    angle -2.9 / -4.2 deg where XFOIL turbulent has -7.8 deg. The solver
+    loses camber lift, not incidence lift -- the flap's share (the 6 deg
+    flap of this section is worth about 0.4 in c_l) -- which points at
+    the thin flap trailing edge (1-2 cells thick over the last 2 % of the
+    chord at c/512, 4 at c/1024) where the Kutta condition is set, and
+    the shift shrinks with resolution. `sec2d_trip_a15` (c/3072 far
+    field, aoa 1.5) gives the slope and shift at the finest grid:
+    A15_FAR_PLACEHOLDER
