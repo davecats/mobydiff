@@ -3362,7 +3362,15 @@ immersed boundary. Phased, each phase verified before the next:
   forces by hundreds; the 6.1 deg start settled, this one tipped) and
   computed NaNs for 20 h: restarted from the 6.1 deg run's converged
   field with `aoa = 1.5` on istmcorax (`build_gpu_corax` rebuilt on
-  34d2f7f), t 15 -> 30.
+  34d2f7f), t 15 -> 30. READ OUT 2026-11-07: c_l 0.596 +- 0.002 at the
+  finest grid (0.746 at 6.1 deg: slope 0.065 per deg against XFOIL
+  turbulent's 0.067; 75 % of XFOIL turbulent, 58 % of free transition),
+  upper surface reversed from 0.70 c, plateau Cp -0.26 at 0.70 c to
+  -0.06 at the trailing edge, lower surface Cp +0.24 to -0.13 where XFOIL
+  has +0.1 to +0.5. Resolution takes the solver from 59 % (c/512) over
+  65-67 % (c/1024) to 75 % (c/3072) of XFOIL turbulent; the rest is the
+  pressure recovery over the separated aft quarter (README of the box,
+  figure `viz/cp_twins_vs_xfoil_a3.8.png`, six series).
 - **2026-11-01, the c/2048 injected start blew up in its first step: two
   defects at a 2:1 interface that CROSSES the body, fixed at the root.**
   The 6-node test of the c/2048 calibration box (the c/512 final field

@@ -831,7 +831,28 @@ with the measured leaf count and step time before the long solve.
     from the 6.1 deg run's converged field `sec2d_trip_356218.h5` with
     `aoa = 1.5`, t 15 -> 30 (`[restart] file`, the ini as authority for
     the incidence): the change of inflow angle at the boundaries is a
-    mild perturbation of a developed flow. Result: A15_FAR_RESULT
+    mild perturbation of a developed flow. RESULT (2026-11-07, 10 h on
+    the RTX 5090 for t 15 -> 30, 2.1e-2 s/step): c_l 0.596 +- 0.002,
+    c_d 0.021 -- the restart swings the control-volume forces for two
+    units and the lift is within 0.01 of its end value from t 20 (0.6029
+    at t 19-20, 0.5958 at t 29-30, drift -0.0004 per unit at the end; the
+    `dmomdt` column stays at 0.3 because the separated flap sheds at a
+    period of 0.035 c/U, c_l std 0.002, and the column is the MAGNITUDE
+    of that unsteady term). Against the 6.1 deg run's 0.746: a slope of
+    0.065 per deg (XFOIL turbulent 0.067) -- the slope match of the box
+    twins holds at the finest grid, and so does the shift: 75 % of XFOIL
+    turbulent (0.793), 58 % of XFOIL free transition (1.03). The surface
+    scan (`sep_scan.py`, 3 cells off the wall) reads like the box twins:
+    upper surface reversed from 0.70 c with the plateau Cp -0.26 at
+    0.70 c recovering only to -0.06 at the trailing edge, lower surface
+    attached but Cp +0.24 at 0.05 c falling to -0.13 at 0.9 c where XFOIL
+    has +0.1 to +0.5. Resolution closes the gap to XFOIL turbulent from
+    59 % (c/512 box) over 65-67 % (c/1024) to 75 % (c/3072) and no
+    further by the look of it: the remaining quarter is the pressure
+    recovery over the separated aft quarter of the chord that XFOIL's
+    integral wake model supplies and the SST field does not. Figure
+    `viz/cp_twins_vs_xfoil_a3.8.png` carries this run as the sixth
+    series.
   - THE TRAILING EDGE LOOKED AT (2026-11-06, the user's request; probes
     `scratchpad/te_probe.py`, `sep_scan.py` on the final 2D snapshots):
     the section is 1-2 cells thick at c/512 only over the last 2.5 % of
