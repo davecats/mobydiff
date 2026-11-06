@@ -820,3 +820,47 @@ with the measured leaf count and step time before the long solve.
     the shift shrinks with resolution. `sec2d_trip_a15` (c/3072 far
     field, aoa 1.5) gives the slope and shift at the finest grid:
     A15_FAR_PLACEHOLDER
+  - THE TRAILING EDGE LOOKED AT (2026-11-06, the user's request; probes
+    `scratchpad/te_probe.py`, `sep_scan.py` on the final 2D snapshots):
+    the section is 1-2 cells thick at c/512 only over the last 2.5 % of
+    the chord (0.6 cells at the trailing edge itself), 1.2 % at c/1024.
+    The prepare marks a staggered point solid when it lies inside the
+    STL (coefficient SOLID/Re) and gives an outside point the graded sum
+    over its six stencil neighbours that are inside; a sliver thinner
+    than a cell is therefore porous where it passes between two staggered
+    planes. Measured on the c/512 and c/1024 snapshots at 3.8 deg: the
+    velocity inside the sliver is 0.04-0.07 over x/c 0.96-0.99 and up to
+    0.2 at 0.999 (c/512; 0.05-0.23 at c/1024), the velocity THROUGH it
+    (w at the mid-plane) at most 0.035, and only over the last 1 % of the
+    chord. It cannot matter, because the pressure difference across the
+    aft 30 % of the chord is already near zero: the upper-surface flow is
+    reversed from 0.70-0.75 c to the trailing edge on every grid (first
+    u_t < 0 at 3 cells off the wall: 0.75 c at c/512, 0.70 c at c/1024,
+    0.70 c at c/3072 with the trip at 6.1 deg; the lower surface attached
+    everywhere), with a flat plateau Cp -0.2 to -0.1 over the flap on the
+    upper side and -0.06 to -0.1 on the lower side, and behind the
+    trailing edge the flow RISES at +8 to +11 deg (u 0.16-0.3, w +0.03-
+    0.05 over 1.002-1.02 c): the lower-surface stream curls up around the
+    trailing edge into the dead-air region over the flap. The lift is
+    lost to a separated flap, not at the trailing edge. XFOIL fully
+    turbulent at 3.8 deg separates at 0.75 c too, yet keeps c_n 0.79: its
+    Cp (`scratchpad/xfoil/cp_turb_a3.8.txt`) RECOVERS inside the separated
+    zone to +0.04 at the trailing edge and the fore half carries 0.65 of
+    the 0.79 (suction peak -1.24 at 0.045 c, lower surface +0.51 at 0.05
+    c), where the solver at c/1024 has -0.62 / +0.13 at 0.05 c, -0.80 at
+    0.35 c and the fore half carrying about 0.4: the circulation is lower
+    everywhere, exactly XFOIL's -1.1 deg curve (Cp min -0.78 at 0.34 c,
+    lower surface near zero) -- a wing whose Kutta condition is set by a
+    stalled flap rather than by the trailing edge. XFOIL's integral
+    closure with a quarter of the chord separated is the less reliable
+    side of this comparison, AND the fully turbulent flow is not the
+    design flow of this section: XFOIL with free transition (Ncrit 9)
+    keeps the flow attached to the trailing edge (TE Cp +0.145, c_n 1.03,
+    transition 0.6 c through the bubble). Two tests on the RTX 3060
+    (chain `.chain_local.sh`): `boxdom_a15_tr.ini` = the c/1024 resolved
+    twin at 3.8 deg with the gamma-Re_theta transition model (the same
+    case file; does the solver reproduce the attached free-transition
+    flow?), then `box2d512_a15_te4.ini` = the c/512 twin with the
+    trailing edge thickened to 0.0072 c (3.7 cells) over the last 20 % of
+    the chord (`sec_y1.0_a1.5_te4.dat`; the trailing-edge question closed
+    with a number): TE_TR_PLACEHOLDER
