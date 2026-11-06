@@ -895,3 +895,10 @@ with the measured leaf count and step time before the long solve.
     XFOIL's separated turbulent zone recovers to +0.04 at the trailing
     edge, the solver's dead-air plateau starts 0.05-0.1 c earlier and
     recovers to 0.0 at best.
+    Figure `viz/cp_twins_vs_xfoil_a3.8.png` (the three solver twins at
+    3.8 deg against XFOIL turbulent and free transition): the solver's
+    LOWER surface sits at Cp 0 to -0.2 over the whole chord where XFOIL
+    has +0.1 to +0.5 (stagnation point at the nose rather than under
+    it) and its upper surface is 0.2-0.4 less sucked everywhere -- the
+    circulation of a wing at about -1 deg on both surfaces alike, the
+    transition model moving it by a third of the gap to XFOIL turbulent.
