@@ -3343,8 +3343,26 @@ immersed boundary. Phased, each phase verified before the next:
   0.38 and 0.31, zero-lift angle -2.9 / -4.2 deg where XFOIL has -7.8:
   the solver loses the CAMBER lift (the 6 deg flap's share), less so
   with resolution -- the thin flap trailing edge where the Kutta
-  condition is set is the suspect. The c/3072 far-field twin at 3.8 deg
-  runs (istmcetus, 22 h).
+  condition is set is the suspect. **2026-11-06, the trailing edge
+  cleared, the flap stays separated with the transition model.** The
+  sliver leaks at most 0.035 over the last 1 % of the chord; the lift is
+  lost to the flap, reversed from 0.70-0.75 c on every grid under a
+  flat Cp plateau, the lower-surface flow curling up around the trailing
+  edge (circulation = XFOIL's -1.1 deg curve). Two twins at 3.8 deg on
+  the RTX 3060: the c/512 twin with the trailing edge thickened to 3.7
+  cells gives 0.426 against 0.416 (Cp and reversal point identical to
+  0.01: the trailing edge is not the cause); the c/1024 resolved twin
+  with the gamma-Re_theta transition model gives 0.577 against 0.479
+  (deeper mid-chord suction, reversal 0.75 c, plateau to Cp 0.0 at the
+  trailing edge) -- 73 % of XFOIL turbulent and 56 % of XFOIL free
+  transition (c_n 1.03, attached): the solver does not reproduce the
+  attached design flow either; what it lacks is the pressure recovery
+  over the aft quarter. The c/3072 far-field twin's cold start at aoa
+  1.5 diverged at t 0.4 (the impulsive start swings the control-volume
+  forces by hundreds; the 6.1 deg start settled, this one tipped) and
+  computed NaNs for 20 h: restarted from the 6.1 deg run's converged
+  field with `aoa = 1.5` on istmcorax (`build_gpu_corax` rebuilt on
+  34d2f7f), t 15 -> 30.
 - **2026-11-01, the c/2048 injected start blew up in its first step: two
   defects at a 2:1 interface that CROSSES the body, fixed at the root.**
   The 6-node test of the c/2048 calibration box (the c/512 final field

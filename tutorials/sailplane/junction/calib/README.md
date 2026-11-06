@@ -819,7 +819,19 @@ with the measured leaf count and step time before the long solve.
     chord at c/512, 4 at c/1024) where the Kutta condition is set, and
     the shift shrinks with resolution. `sec2d_trip_a15` (c/3072 far
     field, aoa 1.5) gives the slope and shift at the finest grid:
-    A15_FAR_PLACEHOLDER
+    the cold start at aoa 1.5 (`.chain_a15.sh`, istmcetus
+    GPU0 from 2026-11-05 16:23) DIVERGED at t 0.25-0.44: the impulsive
+    start swings c_l and c_d by hundreds in the control volume (the 6.1
+    deg start did the same to t 0.5 and settled), this one grew instead,
+    dt collapsed to 1e-22 and the run computed NaNs for 20 h before it
+    was noticed and killed (2026-11-06 13:02; the same ini as the 6.1
+    deg run except `aoa`, `initial_u`, `initial_w` -- a marginal start
+    that tipped). RESTARTED 2026-11-06 14:07 on istmcorax (RTX 5090,
+    `build_gpu_corax` rebuilt on the current tree first, `.chain_corax.sh`)
+    from the 6.1 deg run's converged field `sec2d_trip_356218.h5` with
+    `aoa = 1.5`, t 15 -> 30 (`[restart] file`, the ini as authority for
+    the incidence): the change of inflow angle at the boundaries is a
+    mild perturbation of a developed flow. Result: A15_FAR_RESULT
   - THE TRAILING EDGE LOOKED AT (2026-11-06, the user's request; probes
     `scratchpad/te_probe.py`, `sep_scan.py` on the final 2D snapshots):
     the section is 1-2 cells thick at c/512 only over the last 2.5 % of
@@ -863,4 +875,23 @@ with the measured leaf count and step time before the long solve.
     flow?), then `box2d512_a15_te4.ini` = the c/512 twin with the
     trailing edge thickened to 0.0072 c (3.7 cells) over the last 20 % of
     the chord (`sec_y1.0_a1.5_te4.dat`; the trailing-edge question closed
-    with a number): TE_TR_PLACEHOLDER
+    with a number): both done 2026-11-06 (3.5 h and 26 min on the RTX 3060).
+    `boxdom_a15_tr`: **c_l 0.577 +- 0.002 at t 10-15**, c_d 0.0247
+    (plain SST 0.479 / 0.0279). The transition model adds 0.10: the
+    upper-surface Cp deepens over the mid-chord (-0.86 at 0.25 c, -0.71
+    at 0.5, -0.52 at 0.6 against -0.79 / -0.62 / -0.40), the lower
+    surface carries +0.02..0.00 over 0.5-0.9 c against -0.02..-0.11, the
+    reversal moves from 0.70 to 0.75 c and the plateau recovers to Cp
+    0.00 at 0.98 c (-0.05 before) -- but the flap stays separated under
+    the same -0.19..-0.1 plateau: 73 % of XFOIL turbulent, 56 % of XFOIL
+    free transition (c_n 1.03, attached to the trailing edge). The
+    solver does NOT reproduce the attached free-transition flow.
+    `box2d512_a15_te4`: **0.426 +- 0.002 at t 10-15**, c_d 0.038 against
+    the sharp twin's 0.416; the upper-surface Cp and the reversal point
+    (0.75 c) agree with the sharp twin to 0.01 at every station. The
+    trailing-edge sliver is CLEARED as a cause (+0.01 for a trailing
+    edge 3.7 cells thick). What the solver lacks against both XFOIL
+    flows is the pressure recovery over the aft quarter of the chord:
+    XFOIL's separated turbulent zone recovers to +0.04 at the trailing
+    edge, the solver's dead-air plateau starts 0.05-0.1 c earlier and
+    recovers to 0.0 at best.
