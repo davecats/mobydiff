@@ -3379,8 +3379,14 @@ immersed boundary. Phased, each phase verified before the next:
   value and rising. The t 16.05 reading ("the near-wall resolution is
   not the cause") is WITHDRAWN: one chord after the injection the field
   had not answered the resolved wall. The trend (snapshots 70000 / 80000
-  / 90000) is queued; the run must be continued beyond t 18 (the user's
-  decision, ~100 GPU-h per quarter chord).
+  / 90000) read out the same day: 0.373 / 0.387 / 0.416 / 0.440 / 0.456
+  at t 16.05 / 16.37 / 16.77 / 17.17 / 17.57, a single relaxation with
+  tau 1.4 c/U toward 0.506 +- 0.006 (outboard strips 0.52), the spanwise
+  shape and the separation line (0.65-0.66 c) unchanged: the resolved
+  box lands at about 0.51, a third above the wall-function box, at the
+  2D c/1024 resolved twin's 0.479, 64 % of XFOIL turbulent. Reading it
+  settled needs t 20-21 (~1 000 GPU-h more), the user's decision; figure
+  `calib/viz/l7_cl_history.png`.
 - **2026-11-01, the c/2048 injected start blew up in its first step: two
   defects at a 2:1 interface that CROSSES the body, fixed at the root.**
   The 6-node test of the c/2048 calibration box (the c/512 final field

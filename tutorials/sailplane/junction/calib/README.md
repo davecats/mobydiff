@@ -698,6 +698,31 @@ with the measured leaf count and step time before the long solve.
   as cpuonly jobs for the trend, and the run has to be CONTINUED beyond
   t 18 (the user's decision: release 5228074 and chain further chunks,
   about 100 GPU-h per 0.25 c/U).
+  THE TREND (2026-11-07, jobs 5229921-5229923, 24 min each; files
+  `~/horeka_stage/junction/l7_<step>_*.csv`, figure
+  `viz/l7_cl_history.png`):
+
+  | step | t | c_l | dc_l/dt | c_dp | c_m | root strip | outboard y > 1.5 c | separation (mid-span) |
+  |---|---|---|---|---|---|---|---|---|
+  | 61925 | 16.05 | 0.373 | | 0.0149 | -0.017 | 0.270 | 0.404 | 0.64 c |
+  | 70000 | 16.37 | 0.387 | +0.042 | 0.0146 | -0.018 | 0.299 | 0.412 | 0.65 c |
+  | 80000 | 16.77 | 0.416 | +0.075 | 0.0164 | -0.025 | 0.318 | 0.443 | 0.65 c |
+  | 90000 | 17.17 | 0.440 | +0.058 | 0.0168 | -0.029 | 0.339 | 0.466 | 0.66 c |
+  | 100000 | 17.57 | 0.456 | +0.041 | 0.0180 | -0.032 | 0.356 | 0.482 | 0.66 c |
+
+  The rise is a single relaxation: a - b exp(-(t - 16.37)/tau) through
+  the last four points (residual 0.0004) gives the asymptote 0.506 +-
+  0.006 with tau 1.4 c/U (outboard strips alone: 0.522, tau 1.2) --
+  0.47 at t 18, 0.49 at 19, 0.50 at 20. So the resolved box lands at
+  about 0.50-0.51, a third above the c/512 wall-function box (0.380),
+  at the 2D c/1024 resolved twin's 0.479 and 64 % of XFOIL turbulent
+  (0.79); the spanwise shape is unchanged (root strips 0.07 below the
+  outboard ones at every time) and the separation line stays at
+  0.65-0.66 c. The first half of the chunk-1 chord was the injected
+  wall-function field relaxing to the resolved wall, the rest of the run
+  the slow approach. To READ the box at its settled value the run needs
+  t about 20-21 (2.5 c/U more, ~1 000 GPU-h at 2.9 s/step); the
+  calibration c_l is otherwise the extrapolated 0.51 +- 0.01.
 - INVESTIGATION 2026-11-04 (the user's three hypotheses: the effective
   incidence, the Reynolds number, a boundary layer that is not fully
   turbulent). Checked in turn:
