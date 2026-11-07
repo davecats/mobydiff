@@ -3370,7 +3370,17 @@ immersed boundary. Phased, each phase verified before the next:
   has +0.1 to +0.5. Resolution takes the solver from 59 % (c/512) over
   65-67 % (c/1024) to 75 % (c/3072) of XFOIL turbulent; the rest is the
   pressure recovery over the separated aft quarter (README of the box,
-  figure `viz/cp_twins_vs_xfoil_a3.8.png`, six series).
+  figure `viz/cp_twins_vs_xfoil_a3.8.png`, six series). THE c/2048 BOX
+  AT t 17.57 (same day; chunk 3 reached t 18 but the final snapshot
+  write hung on Lustre and the job timed out, the t 18 state is lost,
+  the successor is held): c_l 0.456 against 0.373 at t 16.05 -- +0.08
+  on every strip, the separation line 0.64 -> 0.66 c, the root corner
+  separation 0.22 -> 0.09 c, outboard 20 % above the c/512 wall-function
+  value and rising. The t 16.05 reading ("the near-wall resolution is
+  not the cause") is WITHDRAWN: one chord after the injection the field
+  had not answered the resolved wall. The trend (snapshots 70000 / 80000
+  / 90000) is queued; the run must be continued beyond t 18 (the user's
+  decision, ~100 GPU-h per quarter chord).
 - **2026-11-01, the c/2048 injected start blew up in its first step: two
   defects at a 2:1 interface that CROSSES the body, fixed at the root.**
   The 6-node test of the c/2048 calibration box (the c/512 final field

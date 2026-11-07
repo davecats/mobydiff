@@ -651,16 +651,16 @@ with the measured leaf count and step time before the long solve.
   75 M staggered faces; Cf fitted from a median of 44 band points per
   piece (9 at c/512). Against the c/512 final field (t 15.0):
 
-  | quantity (area-weighted over the 3 c of wing) | c/512, wall function | c/2048, resolved wall |
-  |---|---|---|
-  | c_l | 0.3816 | 0.3730 |
-  | c_dp / c_df | 0.0214 / 0.0049 | 0.0149 / 0.0085 |
-  | c_m | -0.0254 | -0.0167 |
-  | first reversed-flow point x/c (upper) | 0.07 (near-LE points), separation from 0.65-0.7 | 0.60-0.64 everywhere, 0.22 at the root strip |
-  | reversed fraction of the upper surface | 0.34 | 0.36 |
-  | c_l(y): y 0.62 / 0.92 / 1.22 / 1.52 c | 0.310 / 0.333 / 0.350 / 0.377 | 0.270 / 0.297 / 0.334 / 0.373 |
-  | c_l(y): y 1.82 c to the cut | 0.390 -> 0.417 | 0.388 -> 0.419 (ratio 1.000 +- 0.004) |
-  | Cp min, y 0.722 c / 1.203 c | -1.44 at x/c 0.10 / -0.91 at 0.28 | -1.01 at 0.15 / -0.83 at 0.25 |
+  | quantity (area-weighted over the 3 c of wing) | c/512, wall function | c/2048, resolved wall, t 16.05 | c/2048, t 17.57 |
+  |---|---|---|---|
+  | c_l | 0.3816 | 0.3730 | 0.4560 |
+  | c_dp / c_df | 0.0214 / 0.0049 | 0.0149 / 0.0085 | 0.0180 / 0.0085 |
+  | c_m | -0.0254 | -0.0167 | -0.0321 |
+  | first reversed-flow point x/c (upper) | 0.07 (near-LE points), separation from 0.65-0.7 | 0.60-0.64 everywhere, 0.22 at the root strip | 0.65-0.66 everywhere, 0.09 at the root strip |
+  | reversed fraction of the upper surface | 0.34 | 0.36 | 0.32 |
+  | c_l(y): y 0.62 / 0.92 / 1.22 / 1.52 c | 0.310 / 0.333 / 0.350 / 0.377 | 0.270 / 0.297 / 0.334 / 0.373 | 0.356 / 0.393 / 0.429 / 0.454 |
+  | c_l(y): y 1.82 c to the cut | 0.390 -> 0.417 | 0.388 -> 0.419 (ratio 1.000 +- 0.004) | 0.468 -> 0.494 (ratio 1.19 to t 16.05) |
+  | Cp min, y 0.722 c / 1.203 c | -1.44 at x/c 0.10 / -0.91 at 0.28 | -1.01 at 0.15 / -0.83 at 0.25 | -1.06 at 0.15 / -0.89 at 0.25 |
 
   READING (preliminary, one c/U after the injection): the near-wall
   resolution is NOT the cause of the factor 2.7. Outboard of y 1.5 c the
@@ -678,6 +678,26 @@ with the measured leaf count and step time before the long solve.
   flapped section separates at 0.64 c where XFOIL's turbulent boundary
   layer holds to 0.75 c -- the model, the section's flap geometry in the
   STL, or the incidence are now the suspects, not the grid.
+  READ-OUT AT t 17.57 (2026-11-07; snapshot 100000, the last one of the
+  run: chunk 3 reached t 18 at step 109880 on 2026-11-06 but the write
+  of that snapshot hung on Lustre, the job ran into its 24 h limit and
+  the t 18 state is lost; the self-chained successor 5228074 is HELD
+  pending the decision to rerun the last half chord, ~200 GPU-h): the
+  resolved box is NOT converged and the t 16.05 reading is WITHDRAWN.
+  c_l 0.456, +0.083 in 1.5 c/U, the gain uniform over the span (+0.08
+  on every strip, +0.09 at the root), the separation line retreating
+  from 0.64 to 0.66 c, the root-strip corner separation back from 0.22
+  to 0.09 c, Cp min deeper at both stations, c_dp up 0.003, c_m -0.032.
+  Outboard of y 1.5 c the resolved wall now carries 20 % MORE lift than
+  the c/512 wall function (0.48 against 0.40) and is still rising: one
+  chord after the injection the field had not yet answered the resolved
+  wall; the box is heading for the 2D c/1024 resolved value (0.479 in
+  the box domain) or beyond. Where it settles decides the step-2
+  calibration numbers: the strip read-outs of the intermediate
+  snapshots 70000 / 80000 / 90000 (t 16.37 / 16.77 / 17.17) are queued
+  as cpuonly jobs for the trend, and the run has to be CONTINUED beyond
+  t 18 (the user's decision: release 5228074 and chain further chunks,
+  about 100 GPU-h per 0.25 c/U).
 - INVESTIGATION 2026-11-04 (the user's three hypotheses: the effective
   incidence, the Reynolds number, a boundary layer that is not fully
   turbulent). Checked in turn:
