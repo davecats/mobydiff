@@ -723,6 +723,26 @@ with the measured leaf count and step time before the long solve.
   the slow approach. To READ the box at its settled value the run needs
   t about 20-21 (2.5 c/U more, ~1 000 GPU-h at 2.9 s/step); the
   calibration c_l is otherwise the extrapolated 0.51 +- 0.01.
+- CONTINUED TO t 20 (the user's go, 2026-11-07): `t_final = 20.0` in
+  `calib_a1.5_y3.5_l7.ini` here and in `$W/calib_run` (the ini is the
+  authority for the run length on a restart; the chunk ini is cut from
+  it at job start), the held successor 5228074 freed of its `afterany`
+  on the stuck job 5226341 (in CG on hkn0608 since 2026-11-06 14:49, its
+  hung snapshot write never ends, so the dependency would never have
+  been satisfied) and released. It restarts from the latest snapshot
+  (`_100000.h5`, t 17.57), runs chunks of 27 000 steps (t 18.65, 19.73)
+  and a short last one to step ~160 750 = t 20.0; three 24-h jobs, about
+  1 200 GPU-h, snapshots every 10 000 steps for the lift history. The
+  login nodes' Lustre mounts stalled on 2026-11-07 and the system was
+  unreachable until 2026-11-09 (the user's hold); the edit and the release
+  were applied 2026-11-09 10:15. Chunk 3 had in fact ENDED its main loop at
+  step 109 880 (t 18.0) before its final snapshot write hung: the write
+  never completed (only two zero-byte HDF5 lock-test files of that name
+  remained, removed), the job left the queue during the outage, and
+  status.txt has no exit line for it. The chain's done-check therefore
+  measures from the chunk-2 exit (step 61 925) to the newest snapshot
+  (100 000): 38 075 steps, more than one chunk, so the released job
+  restarts from `_100000.h5` as intended.
 - INVESTIGATION 2026-11-04 (the user's three hypotheses: the effective
   incidence, the Reynolds number, a boundary layer that is not fully
   turbulent). Checked in turn:

@@ -3386,7 +3386,12 @@ immersed boundary. Phased, each phase verified before the next:
   box lands at about 0.51, a third above the wall-function box, at the
   2D c/1024 resolved twin's 0.479, 64 % of XFOIL turbulent. Reading it
   settled needs t 20-21 (~1 000 GPU-h more), the user's decision; figure
-  `calib/viz/l7_cl_history.png`.
+  `calib/viz/l7_cl_history.png`. The user's go the same day: `t_final`
+  18 -> 20 in the chunk ini, the held successor freed of its dependency
+  on the stuck job and released (applied 2026-11-09 after a two-day
+  HoreKa outage; chunk 3 had reached t 18 but its last snapshot was lost
+  to the hung write) -- chunks of 27 000 steps from the t 17.57
+  snapshot to t 20 (three 24-h jobs on 6 nodes).
 - **2026-11-01, the c/2048 injected start blew up in its first step: two
   defects at a 2:1 interface that CROSSES the body, fixed at the root.**
   The 6-node test of the c/2048 calibration box (the c/512 final field
