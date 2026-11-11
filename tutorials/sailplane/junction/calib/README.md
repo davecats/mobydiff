@@ -711,6 +711,7 @@ with the measured leaf count and step time before the long solve.
   | 100000 | 17.57 | 0.456 | +0.041 | 0.0180 | -0.032 | 0.356 | 0.482 | 0.66 c |
   | 110000 | 18.01 | 0.471 | +0.034 | 0.0184 | -0.034 | 0.371 | 0.495 | 0.66 c |
   | 120000 | 18.45 | 0.482 | +0.026 | 0.0184 | -0.036 | 0.384 | 0.505 | 0.66 c |
+  | 127000 | 18.76 | 0.488 | +0.020 | 0.0184 | -0.036 | 0.392 | 0.511 | 0.66 c |
 
   The rise is a single relaxation: a - b exp(-(t - 16.37)/tau) through
   the last four points (residual 0.0004) gives the asymptote 0.506 +-
@@ -739,6 +740,11 @@ with the measured leaf count and step time before the long solve.
   fits give 0.502-0.506, still 0.01-0.02 below their asymptotes: the
   settled resolved-box value is 0.51-0.53, read at t 20 as 0.50-0.51
   plus the extrapolation.
+  The t 18.76 point (job 5233994, chunk-4 end) reads 0.488, again on
+  the prediction (0.488-0.489), and the fits now agree: 0.515 +- 0.002
+  (tau 1.52, all seven points from t 16.37) and 0.518 (tau 1.62, last
+  four), outboard 0.532-0.535; the drift of the last-four asymptote has
+  reversed (0.525 -> 0.518). At t 20 both give 0.503-0.504.
 - CONTINUED TO t 20 (the user's go, 2026-11-07): `t_final = 20.0` in
   `calib_a1.5_y3.5_l7.ini` here and in `$W/calib_run` (the ini is the
   authority for the run length on a restart; the chunk ini is cut from

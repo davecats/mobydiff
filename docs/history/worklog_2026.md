@@ -3395,7 +3395,8 @@ immersed boundary. Phased, each phase verified before the next:
   t 18.01 / 18.45 read-outs give c_l 0.471 / 0.482, on the 11-07
   prediction, but the refit drifts up (asymptote 0.513-0.525, tau
   1.5-1.85): the approach is slower than one exponential, t 20 reads
-  0.50-0.51 with the settled value 0.51-0.53.
+  0.50-0.51 with the settled value 0.51-0.53; the t 18.76 point (0.488)
+  narrows this to 0.515-0.518 (t 20: 0.503-0.504).
 - **2026-11-01, the c/2048 injected start blew up in its first step: two
   defects at a 2:1 interface that CROSSES the body, fixed at the root.**
   The 6-node test of the c/2048 calibration box (the c/512 final field
