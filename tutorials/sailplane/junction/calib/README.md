@@ -709,6 +709,8 @@ with the measured leaf count and step time before the long solve.
   | 80000 | 16.77 | 0.416 | +0.075 | 0.0164 | -0.025 | 0.318 | 0.443 | 0.65 c |
   | 90000 | 17.17 | 0.440 | +0.058 | 0.0168 | -0.029 | 0.339 | 0.466 | 0.66 c |
   | 100000 | 17.57 | 0.456 | +0.041 | 0.0180 | -0.032 | 0.356 | 0.482 | 0.66 c |
+  | 110000 | 18.01 | 0.471 | +0.034 | 0.0184 | -0.034 | 0.371 | 0.495 | 0.66 c |
+  | 120000 | 18.45 | 0.482 | +0.026 | 0.0184 | -0.036 | 0.384 | 0.505 | 0.66 c |
 
   The rise is a single relaxation: a - b exp(-(t - 16.37)/tau) through
   the last four points (residual 0.0004) gives the asymptote 0.506 +-
@@ -723,6 +725,20 @@ with the measured leaf count and step time before the long solve.
   the slow approach. To READ the box at its settled value the run needs
   t about 20-21 (2.5 c/U more, ~1 000 GPU-h at 2.9 s/step); the
   calibration c_l is otherwise the extrapolated 0.51 +- 0.01.
+  CONTINUATION READ-OUTS (2026-11-11, jobs 5233690/5233776, the two
+  rows above the line): the t 18.01 and 18.45 points fall ON the
+  2026-11-07 prediction (0.469 / 0.479 predicted, 0.471 / 0.482
+  measured), 0.002-0.003 above it, and the refit shows the approach is
+  SLOWER than one exponential -- the fitted asymptote drifts up with
+  the window: all six points from t 16.37 give 0.513 +- 0.002 with tau
+  1.50 (rms 0.0003), the last four 0.525 +- 0.004 with tau 1.85 (rms
+  0.0001); the outboard strips alone 0.530, tau 1.34. The rate dc_l/dt
+  falls 0.041 -> 0.034 -> 0.026 per c/U; c_dp has stopped at 0.0184,
+  c_df stays 0.0085, the separation line at 0.66 c, the root strip
+  0.11 below the outboard mean at every time. Reading at t 20 the two
+  fits give 0.502-0.506, still 0.01-0.02 below their asymptotes: the
+  settled resolved-box value is 0.51-0.53, read at t 20 as 0.50-0.51
+  plus the extrapolation.
 - CONTINUED TO t 20 (the user's go, 2026-11-07): `t_final = 20.0` in
   `calib_a1.5_y3.5_l7.ini` here and in `$W/calib_run` (the ini is the
   authority for the run length on a restart; the chunk ini is cut from
@@ -742,7 +758,11 @@ with the measured leaf count and step time before the long solve.
   status.txt has no exit line for it. The chain's done-check therefore
   measures from the chunk-2 exit (step 61 925) to the newest snapshot
   (100 000): 38 075 steps, more than one chunk, so the released job
-  restarts from `_100000.h5` as intended.
+  restarts from `_100000.h5` as intended. Chunk 4 (5228074) ran 2026-11-10
+  14:07 to 11-11 11:51 (27 000 steps, exit 0, no warnings, restart
+  trace identical to chunk 3's at step 100 100): t 18.76, snapshots
+  110000/120000/127000, read out by cpuonly jobs as they appeared;
+  chunk 5 (5233232) queued for t 19.73, then the short last chunk.
 - INVESTIGATION 2026-11-04 (the user's three hypotheses: the effective
   incidence, the Reynolds number, a boundary layer that is not fully
   turbulent). Checked in turn:

@@ -3391,7 +3391,11 @@ immersed boundary. Phased, each phase verified before the next:
   on the stuck job and released (applied 2026-11-09 after a two-day
   HoreKa outage; chunk 3 had reached t 18 but its last snapshot was lost
   to the hung write) -- chunks of 27 000 steps from the t 17.57
-  snapshot to t 20 (three 24-h jobs on 6 nodes).
+  snapshot to t 20 (three 24-h jobs on 6 nodes). Chunk 4 done 2026-11-11 (t 18.76, clean restart); the
+  t 18.01 / 18.45 read-outs give c_l 0.471 / 0.482, on the 11-07
+  prediction, but the refit drifts up (asymptote 0.513-0.525, tau
+  1.5-1.85): the approach is slower than one exponential, t 20 reads
+  0.50-0.51 with the settled value 0.51-0.53.
 - **2026-11-01, the c/2048 injected start blew up in its first step: two
   defects at a 2:1 interface that CROSSES the body, fixed at the root.**
   The 6-node test of the c/2048 calibration box (the c/512 final field
