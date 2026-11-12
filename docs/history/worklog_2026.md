@@ -3403,7 +3403,12 @@ immersed boundary. Phased, each phase verified before the next:
   `$PROJECT`, `horeka/build_hk2.sh` (dev-cpu, NVHPC 25.9 + HPC-X +
   HDF5 module, cc90; `compile.sh` now takes `OPENMP_OFFLOAD_FLAGS` from
   the environment) and `horeka/submit_calib_hk2.sh` (gpu-h100); job
-  129445 = one 2-day chunk to t 20, queue estimate 20 Nov.
+  129445 = one 2-day chunk to t 20, queue estimate 20 Nov. The user
+  then chose to TRY THE LEGACY CLUSTER on that estimate: the chunk was
+  resubmitted in the legacy run dir as job 5235618 under
+  `hk-project-exasim` (the account with legacy GPU hours left, 8 945 of
+  146 814; p0024333 has none there), 6 nodes, 36 h, test-only estimate
+  2026-11-14 18:50; 129445 kept queued as the fallback.
 - **2026-11-01, the c/2048 injected start blew up in its first step: two
   defects at a 2:1 interface that CROSSES the body, fixed at the root.**
   The 6-node test of the c/2048 calibration box (the c/512 final field

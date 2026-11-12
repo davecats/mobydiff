@@ -787,6 +787,17 @@ with the measured leaf count and step time before the long solve.
   (HOREKA.md section 2); legacy A100 jobs stay possible until 20 Nov
   noon. The H100 step time is unmeasured (the A100 ran 2.9 s/step on
   24 GPUs).
+- RESUMED ON LEGACY HOREKA (2026-11-12, the user's call on the 8-day
+  HoreKa 2 estimate): the same chunk resubmitted in the legacy run dir
+  under the account that still has legacy GPU hours, `hk-project-exasim`
+  (`kit_project_usage`: 8 945 of 146 814 GPU-h left; `hk-project-p0024333`
+  has 0 granted there) -- job 5235618, `submit_calib.sh` with
+  `--account=hk-project-exasim --nodes=6 --ntasks-per-node=4
+  --time=1-12:00:00`, NSTEPS 34 000, `SBATCH_ACCOUNT` exported so a
+  successor inherits the account; `sbatch --test-only` estimated the start
+  on 2026-11-14 18:50 (the same for 30 h and 36 h), i.e. done about
+  16 Nov at the measured 2.9 s/step. Job 129445 on HoreKa 2 stays queued
+  as the fallback; whichever starts first runs, the other is cancelled.
 - INVESTIGATION 2026-11-04 (the user's three hypotheses: the effective
   incidence, the Reynolds number, a boundary layer that is not fully
   turbulent). Checked in turn:
