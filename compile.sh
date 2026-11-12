@@ -129,7 +129,7 @@ configure_and_build() {
     # Used only by the nofma modes; empty for a production build, which is what
     # keeps those byte-identical to what they were before these modes existed.
     local extra_fflags="${4:-}"
-    local offload_override="${5:-}"
+    local offload_override="${5:-${OPENMP_OFFLOAD_FLAGS:-}}"   # or from the environment: e.g. "-mp=gpu -gpu=cc90" to build for a GPU the build host lacks
 
     export FC="${FC:-${MPI_FC_WRAPPER:-mpifort}}"
     export CC="${CC:-${MPI_C_WRAPPER:-mpicc}}"
