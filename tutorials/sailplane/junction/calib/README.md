@@ -768,7 +768,25 @@ with the measured leaf count and step time before the long solve.
   14:07 to 11-11 11:51 (27 000 steps, exit 0, no warnings, restart
   trace identical to chunk 3's at step 100 100): t 18.76, snapshots
   110000/120000/127000, read out by cpuonly jobs as they appeared;
-  chunk 5 (5233232) queued for t 19.73, then the short last chunk.
+  chunk 5 (5233232) was queued for t 19.73 and CANCELLED unstarted on
+  2026-11-11 (the user's decision: migrate to HoreKa 2).
+- MIGRATED TO HOREKA 2 (2026-11-12; `~/HOREKA.md` is the system note):
+  workspace `junction` (`/hfs2/work/workspace/scratch/ka_xt8786-junction`,
+  60 d), run dir `calib_run` with the t 18.76 snapshot, the case file,
+  the ini, `strip_loads.py` + STL, provenance and status (174 GB copied
+  in 3.5 min across the legacy mount of the login node); code clone
+  `$PROJECT/moby-junction` (workstation remote `hk2`); binary built on a
+  dev-cpu node by `horeka/build_hk2.sh` (NVHPC 25.9 + HPC-X 2.24 + the
+  parallel HDF5 module + CMake/3.31.12, `-gpu=cc90`, 26 s on 32 cores;
+  the first attempt died on a missing cmake). Chain = job 129445,
+  `horeka/submit_calib_hk2.sh` on 6 `gpu-h100` nodes (24 H100-94 GB),
+  one 2-day chunk of NSTEPS 34 000 for the 33 750 steps to t 20.
+  MEASURED QUEUE: `sbatch --test-only` estimated the start on
+  2026-11-20 15:43 for 3, 4 or 6 nodes and 24-48 h alike (gpu-h200:
+  30 Nov) -- the H100 nodes are still served by the legacy scheduler
+  (HOREKA.md section 2); legacy A100 jobs stay possible until 20 Nov
+  noon. The H100 step time is unmeasured (the A100 ran 2.9 s/step on
+  24 GPUs).
 - INVESTIGATION 2026-11-04 (the user's three hypotheses: the effective
   incidence, the Reynolds number, a boundary layer that is not fully
   turbulent). Checked in turn:

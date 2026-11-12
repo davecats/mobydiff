@@ -3396,7 +3396,14 @@ immersed boundary. Phased, each phase verified before the next:
   prediction, but the refit drifts up (asymptote 0.513-0.525, tau
   1.5-1.85): the approach is slower than one exponential, t 20 reads
   0.50-0.51 with the settled value 0.51-0.53; the t 18.76 point (0.488)
-  narrows this to 0.515-0.518 (t 20: 0.503-0.504).
+  narrows this to 0.515-0.518 (t 20: 0.503-0.504). 2026-11-11/12: the
+  user stopped the legacy chain (chunk 5 cancelled unstarted) and moved
+  the study to HoreKa 2: workspace `junction`, the t 18.76 snapshot +
+  case file copied across the login node's legacy mount, code clone in
+  `$PROJECT`, `horeka/build_hk2.sh` (dev-cpu, NVHPC 25.9 + HPC-X +
+  HDF5 module, cc90; `compile.sh` now takes `OPENMP_OFFLOAD_FLAGS` from
+  the environment) and `horeka/submit_calib_hk2.sh` (gpu-h100); job
+  129445 = one 2-day chunk to t 20, queue estimate 20 Nov.
 - **2026-11-01, the c/2048 injected start blew up in its first step: two
   defects at a 2:1 interface that CROSSES the body, fixed at the root.**
   The 6-node test of the c/2048 calibration box (the c/512 final field
