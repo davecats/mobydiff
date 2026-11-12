@@ -17,7 +17,7 @@
 set -uo pipefail
 CODE_DIR="${CODE_DIR:?}"
 module purge
-module load NVHPC/25.9-CUDA-12.9.1 HDF5/1.14.6-NVHPC-25.9-CUDA-12.9.1
+module load NVHPC/25.9-CUDA-12.9.1 HDF5/1.14.6-NVHPC-25.9-CUDA-12.9.1 CMake/3.31.12   # the toolchain-free CMake (cmake is not on the node PATH)
 export HDF5_ROOT="$EBROOTHDF5"
 export OPENMP_OFFLOAD_FLAGS="-mp=gpu -gpu=cc90"
 cd "$CODE_DIR" && rm -rf build_gpu

@@ -33,7 +33,7 @@ CODE_DIR="${CODE_DIR:?}"; RUN_DIR="${RUN_DIR:?}"; STAGE_INI="${STAGE_INI:?}"; PR
 NSTEPS="${NSTEPS:-20000}"
 
 module purge
-module load NVHPC/25.9-CUDA-12.9.1 HDF5/1.14.6-NVHPC-25.9-CUDA-12.9.1   # nvfortran + HPC-X (CUDA-aware Open MPI 4.1) + parallel HDF5 built with them
+module load NVHPC/25.9-CUDA-12.9.1 HDF5/1.14.6-NVHPC-25.9-CUDA-12.9.1 CMake/3.31.12   # nvfortran + HPC-X (CUDA-aware Open MPI 4.1) + parallel HDF5 built with them
 export HDF5_ROOT="${HDF5_ROOT:-$EBROOTHDF5}"
 export OPENMP_OFFLOAD_FLAGS="${OPENMP_OFFLOAD_FLAGS:--mp=gpu -gpu=cc90}"   # H100 / H200 (the build job runs on a CPU node)
 export LD_LIBRARY_PATH="$HDF5_ROOT/lib:${LD_LIBRARY_PATH:-}"
