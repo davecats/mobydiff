@@ -3408,7 +3408,12 @@ immersed boundary. Phased, each phase verified before the next:
   resubmitted in the legacy run dir as job 5235618 under
   `hk-project-exasim` (the account with legacy GPU hours left, 8 945 of
   146 814; p0024333 has none there), 6 nodes, 36 h, test-only estimate
-  2026-11-14 18:50; 129445 kept queued as the fallback.
+  2026-11-14 18:50; 129445 kept queued as the fallback. 5235618 started
+  a day early (13 Nov 10:23) and exited in 36 s: `done_already` measured
+  chunk 4 against the raised NSTEPS and called the run done. Fixed in
+  both chain scripts (the chunk's own requested `nsteps` from
+  `chunk_<PREFIX>.ini` against the log's `timing: nsteps`), resubmitted
+  as 5237319 (estimate 15 Nov 11:17).
 - **2026-11-01, the c/2048 injected start blew up in its first step: two
   defects at a 2:1 interface that CROSSES the body, fixed at the root.**
   The 6-node test of the c/2048 calibration box (the c/512 final field

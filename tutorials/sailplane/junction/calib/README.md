@@ -798,6 +798,16 @@ with the measured leaf count and step time before the long solve.
   on 2026-11-14 18:50 (the same for 30 h and 36 h), i.e. done about
   16 Nov at the measured 2.9 s/step. Job 129445 on HoreKa 2 stays queued
   as the fallback; whichever starts first runs, the other is cancelled.
+  FALSE START (2026-11-13): 5235618 started at 10:23 on 13 Nov, a day
+  BEFORE the estimate, and exited after 36 s with "is done: nothing to
+  do" -- the chain's `done_already` compared chunk 4's 27 000 steps with
+  the CURRENT NSTEPS (raised to 34 000) and took the full chunk for a
+  trimmed final one. Fixed in both chain scripts: a chunk is done when
+  the solver's closing `timing: nsteps N` is below the `nsteps` of
+  `chunk_<PREFIX>.ini`, the ini of that same chunk (the old snapshot
+  test stays as the fallback); traced on the legacy run dir (`bash -x`:
+  ran 27 000, asked 27 000, not done). Resubmitted as job 5237319 (same
+  account, nodes, time, NSTEPS), test-only estimate 2026-11-15 11:17.
 - INVESTIGATION 2026-11-04 (the user's three hypotheses: the effective
   incidence, the Reynolds number, a boundary layer that is not fully
   turbulent). Checked in turn:

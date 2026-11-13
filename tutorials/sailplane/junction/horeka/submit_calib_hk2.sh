@@ -60,12 +60,23 @@ cd "$RUN_DIR"
 
 latest_of() { ls -1 ${1}_[0-9]*.h5 2>/dev/null | sed 's/.*_\([0-9]*\)\.h5/\1 &/' | sort -n | tail -1 | cut -d' ' -f2; }
 done_already() {  # the run reached t_final: the newest chunk ended ("main loop ended")
-    # after FEWER than NSTEPS steps. The generic case prints no time rows, so
-    # the step count comes from the snapshot names: the newest snapshot's
-    # step minus the step the last chunk restarted from (status.txt holds
-    # "exit <rc> <prefix> <restart file>"; a cold start is step 0).
+    # after FEWER steps than IT was asked for. The solver's closing line
+    # "timing: nsteps N" is the count it ran; the count it was asked for is
+    # the nsteps of chunk_$PREFIX.ini, the ini of that same chunk (written
+    # below, just before mpirun; the check runs before it is rewritten).
+    # Comparing against the CURRENT $NSTEPS is wrong: raising NSTEPS between
+    # chunks made a full earlier chunk look like a trimmed final one and the
+    # job exited with "nothing to do" (2026-11-13, job 5235618).
+    # Fallback for a log without the timing line: the newest snapshot's step
+    # minus the step the last chunk restarted from (status.txt holds
+    # "exit <rc> <prefix> <restart file>"; a cold start is step 0), against
+    # the current NSTEPS.
     local log; log=$(ls -t ${PREFIX}_from_*.log 2>/dev/null | head -1); [ -n "$log" ] || return 1
     grep -q "main loop ended" "$log" || return 1
+    local ran asked
+    ran=$(grep -o '^timing: nsteps [0-9]*' "$log" | tail -1 | awk '{print $3}')
+    asked=$(grep -o '^nsteps = [0-9]*' "chunk_$PREFIX.ini" 2>/dev/null | awk '{print $3}')
+    if [ -n "$ran" ] && [ -n "$asked" ]; then [ "$ran" -lt "$asked" ]; return; fi
     local from; from=$(grep "^exit 0 $PREFIX " status.txt 2>/dev/null | tail -1 | awk '{print $4}')
     [ -n "$from" ] || return 1
     local s0=0; [ "$from" != "cold-start" ] && s0=$(echo "$from" | sed 's/.*_\([0-9]*\)\.h5/\1/')
