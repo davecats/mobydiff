@@ -773,6 +773,16 @@ with the measured leaf count and step time before the long solve.
   are `viz/l7_cl_history.png`. The final snapshot is the initial field
   of step 7: it stays in the legacy run dir and is copied to the
   HoreKa 2 workspace (`$W2/calib_run`, with the strip csv files).
+- CLOSED 2026-11-15 (the user: the extrapolated value stands, no chunk to
+  t 21; legacy clean-up). The legacy run dir (1.7 TB: the c/512 fields
+  and case files, the box6 tests, the c/2048 snapshots 40 000-150 000,
+  the restart and test files) and the legacy code clone were deleted
+  after every non-HDF5 file (logs, csv, inis, scripts, slurm outputs,
+  `calfig/`: 269 files, 2.6 GB) was archived to
+  `$W2/calib_run/legacy_archive/` on HoreKa 2, where the c/2048 case
+  file and the t 18.76 and t 20.0 snapshots already were (sizes
+  checked). The t 20 field `calib_a1.5_y3.5_l7_154547.h5` is the
+  initial field of step 7.
 - CONTINUED TO t 20 (the user's go, 2026-11-07): `t_final = 20.0` in
   `calib_a1.5_y3.5_l7.ini` here and in `$W/calib_run` (the ini is the
   authority for the run length on a restart; the chunk ini is cut from

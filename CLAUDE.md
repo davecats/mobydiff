@@ -246,8 +246,14 @@ stl_sections.py` slices, measures and pitches the STL, `liftingline.py` is
 the AeroSandbox nonlinear lifting line of step 1 -- DONE 2026-10-26:
 alpha_box = 1.5 deg at C_L 1.0 on XFOIL polars, decisions D1-D5 taken: sharp
 corner, C_L 1.0, Ncrit 9/12, XFOIL from source in `assets/xfoil`, account
-`hk-project-p0024333`; NEXT: step 2, the calibration box -- handout section 4
-is the executable procedure, 4.0 the strip-load script first), no case yet. Dropped
+`hk-project-p0024333`; step 2, the calibration box, DONE 2026-11-15 (ledger
+row 2; `tutorials/sailplane/junction/calib/README.md`: the c/512 wall-function
+box 0.38, the c/2048 resolved box 0.504 at t 20 relaxing to 0.52 +- 0.01, the
+level set by the separated flap; the final field and the case file are on
+HoreKa 2, workspace `junction`, the legacy run dir deleted); NEXT: step 3,
+the go / no-go tests of handout section 5.1 -- the TS-wave growth through the
+IBM on the Blasius case against Orr-Sommerfeld, and the projection-residual
+floor on the SD7003 bubble -- both before any production grid). Dropped
 2026-10-24 by decision: S5b (TVD + second halo), C4 (conducting corners), the
 MacDonald rough-wall forced-convection case.
 

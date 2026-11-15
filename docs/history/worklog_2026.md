@@ -3424,7 +3424,11 @@ immersed boundary. Phased, each phase verified before the next:
   32 % above the c/512 wall-function box, 5 % above the 2D c/1024
   resolved twin, 64 % of XFOIL turbulent. Ledger row 2 of the handout
   updated; the HoreKa 2 fallback job cancelled unstarted; the final
-  snapshot copied to the HoreKa 2 workspace for step 7.
+  snapshot copied to the HoreKa 2 workspace for step 7. STEP 2 CLOSED
+  2026-11-15 by the user (the extrapolated 0.52 +- 0.01 stands, no
+  chunk to t 21); the legacy calib run dir (1.7 TB) and code clone
+  deleted after archiving the 269 small files to HoreKa 2. Next: step
+  3, the go / no-go tests (handout 5.1).
 - **2026-11-01, the c/2048 injected start blew up in its first step: two
   defects at a 2:1 interface that CROSSES the body, fixed at the root.**
   The 6-node test of the c/2048 calibration box (the c/512 final field
