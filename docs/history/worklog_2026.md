@@ -3417,7 +3417,14 @@ immersed boundary. Phased, each phase verified before the next:
   15 Nov 11:38 and REACHED t 20 (step 154547, 27 547 steps, 2.89 s/step,
   exit 0, 0 warnings); snapshots 130000/140000/150000/154547 read out
   with the cpuonly strip recipe; `calib/cl_history.py` added (the lift
-  history script, previously a scratch file).
+  history script, previously a scratch file). FINAL READ-OUT: c_l 0.504
+  at t 20 (predicted 0.503-0.504), asymptote 0.517 +- 0.001 (tau 1.58;
+  last four 0.520, outboard strips 0.535), c_dp 0.0181, c_df 0.0085,
+  c_m -0.038, separation 0.66 c, root strip 0.413 / outboard 0.525:
+  32 % above the c/512 wall-function box, 5 % above the 2D c/1024
+  resolved twin, 64 % of XFOIL turbulent. Ledger row 2 of the handout
+  updated; the HoreKa 2 fallback job cancelled unstarted; the final
+  snapshot copied to the HoreKa 2 workspace for step 7.
 - **2026-11-01, the c/2048 injected start blew up in its first step: two
   defects at a 2:1 interface that CROSSES the body, fixed at the root.**
   The 6-node test of the c/2048 calibration box (the c/512 final field

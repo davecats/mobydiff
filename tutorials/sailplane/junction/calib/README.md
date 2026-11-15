@@ -712,6 +712,10 @@ with the measured leaf count and step time before the long solve.
   | 110000 | 18.01 | 0.471 | +0.034 | 0.0184 | -0.034 | 0.371 | 0.495 | 0.66 c |
   | 120000 | 18.45 | 0.482 | +0.026 | 0.0184 | -0.036 | 0.384 | 0.505 | 0.66 c |
   | 127000 | 18.76 | 0.488 | +0.020 | 0.0184 | -0.036 | 0.392 | 0.511 | 0.66 c |
+  | 130000 | 18.89 | 0.491 | +0.017 | 0.0186 | -0.037 | 0.396 | 0.513 | 0.66 c |
+  | 140000 | 19.34 | 0.497 | +0.015 | 0.0183 | -0.037 | 0.403 | 0.519 | 0.66 c |
+  | 150000 | 19.80 | 0.502 | +0.011 | 0.0182 | -0.038 | 0.410 | 0.524 | 0.66 c |
+  | 154547 | 20.00 | 0.504 | +0.010 | 0.0181 | -0.038 | 0.413 | 0.525 | 0.66 c |
 
   The rise is a single relaxation: a - b exp(-(t - 16.37)/tau) through
   the last four points (residual 0.0004) gives the asymptote 0.506 +-
@@ -745,6 +749,30 @@ with the measured leaf count and step time before the long solve.
   (tau 1.52, all seven points from t 16.37) and 0.518 (tau 1.62, last
   four), outboard 0.532-0.535; the drift of the last-four asymptote has
   reversed (0.525 -> 0.518). At t 20 both give 0.503-0.504.
+  FINAL READ-OUT AT t 20 (2026-11-15, jobs 5239972-5239975 on
+  `hk-project-exasim`, 24 min / 26 GB each, the four rows below the
+  line; `cl_history.py` reproduces the table and the fits): **c_l 0.504
+  at t 20.0** (snapshot `calib_a1.5_y3.5_l7_154547.h5`), exactly the
+  0.503-0.504 predicted on 2026-11-11 from the t 18.76 point, and every
+  intermediate point (0.491 / 0.497 / 0.502) on the same curve. The
+  refit with all eleven points from t 16.37 gives the asymptote
+  **0.517 +- 0.001, tau 1.58 c/U**; the last four 0.520, tau 1.78; the
+  outboard strips 0.535, tau 1.44 -- the settled resolved-box value is
+  0.52 +- 0.01, and one more chord of run time (t 21) would read 0.510
+  to 0.511. The rate dc_l/dt is down to 0.010 per c/U. Everything else
+  is settled: c_dp 0.0181 (c_df 0.0085, c_d 0.0266), c_m -0.038, the
+  separation line at 0.66 c on every strip, the root strip 0.11 below
+  the outboard mean (0.413 vs 0.525; tip strip 0.537). Against the
+  references the c/2048 resolved box at t 20 is 32 % above the c/512
+  wall-function box (0.382), 5 % above the 2D c/1024 resolved twin
+  (0.479; 8 % at the asymptote), 64 % of XFOIL fully turbulent (0.79)
+  and half the lifting line (1.04): the resolution of the near wall
+  moved the level by a third, the remaining gap to the 2D references
+  is the separated flap (0.66 c against XFOIL's 0.75 c), as section
+  4.3's conclusion of 2026-11-04 says. The lift history and the fits
+  are `viz/l7_cl_history.png`. The final snapshot is the initial field
+  of step 7: it stays in the legacy run dir and is copied to the
+  HoreKa 2 workspace (`$W2/calib_run`, with the strip csv files).
 - CONTINUED TO t 20 (the user's go, 2026-11-07): `t_final = 20.0` in
   `calib_a1.5_y3.5_l7.ini` here and in `$W/calib_run` (the ini is the
   authority for the run length on a restart; the chunk ini is cut from
