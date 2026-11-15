@@ -72,7 +72,7 @@ module bodyforce
         ! Trip forcing (SRC_TRIP) state -- an EXACT port of the CaNS/SIMSON trip
         ! (cans_js/src/trip.f90; the AMPHIBIOUS "CaNS-exact trip" port). The force
         ! acts on the wall-normal (v) momentum:
-        !   f_v(x,y,z,t) = exp(-((x-x0)/lx)^2 - (y/ly)^2) * g(z,t),
+        !   f_v(x,y,z,t) = exp(-((x-x0)/lx)^2 - ((y-y0)/ly)^2) * g(z,t),
         !   g(z,t) = (amp_s/nmodes) g_s(z)
         !          + (amp_t/nmodes) [ (1-b(t)) g_k(z) + b(t) g_{k+1}(z) ],
         !   g(z) = sqrt(2) cos(phi_0) + sum_{m=1}^{nmodes/2} 2 cos(2 pi m z/Lz + phi_m),
@@ -85,6 +85,12 @@ module bodyforce
         ! g_k is redrawn every ts; b(t) is the C^1 smooth step (Schlatter & Orlu 2012).
         real(C_DOUBLE) :: trip_x0 = 0.0d0, trip_lx = 4.0d0, trip_ly = 1.0d0
         real(C_DOUBLE) :: trip_amp = 0.0d0, trip_amp_s = 0.0d0, trip_ts = 4.0d0, trip_lz = 0.0d0
+        ! trip_y0: the wall height the y envelope is centred on (an immersed
+        ! plate at y = y0; 0 = the domain wall). trip_omega > 0 replaces the
+        ! random spanwise signal by the spanwise-uniform harmonic
+        ! amp*sin(omega t) -- the vibrating-ribbon forcing of the TS-wave
+        ! test (sailplane junction step 3); amp_s, ts, nmodes, seed unused then.
+        real(C_DOUBLE) :: trip_y0 = 0.0d0, trip_omega = 0.0d0
         integer(C_INT) :: trip_nmodes = 16_C_INT, trip_seed = 1_C_INT
         integer(C_INT) :: trip_nharm = 0_C_INT        ! nmodes/2 non-zero harmonics
         integer(C_INT) :: trip_kindex = -1_C_INT
@@ -209,6 +215,8 @@ contains
         bf%trip_ly     = dns%trip_ly
         bf%trip_amp    = dns%trip_amp
         bf%trip_amp_s  = dns%trip_amp_s
+        bf%trip_y0     = dns%trip_y0
+        bf%trip_omega  = dns%trip_omega
         bf%trip_ts     = dns%trip_ts
         bf%trip_nmodes = dns%trip_nmodes
         bf%trip_seed   = dns%trip_seed
@@ -250,8 +258,8 @@ contains
     end subroutine init_trip
 
     ! List the blocks the trip envelope can reach. ex = -((x-x0)/lx)^2
-    ! - (y/ly)^2 is separable, so its MAXIMUM over a block is minus the sum of
-    ! the squared distances from x0 and 0 to the block's own x and y ranges; if
+    ! - ((y-y0)/ly)^2 is separable, so its MAXIMUM over a block is minus the sum of
+    ! the squared distances from x0 and y0 to the block's own x and y ranges; if
     ! that maximum is already below the kernel's -50 cutoff, every cell of the
     ! block is exactly zero. The test is therefore the kernel's own test
     ! evaluated at the block's closest point -- skipping a block writes exactly
@@ -271,7 +279,7 @@ contains
             xlo = minval(blk%x(1:nx,VAR_V,b)); xhi = maxval(blk%x(1:nx,VAR_V,b))
             ylo = minval(blk%y(1:ny,VAR_V,b)); yhi = maxval(blk%y(1:ny,VAR_V,b))
             dx = max(0.0d0, xlo - bf%trip_x0, bf%trip_x0 - xhi)
-            dy = max(0.0d0, ylo, -yhi)
+            dy = max(0.0d0, ylo - bf%trip_y0, bf%trip_y0 - yhi)
             if (-((dx/bf%trip_lx)**2 + (dy/bf%trip_ly)**2) >= -50.0d0) then
                 n = n + 1_C_INT
                 bf%trip_blocks(n) = b
@@ -479,6 +487,12 @@ contains
         integer(C_INT) :: kidx, kbefore
         real(C_DOUBLE) :: p, bstep
 
+        if (bf%trip_omega > 0.0d0) then
+            ! Harmonic forcing: no random walk, no spanwise table.
+            call fill_trip_kernel(bf, blk, 0.0d0, bf%trip_amp*sin(bf%trip_omega*t), .true.)
+            return
+        end if
+
         ! Advance the walk until g_k / g_{k+1} bracket [k*ts, (k+1)*ts] ∋ t.
         kidx = int(floor(t/bf%trip_ts), C_INT)
         kbefore = bf%trip_kindex
@@ -498,7 +512,7 @@ contains
         p = t/bf%trip_ts - real(kidx, C_DOUBLE)
         bstep = p*p*(3.0d0 - 2.0d0*p)        ! 3p^2 - 2p^3, C^1 smooth step
 
-        call fill_trip_kernel(bf, blk, bstep)
+        call fill_trip_kernel(bf, blk, bstep, 0.0d0, .false.)
     end subroutine fill_trip
 
     ! Tabulate the CaNS spanwise signals g_s(z), g_k(z) and g_{k+1}(z) over the
@@ -558,14 +572,16 @@ contains
     ! bf%f = 0.0d0 at allocation, so rewriting them every substage stored two
     ! thirds of a domain-sized array to no effect. Both restrictions write
     ! exactly the values that were there before -- this is bit-exact.
-    subroutine fill_trip_kernel(bf, blk, bstep)
+    subroutine fill_trip_kernel(bf, blk, bstep, harm, harmonic)
         type(bodyforce_type), intent(inout) :: bf
         type(block_set_type), intent(in) :: blk
         real(C_DOUBLE), intent(in) :: bstep
+        real(C_DOUBLE), intent(in) :: harm       ! amp*sin(omega t) when harmonic
+        logical, intent(in) :: harmonic
 
-        integer :: i, j, k, b, bb, nx, ny, nz, nTrip
+        integer :: i, j, k, b, bb, nx, ny, nz, nTrip, iharm
         real(C_DOUBLE) :: x, y, ex, env
-        real(C_DOUBLE) :: amps, ampt, x0, lx, ly
+        real(C_DOUBLE) :: amps, ampt, x0, y0, lx, ly
 
         nTrip = int(bf%n_trip_blocks)
         if (nTrip == 0) return
@@ -574,10 +590,11 @@ contains
         ! CaNS scaling: divide the (non-normalized) signal by nmodes = 2*nharm.
         ampt = bf%trip_amp  /real(bf%trip_nmodes, C_DOUBLE)
         amps = bf%trip_amp_s/real(bf%trip_nmodes, C_DOUBLE)
-        x0 = bf%trip_x0; lx = bf%trip_lx; ly = bf%trip_ly
+        x0 = bf%trip_x0; y0 = bf%trip_y0; lx = bf%trip_lx; ly = bf%trip_ly
+        iharm = merge(1, 0, harmonic)
 
         !$omp target teams distribute parallel do collapse(4) &
-        !$omp& map(to: bstep, ampt, amps, x0, lx, ly, nx, ny, nz, nTrip, &
+        !$omp& map(to: bstep, harm, iharm, ampt, amps, x0, y0, lx, ly, nx, ny, nz, nTrip, &
         !$omp& blk%x, blk%y, bf%trip_blocks, bf%trip_gs, bf%trip_g, bf%trip_gp1) &
         !$omp& map(to: bf%f) &
         !$omp& private(i,j,k,b,bb,x,y,ex,env)
@@ -590,9 +607,11 @@ contains
                     ! is entirely in the tabulated spanwise signals.
                     x = blk%x(i, VAR_V, b)
                     y = blk%y(j, VAR_V, b)
-                    ex = -((x - x0)/lx)**2 - (y/ly)**2
+                    ex = -((x - x0)/lx)**2 - ((y - y0)/ly)**2
                     if (ex < -50.0d0) then
                         bf%f(i,j,k,VAR_V,b) = 0.0d0
+                    else if (iharm == 1) then
+                        bf%f(i,j,k,VAR_V,b) = exp(ex)*harm
                     else
                         env = exp(ex)
                         bf%f(i,j,k,VAR_V,b) = env* &

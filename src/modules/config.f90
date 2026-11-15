@@ -8,7 +8,7 @@ module config
     use :: pressure_solver, only: pressure_solver_type, PRESSURE_JACOBI, PRESSURE_REDBLACK
     use :: boundary, only: boundary_type, boundary_face_id, &
         PATCH_GENERIC, PATCH_WALL, PATCH_INLET, PATCH_OUTLET, &
-        PROFILE_CONSTANT, PROFILE_PARABOLA, PROFILE_BLASIUS
+        PROFILE_CONSTANT, PROFILE_PARABOLA, PROFILE_BLASIUS, PROFILE_TABLE
     use :: comm, only: comm_type
     use :: scalar_types, only: scalar_type, scalars_enabled
     use :: scalar_config, only: apply_scalar_config, validate_scalar_config, &
@@ -506,6 +506,10 @@ subroutine apply_config_value(section, key, value, dns, g, turb, les, ps, bc, sc
             call read_real(value, dns%trip_amp_s, line_no)
         case ("trip_ts")
             call read_real(value, dns%trip_ts, line_no)
+        case ("trip_y0")
+            call read_real(value, dns%trip_y0, line_no)
+        case ("trip_omega")
+            call read_real(value, dns%trip_omega, line_no)
         case ("trip_nmodes")
             call read_int(value, dns%trip_nmodes, line_no)
         case ("trip_seed")
@@ -1083,6 +1087,10 @@ subroutine apply_boundary_value(key, value, bc, line_no)
     case ("blasius_theta")
         ! Inlet momentum thickness of the blasius value profile.
         call read_real(value, bc%blasiusTheta, line_no)
+    case ("blasius_y0")
+        ! The plate height of the blasius profile (an immersed plate at y = y0;
+        ! the profile is zero below it; default 0 = the domain wall).
+        call read_real(value, bc%blasiusY0, line_no)
     case default
         call parse_boundary_key(key, dir, side, var, field)
         if (dir == 0 .or. side < 0 .or. var < 0) call unknown_key("boundary", key, line_no)
@@ -1097,8 +1105,10 @@ subroutine apply_boundary_value(key, value, bc, line_no)
             bc%faceBcValueSet(var,face_id) = .true.
         case ("profile")
             call read_bc_profile(value, bc%faceBcProfile(var,face_id), line_no)
+        case ("table")
+            bc%faceBcTable(var,face_id) = clean_string(value)
         case default
-            if (terminal_output) print *, "error: [boundary] key must end in _type, _value or _profile: ", &
+            if (terminal_output) print *, "error: [boundary] key must end in _type, _value, _profile or _table: ", &
                 trim(key), " (input line", line_no, ")"
             error stop
         end select
@@ -1237,8 +1247,10 @@ subroutine read_bc_profile(value, target, line_no)
         target = PROFILE_PARABOLA
     case ("blasius")
         target = PROFILE_BLASIUS
+    case ("table")
+        target = PROFILE_TABLE
     case default
-        if (terminal_output) print *, "error: boundary profile must be constant, parabola or blasius on input line", &
+        if (terminal_output) print *, "error: boundary profile must be constant, parabola, blasius or table on input line", &
             line_no, ": ", trim(value_l)
         error stop "unknown [boundary] value profile"
     end select

@@ -3429,6 +3429,31 @@ immersed boundary. Phased, each phase verified before the next:
   chunk to t 21); the legacy calib run dir (1.7 TB) and code clone
   deleted after archiving the 269 small files to HoreKa 2. Next: step
   3, the go / no-go tests (handout 5.1).
+- **2026-11-15, step 3a started: the TS-wave test through the immersed
+  plate (`tutorials/sailplane/junction/tswave/`).** Three solver keys,
+  each a few lines and bit-exact at its default (`validation/bodyforce/
+  run_gates.sh` ALL PASS and the Blasius case REF vs NEW identical at
+  max_abs 0, both nofma CPU against `~/pass2_ref_binaries`): `[force]
+  trip_omega` (the CaNS trip's random spanwise walk replaced by the
+  spanwise-uniform harmonic `amp sin(omega t)` -- a vibrating ribbon),
+  `trip_y0` (the envelope and the block pre-selection measured from an
+  immersed plate's height instead of y = 0) and `[boundary] blasius_y0`
+  (the inlet profile raised to the plate, zero below it). The reference
+  is `orr_sommerfeld.py`, a spatial Orr-Sommerfeld solver (Chebyshev
+  collocation, the quartic pencil in alpha as a companion matrix):
+  Jordinson's Re_delta* 998, omega 0.1122 gives 0.30859 - 0.00571 i
+  against 0.30866 - 0.00573 i, converged over N 100-140 and y_max 30-60.
+  The case: the Blasius layer over the analytic wavy wall at zero
+  amplitude (`wall_offset` 10.8 theta_in), 5560 x 424 x 8 uniform cells
+  of h = 0.45 theta_in (delta*/6.8 at the forcing station Re_delta* 753,
+  delta*/8.9 at 1000: the production core's delta*/7), Re_theta,in 250,
+  F = 0.9e-4 (branch I 770, branch II 1340, N 2.5 across); base flow
+  12 500 steps of dt 0.4 (0.9 s/step on the RTX 3060, 18 M cells, 6 GB),
+  then 1.5 flow-throughs of forcing and 8 phase snapshots, read out by
+  `ts_analysis.py` (A(x) at omega against the integrated Orr-Sommerfeld
+  growth, the eigenfunction at Re_delta* 1000). The user's correction
+  on the premise: the IBM is SECOND order at fine resolution (the
+  handout's "first-order cut-cell wall" was wrong and is corrected).
 - **2026-11-01, the c/2048 injected start blew up in its first step: two
   defects at a 2:1 interface that CROSSES the body, fixed at the root.**
   The 6-node test of the c/2048 calibration box (the c/512 final field

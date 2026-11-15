@@ -463,7 +463,7 @@ production grid exists:
 - **TS-wave growth through the IBM.** The Blasius case (`validation/blasius`)
   with a small harmonic inflow perturbation at a branch-I/II Reynolds number,
   wall as an immersed plate at Delta+ 3; the growth rate against Orr-
-  Sommerfeld. The first-order cut-cell wall must not damp or seed the waves
+  Sommerfeld. The penalized wall (second order at fine resolution, the user 2026-11-15) must not damp or seed the waves
   beyond a few percent of the inviscid growth. Fail = the DNS core needs a
   body-fitted-quality wall treatment, which this solver does not have:
   stop and report.

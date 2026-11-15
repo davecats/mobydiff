@@ -171,8 +171,10 @@ directions, for a consistent colouring.
 | `periodic_x/y/z` | bool | false | Periodicity per direction. |
 | `{x,y,z}_{min,max}_{u,v,w,p}_type` | enum | `dirichlet` | Face BC type: `dirichlet` / `0` or `neumann` / `1`. |
 | `{x,y,z}_{min,max}_{u,v,w,p}_value` | real | 0.0 | The Dirichlet / Neumann value for that face and variable. |
-| `{x,y,z}_{min,max}_{u,v,w,p}_profile` | enum | `constant` | Per-point boundary values: `constant`, `parabola` (Poiseuille inlet) or `blasius` (Blasius similarity profile; the `_value` is U∞). |
+| `{x,y,z}_{min,max}_{u,v,w,p}_profile` | enum | `constant` | Per-point boundary values: `constant`, `parabola` (Poiseuille inlet), `blasius` (Blasius similarity profile; the `_value` is U∞) or `table` (the `_value` times a tabulated factor, see `_table`). |
+| `{x,y,z}_{min,max}_{u,v,w,p}_table` | string | — | Two-column text file (coordinate, factor; strictly ascending; `#` comments) for a `table` row: interpolated linearly along the face's first non-periodic tangential direction (x on a y face) at the variable's own staggered location, constant beyond the ends. Read once at setup. The row's `_value` must be set (1.0 = as tabulated). Used for the top pressure p_top(x) of the pressure-gradient boundary layers (`tutorials/turbulentBoundaryLayer/apg.RANS`, `fpg.RANS`: `y_max_p_profile = table` on the outlet top). |
 | `blasius_theta` | real | — | Inlet momentum thickness for the `blasius` profile. |
+| `blasius_y0` | real | 0 | Plate height of the `blasius` profile: an immersed plate at y = y0 (the profile is zero below it; 2026-11-15, the TS-wave test of the sailplane junction). |
 | `{x,y,z}_{min,max}_patch` | enum | (inferred) | Face patch type: `wall`, `patch` (alias `generic`), `inlet` or `outlet`. Absent = infer a wall from Dirichlet tangential velocities. Non-periodic faces only (config error otherwise). |
 
 Every non-periodic face defaults to a homogeneous Dirichlet condition. The patch type is
@@ -256,6 +258,8 @@ Optional force `f(x)` added **on top of** the constant `[flow] forcing_*`.
 | `trip_amp`, `trip_amp_s` | real | 0, 0 | Unsteady and steady trip amplitudes. |
 | `trip_ts` | real | 4.0 | Time between random-walk redraws. |
 | `trip_nmodes`, `trip_seed` | int | 16, 1 | Spanwise modes and RNG seed. |
+| `trip_y0` | real | 0 | Wall height the y envelope is centred on (an immersed plate at y = y0). |
+| `trip_omega` | real | 0 | > 0: harmonic, spanwise-uniform forcing `trip_amp sin(omega t)` instead of the random spanwise walk (the vibrating ribbon of the TS-wave test; `trip_amp_s`, `trip_ts`, `trip_nmodes`, `trip_seed` unused). |
 
 ## `[turbulence]` — model family
 

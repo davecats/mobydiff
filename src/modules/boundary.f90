@@ -45,11 +45,19 @@ module boundary
     ! displacement BC): the v component only, the x-varying entrainment at
     ! the domain top y = leng(2), station x + x_v (x_v = Re_theta*theta/
     ! beta^2). The _value key of every blasius row is U_inf and
-    ! Re_theta = U_inf*theta/nu from [flow] re. Evaluated once into
-    ! pointBcValue at each variable's own staggered coordinate.
+    ! Re_theta = U_inf*theta/nu from [flow] re. TABLE scales the value by a
+    ! tabulated function of ONE tangential coordinate, the face's first
+    ! non-periodic tangential direction (x on a y face of the boundary
+    ! layer): [boundary] <dir>_<side>_<var>_table names a two-column text
+    ! file (coordinate, factor; ascending; '#' comments), interpolated
+    ! linearly and held constant beyond its ends -- the prescribed top
+    ! velocity of the pressure-gradient boundary layers. Every profile is
+    ! evaluated once into pointBcValue at each variable's own staggered
+    ! coordinate (host-only setup; the device sees the finished rows).
     integer(C_INT), parameter :: PROFILE_CONSTANT = 0_C_INT
     integer(C_INT), parameter :: PROFILE_PARABOLA = 1_C_INT
     integer(C_INT), parameter :: PROFILE_BLASIUS = 2_C_INT
+    integer(C_INT), parameter :: PROFILE_TABLE = 3_C_INT
 
     ! Per-face ghost modes for the generic cell-centred scalar BC applicator
     ! (apply_scalar_bc). MIRROR gives a zero face value (Dirichlet 0), COPY a
@@ -117,6 +125,8 @@ module boundary
 
         ! Value profile per row (PROFILE_*), applied when seeding pointBcValue.
         integer(C_INT) :: faceBcProfile(VAR_U:VAR_P,1:NFACES) = PROFILE_CONSTANT
+        ! The file of each TABLE row ([boundary] <dir>_<side>_<var>_table).
+        character(len=256) :: faceBcTable(VAR_U:VAR_P,1:NFACES) = ""
 
         ! Declared patch type per face (index = boundary_face_id).
         integer(C_INT) :: facePatchType(1:NFACES) = PATCH_UNSET
@@ -127,6 +137,9 @@ module boundary
         ! momentum-thickness constant, blasDisp = eta_max - f(eta_max) the
         ! displacement constant used beyond the table).
         real(C_DOUBLE) :: blasiusTheta = 1.0d0
+        ! blasius_y0: the plate height (an immersed plate at y = y0, the
+        ! profile zero below it; 0 = the domain wall).
+        real(C_DOUBLE) :: blasiusY0 = 0.0d0
         real(C_DOUBLE) :: blasH = 0.0d0, blasBeta = 0.0d0, blasDisp = 0.0d0
         real(C_DOUBLE), allocatable :: blasF(:), blasFp(:)
     end type boundary_type
@@ -144,6 +157,7 @@ contains
         bc%faceBcTypeSet = .false.
         bc%faceBcValueSet = .false.
         bc%faceBcProfile = PROFILE_CONSTANT
+        bc%faceBcTable = ""
         bc%facePatchType = PATCH_UNSET
     end subroutine init_bc
 
@@ -402,7 +416,9 @@ contains
         do n = 1, npts
             face_id = int(bc%pointFace(n))
             do var = VAR_U, VAR_P
-                if (bc%faceBcProfile(var,face_id) /= PROFILE_CONSTANT) then
+                if (bc%faceBcProfile(var,face_id) == PROFILE_TABLE) then
+                    cycle   ! apply_table_profiles below
+                else if (bc%faceBcProfile(var,face_id) /= PROFILE_CONSTANT) then
                     bc%pointBcValue(var,n) = bc%faceBcDefaultValue(var,face_id) &
                         *profile_shape(bc, blk, dns, n, var, boundary_face_dir(face_id))
                 else
@@ -410,10 +426,108 @@ contains
                 end if
             end do
         end do
+        if (any(bc%faceBcProfile == PROFILE_TABLE)) call apply_table_profiles(bc, blk)
         do var = VAR_U, VAR_P
             call resolve_affine_rows(bc, blk, var, bc%faceBcType(var,:), bc%pointBcValue(var,:))
         end do
     end subroutine update_boundary_values
+
+    ! TABLE rows: pointBcValue = value * factor(s), s the point's coordinate
+    ! along the face's first non-periodic tangential direction at the
+    ! variable's own staggered location; the factor is the file's linear
+    ! interpolant, constant beyond its ends. Each file is read once, here
+    ! (host-only setup, every rank reads it).
+    subroutine apply_table_profiles(bc, blk)
+        type(boundary_type), intent(inout) :: bc
+        type(block_set_type), intent(in) :: blk
+
+        real(C_DOUBLE), allocatable :: ts(:), tf(:)
+        real(C_DOUBLE) :: s, w
+        integer :: var, face_id, fdir, tdir, d, n, m, b
+
+        do face_id = 1, NFACES
+            do var = VAR_U, VAR_P
+                if (bc%faceBcProfile(var,face_id) /= PROFILE_TABLE) cycle
+                if (.not. bc%faceBcValueSet(var,face_id)) &
+                    error stop "[boundary] table profile: set the row's _value too (it multiplies the table; 1.0 = as tabulated)"
+                fdir = boundary_face_dir(face_id)
+                tdir = 0
+                do d = 3, 1, -1
+                    if (d /= fdir .and. .not. bc%isPeriodic(d)) tdir = d
+                end do
+                if (tdir == 0) error stop "[boundary] table profile: the face has no non-periodic tangential direction"
+                call read_profile_table(trim(bc%faceBcTable(var,face_id)), ts, tf)
+                do n = 1, int(bc%nTotal)
+                    if (int(bc%pointFace(n)) /= face_id) cycle
+                    b = int(bc%slot(n))
+                    select case (tdir)
+                    case (1)
+                        s = blk%x(int(bc%i(n)), var, b)
+                    case (2)
+                        s = blk%y(int(bc%j(n)), var, b)
+                    case default
+                        s = blk%z(int(bc%k(n)), var, b)
+                    end select
+                    if (s <= ts(1)) then
+                        w = tf(1)
+                    else if (s >= ts(size(ts))) then
+                        w = tf(size(ts))
+                    else
+                        m = 1
+                        do while (ts(m+1) < s)
+                            m = m + 1
+                        end do
+                        w = tf(m) + (tf(m+1) - tf(m))*(s - ts(m))/(ts(m+1) - ts(m))
+                    end if
+                    bc%pointBcValue(var,n) = bc%faceBcDefaultValue(var,face_id)*w
+                end do
+                deallocate(ts, tf)
+            end do
+        end do
+    end subroutine apply_table_profiles
+
+    ! Two-column profile table (coordinate, factor), '#' comment and blank
+    ! lines skipped; at least two rows, strictly ascending coordinate.
+    subroutine read_profile_table(path, ts, tf)
+        character(len=*), intent(in) :: path
+        real(C_DOUBLE), allocatable, intent(out) :: ts(:), tf(:)
+
+        character(len=512) :: line
+        real(C_DOUBLE) :: a, f
+        integer :: unit, ios, n, pass
+
+        if (len_trim(path) == 0) error stop "[boundary] table profile: no _table file given"
+        do pass = 1, 2   ! count, then read
+            open(newunit=unit, file=path, status="old", action="read", iostat=ios)
+            if (ios /= 0) then
+                print '(2a)', " error: cannot open [boundary] profile table ", path
+                error stop "[boundary] profile table not found"
+            end if
+            n = 0
+            do
+                read(unit, '(a)', iostat=ios) line
+                if (ios /= 0) exit
+                line = adjustl(line)
+                if (len_trim(line) == 0 .or. line(1:1) == "#") cycle
+                read(line, *, iostat=ios) a, f
+                if (ios /= 0) then
+                    print '(3a)', " error: bad row in [boundary] profile table ", path, ": " // trim(line)
+                    error stop "[boundary] bad profile table row"
+                end if
+                n = n + 1
+                if (pass == 2) then
+                    ts(n) = a
+                    tf(n) = f
+                end if
+            end do
+            close(unit)
+            if (pass == 1) then
+                if (n < 2) error stop "[boundary] profile table needs at least two rows"
+                allocate(ts(n), tf(n))
+            end if
+        end do
+        if (any(ts(2:) <= ts(:size(ts)-1))) error stop "[boundary] profile table: coordinates must ascend strictly"
+    end subroutine read_profile_table
 
     ! Boundary rows of a passive scalar stored in q at column `var`
     ! (scalar.f90, after its patch-derived types are final and before
@@ -689,9 +803,11 @@ contains
                 ! Inlet (x face): u = f'(eta), v = the entrainment component,
                 ! eta = beta*y/theta_in (the station is x = 0). Re_theta from
                 ! the face's u-row value = U_inf.
-                eta = bc%blasBeta*blk%y(int(bc%j(n)), var, b)/bc%blasiusTheta
-                call blasius_lookup(bc, eta, f, fp)
-                if (var == VAR_U) then
+                eta = bc%blasBeta*(blk%y(int(bc%j(n)), var, b) - bc%blasiusY0)/bc%blasiusTheta
+                call blasius_lookup(bc, max(eta, 0.0d0), f, fp)
+                if (eta < 0.0d0) then
+                    fac = 0.0d0              ! below the immersed plate
+                else if (var == VAR_U) then
                     fac = fp
                 else
                     re_theta = bc%faceBcDefaultValue(VAR_U,face_id)*bc%blasiusTheta*dns%re
@@ -707,7 +823,7 @@ contains
                 re_theta = bc%faceBcDefaultValue(VAR_V,face_id)*bc%blasiusTheta*dns%re
                 coord = blk%x(int(bc%i(n)), var, b) &
                       + re_theta*bc%blasiusTheta/(bc%blasBeta*bc%blasBeta)   ! x + x_v
-                eta = dns%leng(2)*sqrt(re_theta/(bc%blasiusTheta*coord))
+                eta = (dns%leng(2) - bc%blasiusY0)*sqrt(re_theta/(bc%blasiusTheta*coord))
                 call blasius_lookup(bc, eta, f, fp)
                 fac = 0.5d0*sqrt(bc%blasiusTheta/(re_theta*coord))*(eta*fp - f)
             end if
