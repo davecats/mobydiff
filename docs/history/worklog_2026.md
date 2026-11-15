@@ -3413,7 +3413,11 @@ immersed boundary. Phased, each phase verified before the next:
   chunk 4 against the raised NSTEPS and called the run done. Fixed in
   both chain scripts (the chunk's own requested `nsteps` from
   `chunk_<PREFIX>.ini` against the log's `timing: nsteps`), resubmitted
-  as 5237319 (estimate 15 Nov 11:17).
+  as 5237319 (estimate 15 Nov 11:17). That job ran 14 Nov 13:31 ->
+  15 Nov 11:38 and REACHED t 20 (step 154547, 27 547 steps, 2.89 s/step,
+  exit 0, 0 warnings); snapshots 130000/140000/150000/154547 read out
+  with the cpuonly strip recipe; `calib/cl_history.py` added (the lift
+  history script, previously a scratch file).
 - **2026-11-01, the c/2048 injected start blew up in its first step: two
   defects at a 2:1 interface that CROSSES the body, fixed at the root.**
   The 6-node test of the c/2048 calibration box (the c/512 final field
@@ -3474,3 +3478,47 @@ immersed boundary. Phased, each phase verified before the next:
   samples the node's GPU memory; both c/2048 inis say `t_final = 18`
   (the injected field is at t = 15; the first test ran zero steps at 15).
 
+
+- **2026-11-13/14, `tutorials/turbulentBoundaryLayer/smooth.RANS`: the
+  smooth DNS as a 2D wall-resolved RANS, plus a RANS inlet fix.** k-omega
+  SST on the DNS domain, inflow and boundary conditions (Blasius at
+  Re_delta* 450, outlets at the top and x = 650), nz = 4 with lz = 26 so dz
+  stays out of the Courant/Peclet sums. Laminar -> trip -> turbulent is
+  imposed with the existing `[rans]` boxes: `kpin_box` holds k = 0 for
+  x < 10 (the DNS trip centre), `ktrip_box` puts 0.002 U^3/delta* in
+  x = 10-15, y < 2 (the smallest rate that does not relaminarize) and
+  2e-4 in x = 15-70, y < 3 (stands in for the DNS's slow transitional
+  overshoot; Re_theta(x) then follows the DNS to ~2 % from x = 100).
+  Free stream: Tu 0.1 %, nut_inf = 0.15 nu (Spalart & Rumsey 2007),
+  omega_inf = 0.0045. Stages: 800 x 192 from scratch to t = 1600
+  (0.035 s/step, RTX 3060), then 1600 x 384 (the DNS y grid) from the
+  interpolated field (`assets/postpro/interp_restart.py`) to t = 1850
+  (0.072 s/step). Result: c_f within 3-6 % of the DNS from Re_theta 450
+  (matched Re_theta 400/500/600/700/800: +0.4/-3.1/-6.2/-3.5/-6.0 %), the
+  grids 1.2-1.4 points apart, H 1.54 against 1.49, the outer nu_t 10-20 %
+  low, U+ to y+ ~ 30 and the -u'v'+ peak to 2 %. The transitional c_f in
+  x = 15-90 is a 0.0072 plateau where the DNS has its dip and overshoot.
+  Calibration (README, 800 x 192 restarts, scratch runs not committed):
+  (1) the first setup, gamma-Re_theta on with Tu 1 % / nut_inf = nu, was
+  13-19 % low: its omega_inf = 0.068 ~ U/delta violates the Spalart-Rumsey
+  ambient criterion and starved the outer nu_t (30-40 % low); omega_inf / 10
+  or less gives 5-7 % at Re_theta 700-800, insensitive below that; omega_inf
+  x 10 nearly relaminarizes. (2) Wall omega x 10 and the Wilcox 2006 inner
+  coefficients are worse; wall omega x 0.1 helps only through a roughness
+  shift of U+. (3) gamma-Re_theta, with the trip boxes in place, holds gamma
+  at 0.1-0.65 in the buffer layer (y+ 10-20, its F_onset cut at
+  R_T = 2.47 and destruction below R_T = 4), costing 3-5 points of c_f;
+  the threshold crossing of single cell rows puts kinks into c_f(x)
+  (x = 174, 353 at Tu 0.1 %). Hence `transition = false`. (4) Trip shape:
+  moving the trip so the RANS peak sits on the DNS peak (x = 70) matches the
+  peak but makes Re_theta lag more; a wide strong source overshoots c_f 2x;
+  the weak 2e-4 extension is the kept compromise. Far downstream, c_f at a
+  fixed x is the same for every trip (~ -7 %): the SST equilibrium deficit.
+  The fix, in `rans.f90` (the freestream k on the inlet face): a Blasius
+  row's `_value` is U_inf itself for EVERY velocity row, so the u and v rows
+  summed as components doubled k_inf on the boundary-layer inlet (3.0e-4
+  against 1.5e-4 in the interior). U_inf^2 is now taken once from a Blasius
+  row; any other inlet keeps the sum of squares. Gates: `validation/rans_inlet`
+  gives max_abs 0 against 720036c at 1 and 4 ranks (un vn wn pn k omega
+  nut), ALL GATES PASS. No suite case has a Blasius inlet with RANS, so the
+  suites are unchanged by construction.

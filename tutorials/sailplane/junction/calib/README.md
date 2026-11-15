@@ -808,6 +808,16 @@ with the measured leaf count and step time before the long solve.
   test stays as the fallback); traced on the legacy run dir (`bash -x`:
   ran 27 000, asked 27 000, not done). Resubmitted as job 5237319 (same
   account, nodes, time, NSTEPS), test-only estimate 2026-11-15 11:17.
+- T 20 REACHED (2026-11-15): job 5237319 started 14 Nov 13:31 (again a
+  day before the estimate) and ended 15 Nov 11:38, exit 0, 0 warnings:
+  27 547 steps from the t 18.757 snapshot to t_final 20.0 (step 154547;
+  dt 4.49e-5 -> 4.50e-5, Courant 0.214 -> 0.217), 2.89 s/step on 24 A100
+  (chunk 4: 2.89), 22 h 08 = 531 GPU-h of hk-project-exasim. Snapshots
+  130000 (t 18.89), 140000 (19.34), 150000 (19.80), 154547 (20.00); the
+  chain's successor 5238690 cancelled unstarted. Strip read-outs of the
+  four: cpuonly jobs 5239955-5239958. The lift-history script is now in
+  the tree, `cl_history.py` (the trend table, the relaxation fits, the
+  figure; the snapshot times are tabulated in it from the trace lines).
 - INVESTIGATION 2026-11-04 (the user's three hypotheses: the effective
   incidence, the Reynolds number, a boundary layer that is not fully
   turbulent). Checked in turn:
