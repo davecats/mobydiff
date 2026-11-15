@@ -22,15 +22,19 @@ momentum thicknesses theta_in = 1, U = 1, `[flow] re` = Re_theta,in.
   ones; the prepare takes 68 s and 5 GB on one CPU rank), Re_theta,in 250,
   the Blasius u + v inlet raised to the plate (`blasius_y0`), the pressure
   outlet at x_max and at the top as in `validation/blasius`, impulsive
-  start (`initial_u = 1`), two flow-throughs (12 500 steps of dt 0.4).
+  start (`initial_u = 1`), two flow-throughs (12 500 steps of dt 0.4);
+  `tsbase2.ini` continues it by 15 000 steps to t 11 000 (see Results:
+  at t 5000 the downstream half was still in the start-up transient).
   Resolution: 6.8 cells per delta* at the forcing station (Re_delta* 753),
   8.9 at 1000, 12 at 1340 -- the production core's delta*/7.
 - `tsw.ini` -- the forced run from the base field: the vibrating ribbon
   (`[force] type = trip` with the two keys added for this test,
   `trip_omega` = harmonic spanwise-uniform forcing and `trip_y0` = the
   plate height; `blasius_y0` is the third) at x = 200, F = 0.9e-4
-  (omega 0.0225, period 279 = 698 steps), amplitude 1e-5, 1.5
-  flow-throughs; `tsw_phases.ini` then samples one period in 8 snapshots.
+  (omega 0.0225, period 279 = 698 steps), amplitude 1e-5, 16 000 steps
+  (6400 theta/U: the wave front at c_g ~ 0.35 U passes the end of the
+  read-out range, x 2127, plus three periods); `tsw_phases.ini` then
+  samples one period in 8 snapshots (every 87 steps).
 - `ts_analysis.py` -- the read-out: delta*, theta, H of the base flow
   against Blasius; the disturbance u' = u - u_base projected on omega over
   the 8 phases, its maximum over y as A(x), d ln A/dx against -alpha_i at
@@ -43,11 +47,29 @@ momentum thicknesses theta_in = 1, U = 1, `[flow] re` = Re_theta,in.
 module load toolkits/nvhpc/25.9; export OMPI_MCA_hwloc_base_binding_policy=none
 mpirun -n 1 ../../../../build_cpu/moby_prepare tsbase.ini          # tswave.case.h5
 mpirun -n 1 ../../../../build_gpu/moby_solve tsbase.ini > tsbase.log
-mpirun -n 1 ../../../../build_gpu/moby_solve tsw.ini > tsw.log
-mpirun -n 1 ../../../../build_gpu/moby_solve tsw_phases.ini > tsw_phases.log
-python3 ts_analysis.py --base tsbase_12500.h5 --forced tswp_*.h5 --ini tsw.ini
+./chain.sh            # tsbase2, tsw, tsw_phases, then the two analysis calls below
+python3 ts_analysis.py --base tsbase_27500.h5 --ini tsw.ini                    # base check
+python3 ts_analysis.py --base tsbase_27500.h5 --forced tswp_*.h5 --ini tsw.ini # growth
 ```
+
+Step times on the RTX 3060: 0.9 s/step alone, 1.47 s/step with two other
+runs on the card (tsbase, 2026-11-15).
 
 ## Results
 
-(pending)
+- BASE FLOW AT t 5000 (two flow-throughs, 2026-11-15): the layer follows
+  Blasius within 0.2 % in delta* and 0.7 % in theta up to x 800 (Re_delta*
+  1000, H 2.577..2.586 against 2.591), then runs THIN downstream: delta*
+  -2 % at x 1200, -6 % at 1600, -12 % at x 2127 with H falling to 2.45.
+  The deviation is a monotone function of the station's age ratio
+  U t / (x + x_v) (3.7 at x 800, 1.9 at x 2127), i.e. the impulsively
+  started plate still relaxing from its thinner, fuller Rayleigh state --
+  Stewartson's steady state needs a ratio of about 4 -- not a wall or
+  pressure-gradient effect (the inlet station, ratio 8.8, is within 0.1 %).
+  So the base runs on to t 11 000 (`tsbase2.ini`; ratio 4.1 at x 2127)
+  before the forcing; the forced stage was lengthened to 16 000 steps at
+  the same time (the earlier 8400 only carried the wave front to x ~ 1400).
+  A drifting base would otherwise leak into the omega projection: a ramp
+  Delta u over one period projects to 0.33 Delta u with 8 phases, and the
+  t 5000 drift at x 2127 gives ~1e-3, ten times the wave.
+- (the TS growth read-out: pending, chain running since 2026-11-15 20:52)

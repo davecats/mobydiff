@@ -3448,12 +3448,25 @@ immersed boundary. Phased, each phase verified before the next:
   of h = 0.45 theta_in (delta*/6.8 at the forcing station Re_delta* 753,
   delta*/8.9 at 1000: the production core's delta*/7), Re_theta,in 250,
   F = 0.9e-4 (branch I 770, branch II 1340, N 2.5 across); base flow
-  12 500 steps of dt 0.4 (0.9 s/step on the RTX 3060, 18 M cells, 6 GB),
-  then 1.5 flow-throughs of forcing and 8 phase snapshots, read out by
-  `ts_analysis.py` (A(x) at omega against the integrated Orr-Sommerfeld
-  growth, the eigenfunction at Re_delta* 1000). The user's correction
-  on the premise: the IBM is SECOND order at fine resolution (the
-  handout's "first-order cut-cell wall" was wrong and is corrected).
+  12 500 steps of dt 0.4 (0.9 s/step on the RTX 3060 alone, 1.47 with
+  two other runs on the card; 18 M cells, 6 GB), then forcing and 8 phase
+  snapshots, read out by `ts_analysis.py` (A(x) at omega against the
+  integrated Orr-Sommerfeld growth, the eigenfunction at Re_delta* 1000).
+  The user's correction on the premise: the IBM is SECOND order at fine
+  resolution (the handout's "first-order cut-cell wall" was wrong and is
+  corrected). FIRST READ-OUT, the base at t 5000 (two flow-throughs):
+  Blasius within 0.2 % in delta* up to x 800 (Re_delta* 1000), then thin
+  downstream (-12 % at x 2127, H 2.45) -- a monotone function of the
+  station's age U t / (x + x_v), the impulsively started plate still
+  relaxing from its Rayleigh state (Stewartson: about 4 needed, 1.9
+  there), not the wall. The forced chain was stopped 14 min in; the base
+  runs on to t 11 000 (`tsbase2.ini`, 15 000 steps) and the forced stage
+  was lengthened from 8400 to 16 000 steps (6400 theta/U: the wave front
+  at c_g ~ 0.35 U reaches x 2127 plus three periods; the earlier length
+  only carried it to x ~ 1400). A drifting base leaks into the 8-phase
+  omega projection as 0.33 x the ramp over one period -- ~1e-3 at x 2127
+  at t 5000, ten times the wave. Chain restarted 20:52, read-out next
+  morning.
 - **2026-11-01, the c/2048 injected start blew up in its first step: two
   defects at a 2:1 interface that CROSSES the body, fixed at the root.**
   The 6-node test of the c/2048 calibration box (the c/512 final field
