@@ -250,10 +250,13 @@ corner, C_L 1.0, Ncrit 9/12, XFOIL from source in `assets/xfoil`, account
 row 2; `tutorials/sailplane/junction/calib/README.md`: the c/512 wall-function
 box 0.38, the c/2048 resolved box 0.504 at t 20 relaxing to 0.52 +- 0.01, the
 level set by the separated flap; the final field and the case file are on
-HoreKa 2, workspace `junction`, the legacy run dir deleted); NEXT: step 3,
-the go / no-go tests of handout section 5.1 -- the TS-wave growth through the
-IBM on the Blasius case against Orr-Sommerfeld, and the projection-residual
-floor on the SD7003 bubble -- both before any production grid). Dropped
+HoreKa 2, workspace `junction`, the legacy run dir deleted); step 3a, the
+TS-wave growth through the immersed plate against Orr-Sommerfeld, GO
+2026-11-16 (`tutorials/sailplane/junction/tswave/README.md`: growth 0.89 of
+OS at delta*/7, 0.95 at delta*/14 under the same plate -- the deficit is the
+grid; refine the core's TS band to delta*/10..14 or carry the 10 % bias);
+NEXT: step 3b, the projection-residual floor on the SD7003 bubble (niter 12
+vs 24, the first HoreKa 2 GPU job), before any production grid). Dropped
 2026-10-24 by decision: S5b (TVD + second halo), C4 (conducting corners), the
 MacDonald rough-wall forced-convection case.
 

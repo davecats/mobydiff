@@ -102,15 +102,46 @@ Step times on the RTX 3060 (18 M cells): 0.69 s/step alone (tsw), 1.04
   averaging band. VERDICT so far: the wall neither seeds nor damps the
   wave qualitatively (shape, branch II, N within 5 %), the 11 % growth
   deficit is referred to the h/2 check below.
-- THE h/2 CHECK (`h2/`, running on istmcetus GPU 0 since 2026-11-16 04:43):
-  the same layer at h = 0.2 theta_in (delta*/14 at the ribbon) on the
-  sub-range Re_delta* 700..1150, inlet Re_theta,in 270 so that the ribbon
-  at x 100 sits at Re_delta* 755 as in the parent, lx 1100.8, 5504 x 568 x 8
-  = 25 M cells (45 408 leaves, prepare 67 s / 6.5 GB), dt 0.18, base
-  32 000 steps (t 5760, age ratio 3.7 at the end of the read-out), forced
-  17 800 steps (omega 0.0243), 8 phases every 180 steps. The read-out is
-  the same table on Re_delta* 850..1100: the ratio to OS at h/2 against
-  0.89 at h. If it closes to within a few %, the deficit is the grid and
-  the production core's delta*/7 undershoots TS growth by ~10 % (a design
-  number for the DNS band); if it stays, it is the wall.
-- (pending: the h/2 read-out)
+- THE h/2 CHECK (`h2/`, istmcetus A6000, 2026-11-16 04:43 -> 09:42; 0.41
+  s/step): the same layer at h = 0.2 theta_in (delta*/14 at the ribbon) on
+  the sub-range Re_delta* 700..1150, inlet Re_theta,in 270 so that the
+  ribbon at x 100 sits at Re_delta* 755 as in the parent, lx 1100.8,
+  5504 x 568 x 8 = 25 M cells (45 408 leaves, prepare 67 s / 6.5 GB), dt
+  0.18, base 32 000 steps (t 5760, age ratio 3.7 at the end of the
+  read-out), forced 17 800 steps (omega 0.0243), 8 phases every 180 steps
+  (`chain_h2.sh`; the analysis runs on the workstation, istmcetus has no
+  h5py). The base at t 5760 is Blasius within 0.11 % (delta*) / 0.28 %
+  (theta), H 2.585..2.590 -- three times closer than the parent's 0.36 /
+  1.0 %. The wave (reference x 157, Re_delta* 784, u'/U 1.3e-5):
+
+  | Re_delta* | -alpha_i OS | d lnA/dx at h/2 | ratio h/2 | ratio h (parent) |
+  |---|---|---|---|---|
+  | 900 | 0.00155 | 0.00135 | 0.87 | 0.82 |
+  | 950 | 0.00183 | 0.00177 | 0.97 | 0.86 |
+  | 1000 | 0.00199 | 0.00190 | 0.95 | 0.90 |
+  | 1050 | 0.00201 | 0.00192 | 0.96 | 0.92 |
+  | 1100 | 0.00191 | 0.00214 | 1.12 | 0.93 |
+
+  (the OS rates are per theta_in of each case; the parent's column is read
+  at the same Re_delta* from `viz/amax.csv`). The growth rate over
+  Re_delta* 850..1092 averages 0.947 of OS against 0.889 on the parent
+  grid (a +-3 % ripple at the TS wavelength rides on A over the whole of
+  this shorter domain, the outlet being 2.5 wavelengths past the read-out
+  end); the eigenfunction at Re_delta* 1000 is within 0.015 of its peak
+  (parent 0.058), the inner maximum at y/delta* 0.57 (OS 0.55; parent
+  0.51). The last rows (Re_delta* > 1050) sit within 200 theta of the
+  outlet and carry its ripple. A ninth phase file (the run's final step,
+  off the 180-step lattice because the restart step 49 800 is not a
+  multiple of it) had to be dropped: `ts_analysis.py` now does that itself
+  and prints the phase spacing.
+- VERDICT 2026-11-16: GO. Halving the spacing halves the growth deficit
+  (11 % -> 5.3 %) and closes the eigenfunction, with the same immersed plate
+  under both grids: the deficit is the grid, not the wall. The penalized
+  wall neither seeds nor damps the Tollmien-Schlichting wave within the
+  resolution of the test. The design number for the DNS band: at
+  delta*/7 (the production core as planned) TS growth rates come out
+  ~10 % low, at delta*/14 ~5 % low (Richardson, second order: ~2.6 % at
+  the limit); a 10 % low growth rate moves an N = 9 transition estimate
+  downstream by ~10 % of the amplification length. The production core's
+  TS band should therefore be refined to delta*/10..14, or the 10 % carried
+  as a known bias.

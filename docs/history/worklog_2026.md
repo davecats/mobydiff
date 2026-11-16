@@ -3482,7 +3482,19 @@ immersed boundary. Phased, each phase verified before the next:
   istmcetus GPU 0 (both A6000s idle). `ts_analysis.py` now fits the
   growth rate over +- one TS wavelength, takes the reference station at
   the amplitude minimum behind the ribbon's near field, and writes
-  amax.csv.
+  amax.csv. h/2 READ-OUT 2026-11-16 09:42 (A6000 0.41 s/step, 4.4 h for
+  the three stages): the base Blasius within 0.11 / 0.28 % (three times
+  closer than the parent), the growth rate over Re_delta* 850..1092 at
+  0.947 of OS (parent 0.889), the eigenfunction within 0.015 of its peak
+  (parent 0.058), inner maximum y/delta* 0.57 (OS 0.55, parent 0.51).
+  VERDICT GO: the deficit halves with the spacing under the same immersed
+  plate, so it is the grid, not the wall. Design number: TS growth ~10 %
+  low at delta*/7, ~5 % at delta*/14 -- refine the production core's TS
+  band to delta*/10..14 or carry the bias. One trap: a phase run whose
+  restart step is not a multiple of field_interval writes its final step
+  as a ninth, off-lattice file, which turned the first read-out into
+  garbage (N jumping, the eigenfunction peak at 0.24 delta*); the
+  analysis now drops such a file and prints the phase spacing.
 - **2026-11-01, the c/2048 injected start blew up in its first step: two
   defects at a 2:1 interface that CROSSES the body, fixed at the root.**
   The 6-node test of the c/2048 calibration box (the c/512 final field

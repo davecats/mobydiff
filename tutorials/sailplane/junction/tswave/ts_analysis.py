@@ -87,7 +87,15 @@ def main():
             u = load_field(f, 'un').mean(axis=0); ts.append(float(f.attrs['t_current']))
         up.append(u - ub)
     ts = np.array(ts); up = np.array(up)                   # (K, ny, nx)
+    # the phases must be equispaced over one period: a run whose restart step
+    # is not a multiple of field_interval also writes its final step, off
+    # the lattice -- drop such a file rather than bias the projection
+    d = np.diff(ts)
+    while len(ts) > 2 and abs(d[-1] - np.median(d)) > 0.01 * np.median(d):
+        print('dropping the off-lattice phase file at t %.1f (spacing %.2f against %.2f)' % (ts[-1], d[-1], np.median(d)))
+        ts, up, d = ts[:-1], up[:-1], d[:-1]
     K = len(ts)
+    print('phases: K %d, spacing %.2f, covering %.3f of the period 2 pi / omega' % (K, d.mean(), K * d.mean() * omega / (2 * np.pi)))
     ph = np.exp(-1j * omega * ts)[:, None, None]
     A = np.abs(2.0 / K * (up * ph).sum(axis=0))             # (ny, nx) amplitude at omega
     Amax = A.max(axis=0)                                    # over y
@@ -123,16 +131,19 @@ def main():
           % (xf[i0], re_ds[i0], Amax[i0], 'trip_amp'))
     print('Re_delta*    x   -alpha_i(OS)  dlnA/dx(fit)   N_OS  N_meas')
     for r in range(800, 1401, 50):
+        if r > re_ds[sel].max() - 20: break                 # the read-out range ends here
         i = np.argmin(np.abs(re_ds - r))
         print('%8.0f %6.0f   %+.5f     %+.5f   %6.3f %6.3f' % (r, xf[i], ai[i], gr[i], N_os[i], N_meas[i]))
     far = sel & (xf > xf[i0] + 200)
-    i2 = np.where(far)[0][np.argmax(Amax[far])]
-    ib = np.where(far)[0][np.argmin(np.abs(ai[far]))]
-    print('branch II: measured A_max peak at x %.0f (Re_delta* %.0f), OS neutral at x %.0f (Re_delta* %.0f)'
-          % (xf[i2], re_ds[i2], xf[ib], re_ds[ib]))
-    print('N at the peak: measured %.3f, OS %.3f at the same x; OS max %.3f' % (N_meas[i2], N_os[i2], N_os[far].max()))
-    band = sel & (re_ds > 850) & (re_ds < 1300)
-    print('growth rate, Re_delta* 850..1300: measured / OS mean ratio %.3f' % (gr[band].sum() / ai[band].sum()))
+    if ai[far].min() < 0:                                   # branch II inside the range
+        i2 = np.where(far)[0][np.argmax(Amax[far])]
+        ib = np.where(far)[0][np.argmin(np.abs(ai[far]))]
+        print('branch II: measured A_max peak at x %.0f (Re_delta* %.0f), OS neutral at x %.0f (Re_delta* %.0f)'
+              % (xf[i2], re_ds[i2], xf[ib], re_ds[ib]))
+        print('N at the peak: measured %.3f, OS %.3f at the same x; OS max %.3f' % (N_meas[i2], N_os[i2], N_os[far].max()))
+    r1 = min(1300.0, re_ds[sel].max() - 20)
+    band = sel & (re_ds > 850) & (re_ds < r1)
+    print('growth rate, Re_delta* 850..%.0f: measured / OS mean ratio %.3f' % (r1, gr[band].sum() / ai[band].sum()))
     # the amplitude profile |u'|(y) at Re_delta* 1000 against the OS eigenfunction
     i1 = np.argmin(np.abs(re_ds - 1000.0))
     al1, yos, uos = osm.os_spatial(re_ds[i1], omega * ds_bl[i1], N=120, eigenfunction=True)
