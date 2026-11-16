@@ -57,13 +57,18 @@ python3 sd_bubble.py --run c12 'sd4_c12_*.red.npz' --run c24 'sd4_c24_*.red.npz'
 | c/512, 22.0 M | RTX 3060, alone | 0.86 | 7.0 GB | 39 ns per cell and step; projection 71 % of the step in the profiled 300-step run |
 | c/1024, 51.8 M | A6000 (istmcetus), SHARED with another user's job at 99 % load | 1.73 | 16.2 GB | an upper bound; projection 84 % |
 | c/1024, 51.8 M | A6000 alone | ~0.9 (estimate) | | from the step-3a pair on the same two cards (A6000 = 0.43 x the RTX 3060 per cell) |
-| c/1024, 51.8 M | H100 | NOT MEASURED | | HoreKa 2 login master expired on 2026-11-16; `../horeka/time_sd7003_hk2.sh` is the job (1 / 2 / 4 H100, niter 12 / 24, red-black 12) |
+| c/1024, 51.8 M | 1 H100 (HoreKa 2, jobs 133191 / 133253) | 0.396 | 18.6 GB host | Chebyshev 24: 0.722; red-black 12: 0.868 |
+| c/1024, 51.8 M | 2 H100, one node | 0.208 | | 130 k face cells across ranks |
+| c/1024, 51.8 M | 4 H100, one node | 0.111 | | Chebyshev 24: 0.202 (x 1.81); red-black 12: 0.244 (x 2.19); 232 k face cells across ranks; 3.55 x one GPU |
 
 The whole c/1024 chain is 105 000 steps (30 000 to the common state, 3 x
-25 000), with the Chebyshev 24 branch near 1.8 x and the red-black branch an
-unmeasured factor per step: about 36 h on one free A6000, an estimated 12-18
-GPU-hours on H100. The test is small; the queue, not the budget, decides
-where it runs.
+25 000): 4.8 h on 4 H100, about 20 GPU-hours with the snapshot output. The
+regular `gpu-h100` queue estimated a week on 2026-11-16 and the dev node an
+hour, so the chain runs in one-hour jobs of `dev-gpu-h100`
+(`../horeka/chain_sd7003_hk2.sh`, first job 133264, run dir
+`$(ws_find junction)/sd7003_run`). The first timing job lost its 4-rank
+runs to `--map-by numa --bind-to core` (two ranks failed to start);
+`--bind-to none` since.
 
 ## Results
 
