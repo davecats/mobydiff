@@ -91,47 +91,71 @@ def main():
     ph = np.exp(-1j * omega * ts)[:, None, None]
     A = np.abs(2.0 / K * (up * ph).sum(axis=0))             # (ny, nx) amplitude at omega
     Amax = A.max(axis=0)                                    # over y
-    # measured growth rate: central log-derivative over +-2 dx, then a 5-point mean
     lnA = np.log(np.maximum(Amax, 1e-300))
-    gr = np.gradient(lnA, xf)
-    k = np.ones(21) / 21; gr_s = np.convolve(gr, k, mode='same')
-    # OS at the local Re_delta*: alpha per delta*, converted to the theta units of x
+    # OS at the local Re_delta* on every 40th column (alpha per delta*,
+    # converted to the theta units of x); interpolated to every column after
     re_ds = DISP * np.sqrt(rex)
     out = []
     guess = None
     for i in np.where(sel)[0][::40]:
         al = osm.os_spatial(re_ds[i], omega * ds_bl[i], N=120, guess=guess); guess = al
-        out.append((xf[i], re_ds[i], -al.imag / ds_bl[i], gr_s[i], Amax[i]))
+        out.append((xf[i], re_ds[i], -al.imag / ds_bl[i], al.real / ds_bl[i], Amax[i]))
     out = np.array(out)
-    print('x  Re_delta*  -alpha_i(OS)  dlnA/dx(measured)  A_max')
-    for r in out:
-        print('%7.1f %7.0f %+.5f %+.5f %.3e' % tuple(r))
-    np.savetxt(os.path.join(args.out, 'growth.csv'), out, delimiter=',',
-               header='x,Re_dstar,minus_alpha_i_OS_per_theta,dlnA_dx_measured,A_max', comments='')
-    # N factors from the forcing station: measured ln(A/A_ref) vs integrated OS
-    i0 = np.argmin(np.abs(xf - (p['x0'] + 40.0)))
+    ai = np.interp(xf, out[:, 0], out[:, 2]); ar = np.interp(xf, out[:, 0], out[:, 3])
+    # the measured growth rate: the least-squares slope of ln A over a window
+    # of +- one local TS wavelength (2 pi / alpha_r, ~ 90 theta_in), which
+    # averages the wavelength-scale ripple of the y-maximum
+    gr = np.full_like(lnA, np.nan)
+    for i in np.where(sel)[0]:
+        lam = 2 * np.pi / ar[i]
+        w = (xf >= xf[i] - lam) & (xf <= xf[i] + lam)
+        gr[i] = np.polyfit(xf[w], lnA[w], 1)[0]
+    # the reference station: the amplitude minimum behind the forcing's near
+    # field (the non-modal part decays within ~60 theta_in of the ribbon)
+    near = (xf > p['x0'] + 20) & (xf < p['x0'] + 200)
+    i0 = np.where(near)[0][np.argmin(Amax[near])]
     N_meas = lnA - lnA[i0]
-    ai = np.interp(xf, out[:, 0], out[:, 2])
     N_os = np.concatenate([[0], np.cumsum(0.5 * (ai[1:] + ai[:-1]) * np.diff(xf))]); N_os -= N_os[i0]
+    np.savetxt(os.path.join(args.out, 'amax.csv'), np.c_[xf, re_ds, Amax, gr, ai, N_meas, N_os][sel],
+               delimiter=',', header='x,Re_dstar,A_max,dlnA_dx_fit,minus_alpha_i_OS,N_measured,N_OS',
+               comments='')
+    print('reference station x %.0f (Re_delta* %.0f), A %.3e; forcing amplitude %s'
+          % (xf[i0], re_ds[i0], Amax[i0], 'trip_amp'))
+    print('Re_delta*    x   -alpha_i(OS)  dlnA/dx(fit)   N_OS  N_meas')
+    for r in range(800, 1401, 50):
+        i = np.argmin(np.abs(re_ds - r))
+        print('%8.0f %6.0f   %+.5f     %+.5f   %6.3f %6.3f' % (r, xf[i], ai[i], gr[i], N_os[i], N_meas[i]))
+    far = sel & (xf > xf[i0] + 200)
+    i2 = np.where(far)[0][np.argmax(Amax[far])]
+    ib = np.where(far)[0][np.argmin(np.abs(ai[far]))]
+    print('branch II: measured A_max peak at x %.0f (Re_delta* %.0f), OS neutral at x %.0f (Re_delta* %.0f)'
+          % (xf[i2], re_ds[i2], xf[ib], re_ds[ib]))
+    print('N at the peak: measured %.3f, OS %.3f at the same x; OS max %.3f' % (N_meas[i2], N_os[i2], N_os[far].max()))
+    band = sel & (re_ds > 850) & (re_ds < 1300)
+    print('growth rate, Re_delta* 850..1300: measured / OS mean ratio %.3f' % (gr[band].sum() / ai[band].sum()))
     # the amplitude profile |u'|(y) at Re_delta* 1000 against the OS eigenfunction
     i1 = np.argmin(np.abs(re_ds - 1000.0))
     al1, yos, uos = osm.os_spatial(re_ds[i1], omega * ds_bl[i1], N=120, eigenfunction=True)
     prof = A[:, i1] / A[:, i1].max(); yprof = (yc - y0) / ds_bl[i1]
+    np.savetxt(os.path.join(args.out, 'eigenfunction_re1000.csv'), np.c_[yprof, prof], delimiter=',',
+               header='y_over_dstar,u_amplitude_normalised', comments='')
+    uos_i = np.interp(yprof, yos, uos)
+    print('eigenfunction at Re_delta* %.0f: max |measured - OS| %.3f of the peak, inner peak at y/delta* %.2f (OS %.2f)'
+          % (re_ds[i1], np.abs(prof - uos_i)[(yprof > 0) & (yprof < 8)].max(), yprof[np.argmax(prof)], yos[np.argmax(uos)]))
     import matplotlib; matplotlib.use('Agg'); import matplotlib.pyplot as plt
     fig, ax = plt.subplots(1, 3, figsize=(15, 4), dpi=140)
     ax[2].plot(prof[yc > y0], yprof[yc > y0], 'o', color='#2a78d6', ms=3, label='measured |u\'|, x %.0f' % xf[i1])
     ax[2].plot(uos, yos, '-', color='#eb6834', lw=1.6, label='Orr-Sommerfeld, Re_delta* %.0f' % re_ds[i1])
     ax[2].set_ylim(0, 8); ax[2].set_xlabel('|u\'| / max'); ax[2].set_ylabel('(y - y_plate) / delta*')
     ax[2].legend(fontsize=8); ax[2].grid(alpha=.3)
-    np.savetxt(os.path.join(args.out, 'eigenfunction_re1000.csv'), np.c_[yprof, prof], delimiter=',',
-               header='y_over_dstar,u_amplitude_normalised', comments='')
-    ax[0].plot(xf[sel], N_meas[sel], color='#2a78d6', lw=1.8, label='measured ln(A/A_ref), u\' max over y')
-    ax[0].plot(xf[sel], N_os[sel], '--', color='#eb6834', lw=1.6, label='Orr-Sommerfeld (parallel), integrated')
-    ax[0].set_xlabel('x (theta_in)'); ax[0].set_ylabel('N'); ax[0].legend(fontsize=8); ax[0].grid(alpha=.3)
-    ax[1].plot(out[:, 1], out[:, 3], 'o', color='#2a78d6', ms=4, label='measured d ln A / dx')
-    ax[1].plot(out[:, 1], out[:, 2], '-', color='#eb6834', lw=1.6, label='-alpha_i, Orr-Sommerfeld')
+    s0 = sel & (xf >= xf[i0])
+    ax[0].plot(xf[s0], N_meas[s0], color='#2a78d6', lw=1.8, label='measured ln(A/A_ref), u\' max over y')
+    ax[0].plot(xf[s0], N_os[s0], '--', color='#eb6834', lw=1.6, label='Orr-Sommerfeld (parallel), integrated')
+    ax[0].set_xlabel('x (theta_in)'); ax[0].set_ylabel('N from x %.0f' % xf[i0]); ax[0].legend(fontsize=8); ax[0].grid(alpha=.3)
+    ax[1].plot(re_ds[s0], gr[s0], color='#2a78d6', lw=1.8, label='measured d ln A / dx (fit over +- one wavelength)')
+    ax[1].plot(re_ds[s0], ai[s0], '--', color='#eb6834', lw=1.6, label='-alpha_i, Orr-Sommerfeld')
     ax[1].axhline(0, color='#888', lw=.8); ax[1].set_xlabel('Re_delta*'); ax[1].set_ylabel('growth rate (1/theta_in)')
-    ax[1].legend(fontsize=8); ax[1].grid(alpha=.3)
+    ax[1].set_ylim(-0.002, 0.003); ax[1].legend(fontsize=8); ax[1].grid(alpha=.3)
     fig.suptitle('TS wave through the immersed plate, omega %.4f, K = %d phases' % (omega, K), fontsize=10)
     fig.tight_layout(); fig.savefig(os.path.join(args.out, 'ts_growth.png')); print('wrote', args.out)
 

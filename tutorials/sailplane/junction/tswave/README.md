@@ -52,8 +52,9 @@ python3 ts_analysis.py --base tsbase_27500.h5 --ini tsw.ini                    #
 python3 ts_analysis.py --base tsbase_27500.h5 --forced tswp_*.h5 --ini tsw.ini # growth
 ```
 
-Step times on the RTX 3060: 0.9 s/step alone, 1.47 s/step with two other
-runs on the card (tsbase, 2026-11-15).
+Step times on the RTX 3060 (18 M cells): 0.69 s/step alone (tsw), 1.04
+(tsbase2, shared part of the time), 1.47 with two other runs on the card
+(tsbase, 2026-11-15); the analysis takes 4 min for the 9 snapshots.
 
 ## Results
 
@@ -72,4 +73,44 @@ runs on the card (tsbase, 2026-11-15).
   A drifting base would otherwise leak into the omega projection: a ramp
   Delta u over one period projects to 0.33 Delta u with 8 phases, and the
   t 5000 drift at x 2127 gives ~1e-3, ten times the wave.
-- (the TS growth read-out: pending, chain running since 2026-11-15 20:52)
+- BASE FLOW AT t 11 000 (`tsbase2.ini`, 2026-11-16): Blasius within 0.36 %
+  in delta* and 1.0 % in theta over x 100..2127, H 2.574..2.586 (2.591).
+  The immersed plate carries the laminar layer; the base is converged.
+- TS GROWTH (forced 16 000 steps to t 17 400, 8 phases, `analysis.log`,
+  `viz/ts_growth.png`, `viz/amax.csv`): the wave is linear (u'/U 1.2e-5 at
+  the reference station x 262 behind the ribbon's near field, 7.8e-5 at
+  its peak). Against parallel Orr-Sommerfeld at the local Re_delta*:
+
+  | Re_delta* | x | -alpha_i OS | d lnA/dx measured | N_OS | N_meas |
+  |---|---|---|---|---|---|
+  | 900 | 527 | 0.00143 | 0.00117 | 0.24 | 0.31 |
+  | 1000 | 784 | 0.00184 | 0.00166 | 0.67 | 0.68 |
+  | 1100 | 1068 | 0.00177 | 0.00164 | 1.20 | 1.16 |
+  | 1200 | 1378 | 0.00128 | 0.00119 | 1.68 | 1.60 |
+  | 1300 | 1716 | 0.00041 | 0.00030 | 1.98 | 1.88 |
+
+  Branch II: the amplitude peaks at Re_delta* 1334 (OS neutral at 1337).
+  The peak N is 1.90 against 2.00 (the OS maximum 2.00). The eigenfunction
+  |u'|(y) at Re_delta* 1000 lies on the OS one within 0.06 of the peak,
+  its inner maximum at y/delta* 0.51 (OS 0.55), the node at 2.0. The
+  growth rate over Re_delta* 850..1300 is 0.89 of parallel OS -- an 11 %
+  deficit, uniform over the band; non-parallel corrections to the u'_max
+  growth go the other way at this F, so the deficit is numerical: the
+  grid (delta*/6.8..12) or the wall. A ripple of +- 5 % in A at the TS
+  wavelength appears beyond Re_delta* 1250, in the last 1000 theta before
+  the outlet (a potential-field reflection at omega); it is outside the
+  averaging band. VERDICT so far: the wall neither seeds nor damps the
+  wave qualitatively (shape, branch II, N within 5 %), the 11 % growth
+  deficit is referred to the h/2 check below.
+- THE h/2 CHECK (`h2/`, running on istmcetus GPU 0 since 2026-11-16 04:43):
+  the same layer at h = 0.2 theta_in (delta*/14 at the ribbon) on the
+  sub-range Re_delta* 700..1150, inlet Re_theta,in 270 so that the ribbon
+  at x 100 sits at Re_delta* 755 as in the parent, lx 1100.8, 5504 x 568 x 8
+  = 25 M cells (45 408 leaves, prepare 67 s / 6.5 GB), dt 0.18, base
+  32 000 steps (t 5760, age ratio 3.7 at the end of the read-out), forced
+  17 800 steps (omega 0.0243), 8 phases every 180 steps. The read-out is
+  the same table on Re_delta* 850..1100: the ratio to OS at h/2 against
+  0.89 at h. If it closes to within a few %, the deficit is the grid and
+  the production core's delta*/7 undershoots TS growth by ~10 % (a design
+  number for the DNS band); if it stays, it is the wall.
+- (pending: the h/2 read-out)

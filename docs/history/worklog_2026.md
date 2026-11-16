@@ -3465,8 +3465,24 @@ immersed boundary. Phased, each phase verified before the next:
   at c_g ~ 0.35 U reaches x 2127 plus three periods; the earlier length
   only carried it to x ~ 1400). A drifting base leaks into the 8-phase
   omega projection as 0.33 x the ramp over one period -- ~1e-3 at x 2127
-  at t 5000, ten times the wave. Chain restarted 20:52, read-out next
-  morning.
+  at t 5000, ten times the wave. READ-OUT 2026-11-16 (chain 20:52 ->
+  04:33; tsbase2 1.04 s/step, tsw 0.69 alone): the t 11 000 base is
+  Blasius within 0.36 % (delta*) / 1.0 % (theta), H 2.574..2.586. The
+  wave (linear, u'/U 1.2e-5 -> 7.8e-5) against parallel Orr-Sommerfeld:
+  branch II at Re_delta* 1334 (OS 1337), peak N 1.90 (OS 2.00), the
+  eigenfunction at Re_delta* 1000 on the OS one within 0.06 of its peak
+  (inner maximum y/delta* 0.51 vs 0.55), the growth rate over Re_delta*
+  850..1300 0.89 of OS -- an 11 % deficit uniform over the band, numerical
+  (non-parallel corrections go the other way); +-5 % ripple at the TS
+  wavelength in the last 1000 theta before the outlet. The wall neither
+  seeds nor damps the wave qualitatively; whether the 11 % is the grid
+  (delta*/6.8..12) or the wall is the h/2 check: `tswave/h2/`, the same
+  layer at h 0.2 (delta*/14 at the ribbon) on Re_delta* 700..1150 (inlet
+  Re_theta 270, 25 M cells, dt 0.18, 51 000 steps), launched 04:43 on
+  istmcetus GPU 0 (both A6000s idle). `ts_analysis.py` now fits the
+  growth rate over +- one TS wavelength, takes the reference station at
+  the amplitude minimum behind the ribbon's near field, and writes
+  amax.csv.
 - **2026-11-01, the c/2048 injected start blew up in its first step: two
   defects at a 2:1 interface that CROSSES the body, fixed at the root.**
   The 6-node test of the c/2048 calibration box (the c/512 final field
