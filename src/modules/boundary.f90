@@ -50,8 +50,8 @@ module boundary
     ! non-periodic tangential direction (x on a y face of the boundary
     ! layer): [boundary] <dir>_<side>_<var>_table names a two-column text
     ! file (coordinate, factor; ascending; '#' comments), interpolated
-    ! linearly and held constant beyond its ends -- the prescribed top
-    ! velocity of the pressure-gradient boundary layers. Every profile is
+    ! linearly and held constant beyond its ends -- the top-outlet pressure
+    ! p_top(x) of the pressure-gradient boundary layers. Every profile is
     ! evaluated once into pointBcValue at each variable's own staggered
     ! coordinate (host-only setup; the device sees the finished rows).
     integer(C_INT), parameter :: PROFILE_CONSTANT = 0_C_INT

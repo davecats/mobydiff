@@ -118,7 +118,7 @@ module rans
     use :: blocks, only: block_set_type, FACE_PHYS
     use :: boundary, only: boundary_type, boundary_face_id, NFACES, &
         domain_face_is_wall, apply_scalar_bc, PATCH_UNSET, &
-        PATCH_GENERIC, PATCH_WALL, PATCH_INLET, PATCH_OUTLET, &
+        PATCH_GENERIC, PATCH_WALL, PATCH_INLET, PATCH_OUTLET, PROFILE_BLASIUS, &
         SCALAR_BC_NONE, SCALAR_BC_COPY, SCALAR_BC_MIRROR, SCALAR_BC_VALUE
     use :: ibmm, only: ibm_type, body_indicator_i
     use :: walldist, only: walldist_type, build_walldist, destroy_walldist, &
@@ -787,7 +787,11 @@ contains
         ! profile face uses the face-uniform default = the profile peak);
         ! k_inf = 1.5 (tu/100 U_inf)^2 and omega_inf = k_inf/(nut_ratio nu)
         ! mirror the initial condition below, WITHOUT the wall blend — an
-        ! inlet face carries the freestream, not a wall layer.
+        ! inlet face carries the freestream, not a wall layer. A Blasius
+        ! face is the exception to "values are components": the _value of
+        ! EVERY blasius row is U_inf itself (boundary.f90), so the u and v
+        ! rows of the boundary-layer inlet hold U_inf twice and the sum of
+        ! squares would double k_inf; take U_inf from the blasius row once.
         do dir = 1, 3
             do side = 0, 1
                 face_id = boundary_face_id(dir, side)
@@ -795,9 +799,14 @@ contains
                     bc%facePatchType(face_id) == PATCH_INLET)
                 sst%faceoutlet(face_id) = merge(1_C_INT, 0_C_INT, &
                     bc%facePatchType(face_id) == PATCH_OUTLET)
-                uinf2 = bc%faceBcDefaultValue(VAR_U,face_id)**2 &
-                      + bc%faceBcDefaultValue(VAR_V,face_id)**2 &
-                      + bc%faceBcDefaultValue(VAR_W,face_id)**2
+                if (any(bc%faceBcProfile(VAR_U:VAR_W,face_id) == PROFILE_BLASIUS)) then
+                    uinf2 = maxval(bc%faceBcDefaultValue(VAR_U:VAR_W,face_id), &
+                        mask=bc%faceBcProfile(VAR_U:VAR_W,face_id) == PROFILE_BLASIUS)**2
+                else
+                    uinf2 = bc%faceBcDefaultValue(VAR_U,face_id)**2 &
+                          + bc%faceBcDefaultValue(VAR_V,face_id)**2 &
+                          + bc%faceBcDefaultValue(VAR_W,face_id)**2
+                end if
                 kin = max(1.5d0*tu_frac*tu_frac*uinf2, 1.0d-10)
                 sst%inletk(face_id) = kin
                 sst%inletomg(face_id) = max(kin/(dns%rans_nut_ratio*nu), OMEGA_MIN)
