@@ -35,11 +35,13 @@ run() {   # ranks, label, nsteps, pressure lines
         -e "s/^field_prefix = .*/field_prefix = time_$tag/" -e "s/^runtime_file = .*/runtime_file = forces_time_$tag.txt/" \
         -e '/^accel = chebyshev$/d' -e "s/^niter = 12$/$pres/" sd_seed.ini | sed 's/|/\n/g' > "$ini"
     printf 'profile = true\n' >> "$ini"
-    mpirun -n "$n" --bind-to core --map-by numa "$BIN" "$ini" > "time_${tag}_$n.log" 2>&1
+    mpirun -n "$n" --bind-to none "$BIN" "$ini" > "time_${tag}_$n.log" 2>&1
     echo "$tag ranks $n rc $? $(grep -o 'seconds_per_step .*' "time_${tag}_$n.log" | head -1) projection $(grep 'step_timing: projection' "time_${tag}_$n.log" | grep -o 'seconds_per_step *[0-9.E+-]*')" | tee -a timing.txt
 }
-run 1 c12 300 'accel = chebyshev|niter = 12'
-run 2 c12 300 'accel = chebyshev|niter = 12'
-run 4 c12 300 'accel = chebyshev|niter = 12'
-run 4 c24 150 'accel = chebyshev|niter = 24'
-run 4 rb12 150 'solver = redblack|sor = 1.5|niter = 12'
+# (--bind-to none: "--map-by numa --bind-to core" could not place 4 ranks on
+# the node, job 133191; ranks 1 and 2 of that job are in timing.txt.)
+for r in ${RUNS:-"1 c12" "2 c12" "4 c12" "1 c24" "1 rb12" "4 c24" "4 rb12"}; do
+    set -- $r
+    case $2 in c12) p='accel = chebyshev|niter = 12';; c24) p='accel = chebyshev|niter = 24';; rb12) p='solver = redblack|sor = 1.5|niter = 12';; esac
+    run $1 $2 $([ $2 = c12 ] && echo 300 || echo 150) "$p"
+done
