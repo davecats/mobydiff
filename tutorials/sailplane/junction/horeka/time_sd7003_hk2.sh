@@ -40,8 +40,9 @@ run() {   # ranks, label, nsteps, pressure lines
 }
 # (--bind-to none: "--map-by numa --bind-to core" could not place 4 ranks on
 # the node, job 133191; ranks 1 and 2 of that job are in timing.txt.)
-for r in ${RUNS:-"1 c12" "2 c12" "4 c12" "1 c24" "1 rb12" "4 c24" "4 rb12"}; do
-    set -- $r
-    case $2 in c12) p='accel = chebyshev|niter = 12';; c24) p='accel = chebyshev|niter = 24';; rb12) p='solver = redblack|sor = 1.5|niter = 12';; esac
-    run $1 $2 $([ $2 = c12 ] && echo 300 || echo 150) "$p"
+# RUNS: comma-separated "ranks:tag" pairs.
+for r in $(echo "${RUNS:-1:c12,2:c12,4:c12,1:c24,1:rb12,4:c24,4:rb12}" | tr ',' ' '); do
+    n=${r%%:*}; tag=${r##*:}
+    case $tag in c12) p='accel = chebyshev|niter = 12';; c24) p='accel = chebyshev|niter = 24';; rb12) p='solver = redblack|sor = 1.5|niter = 12';; *) continue;; esac
+    run $n $tag $([ $tag = c12 ] && echo 300 || echo 150) "$p"
 done
