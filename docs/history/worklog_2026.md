@@ -3599,3 +3599,72 @@ immersed boundary. Phased, each phase verified before the next:
   gives max_abs 0 against 720036c at 1 and 4 ranks (un vn wn pn k omega
   nut), ALL GATES PASS. No suite case has a Blasius inlet with RANS, so the
   suites are unchanged by construction.
+
+- **2026-11-14/15, `tutorials/turbulentBoundaryLayer/apg.RANS` and
+  `fpg.RANS`: constant-Clauser-parameter pressure-gradient layers on the
+  smooth.RANS set-up, with the top pressure found by an optimisation loop.**
+  Targets beta = delta*/tau_w dP_e/dx = +0.5 and -0.3 from x = 200 (Re_theta
+  500 / 400, where the RANS follows the DNS Re_theta(x)) to the outlet;
+  light gradients, no separation. (1) THE FEATURE: `[boundary]
+  <dir>_<side>_<var>_profile = table` + `_table = FILE` (two columns,
+  coordinate and factor, linear, constant beyond the ends, along the face's
+  first non-periodic tangential direction at the variable's staggered
+  location, times `_value`; `boundary.f90` `apply_table_profiles` /
+  `read_profile_table`, host-only setup into `pointBcValue`). Gated in the
+  worktree mobydiff.smoothrans at nofma against `~/pass2_ref_binaries`:
+  `run_bitexact.sh` 8/9 PASS max_abs 0 on CPU and GPU (les_ibm_refine
+  failed on the REF side -- its IC_refine.h5 lives in the sibling checkouts,
+  not in a fresh worktree; not this change), `run_bitexact_outlet.sh` 7/7.
+  The device sees the table: every optimisation run was on the GPU build
+  and the field follows the table. The three files reached `main` inside
+  the sailplane session's commit 8238e75, the inlet fix and the table
+  comment in be57d25. (2) VELOCITY CONTROL FAILS: the
+  first design prescribed V_top (generic face, v Dirichlet, p Neumann).
+  The only Dirichlet pressure left is then the x = 650 outlet, the
+  iterative projection cannot move the domain-long pressure mode that
+  carries the top flux to it, and the field keeps a 10 % mass imbalance,
+  L2(div) ~ 3e-3, for niter 6, 30 and 100 (`apg.RANS/opt/t0`, deleted
+  2026-11-16 with the intermediate fields, the non-final iterates' fields
+  and `smooth.RANS/tune2`). The control
+  is the TOP-OUTLET PRESSURE p_top(x) instead (p_top(650) = 0); V_top is an
+  output. (3) THE EDGE (`smooth.RANS/assets/postpro/pg_bl.py`): Griffin, Fu
+  & Moin 2021, U_I = sqrt(2(P0_e - p) - V^2), delta_99 at U/U_I = 0.99,
+  delta*/theta to delta_99, but P0_e of the free stream JUST ABOVE the
+  layer (first y with |dP0/dy| < 1e-3 and U/U_I,top > 0.9), not of the top
+  row: the Blasius inlet fixes U, not p, so P0 varies by 0.5 % (ZPG) to
+  1.5 % (these tables) of U^2 across the free stream, and with the top-row
+  P0 an FPG delta_99 landed anywhere on a 0.991 plateau (20 instead of 7.4).
+  The DNS export takes the same test on U^2/2. (4) THE LOOP
+  (`top_optimise.py CASE.json`): g = dp_top/dx = S(x) sum_{m<4} a_m xi^m
+  + a_b (S_b - S) (S half-cosine ramp 80-200, S_b 80-160: a steeper ramp
+  start, added when the polynomial alone stalled the APG at max error 0.073
+  for 8 iterates with beta(200) at 0.43); response model d beta = kappa
+  (delta*/tau_w) R da, R the Laplace response of the wall dp/dx to the top
+  pressure, kappa the secant gain on the CURRENT state's model (the
+  frozen-layer kappa = 1 step overshot to beta 1.2; the previous state's
+  model double-counts the thickening, kappa 3, steps 6x short); least
+  squares on [200, 640], relax 0.9; each iterate marched in 250 t.u.
+  chunks until max |dc_f|/c_f < 0.5 % per chunk (a pressure step travels
+  at the near-wall speed; an update from an unsteady field chases the
+  transient), the final one to 0.2 %; a stall exit (< 5 % gain over three
+  iterates). Coarse grid (800 x 192): APG 15 iterates / 14 500 t.u., FPG
+  7 / 8 500 t.u., both to max |beta - target| 0.010 on x 200-550
+  (`pg_history.py` re-evaluates every iterate at the final edge). (5)
+  VERIFICATION: stage 1 from the ZPG field with only the final table
+  reproduces the optimiser's field to 0.005 % (APG) / 0.0002 % (FPG) in c_f,
+  1e-4 in beta (path independent; steady ~1750 / 1300 t.u. after the
+  switch). Stage 2, 1600 x 384 from the interpolated field, t 5100 -> 5600:
+  c_f 1.1-1.45 % above the coarse grid (the ZPG pair's offset), Re_theta
+  within 1 %, H within 0.002; beta 200-550 mean +0.493 (+0.484..+0.498) and
+  -0.304 (-0.308..-0.292); min c_f 0.0034 / 0.0047; H 1.67 -> 1.61 / 1.59 ->
+  1.50; Re_theta to 1075 / 702 at x = 640; settled to 0.17 % / 0.03 % in
+  c_f over the last 100 t.u. (6) RANS -> DNS beta RATIO (`beta_ratio.py`,
+  `assets/beta_ratio_zpg.txt`): r = (delta*_DNS/delta*_RANS)(tau_w,RANS/
+  tau_w,DNS) at the same x and dP_e/dx from the ZPG pair, 0.900-0.940 on
+  x 200-550 (mean 0.920); the tables on the DNS would give beta ~ +0.45 /
+  -0.28. Known: the wall pressure gradient starts upstream of x = 80
+  (elliptic; APG trip c_f peak 2 % below ZPG), and V_top has an odd-even
+  sawtooth over the last ~25 cells before the top / x-outlet corner (top
+  plane only, present at 1e-5 in the ZPG, scales with V_top; wall
+  quantities smooth). The procedure is the APG README's "Procedure"
+  section.

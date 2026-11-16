@@ -1,0 +1,25 @@
+# case state max|beta-target| mean_beta n_coeffs field (pg_bl edge of today)
+APG  0 0.499 +0.001 0 ../../smooth.RANS/coarse_38117.h5
+APG  1 1.530 +1.218 4 it0/it0c9_97807.h5
+APG  2 0.228 +0.347 4 it1/it1c6_139590.h5
+APG  3 0.105 +0.427 4 it2/it2c4_169435.h5
+APG  4 0.072 +0.504 4 it3/it3c4_199280.h5
+APG  5 0.073 +0.500 4 it4/it4c1_211218.h5
+APG  6 0.073 +0.499 4 it5/it5c1_223156.h5
+APG  7 0.073 +0.499 4 it6/it6c1_235094.h5
+APG  8 0.073 +0.500 4 it7/it7c1_247032.h5
+APG  9 0.073 +0.500 4 it8/it8c1_258970.h5
+APG 10 0.073 +0.500 4 it9/it9c1_270908.h5
+APG 11 0.073 +0.500 4 it10/it10c1_282846.h5
+APG 12 0.073 +0.500 4 it11/it11c1_294784.h5
+APG 13 0.058 +0.549 5 it12/it12c6_336574.h5
+APG 14 0.032 +0.483 5 it13/it13c3_360454.h5
+APG 15 0.010 +0.497 5 it14/it14fc1_384334.h5
+FPG  0 0.301 +0.001 0 ../../smooth.RANS/coarse_38117.h5
+FPG  1 0.144 -0.173 4 it0/it0c5_73907.h5
+FPG  2 0.077 -0.233 4 it1/it1c3_97767.h5
+FPG  3 0.063 -0.266 4 it2/it2fc1_127592.h5
+FPG  4 0.026 -0.282 4 it3/it3fc1_163382.h5
+FPG  5 0.021 -0.285 5 it4/it4c3_187234.h5
+FPG  6 0.036 -0.314 5 it5/it5c3_211090.h5
+FPG  7 0.010 -0.306 5 it6/it6fc1_240905.h5

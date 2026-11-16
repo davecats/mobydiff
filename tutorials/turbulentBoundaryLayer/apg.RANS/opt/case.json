@@ -1,0 +1,31 @@
+{
+ "beta": 0.5,
+ "x_ramp": [
+  120.0,
+  200.0
+ ],
+ "x_fit": [
+  200.0,
+  550.0
+ ],
+ "tol": 0.015,
+ "max_iter": 24,
+ "relax": 0.9,
+ "zpg_field": "../../smooth.RANS/coarse_38117.h5",
+ "template": "template_p.ini",
+ "solver": "/home/ws/xt8786/pgtop_new_binaries/build_gpu/moby_solve",
+ "workdir": ".",
+ "npoly": 4,
+ "p_ramp": [
+  80.0,
+  200.0
+ ],
+ "t_chunk": 250.0,
+ "steady_tol": 0.005,
+ "t_max": 2500.0,
+ "final_tol": 0.002,
+ "bump": [
+  80,
+  160
+ ]
+}
