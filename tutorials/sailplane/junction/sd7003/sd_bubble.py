@@ -2,7 +2,7 @@
 """The bubble and the transition front of the SD7003 runs from the reduced
 snapshots (sd_reduce.py), one or several runs side by side.
 
-    sd_bubble.py --run LABEL 'GLOB.red.npz' [--run ...] [--tmin 14] [--out viz]
+    sd_bubble.py --run LABEL 'GLOB.red.npz' [--run ...] [--tmin 14] [--tmax T] [--out viz]
 
 Time average of the span-averaged moments over the snapshots with t >=
 tmin; the Reynolds stresses are those of the time-and-span average. Per
@@ -24,6 +24,7 @@ import numpy as np
 ap = argparse.ArgumentParser()
 ap.add_argument("--run", nargs=2, action="append", metavar=("LABEL", "GLOB"), required=True)
 ap.add_argument("--tmin", type=float, default=14.0)
+ap.add_argument("--tmax", type=float, default=1e30, help="end of the averaging window (half-window scatter)")
 ap.add_argument("--out", default="viz")
 ap.add_argument("--re", type=float, default=6.0e4)
 a = ap.parse_args()
@@ -35,12 +36,12 @@ ile = np.argmin(d[:, 0])
 xu, yu = d[:ile + 1][::-1, 0], d[:ile + 1][::-1, 1]           # upper side, leading to trailing edge
 slope = np.gradient(yu, xu)
 
-def average(pattern, tmin):
+def average(pattern, tmin, tmax):
     files = sorted(glob.glob(pattern), key=lambda s: int(s.split("_")[-1].split(".")[0]))
     acc, n, ts = None, 0, []
     for fn in files:
         z = np.load(fn)
-        if float(z["t"]) < tmin:
+        if not tmin <= float(z["t"]) <= tmax:
             continue
         if acc is None:
             x, y, h = z["x"], z["y"], float(z["h"])
@@ -61,7 +62,7 @@ def bilinear(f, x, y, h, xp, yp):
 
 res = {}
 for label, pattern in a.run:
-    x, y, h, m, n, ts = average(pattern, a.tmin)
+    x, y, h, m, n, ts = average(pattern, a.tmin, a.tmax)
     xc = (x - XLE)
     on = (xc > 0.02) & (xc < 0.995)
     ys = YLE + np.interp(xc[on], xu, yu); sl = np.interp(xc[on], xu, slope)

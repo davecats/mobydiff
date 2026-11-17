@@ -72,4 +72,45 @@ runs to `--map-by numa --bind-to core` (two ranks failed to start);
 
 ## Results
 
-(none yet: the c/512 chain started 2026-11-16 12:33 on the RTX 3060)
+### c/512 twin (2026-11-17, RTX 3060, binary of be57d25)
+
+Three branches from the same developed field (step 15 000, t 11.8), 12 500
+steps each, 78 snapshots in the window t 14.0..21.5 (7.5 c/U);
+`sd_bubble.py --run c12 'sd4_c12_*.red.npz' --run c24 ... --run rb ... --out viz4`
+(`viz4/bubble.png`, `viz4/bubble_*.csv`). Positions in x/c on the suction
+side; the two half windows (t 14.0..17.8 and 17.8..21.5) in brackets.
+
+| projection | separation | transition (-u'v' 1e-3) | reattachment | c_l | c_d |
+|---|---|---|---|---|---|
+| Chebyshev 12 | 0.256 (0.258, 0.253) | 0.534 (0.532, 0.544) | 0.726 (0.712, 0.737) | 0.588 | 0.0300 |
+| Chebyshev 24 | 0.257 (0.261, 0.253) | 0.538 (0.540, 0.552) | 0.728 (0.723, 0.739) | 0.590 | 0.0299 |
+| red-black 12 | 0.264 (0.265, 0.262) | 0.532 (0.528, 0.552) | 0.705 (0.698, 0.708) | 0.582 | 0.0288 |
+| literature | 0.22..0.30 | 0.53..0.58 | 0.65..0.70 | | |
+
+- **Chebyshev 12 against 24: nothing moves.** Transition 0.004 c and
+  reattachment 0.002 c apart on the full window, against a half-window
+  scatter of 0.01..0.025 c in every run (the bubble is still lengthening
+  slowly: the second half is later in all three). Doubling the iterations
+  buys nothing at this resolution.
+- **Red-black 12 reattaches 0.02..0.03 c earlier** than either Chebyshev run,
+  in both half windows, with the same transition position; separation 0.007 c
+  later, c_l 1 % and c_d 4 % lower. That is about the size of the scatter and
+  wants the c/1024 run before it is called a difference between the solvers.
+- **The upstream level of w'w' does not set the front.** At x/c 0.1..0.2
+  red-black carries w'w' 1.7e-9 (flat from the leading edge), Chebyshev 12
+  4e-11 and Chebyshev 24 1e-10; from x/c 0.25 on the three curves are one, and
+  they saturate at the same place. u'u' at x/c 0.1..0.2 is 1e-6..1e-5 in all
+  three and changes by a factor 3 between the half windows: it is the
+  two-dimensional unsteadiness the shedding bubble radiates upstream, not a
+  projection residual.
+- The bubble is 0.03..0.06 c longer than the literature band at reattachment
+  (c/512, Delta+ about 8 behind reattachment); separation and transition are
+  inside it.
+
+### c/1024 (HoreKa 2, 4 H100)
+
+Seed and the first dev chunk done 2026-11-16 (0.1105 and 0.1101 s/step); the
+chain then stopped for 13 h: the successor could not be submitted (QoS `dev`
+allows 3 submitted jobs per user and other jobs of the same user held the
+slots; the retry loop died with the job). Resubmitted 2026-11-17 10:20; a
+watcher on the workstation resubmits when no chain job is queued.
