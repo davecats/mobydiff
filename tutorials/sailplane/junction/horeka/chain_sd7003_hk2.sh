@@ -36,7 +36,7 @@ step_of() { echo "$1" | sed 's/.*_\([0-9]*\)\.h5/\1/'; }
 
 # the first unfinished stage: name, prefix, end step, cost factor per step (x 10)
 stage=""
-for s in "seed sd 7500 10" "dev sd 30000 10" "c12 sd_c12 55000 10" "c24 sd_c24 55000 ${FACTOR_C24:-19}" "rb sd_rb 55000 ${FACTOR_RB:-19}"; do
+for s in "seed sd 7500 10" "dev sd 30000 10" "c12 sd_c12 55000 10" "c24 sd_c24 55000 ${FACTOR_C24:-19}" "rb sd_rb 55000 ${FACTOR_RB:-19}" "c48 sd_c48 55000 ${FACTOR_C48:-35}" "rb24 sd_rb24 55000 ${FACTOR_RB24:-35}"; do
     set -- $s
     [ -f "$2_$3.h5" ] && continue
     stage=$1; prefix=$2; end=$3; factor=$4; break
@@ -57,7 +57,7 @@ case $stage in seed) : ;; dev) [ "$(step_of "${latest:-x_0.h5}")" -lt 7500 ] && 
 from=0; [ -n "$latest" ] && from=$(step_of "$latest")
 chunk=$(awk -v b="$BUDGET" -v s="$SECONDS_PER_STEP_C12" -v f="$factor" 'BEGIN { printf "%d", int(b / (s * f / 10) / 250) * 250 }')
 [ $((from + chunk)) -gt "$end" ] && chunk=$((end - from))
-interval=$chunk; case $stage in c12|c24|rb) interval=250 ;; esac
+interval=$chunk; case $stage in c12|c24|rb|c48|rb24) interval=250 ;; esac
 ini=chunk_$stage.ini
 sed -e "s/^nsteps = .*/nsteps = $chunk/" -e "s/^field_interval = .*/field_interval = $interval/" \
     -e '/^\[restart\]/,$d' "sd_$stage.ini" > "$ini"
@@ -69,7 +69,7 @@ grep -q "main loop ended" "$log" || rc=$(( rc == 0 ? 99 : rc ))
 echo "exit $rc $stage to $(step_of "$(newest "$prefix")") $(grep -o 'seconds_per_step .*' "$log" | head -1) $(date '+%F %T')" >> status.txt
 [ $rc -eq 0 ] || exit 1
 
-case $stage in c12|c24|rb)
+case $stage in c12|c24|rb|c48|rb24)
     ( module purge; module load h5py/3.12.1-foss-2024a
       files=$(ls -1 ${prefix}_[0-9]*.h5 | sed 's/.*_\([0-9]*\)\.h5/\1 &/' | sort -n | cut -d' ' -f2)
       todo=""; for f in $files; do [ -s "${f%.h5}.red.npz" ] || todo="$todo $f"; done
