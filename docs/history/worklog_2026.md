@@ -3668,3 +3668,30 @@ immersed boundary. Phased, each phase verified before the next:
   plane only, present at 1e-5 in the ZPG, scales with V_top; wall
   quantities smooth). The procedure is the APG README's "Procedure"
   section.
+- **2026-11-16/18, step 3b of the junction study: the projection floor on
+  the SD7003 bubble** (`tutorials/sailplane/junction/sd7003/`). The unforced
+  laminar separation bubble at Re_c 6e4, alpha 4 deg, span 0.25 c periodic,
+  octree to c/1024 on the surface (52 M cells) and a c/512 twin (22 M); a
+  weak trip in the first 3 c/U only as the spanwise seed (`[flow]
+  initial_noise` is read and never used). One developed field, then three
+  branches of 10 c/U: Chebyshev 12, Chebyshev 24, red-black 12 (sor 1.5);
+  `sd_reduce.py` (span-averaged moments per snapshot), `sd_bubble.py`
+  (separation / transition by -u'v' 1e-3 / reattachment, half windows by
+  `--tmax`). TIMING, 52 M cells, Chebyshev 12: A6000 1.73 s/step, H100 0.396
+  / 0.208 / 0.111 on 1 / 2 / 4 GPUs (`--bind-to none`; core binding fails
+  for 4 ranks), Chebyshev 24 x 1.81, red-black 12 x 2.19. RESULT: w'w' is one
+  curve in the three branches on both grids from x/c 0.3 to saturation --
+  the projection does not seed the breakdown, although red-black carries
+  1e-9..4e-8 of w'w' upstream against 1e-11. c/512: Chebyshev 12 and 24
+  identical within the half-window scatter (transition 0.534 / 0.538,
+  reattachment 0.726 / 0.728). c/1024: Chebyshev 12 carries a
+  spanwise-coherent u'u' (9e-5 at x/c 0.1..0.2; 24: 1.8e-5; red-black:
+  3.2e-6) and a wandering bubble (transition 0.552 -> 0.495); Chebyshev 24
+  0.262 / 0.507 / 0.721 and red-black 12 0.269 / 0.512 / 0.700, both
+  stationary to 0.007 c. Red-black reattaches 0.02 c earlier on both grids
+  (open: which is converged; a Chebyshev 48 or red-black 24 branch would
+  say). VERDICT: GO; a c/1024-class DNS band wants Chebyshev 24 or red-black
+  12. HoreKa 2 lesson: QoS `dev` allows 3 submitted jobs per user; a
+  self-chaining job whose `sbatch` is refused dies without a successor
+  (`horeka/chain_sd7003_hk2.sh` retries only while the job lives) -- watch
+  and resubmit from the workstation.

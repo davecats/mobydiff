@@ -107,10 +107,55 @@ side; the two half windows (t 14.0..17.8 and 17.8..21.5) in brackets.
   (c/512, Delta+ about 8 behind reattachment); separation and transition are
   inside it.
 
-### c/1024 (HoreKa 2, 4 H100)
+### c/1024 (2026-11-18, HoreKa 2, 4 H100, binary of 0c0c01f)
 
-Seed and the first dev chunk done 2026-11-16 (0.1105 and 0.1101 s/step); the
-chain then stopped for 13 h: the successor could not be submitted (QoS `dev`
+52 M cells, three branches from step 30 000 (t 12.0), 25 000 steps each, 78
+snapshots in t 14.0..21.5; `viz5/bubble.png`, `viz5/bubble_*.csv`. Half
+windows in brackets. Step times 0.111 (Chebyshev 12), 0.201 (Chebyshev 24),
+0.243 s/step (red-black 12); about 19 GPU-hours of stepping for the whole chain.
+
+| projection | separation | transition (-u'v' 1e-3) | reattachment | c_l | c_d | u'u' at x/c 0.1..0.2 |
+|---|---|---|---|---|---|---|
+| Chebyshev 12 | 0.257 (0.260, 0.254) | 0.500 (0.552, 0.495) | 0.731 (0.740, 0.721) | 0.595 | 0.0256 | 9.0e-5 |
+| Chebyshev 24 | 0.262 (0.263, 0.261) | 0.507 (0.506, 0.508) | 0.721 (0.720, 0.721) | 0.592 | 0.0250 | 1.8e-5 |
+| red-black 12 | 0.269 (0.270, 0.269) | 0.512 (0.516, 0.509) | 0.700 (0.700, 0.700) | 0.587 | 0.0243 | 3.2e-6 |
+| literature | 0.22..0.30 | 0.53..0.58 | 0.65..0.70 | | | |
+
+- **The three-dimensional breakdown does not move with the projection.**
+  w'w' of the three runs is one curve from x/c 0.3 to saturation at x/c
+  0.65, although upstream red-black carries 4e-8 (flat from the leading
+  edge) against 1e-11 for the Chebyshev runs. As at c/512, the upstream
+  spanwise level is not what seeds the bubble.
+- **Chebyshev 12 is not quiet at this resolution.** It carries a
+  SPANWISE-COHERENT streamwise fluctuation over the laminar and separated
+  layer (max u'u' 9e-5 at x/c 0.1..0.2, 1e-2 at x/c 0.4) that Chebyshev 24
+  cuts by 3..5 and red-black 12 by 10..30, and its bubble wanders: transition
+  0.552 in the first half window and 0.495 in the second, reattachment
+  0.740 and 0.721. Chebyshev 24 and red-black 12 are stationary to 0.007 c
+  between the halves. At c/512 the same comparison showed no ordering
+  (Chebyshev 24 above 12): twelve fixed iterations lose ground as the grid is
+  refined.
+- **Red-black 12 reattaches 0.02 c ahead of Chebyshev 24** (0.700 against
+  0.721, both stationary) and separates 0.007 c later, the same sign and
+  size as at c/512: a difference between the two solvers that the grid does
+  not remove. Red-black sits on the edge of the literature band; which of the
+  two is the converged answer is NOT decided by this test (it wants a
+  Chebyshev 48 or red-black 24 branch, 25 000 steps, about 3 GPU-hours).
+- c/512 to c/1024: separation and reattachment within 0.01 c for each
+  solver; transition by the -u'v' threshold 0.02..0.03 c earlier on the fine
+  grid; c_d 15 % lower (0.025 against 0.030), c_l 1 % higher.
+
+**Verdict for the production core.** The projection does not set where the
+flow turns three-dimensional, so no trip and no compensation is called for.
+Chebyshev 12 is too loose for a c/1024-class DNS band (coherent unsteadiness,
+a wandering bubble); Chebyshev 24 (x 1.81 per step) or red-black 12 (x 2.19)
+is the price there, and the 0.02 c between those two is the uncertainty this
+test leaves on a reattachment line.
+
+Chain notes: 9 one-hour jobs on `dev-gpu-h100` between 2026-11-16 17:29 and
+2026-11-18 05:20. The chain stopped twice without a successor (QoS `dev`
 allows 3 submitted jobs per user and other jobs of the same user held the
-slots; the retry loop died with the job). Resubmitted 2026-11-17 10:20; a
-watcher on the workstation resubmits when no chain job is queued.
+slots; the retry loop dies with the job) -- a watcher on the workstation
+that resubmits when no chain job is queued is the remedy. The reduced
+snapshots and force traces are in the run directory on HoreKa 2 and (not in
+git) here; the end fields `sd_{c12,c24,rb}_55000.h5` on HoreKa 2 only.

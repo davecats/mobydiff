@@ -255,8 +255,12 @@ TS-wave growth through the immersed plate against Orr-Sommerfeld, GO
 2026-11-16 (`tutorials/sailplane/junction/tswave/README.md`: growth 0.89 of
 OS at delta*/7, 0.95 at delta*/14 under the same plate -- the deficit is the
 grid; refine the core's TS band to delta*/10..14 or carry the 10 % bias);
-NEXT: step 3b, the projection-residual floor on the SD7003 bubble (niter 12
-vs 24, the first HoreKa 2 GPU job), before any production grid). Dropped
+step 3b, the projection floor on the SD7003 bubble, GO 2026-11-18
+(`tutorials/sailplane/junction/sd7003/README.md`: the 3D breakdown does not
+move between Chebyshev 12, 24 and red-black 12 at c/512 or c/1024; Chebyshev
+12 is too loose at c/1024 -- coherent u'u', a wandering bubble -- so the DNS
+band costs Chebyshev 24, x 1.81, or red-black 12, x 2.19; 0.02 c of
+reattachment between those two is open); NEXT: step 4 (`dns_levels_from`)). Dropped
 2026-10-24 by decision: S5b (TVD + second halo), C4 (conducting corners), the
 MacDonald rough-wall forced-convection case.
 
