@@ -3722,6 +3722,11 @@ immersed boundary. Phased, each phase verified before the next:
   from the trip to x 60 (the trip on the doubled span, not the APG).
   Local data: `apg.DNS/run/` (16 GB, gitignored); HoreKa keeps all 112
   statistics copies until 16 Dec. `apg.RANS/README.md` notes the measured r.
+  2026-11-21: the window committed as `apg.DNS/assets/mobydiff/xyz_3200_384_272/data.nc`
+  (98 MB, the ../smooth format; `dns_pg.window` reads it), `reproduce.py`,
+  `run_provenance.txt`; the beta (with half windows split at step 1 475 000:
+  0.006 in beta, 0.7 % in c_f) and the matched-Re_theta fluctuation figures
+  (ZPG DNS / ZPG RANS / FPG RANS) moved into `apg.DNS/assets`.
   ADDENDUM 2026-11-21, the two convergence branches (Chebyshev 48, 0.380
   s/step; red-black 24, 0.467): every measure is monotone in the Chebyshev
   count and ends at red-black -- separation 0.257 / 0.262 / 0.266 against

@@ -83,6 +83,12 @@ the same edge on both sides.
   ratio is 0.90–0.94.
 - **The assumption behind it.** The ZPG errors of the model are assumed to
   carry over to the mild gradient.
+- **Measured since (2026-11-20, [`../apg.DNS`](../apg.DNS/README.md)):** they
+  do not. Under this table × 1.087 the DNS gives β = 0.497 where the RANS
+  gives 0.592, so r ≈ 0.84. dP_e/dx and the δ* ratio transfer as assumed;
+  the SST τ_w error grows from about 4.5 % to about 13 %. The β_DNS est.
+  column above is therefore about 10 % high. The DNS README gives the
+  x-dependent RANS target for a flat β_DNS.
 
 ## Procedure
 

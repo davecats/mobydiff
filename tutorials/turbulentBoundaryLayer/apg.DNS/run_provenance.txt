@@ -1,0 +1,16 @@
+The shipped statistics (assets/mobydiff/xyz_3200_384_272/data.nc and the figures): the APG DNS of 2026-11-16/20 on
+legacy HoreKa, account hk-project-exasim, 2 nodes x 4 A100-SXM4-40GB, code 4b0dcc7ffa38969cf280790f875d5585f1f70601,
+run dir /hkfs/work/workspace/scratch/xt8786-apgdns/run (workspace until 2026-12-16).
+
+start   assets/tile_restart.py on the ZPG field smooth_775000.h5 (t 15 500), --ntile 2 --noise 1e-3 --seed 1 (job 5242756)
+chain   horeka/submit_apgdns.sh, 12 500-step chunks (250 t.u., 0.221 s/step), self-chaining to the deadline 2026-11-20 11:45
+  5242802  2026-11-16 16:24  hkn[0510,0513]  limit 24:00
+  5242805  2026-11-17 18:36  hkn[0802,0813]  limit 24:00
+  5246330  2026-11-18 17:47  hkn[0613-0614]  limit 24:00
+  5248675  2026-11-19 16:56  hkn[0613-0614]  limit 17:57   last chunk 10:29, "no successor: 51 min left"
+result  112 chunks, step 775 000 -> 2 175 000, t 15 500 -> 43 500, no failed chunk, about 700 GPU-h
+window  steps 825 000 .. 2 175 000 = t 16 500 .. 43 500 (stats_apg_2175000.h5 minus stats_apg_825000.h5;
+        the first 1000 t.u. after the switch to the APG are the transient); half windows split at step 1 475 000
+local   run/ (16 GB, not in git): apg_2175000.h5 (md5 d7a0adcd3ecbeb64d601558f4d755093), stats/ (29 cumulative
+        copies, every 50 000 steps from 825 000; 787 500), logs_apgdns.tgz (chunk logs, status.txt, apg_runtime.txt,
+        provenance, ini, script)

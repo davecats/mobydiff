@@ -15,3 +15,6 @@ skewsym_*.h5
 *_runtime.txt
 new_y*.npy
 *.mat
+
+# The APG DNS run directory (fields, cumulative statistics, chunk logs; 16 GB).
+apg.DNS/run/
