@@ -3695,3 +3695,39 @@ immersed boundary. Phased, each phase verified before the next:
   self-chaining job whose `sbatch` is refused dies without a successor
   (`horeka/chain_sd7003_hk2.sh` retries only while the job lives) -- watch
   and resubmit from the workstation.
+- **2026-11-16/20, the APG DNS** (`tutorials/turbulentBoundaryLayer/apg.DNS/`,
+  README + PLAN.md). The ZPG DNS of `smooth/` with its top outlet under
+  `apg.RANS/ptop.txt` x 1.087 (= 1/r, r = 0.92 from the ZPG pair), aiming at
+  beta_DNS = 0.5 on x 200-550. Lz doubled to 52 (nz 272), the trip at the
+  same spectral density (nmodes 32, amp x sqrt 2). Start: the ZPG field at
+  t 15 500 tiled twice in z (`assets/tile_restart.py`; 1e-3 perturbation,
+  outlet planes dropped, global-3D layout). Legacy HoreKa, 8 A100,
+  hk-project-exasim, code 4b0dcc7: `horeka/submit_apgdns.sh` runs 250 t.u.
+  chunks (46 min, 0.221 s/step) in self-chaining 24 h jobs to a deadline,
+  restarting from the last clean chunk with the statistics file restored to
+  that chunk's copy. 112 chunks, t 15 500 -> 43 500, no failure, ~700 GPU-h.
+  Two smoke failures fixed on the way (a chunk need above the dev job's hour;
+  the step parsed from `.h5` by `grep -o [0-9]*`). L2_div 2e-4 after the
+  switch, back to 6e-6 in ~900 t.u.; beta settled in ~1000 t.u.; window
+  t 16 500-43 500. RESULT: beta mean +0.497 (0.465 -> 0.527, tilted; the
+  halves agree to 0.006); c_f(400) 0.00409, Re_theta 1021 at x 550, no
+  separation. The RANS under the target table: c_f 10-11 % low, H +0.06,
+  Re_theta 5 % low. TRANSFER (DNS vs the coarse RANS under the same table,
+  `rans_check/`): dP_e/dx equal to 1 %, the delta* ratio as at ZPG, the SST
+  tau_w ratio 0.955 -> 0.867, so r ~ 0.84 under the APG; the 1.087 landed
+  because the RANS response is superlinear (beta_RANS 0.49 -> 0.59). The
+  Clauser G of the low-Re DNS responds less to beta than SST and than the
+  high-Re equilibrium fit. For a flat beta_DNS: re-optimise the RANS to
+  0.5/r(x) (0.60 -> 0.58). Transition unmoved; c_f 3-4 % below the ZPG DNS
+  from the trip to x 60 (the trip on the doubled span, not the APG).
+  Local data: `apg.DNS/run/` (16 GB, gitignored); HoreKa keeps all 112
+  statistics copies until 16 Dec. `apg.RANS/README.md` notes the measured r.
+  ADDENDUM 2026-11-21, the two convergence branches (Chebyshev 48, 0.380
+  s/step; red-black 24, 0.467): every measure is monotone in the Chebyshev
+  count and ends at red-black -- separation 0.257 / 0.262 / 0.266 against
+  0.269 / 0.270, reattachment 0.731 / 0.721 / 0.712 against 0.700 / 0.696,
+  c_d 0.0256 / 0.0250 / 0.0244 against 0.0243 / 0.0242, the coherent u'u'
+  9e-5 / 1.8e-5 / 5e-6 against 3e-6 / 2e-6. Red-black 12 is converged and is
+  the projection of a c/1024-class DNS band (x 2.19; Chebyshev 48 costs
+  x 3.43 and only approaches it). The red-black upstream w'w' (5e-8) does
+  not fall with the sweeps and does not move the breakdown.

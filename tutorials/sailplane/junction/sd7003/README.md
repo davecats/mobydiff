@@ -145,17 +145,47 @@ windows in brackets. Step times 0.111 (Chebyshev 12), 0.201 (Chebyshev 24),
   solver; transition by the -u'v' threshold 0.02..0.03 c earlier on the fine
   grid; c_d 15 % lower (0.025 against 0.030), c_l 1 % higher.
 
+### c/1024 convergence branches (2026-11-21): Chebyshev 48 and red-black 24
+
+Two more branches from the same field (`sd_c48.ini`, `sd_rb24.ini`; 0.380 and
+0.467 s/step on 4 H100, x 3.43 and x 4.21 of Chebyshev 12), same window.
+
+| projection | separation | transition | reattachment | c_l | c_d | u'u' at x/c 0.1..0.2 |
+|---|---|---|---|---|---|---|
+| Chebyshev 12 | 0.257 | 0.500 (0.552, 0.495) | 0.731 (0.740, 0.721) | 0.595 | 0.0256 | 9.0e-5 |
+| Chebyshev 24 | 0.262 | 0.507 (0.506, 0.508) | 0.721 (0.720, 0.721) | 0.592 | 0.0250 | 1.8e-5 |
+| Chebyshev 48 | 0.266 | 0.509 (0.507, 0.511) | 0.712 (0.721, 0.697) | 0.588 | 0.0244 | 5.2e-6 |
+| red-black 12 | 0.269 | 0.512 (0.516, 0.509) | 0.700 (0.700, 0.700) | 0.587 | 0.0243 | 3.2e-6 |
+| red-black 24 | 0.270 | 0.512 (0.512, 0.513) | 0.696 (0.700, 0.690) | 0.587 | 0.0242 | 2.0e-6 |
+
+- **Red-black is the converged answer; Chebyshev walks towards it.** Every
+  column is monotone in the Chebyshev iteration count and ends at the
+  red-black value: separation 0.257 -> 0.262 -> 0.266 (red-black 0.269 /
+  0.270), reattachment 0.731 -> 0.721 -> 0.712 (0.700 / 0.696; Chebyshev 48
+  reads 0.697 in its second half window), c_d 0.0256 -> 0.0250 -> 0.0244
+  (0.0243 / 0.0242), the coherent u'u' 9e-5 -> 1.8e-5 -> 5e-6 (3e-6 / 2e-6).
+- **Red-black 12 is already converged**: doubling the sweeps moves
+  reattachment 0.004 c and nothing else. The 0.02 c between Chebyshev 24 and
+  red-black 12 was Chebyshev 24 not yet there.
+- The upstream w'w' of red-black (5e-8, flat from the leading edge) does NOT
+  fall with the sweeps: it is a property of the sweep, not a residual, and it
+  still leaves the breakdown where the Chebyshev runs have it.
+- With the converged projection the bubble is 0.270 / 0.512 / 0.70:
+  separation and reattachment in the literature bands, transition by the
+  -u'v' threshold 0.02 c ahead of it.
+
 **Verdict for the production core.** The projection does not set where the
 flow turns three-dimensional, so no trip and no compensation is called for.
-Chebyshev 12 is too loose for a c/1024-class DNS band (coherent unsteadiness,
-a wandering bubble); Chebyshev 24 (x 1.81 per step) or red-black 12 (x 2.19)
-is the price there, and the 0.02 c between those two is the uncertainty this
-test leaves on a reattachment line.
+In a c/1024-class DNS band use **red-black 12** (`solver = redblack`,
+`sor = 1.5`, `niter = 12`): x 2.19 per step against Chebyshev 12, converged,
+and cheaper than the Chebyshev 48 (x 3.43) that only approaches it. Fixed
+Chebyshev 12 is fine at c/512 and too loose at c/1024.
 
 Chain notes: 9 one-hour jobs on `dev-gpu-h100` between 2026-11-16 17:29 and
-2026-11-18 05:20. The chain stopped twice without a successor (QoS `dev`
+2026-11-18 05:20, 8 more for the convergence branches to 2026-11-20 23:39
+(about 40 GPU-hours in all). The chain stopped twice without a successor (QoS `dev`
 allows 3 submitted jobs per user and other jobs of the same user held the
 slots; the retry loop dies with the job) -- a watcher on the workstation
 that resubmits when no chain job is queued is the remedy. The reduced
 snapshots and force traces are in the run directory on HoreKa 2 and (not in
-git) here; the end fields `sd_{c12,c24,rb}_55000.h5` on HoreKa 2 only.
+git) here; the end fields `sd_{c12,c24,c48,rb,rb24}_55000.h5` on HoreKa 2 only.
